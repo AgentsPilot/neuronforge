@@ -17,6 +17,11 @@ import V6WorkflowPreview, {
   UserDecision as V6UserDecision
 } from '@/components/v6/V6WorkflowPreview';
 import { useV6AgentGeneration } from '@/lib/utils/featureFlags';
+import type {
+  ClarificationAnswer,
+  StructuredSelectAnswer,
+  StructuredMultiSelectAnswer
+} from '@/components/agent-creation/types/agent-prompt-threads';
 
 // Workflow step interface for step visualization
 interface WorkflowStep {
@@ -693,7 +698,7 @@ export default function TestPluginsPage() {
   const [currentQuestions, setCurrentQuestions] = useState<any[]>([]);
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
   const [userAnswer, setUserAnswer] = useState('');
-  const [clarificationAnswers, setClarificationAnswers] = useState<Record<string, string>>({});
+  const [clarificationAnswers, setClarificationAnswers] = useState<Record<string, ClarificationAnswer>>({});
   const [enhancedPrompt, setEnhancedPrompt] = useState<any>(null);
   const [clarityScore, setClarityScore] = useState(0);
   const [analysisData, setAnalysisData] = useState<any>(null);
@@ -723,6 +728,11 @@ export default function TestPluginsPage() {
   const [v6CompiledResult, setV6CompiledResult] = useState<any>(null);
   const [v6ShowWorkflowPreview, setV6ShowWorkflowPreview] = useState(false);
 
+  // V6 Regeneration/feedback state
+  const [v6RegenerationCount, setV6RegenerationCount] = useState(0);
+  const [v6PreviousWorkflow, setV6PreviousWorkflow] = useState<any[] | null>(null);
+  const [v6FeedbackHistory, setV6FeedbackHistory] = useState<string[]>([]);
+
   // Enhanced Prompt Import state (for skipping to Phase 3)
   const [showEnhancedPromptImportModal, setShowEnhancedPromptImportModal] = useState(false);
   const [enhancedPromptImportValue, setEnhancedPromptImportValue] = useState('');
@@ -734,6 +744,11 @@ export default function TestPluginsPage() {
   // Mini-cycle state (for user_inputs_required refinement)
   const [isInMiniCycle, setIsInMiniCycle] = useState(false);
   const [miniCyclePhase3, setMiniCyclePhase3] = useState<any>(null);
+
+  // Hybrid question support (v14): toggle custom text input for select questions
+  const [showCustomInput, setShowCustomInput] = useState(false);
+  // V14: Track selected options for multi_select questions
+  const [selectedMultiOptions, setSelectedMultiOptions] = useState<string[]>([]);
 
   // Communication tracking for download
   const [apiCommunications, setApiCommunications] = useState<Array<{
@@ -1334,7 +1349,7 @@ export default function TestPluginsPage() {
     }
   };
 
-  const processMessage = async (phase: number, answers?: Record<string, string>, explicitThreadId?: string) => {
+  const processMessage = async (phase: number, answers?: Record<string, ClarificationAnswer>, explicitThreadId?: string) => {
     const currentThreadId = explicitThreadId || threadId;
 
     if (!currentThreadId) {
@@ -1559,9 +1574,32 @@ export default function TestPluginsPage() {
     }
 
     const currentQuestion = currentQuestions[currentQuestionIndex];
+    const questionId = currentQuestion.id;
+
+    // V14: Determine answer format based on question type
+    let answer: ClarificationAnswer;
+    if (currentQuestion.type === 'select') {
+      // Custom answer for select question
+      answer = {
+        answerType: 'select',
+        mode: 'custom',
+        custom: userAnswer
+      } as StructuredSelectAnswer;
+    } else if (currentQuestion.type === 'multi_select') {
+      // Custom answer for multi_select question
+      answer = {
+        answerType: 'multi_select',
+        mode: 'custom',
+        custom: userAnswer
+      } as StructuredMultiSelectAnswer;
+    } else {
+      // Plain text for text/email/number questions
+      answer = userAnswer;
+    }
+
     const updatedAnswers = {
       ...clarificationAnswers,
-      [currentQuestion.id]: userAnswer
+      [questionId]: answer
     };
 
     setClarificationAnswers(updatedAnswers);
@@ -1573,14 +1611,19 @@ export default function TestPluginsPage() {
       data: null
     }]);
 
+    // Reset states
+    setSelectedMultiOptions([]);
+
     if (currentQuestionIndex < currentQuestions.length - 1) {
       // Move to next question
       setCurrentQuestionIndex(currentQuestionIndex + 1);
       setUserAnswer('');
+      setShowCustomInput(false);
       addDebugLog('info', `Question ${currentQuestionIndex + 2} of ${currentQuestions.length}`);
     } else {
       // All questions answered, proceed to Phase 3
       setUserAnswer('');
+      setShowCustomInput(false);
 
       if (isInMiniCycle) {
         addDebugLog('info', 'Mini-cycle questions answered, generating refined enhanced prompt...');
@@ -1592,6 +1635,110 @@ export default function TestPluginsPage() {
       } else {
         addDebugLog('info', 'All questions answered, generating enhanced prompt...');
         // Regular flow: Generate Phase 3
+        processMessage(3, updatedAnswers);
+      }
+    }
+  };
+
+  // Handle selecting a predefined option from a select-type question (v14 hybrid)
+  const handleOptionSelect = (questionId: string, value: string, label: string) => {
+    // V14: Create structured answer object for select questions
+    const answer: StructuredSelectAnswer = {
+      answerType: 'select',
+      mode: 'selected',
+      selected: value  // Store the value, Phase 3 resolves to label
+    };
+
+    const updatedAnswers = {
+      ...clarificationAnswers,
+      [questionId]: answer
+    };
+
+    setClarificationAnswers(updatedAnswers);
+
+    // Add answer to conversation history (show label for readability)
+    setConversationHistory(prev => [...prev, {
+      role: 'user',
+      content: `Q: ${currentQuestions[currentQuestionIndex].question}\nA: ${label}`,
+      data: null
+    }]);
+
+    // Reset states
+    setShowCustomInput(false);
+    setSelectedMultiOptions([]);
+    setUserAnswer('');
+
+    if (currentQuestionIndex < currentQuestions.length - 1) {
+      setCurrentQuestionIndex(currentQuestionIndex + 1);
+      addDebugLog('info', `Question ${currentQuestionIndex + 2} of ${currentQuestions.length}`);
+    } else {
+      if (isInMiniCycle) {
+        addDebugLog('info', 'Mini-cycle questions answered, generating refined enhanced prompt...');
+        processMessage(3, updatedAnswers);
+        setIsInMiniCycle(false);
+        setMiniCyclePhase3(null);
+      } else {
+        addDebugLog('info', 'All questions answered, generating enhanced prompt...');
+        processMessage(3, updatedAnswers);
+      }
+    }
+  };
+
+  // V14: Toggle selection for multi_select questions
+  const handleMultiSelectToggle = (value: string) => {
+    setSelectedMultiOptions(prev =>
+      prev.includes(value)
+        ? prev.filter(v => v !== value)
+        : [...prev, value]
+    );
+  };
+
+  // V14: Submit selected options for multi_select questions
+  const handleMultiSelectSubmit = () => {
+    const currentQuestion = currentQuestions[currentQuestionIndex];
+    const questionId = currentQuestion.id;
+
+    // Create structured answer object for multi_select
+    const answer: StructuredMultiSelectAnswer = {
+      answerType: 'multi_select',
+      mode: 'selected',
+      selected: selectedMultiOptions
+    };
+
+    const updatedAnswers = { ...clarificationAnswers, [questionId]: answer };
+    setClarificationAnswers(updatedAnswers);
+
+    // Build display labels for conversation history
+    const selectedLabels = selectedMultiOptions.map(val => {
+      const opt = currentQuestion.options?.find((o: any) =>
+        (typeof o === 'object' ? o.value : o) === val
+      );
+      return opt ? (typeof opt === 'object' ? opt.label : opt) : val;
+    });
+
+    setConversationHistory(prev => [...prev, {
+      role: 'user',
+      content: `Q: ${currentQuestion.question}\nA: ${selectedLabels.join(', ')}`,
+      data: null
+    }]);
+
+    // Reset states
+    setShowCustomInput(false);
+    setSelectedMultiOptions([]);
+    setUserAnswer('');
+
+    // Advance to next question or Phase 3
+    if (currentQuestionIndex < currentQuestions.length - 1) {
+      setCurrentQuestionIndex(currentQuestionIndex + 1);
+      addDebugLog('info', `Question ${currentQuestionIndex + 2} of ${currentQuestions.length}`);
+    } else {
+      if (isInMiniCycle) {
+        addDebugLog('info', 'Mini-cycle questions answered, generating refined enhanced prompt...');
+        processMessage(3, updatedAnswers);
+        setIsInMiniCycle(false);
+        setMiniCyclePhase3(null);
+      } else {
+        addDebugLog('info', 'All questions answered, generating enhanced prompt...');
         processMessage(3, updatedAnswers);
       }
     }
@@ -1678,7 +1825,15 @@ export default function TestPluginsPage() {
   };
 
   // V6 Intent Validation - Step 2: Compile with user decisions
-  const handleV6CreateAgent = async (decisions: V6UserDecisions) => {
+  // Modified to accept optional feedback for regeneration
+  const handleV6CreateAgent = async (
+    decisions: V6UserDecisions,
+    feedback?: {
+      previous_workflow: any[]
+      user_feedback: string
+      feedback_history?: string[]
+    }
+  ) => {
     if (!v6GroundedPlan) {
       addDebugLog('error', 'No grounded plan available for V6 compilation');
       return;
@@ -1688,8 +1843,17 @@ export default function TestPluginsPage() {
     setV6Error(null);
     setV6UserDecisions(decisions);
 
+    // Clear previous result when regenerating
+    if (feedback) {
+      setV6ShowWorkflowPreview(false);
+    }
+
     try {
-      addDebugLog('info', 'Starting V6 Compilation with user decisions...');
+      const isRegeneration = !!feedback;
+      addDebugLog('info', isRegeneration
+        ? `Regenerating workflow with feedback (attempt ${v6RegenerationCount + 1})...`
+        : 'Starting V6 Compilation with user decisions...'
+      );
 
       const correlationId = uuidv4();
       const requestBody = {
@@ -1700,7 +1864,16 @@ export default function TestPluginsPage() {
         config: {
           provider: selectedProvider,
           model: selectedModel
-        }
+        },
+        // Include feedback for regeneration
+        ...(feedback && {
+          feedback: {
+            previous_workflow: feedback.previous_workflow,
+            user_feedback: feedback.user_feedback,
+            feedback_history: feedback.feedback_history,
+            regeneration_attempt: v6RegenerationCount + 1
+          }
+        })
       };
 
       const response = await fetch('/api/v6/compile-with-decisions', {
@@ -1718,6 +1891,17 @@ export default function TestPluginsPage() {
         throw new Error(data.error || `HTTP ${response.status}`);
       }
 
+      // Update regeneration tracking
+      if (feedback) {
+        setV6RegenerationCount(prev => prev + 1);
+        setV6FeedbackHistory(prev => [...prev, feedback.user_feedback]);
+      }
+
+      // Store previous workflow before updating (for next potential regeneration)
+      if (v6CompiledResult?.workflow) {
+        setV6PreviousWorkflow(v6CompiledResult.workflow);
+      }
+
       // Store compiled result and show workflow preview
       setV6CompiledResult(data);
       setV6ShowWorkflowPreview(true);
@@ -1725,18 +1909,18 @@ export default function TestPluginsPage() {
       // Track in API communications
       setApiCommunications(prev => [...prev, {
         timestamp: new Date().toISOString(),
-        phase: 'V6-API2',
+        phase: feedback ? 'V6-API2-REGEN' : 'V6-API2',
         endpoint: '/api/v6/compile-with-decisions',
         request: requestBody,
         response: data
       }]);
 
-      addDebugLog('success', `V6 Compilation complete - Agent ready: ${data.agent?.agent_name || 'unnamed'}`);
+      addDebugLog('success', `V6 ${feedback ? 'Regeneration' : 'Compilation'} complete - Agent ready: ${data.agent?.agent_name || 'unnamed'}`);
 
     } catch (error: any) {
       const errorMessage = error.message || 'Unknown error';
       setV6Error(errorMessage);
-      addDebugLog('error', `V6 Compilation failed: ${errorMessage}`);
+      addDebugLog('error', `V6 ${feedback ? 'Regeneration' : 'Compilation'} failed: ${errorMessage}`);
     } finally {
       setV6Loading(false);
     }
@@ -1757,6 +1941,10 @@ export default function TestPluginsPage() {
     setV6Error(null);
     setV6CompiledResult(null);
     setV6ShowWorkflowPreview(false);
+    // Reset regeneration state
+    setV6RegenerationCount(0);
+    setV6PreviousWorkflow(null);
+    setV6FeedbackHistory([]);
   };
 
   // V6 Workflow Preview handlers
@@ -1778,6 +1966,23 @@ export default function TestPluginsPage() {
     addDebugLog('success', 'Agent approved for saving (save logic not yet implemented)');
     // For now, just show a success message
     // In the future, this would call an API to persist the agent
+  };
+
+  // Handler for workflow regeneration with user feedback
+  const handleV6RequestChanges = (feedback: string) => {
+    if (!v6UserDecisions || !v6CompiledResult?.workflow) {
+      addDebugLog('error', 'Cannot regenerate: missing decisions or workflow');
+      return;
+    }
+
+    addDebugLog('info', `User requested changes: "${feedback.substring(0, 100)}${feedback.length > 100 ? '...' : ''}"`);
+
+    // Call compile with feedback
+    handleV6CreateAgent(v6UserDecisions, {
+      previous_workflow: v6CompiledResult.workflow,
+      user_feedback: feedback,
+      feedback_history: v6FeedbackHistory
+    });
   };
 
   // Transform V6 user decisions to preview format
@@ -3562,7 +3767,36 @@ export default function TestPluginsPage() {
 
           {/* Current Question (Phase 2) */}
           {currentPhase === 2 && currentQuestions.length > 0 && currentQuestionIndex < currentQuestions.length && (
-            <div style={{ marginBottom: '30px', padding: '15px', border: `2px solid ${isInMiniCycle ? '#ff6b6b' : '#007bff'}`, borderRadius: '5px', backgroundColor: isInMiniCycle ? '#fff5f5' : '#f0f8ff' }}>
+            <div style={{ marginBottom: '30px', padding: '15px', border: `2px solid ${isInMiniCycle ? '#ff6b6b' : '#007bff'}`, borderRadius: '5px', backgroundColor: isInMiniCycle ? '#fff5f5' : '#f0f8ff', position: 'relative' }}>
+              {/* Processing overlay */}
+              {isLoading && (
+                <div style={{
+                  position: 'absolute',
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  backgroundColor: 'rgba(255, 255, 255, 0.85)',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  borderRadius: '5px',
+                  zIndex: 10
+                }}>
+                  <div style={{
+                    width: '40px',
+                    height: '40px',
+                    border: '4px solid #e0e0e0',
+                    borderTopColor: '#007bff',
+                    borderRadius: '50%',
+                    animation: 'spin 1s linear infinite'
+                  }} />
+                  <div style={{ marginTop: '12px', fontSize: '14px', color: '#333', fontWeight: '500' }}>
+                    Processing your answer...
+                  </div>
+                </div>
+              )}
               <h2>
                 {isInMiniCycle && '🔄 Mini-Cycle: '}
                 Question {currentQuestionIndex + 1} of {currentQuestions.length}
@@ -3581,49 +3815,361 @@ export default function TestPluginsPage() {
                     `Theme: ${currentQuestions[currentQuestionIndex].theme}` :
                     `Dimension: ${currentQuestions[currentQuestionIndex].dimension}`
                   }
+                  {currentQuestions[currentQuestionIndex].type && (
+                    <span style={{
+                      marginLeft: '10px',
+                      padding: '2px 6px',
+                      backgroundColor: currentQuestions[currentQuestionIndex].type === 'select' ? '#e8f4fd' :
+                                       currentQuestions[currentQuestionIndex].type === 'multi_select' ? '#e8f4fd' : '#f0f0f0',
+                      borderRadius: '3px',
+                      fontSize: '11px'
+                    }}>
+                      {currentQuestions[currentQuestionIndex].type === 'select' ? 'Single Choice' :
+                       currentQuestions[currentQuestionIndex].type === 'multi_select' ? 'Multi-Select' : 'Open Text'}
+                    </span>
+                  )}
                 </div>
-                <textarea
-                  value={userAnswer}
-                  onChange={(e) => setUserAnswer(e.target.value)}
-                  placeholder="Type your answer here..."
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' && !e.shiftKey) {
-                      e.preventDefault();
-                      handleAnswerSubmit();
-                    }
-                  }}
-                  style={{
-                    width: '100%',
-                    height: '80px',
-                    padding: '10px',
-                    fontSize: '14px',
-                    fontFamily: 'monospace',
-                    border: '1px solid #ccc',
-                    borderRadius: '3px'
-                  }}
-                />
+
+                {/* Hybrid rendering: select, multi_select, or text questions */}
+                {currentQuestions[currentQuestionIndex].type === 'multi_select' &&
+                 currentQuestions[currentQuestionIndex].options &&
+                 currentQuestions[currentQuestionIndex].options.length > 0 ? (
+                  /* V14: Multi-select question - checkbox-style buttons */
+                  <>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '12px' }}>
+                      {currentQuestions[currentQuestionIndex].options.map((opt: any, i: number) => {
+                        const optValue = typeof opt === 'object' ? opt.value : opt;
+                        const optLabel = typeof opt === 'object' ? opt.label : opt;
+                        const optDescription = typeof opt === 'object' ? opt.description : undefined;
+                        const isSelected = selectedMultiOptions.includes(optValue);
+                        return (
+                          <button
+                            key={optValue || `opt-${i}`}
+                            onClick={() => handleMultiSelectToggle(optValue)}
+                            disabled={isLoading}
+                            style={{
+                              textAlign: 'left',
+                              padding: '12px 16px',
+                              border: isSelected ? '2px solid #007bff' : '2px solid #ddd',
+                              borderRadius: '5px',
+                              backgroundColor: isSelected ? '#e8f4fd' : '#fff',
+                              cursor: isLoading ? 'not-allowed' : 'pointer',
+                              fontSize: '14px',
+                              transition: 'border-color 0.2s, background-color 0.2s',
+                              display: 'flex',
+                              alignItems: 'flex-start',
+                              gap: '10px'
+                            }}
+                          >
+                            {/* Checkbox indicator */}
+                            <span style={{
+                              display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                              width: '20px', height: '20px', borderRadius: '4px', flexShrink: 0,
+                              border: '2px solid #007bff',
+                              backgroundColor: isSelected ? '#007bff' : 'transparent',
+                              color: isSelected ? '#fff' : 'transparent',
+                              fontWeight: 'bold', fontSize: '12px'
+                            }}>
+                              {isSelected && '✓'}
+                            </span>
+                            <div>
+                              <div style={{ fontWeight: '500' }}>{optLabel}</div>
+                              {optDescription && (
+                                <div style={{ fontSize: '12px', color: '#666', marginTop: '2px' }}>{optDescription}</div>
+                              )}
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    {/* Submit selected options button */}
+                    {selectedMultiOptions.length > 0 && !showCustomInput && (
+                      <button
+                        onClick={handleMultiSelectSubmit}
+                        disabled={isLoading}
+                        style={{
+                          width: '100%',
+                          padding: '10px 20px',
+                          backgroundColor: '#007bff',
+                          color: 'white',
+                          border: 'none',
+                          borderRadius: '5px',
+                          cursor: isLoading ? 'not-allowed' : 'pointer',
+                          fontSize: '14px',
+                          fontWeight: 'bold',
+                          marginBottom: '12px'
+                        }}
+                      >
+                        {isLoading ? 'Submitting...' : `Submit (${selectedMultiOptions.length} selected)`}
+                      </button>
+                    )}
+
+                    {/* "Other" button */}
+                    <button
+                      onClick={() => { setShowCustomInput(true); setSelectedMultiOptions([]); }}
+                      disabled={isLoading}
+                      style={{
+                        width: '100%',
+                        textAlign: 'left',
+                        padding: '10px 16px',
+                        border: '2px dashed #ccc',
+                        borderRadius: '5px',
+                        backgroundColor: showCustomInput ? '#f8f9fa' : '#fff',
+                        cursor: isLoading ? 'not-allowed' : 'pointer',
+                        fontSize: '14px',
+                        color: '#666',
+                        marginBottom: '8px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px'
+                      }}
+                    >
+                      <span style={{ fontSize: '16px' }}>&#9998;</span>
+                      Other (type your own answer)
+                    </button>
+
+                    {/* Custom text input - shown when "Other" is clicked */}
+                    {showCustomInput && (
+                      <div style={{ marginTop: '8px' }}>
+                        <textarea
+                          value={userAnswer}
+                          onChange={(e) => setUserAnswer(e.target.value)}
+                          placeholder="Type your custom answer here..."
+                          autoFocus
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' && !e.shiftKey) {
+                              e.preventDefault();
+                              handleAnswerSubmit();
+                            }
+                          }}
+                          style={{
+                            width: '100%',
+                            height: '80px',
+                            padding: '10px',
+                            fontSize: '14px',
+                            fontFamily: 'monospace',
+                            border: '1px solid #ccc',
+                            borderRadius: '3px'
+                          }}
+                        />
+                        <button
+                          onClick={handleAnswerSubmit}
+                          disabled={isLoading || !userAnswer.trim()}
+                          style={{
+                            marginTop: '8px',
+                            padding: '10px 20px',
+                            backgroundColor: !userAnswer.trim() ? '#ccc' : '#007bff',
+                            color: 'white',
+                            border: 'none',
+                            borderRadius: '3px',
+                            cursor: !userAnswer.trim() ? 'not-allowed' : 'pointer',
+                            fontSize: '16px',
+                            fontWeight: 'bold'
+                          }}
+                        >
+                          {isLoading ? 'Submitting...' : 'Submit Answer'}
+                        </button>
+                      </div>
+                    )}
+                  </>
+                ) : currentQuestions[currentQuestionIndex].type === 'select' &&
+                 currentQuestions[currentQuestionIndex].options &&
+                 currentQuestions[currentQuestionIndex].options.length > 0 ? (
+                  /* Single-select question - radio-style buttons */
+                  <>
+                    {/* Option buttons */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '12px' }}>
+                      {currentQuestions[currentQuestionIndex].options.map((opt: any, i: number) => {
+                        const optValue = typeof opt === 'object' ? opt.value : opt;
+                        const optLabel = typeof opt === 'object' ? opt.label : opt;
+                        const optDescription = typeof opt === 'object' ? opt.description : undefined;
+                        return (
+                          <button
+                            key={optValue || `opt-${i}`}
+                            onClick={() => handleOptionSelect(currentQuestions[currentQuestionIndex].id, optValue, optLabel)}
+                            disabled={isLoading}
+                            style={{
+                              textAlign: 'left',
+                              padding: '12px 16px',
+                              border: '2px solid #ddd',
+                              borderRadius: '5px',
+                              backgroundColor: '#fff',
+                              cursor: isLoading ? 'not-allowed' : 'pointer',
+                              fontSize: '14px',
+                              transition: 'border-color 0.2s, background-color 0.2s',
+                              display: 'flex',
+                              alignItems: 'flex-start',
+                              gap: '10px'
+                            }}
+                            onMouseEnter={(e) => { e.currentTarget.style.borderColor = '#007bff'; e.currentTarget.style.backgroundColor = '#f0f8ff'; }}
+                            onMouseLeave={(e) => { e.currentTarget.style.borderColor = '#ddd'; e.currentTarget.style.backgroundColor = '#fff'; }}
+                          >
+                            <span style={{
+                              display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                              width: '24px', height: '24px', borderRadius: '50%', flexShrink: 0,
+                              backgroundColor: '#e8f4fd', color: '#007bff', fontWeight: 'bold', fontSize: '12px'
+                            }}>
+                              {i + 1}
+                            </span>
+                            <div>
+                              <div style={{ fontWeight: '500' }}>{optLabel}</div>
+                              {optDescription && (
+                                <div style={{ fontSize: '12px', color: '#666', marginTop: '2px' }}>{optDescription}</div>
+                              )}
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    {/* "Other" button */}
+                    <button
+                      onClick={() => setShowCustomInput(true)}
+                      disabled={isLoading}
+                      style={{
+                        width: '100%',
+                        textAlign: 'left',
+                        padding: '10px 16px',
+                        border: '2px dashed #ccc',
+                        borderRadius: '5px',
+                        backgroundColor: showCustomInput ? '#f8f9fa' : '#fff',
+                        cursor: isLoading ? 'not-allowed' : 'pointer',
+                        fontSize: '14px',
+                        color: '#666',
+                        marginBottom: '8px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px'
+                      }}
+                    >
+                      <span style={{ fontSize: '16px' }}>&#9998;</span>
+                      Other (type your own answer)
+                    </button>
+
+                    {/* Custom text input - shown when "Other" is clicked */}
+                    {showCustomInput && (
+                      <div style={{ marginTop: '8px' }}>
+                        <textarea
+                          value={userAnswer}
+                          onChange={(e) => setUserAnswer(e.target.value)}
+                          placeholder="Type your custom answer here..."
+                          autoFocus
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' && !e.shiftKey) {
+                              e.preventDefault();
+                              handleAnswerSubmit();
+                            }
+                          }}
+                          style={{
+                            width: '100%',
+                            height: '80px',
+                            padding: '10px',
+                            fontSize: '14px',
+                            fontFamily: 'monospace',
+                            border: '1px solid #ccc',
+                            borderRadius: '3px'
+                          }}
+                        />
+                        <button
+                          onClick={handleAnswerSubmit}
+                          disabled={isLoading || !userAnswer.trim()}
+                          style={{
+                            marginTop: '8px',
+                            padding: '10px 20px',
+                            backgroundColor: !userAnswer.trim() ? '#ccc' : '#007bff',
+                            color: 'white',
+                            border: 'none',
+                            borderRadius: '3px',
+                            cursor: !userAnswer.trim() ? 'not-allowed' : 'pointer',
+                            fontSize: '16px',
+                            fontWeight: 'bold'
+                          }}
+                        >
+                          {isLoading ? 'Submitting...' : 'Submit Answer'}
+                        </button>
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  /* Text question - existing textarea (unchanged) */
+                  <>
+                    <textarea
+                      value={userAnswer}
+                      onChange={(e) => setUserAnswer(e.target.value)}
+                      placeholder="Type your answer here..."
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && !e.shiftKey) {
+                          e.preventDefault();
+                          handleAnswerSubmit();
+                        }
+                      }}
+                      style={{
+                        width: '100%',
+                        height: '80px',
+                        padding: '10px',
+                        fontSize: '14px',
+                        fontFamily: 'monospace',
+                        border: '1px solid #ccc',
+                        borderRadius: '3px'
+                      }}
+                    />
+                  </>
+                )}
               </div>
-              <button
-                onClick={handleAnswerSubmit}
-                disabled={isLoading || !userAnswer.trim()}
-                style={{
-                  padding: '10px 20px',
-                  backgroundColor: !userAnswer.trim() ? '#ccc' : '#007bff',
-                  color: 'white',
-                  border: 'none',
-                  borderRadius: '3px',
-                  cursor: !userAnswer.trim() ? 'not-allowed' : 'pointer',
-                  fontSize: '16px',
-                  fontWeight: 'bold'
-                }}
-              >
-                {isLoading ? 'Submitting...' : 'Submit Answer'}
-              </button>
+              {/* Submit button for text questions (outside conditional so it doesn't duplicate) */}
+              {(currentQuestions[currentQuestionIndex].type !== 'select' &&
+                currentQuestions[currentQuestionIndex].type !== 'multi_select') && (
+                <button
+                  onClick={handleAnswerSubmit}
+                  disabled={isLoading || !userAnswer.trim()}
+                  style={{
+                    padding: '10px 20px',
+                    backgroundColor: !userAnswer.trim() ? '#ccc' : '#007bff',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '3px',
+                    cursor: !userAnswer.trim() ? 'not-allowed' : 'pointer',
+                    fontSize: '16px',
+                    fontWeight: 'bold'
+                  }}
+                >
+                  {isLoading ? 'Submitting...' : 'Submit Answer'}
+                </button>
+              )}
             </div>
           )}
 
-          {/* Enhanced Prompt Preview (Phase 3) */}
-          {currentPhase === 3 && enhancedPrompt && (
+          {/* Processing indicator for Phase 3 transition */}
+          {isLoading && currentPhase >= 2 && !enhancedPrompt && (currentQuestions.length === 0 || currentQuestionIndex >= currentQuestions.length) && (
+            <div style={{
+              marginBottom: '30px',
+              padding: '30px',
+              border: '2px solid #007bff',
+              borderRadius: '5px',
+              backgroundColor: '#f0f8ff',
+              textAlign: 'center'
+            }}>
+              <div style={{
+                width: '50px',
+                height: '50px',
+                margin: '0 auto 15px',
+                border: '4px solid #e0e0e0',
+                borderTopColor: '#007bff',
+                borderRadius: '50%',
+                animation: 'spin 1s linear infinite'
+              }} />
+              <div style={{ fontSize: '16px', fontWeight: '500', color: '#333' }}>
+                Generating Enhanced Prompt...
+              </div>
+              <div style={{ fontSize: '13px', color: '#666', marginTop: '8px' }}>
+                Analyzing your answers and building the workflow specification
+              </div>
+            </div>
+          )}
+
+          {/* Enhanced Prompt Preview (Phase 3) - hidden during mini-cycle */}
+          {currentPhase === 3 && enhancedPrompt && !isInMiniCycle && (
             <div style={{ marginBottom: '30px', padding: '15px', border: '2px solid #28a745', borderRadius: '5px', backgroundColor: '#f0fff0' }}>
               <h2>Enhanced Prompt (Phase 3)</h2>
               <div style={{ marginBottom: '15px' }}>
@@ -4006,6 +4552,9 @@ export default function TestPluginsPage() {
                         onGoBack={handleV6WorkflowGoBack}
                         onCopyJSON={handleV6WorkflowCopyJSON}
                         isLoading={v6Loading}
+                        onRequestChanges={handleV6RequestChanges}
+                        regenerationCount={v6RegenerationCount}
+                        maxRegenerations={3}
                       />
 
                       {/* Raw JSON Details (collapsible) */}

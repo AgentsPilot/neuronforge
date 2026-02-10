@@ -723,6 +723,7 @@ export async function POST(request: NextRequest) {
     console.log(`[API] Phase 4 complete in ${phase4Time}ms`)
     console.log(`[API] Compilation method: ${compilationMethod}`)
     console.log(`[API] Steps generated: ${compilationResult.workflow?.length || 0}`)
+    console.log('[API] Workflow Steps:', JSON.stringify(compilationResult.workflow, null, 2))
 
     if (!compilationResult.success) {
       console.error('[API] Compilation failed:', compilationResult.errors)

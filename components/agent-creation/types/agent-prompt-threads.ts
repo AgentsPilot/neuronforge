@@ -36,7 +36,7 @@ export interface ThreadMetadata {
   user_prompt?: string;
   analysis?: AnalysisObject;
   connected_services?: string[]; // Simple array of plugin keys
-  clarification_answers?: Record<string, any>;
+  clarification_answers?: Record<string, ClarificationAnswer>; // V14: strict typing
   user_context?: UserContext;
   [key: string]: any; // Allow additional metadata
 }
@@ -119,7 +119,7 @@ export interface ProcessMessageRequest {
   analysis?: AnalysisObject | null;
   connected_services?: string[]; // Simple array of connected plugin keys
   available_services?: ConnectedService[]; // All plugins available in the system with full context
-  clarification_answers?: Record<string, any>;
+  clarification_answers?: Record<string, ClarificationAnswer>; // V14: strict typing
   enhanced_prompt?: EnhancedPrompt | null; // Phase 2/3/4: Previous Phase 3 output for refinement
   declined_services?: string[]; // V10: Services user explicitly refused to connect (top-level)
   user_feedback?: string; // V10: Free-form user feedback for refinement (mini-cycle mode)
@@ -186,7 +186,7 @@ export interface ClarificationQuestion {
   dimension?: 'data' | 'trigger' | 'output' | 'actions' | 'delivery' | 'error_handling'; // v7 and below
   theme?: string; // v8: Inputs, Processing, Outputs, Delivery
   question: string;
-  type: 'select' | 'text' | 'email' | 'number';
+  type: 'select' | 'multi_select' | 'text' | 'email' | 'number'; // v14: added multi_select
   options?: ClarificationOption[];
   allowCustom?: boolean;
   required?: boolean;
@@ -199,6 +199,36 @@ export interface ClarificationOption {
   label: string;
   description?: string;
 }
+
+/**
+ * V14: Structured answer for single-select questions
+ * Sent to Phase 3 to distinguish selected option vs custom text
+ */
+export interface StructuredSelectAnswer {
+  answerType: 'select';
+  mode: 'selected' | 'custom';
+  selected?: string;   // option.value when mode='selected'
+  custom?: string;     // free-text when mode='custom'
+}
+
+/**
+ * V14: Structured answer for multi-select questions
+ * Sent to Phase 3 to distinguish selected options vs custom text
+ */
+export interface StructuredMultiSelectAnswer {
+  answerType: 'multi_select';
+  mode: 'selected' | 'custom';
+  selected?: string[];  // array of option.value when mode='selected'
+  custom?: string;      // free-text when mode='custom'
+}
+
+/**
+ * V14: Union type for all clarification answer formats
+ * - string: plain text answer (for type='text' questions)
+ * - StructuredSelectAnswer: for type='select' questions
+ * - StructuredMultiSelectAnswer: for type='multi_select' questions
+ */
+export type ClarificationAnswer = string | StructuredSelectAnswer | StructuredMultiSelectAnswer;
 
 export interface EnhancedPromptSections {
   data: string[];              // Array of bullet points

@@ -22,7 +22,10 @@ import {
   Zap,
   FileText,
   User,
-  AlertTriangle
+  AlertTriangle,
+  RefreshCw,
+  X,
+  MessageSquare
 } from 'lucide-react'
 
 // ============================================================================
@@ -65,6 +68,10 @@ interface V6WorkflowPreviewProps {
   onGoBack?: () => void
   onCopyJSON?: () => void
   isLoading?: boolean
+  // Feedback/regeneration props
+  onRequestChanges?: (feedback: string) => void
+  regenerationCount?: number
+  maxRegenerations?: number
 }
 
 // ============================================================================
@@ -435,8 +442,25 @@ export default function V6WorkflowPreview({
   onApprove,
   onGoBack,
   onCopyJSON,
-  isLoading = false
+  isLoading = false,
+  onRequestChanges,
+  regenerationCount = 0,
+  maxRegenerations = 3
 }: V6WorkflowPreviewProps) {
+  // Feedback modal state
+  const [showFeedbackModal, setShowFeedbackModal] = useState(false)
+  const [feedbackText, setFeedbackText] = useState('')
+
+  const canRequestChanges = onRequestChanges && regenerationCount < maxRegenerations
+
+  const handleSubmitFeedback = () => {
+    if (feedbackText.trim() && onRequestChanges) {
+      onRequestChanges(feedbackText.trim())
+      setShowFeedbackModal(false)
+      setFeedbackText('')
+    }
+  }
+
   return (
     <div className="bg-white rounded-lg border border-gray-200 shadow-sm">
       {/* Header */}
@@ -502,6 +526,22 @@ export default function V6WorkflowPreview({
               Copy JSON
             </button>
           )}
+          {/* Request Changes button */}
+          {canRequestChanges && (
+            <button
+              onClick={() => setShowFeedbackModal(true)}
+              disabled={isLoading}
+              className="px-4 py-2 text-amber-700 bg-amber-50 border border-amber-300 rounded-lg hover:bg-amber-100 transition-colors disabled:opacity-50 flex items-center gap-2"
+            >
+              <RefreshCw className="h-4 w-4" />
+              Request Changes
+              {regenerationCount > 0 && (
+                <span className="text-xs bg-amber-200 px-1.5 py-0.5 rounded">
+                  {regenerationCount}/{maxRegenerations}
+                </span>
+              )}
+            </button>
+          )}
         </div>
 
         {onApprove && (
@@ -518,6 +558,77 @@ export default function V6WorkflowPreview({
           </button>
         )}
       </div>
+
+      {/* Feedback Modal */}
+      {showFeedbackModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl max-w-lg w-full mx-4">
+            {/* Modal Header */}
+            <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+                  <MessageSquare className="h-5 w-5 text-amber-600" />
+                  Request Changes
+                </h3>
+                <p className="text-sm text-gray-600 mt-1">
+                  Describe what needs to be fixed in the workflow
+                </p>
+              </div>
+              <button
+                onClick={() => {
+                  setShowFeedbackModal(false)
+                  setFeedbackText('')
+                }}
+                className="p-1 text-gray-400 hover:text-gray-600 rounded"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="px-6 py-4">
+              <textarea
+                value={feedbackText}
+                onChange={(e) => setFeedbackText(e.target.value)}
+                placeholder="Example: Step 2 should filter by 'Stage = 4' not 'Stage = 3'. Also, the email step should include the contact name in the subject line."
+                className="w-full h-32 px-3 py-2 border border-gray-300 rounded-lg resize-none focus:ring-2 focus:ring-amber-500 focus:border-amber-500"
+                autoFocus
+              />
+              <div className="mt-2 space-y-1">
+                <p className="text-xs text-gray-500">
+                  Tip: Reference specific steps by their number (e.g., "Step 2", "Step 4")
+                </p>
+                {regenerationCount > 0 && (
+                  <p className="text-xs text-amber-600">
+                    This is regeneration attempt {regenerationCount + 1} of {maxRegenerations}
+                  </p>
+                )}
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="px-6 py-4 border-t border-gray-200 bg-gray-50 flex justify-end gap-3 rounded-b-lg">
+              <button
+                onClick={() => {
+                  setShowFeedbackModal(false)
+                  setFeedbackText('')
+                }}
+                className="px-4 py-2 text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSubmitFeedback}
+                disabled={!feedbackText.trim()}
+                className="px-4 py-2 bg-amber-600 text-white rounded-lg hover:bg-amber-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+              >
+                <RefreshCw className="h-4 w-4" />
+                Regenerate Workflow
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

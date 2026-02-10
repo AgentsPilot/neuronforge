@@ -17,6 +17,10 @@ import type { DeclarativeLogicalIR } from '../logical-ir/schemas/declarative-ir-
 import { validateWorkflowStructure } from '../../../pilot/schema/runtime-validator'
 import { WorkflowPostValidator } from './WorkflowPostValidator'
 import { PilotNormalizer } from './PilotNormalizer'
+import { createLogger, Logger } from '@/lib/logger'
+
+// Create module-scoped logger
+const moduleLogger = createLogger({ module: 'V6', service: 'IRToDSLCompiler' })
 
 // ============================================================================
 // Types
@@ -55,6 +59,14 @@ export interface CompilationResult {
   errors?: string[]
 }
 
+// User feedback for workflow regeneration
+export interface UserFeedback {
+  previous_workflow: any[]
+  user_feedback: string
+  feedback_history?: string[]
+  regeneration_attempt?: number
+}
+
 // ============================================================================
 // IR to DSL Compiler
 // ============================================================================
@@ -65,8 +77,10 @@ export class IRToDSLCompiler {
   private temperature: number
   private maxTokens: number
   private pluginManager: PluginManagerV2
+  private logger: Logger
 
   constructor(config: IRToDSLConfig) {
+    this.logger = moduleLogger.child({ method: 'constructor' })
     this.temperature = config.temperature ?? 0
     this.maxTokens = config.maxTokens ?? 8000
     this.pluginManager = config.pluginManager
@@ -74,6 +88,8 @@ export class IRToDSLCompiler {
     this.openai = new OpenAI({
       apiKey: process.env.OPENAI_API_KEY
     })
+
+    this.logger.info({ model: this.model, temperature: this.temperature }, 'Initialized')
   }
 
   /**
@@ -82,32 +98,47 @@ export class IRToDSLCompiler {
    * @param ir - Declarative IR from Phase 3 (Formalization)
    * @param pipelineContext - Rich context from Phases 1-3 (semantic plan, grounded facts, metadata)
    * @param retryCount - Internal retry counter for validation failures
+   * @param previousValidationErrors - Errors from previous validation attempts
+   * @param userFeedback - Optional user feedback for workflow regeneration
    */
   async compile(
     ir: DeclarativeLogicalIR,
     pipelineContext?: PipelineContext,
     retryCount: number = 0,
-    previousValidationErrors?: string[]
+    previousValidationErrors?: string[],
+    userFeedback?: UserFeedback
   ): Promise<CompilationResult> {
+    const compileLogger = moduleLogger.child({ method: 'compile', retryCount })
     const startTime = Date.now()
 
     try {
       // Extract used plugins from IR
       const usedPlugins = this.extractUsedPlugins(ir)
-      console.log('[IRToDSLCompiler] Used plugins:', usedPlugins)
+      compileLogger.info({ usedPlugins }, 'Extracted used plugins from IR')
 
       if (pipelineContext) {
-        console.log('[IRToDSLCompiler] Pipeline context available:')
-        console.log('  - Semantic goal:', pipelineContext.semantic_plan?.goal ? 'YES' : 'NO')
-        console.log('  - Grounded facts:', pipelineContext.grounded_facts ? Object.keys(pipelineContext.grounded_facts).length : 0)
-        console.log('  - Formalization confidence:', pipelineContext.formalization_metadata?.formalization_confidence || 'N/A')
+        compileLogger.info({
+          hasSemanticGoal: !!pipelineContext.semantic_plan?.goal,
+          groundedFactsCount: pipelineContext.grounded_facts ? Object.keys(pipelineContext.grounded_facts).length : 0,
+          formalizationConfidence: pipelineContext.formalization_metadata?.formalization_confidence || null
+        }, 'Pipeline context available')
       } else {
-        console.log('[IRToDSLCompiler] ⚠️ No pipeline context provided - compilation may be less accurate')
+        compileLogger.warn('No pipeline context provided - compilation may be less accurate')
+      }
+
+      // Log if regenerating with user feedback
+      if (userFeedback) {
+        compileLogger.info({
+          attempt: userFeedback.regeneration_attempt || 1,
+          previousStepsCount: userFeedback.previous_workflow?.length || 0,
+          feedbackLength: userFeedback.user_feedback?.length || 0,
+          feedbackHistoryCount: userFeedback.feedback_history?.length || 0
+        }, 'Regenerating with user feedback')
       }
 
       // Build prompts
       const systemPrompt = this.buildSystemPrompt()
-      const userPrompt = this.buildUserPrompt(ir, pipelineContext, usedPlugins, previousValidationErrors)
+      const userPrompt = this.buildUserPrompt(ir, pipelineContext, usedPlugins, previousValidationErrors, userFeedback)
 
       // Call OpenAI gpt-5.2 with strict schema validation
       const result = await this.compileWithOpenAI(systemPrompt, userPrompt)
@@ -137,7 +168,9 @@ export class IRToDSLCompiler {
       const postValidation = postValidator.validate({ workflow }, true) // autoFix=true
 
       if (postValidation.autoFixed && postValidation.fixedWorkflow) {
-        console.log('[IRToDSLCompiler] ✓ Auto-fixed workflow issues:', postValidation.issues.filter(i => i.autoFixable).map(i => i.code))
+        compileLogger.info({
+          autoFixedCodes: postValidation.issues.filter(i => i.autoFixable).map(i => i.code)
+        }, 'Auto-fixed workflow issues')
         workflow = postValidation.fixedWorkflow.workflow
 
         // CRITICAL: Re-normalize after auto-fix to ensure sequential IDs
@@ -149,13 +182,16 @@ export class IRToDSLCompiler {
       }
 
       if (postValidation.issues.length > 0) {
-        console.warn('[IRToDSLCompiler] ⚠️ Post-validation issues found:')
-        postValidation.issues.forEach(issue => {
-          console.warn(`  [${issue.severity.toUpperCase()}] ${issue.stepId}: ${issue.code} - ${issue.message}`)
-          if (issue.suggestion) {
-            console.warn(`    Suggestion: ${issue.suggestion}`)
-          }
-        })
+        compileLogger.warn({
+          issueCount: postValidation.issues.length,
+          issues: postValidation.issues.map(issue => ({
+            severity: issue.severity,
+            stepId: issue.stepId,
+            code: issue.code,
+            message: issue.message,
+            suggestion: issue.suggestion
+          }))
+        }, 'Post-validation issues found')
       }
 
       // PHASE 3 ADDITION: Validate workflow before returning
@@ -178,24 +214,25 @@ export class IRToDSLCompiler {
 
       // Retry if we have errors and haven't exceeded retry limit
       if (allValidationErrors.length > 0 && retryCount < 2) {
-        console.warn('[IRToDSLCompiler] ⚠️ Validation failed, retrying...', allValidationErrors)
-        console.warn('[IRToDSLCompiler] Retry attempt:', retryCount + 1)
-        return this.compile(ir, pipelineContext, retryCount + 1, allValidationErrors)
+        compileLogger.warn({
+          validationErrors: allValidationErrors,
+          nextRetryAttempt: retryCount + 1
+        }, 'Validation failed, retrying')
+        return this.compile(ir, pipelineContext, retryCount + 1, allValidationErrors, userFeedback)
       }
 
       if (allValidationErrors.length > 0 && retryCount >= 2) {
-        console.error('[IRToDSLCompiler] ✗ Validation failed after 2 retries:', allValidationErrors)
+        compileLogger.error({ validationErrors: allValidationErrors }, 'Validation failed after 2 retries')
         throw new Error(`Workflow validation failed: ${allValidationErrors.join(', ')}`)
       }
 
       const compilationTime = Date.now() - startTime
 
-      console.log('[IRToDSLCompiler] ✓ Compilation successful')
-      console.log('[IRToDSLCompiler] Steps generated:', workflow.length)
-      console.log('[IRToDSLCompiler] Time:', compilationTime, 'ms')
-      if (retryCount > 0) {
-        console.log('[IRToDSLCompiler] ✓ Succeeded after', retryCount, 'retries')
-      }
+      compileLogger.info({
+        stepsGenerated: workflow.length,
+        duration: compilationTime,
+        retriesUsed: retryCount
+      }, 'Compilation successful')
 
       return {
         success: true,
@@ -205,7 +242,7 @@ export class IRToDSLCompiler {
         token_usage: tokenUsage
       }
     } catch (error) {
-      console.error('[IRToDSLCompiler] ✗ Compilation failed:', error)
+      compileLogger.error({ err: error }, 'Compilation failed')
 
       return {
         success: false,
@@ -225,6 +262,7 @@ export class IRToDSLCompiler {
    * if the output has a primary array field and auto-unwrap it to {{step1.data.FIELD}}
    */
   private fixVariableReferences(workflow: any[]): any[] {
+    const fixVarLogger = moduleLogger.child({ method: 'fixVariableReferences' })
     const availablePlugins = this.pluginManager.getAvailablePlugins()
 
     // Build map of step outputs (id → primary array field name)
@@ -256,7 +294,7 @@ export class IRToDSLCompiler {
 
           if (arrayField) {
             stepOutputFields.set(step.id, arrayField[0])
-            console.log(`[IRToDSLCompiler] Detected ${step.id} output array field: ${arrayField[0]}`)
+            fixVarLogger.debug({ stepId: step.id, arrayField: arrayField[0] }, 'Detected output array field')
           }
         }
       }
@@ -267,7 +305,7 @@ export class IRToDSLCompiler {
       if (step.type === 'transform' && step.input) {
         const fixed = this.unwrapVariableReference(step.input, stepOutputFields, transformSteps)
         if (fixed !== step.input) {
-          console.log(`[IRToDSLCompiler] Fixed transform input: ${step.input} → ${fixed}`)
+          fixVarLogger.debug({ stepId: step.id, original: step.input, fixed }, 'Fixed transform input')
           return { ...step, input: fixed }
         }
       }
@@ -275,7 +313,7 @@ export class IRToDSLCompiler {
       if (step.type === 'scatter_gather' && step.scatter?.input) {
         const fixed = this.unwrapVariableReference(step.scatter.input, stepOutputFields, transformSteps)
         if (fixed !== step.scatter.input) {
-          console.log(`[IRToDSLCompiler] Fixed scatter data: ${step.scatter.input} → ${fixed}`)
+          fixVarLogger.debug({ stepId: step.id, original: step.scatter.input, fixed }, 'Fixed scatter data')
           return {
             ...step,
             scatter: { ...step.scatter, input: fixed }
@@ -334,6 +372,7 @@ export class IRToDSLCompiler {
    * Ensures primitive types aren't wrapped in objects and handles null values
    */
   private fixParameterTypes(workflow: any[]): any[] {
+    const fixParamLogger = moduleLogger.child({ method: 'fixParameterTypes' })
     const availablePlugins = this.pluginManager.getAvailablePlugins()
 
     return workflow.map(step => {
@@ -344,7 +383,7 @@ export class IRToDSLCompiler {
 
       const pluginDef = availablePlugins[step.plugin]
       if (!pluginDef || !pluginDef.actions || !pluginDef.actions[step.action]) {
-        console.warn(`[IRToDSLCompiler] Plugin or action not found: ${step.plugin}.${step.action}`)
+        fixParamLogger.warn({ plugin: step.plugin, action: step.action }, 'Plugin or action not found')
         return step
       }
 
@@ -373,10 +412,19 @@ export class IRToDSLCompiler {
         if (paramValue === null) {
           if ('default' in paramDef) {
             fixedParams[paramName] = paramDef.default
-            console.log(`[IRToDSLCompiler] Fixed ${step.plugin}.${step.action}.${paramName}: replaced null with default (${paramDef.default})`)
+            fixParamLogger.debug({
+              plugin: step.plugin,
+              action: step.action,
+              param: paramName,
+              defaultValue: paramDef.default
+            }, 'Replaced null with default')
           } else {
             // Omit null params that have no default
-            console.log(`[IRToDSLCompiler] Omitted ${step.plugin}.${step.action}.${paramName}: null value with no schema default`)
+            fixParamLogger.debug({
+              plugin: step.plugin,
+              action: step.action,
+              param: paramName
+            }, 'Omitted null value with no schema default')
           }
           continue
         }
@@ -390,7 +438,12 @@ export class IRToDSLCompiler {
               // Unwrap: { "value": 10 } → 10
               const unwrappedValue = (paramValue as Record<string, any>)[keys[0]]
               fixedParams[paramName] = unwrappedValue
-              console.log(`[IRToDSLCompiler] Fixed ${step.plugin}.${step.action}.${paramName}: unwrapped object to ${expectedType}`)
+              fixParamLogger.debug({
+                plugin: step.plugin,
+                action: step.action,
+                param: paramName,
+                expectedType
+              }, 'Unwrapped object to primitive')
             } else {
               // Keep as-is if it's a complex object
               fixedParams[paramName] = paramValue
@@ -432,7 +485,8 @@ export class IRToDSLCompiler {
    *   step2: transform filter with condition: item.subject.toLowerCase().includes('complaint')
    */
   private optimizeAIOperations(workflow: any[]): any[] {
-    console.log('[IRToDSLCompiler] Starting AI operation optimization...')
+    const optimizeLogger = moduleLogger.child({ method: 'optimizeAIOperations' })
+    optimizeLogger.debug('Starting AI operation optimization')
 
     // Detect pattern: scatter_gather → AI call → JSON parse → filter
     const optimizations: Array<{
@@ -477,7 +531,7 @@ export class IRToDSLCompiler {
           const keywords = this.extractKeywordsFromClassificationPrompt(prompt)
 
           if (keywords.length > 0) {
-            console.log(`[IRToDSLCompiler] Detected AI classification pattern at step ${i} with keywords:`, keywords)
+            optimizeLogger.debug({ stepIndex: i, keywords }, 'Detected AI classification pattern')
 
             // Look for optional parse and filter steps after scatter
             let parseStepIdx: number | undefined
@@ -518,13 +572,13 @@ export class IRToDSLCompiler {
     }
 
     if (optimizations.length === 0) {
-      console.log('[IRToDSLCompiler] No AI optimization opportunities found')
+      optimizeLogger.debug('No AI optimization opportunities found')
       return workflow
     }
 
     // Apply optimizations in reverse order to maintain indices
     for (const opt of optimizations.reverse()) {
-      console.log(`[IRToDSLCompiler] Optimizing scatter_gather at step ${opt.scatterStepIdx}...`)
+      optimizeLogger.debug({ stepIndex: opt.scatterStepIdx }, 'Optimizing scatter_gather step')
 
       const scatterStep = workflow[opt.scatterStepIdx]
       const inputData = scatterStep.scatter?.input || '{{step1.data}}'
@@ -559,8 +613,10 @@ export class IRToDSLCompiler {
       // Remove AI, parse, and filter steps (they're now replaced by single filter)
       workflow = workflow.filter((_, idx) => !stepsToRemove.includes(idx))
 
-      console.log(`[IRToDSLCompiler] ✓ Optimized: Replaced scatter+AI+parse+filter (${stepsToRemove.length + 1} steps) with single filter`)
-      console.log(`[IRToDSLCompiler] ✓ Condition: ${condition}`)
+      optimizeLogger.info({
+        stepsReplaced: stepsToRemove.length + 1,
+        condition
+      }, 'Optimized: Replaced scatter+AI+parse+filter with single filter')
     }
 
     // Renumber steps after removal
@@ -960,7 +1016,30 @@ Example for rendering.columns_in_order = ["sender_email", "subject", "date", "fu
 - Construct missing fields: item.id ? \`url/\${item.id}\` : ''
 
 **Rendering**: IR.rendering → transform with operation: "map"
-- Format to rows: "item.map(row => [row.date, row.name])"
+- Format to rows: "[item.date, item.name]" (each item becomes a row array)
+
+**Map Expression Patterns** (CRITICAL):
+In a map operation, the runtime iterates over the input array for you.
+\`item\` is ONE ELEMENT of the array, NOT the whole array.
+
+1. **Transform each element** (e.g., spreadsheet row array to object):
+   ✅ {"expression": "{ \"Date\": item[0], \"Name\": item[1], \"Email\": item[2] }"}
+   ❌ WRONG - item is already one element, do NOT call array methods on it:
+   {"expression": "item.map(row => ({ \"Date\": row[0] }))"}
+
+2. **Extract single field from each item**:
+   ✅ {"expression": "item[0]"}   // Extract first column value
+   ✅ {"expression": "item.id"}   // Extract id field
+   ❌ WRONG: {"expression": "item.map(row => row[0])"}  // item is NOT the array
+
+3. **Create tuple pairs for filtering**:
+   ✅ {"expression": "[item, item.status == 'active']"}  // Per-item, returns [item, boolean]
+
+4. **NEVER call array methods on item**:
+   ❌ item.map(...)    - item is one element, not the array
+   ❌ item.filter(...)  - item is one element, not the array
+   ❌ item.slice(...)   - item is one element, not the array
+   ❌ item.reduce(...)  - item is one element, not the array
 
 **Delivery**:
 - summary: Single action step
@@ -1022,7 +1101,8 @@ Example for rendering.columns_in_order = ["sender_email", "subject", "date", "fu
     ir: DeclarativeLogicalIR,
     pipelineContext: PipelineContext | undefined,
     usedPlugins: string[],
-    previousValidationErrors?: string[]
+    previousValidationErrors?: string[],
+    userFeedback?: UserFeedback
   ): string {
     const pluginSchemasSection = this.buildPluginSchemasSection(usedPlugins)
 
@@ -1059,8 +1139,43 @@ Please carefully review these errors and correct them in the new workflow.
 `
       : ''
 
+    // Build user feedback section (for regeneration based on user feedback)
+    const userFeedbackSection = userFeedback
+      ? `# 🔄 USER FEEDBACK - WORKFLOW REGENERATION
+
+This is regeneration attempt #${userFeedback.regeneration_attempt || 1}.
+The user reviewed your previous workflow and identified problems that need to be fixed.
+
+## Previous Workflow (User Rejected This)
+
+\`\`\`json
+${JSON.stringify(userFeedback.previous_workflow, null, 2)}
+\`\`\`
+
+## User's Feedback
+
+"${userFeedback.user_feedback}"
+
+${userFeedback.feedback_history && userFeedback.feedback_history.length > 0 ? `## Previous Feedback History
+
+${userFeedback.feedback_history.map((fb, i) => `Attempt ${i + 1}: "${fb}"`).join('\n')}
+
+` : ''}## Instructions for Regeneration
+
+1. Carefully read and understand the user's feedback above
+2. Identify which specific steps need to be changed based on the feedback
+3. Generate an IMPROVED workflow that addresses the user's concerns
+4. Keep steps that were NOT mentioned as problematic
+5. Ensure the new workflow still achieves the original goal
+6. Reference the specific step numbers from the previous workflow when making changes
+
+IMPORTANT: The user expects the new workflow to be different and improved based on their feedback.
+
+`
+      : ''
+
     return `
-${validationErrorsSection}${semanticContextSection}${groundedFactsSection}# Declarative IR (From Phase 3)
+${userFeedbackSection}${validationErrorsSection}${semanticContextSection}${groundedFactsSection}# Declarative IR (From Phase 3)
 
 ${JSON.stringify(ir, null, 2)}
 
@@ -1071,7 +1186,7 @@ ${pluginSchemasSection}
 Generate complete PILOT DSL workflow that executes this IR.
 Use EXACT parameter names from plugin schemas above.
 Follow workflow patterns from system prompt.
-${previousValidationErrors && previousValidationErrors.length > 0 ? 'CRITICAL: Fix the validation errors listed above.\n' : ''}Output JSON only: { "workflow": [...] }
+${previousValidationErrors && previousValidationErrors.length > 0 ? 'CRITICAL: Fix the validation errors listed above.\n' : ''}${userFeedback ? 'CRITICAL: Address the user feedback above and generate an improved workflow.\n' : ''}Output JSON only: { "workflow": [...] }
 `.trim()
   }
 
@@ -1079,13 +1194,14 @@ ${previousValidationErrors && previousValidationErrors.length > 0 ? 'CRITICAL: F
    * Build plugin schemas section (only used plugins)
    */
   private buildPluginSchemasSection(usedPlugins: string[]): string {
+    const buildSchemaLogger = moduleLogger.child({ method: 'buildPluginSchemasSection' })
     const availablePlugins = this.pluginManager.getAvailablePlugins()
 
     const pluginSchemas = usedPlugins
       .map(pluginKey => {
         const pluginDef = availablePlugins[pluginKey]
         if (!pluginDef) {
-          console.warn(`[IRToDSLCompiler] Plugin not found: ${pluginKey}`)
+          buildSchemaLogger.warn({ pluginKey }, 'Plugin not found')
           return null
         }
 
@@ -1222,12 +1338,13 @@ Use EXACT param names. Preserve nested structures (e.g., params.content.subject)
     systemPrompt: string,
     userPrompt: string
   ): Promise<{ workflow: any[]; tokenUsage: any }> {
+    const openaiLogger = moduleLogger.child({ method: 'compileWithOpenAI', model: this.model })
+
     if (!this.openai) {
       throw new Error('OpenAI client not initialized')
     }
 
-    console.log('[IRToDSLCompiler] Calling OpenAI...')
-    console.log(`[IRToDSLCompiler] Model: ${this.model}`)
+    openaiLogger.info('Calling OpenAI API')
 
     // PHASE 3: Use json_object mode (strict mode disabled due to incompatibility with discriminated unions)
     // OpenAI strict mode cannot handle optional $ref fields in discriminated unions
@@ -1245,14 +1362,14 @@ Use EXACT param names. Preserve nested structures (e.g., params.content.subject)
       max_completion_tokens: this.maxTokens
     })
 
-    // Wrap with 30-second timeout
-    const response = await this.callWithTimeout(apiCall, 30000)
+    // TO FIX: Move timeout value to DB config or environment variable
+    // Wrap with 120-second timeout (complex workflows can take 60-90s)
+    const response = await this.callWithTimeout(apiCall, 120000)
 
     const content = response.choices[0]?.message?.content
     if (!content) {
       const finishReason = response.choices[0]?.finish_reason
-      const responseDebug = JSON.stringify(response, null, 2)
-      console.error('[IRToDSLCompiler] Empty response from OpenAI:', responseDebug)
+      openaiLogger.error({ finishReason, response }, 'Empty response from OpenAI')
       throw new Error(`Empty response from OpenAI (finish_reason: ${finishReason || 'unknown'}, model: ${this.model})`)
     }
 

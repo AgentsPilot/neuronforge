@@ -18,8 +18,7 @@ import type {
 import { PROVIDERS } from '@/lib/ai/providerFactory';
 import { resolveThreadProviderConfig } from '@/lib/agent-creation/thread-provider-config';
 
-//const aiAgentPromptTemplate = "Workflow-Agent-Creation-Prompt-v10-chatgpt";
-const aiAgentPromptTemplate = "Workflow-Agent-Creation-Prompt-v13-chatgpt";
+const aiAgentPromptTemplate = "Workflow-Agent-Creation-Prompt-v14-chatgpt";
 
 // Initialize Supabase client (still needed for AIAnalyticsService)
 const supabase = createClient(
@@ -179,6 +178,7 @@ export async function POST(request: NextRequest) {
       status: 'active',
       current_phase: 1,
       agent_id: null,
+      user_prompt: null, // Will be populated in Phase 1 when user sends their prompt
       ai_provider: aiProvider,
       ai_model: aiModel,
       expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(), // 24 hours from now

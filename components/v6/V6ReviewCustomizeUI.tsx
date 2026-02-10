@@ -13,7 +13,7 @@
  * 4. Grounding Ambiguities - Multiple matches found during grounding
  */
 
-import React, { useState, useMemo } from 'react'
+import React, { useState, useMemo, useEffect } from 'react'
 import {
   AlertTriangle,
   AlertCircle,
@@ -188,6 +188,47 @@ export default function V6ReviewCustomizeUI({
     input_parameters: {}
   })
 
+  // Auto-select recommended option for binary must_confirm items on mount
+  useEffect(() => {
+    const autoSelections: Partial<UserDecisions> = {
+      confirmed_patterns: {},
+      resolved_ambiguities: {}
+    }
+
+    ambiguityReport.must_confirm.forEach(item => {
+      // Only auto-select for binary items (2 options)
+      if (item.options.length !== 2) return
+
+      // Find the "confirm" option (recommended, or contains 'correct'/'keep')
+      const confirmOption = item.options.find(o =>
+        o.id === item.recommended ||
+        o.id.includes('correct') ||
+        o.label.toLowerCase().includes('correct') ||
+        o.label.toLowerCase().includes('keep')
+      ) || item.options[0]
+
+      // Store based on item type
+      if (item.type === 'semantic_ambiguity' || item.type === 'vague_language') {
+        autoSelections.resolved_ambiguities![item.id] = confirmOption.id
+      } else {
+        autoSelections.confirmed_patterns![item.id] = confirmOption.id
+      }
+    })
+
+    // Only update if we have auto-selections
+    const hasConfirmed = Object.keys(autoSelections.confirmed_patterns!).length > 0
+    const hasResolved = Object.keys(autoSelections.resolved_ambiguities!).length > 0
+
+    if (hasConfirmed || hasResolved) {
+      setDecisions(prev => ({
+        ...prev,
+        confirmed_patterns: { ...prev.confirmed_patterns, ...autoSelections.confirmed_patterns },
+        resolved_ambiguities: { ...prev.resolved_ambiguities, ...autoSelections.resolved_ambiguities }
+      }))
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []) // Run once on mount
+
   // Track which must_confirm items have been resolved
   const resolvedMustConfirm = useMemo(() => {
     const resolved = new Set<string>()
@@ -296,71 +337,135 @@ export default function V6ReviewCustomizeUI({
             onToggle={() => toggleSection('mustConfirm')}
           />
           {expandedSections.mustConfirm && (
-            <div className="p-4 space-y-4 bg-red-50/30">
+            <div className="p-4 space-y-3 bg-red-50/30">
               <p className="text-sm text-red-700 flex items-center gap-2">
                 <XCircle className="h-4 w-4" />
                 You must resolve all items below before creating your agent
               </p>
-              {ambiguityReport.must_confirm.map(item => (
-                <div
-                  key={item.id}
-                  className={`p-4 bg-white rounded-lg border ${
-                    resolvedMustConfirm.has(item.id) ? 'border-green-300' : 'border-red-200'
-                  }`}
-                >
-                  <div className="flex items-start justify-between mb-2">
-                    <div>
-                      <h4 className="font-semibold text-gray-900">{item.title}</h4>
-                      <p className="text-sm text-gray-600 mt-1">{item.description}</p>
-                    </div>
-                    <LayerBadge layer={item.layer} />
-                  </div>
-                  <div className="mt-3 space-y-2">
-                    {item.options.map(option => (
-                      <label
-                        key={option.id}
-                        className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
-                          (decisions.confirmed_patterns[item.id] === option.id ||
-                            decisions.resolved_ambiguities[item.id] === option.id)
-                            ? 'border-indigo-500 bg-indigo-50'
-                            : 'border-gray-200 hover:border-gray-300'
-                        }`}
-                      >
-                        <input
-                          type="radio"
-                          name={`must-confirm-${item.id}`}
-                          value={option.id}
-                          checked={
-                            decisions.confirmed_patterns[item.id] === option.id ||
-                            decisions.resolved_ambiguities[item.id] === option.id
-                          }
-                          onChange={() => handleMustConfirmSelect(item.id, option.id, item.type)}
-                          className="mt-1"
-                        />
+              {ambiguityReport.must_confirm.map(item => {
+                // Check if this is a simple binary item (2 options, typically confirm/reject)
+                const isBinaryItem = item.options.length === 2
+                const selectedOptionId = decisions.confirmed_patterns[item.id] || decisions.resolved_ambiguities[item.id]
+
+                // For binary items, find the "correct" and "incorrect" options
+                const confirmOption = item.options.find(o =>
+                  o.id === item.recommended ||
+                  o.id.includes('correct') ||
+                  o.label.toLowerCase().includes('correct') ||
+                  o.label.toLowerCase().includes('keep')
+                ) || item.options[0]
+                const rejectOption = item.options.find(o => o.id !== confirmOption.id) || item.options[1]
+
+                const isConfirmed = selectedOptionId === confirmOption?.id
+                const isRejected = selectedOptionId === rejectOption?.id
+
+                // Binary items: compact layout like Should Review
+                if (isBinaryItem) {
+                  return (
+                    <div
+                      key={item.id}
+                      className={`p-4 bg-white rounded-lg border ${
+                        resolvedMustConfirm.has(item.id) ? 'border-green-300' : 'border-red-200'
+                      }`}
+                    >
+                      <div className="flex items-start justify-between">
                         <div className="flex-1">
-                          <div className="flex items-center gap-2">
-                            <span className="font-medium text-gray-900">{option.label}</span>
-                            {item.recommended === option.id && (
-                              <span className="px-2 py-0.5 text-xs bg-green-100 text-green-700 rounded">
-                                Recommended
-                              </span>
+                          <p className="text-gray-800">{item.description || item.title}</p>
+                        </div>
+                        <div className="flex items-center gap-3 ml-4">
+                          <ConfidenceBadge confidence={item.layer === 1 ? 0.45 : 0.65} />
+                          <div className="flex gap-1">
+                            <button
+                              onClick={() => handleMustConfirmSelect(item.id, confirmOption.id, item.type)}
+                              className={`p-2 rounded ${
+                                isConfirmed
+                                  ? 'bg-green-100 text-green-700'
+                                  : 'bg-gray-100 text-gray-400 hover:bg-green-50'
+                              }`}
+                              title={confirmOption.label}
+                            >
+                              <CheckCircle className="h-4 w-4" />
+                            </button>
+                            <button
+                              onClick={() => handleMustConfirmSelect(item.id, rejectOption.id, item.type)}
+                              className={`p-2 rounded ${
+                                isRejected
+                                  ? 'bg-red-100 text-red-700'
+                                  : 'bg-gray-100 text-gray-400 hover:bg-red-50'
+                              }`}
+                              title={rejectOption.label}
+                            >
+                              <XCircle className="h-4 w-4" />
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )
+                }
+
+                // Complex items (3+ options): keep full radio layout
+                return (
+                  <div
+                    key={item.id}
+                    className={`p-4 bg-white rounded-lg border ${
+                      resolvedMustConfirm.has(item.id) ? 'border-green-300' : 'border-red-200'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between mb-2">
+                      <div>
+                        <h4 className="font-semibold text-gray-900">{item.title}</h4>
+                        <p className="text-sm text-gray-600 mt-1">{item.description}</p>
+                      </div>
+                      <LayerBadge layer={item.layer} />
+                    </div>
+                    <div className="mt-3 space-y-2">
+                      {item.options.map(option => (
+                        <label
+                          key={option.id}
+                          className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
+                            (decisions.confirmed_patterns[item.id] === option.id ||
+                              decisions.resolved_ambiguities[item.id] === option.id)
+                              ? 'border-indigo-500 bg-indigo-50'
+                              : 'border-gray-200 hover:border-gray-300'
+                          }`}
+                        >
+                          <input
+                            type="radio"
+                            name={`must-confirm-${item.id}`}
+                            value={option.id}
+                            checked={
+                              decisions.confirmed_patterns[item.id] === option.id ||
+                              decisions.resolved_ambiguities[item.id] === option.id
+                            }
+                            onChange={() => handleMustConfirmSelect(item.id, option.id, item.type)}
+                            className="mt-1"
+                          />
+                          <div className="flex-1">
+                            <div className="flex items-center gap-2">
+                              <span className="font-medium text-gray-900">{option.label}</span>
+                              {item.recommended === option.id && (
+                                <span className="px-2 py-0.5 text-xs bg-green-100 text-green-700 rounded">
+                                  Recommended
+                                </span>
+                              )}
+                            </div>
+                            {option.description && (
+                              <p className="text-sm text-gray-500 mt-1">{option.description}</p>
+                            )}
+                            {option.impact && (
+                              <p className="text-xs text-amber-600 mt-1 flex items-center gap-1">
+                                <Zap className="h-3 w-3" />
+                                {option.impact}
+                              </p>
                             )}
                           </div>
-                          {option.description && (
-                            <p className="text-sm text-gray-500 mt-1">{option.description}</p>
-                          )}
-                          {option.impact && (
-                            <p className="text-xs text-amber-600 mt-1 flex items-center gap-1">
-                              <Zap className="h-3 w-3" />
-                              {option.impact}
-                            </p>
-                          )}
-                        </div>
-                      </label>
-                    ))}
+                        </label>
+                      ))}
+                    </div>
                   </div>
-                </div>
-              ))}
+                )
+              })}
             </div>
           )}
         </div>

@@ -1939,6 +1939,31 @@ export class StepExecutor {
           }
         }
 
+        // ✅ CRITICAL FIX: Detect per-item object literal expressions
+        // Expressions like { "Date": item[0], "Name": item[1] } are meant to be applied
+        // to EACH row, not the entire array. Detect this pattern and handle correctly.
+        // Pattern: object literal with item[n] references, NOT containing .map()
+        const isPerItemObjectLiteral =
+          /^\s*\{/.test(resolvedExpression) &&           // Starts with {
+          /item\[\d+\]/.test(resolvedExpression) &&      // Contains item[n] references
+          !resolvedExpression.includes('.map(') &&       // Doesn't already use .map()
+          !resolvedExpression.includes('.filter(') &&    // Doesn't use other array methods
+          !resolvedExpression.includes('.reduce(');
+
+        if (isPerItemObjectLiteral) {
+          // Apply expression to each item individually
+          console.log('🔍 [transformMap] Detected per-item object literal - applying to each row');
+          logger.info({
+            expression: resolvedExpression.slice(0, 100),
+            itemCount: data.length
+          }, 'Applying per-item object literal expression to each row');
+
+          return data.map(row => {
+            const evalFn = new Function('item', `return ${resolvedExpression}`);
+            return evalFn(row);
+          });
+        }
+
         // The expression operates on the whole array, so we evaluate it once
         const evalFn = new Function('item', `return ${resolvedExpression}`);
         const result = evalFn(data);

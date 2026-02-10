@@ -73,6 +73,13 @@ interface CompileWithDecisionsRequest {
     provider?: 'openai' | 'anthropic'
     model?: string
   }
+  // Feedback for workflow regeneration
+  feedback?: {
+    previous_workflow: any[]           // What LLM generated before
+    user_feedback: string              // What user said is wrong
+    feedback_history?: string[]        // All previous feedback attempts
+    regeneration_attempt?: number      // Which attempt this is (1, 2, 3...)
+  }
 }
 
 interface CompileWithDecisionsResponse {
@@ -460,42 +467,88 @@ export async function POST(request: NextRequest) {
     requestLogger.info({ phase: 4 }, 'Phase 4+5: Compilation started')
     const phase4Start = Date.now()
 
+    // Log if regenerating with feedback
+    const hasFeedback = !!body.feedback
+    if (hasFeedback) {
+      requestLogger.info({
+        regenerationAttempt: body.feedback!.regeneration_attempt,
+        feedbackLength: body.feedback!.user_feedback.length,
+        previousStepsCount: body.feedback!.previous_workflow?.length,
+        feedbackHistoryCount: body.feedback!.feedback_history?.length || 0
+      }, 'Regenerating workflow with user feedback')
+    }
+
     let compilationResult: any
     let usedFallback = false
 
-    // Try DeclarativeCompiler first, fall back to LLM on failure
-    try {
-      requestLogger.debug('Attempting deterministic compilation with DeclarativeCompiler')
-      const declarativeCompiler = new DeclarativeCompiler(pluginManager)
-      compilationResult = await declarativeCompiler.compile(ir)
-
-      if (!compilationResult.success) {
-        throw new Error(`Deterministic compilation failed: ${compilationResult.errors?.join(', ')}`)
-      }
-
-      requestLogger.debug({
-        stepsGenerated: compilationResult.workflow.length
-      }, 'Deterministic compilation successful')
-    } catch (error) {
-      requestLogger.warn({ err: error }, 'DeclarativeCompiler failed, falling back to LLM compiler')
+    // When feedback is present, skip deterministic compiler and use LLM directly
+    // since only LLM can incorporate user feedback
+    if (hasFeedback) {
+      requestLogger.debug('Using LLM compiler directly for feedback-based regeneration')
       usedFallback = true
 
-      // Fallback to LLM compilation
       const llmCompiler = new IRToDSLCompiler({
-        temperature: 0,
+        temperature: 0.1, // Slightly higher temperature for regeneration variety
         maxTokens: 8000,
         pluginManager
       })
 
-      compilationResult = await llmCompiler.compile(ir, {
-        semantic_plan: {
-          goal: body.grounded_plan.goal,
-          understanding: body.grounded_plan.understanding,
-          reasoning_trace: body.grounded_plan.reasoning_trace
+      compilationResult = await llmCompiler.compile(
+        ir,
+        {
+          semantic_plan: {
+            goal: body.grounded_plan.goal,
+            understanding: body.grounded_plan.understanding,
+            reasoning_trace: body.grounded_plan.reasoning_trace
+          },
+          grounded_facts: formalizationResult.formalization_metadata.grounded_facts_used,
+          formalization_metadata: formalizationResult.formalization_metadata
         },
-        grounded_facts: formalizationResult.formalization_metadata.grounded_facts_used,
-        formalization_metadata: formalizationResult.formalization_metadata
-      })
+        0, // retryCount
+        undefined, // previousValidationErrors
+        // Pass user feedback to compiler
+        {
+          previous_workflow: body.feedback!.previous_workflow,
+          user_feedback: body.feedback!.user_feedback,
+          feedback_history: body.feedback!.feedback_history,
+          regeneration_attempt: body.feedback!.regeneration_attempt
+        }
+      )
+    } else {
+      // Try DeclarativeCompiler first, fall back to LLM on failure
+      try {
+        requestLogger.debug('Attempting deterministic compilation with DeclarativeCompiler')
+        const declarativeCompiler = new DeclarativeCompiler(pluginManager)
+        compilationResult = await declarativeCompiler.compile(ir)
+
+        if (!compilationResult.success) {
+          throw new Error(`Deterministic compilation failed: ${compilationResult.errors?.join(', ')}`)
+        }
+
+        requestLogger.debug({
+          stepsGenerated: compilationResult.workflow.length
+        }, 'Deterministic compilation successful')
+      } catch (error) {
+        requestLogger.warn({ err: error }, 'DeclarativeCompiler failed, falling back to LLM compiler')
+        usedFallback = true
+
+        // Fallback to LLM compilation
+        const llmCompiler = new IRToDSLCompiler({
+          temperature: 0,
+          maxTokens: 8000,
+          pluginManager
+        })
+
+        compilationResult = await llmCompiler.compile(ir, {
+          semantic_plan: {
+            goal: body.grounded_plan.goal,
+            understanding: body.grounded_plan.understanding,
+            reasoning_trace: body.grounded_plan.reasoning_trace
+          },
+          grounded_facts: formalizationResult.formalization_metadata.grounded_facts_used,
+          formalization_metadata: formalizationResult.formalization_metadata
+        })
+      }
     }
 
     if (!compilationResult.success) {

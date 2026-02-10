@@ -27,7 +27,8 @@ import { ArrowLeft, Bot, Sparkles, MessageSquare, Zap, CheckCircle2, Clock,
   Plug,
   AlertCircle,
   HelpCircle,  // V10: For question message variant
-  FileText     // V10: For plan summary message variant
+  FileText,    // V10: For plan summary message variant
+  Check        // V14: For multi-select checkboxes
 } from 'lucide-react'
 import { useAgentBuilderState } from '@/hooks/useAgentBuilderState'
 import { useAgentBuilderMessages } from '@/hooks/useAgentBuilderMessages'
@@ -41,6 +42,194 @@ import type {
 } from '@/components/agent-creation/types/generate-agent-v2'
 import { isGenerateAgentV2Success } from '@/components/agent-creation/types/generate-agent-v2'
 import { formatScheduleDisplay } from '@/lib/utils/scheduleFormatter'
+import { useV6AgentGeneration } from '@/lib/utils/featureFlags'
+
+// ============================================================================
+// V6 Agent Generation Types and Helpers
+// ============================================================================
+
+/**
+ * V6 API Response structure from /api/v6/generate-ir-semantic
+ */
+interface V6GenerateResponse {
+  success: boolean
+  workflow: {
+    workflow_steps: any[]
+    suggested_plugins: string[]
+  }
+  validation?: {
+    valid: boolean
+    issues: string[]
+  }
+  metadata: {
+    architecture: string
+    total_time_ms: number
+    phase_times_ms: {
+      understanding: number
+      grounding: number
+      formalization: number
+      compilation: number
+      normalization: number
+    }
+    steps_generated: number
+    plugins_used: string[]
+    grounding_confidence?: number
+    formalization_confidence?: number
+  }
+  intermediate_results?: {
+    semantic_plan?: {
+      goal?: string
+      understanding?: {
+        data_sources?: any[]
+      }
+    }
+    grounded_plan?: any
+    ir?: any
+  }
+}
+
+/**
+ * Input schema item structure (V4-compatible)
+ */
+interface InputSchemaItem {
+  name: string
+  type: string
+  label: string
+  required: boolean
+  description: string
+  placeholder: string
+  hidden: boolean
+}
+
+/**
+ * Extract input schema from workflow steps by parsing {{input.variable_name}} patterns
+ *
+ * @param workflowSteps - Array of PILOT DSL workflow steps
+ * @returns Array of input schema items
+ */
+function extractInputSchema(workflowSteps: any[]): InputSchemaItem[] {
+  const inputs: InputSchemaItem[] = []
+  const seenNames = new Set<string>()
+
+  for (const step of workflowSteps) {
+    // Stringify the step to search for patterns
+    const stepStr = JSON.stringify(step)
+    // Match {{input.variable_name}} patterns
+    const matches = stepStr.match(/\{\{input\.(\w+)\}\}/g) || []
+
+    for (const match of matches) {
+      const name = match.replace('{{input.', '').replace('}}', '')
+      if (!seenNames.has(name)) {
+        seenNames.add(name)
+        inputs.push({
+          name,
+          type: 'string',
+          // Convert snake_case to Title Case for label
+          label: name.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()),
+          required: true,
+          description: '',
+          placeholder: '',
+          hidden: false
+        })
+      }
+    }
+  }
+
+  return inputs
+}
+
+/**
+ * Map V6 API response to V4-compatible agent object
+ *
+ * @param v6Response - Response from /api/v6/generate-ir-semantic
+ * @param context - Additional context for agent creation
+ * @returns Agent data compatible with /api/create-agent
+ */
+function mapV6ResponseToAgent(
+  v6Response: V6GenerateResponse,
+  context: {
+    agentId: string
+    userId: string
+    sessionId: string
+    initialPrompt: string
+    enhancedPromptData: any
+    connectedPlugins: string[]
+    latencyMs: number
+  }
+): Partial<CreateAgentData> {
+  const { workflow, metadata, intermediate_results } = v6Response
+  const semanticPlan = intermediate_results?.semantic_plan
+
+  return {
+    user_id: context.userId,
+    agent_name: context.enhancedPromptData?.plan_title ||
+                semanticPlan?.goal ||
+                'New Agent',
+    user_prompt: context.enhancedPromptData?.enhanced_prompt || context.initialPrompt || '',
+    system_prompt: `You are an automation agent. ${context.enhancedPromptData?.plan_description || semanticPlan?.goal || ''}`,
+    description: context.enhancedPromptData?.plan_description ||
+                 semanticPlan?.goal ||
+                 '',
+    plugins_required: workflow.suggested_plugins || metadata.plugins_used || [],
+    connected_plugins: context.connectedPlugins,
+    input_schema: extractInputSchema(workflow.workflow_steps),
+    output_schema: [],
+    status: 'draft' as const,
+    mode: 'on_demand' as const,
+    schedule_cron: null,
+    created_from_prompt: context.initialPrompt || '',
+    ai_reasoning: `Generated via V6 5-phase semantic pipeline. ` +
+                  `${metadata.steps_generated} steps created in ${metadata.total_time_ms}ms.`,
+    ai_confidence: metadata.grounding_confidence || 0.8,
+    ai_generated_at: new Date().toISOString(),
+    workflow_steps: workflow.workflow_steps,
+    pilot_steps: workflow.workflow_steps,
+    trigger_conditions: {
+      error_handling: {
+        on_failure: 'stop',
+        retry_on_fail: false
+      }
+    },
+    detected_categories: (workflow.suggested_plugins || []).map((p: string) => ({
+      plugin: p,
+      detected: true
+    })),
+    agent_config: {
+      creation_metadata: {
+        ai_generated_at: new Date().toISOString(),
+        session_id: context.sessionId,
+        agent_id: context.agentId,
+        thread_id: '', // V6 doesn't use threads
+        prompt_type: 'enhanced',
+        clarification_answers: {},
+        version: '6.0',
+        platform_version: 'v6.0',
+        enhanced_prompt_data: {
+          ...context.enhancedPromptData,
+          // V6-specific metadata
+          v6_metadata: {
+            architecture: 'semantic_plan_5_phase',
+            latency_ms: context.latencyMs,
+            phase_times_ms: metadata.phase_times_ms,
+            grounding_confidence: metadata.grounding_confidence,
+            steps_generated: metadata.steps_generated
+          }
+        }
+      },
+      ai_context: {
+        reasoning: `Generated via V6 5-phase semantic pipeline. ${metadata.steps_generated} steps created in ${metadata.total_time_ms}ms.`,
+        confidence: metadata.grounding_confidence || 0.8,
+        original_prompt: context.initialPrompt || '',
+        enhanced_prompt: context.enhancedPromptData?.enhanced_prompt || '',
+        generated_plan: ''
+      }
+    }
+  }
+}
+
+// ============================================================================
+// Main Component
+// ============================================================================
 
 function V2AgentBuilderContent() {
   const searchParams = useSearchParams()
@@ -54,6 +243,12 @@ function V2AgentBuilderContent() {
     setState: setBuilderState,
     setQuestionsSequence,
     answerQuestion,
+    answerSelectOption,       // V14: single-select option click
+    toggleMultiSelectOption,  // V14: multi-select checkbox toggle
+    submitMultiSelectAnswer,  // V14: submit multi-select selections
+    openCustomInput,          // V14: show "Other" textarea
+    updateCustomInput,        // V14: update custom input value
+    submitCustomAnswer,       // V14: submit custom text answer
     setEnhancement,
     startEditingEnhanced,
     resetForRefinement,  // V10: Reset state for mini-cycle/edit flow
@@ -214,8 +409,21 @@ function V2AgentBuilderContent() {
 
   // Auto-trigger Phase 3 when all questions are answered
   useEffect(() => {
+    // V14: Helper to check if answer is valid (works with string or structured)
+    const isAnswerValid = (answer: unknown): boolean => {
+      if (!answer) return false;
+      if (typeof answer === 'string') return answer.trim().length > 0;
+      // Structured answer (select/multi_select)
+      if (typeof answer === 'object' && answer !== null) {
+        const a = answer as { mode?: string; selected?: unknown; custom?: string };
+        if (a.mode === 'selected') return !!a.selected;
+        if (a.mode === 'custom') return !!a.custom?.trim();
+      }
+      return false;
+    };
+
     const allQuestionsAnswered = builderState.questionsSequence.length > 0 &&
-      builderState.questionsSequence.every(q => builderState.clarificationAnswers[q.id]?.trim())
+      builderState.questionsSequence.every(q => isAnswerValid(builderState.clarificationAnswers[q.id]))
 
     if (builderState.workflowPhase === 'enhancement' &&
         builderState.currentQuestionIndex === -1 &&
@@ -693,74 +901,175 @@ function V2AgentBuilderContent() {
         plan_description: enhancedPromptData?.plan_description
       }
 
-      // Step 2: Call /api/generate-agent-v4 (OpenAI 3-Stage Generation)
-      console.log('📞 Calling /api/generate-agent-v4 (OpenAI 3-Stage)...')
-      console.log('🎯 Passing services_involved for token optimization:', requiredServices)
-      const generateRes = await fetch('/api/generate-agent-v4', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-user-id': user.id,
-          'x-session-id': sessionId.current,
-          'x-agent-id': agentId.current
-        },
-        body: JSON.stringify({
-          // V4 expects 'enhancedPrompt' if we already have it, or 'prompt' for raw
-          // Use enhancedPromptData (the structured object) if available, otherwise fallback
-          ...(useEnhanced && enhancedPromptData
-            ? {
-                enhancedPrompt: typeof enhancedPromptData === 'string'
-                  ? enhancedPromptData
-                  : JSON.stringify(enhancedPromptData, null, 2)
-              }
-            : { prompt: initialPrompt }
-          ),
-          promptType: useEnhanced ? 'enhanced' : 'original',
-          clarificationAnswers,
-          userId: user.id,
-          services_involved: requiredServices,  // Pass filtered plugins from Phase 3
-          connectedPlugins: connectedPlugins  // Pass connected plugin keys for v4
+      // Check if V6 generation is enabled
+      const useV6 = useV6AgentGeneration()
+      let agentData: CreateAgentData
+
+      if (useV6) {
+        // ================================================================
+        // V6 FLOW: 5-Phase Semantic Pipeline (Single API Call)
+        // ================================================================
+        console.log('🚀 Using V6 5-phase semantic pipeline...')
+
+        // Show loading message
+        addAIMessage('🔍 Generating your agent...')
+
+        const v6StartTime = Date.now()
+
+        // Single API call - runs all 5 phases
+        const v6Response = await fetch('/api/v6/generate-ir-semantic', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-user-id': user.id,
+            'x-session-id': sessionId.current,
+            'x-agent-id': agentId.current
+          },
+          body: JSON.stringify({
+            enhanced_prompt: enhancedPromptData,
+            userId: user.id,
+            config: {
+              return_intermediate_results: true,  // Get semantic plan for agent name
+              provider: 'openai'
+            }
+          })
         })
-      })
 
-      const generatedAgent: GenerateAgentV2Response = await generateRes.json()
-
-      if (!isGenerateAgentV2Success(generatedAgent)) {
-        throw new Error(generatedAgent.error || 'Failed to generate agent')
-      }
-
-      console.log('✅ Agent generated:', generatedAgent.agent.agent_name)
-
-      // Step 3: Build agent_config metadata
-      const agentConfig: CreateAgentConfig = {
-        creation_metadata: {
-          ai_generated_at: new Date().toISOString(),
-          session_id: sessionId.current,
-          agent_id: agentId.current,
-          thread_id: threadId || '',
-          prompt_type: useEnhanced ? 'enhanced' : 'original',
-          clarification_answers: builderState.clarificationAnswers,
-          version: '2.0',
-          platform_version: 'v2.0',
-          enhanced_prompt_data: enhancedPromptData // Structured v9 data
-        },
-        ai_context: {
-          reasoning: generatedAgent.agent.ai_reasoning || '',
-          confidence: generatedAgent.agent.ai_confidence || 0,
-          original_prompt: initialPrompt || '',
-          enhanced_prompt: builderState.enhancedPrompt || '',
-          generated_plan: (generatedAgent.agent as any).generated_plan || ''
+        if (!v6Response.ok) {
+          const errorData = await v6Response.json()
+          throw new Error(errorData.error || errorData.details || 'V6 generation failed')
         }
-      }
 
-      // Step 4: Build initial agent data (schedule will be set later)
-      const agentData: CreateAgentData = {
-        ...generatedAgent.agent,
-        agent_config: agentConfig,
-        schedule_cron: null, // Will be set after scheduling step
-        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
-        mode: 'on_demand', // Will be updated if scheduled
-        status: 'draft'
+        const v6Data: V6GenerateResponse = await v6Response.json()
+        const v6LatencyMs = Date.now() - v6StartTime
+
+        if (!v6Data.success) {
+          throw new Error('V6 generation returned unsuccessful response')
+        }
+
+        console.log('✅ V6 generation complete:', {
+          steps: v6Data.metadata.steps_generated,
+          time: `${v6LatencyMs}ms`,
+          phases: v6Data.metadata.phase_times_ms
+        })
+
+        // Map V6 response to agent object
+        const v6Agent = mapV6ResponseToAgent(v6Data, {
+          agentId: agentId.current,
+          userId: user.id,
+          sessionId: sessionId.current,
+          initialPrompt: initialPrompt || '',
+          enhancedPromptData,
+          connectedPlugins,
+          latencyMs: v6LatencyMs
+        })
+
+        // Build agent config for V6
+        const agentConfig: CreateAgentConfig = {
+          creation_metadata: {
+            ai_generated_at: new Date().toISOString(),
+            session_id: sessionId.current,
+            agent_id: agentId.current,
+            thread_id: threadId || '',
+            prompt_type: 'enhanced',
+            clarification_answers: builderState.clarificationAnswers,
+            version: '6.0',
+            platform_version: 'v6.0',
+            enhanced_prompt_data: enhancedPromptData
+          },
+          ai_context: {
+            reasoning: v6Agent.ai_reasoning || '',
+            confidence: v6Agent.ai_confidence || 0,
+            original_prompt: initialPrompt || '',
+            enhanced_prompt: builderState.enhancedPrompt || '',
+            generated_plan: ''
+          }
+        }
+
+        // Build final agent data
+        agentData = {
+          ...v6Agent,
+          agent_config: agentConfig,
+          schedule_cron: null,
+          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
+          mode: 'on_demand',
+          status: 'draft'
+        } as CreateAgentData
+
+        console.log('✅ V6 Agent mapped:', agentData.agent_name)
+
+      } else {
+        // ================================================================
+        // V4 FLOW: OpenAI 3-Stage Generation (Existing Flow)
+        // ================================================================
+        console.log('📞 Calling /api/generate-agent-v4 (OpenAI 3-Stage)...')
+        console.log('🎯 Passing services_involved for token optimization:', requiredServices)
+        const generateRes = await fetch('/api/generate-agent-v4', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-user-id': user.id,
+            'x-session-id': sessionId.current,
+            'x-agent-id': agentId.current
+          },
+          body: JSON.stringify({
+            // V4 expects 'enhancedPrompt' if we already have it, or 'prompt' for raw
+            // Use enhancedPromptData (the structured object) if available, otherwise fallback
+            ...(useEnhanced && enhancedPromptData
+              ? {
+                  enhancedPrompt: typeof enhancedPromptData === 'string'
+                    ? enhancedPromptData
+                    : JSON.stringify(enhancedPromptData, null, 2)
+                }
+              : { prompt: initialPrompt }
+            ),
+            promptType: useEnhanced ? 'enhanced' : 'original',
+            clarificationAnswers,
+            userId: user.id,
+            services_involved: requiredServices,  // Pass filtered plugins from Phase 3
+            connectedPlugins: connectedPlugins  // Pass connected plugin keys for v4
+          })
+        })
+
+        const generatedAgent: GenerateAgentV2Response = await generateRes.json()
+
+        if (!isGenerateAgentV2Success(generatedAgent)) {
+          throw new Error(generatedAgent.error || 'Failed to generate agent')
+        }
+
+        console.log('✅ Agent generated:', generatedAgent.agent.agent_name)
+
+        // Build agent_config metadata
+        const agentConfig: CreateAgentConfig = {
+          creation_metadata: {
+            ai_generated_at: new Date().toISOString(),
+            session_id: sessionId.current,
+            agent_id: agentId.current,
+            thread_id: threadId || '',
+            prompt_type: useEnhanced ? 'enhanced' : 'original',
+            clarification_answers: builderState.clarificationAnswers,
+            version: '2.0',
+            platform_version: 'v2.0',
+            enhanced_prompt_data: enhancedPromptData // Structured v9 data
+          },
+          ai_context: {
+            reasoning: generatedAgent.agent.ai_reasoning || '',
+            confidence: generatedAgent.agent.ai_confidence || 0,
+            original_prompt: initialPrompt || '',
+            enhanced_prompt: builderState.enhancedPrompt || '',
+            generated_plan: (generatedAgent.agent as any).generated_plan || ''
+          }
+        }
+
+        // Build initial agent data (schedule will be set later)
+        agentData = {
+          ...generatedAgent.agent,
+          agent_config: agentConfig,
+          schedule_cron: null, // Will be set after scheduling step
+          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
+          mode: 'on_demand', // Will be updated if scheduled
+          status: 'draft'
+        }
       }
 
       // Store agent data for later
@@ -781,7 +1090,8 @@ function V2AgentBuilderContent() {
       }
 
       // Check for required input parameters that don't already have values from resolved_user_inputs
-      const requiredParams = generatedAgent.agent.input_schema?.filter(
+      // Note: Use agentData.input_schema which works for both V6 and V4 flows
+      const requiredParams = agentData.input_schema?.filter(
         (input: any) => input.required === true && !(input.name in resolvedInputs)
       ) || []
 
@@ -854,6 +1164,7 @@ function V2AgentBuilderContent() {
       console.log('✅ Agent created successfully:', result.agent?.id)
 
       // Save input parameter values if any were collected
+      // Note: Use agentData.input_schema (full schema) not requiredInputs (only missing params)
       if (Object.keys(inputParameterValues).length > 0 && result.agent?.id) {
         console.log('💾 Saving input parameter values...')
         try {
@@ -863,7 +1174,7 @@ function V2AgentBuilderContent() {
             body: JSON.stringify({
               agent_id: result.agent.id,
               input_values: inputParameterValues,
-              input_schema: requiredInputs
+              input_schema: agentData.input_schema || []
             })
           })
 
@@ -1892,6 +2203,141 @@ function V2AgentBuilderContent() {
                                 Question {builderState.currentQuestionIndex + 1} of {builderState.questionsSequence.length}
                               </span>
                             </div>
+                          )}
+
+                          {/* V14: Hybrid Question Options - Select/Multi-Select with option buttons */}
+                          {message.role === 'assistant' &&
+                           message.variant === 'question' &&
+                           builderState.workflowPhase === 'questions' &&
+                           builderState.currentQuestionIndex >= 0 &&
+                           builderState.questionsSequence[builderState.currentQuestionIndex]?.question === message.content &&
+                           !builderState.clarificationAnswers[builderState.questionsSequence[builderState.currentQuestionIndex]?.id] && (
+                            (() => {
+                              const currentQ = builderState.questionsSequence[builderState.currentQuestionIndex];
+                              const qType = currentQ?.type;
+                              const options = currentQ?.options || [];
+
+                              // Only render option buttons for select/multi_select with options
+                              if ((qType === 'select' || qType === 'multi_select') && options.length > 0) {
+                                return (
+                                  <div className="mt-3 space-y-2">
+                                    {/* Option buttons */}
+                                    <div className="flex flex-col gap-2">
+                                      {options.map((opt, i) => {
+                                        const isMulti = qType === 'multi_select';
+                                        const isSelected = isMulti && builderState.selectedMultiOptions.includes(opt.value);
+
+                                        return (
+                                          <button
+                                            key={opt.value}
+                                            onClick={() => {
+                                              if (isMulti) {
+                                                toggleMultiSelectOption(opt.value);
+                                              } else {
+                                                // Single select - record answer and proceed
+                                                answerSelectOption(currentQ.id, opt.value);
+                                                // Add to messages
+                                                addUserMessage(opt.label);
+                                              }
+                                            }}
+                                            className={`text-left px-3 py-2.5 border transition-all duration-150 ${
+                                              isSelected
+                                                ? 'border-cyan-500 bg-cyan-500/10 text-cyan-700 dark:text-cyan-300'
+                                                : 'border-[var(--v2-border)] bg-[var(--v2-surface)] hover:border-cyan-400 hover:bg-cyan-500/5 text-[var(--v2-text-primary)]'
+                                            }`}
+                                            style={{ borderRadius: 'var(--v2-radius-button)' }}
+                                          >
+                                            <div className="flex items-start gap-2">
+                                              {isMulti && (
+                                                <div className={`mt-0.5 w-4 h-4 border flex items-center justify-center flex-shrink-0 ${
+                                                  isSelected ? 'border-cyan-500 bg-cyan-500' : 'border-[var(--v2-border)]'
+                                                }`} style={{ borderRadius: '3px' }}>
+                                                  {isSelected && (
+                                                    <Check className="w-3 h-3 text-white" />
+                                                  )}
+                                                </div>
+                                              )}
+                                              <div className="flex-1">
+                                                <span className="text-sm font-medium">{opt.label}</span>
+                                                {opt.description && (
+                                                  <span className="text-xs text-[var(--v2-text-muted)] ml-1">— {opt.description}</span>
+                                                )}
+                                              </div>
+                                            </div>
+                                          </button>
+                                        );
+                                      })}
+                                    </div>
+
+                                    {/* Multi-select: Done button */}
+                                    {qType === 'multi_select' && builderState.selectedMultiOptions.length > 0 && (
+                                      <button
+                                        onClick={() => {
+                                          // Get labels for selected options
+                                          const selectedLabels = builderState.selectedMultiOptions
+                                            .map(v => options.find(o => o.value === v)?.label)
+                                            .filter(Boolean)
+                                            .join(', ');
+                                          submitMultiSelectAnswer(currentQ.id);
+                                          addUserMessage(selectedLabels);
+                                        }}
+                                        className="w-full px-3 py-2 bg-gradient-to-r from-[var(--v2-primary)] to-[var(--v2-secondary)] text-white font-medium text-sm hover:opacity-90 transition-opacity"
+                                        style={{ borderRadius: 'var(--v2-radius-button)' }}
+                                      >
+                                        Done ({builderState.selectedMultiOptions.length} selected)
+                                      </button>
+                                    )}
+
+                                    {/* "Other" button - shows custom input */}
+                                    {!builderState.showingCustomInput && (
+                                      <button
+                                        onClick={() => openCustomInput(currentQ.id)}
+                                        className="w-full px-3 py-2 border-2 border-dashed border-[var(--v2-border)] text-[var(--v2-text-muted)] text-sm hover:border-cyan-400 hover:text-cyan-600 transition-colors"
+                                        style={{ borderRadius: 'var(--v2-radius-button)' }}
+                                      >
+                                        ✏️ Other (type your own answer)
+                                      </button>
+                                    )}
+
+                                    {/* Custom input textarea - shown when "Other" clicked */}
+                                    {builderState.showingCustomInput && builderState.customInputQuestionId === currentQ.id && (
+                                      <div className="space-y-2">
+                                        <textarea
+                                          value={builderState.customInputValue}
+                                          onChange={(e) => updateCustomInput(e.target.value)}
+                                          placeholder="Type your answer..."
+                                          className="w-full px-3 py-2 border border-[var(--v2-border)] bg-[var(--v2-surface)] text-[var(--v2-text-primary)] text-sm resize-none focus:outline-none focus:border-cyan-500"
+                                          style={{ borderRadius: 'var(--v2-radius-button)' }}
+                                          rows={2}
+                                          autoFocus
+                                        />
+                                        <div className="flex gap-2">
+                                          <button
+                                            onClick={() => {
+                                              submitCustomAnswer();
+                                              addUserMessage(builderState.customInputValue.trim());
+                                            }}
+                                            disabled={!builderState.customInputValue.trim()}
+                                            className="flex-1 px-3 py-2 bg-gradient-to-r from-[var(--v2-primary)] to-[var(--v2-secondary)] text-white font-medium text-sm hover:opacity-90 transition-opacity disabled:opacity-50"
+                                            style={{ borderRadius: 'var(--v2-radius-button)' }}
+                                          >
+                                            Submit
+                                          </button>
+                                          <button
+                                            onClick={() => setBuilderState(prev => ({ ...prev, showingCustomInput: false, customInputValue: '', customInputQuestionId: null }))}
+                                            className="px-3 py-2 border border-[var(--v2-border)] text-[var(--v2-text-muted)] text-sm hover:bg-[var(--v2-surface-hover)]"
+                                            style={{ borderRadius: 'var(--v2-radius-button)' }}
+                                          >
+                                            Cancel
+                                          </button>
+                                        </div>
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              }
+                              return null;
+                            })()
                           )}
                         </div>
 

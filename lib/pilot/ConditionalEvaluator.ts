@@ -148,9 +148,22 @@ export class ConditionalEvaluator {
     expression: string,
     context: ExecutionContext
   ): string {
-    // Match {{...}} or identifiers with property/array access (e.g., item[5], item.field, step1.data)
-    // Requires at least one . or [ to avoid matching standalone identifiers or numbers
-    return expression.replace(/\{\{([^}]+)\}\}|(\w+(?:\.\w+|\[\d+\])[\w.\[\]]*)/g, (match, explicit, implicit) => {
+    // Match {{...}} or identifiers with property/array access
+    // Supports:
+    //   - Dot notation: item.field, step1.data
+    //   - Numeric bracket: item[0], item[123]
+    //   - String bracket: item['Stage'], item["Sales Person"]
+    // Regex breakdown:
+    //   \{\{([^}]+)\}\}  - Explicit {{...}} variables
+    //   |
+    //   (\w+             - Start with word chars (item, step1, etc.)
+    //     (?:            - Non-capturing group for chained access
+    //       \.\w+        - Dot notation: .field
+    //       |
+    //       \[(?:\d+|'[^']*'|"[^"]*")\]  - Bracket notation: [0], ['key'], ["key"]
+    //     )+             - One or more access patterns
+    //   )
+    return expression.replace(/\{\{([^}]+)\}\}|(\w+(?:(?:\.\w+)|(?:\[(?:\d+|'[^']*'|"[^"]*")\]))+)/g, (match, explicit, implicit) => {
       const ref = explicit || implicit;
 
       try {
