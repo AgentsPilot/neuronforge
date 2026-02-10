@@ -78,7 +78,7 @@ export async function POST(req: NextRequest) {
       agentId,
       user.id,
       inputValues,
-      inputSchema
+      { inputSchema }
     );
 
     if (saveError || !savedConfig) {

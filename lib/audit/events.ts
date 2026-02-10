@@ -33,6 +33,7 @@ export const AUDIT_EVENTS = {
   AGENT_RUN_COMPLETED: 'AGENT_RUN_COMPLETED',
   AGENT_RUN_FAILED: 'AGENT_RUN_FAILED',
   AGENT_SCHEMA_UPDATED: 'AGENT_SCHEMA_UPDATED', // input/output schema changes
+  AGENT_CONFIG_SAVED: 'AGENT_CONFIG_SAVED', // input values saved/updated
 
   // Agent Generation events
   AGENT_GENERATION_STARTED: 'AGENT_GENERATION_STARTED',
@@ -237,6 +238,11 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
     severity: 'warning',
     complianceFlags: ['SOC2'],
     description: 'Agent schedule modified',
+  },
+  [AUDIT_EVENTS.AGENT_CONFIG_SAVED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'Agent input configuration saved or updated',
   },
   [AUDIT_EVENTS.AGENT_RUN_STARTED]: {
     severity: 'info',
