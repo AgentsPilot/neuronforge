@@ -20,7 +20,8 @@ export type ThinkingCategory =
   | 'problem_solving'
   | 'communication'
   | 'progress'
-  | 'friendly';
+  | 'friendly'
+  | 'long_wait';
 
 interface CategoryDefinition {
   description: string;

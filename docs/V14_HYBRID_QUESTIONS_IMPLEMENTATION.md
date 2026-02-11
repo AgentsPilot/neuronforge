@@ -1,6 +1,6 @@
 # V14 Hybrid Questions - Implementation Tracker
 
-**Status:** PHASE B IMPLEMENTATION COMPLETE - VERIFICATION PENDING
+**Status:** PHASE B COMPLETE — PHASE C PENDING
 **Created:** 2026-02-05
 **Delete when done:** Yes - remove this file once implementation is complete and verified.
 
@@ -20,8 +20,8 @@ Create a new **v14 Workflow Agent Creation Prompt** that supports:
 **Phase A.3:** ✅ UI improvements (processing indicators, mini-cycle handling)
 **Phase A.4:** ✅ V6 Review Mode feature flag (infrastructure complete)
 **Phase B.1-B.4:** ✅ Production page + V6 single API (`generate-ir-semantic`, no review)
-**Phase B.5:** Verification testing (pending)
-**Phase B.6:** Thinking Words integration (processing indicators with rotating words)
+**Phase B.5:** ✅ Verification testing (8 bugs found & fixed)
+**Phase B.6:** ✅ Thinking Words integration (`createTimedThinkingWordCycler` with time-tiered phases)
 **Phase C:** V6 Review Mode flag support (split API flow with `V6ReviewCustomizeUI`)
 
 ---
@@ -765,118 +765,86 @@ Port hybrid questions UI to `app/v2/agents/new/page.tsx` using **V6 single API f
 | 7 | Agent creation works end-to-end | [ ] |
 | 8 | No `any` types in production answer flow | [ ] |
 
-### B.6: Thinking Words Integration (Processing Indicators)
+### B.6: Thinking Words Integration (Processing Indicators) — COMPLETED
 
-Enhance the typing indicator to show rotating "thinking words" instead of static messages, providing visual feedback that work is in progress.
+Replace **all** static typing indicators across the entire agent creation flow with rotating thinking words. Each processing phase shows a contextual first message, then rotates through time-tiered thinking words every 4 seconds.
 
 **Reference:** [THINKING_WORDS.md](./THINKING_WORDS.md)
 
-**Approach:** Create a `ThinkingWordsIndicator` component that alternates between the context message and role-personalized thinking words.
+**Approach:** `createTimedThinkingWordCycler()` — a time-aware cycler function that handles phase progression internally. Two page-level helpers (`startThinkingWords(initialMessage?)` / `stopThinkingWords()`) wrap the lifecycle. `startThinkingWords` accepts an optional contextual first message (e.g. "Analyzing your request...") before rotating thinking words.
 
-#### Architecture
+#### Files Modified
 
-```
-components/v2/
-└── ThinkingWordsIndicator.tsx  ← New component
+| File | Change |
+|------|--------|
+| `lib/ui/thinking-words-dictionary.json` | Added `long_wait` category (5 humorous delay messages) |
+| `lib/ui/thinking-words-loader.ts` | Added `'long_wait'` to `ThinkingCategory` union type |
+| `lib/ui/thinking-words.ts` | Added `createTimedThinkingWordCycler(role?)` with 4 time tiers |
+| `app/v2/agents/new/page.tsx` | Replaced all 12 `addTypingIndicator()` calls with `startThinkingWords()` and all 9 `removeTypingIndicator()` calls with `stopThinkingWords()` across phases 1-3, V6 generation, OAuth, edit/feedback, and final approve flows |
+| `docs/THINKING_WORDS.md` | Documented new category, function, and timed cycler usage |
 
-lib/ui/
-├── thinking-words-dictionary.json  ← Word dictionary (already exists)
-├── thinking-words-loader.ts        ← Singleton loader (already exists)
-└── thinking-words.ts               ← Public API (already exists)
-```
+#### Coverage — All Processing Phases
 
-#### Component Design
+| Phase / Context | Initial Message | Thinking Words After 4s |
+|----------------|----------------|------------------------|
+| Thread init (Phase 1 start) | "Analyzing your request..." | Yes |
+| Phase 1 → Phase 2 | "Generating clarification questions..." | Yes |
+| Phase 2 → Phase 3 (no questions) | "Creating your agent plan..." | Yes |
+| Phase 2 → Phase 3 (mini-cycle) | "Finalizing your agent plan..." | Yes |
+| Phase 3 auto-trigger (all questions answered) | "Creating your enhanced agent plan..." / "Updating your agent plan with new details..." | Yes |
+| Phase 3 mini-cycle questions | "Generating clarification questions..." | Yes |
+| OAuth all connected → Phase 3 | "All services connected! Creating your enhanced plan..." | Yes |
+| Skip plugin → Phase 3 | "Re-evaluating with alternative services..." | Yes |
+| V6 agent generation (main wait) | *(starts with thinking word directly)* | Yes |
+| Edit/feedback → Phase 2 | "Updating your plan..." | Yes |
+| Final approve → DB save | "Creating agent..." | Yes |
 
-```tsx
-// components/v2/ThinkingWordsIndicator.tsx
-'use client';
+#### Time-Tier Progression
 
-import { useState, useEffect, useRef } from 'react';
-import { createThinkingWordCyclerForRole } from '@/lib/ui/thinking-words';
+| Elapsed | Categories | Example Words |
+|---------|-----------|---------------|
+| 0-15s | `general`, `friendly` | "Thinking", "On it", "Brewing ideas" |
+| 15-30s | `data_analysis`, `planning` | "Parsing data", "Mapping out", "Structuring" |
+| 30-45s | `progress`, `communication` | "Almost there", "Fine-tuning", "Final checks" |
+| 45s+ | `long_wait` | "Brewing extra coffee for the team...", "Perfection takes time" |
 
-interface ThinkingWordsIndicatorProps {
-  contextMessage?: string;  // Static context ("Analyzing your request...")
-  userRole?: string;        // User role for personalized words
-  intervalMs?: number;      // Rotation interval (default 2500ms)
-}
+Words rotate every 4 seconds. Each tier's words are shuffled to avoid predictable sequences. Each `startThinkingWords()` call resets the timer (fresh tier progression per phase).
 
-export function ThinkingWordsIndicator({
-  contextMessage,
-  userRole = 'other',
-  intervalMs = 2500
-}: ThinkingWordsIndicatorProps) {
-  const [displayText, setDisplayText] = useState(contextMessage || 'Thinking');
-  const cycleRef = useRef(0);
+#### Key Design Decisions
 
-  useEffect(() => {
-    const getNextWord = createThinkingWordCyclerForRole(userRole as any);
+- **All words live in the dictionary** — the page has zero word constants
+- **All time logic lives in `createTimedThinkingWordCycler()`** — the page just calls `getNextWord()`
+- **`startThinkingWords(initialMessage?)` shows context first** — the static message displays initially, then rotates thinking words after the first 4s interval
+- **`startThinkingWords` is safe to call repeatedly** — it clears any existing interval before starting a new one (handles phase transitions)
+- **`long_wait` is excluded from role mappings** — it only activates via the timed cycler, never in generic role-based cycling
+- **Updates typing indicator in-place** via `setMessages` with fixed `'typing-indicator'` ID
+- **No duplicate typing indicators** — removed the redundant `addTypingIndicator` from `handleApprove` (now only `startThinkingWords` inside `createAgent` handles it)
+- **`setMessages` properly destructured** from `useAgentBuilderMessages()` hook
 
-    const interval = setInterval(() => {
-      cycleRef.current++;
+#### Bug Fixes During Implementation
 
-      if (contextMessage) {
-        // Alternate: context → word → context → word...
-        if (cycleRef.current % 2 === 0) {
-          setDisplayText(contextMessage);
-        } else {
-          setDisplayText(getNextWord());
-        }
-      } else {
-        // No context, just cycle thinking words
-        setDisplayText(getNextWord());
-      }
-    }, intervalMs);
-
-    return () => clearInterval(interval);
-  }, [contextMessage, userRole, intervalMs]);
-
-  return (
-    <span className="text-sm text-[var(--v2-text-secondary)] font-medium">
-      {displayText}
-    </span>
-  );
-}
-```
-
-#### Integration Point
-
-**File:** `app/v2/agents/new/page.tsx` line ~2126
-
-**Before:**
-```tsx
-<span className="text-sm text-[var(--v2-text-secondary)] font-medium">{message.content}</span>
-```
-
-**After:**
-```tsx
-<ThinkingWordsIndicator contextMessage={message.content} userRole={user?.role} />
-```
-
-#### Example Rotation
-
-```
-"Analyzing your request..." → "Thinking" → "Analyzing your request..."
-→ "Crunching numbers" → "Analyzing your request..." → "On it" → ...
-```
+| Bug | Root Cause | Fix |
+|-----|-----------|-----|
+| `setMessages is not defined` (30+ errors in console) | `setMessages` not destructured from `useAgentBuilderMessages()` hook | Added `setMessages` to hook destructure |
+| 2 typing indicators displayed simultaneously | `handleApprove` called `addTypingIndicator()` before `createAgent()` which also called `startThinkingWords()` | Removed duplicate from `handleApprove` |
+| Interval not cleared on phase transitions | `startThinkingWords` didn't check for existing interval | Added guard: clears existing interval + removes old indicator before starting new one |
 
 #### Tasks
 
 | # | Task | Status |
 |---|------|--------|
-| 1 | Create `components/v2/ThinkingWordsIndicator.tsx` component | [ ] |
-| 2 | Import component in `app/v2/agents/new/page.tsx` | [ ] |
-| 3 | Replace static text in typing indicator with component | [ ] |
-| 4 | Pass `user?.role` for role-personalized words | [ ] |
-| 5 | Verify rotation works during all processing phases | [ ] |
-
-#### Benefits
-
-| Benefit | Description |
-|---------|-------------|
-| **No call-site changes** | All existing `addTypingIndicator('...')` calls work unchanged |
-| **Role-personalized** | Uses `userRole` to show relevant thinking words |
-| **Context preserved** | Alternates between context message and thinking words |
-| **Clean unmount** | Interval cleared automatically when typing indicator removed |
+| 1 | Add `long_wait` category to `thinking-words-dictionary.json` | [x] |
+| 2 | Add `'long_wait'` to `ThinkingCategory` type in loader | [x] |
+| 3 | Add `createTimedThinkingWordCycler()` to `thinking-words.ts` | [x] |
+| 4 | Wire `startThinkingWords()`/`stopThinkingWords()` into page | [x] |
+| 5 | Replace ALL 12 static `addTypingIndicator()` with `startThinkingWords()` | [x] |
+| 6 | Replace ALL 9 `removeTypingIndicator()` with `stopThinkingWords()` | [x] |
+| 7 | Add unmount cleanup `useEffect` | [x] |
+| 8 | Update `THINKING_WORDS.md` documentation | [x] |
+| 9 | Fix `setMessages` not destructured from hook | [x] |
+| 10 | Fix duplicate typing indicator from `handleApprove` | [x] |
+| 11 | Add re-entrant safety to `startThinkingWords` | [x] |
+| 12 | Verify rotation works across all phases | [x] |
 
 ---
 
@@ -1082,4 +1050,4 @@ if (useV6) {
 
 ---
 
-**Last Updated:** 2026-02-08 - Phase B implementation complete (B.1-B.4), added B.6 Thinking Words integration plan
+**Last Updated:** 2026-02-11 - Phase B fully complete (B.1-B.6 all verified). Phase C pending.

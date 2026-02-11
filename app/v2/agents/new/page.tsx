@@ -43,6 +43,7 @@ import type {
 import { isGenerateAgentV2Success } from '@/components/agent-creation/types/generate-agent-v2'
 import { formatScheduleDisplay } from '@/lib/utils/scheduleFormatter'
 import { useV6AgentGeneration } from '@/lib/utils/featureFlags'
+import { createTimedThinkingWordCycler } from '@/lib/ui/thinking-words'
 
 // ============================================================================
 // V6 Agent Generation Types and Helpers
@@ -107,14 +108,13 @@ interface InputSchemaItem {
  * @param workflowSteps - Array of PILOT DSL workflow steps
  * @returns Array of input schema items
  */
-function extractInputSchema(workflowSteps: any[]): InputSchemaItem[] {
+function extractInputSchema(workflowSteps: any[], enhancedPromptData?: any): InputSchemaItem[] {
   const inputs: InputSchemaItem[] = []
   const seenNames = new Set<string>()
 
+  // Source 1: Scan workflow steps for {{input.variable_name}} patterns
   for (const step of workflowSteps) {
-    // Stringify the step to search for patterns
     const stepStr = JSON.stringify(step)
-    // Match {{input.variable_name}} patterns
     const matches = stepStr.match(/\{\{input\.(\w+)\}\}/g) || []
 
     for (const match of matches) {
@@ -124,10 +124,47 @@ function extractInputSchema(workflowSteps: any[]): InputSchemaItem[] {
         inputs.push({
           name,
           type: 'string',
-          // Convert snake_case to Title Case for label
           label: name.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()),
           required: true,
           description: '',
+          placeholder: '',
+          hidden: false
+        })
+      }
+    }
+  }
+
+  // Source 2: Include resolved_user_inputs from enhanced prompt data
+  // V6 compiler hardcodes resolved values into steps, so {{input.*}} patterns won't exist
+  if (enhancedPromptData?.specifics?.resolved_user_inputs) {
+    for (const input of enhancedPromptData.specifics.resolved_user_inputs) {
+      if (input.key && !seenNames.has(input.key)) {
+        seenNames.add(input.key)
+        inputs.push({
+          name: input.key,
+          type: 'string',
+          label: input.key.replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase()),
+          required: true,
+          description: '',
+          placeholder: input.value || '',
+          hidden: false
+        })
+      }
+    }
+  }
+
+  // Source 3: Include user_inputs_required (inputs that still need values)
+  if (enhancedPromptData?.specifics?.user_inputs_required) {
+    for (const input of enhancedPromptData.specifics.user_inputs_required) {
+      const key = input.key || input.name
+      if (key && !seenNames.has(key)) {
+        seenNames.add(key)
+        inputs.push({
+          name: key,
+          type: 'string',
+          label: key.replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase()),
+          required: true,
+          description: input.description || '',
           placeholder: '',
           hidden: false
         })
@@ -165,14 +202,16 @@ function mapV6ResponseToAgent(
     agent_name: context.enhancedPromptData?.plan_title ||
                 semanticPlan?.goal ||
                 'New Agent',
-    user_prompt: context.enhancedPromptData?.enhanced_prompt || context.initialPrompt || '',
+    user_prompt: context.enhancedPromptData
+      ? JSON.stringify(context.enhancedPromptData)
+      : context.initialPrompt || '',
     system_prompt: `You are an automation agent. ${context.enhancedPromptData?.plan_description || semanticPlan?.goal || ''}`,
     description: context.enhancedPromptData?.plan_description ||
                  semanticPlan?.goal ||
                  '',
     plugins_required: workflow.suggested_plugins || metadata.plugins_used || [],
     connected_plugins: context.connectedPlugins,
-    input_schema: extractInputSchema(workflow.workflow_steps),
+    input_schema: extractInputSchema(workflow.workflow_steps, context.enhancedPromptData),
     output_schema: [],
     status: 'draft' as const,
     mode: 'on_demand' as const,
@@ -257,6 +296,7 @@ function V2AgentBuilderContent() {
 
   const {
     messages,
+    setMessages,
     messagesEndRef,
     addUserMessage,
     addAIMessage,
@@ -285,6 +325,10 @@ function V2AgentBuilderContent() {
   // ID tracking (for consistency with token tracking and database)
   const sessionId = useRef(generateUUID())
   const agentId = useRef(generateUUID())
+
+  // B.6: Thinking Words - rotating status messages during V6 generation
+  const THINKING_INTERVAL_MS = 4000
+  const thinkingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   console.log('🆔 V2 Agent Builder initialized with IDs:', {
     agentId: agentId.current,
@@ -361,7 +405,14 @@ function V2AgentBuilderContent() {
   // Auto-scroll to bottom when messages or UI state changes
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages, scheduleType, scheduleTime, selectedDays, selectedMonthDay, showScheduleBuilder, isAwaitingSchedule, isAwaitingFinalApproval])
+  }, [messages, scheduleType, scheduleTime, selectedDays, selectedMonthDay, showScheduleBuilder, isAwaitingSchedule, isAwaitingFinalApproval, builderState.showingCustomInput])
+
+  // B.6: Cleanup thinking words interval on unmount
+  useEffect(() => {
+    return () => {
+      if (thinkingIntervalRef.current) clearInterval(thinkingIntervalRef.current)
+    }
+  }, [])
 
   // Close schedule builder when clicking outside
   useEffect(() => {
@@ -432,9 +483,9 @@ function V2AgentBuilderContent() {
 
       // V10: Different messaging for mini-cycle vs initial Phase 3
       if (isInMiniCycle) {
-        addTypingIndicator('Updating your agent plan with new details...')
+        startThinkingWords('Updating your agent plan with new details...')
       } else {
-        addTypingIndicator('Creating your enhanced agent plan...')
+        startThinkingWords('Creating your enhanced agent plan...')
       }
 
       setTimeout(() => {
@@ -471,8 +522,8 @@ function V2AgentBuilderContent() {
       // 1. Add user's original prompt to chat
       addUserMessage(initialPrompt!)
 
-      // 2. Add typing indicator
-      addTypingIndicator('Analyzing your request...')
+      // 2. Add thinking words indicator
+      startThinkingWords('Analyzing your request...')
 
       // Create thread with AI provider/model from system config
       console.log('🔄 Creating thread with prompt:', initialPrompt, 'using:', aiConfig)
@@ -504,7 +555,7 @@ function V2AgentBuilderContent() {
 
     } catch (error) {
       console.error('❌ Thread initialization error:', error)
-      removeTypingIndicator()
+      stopThinkingWords()
       addSystemMessage('Error initializing conversation. Please try again.')
     } finally {
       setIsInitializing(false)
@@ -536,8 +587,8 @@ function V2AgentBuilderContent() {
       const data = await res.json()
       console.log('✅ Phase 1 response:', data)
 
-      // Remove typing indicator
-      removeTypingIndicator()
+      // Stop thinking words
+      stopThinkingWords()
 
       // Store connected plugins from Phase 1 for service status checking
       if (data.connectedPlugins) {
@@ -557,15 +608,15 @@ function V2AgentBuilderContent() {
         workflowPhase: 'analysis'
       }))
 
-      // Add typing indicator for Phase 2
-      addTypingIndicator('Generating clarification questions...')
+      // Add thinking words for Phase 2
+      startThinkingWords('Generating clarification questions...')
 
       // Move to Phase 2
       setTimeout(() => processPhase2(tid), 1000)
 
     } catch (error) {
       console.error('❌ Phase 1 error:', error)
-      removeTypingIndicator()
+      stopThinkingWords()
       addSystemMessage('Error during analysis')
     }
   }
@@ -604,8 +655,8 @@ function V2AgentBuilderContent() {
       const data = await res.json()
       console.log('✅ Phase 2 response:', data)
 
-      // Remove typing indicator
-      removeTypingIndicator()
+      // Stop thinking words
+      stopThinkingWords()
 
       // Display conversational summary
       if (data.conversationalSummary) {
@@ -632,16 +683,16 @@ function V2AgentBuilderContent() {
         if (isMiniCycle) {
           // V10: Mini-cycle complete, no more questions - show the plan
           setIsInMiniCycle(false)
-          addTypingIndicator('Finalizing your agent plan...')
+          startThinkingWords('Finalizing your agent plan...')
         } else {
-          addTypingIndicator('Creating your agent plan...')
+          startThinkingWords('Creating your agent plan...')
         }
         setTimeout(() => processPhase3(tid), 1500)
       }
 
     } catch (error) {
       console.error('❌ Phase 2 error:', error)
-      removeTypingIndicator()
+      stopThinkingWords()
       addSystemMessage('Error generating questions')
     }
   }
@@ -700,8 +751,8 @@ function V2AgentBuilderContent() {
       const data = await res.json()
       console.log('✅ Phase 3 response:', data)
 
-      // Remove typing indicator
-      removeTypingIndicator()
+      // Stop thinking words
+      stopThinkingWords()
 
       // ⚠️ OAuth Gate Check: If missing plugins, show connection cards
       if (data.missingPlugins && data.missingPlugins.length > 0) {
@@ -733,7 +784,7 @@ function V2AgentBuilderContent() {
         addAIMessage(`I need a few more details to complete your agent. Let me ask some quick questions about: ${userInputsRequired.join(', ')}`)
 
         // Trigger mini-cycle Phase 2 with the enhanced_prompt
-        addTypingIndicator('Generating clarification questions...')
+        startThinkingWords('Generating clarification questions...')
         setTimeout(() => {
           processPhase2(currentThreadId, { enhanced_prompt: data.enhanced_prompt })
         }, 1000)
@@ -772,7 +823,7 @@ function V2AgentBuilderContent() {
 
     } catch (error: any) {
       console.error('❌ Phase 3 error:', error)
-      removeTypingIndicator()
+      stopThinkingWords()
 
       // Show detailed error to help debugging
       const errorMessage = error.message || 'Unknown error'
@@ -828,7 +879,7 @@ function V2AgentBuilderContent() {
       if (remainingMissing.length === 0) {
         console.log('✅ All plugins connected! Re-running Phase 3...')
         setShowPluginCards(false)
-        addTypingIndicator('All services connected! Creating your enhanced plan...')
+        startThinkingWords('All services connected! Creating your enhanced plan...')
         await processPhase3(threadId!, updatedPlugins)
       }
 
@@ -862,9 +913,43 @@ function V2AgentBuilderContent() {
     if (remainingMissing.length === 0) {
       console.log('🔄 All plugins handled. Re-running Phase 3 with declined services:', updatedDeclined)
       setShowPluginCards(false)
-      addTypingIndicator('Re-evaluating with alternative services...')
+      startThinkingWords('Re-evaluating with alternative services...')
       await processPhase3(threadId!, connectedPlugins, { declined_services: updatedDeclined })
     }
+  }
+
+  // ==================== THINKING WORDS HELPERS ====================
+
+  const startThinkingWords = (initialMessage?: string) => {
+    // Stop any existing interval before starting a new one
+    if (thinkingIntervalRef.current) {
+      clearInterval(thinkingIntervalRef.current)
+      thinkingIntervalRef.current = null
+    }
+    removeTypingIndicator()
+
+    const getNextWord = createTimedThinkingWordCycler()
+
+    // Show contextual message first, then rotate thinking words after first interval
+    addTypingIndicator(initialMessage || getNextWord() + '...')
+
+    thinkingIntervalRef.current = setInterval(() => {
+      setMessages(prev =>
+        prev.map(msg =>
+          msg.id === 'typing-indicator'
+            ? { ...msg, content: getNextWord() + '...' }
+            : msg
+        )
+      )
+    }, THINKING_INTERVAL_MS)
+  }
+
+  const stopThinkingWords = () => {
+    if (thinkingIntervalRef.current) {
+      clearInterval(thinkingIntervalRef.current)
+      thinkingIntervalRef.current = null
+    }
+    removeTypingIndicator()
   }
 
   // ==================== AGENT CREATION ====================
@@ -911,8 +996,8 @@ function V2AgentBuilderContent() {
         // ================================================================
         console.log('🚀 Using V6 5-phase semantic pipeline...')
 
-        // Show loading message
-        addAIMessage('🔍 Generating your agent...')
+        // Show rotating thinking words during V6 generation
+        startThinkingWords()
 
         const v6StartTime = Date.now()
 
@@ -1075,8 +1160,8 @@ function V2AgentBuilderContent() {
       // Store agent data for later
       setPendingAgentData(agentData)
 
-      // Remove typing indicator and show draft ready message
-      removeTypingIndicator()
+      // Stop thinking words and show draft ready message
+      stopThinkingWords()
       addAIMessage("Agent draft ready!")
 
       // Add resolved_user_inputs to inputParameterValues if available
@@ -1117,7 +1202,7 @@ function V2AgentBuilderContent() {
 
     } catch (error: any) {
       console.error('❌ Agent creation error:', error)
-      removeTypingIndicator()
+      stopThinkingWords()
       addSystemMessage(`Error creating agent: ${error.message}`)
     } finally {
       setIsCreatingAgent(false)
@@ -1191,8 +1276,8 @@ function V2AgentBuilderContent() {
       // Mark agent as created
       setAgentCreated(true)
 
-      // Remove typing indicator and show success message
-      removeTypingIndicator()
+      // Stop thinking words and show success message
+      stopThinkingWords()
       addAIMessage('Your agent has been created successfully! Taking you to your new agent...')
 
       setTimeout(() => {
@@ -1231,8 +1316,8 @@ function V2AgentBuilderContent() {
         // V10: Reset enhancement state so Phase 3 can be re-triggered after edit questions
         resetForRefinement()
 
-        // Show typing indicator
-        addTypingIndicator('Updating your plan...')
+        // Show thinking words
+        startThinkingWords('Updating your plan...')
 
         // Call Phase 2 with user_feedback and current enhanced_prompt
         await processPhase2(threadId, {
@@ -1334,8 +1419,7 @@ function V2AgentBuilderContent() {
       addPlanSummary(planSummary)
     }
 
-    // Show thinking indicator while generating agent
-    addTypingIndicator('Drafting your agent based on the enhanced plan...')
+    // B.6: startThinkingWords() inside createAgent() handles the typing indicator
     approvePlan()
 
     // Create agent with enhanced prompt (will show scheduling UI after)
@@ -1554,8 +1638,8 @@ function V2AgentBuilderContent() {
     addUserMessage('Approve')
     setIsAwaitingFinalApproval(false)
 
-    // Show creating agent indicator
-    addTypingIndicator('Creating agent...')
+    // Show thinking words while creating agent
+    startThinkingWords('Creating agent...')
     setIsCreatingAgent(true)
 
     // Create the agent
