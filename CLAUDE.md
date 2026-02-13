@@ -61,6 +61,7 @@ Users describe what they want (e.g. *"Summarize my last 10 Gmail emails and save
 | **AI Provider Factory** | Multi-provider abstraction (singleton) | `/lib/ai/providerFactory.ts` |
 | **Orchestration Service** | Workflow orchestration with AIS-based model routing | `/lib/orchestration/OrchestrationService.ts` |
 | **Audit Trail Service** | Centralized audit logging (batched, non-blocking) | `/lib/services/AuditTrailService.ts` |
+| **User Context** | LLM personalization from auth/profile data | `/lib/user-context/` |
 
 ### V6 Agent Generation Pipeline
 
@@ -92,6 +93,52 @@ The following documents define **mandatory development standards** for this proj
 |----------|----------|---------|
 | **Repository Pattern** | [REPOSITORY_STRATEGY.md](/docs/REPOSITORY_STRATEGY.md) | All database access MUST go through the repository layer (`lib/repositories/`). No direct Supabase queries in API routes, services, or components. Repositories are server-side only — never import them in `'use client'` components. |
 
+### Documentation Standards
+
+All project documentation lives under `/docs/`. When creating or updating docs, follow these conventions:
+
+**File Naming:**
+
+| Doc Type | Convention | Example |
+|----------|------------|---------|
+| High-level guides | `SCREAMING_SNAKE_CASE.md` | `REPOSITORY_STRATEGY.md` |
+| Implementation docs | `PascalCase_With_Underscores.md` | `V2_Agent_Creation.md` |
+| Plugin docs | `kebab-case.md` | `google-sheets-plugin.md` |
+| Deprecated docs | Move to `docs/archive/` | — |
+
+**Required Structure:**
+
+1. **Header block** — title, last-updated date, and a brief purpose statement:
+   ```markdown
+   # Document Title
+
+   > **Last Updated**: YYYY-MM-DD
+
+   ## Overview
+   One paragraph: what this doc covers and why it exists.
+   ```
+
+2. **Table of Contents** — required for docs longer than ~150 lines, placed after the Overview.
+
+3. **Change History** — required for living docs. Place at the **end** of the document:
+   ```markdown
+   ## Change History
+
+   | Date | Change | Details |
+   |------|--------|---------|
+   | 2026-02-13 | Added X | Brief description |
+   ```
+
+**Formatting Rules:**
+
+- Use **tables** for structured data (APIs, configs, comparisons, status tracking)
+- Include **file paths** before code blocks (`**File:** \`lib/server/example.ts\``)
+- Use proper language tags on code fences (```typescript, ```json, ```bash)
+- Cross-reference other docs with relative links: `[Doc Name](/docs/DOC_NAME.md)`
+- Status indicators: `✅` done, `⬜` todo, `🟢` easy, `🟡` medium, `🔴` hard
+- Use `---` horizontal rules to separate major sections
+- Maximum one blank line between sections
+
 ---
 
 ## Code Patterns & Conventions
@@ -103,7 +150,7 @@ The following documents define **mandatory development standards** for this proj
 | **Components** | PascalCase | `AgentWizard.tsx` |
 | **API routes** | kebab-case directories | `/api/run-agent/route.ts` |
 | **Utils/Services** | camelCase | `featureFlags.ts` |
-| **Type files** | suffix with `-types.ts` or `-schema.ts` | `agent-prompt-threads.ts` |
+| **Type files** | suffix with `-types.ts` or `-schema.ts` | `plugin-types.ts` |
 | **Constants** | SCREAMING_SNAKE_CASE | `AUDIT_EVENTS` |
 | **Booleans** | Prefix with verb | `isEnabled`, `hasChanges`, `canEdit` |
 
@@ -296,7 +343,7 @@ export class AgentRepository {
 
 ## Feature Flags
 
-Feature flags control experimental features and gradual rollouts. See `/docs/FEATURE_FLAGS.md` for full documentation.
+Feature flags control experimental features and gradual rollouts. See `/docs/feature_flags.md` for full documentation.
 
 ### Usage
 
@@ -381,6 +428,28 @@ await auditTrail.log({
 
 ---
 
+## User Context
+
+Personalize LLM calls with user data from auth or profile. See [USER_CONTEXT.md](/docs/USER_CONTEXT.md) for full details.
+
+```typescript
+import { buildUserContextFromAuth, mergeUserContext } from '@/lib/user-context';
+
+// Fast path — from auth metadata (no DB call)
+const userContext = buildUserContextFromAuth(user);
+
+// With client overrides
+const finalContext = mergeUserContext(serverContext, body.user_context);
+
+// Full path — from profiles table (DB call)
+import { buildUserContextFromProfile } from '@/lib/user-context';
+const userContext = await buildUserContextFromProfile(user);
+```
+
+Include user context in LLM calls for agent creation, workflow generation, and any personalized responses.
+
+---
+
 ## UI Components
 
 Use Radix UI primitives from `/components/ui/`:
@@ -443,20 +512,22 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 
 ---
 
-## Plugin System
+## Plugin System (V2)
 
-Each integration implements a strategy under `/lib/plugins/strategies/`:
+Plugins use a JSON-definition + executor-class architecture. See [PLUGIN_GENERATION_WORKFLOW.md](/docs/PLUGIN_GENERATION_WORKFLOW.md) for the full plugin generation guide.
 
-```typescript
-// Required exports
-export const connect = async (userId: string) => { ... };
-export const disconnect = async (userId: string) => { ... };
-export const handleOAuthCallback = async (code: string, userId: string) => { ... };
-export const run = async (userId: string, input: PluginInput) => { ... };
-export const refreshToken = async (userId: string) => { ... };
-```
+| Component | Location | Purpose |
+|-----------|----------|---------|
+| **Plugin Definitions** | `lib/plugins/definitions/{name}-plugin-v2.json` | OAuth config, action schemas, output schemas |
+| **Plugin Executors** | `lib/server/{name}-plugin-executor.ts` | Action implementation (extends `BasePluginExecutor`) |
+| **Base Executor** | `lib/server/base-plugin-executor.ts` | Shared executor logic (auth, error handling) |
+| **Plugin Manager** | `lib/server/plugin-manager-v2.ts` | Loads definitions, manages plugin registry |
+| **Executor Registry** | `lib/server/plugin-executer-v2.ts` | Maps plugin keys to executor classes |
+| **Plugin List (UI)** | `lib/plugins/pluginList.tsx` | UI metadata for plugin display |
 
-Registered in `/lib/plugins/pluginRegistry.ts`. Connections stored in `plugin_connections` table.
+Connections stored in `plugin_connections` table.
+
+> **Note:** The legacy v1 strategy-based system (`lib/plugins/pluginRegistry.ts`, `lib/plugins/strategies/`) is deprecated. All new plugins must use the v2 architecture.
 
 ---
 
@@ -489,7 +560,7 @@ npm run lint       # ESLint
 
 | Document | Purpose | Last Updated |
 |----------|---------|--------------|
-| [FEATURE_FLAGS.md](/docs/FEATURE_FLAGS.md) | Complete feature flag reference (env + database flags) | 2026-02-08 |
+| [feature_flags.md](/docs/feature_flags.md) | Complete feature flag reference (env + database flags) | 2026-02-08 |
 | [V6_OVERVIEW.md](/docs/v6/V6_OVERVIEW.md) | V6 agent generation system overview and documentation guide | 2026-01-16 |
 | [V6_AGENT_CREATION_INTEGRATION_PLAN.md](/docs/v6/V6_AGENT_CREATION_INTEGRATION_PLAN.md) | V6 integration with Intent Validation and Review UI | 2026-01-21 |
 | [V2_Thread-Based-Agent-Creation-Flow.md](/docs/V2_Thread-Based-Agent-Creation-Flow.md) | Thread-based agent creation flow diagram | 2026-01-16 |
@@ -497,3 +568,5 @@ npm run lint       # ESLint
 | [V2_TEST_PAGE_SCOPE.md](/docs/V2_TEST_PAGE_SCOPE.md) | Test page functionality (`/test-plugins-v2`) | 2026-01-21 |
 | [REPOSITORY_STRATEGY.md](/docs/REPOSITORY_STRATEGY.md) | Repository pattern guidelines and architecture | 2026-01-15 |
 | [SYSTEM_LOGGING_GUIDELINES.md](/docs/SYSTEM_LOGGING_GUIDELINES.md) | Pino logging standards and best practices | 2025-11-28 |
+| [USER_CONTEXT.md](/docs/USER_CONTEXT.md) | User context module for LLM personalization | — |
+| [PLUGIN_GENERATION_WORKFLOW.md](/docs/PLUGIN_GENERATION_WORKFLOW.md) | Interactive plugin generation guide for Claude Code | — |
