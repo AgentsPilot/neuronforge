@@ -1,8 +1,64 @@
 // app/oauth/callback/[plugin]/route.ts
 
 import { NextRequest, NextResponse } from 'next/server';
+import { createLogger } from '@/lib/logger';
+import type { Logger } from 'pino';
 import { PluginManagerV2 } from '@/lib/server/plugin-manager-v2';
 import { UserPluginConnections } from '@/lib/server/user-plugin-connections';
+
+const logger = createLogger({ module: 'OAuthCallbackAPI' });
+
+const APP_URL = process.env.NEXT_PUBLIC_APP_URL || '';
+
+/** Escape a string for safe embedding inside a JS single-quoted literal. */
+function escapeJs(value: string): string {
+  return value
+    .replace(/\\/g, '\\\\')
+    .replace(/'/g, "\\'")
+    .replace(/</g, '\\x3c')
+    .replace(/>/g, '\\x3e')
+    .replace(/\n/g, '\\n');
+}
+
+/** Build an HTML page that posts a message to the opener window and closes itself. */
+function buildPostMessageResponse(
+  plugin: string,
+  payload: { success: boolean; error?: string; data?: Record<string, string> }
+): NextResponse {
+  const safePlugin = escapeJs(plugin);
+  const safeOrigin = escapeJs(APP_URL);
+
+  const dataBlock = payload.data
+    ? `,\n              data: { ${Object.entries(payload.data).map(([k, v]) => `${k}: '${escapeJs(v)}'`).join(', ')} }`
+    : '';
+
+  const errorBlock = payload.error
+    ? `,\n              error: '${escapeJs(payload.error)}'`
+    : '';
+
+  const bodyHtml = payload.success
+    ? '<h3>Authorization Successful!</h3><p>Closing window...</p>'
+    : '';
+
+  const noOpenerFallback = payload.success
+    ? `\n            } else {\n              document.body.innerHTML += '<p style="color: red;">Error: Could not communicate with parent window. Please close this window and try again.</p>';`
+    : `\n            } else {\n              window.close();`;
+
+  return new NextResponse(
+    `<html><body>${bodyHtml}<script>
+            if (window.opener) {
+              window.opener.postMessage({
+                type: 'plugin-connected',
+                plugin: '${safePlugin}',
+                success: ${payload.success}${errorBlock}${dataBlock}
+              }, '${safeOrigin}');
+              setTimeout(() => window.close(), ${payload.success ? 500 : 100});
+${noOpenerFallback}
+            }
+          </script></body></html>`,
+    { headers: { 'Content-Type': 'text/html' } }
+  );
+}
 
 // GET /oauth/callback/[plugin]?code={code}&state={state}
 // Handles OAuth callbacks from various plugins (Gmail, Slack, etc.)
@@ -10,51 +66,35 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ plugin: string }> }
 ) {
+  const { plugin } = await params;
+  const requestLogger = logger.child({ plugin });
+
   try {
     const { searchParams } = new URL(request.url);
     const code = searchParams.get('code');
     const state = searchParams.get('state');
-    const { plugin } = await params;
 
-    console.log(`DEBUG: API - OAuth callback for plugin: ${plugin}`);
+    requestLogger.info('OAuth callback received');
 
-    // Check for OAuth errors
-    const error = searchParams.get('error');
-    if (error) {
+    // Check for OAuth errors from provider
+    const oauthError = searchParams.get('error');
+    if (oauthError) {
       const errorDescription = searchParams.get('error_description');
-      console.error(`DEBUG: API - OAuth error from ${plugin}:`, error, errorDescription);
-      
-      return new NextResponse(`
-        <script>
-          window.opener.postMessage({
-            type: 'plugin-connected',
-            plugin: '${plugin}',
-            success: false,
-            error: '${error}: ${errorDescription || 'OAuth authorization failed'}'
-          }, '${process.env.NEXT_PUBLIC_APP_URL}');
-          setTimeout(() => window.close(), 100);
-        </script>
-      `, {
-        headers: { 'Content-Type': 'text/html' }
+      requestLogger.error({ oauthError, errorDescription }, 'OAuth error from provider');
+
+      return buildPostMessageResponse(plugin, {
+        success: false,
+        error: `${oauthError}: ${errorDescription || 'OAuth authorization failed'}`,
       });
     }
 
     // Validate required parameters
     if (!code || !state) {
-      console.error(`DEBUG: API - Missing OAuth parameters for ${plugin}`);
-      
-      return new NextResponse(`
-        <script>
-          window.opener.postMessage({
-            type: 'plugin-connected',
-            plugin: '${plugin}',
-            success: false,
-            error: 'Missing authorization code or state parameter'
-          }, '${process.env.NEXT_PUBLIC_APP_URL}');
-          setTimeout(() => window.close(), 100);
-        </script>
-      `, {
-        headers: { 'Content-Type': 'text/html' }
+      requestLogger.error('Missing OAuth code or state parameter');
+
+      return buildPostMessageResponse(plugin, {
+        success: false,
+        error: 'Missing authorization code or state parameter',
       });
     }
 
@@ -62,26 +102,14 @@ export async function GET(
     const pluginManager = await PluginManagerV2.getInstance();
     const userConnections = UserPluginConnections.getInstance();
 
-    // Map plugin to plugin key (handle variations)
-    const pluginKey = mapPluginToPluginKey(plugin);
-    
     // Get plugin definition
-    const pluginDefinition = pluginManager.getPluginDefinition(pluginKey);
+    const pluginDefinition = pluginManager.getPluginDefinition(plugin);
     if (!pluginDefinition) {
-      console.error(`DEBUG: API - Plugin definition not found for ${pluginKey}`);
-      
-      return new NextResponse(`
-        <script>
-          window.opener.postMessage({
-            type: 'plugin-connected',
-            plugin: '${plugin}',
-            success: false,
-            error: 'Plugin configuration not found'
-          }, '${process.env.NEXT_PUBLIC_APP_URL}');
-          setTimeout(() => window.close(), 100);
-        </script>
-      `, {
-        headers: { 'Content-Type': 'text/html' }
+      requestLogger.error({ plugin }, 'Plugin definition not found');
+
+      return buildPostMessageResponse(plugin, {
+        success: false,
+        error: 'Plugin configuration not found',
       });
     }
 
@@ -90,133 +118,67 @@ export async function GET(
       code,
       state,
       pluginDefinition.plugin.auth_config,
-      request // Pass request for audit trail IP/user-agent extraction
+      request
     );
 
-    // Extract and save plugin-specific additional profile data
-    await pluginSpecificExtractAndSaveAdditionalProfileData(searchParams, connection, pluginKey, userConnections);
+    // Extract and save plugin-specific profile data (driven by plugin definition)
+    await extractPluginProfileData(searchParams, connection, pluginDefinition, userConnections, requestLogger);
 
-    console.log(`DEBUG: API - OAuth callback successful for ${plugin}, user: ${connection.user_id}`);
+    requestLogger.info({ userId: connection.user_id }, 'OAuth callback successful');
 
-    // Return success response that communicates with popup window
-    return new NextResponse(`
-      <html>
-        <body>
-          <h3>Authorization Successful!</h3>
-          <p>Closing window...</p>
-          <script>
-            console.log('[OAuth Callback] Sending postMessage to parent window');
-            console.log('[OAuth Callback] Plugin:', '${plugin}');
-            console.log('[OAuth Callback] Target origin:', '${process.env.NEXT_PUBLIC_APP_URL}');
-
-            if (window.opener) {
-              window.opener.postMessage({
-                type: 'plugin-connected',
-                plugin: '${plugin}',
-                success: true,
-                data: {
-                  plugin_key: '${connection.plugin_key}',
-                  plugin_name: '${connection.plugin_name}',
-                  username: '${connection.username}',
-                  connected_at: '${connection.connected_at}'
-                }
-              }, '${process.env.NEXT_PUBLIC_APP_URL}');
-              console.log('[OAuth Callback] postMessage sent successfully');
-              setTimeout(() => {
-                console.log('[OAuth Callback] Closing window now');
-                window.close();
-              }, 500);
-            } else {
-              console.error('[OAuth Callback] No window.opener found!');
-              document.body.innerHTML += '<p style="color: red;">Error: Could not communicate with parent window. Please close this window and try again.</p>';
-            }
-          </script>
-        </body>
-      </html>
-    `, {
-      headers: { 'Content-Type': 'text/html' }
+    return buildPostMessageResponse(plugin, {
+      success: true,
+      data: {
+        plugin_key: connection.plugin_key,
+        plugin_name: connection.plugin_name,
+        username: connection.username || '',
+        connected_at: connection.connected_at,
+      },
     });
 
-  } catch (error: any) {
-    console.error('DEBUG: API - OAuth callback error:', error);
+  } catch (error) {
+    requestLogger.error({ err: error }, 'OAuth callback failed');
 
-    const { plugin } = await params;
-
-    return new NextResponse(`
-      <script>
-        window.opener.postMessage({
-          type: 'plugin-connected',
-          plugin: '${plugin}',
-          success: false,
-          error: '${error.message || 'OAuth callback failed'}'
-        }, '${process.env.NEXT_PUBLIC_APP_URL}');
-        setTimeout(() => window.close(), 100);
-      </script>
-    `, {
-      headers: { 'Content-Type': 'text/html' }
+    return buildPostMessageResponse(plugin, {
+      success: false,
+      error: error instanceof Error ? error.message : 'OAuth callback failed',
     });
   }
 }
 
-// Helper function to map OAuth plugin to plugin key
-function mapPluginToPluginKey(plugin: string): string {
-  const pluginMap: Record<string, string> = {
-    'gmail': 'google-mail', // not in use
-    'google-mail': 'google-mail',
-    'google': 'gmail',  // not in use
-
-    'google-drive': 'google-drive',
-    'google-sheets': 'google-sheets',
-    'google-docs': 'google-docs',
-
-    'slack': 'slack',
-
-    'microsoft': 'outlook',
-    'outlook': 'outlook',
-
-    'google-calendar': 'google-calendar',
-    'calendar': 'google-calendar',
-
-    'whatsapp': 'whatsapp'
-  };
-
-  return pluginMap[plugin] || plugin;
-}
-
-// Extract and save plugin-specific additional profile data
-async function pluginSpecificExtractAndSaveAdditionalProfileData(
+/** Extract and save plugin-specific profile data based on oauth_callback_profile_params in the plugin definition. */
+async function extractPluginProfileData(
   searchParams: URLSearchParams,
   connection: any,
-  pluginKey: string,
-  userConnections: UserPluginConnections
+  pluginDefinition: any,
+  userConnections: UserPluginConnections,
+  requestLogger: Logger
 ): Promise<void> {
-  if (pluginKey === 'whatsapp') {
-    try {
-      // WhatsApp Embedded Signup passes phone_number_id and waba_id as URL parameters
-      const phoneNumberId = searchParams.get('phone_number_id');
-      const wabaId = searchParams.get('waba_id');
-      
-      if (phoneNumberId && wabaId) {
-        // Update the connection with profile data
-        await userConnections.updateConnectionProfileData(
-          connection.user_id,
-          pluginKey,
-          {
-            phone_number_id: phoneNumberId,
-            waba_id: wabaId
-          }
-        );
-        
-        console.log(`DEBUG: Stored WhatsApp profile data - phone_number_id: ${phoneNumberId}, waba_id: ${wabaId}`);
-      } else {
-        console.warn('DEBUG: WhatsApp OAuth callback missing phone_number_id or waba_id parameters');
-        console.warn('DEBUG: Available search params:', Array.from(searchParams.entries()));
-      }
-    } catch (error) {
-      console.error('DEBUG: Failed to store WhatsApp profile data:', error);
-      // Don't throw - we don't want to fail the OAuth flow if profile data storage fails
+  const profileParams: string[] | undefined = pluginDefinition.plugin.auth_config?.oauth_callback_profile_params;
+  if (!profileParams?.length) return;
+
+  try {
+    const profileData: Record<string, string> = {};
+    for (const param of profileParams) {
+      const value = searchParams.get(param);
+      if (value) profileData[param] = value;
     }
-  }  
-  // Add other plugin-specific handlers here as needed in the future
-  // else if (pluginKey === 'other-plugin') { ... }
+
+    if (Object.keys(profileData).length > 0) {
+      await userConnections.updateConnectionProfileData(
+        connection.user_id,
+        connection.plugin_key,
+        profileData
+      );
+      requestLogger.info({ profileData }, 'Stored plugin profile data');
+    } else {
+      requestLogger.warn(
+        { expectedParams: profileParams, received: Object.fromEntries(searchParams.entries()) },
+        'OAuth callback missing expected profile params'
+      );
+    }
+  } catch (error) {
+    // Don't throw - profile data storage failure shouldn't break the OAuth flow
+    requestLogger.error({ err: error }, 'Failed to store plugin profile data');
+  }
 }
