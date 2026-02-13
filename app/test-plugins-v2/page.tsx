@@ -497,6 +497,39 @@ const PARAMETER_TEMPLATES = {
       "record_id": "recXXXXXXXXXXXXXX",
       "field_name": "Attachments"
     }
+  },
+  "whatsapp-business": {
+    "send_template_message": {
+      "recipient_phone": "+15551234567",
+      "template_name": "order_confirmation",
+      "language_code": "en_US",
+      "template_parameters": {
+        "body": ["John", "ORD-12345"],
+        "header": []
+      }
+    },
+    "send_text_message": {
+      "recipient_phone": "+15551234567",
+      "message_text": "Hello! Thanks for reaching out. How can I help you today?",
+      "preview_url": false
+    },
+    "send_interactive_message": {
+      "recipient_phone": "+15551234567",
+      "body_text": "How would you like to proceed with your order?",
+      "interaction_type": "button",
+      "buttons": [
+        { "id": "track_order", "title": "Track Order" },
+        { "id": "cancel_order", "title": "Cancel Order" },
+        { "id": "speak_agent", "title": "Speak to Agent" }
+      ]
+    },
+    "list_message_templates": {
+      "limit": 50,
+      "status_filter": "APPROVED"
+    },
+    "mark_message_read": {
+      "message_id": "wamid.HBgLMTU1NTEyMzQ1NjcVAgARGBI2QTNEME"
+    }
   }
 };
 

@@ -1,48 +1,53 @@
 // app/api/plugins/webhooks/whatsapp-business/route.ts
 
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import { UserPluginConnections } from '@/lib/server/user-plugin-connections';
+import { createLogger } from '@/lib/logger';
 
+const logger = createLogger({ module: 'WhatsAppWebhook' });
 const VERIFY_TOKEN = process.env.WHATSAPP_VERIFY_TOKEN || 'your-verify-token-here';
 
 // GET: Handle webhook verification from Meta
 export async function GET(request: NextRequest) {
   try {
     const searchParams = request.nextUrl.searchParams;
-    
+
     // Meta sends these parameters for webhook verification
     const mode = searchParams.get('hub.mode');
     const token = searchParams.get('hub.verify_token');
     const challenge = searchParams.get('hub.challenge');
 
-    console.log('DEBUG: WhatsApp webhook verification request received');
+    logger.info('Webhook verification request received');
 
     // Verify the token matches
     if (mode === 'subscribe' && token === VERIFY_TOKEN) {
-      console.log('DEBUG: WhatsApp webhook verified successfully');
+      logger.info('Webhook verified successfully');
       // Respond with the challenge to complete verification
       return new Response(challenge, { status: 200 });
     }
 
-    console.error('DEBUG: WhatsApp webhook verification failed - invalid token');
+    logger.warn('Webhook verification failed - invalid token');
     return new Response('Forbidden', { status: 403 });
 
-  } catch (error: any) {
-    console.error('DEBUG: WhatsApp webhook verification error:', error);
+  } catch (error) {
+    logger.error({ err: error }, 'Webhook verification error');
     return new Response('Internal Server Error', { status: 500 });
   }
 }
 
 // POST: Handle incoming webhook events from WhatsApp
 export async function POST(request: NextRequest) {
+  const correlationId = request.headers.get('x-correlation-id') || crypto.randomUUID();
+  const requestLogger = logger.child({ correlationId });
+
   try {
     const body = await request.json();
-    
-    console.log('DEBUG: WhatsApp webhook event received:', JSON.stringify(body, null, 2));
+
+    requestLogger.debug({ payload: body }, 'Webhook event received');
 
     // WhatsApp webhook structure
     if (body.object !== 'whatsapp_business_account') {
-      console.log('DEBUG: Not a WhatsApp Business Account webhook');
+      requestLogger.debug('Not a WhatsApp Business Account webhook');
       return new Response('OK', { status: 200 });
     }
 
@@ -56,31 +61,31 @@ export async function POST(request: NextRequest) {
         const displayPhoneNumber = value.metadata?.display_phone_number;
 
         if (!phoneNumberId) {
-          console.log('DEBUG: No phone_number_id in webhook payload');
+          requestLogger.warn('No phone_number_id in webhook payload');
           continue;
         }
 
         // Find user by phone_number_id in their profile_data
-        const userConnection = await findUserByPhoneNumberId(phoneNumberId);
-        
+        const userConnection = await findUserByPhoneNumberId(phoneNumberId, requestLogger);
+
         if (!userConnection) {
-          console.log(`DEBUG: No user found for phone_number_id: ${phoneNumberId}`);
+          requestLogger.warn({ phoneNumberId }, 'No user found for phone_number_id');
           continue;
         }
 
-        console.log(`DEBUG: Webhook event for user: ${userConnection.user_id}`);
+        requestLogger.info({ userId: userConnection.user_id }, 'Webhook event for user');
 
         // Handle incoming messages
         if (value.messages && Array.isArray(value.messages)) {
           for (const message of value.messages) {
-            await handleIncomingMessage(userConnection, message, displayPhoneNumber);
+            await handleIncomingMessage(userConnection, message, displayPhoneNumber, requestLogger);
           }
         }
 
         // Handle message status updates
         if (value.statuses && Array.isArray(value.statuses)) {
           for (const status of value.statuses) {
-            await handleMessageStatus(userConnection, status);
+            await handleMessageStatus(userConnection, status, requestLogger);
           }
         }
       }
@@ -89,41 +94,41 @@ export async function POST(request: NextRequest) {
     // Always return 200 to acknowledge receipt
     return new Response('OK', { status: 200 });
 
-  } catch (error: any) {
-    console.error('DEBUG: WhatsApp webhook processing error:', error);
+  } catch (error) {
+    requestLogger.error({ err: error }, 'Webhook processing error');
     // Still return 200 to prevent retries
     return new Response('OK', { status: 200 });
   }
 }
 
 // Helper: Find user connection by phone_number_id
-async function findUserByPhoneNumberId(phoneNumberId: string): Promise<any | null> {
+async function findUserByPhoneNumberId(phoneNumberId: string, log: typeof logger): Promise<any | null> {
   try {
     const userConnections = UserPluginConnections.getInstance();
-    
+
     // This is a simplified implementation
     // You'll need to implement a method in UserPluginConnections to query by profile_data
     // For now, this is a placeholder that you'll need to adapt to your database schema
-    
+
     // Option 1: If you have a method to get all connections and filter
     // const allConnections = await userConnections.getAllConnections();
-    // return allConnections.find(conn => 
-    //   conn.plugin_name === 'whatsapp' && 
+    // return allConnections.find(conn =>
+    //   conn.plugin_name === 'whatsapp-business' &&
     //   conn.profile_data?.phone_number_id === phoneNumberId
     // );
 
     // Option 2: Implement a new method in UserPluginConnections
-    // return await userConnections.findByPhoneNumberId('whatsapp', phoneNumberId);
+    // return await userConnections.findByPhoneNumberId('whatsapp-business', phoneNumberId);
 
-    console.log(`DEBUG: Looking for user with phone_number_id: ${phoneNumberId}`);
-    
+    log.debug({ phoneNumberId }, 'Looking for user with phone_number_id');
+
     // TODO: Implement proper database query
     // This requires adding a method to UserPluginConnections or querying your database directly
-    
+
     return null;
 
   } catch (error) {
-    console.error('DEBUG: Error finding user by phone_number_id:', error);
+    log.error({ err: error, phoneNumberId }, 'Error finding user by phone_number_id');
     return null;
   }
 }
@@ -132,14 +137,15 @@ async function findUserByPhoneNumberId(phoneNumberId: string): Promise<any | nul
 async function handleIncomingMessage(
   userConnection: any,
   message: any,
-  businessPhone: string | undefined
+  businessPhone: string | undefined,
+  log: typeof logger
 ): Promise<void> {
-  console.log('DEBUG: Incoming message:', {
+  log.info({
     from: message.from,
-    id: message.id,
+    messageId: message.id,
     type: message.type,
-    timestamp: message.timestamp
-  });
+    userId: userConnection.user_id
+  }, 'Incoming message');
 
   // Extract message details
   const messageData: Record<string, any> = {
@@ -188,7 +194,7 @@ async function handleIncomingMessage(
       break;
   }
 
-  console.log('DEBUG: Processed message data:', messageData);
+  log.debug({ messageData }, 'Processed message data');
 
   // TODO: Store in your database, trigger automation, notify user, etc.
   // Examples of what you might do:
@@ -201,14 +207,15 @@ async function handleIncomingMessage(
 // Helper: Handle message status update
 async function handleMessageStatus(
   userConnection: any,
-  status: any
+  status: any,
+  log: typeof logger
 ): Promise<void> {
-  console.log('DEBUG: Message status update:', {
-    message_id: status.id,
+  log.info({
+    messageId: status.id,
     status: status.status,
-    timestamp: status.timestamp,
-    recipient: status.recipient_id
-  });
+    recipient: status.recipient_id,
+    userId: userConnection.user_id
+  }, 'Message status update');
 
   const statusData: Record<string, any> = {
     message_id: status.id,
@@ -221,7 +228,7 @@ async function handleMessageStatus(
   // Handle errors if present
   if (status.errors && Array.isArray(status.errors)) {
     statusData['errors'] = status.errors;
-    console.error('DEBUG: Message delivery errors:', status.errors);
+    log.error({ errors: status.errors, messageId: status.id }, 'Message delivery errors');
   }
 
   // TODO: Update message status in your database
