@@ -28,7 +28,7 @@
     },
     "webhook_config": {
       "required": true,
-      "endpoint_path": "/api/plugins/webhooks/whatsapp",
+      "endpoint_path": "/api/plugins/webhooks/whatsapp-business",
       "events": ["messages", "message_status"],
       "setup_instructions": "After OAuth, configure webhook in Meta App Dashboard > WhatsApp > Configuration. Subscribe to 'messages' field. Webhook URL will be provided after connection.",
       "verify_token_required": true,

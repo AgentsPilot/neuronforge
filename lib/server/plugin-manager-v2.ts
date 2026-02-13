@@ -17,7 +17,7 @@ const corePluginFiles = [
       'google-docs-plugin-v2.json',
       'google-calendar-plugin-v2.json',
       'slack-plugin-v2.json',
-      'whatsapp-plugin-v2.json',
+      'whatsapp-business-plugin-v2.json',
       'hubspot-plugin-v2.json',
       'chatgpt-research-plugin-v2.json',
       'linkedin-plugin-v2.json',

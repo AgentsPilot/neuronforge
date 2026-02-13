@@ -1,4 +1,4 @@
-// app/api/plugins/webhooks/whatsapp/route.ts
+// app/api/plugins/webhooks/whatsapp-business/route.ts
 
 import { NextRequest, NextResponse } from 'next/server';
 import { UserPluginConnections } from '@/lib/server/user-plugin-connections';
@@ -142,7 +142,7 @@ async function handleIncomingMessage(
   });
 
   // Extract message details
-  const messageData = {
+  const messageData: Record<string, any> = {
     message_id: message.id,
     from: message.from,
     timestamp: message.timestamp,
@@ -210,7 +210,7 @@ async function handleMessageStatus(
     recipient: status.recipient_id
   });
 
-  const statusData = {
+  const statusData: Record<string, any> = {
     message_id: status.id,
     status: status.status, // sent, delivered, read, failed
     timestamp: status.timestamp,
