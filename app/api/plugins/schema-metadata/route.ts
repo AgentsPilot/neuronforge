@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { getUser } from '@/lib/auth';
+import { createLogger } from '@/lib/logger';
 import { PluginManagerV2 } from '@/lib/server/plugin-manager-v2';
 
 /**
@@ -10,33 +12,35 @@ import { PluginManagerV2 } from '@/lib/server/plugin-manager-v2';
  *
  * Response format:
  * {
- *   "metadata": {
- *     "channel_id": [{ plugin: "slack", action: "send_message", parameter: "channel_id", source: "list_channels" }],
- *     "spreadsheet_id": [{ plugin: "google-sheets", action: "read_range", parameter: "spreadsheet_id", source: "list_spreadsheets" }],
- *     ...
+ *   "success": true,
+ *   "data": {
+ *     "metadata": {
+ *       "channel_id": [{ plugin: "slack", action: "send_message", parameter: "channel_id", source: "list_channels" }],
+ *       "spreadsheet_id": [{ plugin: "google-sheets", action: "read_range", parameter: "spreadsheet_id", source: "list_spreadsheets" }],
+ *       ...
+ *     },
+ *     "timestamp": 1234567890
  *   }
  * }
  */
-export async function GET(request: NextRequest) {
-  try {
-    const pluginManager = await PluginManagerV2.getInstance();
 
-    // Get all plugin names - use the method if available, otherwise use core plugin list
-    const allPlugins = typeof (pluginManager as any).getAllPluginNames === 'function'
-      ? (pluginManager as any).getAllPluginNames()
-      : [
-          'google-mail',
-          'google-drive',
-          'google-sheets',
-          'google-docs',
-          'google-calendar',
-          'slack',
-          'whatsapp',
-          'hubspot',
-          'chatgpt-research',
-          'linkedin',
-          'airtable'
-        ];
+const logger = createLogger({ module: 'SchemaMetadataAPI' });
+
+export async function GET(request: NextRequest) {
+  const correlationId = request.headers.get('x-correlation-id') || crypto.randomUUID();
+  const requestLogger = logger.child({ correlationId });
+
+  try {
+    const user = await getUser();
+    if (!user) {
+      return NextResponse.json(
+        { success: false, error: 'Unauthorized' },
+        { status: 401 }
+      );
+    }
+
+    const pluginManager = await PluginManagerV2.getInstance();
+    const allPlugins = pluginManager.getAllPluginNames();
 
     // Build a map of parameter names to their dynamic options config
     const metadata: Record<string, { plugin: string; action: string; parameter: string; source: string; depends_on?: string[] }[]> = {};
@@ -45,18 +49,14 @@ export async function GET(request: NextRequest) {
       const pluginDef = pluginManager.getPluginDefinition(pluginName);
       if (!pluginDef || !pluginDef.actions) continue;
 
-      // Scan all actions in this plugin
       for (const actionName of Object.keys(pluginDef.actions)) {
         const actionDef = pluginManager.getActionDefinition(pluginName, actionName);
         if (!actionDef || !actionDef.parameters?.properties) continue;
 
-        // Scan all parameters in this action
         for (const [paramName, paramSchema] of Object.entries(actionDef.parameters.properties)) {
           const dynamicOptions = (paramSchema as any)['x-dynamic-options'];
 
           if (dynamicOptions && dynamicOptions.source) {
-            // This parameter supports dynamic options
-            // Store it indexed by parameter name for easy lookup
             if (!metadata[paramName]) {
               metadata[paramName] = [];
             }
@@ -66,22 +66,28 @@ export async function GET(request: NextRequest) {
               action: actionName,
               parameter: paramName,
               source: dynamicOptions.source,
-              depends_on: dynamicOptions.depends_on // Include dependency information
+              depends_on: dynamicOptions.depends_on
             });
           }
         }
       }
     }
 
+    requestLogger.info({ userId: user.id, pluginCount: allPlugins.length }, 'Schema metadata fetched');
+
     return NextResponse.json({
-      metadata,
-      timestamp: Date.now()
+      success: true,
+      data: { metadata, timestamp: Date.now() }
     });
 
-  } catch (error: any) {
-    console.error('[Schema Metadata] Error:', error);
+  } catch (error) {
+    requestLogger.error({ err: error }, 'Failed to fetch schema metadata');
     return NextResponse.json(
-      { error: 'Failed to fetch schema metadata', details: error.toString() },
+      {
+        success: false,
+        error: 'Failed to fetch schema metadata',
+        details: process.env.NODE_ENV === 'development' ? String(error) : undefined
+      },
       { status: 500 }
     );
   }
