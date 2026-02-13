@@ -101,32 +101,15 @@ export async function POST(request: NextRequest) {
   }
 }
 
-// Helper: Find user connection by phone_number_id
+// Helper: Find user connection by phone_number_id stored in profile_data
 async function findUserByPhoneNumberId(phoneNumberId: string, log: typeof logger): Promise<any | null> {
   try {
     const userConnections = UserPluginConnections.getInstance();
-
-    // This is a simplified implementation
-    // You'll need to implement a method in UserPluginConnections to query by profile_data
-    // For now, this is a placeholder that you'll need to adapt to your database schema
-
-    // Option 1: If you have a method to get all connections and filter
-    // const allConnections = await userConnections.getAllConnections();
-    // return allConnections.find(conn =>
-    //   conn.plugin_name === 'whatsapp-business' &&
-    //   conn.profile_data?.phone_number_id === phoneNumberId
-    // );
-
-    // Option 2: Implement a new method in UserPluginConnections
-    // return await userConnections.findByPhoneNumberId('whatsapp-business', phoneNumberId);
-
-    log.debug({ phoneNumberId }, 'Looking for user with phone_number_id');
-
-    // TODO: Implement proper database query
-    // This requires adding a method to UserPluginConnections or querying your database directly
-
-    return null;
-
+    const connection = await userConnections.findActiveConnectionByProfileData(
+      'whatsapp-business',
+      { phone_number_id: phoneNumberId }
+    );
+    return connection;
   } catch (error) {
     log.error({ err: error, phoneNumberId }, 'Error finding user by phone_number_id');
     return null;
