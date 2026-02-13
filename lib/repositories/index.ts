@@ -12,6 +12,7 @@ export { AgentStatsRepository, agentStatsRepository } from './AgentStatsReposito
 export { AgentConfigurationRepository, agentConfigurationRepository } from './AgentConfigurationRepository';
 export { AgentLogsRepository, agentLogsRepository } from './AgentLogsRepository';
 export { ExecutionLogRepository, executionLogRepository } from './ExecutionLogRepository';
+export { PluginConnectionRepository, pluginConnectionRepository } from './PluginConnectionRepository';
 
 // Types
 export type {
@@ -38,6 +39,8 @@ export type {
   SystemConfig,
   RewardConfig,
   SystemSettingsConfig,
+  // Plugin connection types
+  UpsertPluginConnectionInput,
 } from './types';
 
 export { AgentStatusEnum, STATUS_TRANSITIONS } from './types';

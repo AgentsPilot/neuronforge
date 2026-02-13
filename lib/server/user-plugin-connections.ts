@@ -1,9 +1,13 @@
 // lib/server/user-plugin-connections.ts
 
-import { createClient } from '@supabase/supabase-js';
-import { savePluginConnection } from '../plugins/savePluginConnection';
+import { NextRequest } from 'next/server';
 import { PluginAuthConfig, UserConnection, ConnectionStatus } from '@/lib/types/plugin-types'
 import { createLogger } from '@/lib/logger';
+import { PluginConnectionRepository, pluginConnectionRepository } from '@/lib/repositories';
+import type { UpsertPluginConnectionInput } from '@/lib/repositories';
+import { exchangeCodeForTokens, refreshAccessToken, fetchUserProfile, calculateExpiresAt } from '@/lib/services/OAuthTokenService';
+import { AuditTrail } from '@/lib/services/AuditTrailService';
+import type { AuditLogInput } from '@/lib/audit/types';
 
 // Create logger instance for plugin connections
 const logger = createLogger({ module: 'UserPluginConnections', service: 'plugin-system' });
@@ -14,28 +18,14 @@ const globalForUserConnections = globalThis as unknown as {
 };
 
 export class UserPluginConnections {
-  private supabase: any;  
+  private repository: PluginConnectionRepository;
   // Cache for token validation to avoid redundant logs and calculations
   private tokenValidationCache = new Map<string, { isValid: boolean, checkedAt: number }>();
   private readonly TOKEN_CACHE_TTL = 1000; // 1 second cache
+  private readonly TOKEN_CACHE_MAX_SIZE = 100;
 
-  constructor() {
-    // Create client for read operations (server-side with service role key for better permissions)
-    // Disable query caching to ensure fresh data for plugin connections
-    this.supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!,
-      {
-        db: {
-          schema: 'public',
-        },
-        global: {
-          headers: {
-            'cache-control': 'no-cache',
-          },
-        },
-      }
-    );
+  constructor(repository?: PluginConnectionRepository) {
+    this.repository = repository || pluginConnectionRepository;
     logger.debug('UserPluginConnections instance created');
   }
 
@@ -51,23 +41,12 @@ export class UserPluginConnections {
 
   // Private helper: Fetch active plugin connections from database
   private async fetchActiveConnections(userId: string): Promise<UserConnection[]> {
-    try {
-      const { data: connections, error } = await this.supabase
-        .from('plugin_connections')
-        .select('*')
-        .eq('user_id', userId)
-        .eq('status', 'active');
-
-      if (error) {
-        logger.error({ err: error, userId }, 'Database error fetching connections');
-        return [];
-      }
-
-      return connections || [];
-    } catch (error) {
-      logger.error({ err: error, userId }, 'Error fetching active connections');
+    const { data, error } = await this.repository.findActiveByUser(userId);
+    if (error) {
+      logger.error({ err: error, userId }, 'Database error fetching connections');
       return [];
     }
+    return data || [];
   }
 
   // Get all active plugin connections (including expired tokens that can be refreshed)
@@ -158,14 +137,9 @@ export class UserPluginConnections {
   // Get connection status for specific plugin
   async getConnectionStatus(userId: string, pluginKey: string): Promise<ConnectionStatus> {
     logger.debug({ userId, pluginKey }, 'Getting connection status');
-    
+
     try {
-      const { data: connection, error } = await this.supabase
-        .from('plugin_connections')
-        .select('*')
-        .eq('user_id', userId)
-        .eq('plugin_key', pluginKey)
-        .single();
+      const { data: connection, error } = await this.repository.findByUserAndPlugin(userId, pluginKey);
 
       if (error || !connection) {
         logger.debug({ userId, pluginKey }, 'No connection found');
@@ -182,7 +156,7 @@ export class UserPluginConnections {
         return {
           connected: false,
           reason: 'token_expired',
-          expires_at: connection.expires_at
+          expires_at: connection.expires_at ?? undefined
         };
       }
 
@@ -190,7 +164,7 @@ export class UserPluginConnections {
       return {
         connected: true,
         reason: 'connected',
-        expires_at: connection.expires_at
+        expires_at: connection.expires_at ?? undefined
       };
     } catch (error) {
       logger.error({ err: error, userId, pluginKey }, 'Error getting connection status');
@@ -210,7 +184,7 @@ export class UserPluginConnections {
       return {
         user_id: userId,
         plugin_key: pluginKey,
-        plugin_name: this.getPluginDisplayName(pluginKey),
+        plugin_name: pluginKey,
         access_token: 'system', // Placeholder - not used by system plugins
         refresh_token: null,
         expires_at: null, // System plugins don't expire
@@ -228,13 +202,7 @@ export class UserPluginConnections {
 
     // OAuth plugins: query database for connection
     try {
-      const { data: connection, error } = await this.supabase
-        .from('plugin_connections')
-        .select('*')
-        .eq('user_id', userId)
-        .eq('plugin_key', pluginKey)
-        .eq('status', 'active')
-        .single();
+      const { data: connection, error } = await this.repository.findActiveByUserAndPlugin(userId, pluginKey);
 
       if (error || !connection) {
         logger.debug({ userId, pluginKey }, 'No active connection found');
@@ -277,9 +245,9 @@ export class UserPluginConnections {
   }
 
   // Handle OAuth callback (called from API route)
-  async handleOAuthCallback(code: string, state: string, authConfig: PluginAuthConfig, request?: any): Promise<UserConnection> {
+  async handleOAuthCallback(code: string, state: string, authConfig: PluginAuthConfig, request?: NextRequest): Promise<UserConnection> {
     logger.debug('Handling OAuth callback server-side');
-    
+
     try {
       if (!code) {
         throw new Error('Authorization code missing from callback');
@@ -300,76 +268,23 @@ export class UserPluginConnections {
         throw new Error('OAuth credentials not configured');
       }
 
-      // Build token exchange parameters
-      const tokenParams: Record<string, string> = {
-        code,
-        grant_type: 'authorization_code',
-        redirect_uri: authConfig.redirect_uri,
-      };
-
-      // Prepare headers
-      const headers: Record<string, string> = {
-        'Content-Type': 'application/x-www-form-urlencoded',
-        'Accept': 'application/json',
-      };
-
-      // Add code_verifier for PKCE if present
-      if (code_verifier) {
-        tokenParams.code_verifier = code_verifier;
-        logger.debug('Using PKCE for token exchange');
-
-        // For PKCE flows (like Airtable), send credentials via Basic Auth header
-        const credentials = Buffer.from(`${authConfig.client_id}:${authConfig.client_secret}`).toString('base64');
-        headers['Authorization'] = `Basic ${credentials}`;
-        logger.debug('Sending credentials via Basic Auth header (PKCE flow)');
-      } else {
-        // For non-PKCE flows, send credentials in body
-        tokenParams.client_id = authConfig.client_id;
-        tokenParams.client_secret = authConfig.client_secret;
-        logger.debug('Sending credentials in request body (standard OAuth flow)');
-      }
-
-      // Exchange code for tokens
-      const tokenResponse = await fetch(authConfig.token_url, {
-        method: 'POST',
-        headers: headers,
-        body: new URLSearchParams(tokenParams),
-      });
-
-      if (!tokenResponse.ok) {
-        const errorText = await tokenResponse.text();
-        logger.error({ status: tokenResponse.status, errorText }, 'Token exchange failed');
-        throw new Error(`Token exchange failed: ${tokenResponse.status}`);
-      }
-
-      const tokens = await tokenResponse.json();
-      logger.debug({ hasAccessToken: !!tokens.access_token }, 'Tokens response received');
-
-      if (!tokens.access_token) {
-        throw new Error('No access token received');
-      }
-
-      logger.debug('Tokens received successfully');
+      // Exchange authorization code for tokens via OAuthTokenService
+      const tokens = await exchangeCodeForTokens(code, authConfig, code_verifier);
 
       // For Slack OAuth v2, use the user token for profile fetch (authed_user.access_token)
-      // For other providers, use the regular access_token
       const profileAccessToken = tokens.authed_user?.access_token || tokens.access_token;
-      logger.debug({
-        hasAuthedUserToken: !!tokens.authed_user?.access_token,
-        hasAccessToken: !!tokens.access_token
-      }, 'Determining profile access token');
 
       // Fetch user profile (provider-specific)
-      const profile = await this.fetchUserProfile(profileAccessToken, authConfig.auth_type, authConfig.profile_url);
+      const profile = await fetchUserProfile(profileAccessToken, authConfig.auth_type, authConfig.profile_url);
 
       // Calculate expiration
-      const expiresAt = this.getExpiresAt(tokens.expires_in);
+      const expiresAt = calculateExpiresAt(tokens.expires_in);
 
-      // Store connection using existing savePluginConnection function
-      const connectionData = {
+      // Build connection data for upsert
+      const connectionData: UpsertPluginConnectionInput = {
         user_id,
         plugin_key,
-        plugin_name: this.getPluginDisplayName(plugin_key),
+        plugin_name: plugin_key,
         access_token: tokens.access_token,
         refresh_token: tokens.refresh_token || null,
         expires_at: expiresAt, // null if token doesn't expire
@@ -384,88 +299,71 @@ export class UserPluginConnections {
       logger.debug({ pluginKey: plugin_key }, 'Saving connection');
 
       // Check if connection already exists to determine if this is new or reconnection
-      const existingConnection = await this.supabase
-        .from('plugin_connections')
-        .select('id')
-        .eq('user_id', user_id)
-        .eq('plugin_key', plugin_key)
-        .single();
+      const { data: exists } = await this.repository.existsByUserAndPlugin(user_id, plugin_key);
+      const isNewConnection = !exists;
 
-      const isNewConnection = !existingConnection.data;
+      // Upsert via repository
+      const { data, error: upsertError } = await this.repository.upsert(connectionData);
 
-      const data = await savePluginConnection(connectionData);
+      if (upsertError || !data) {
+        throw new Error(`Failed to save connection: ${upsertError?.message || 'Unknown error'}`);
+      }
 
       logger.info({ pluginKey: plugin_key, isNewConnection }, 'Connection saved successfully');
 
-      // Audit trail logging
-      try {
-        const { AuditTrail } = await import('@/lib/services/AuditTrailService');
-        await AuditTrail.log({
-          action: isNewConnection ? 'PLUGIN_CONNECTED' : 'PLUGIN_RECONNECTED',
-          entityType: 'connection',
-          entityId: data.id,
-          resourceName: this.getPluginDisplayName(plugin_key),
-          userId: user_id,
-          request: request, // Pass request for IP/user-agent extraction
-          details: {
-            plugin_key,
-            plugin_name: this.getPluginDisplayName(plugin_key),
-            scopes: connectionData.scope,
-            provider_email: profile.email,
-            auth_type: authConfig.auth_type,
-            username: connectionData.username,
-          },
-          severity: 'info',
-          complianceFlags: ['SOC2'],
-        });
-        logger.debug({ pluginKey: plugin_key }, 'Audit trail logged for connection');
-      } catch (auditError) {
-        logger.error({ err: auditError, pluginKey: plugin_key }, 'Failed to log audit trail');
-        // Don't fail the connection if audit logging fails
-      }
+      // Audit trail logging (non-blocking)
+      this.audit({
+        action: isNewConnection ? 'PLUGIN_CONNECTED' : 'PLUGIN_RECONNECTED',
+        entityType: 'connection',
+        entityId: data.id,
+        resourceName: plugin_key,
+        userId: user_id,
+        request,
+        details: {
+          plugin_key,
+          plugin_name: plugin_key,
+          scopes: connectionData.scope,
+          provider_email: profile.email,
+          auth_type: authConfig.auth_type,
+          username: connectionData.username,
+        },
+        severity: 'info',
+        complianceFlags: ['SOC2'],
+      });
 
       return data;
     } catch (error) {
       logger.error({ err: error }, 'OAuth callback error');
 
-      // Audit trail for OAuth failures
+      // Audit trail for OAuth failures (non-blocking)
+      let failedUserId: string | null = null;
+      let failedPluginKey: string | null = null;
       try {
-        const { AuditTrail } = await import('@/lib/services/AuditTrailService');
-
-        // Try to extract state if available
-        let userId = 'unknown';
-        let pluginKey = 'unknown';
-        try {
-          if (state) {
-            const parsedState = JSON.parse(decodeURIComponent(state));
-            userId = parsedState.user_id;
-            pluginKey = parsedState.plugin_key;
-          }
-        } catch (stateError) {
-          logger.error({ err: stateError }, 'Failed to parse state');
+        if (state) {
+          const parsedState = JSON.parse(decodeURIComponent(state));
+          failedUserId = parsedState.user_id;
+          failedPluginKey = parsedState.plugin_key;
         }
-
-        await AuditTrail.log({
-          action: 'PLUGIN_AUTH_FAILED',
-          entityType: 'connection',
-          resourceName: pluginKey !== 'unknown' ? this.getPluginDisplayName(pluginKey) : pluginKey,
-          userId: userId !== 'unknown' ? userId : null,
-          request: request,
-          details: {
-            plugin_key: pluginKey,
-            error_message: error instanceof Error ? error.message : 'Unknown error',
-            auth_type: authConfig?.auth_type,
-            has_code: !!code,
-            has_state: !!state,
-          },
-          severity: 'warning',
-          complianceFlags: ['SOC2'],
-        });
-        logger.debug({ pluginKey }, 'Audit trail logged for OAuth failure');
-      } catch (auditError) {
-        logger.error({ err: auditError }, 'Failed to log audit trail for OAuth failure');
-        // Don't block the error throw
+      } catch (stateError) {
+        logger.error({ err: stateError }, 'Failed to parse state');
       }
+
+      this.audit({
+        action: 'PLUGIN_AUTH_FAILED',
+        entityType: 'connection',
+        resourceName: failedPluginKey ?? undefined,
+        userId: failedUserId,
+        request,
+        details: {
+          plugin_key: failedPluginKey,
+          error_message: error instanceof Error ? error.message : 'Unknown error',
+          auth_type: authConfig?.auth_type,
+          has_code: !!code,
+          has_state: !!state,
+        },
+        severity: 'warning',
+        complianceFlags: ['SOC2'],
+      });
 
       throw error;
     }
@@ -486,44 +384,12 @@ export class UserPluginConnections {
     }
 
     try {
-      logger.debug({ refreshUrl: authConfig.refresh_url }, 'Token Refresh: Calling refresh endpoint');
+      // Refresh token via OAuthTokenService
+      const tokens = await refreshAccessToken(connection.refresh_token, authConfig);
 
-      // Build refresh token parameters
-      const refreshParams: Record<string, string> = {
-        refresh_token: connection.refresh_token,
-        grant_type: 'refresh_token',
-      };
-
-      // Prepare headers
-      const headers: Record<string, string> = {
-        'Content-Type': 'application/x-www-form-urlencoded',
-        'Accept': 'application/json',
-      };
-
-      // Check if this is a PKCE-enabled plugin (like Airtable)
-      if (authConfig.requires_pkce) {
-        // For PKCE plugins, send credentials via Basic Auth header
-        const credentials = Buffer.from(`${authConfig.client_id}:${authConfig.client_secret}`).toString('base64');
-        headers['Authorization'] = `Basic ${credentials}`;
-        logger.debug('Token Refresh: Using Basic Auth for PKCE plugin');
-      } else {
-        // For non-PKCE plugins, send credentials in body
-        refreshParams.client_id = authConfig.client_id;
-        refreshParams.client_secret = authConfig.client_secret;
-      }
-
-      const response = await fetch(authConfig.refresh_url, {
-        method: 'POST',
-        headers: headers,
-        body: new URLSearchParams(refreshParams),
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
+      if (!tokens) {
         logger.error({
-          pluginKey: connection.plugin_key,
-          status: response.status,
-          errorText
+          pluginKey: connection.plugin_key
         }, 'Token Refresh Failed - User needs to reconnect in Settings');
         logger.error({
           pluginKey: connection.plugin_key
@@ -531,27 +397,30 @@ export class UserPluginConnections {
         return null;
       }
 
-      const tokens = await response.json();
+      const expiresAt = calculateExpiresAt(tokens.expires_in);
 
-      const expiresAt = this.getExpiresAt(tokens.expires_in);
-
-      // Update connection using existing save function
-      const updatedConnectionData = {
+      // Update connection via repository upsert
+      const updatedConnectionData: UpsertPluginConnectionInput = {
         user_id: connection.user_id,
         plugin_key: connection.plugin_key,
         plugin_name: connection.plugin_name,
         access_token: tokens.access_token,
         refresh_token: tokens.refresh_token || connection.refresh_token,
         expires_at: expiresAt,
-        scope: connection.scope,
-        username: connection.username,
-        email: connection.email,
-        profile_data: connection.profile_data,
+        scope: connection.scope || null,
+        username: connection.username || '',
+        email: connection.email || null,
+        profile_data: connection.profile_data || null,
         settings: connection.settings || {},
         status: 'active'
       };
 
-      const data = await savePluginConnection(updatedConnectionData);
+      const { data, error } = await this.repository.upsert(updatedConnectionData);
+
+      if (error || !data) {
+        logger.error({ err: error, pluginKey: connection.plugin_key }, 'Failed to save refreshed token');
+        return null;
+      }
 
       logger.info({
         pluginKey: connection.plugin_key,
@@ -571,63 +440,50 @@ export class UserPluginConnections {
   }
 
   // Disconnect plugin
-  async disconnectPlugin(userId: string, pluginKey: string, request?: any): Promise<boolean> {
+  async disconnectPlugin(userId: string, pluginKey: string, request?: NextRequest): Promise<boolean> {
     logger.debug({ userId, pluginKey }, 'Disconnecting plugin');
 
     try {
       // Fetch connection details BEFORE disconnecting for audit trail
-      const { data: connection } = await this.supabase
-        .from('plugin_connections')
-        .select('*')
-        .eq('user_id', userId)
-        .eq('plugin_key', pluginKey)
-        .single();
+      const { data: connection } = await this.repository.findByUserAndPlugin(userId, pluginKey);
 
-      const { error } = await this.supabase
-        .from('plugin_connections')
-        .update({ status: 'disconnected', disconnected_at: new Date().toISOString() })
-        .eq('user_id', userId)
-        .eq('plugin_key', pluginKey);
+      const { data: success, error } = await this.repository.updateStatus(
+        userId,
+        pluginKey,
+        'disconnected',
+        { disconnected_at: new Date().toISOString() }
+      );
 
-      if (error) {
+      if (error || !success) {
         logger.error({ err: error, userId, pluginKey }, 'Failed to disconnect plugin');
         return false;
       }
 
-      // Audit trail logging
+      // Audit trail logging (non-blocking)
       if (connection) {
-        try {
-          const { AuditTrail } = await import('@/lib/services/AuditTrailService');
+        const connectedAt = connection.connected_at ? new Date(connection.connected_at) : null;
+        const connectionDurationDays = connectedAt
+          ? Math.floor((Date.now() - connectedAt.getTime()) / (1000 * 60 * 60 * 24))
+          : null;
 
-          // Calculate connection duration
-          const connectedAt = connection.connected_at ? new Date(connection.connected_at) : null;
-          const connectionDurationDays = connectedAt
-            ? Math.floor((Date.now() - connectedAt.getTime()) / (1000 * 60 * 60 * 24))
-            : null;
-
-          await AuditTrail.log({
-            action: 'PLUGIN_DISCONNECTED',
-            entityType: 'connection',
-            entityId: connection.id,
-            resourceName: this.getPluginDisplayName(pluginKey),
-            userId: userId,
-            request: request, // Pass request for IP/user-agent extraction
-            details: {
-              plugin_key: pluginKey,
-              plugin_name: this.getPluginDisplayName(pluginKey),
-              provider_email: connection.email,
-              username: connection.username,
-              connection_duration_days: connectionDurationDays,
-              scopes: connection.scope,
-            },
-            severity: 'warning',
-            complianceFlags: ['SOC2'],
-          });
-          logger.debug({ pluginKey }, 'Audit trail logged for disconnection');
-        } catch (auditError) {
-          logger.error({ err: auditError, pluginKey }, 'Failed to log audit trail');
-          // Don't fail the disconnect if audit logging fails
-        }
+        this.audit({
+          action: 'PLUGIN_DISCONNECTED',
+          entityType: 'connection',
+          entityId: connection.id,
+          resourceName: pluginKey,
+          userId,
+          request,
+          details: {
+            plugin_key: pluginKey,
+            plugin_name: pluginKey,
+            provider_email: connection.email,
+            username: connection.username,
+            connection_duration_days: connectionDurationDays,
+            scopes: connection.scope,
+          },
+          severity: 'warning',
+          complianceFlags: ['SOC2'],
+        });
       }
 
       logger.info({ userId, pluginKey }, 'Plugin disconnected successfully');
@@ -642,18 +498,13 @@ export class UserPluginConnections {
   async updateConnectionProfileData(
     userId: string,
     pluginKey: string,
-    profileData: any
+    profileData: Record<string, unknown>
   ): Promise<boolean> {
     logger.debug({ userId, pluginKey }, 'Updating profile_data');
 
     try {
       // Get existing connection to merge with new profile data
-      const { data: existingConnection, error: fetchError } = await this.supabase
-        .from('plugin_connections')
-        .select('profile_data')
-        .eq('user_id', userId)
-        .eq('plugin_key', pluginKey)
-        .single();
+      const { data: existing, error: fetchError } = await this.repository.findProfileData(userId, pluginKey);
 
       if (fetchError) {
         logger.error({ err: fetchError, userId, pluginKey }, 'Error fetching existing connection');
@@ -662,19 +513,12 @@ export class UserPluginConnections {
 
       // Merge new profile data with existing (new data overwrites existing keys)
       const mergedProfileData = {
-        ...(existingConnection?.profile_data || {}),
+        ...(existing?.profile_data || {}),
         ...profileData
       };
 
       // Update the connection with merged profile data
-      const { error: updateError } = await this.supabase
-        .from('plugin_connections')
-        .update({
-          profile_data: mergedProfileData,
-          updated_at: new Date().toISOString()
-        })
-        .eq('user_id', userId)
-        .eq('plugin_key', pluginKey);
+      const { error: updateError } = await this.repository.updateProfileData(userId, pluginKey, mergedProfileData);
 
       if (updateError) {
         logger.error({ err: updateError, userId, pluginKey }, 'Failed to update profile_data');
@@ -689,22 +533,47 @@ export class UserPluginConnections {
     }
   }
 
+  // Find an active connection by matching fields in profile_data (JSONB @> operator)
+  // Used by webhook routes to look up which user owns a given external identifier
+  // Example: findActiveConnectionByProfileData('whatsapp-business', { phone_number_id: '12345' })
+  async findActiveConnectionByProfileData(
+    pluginKey: string,
+    profileDataMatch: Record<string, string>
+  ): Promise<UserConnection | null> {
+    logger.debug({ pluginKey, profileDataMatch }, 'Finding connection by profile_data');
+
+    try {
+      const { data: connection, error } = await this.repository.findActiveByProfileData(pluginKey, profileDataMatch);
+
+      if (error) {
+        logger.error({ err: error, pluginKey, profileDataMatch }, 'Error finding connection by profile_data');
+        return null;
+      }
+
+      if (!connection) {
+        logger.debug({ pluginKey, profileDataMatch }, 'No active connection found for profile_data match');
+        return null;
+      }
+
+      logger.debug({ pluginKey, userId: connection.user_id }, 'Connection found by profile_data');
+      return connection;
+    } catch (error) {
+      logger.error({ err: error, pluginKey }, 'Error in findActiveConnectionByProfileData');
+      return null;
+    }
+  }
+
   // Update additional configuration data for a plugin connection
   async updateAdditionalConfig(
     userId: string,
     pluginKey: string,
-    additionalData: Record<string, any>
+    additionalData: Record<string, unknown>
   ): Promise<boolean> {
     logger.debug({ userId, pluginKey }, 'Updating additional config');
 
     try {
       // Get existing connection to preserve auth data
-      const { data: existingConnection, error: fetchError } = await this.supabase
-        .from('plugin_connections')
-        .select('profile_data')
-        .eq('user_id', userId)
-        .eq('plugin_key', pluginKey)
-        .single();
+      const { data: existing, error: fetchError } = await this.repository.findProfileData(userId, pluginKey);
 
       if (fetchError) {
         logger.error({ err: fetchError, userId, pluginKey }, 'Error fetching existing connection');
@@ -713,19 +582,12 @@ export class UserPluginConnections {
 
       // Build nested structure: { auth: {...}, additional: {...} }
       const updatedProfileData = {
-        auth: existingConnection?.profile_data?.auth || existingConnection?.profile_data || {},
+        auth: (existing?.profile_data as Record<string, unknown> | undefined)?.auth || existing?.profile_data || {},
         additional: additionalData
       };
 
       // Update the connection with new structure
-      const { error: updateError } = await this.supabase
-        .from('plugin_connections')
-        .update({
-          profile_data: updatedProfileData,
-          updated_at: new Date().toISOString()
-        })
-        .eq('user_id', userId)
-        .eq('plugin_key', pluginKey);
+      const { error: updateError } = await this.repository.updateProfileData(userId, pluginKey, updatedProfileData);
 
       if (updateError) {
         logger.error({ err: updateError, userId, pluginKey }, 'Failed to update additional config');
@@ -744,24 +606,19 @@ export class UserPluginConnections {
   async getAdditionalConfig(
     userId: string,
     pluginKey: string
-  ): Promise<Record<string, any> | null> {
+  ): Promise<Record<string, unknown> | null> {
     logger.debug({ userId, pluginKey }, 'Getting additional config');
 
     try {
-      const { data: connection, error } = await this.supabase
-        .from('plugin_connections')
-        .select('profile_data')
-        .eq('user_id', userId)
-        .eq('plugin_key', pluginKey)
-        .single();
+      const { data: existing, error } = await this.repository.findProfileData(userId, pluginKey);
 
-      if (error || !connection) {
+      if (error || !existing) {
         logger.debug({ userId, pluginKey }, 'No connection found');
         return null;
       }
 
       // Return additional data if it exists in nested structure
-      return connection.profile_data?.additional || null;
+      return (existing.profile_data as Record<string, unknown> | undefined)?.additional as Record<string, unknown> | null ?? null;
     } catch (error) {
       logger.error({ err: error, userId, pluginKey }, 'Error getting additional config');
       return null;
@@ -771,24 +628,15 @@ export class UserPluginConnections {
   // Get all user connections (for admin/debug purposes)
   async getAllUserConnections(userId: string): Promise<UserConnection[]> {
     logger.debug({ userId }, 'Getting all connections for user');
-    
-    try {
-      const { data: connections, error } = await this.supabase
-        .from('plugin_connections')
-        .select('*')
-        .eq('user_id', userId)
-        .order('connected_at', { ascending: false });
 
-      if (error) {
-        logger.error({ err: error, userId }, 'Error fetching all connections');
-        return [];
-      }
+    const { data, error } = await this.repository.findAllByUser(userId);
 
-      return connections || [];
-    } catch (error) {
-      logger.error({ err: error, userId }, 'Error getting all user connections');
+    if (error) {
+      logger.error({ err: error, userId }, 'Error fetching all connections');
       return [];
     }
+
+    return data || [];
   }
 
   // Private helper methods
@@ -817,6 +665,15 @@ export class UserPluginConnections {
         isValid,
         expiresAt: expiryDate.toISOString()
       }, 'Token validity checked');
+    }
+
+    // Evict stale entries when cache exceeds max size
+    if (this.tokenValidationCache.size >= this.TOKEN_CACHE_MAX_SIZE) {
+      for (const [key, entry] of this.tokenValidationCache) {
+        if ((now - entry.checkedAt) >= this.TOKEN_CACHE_TTL) {
+          this.tokenValidationCache.delete(key);
+        }
+      }
     }
 
     // Cache the result
@@ -850,102 +707,10 @@ export class UserPluginConnections {
     return shouldRefresh;
   }
 
-  // Fetch user profile based on provider
-  private async fetchUserProfile(accessToken: string, authType: string, profileUrl?: string): Promise<any> {
-    logger.debug({ authType, profileUrl }, 'Fetching user profile');
-
-    // Use provided profile_url if available, otherwise fall back to switch case
-    if (!profileUrl) {
-      switch (authType) {
-        case 'oauth2_google':
-          profileUrl = 'https://www.googleapis.com/oauth2/v2/userinfo';
-          break;
-        case 'oauth2_microsoft':
-          profileUrl = 'https://graph.microsoft.com/v1.0/me';
-          break;
-        case 'oauth2_hubspot':
-          profileUrl = `https://api.hubapi.com/oauth/v1/access-tokens/${accessToken}`;
-          break;
-        case 'oauth2':
-          // Generic oauth2 - profile_url must be provided
-          throw new Error('profile_url is required for generic oauth2 auth type');
-        default:
-          throw new Error(`Unsupported auth type: ${authType}`);
-      }
-    }
-
-    const response = await fetch(profileUrl, {
-      headers: {
-        'Authorization': `Bearer ${accessToken}`,
-        'Accept': 'application/json',
-      },
-    });
-
-    if (!response.ok) {
-      throw new Error(`Failed to fetch profile: ${response.status}`);
-    }
-
-    const profile = await response.json();
-
-    logger.debug('User profile fetched successfully');
-
-    return profile;
-  }
-
-  // Get plugin display name for DB storage --> NEED TO BE FIXES/REMOVED in the future, need to take from plugin definition
-  private getPluginDisplayName(pluginKey: string): string {
-    const displayNames: Record<string, string> = {
-      'gmail': 'google-mail',
-    };
-
-    return displayNames[pluginKey] || pluginKey;
-  }
-
-  // Calculate expiration date from expires_in seconds
-  private getExpiresAt(expires_in: any): string | null {
-    if (!expires_in) {
-      return null; // Token doesn't expire (e.g., Slack without token rotation)
-    }
-    const expiresAt = new Date();
-    expiresAt.setSeconds(expiresAt.getSeconds() + expires_in);
-    return expiresAt.toISOString();
-  }
-
-  // Validate OAuth state parameter
-  private validateOAuthState(state: string, expectedPluginKey: string): { valid: boolean; userId: string; pluginKey: string } {
-    try {
-      const parsedState = JSON.parse(decodeURIComponent(state));
-      const { user_id, plugin_key, timestamp } = parsedState;
-
-      // Basic validation
-      if (!user_id || !plugin_key || !timestamp) {
-        throw new Error('Invalid state structure');
-      }
-
-      // Check plugin key matches
-      if (plugin_key !== expectedPluginKey) {
-        throw new Error('Plugin key mismatch');
-      }
-
-      // Check timestamp (reject if older than 1 hour)
-      const stateAge = Date.now() - timestamp;
-      if (stateAge > 3600000) { // 1 hour in milliseconds
-        throw new Error('State parameter expired');
-      }
-
-      return {
-        valid: true,
-        userId: user_id,
-        pluginKey: plugin_key
-      };
-    } catch (error) {
-      logger.debug({ err: error }, 'OAuth state validation failed');
-      return {
-        valid: false,
-        userId: '',
-        pluginKey: ''
-      };
-    }
+  // Non-blocking audit trail helper
+  private audit(input: AuditLogInput): void {
+    AuditTrail.log(input)
+      .catch((err: unknown) => logger.error({ err }, 'Audit trail logging failed (non-blocking)'));
   }
 
   // Generate OAuth state parameter
@@ -958,44 +723,5 @@ export class UserPluginConnections {
     };
 
     return encodeURIComponent(JSON.stringify(state));
-  }
-
-  // Check if user has permission for plugin
-  async hasPluginPermission(userId: string, pluginKey: string): Promise<boolean> {
-    // Basic implementation - in production you might have more complex permission logic
-    logger.debug({ userId, pluginKey }, 'Checking plugin permission');
-
-    // For now, all authenticated users can connect to any plugin
-    // You could add role-based access control here
-    return true;
-  }
-
-  // Cleanup expired connections (utility method)
-  async cleanupExpiredConnections(): Promise<number> {
-    logger.debug('Cleaning up expired connections');
-    
-    try {
-      const now = new Date().toISOString();
-      
-      const { data, error } = await this.supabase
-        .from('plugin_connections')
-        .update({ status: 'expired' })
-        .lt('expires_at', now)
-        .eq('status', 'active')
-        .select('id');
-
-      if (error) {
-        logger.error({ err: error }, 'Error cleaning up expired connections');
-        return 0;
-      }
-
-      const cleanedCount = data?.length || 0;
-      logger.info({ cleanedCount }, 'Expired connections cleaned up');
-
-      return cleanedCount;
-    } catch (error) {
-      logger.error({ err: error }, 'Error in cleanup process');
-      return 0;
-    }
   }
 }
