@@ -11,7 +11,7 @@ interface DraftAgentTourProps {
   productionReady: boolean;
 }
 
-export function DraftAgentTour({ agentId, agentName, agentStatus, productionReady }: DraftAgentTourProps) {
+export default function DraftAgentTour({ agentId, agentName, agentStatus, productionReady }: DraftAgentTourProps) {
   const [runTour, setRunTour] = useState(false);
   const [mounted, setMounted] = useState(false);
 

@@ -26,6 +26,8 @@ import { PluginManagerV2 } from '@/lib/server/plugin-manager-v2'
 import type { DataSourceMetadata } from '@/lib/agentkit/v6/semantic-plan/grounding/DataSampler'
 import { detectAmbiguities } from '@/lib/agentkit/v6/ambiguity-detection'
 import { createLogger } from '@/lib/logger'
+import { determineV6Pathway, explainPathwayDecision } from '@/lib/agentkit/v6/utils/PathwayDetector'
+import { HardRequirementsExtractor } from '@/lib/agentkit/v6/requirements/HardRequirementsExtractor'
 
 // Create module-scoped logger
 const logger = createLogger({ module: 'V6', route: '/api/v6/generate-semantic-grounded' })
@@ -204,11 +206,72 @@ export async function POST(request: NextRequest) {
     }
 
     const config = body.config || {}
-    const provider = config.provider || 'openai'
+    // Default to Anthropic (Opus 4.5) for semantic understanding - better workflow quality
+    const provider = config.provider || 'anthropic'
 
     // Extract services_involved from Enhanced Prompt
     const servicesInvolved = body.enhanced_prompt?.specifics?.services_involved || []
     requestLogger.debug({ servicesInvolved }, 'Services involved')
+
+    // ========================================================================
+    // PATHWAY DETECTION: Determine Fast vs Full Path
+    // ========================================================================
+
+    // Initialize PluginManager for pathway detection
+    const pluginManager = await PluginManagerV2.getInstance()
+
+    // Determine which pathway to use (smart, generic - no hardcoding)
+    const pathway = await determineV6Pathway(body.enhanced_prompt, pluginManager)
+    const pathwayExplanation = await explainPathwayDecision(body.enhanced_prompt, pluginManager)
+
+    requestLogger.info({
+      pathway,
+      reason: pathwayExplanation.reason,
+      details: pathwayExplanation.details
+    }, 'Pathway determined')
+
+    // FAST PATH: Skip Semantic Plan + Grounding for OAuth-based plugins
+    if (pathway === 'fast') {
+      requestLogger.info('Using FAST PATH - skipping Semantic Plan + Grounding (known APIs with fixed schemas)')
+
+      // Return minimal response that signals to skip to formalization
+      // The client will call formalize-to-ir directly with enhanced_prompt
+      return NextResponse.json({
+        success: true,
+        pathway: 'fast',
+        skip_to_formalization: true,
+        message: 'All services use OAuth (well-known APIs) - skipping Semantic Plan + Grounding',
+        metadata: {
+          services_involved: servicesInvolved,
+          reason: pathwayExplanation.reason,
+          total_time_ms: Date.now() - startTime
+        }
+      })
+    }
+
+    // FULL PATH: Continue with Semantic Plan + Grounding
+    requestLogger.info('Using FULL PATH - running Semantic Plan + Grounding (contains unknown/custom services)')
+
+    // ========================================================================
+    // PHASE 0: Hard Requirements Extraction (Pre-Hoc Constraint Enforcement)
+    // ========================================================================
+
+    requestLogger.info({ phase: 0 }, 'Phase 0: Hard Requirements Extraction started')
+    const phase0Start = Date.now()
+
+    const requirementsExtractor = new HardRequirementsExtractor()
+    const hardRequirements = await requirementsExtractor.extract(body.enhanced_prompt)
+
+    const phase0Time = Date.now() - phase0Start
+
+    requestLogger.info({
+      phase: 0,
+      duration: phase0Time,
+      requirementsCount: hardRequirements.requirements.length,
+      unitOfWork: hardRequirements.unit_of_work,
+      thresholdsCount: hardRequirements.thresholds.length,
+      invariantsCount: hardRequirements.invariants.length
+    }, 'Phase 0 complete')
 
     // ========================================================================
     // PHASE 1: Understanding (Semantic Plan Generation)
@@ -217,7 +280,9 @@ export async function POST(request: NextRequest) {
     requestLogger.info({ phase: 1 }, 'Phase 1: Understanding started')
     const phase1Start = Date.now()
 
-    const resolvedModel = config.model || (provider === 'openai' ? 'gpt-4o' : 'claude-3-5-sonnet-20241022')
+    // Use config.model if provided, otherwise let SemanticPlanGenerator use its defaults
+    // (gpt-5.2 for OpenAI, claude-opus-4-5-20251101 for Anthropic - best for complex workflows)
+    const resolvedModel = config.model || (provider === 'openai' ? 'gpt-4o' : undefined)
 
     const semanticPlanGenerator = new SemanticPlanGenerator({
       model_provider: provider,
@@ -226,7 +291,8 @@ export async function POST(request: NextRequest) {
       max_tokens: 6000
     })
 
-    const semanticPlanResult = await semanticPlanGenerator.generate(body.enhanced_prompt)
+    // CRITICAL: Pass hardRequirements to guide semantic plan generation
+    const semanticPlanResult = await semanticPlanGenerator.generate(body.enhanced_prompt, hardRequirements)
 
     const phase1Time = Date.now() - phase1Start
 

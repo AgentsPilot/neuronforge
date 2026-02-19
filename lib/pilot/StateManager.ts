@@ -721,7 +721,7 @@ export class StateManager {
   async resumeExecution(executionId: string): Promise<{
     context: ExecutionContext;
     agent: Agent;
-    runMode: 'calibration' | 'production';
+    runMode: 'calibration' | 'batch_calibration' | 'production';
   }> {
     const { data, error } = await this.supabase
       .from('workflow_executions')
@@ -749,7 +749,8 @@ export class StateManager {
     }
 
     // Extract run_mode from execution record
-    const runMode = (data.run_mode as 'calibration' | 'production') || 'production';
+    const runMode = (data.run_mode as 'calibration' | 'batch_calibration' | 'production') || 'production';
+    const isBatchCalibration = runMode === 'batch_calibration';
 
     // Reconstruct ExecutionContext from checkpoint
     const context = new ExecutionContext(
@@ -757,7 +758,8 @@ export class StateManager {
       agent,
       data.user_id,
       data.session_id,
-      data.input_values || {}
+      data.input_values || {},
+      isBatchCalibration
     );
 
     // Restore state

@@ -112,10 +112,15 @@ export class GoogleDocsPluginExecutor extends GoogleBasePluginExecutor {
     }
 
     const result: any = {
+      // Primary format (snake_case to match schema)
       document_id: data.documentId,
       title: data.title,
       char_count: charCount,
-      retrieved_at: new Date().toISOString()
+      retrieved_at: new Date().toISOString(),
+      // Legacy format (camelCase for backward compatibility)
+      documentId: data.documentId,
+      charCount: charCount,
+      retrievedAt: new Date().toISOString()
     };
 
     if (plain_text_only) {
@@ -123,10 +128,12 @@ export class GoogleDocsPluginExecutor extends GoogleBasePluginExecutor {
     } else {
       result.content = textContent;
       result.structured_content = content;
+      result.structuredContent = content;  // Legacy format
     }
 
     if (include_formatting) {
       result.full_document = data;
+      result.fullDocument = data;  // Legacy format
     }
 
     return result;
@@ -178,10 +185,15 @@ export class GoogleDocsPluginExecutor extends GoogleBasePluginExecutor {
     const data = await response.json();
 
     return {
+      // Primary format (snake_case to match schema)
       document_id: data.documentId,
       char_count: text.length,
       index: insertIndex,
-      inserted_at: new Date().toISOString()
+      inserted_at: new Date().toISOString(),
+      // Legacy format (camelCase for backward compatibility)
+      documentId: data.documentId,
+      charCount: text.length,
+      insertedAt: new Date().toISOString()
     };
   }
 
@@ -245,10 +257,15 @@ export class GoogleDocsPluginExecutor extends GoogleBasePluginExecutor {
     const data = await response.json();
 
     return {
+      // Primary format (snake_case to match schema)
       document_id: data.documentId,
       title: docData.title,
       char_count: textToInsert.length,
-      appended_at: new Date().toISOString()
+      appended_at: new Date().toISOString(),
+      // Legacy format (camelCase for backward compatibility)
+      documentId: data.documentId,
+      charCount: textToInsert.length,
+      appendedAt: new Date().toISOString()
     };
   }
 
@@ -297,10 +314,15 @@ export class GoogleDocsPluginExecutor extends GoogleBasePluginExecutor {
     }
 
     return {
+      // Primary format (snake_case to match schema)
       document_id: data.documentId,
       document_url: `https://docs.google.com/document/d/${data.documentId}/edit`,
       title: data.title,
-      created_at: new Date().toISOString()
+      created_at: new Date().toISOString(),
+      // Legacy format (camelCase for backward compatibility)
+      documentId: data.documentId,
+      documentUrl: `https://docs.google.com/document/d/${data.documentId}/edit`,
+      createdAt: new Date().toISOString()
     };
   }
 
@@ -329,9 +351,13 @@ export class GoogleDocsPluginExecutor extends GoogleBasePluginExecutor {
     const data = await response.json();
 
     const result: any = {
+      // Primary format (snake_case to match schema)
       document_id: data.documentId,
       title: data.title,
-      retrieved_at: new Date().toISOString()
+      retrieved_at: new Date().toISOString(),
+      // Legacy format (camelCase for backward compatibility)
+      documentId: data.documentId,
+      retrievedAt: new Date().toISOString()
     };
 
     // Add content summary if requested
@@ -355,9 +381,14 @@ export class GoogleDocsPluginExecutor extends GoogleBasePluginExecutor {
       result.char_count = charCount;
       result.paragraph_count = paragraphCount;
       result.end_index = data.body?.content?.[data.body.content.length - 1]?.endIndex || 1;
+      // Legacy format (camelCase)
+      result.charCount = charCount;
+      result.paragraphCount = paragraphCount;
+      result.endIndex = data.body?.content?.[data.body.content.length - 1]?.endIndex || 1;
     } else {
       // Just get the end index for potential use
       result.end_index = data.body?.content?.[data.body.content.length - 1]?.endIndex || 1;
+      result.endIndex = data.body?.content?.[data.body.content.length - 1]?.endIndex || 1;  // Legacy format
     }
 
     return result;

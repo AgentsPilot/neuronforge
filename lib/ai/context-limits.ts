@@ -42,6 +42,10 @@ export const MODEL_CONTEXT_LIMITS: Record<string, number> = {
   'gpt-4': 8192,
   'gpt-3.5-turbo': 16385,
 
+  // Anthropic Claude 4.6 Series (Feb 2026)
+  'claude-opus-4-6': 200000,
+  'claude-sonnet-4-6': 200000,
+
   // Anthropic Claude 4.5 Series
   'claude-opus-4-5-20251101': 200000,
   'claude-sonnet-4-5-20250929': 200000,
@@ -122,6 +126,10 @@ export const MODEL_MAX_OUTPUT_TOKENS: Record<string, number> = {
   'gpt-4-turbo': 4096,
   'gpt-4': 8192,
   'gpt-3.5-turbo': 4096,
+
+  // Anthropic Claude 4.6 Series (Feb 2026)
+  'claude-opus-4-6': 16384,
+  'claude-sonnet-4-6': 16384,
 
   // Anthropic Claude 4.5 Series
   'claude-opus-4-5-20251101': 16384,

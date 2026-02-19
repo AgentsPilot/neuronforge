@@ -65,7 +65,7 @@ import { MiniInsightCard, HealthStatus, NoIssuesState } from '@/components/v2/ex
 import { InsightsList } from '@/components/v2/insights/InsightsList'
 
 // PERFORMANCE: Lazy load heavy components that may not be used immediately
-const DraftAgentTour = lazy(() => import('@/components/agents/DraftAgentTour').then(mod => ({ default: mod.DraftAgentTour })))
+const DraftAgentTour = lazy(() => import('@/components/agents/DraftAgentTour'))
 
 // Helper function to get plugin-specific icon
 const getPluginIcon = (pluginName: string) => {

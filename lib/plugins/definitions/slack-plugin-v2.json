@@ -89,7 +89,7 @@
         }
       },
       "output_guidance": {
-        "success_description": "Message sent successfully with timestamp for future reference",
+        "success_description": "Sent message",
         "sample_output": {
           "message_timestamp": "1234567890.123456",
           "channel_id": "C1234567890",
@@ -170,7 +170,7 @@
         }
       },
       "output_guidance": {
-        "success_description": "Returns message history with user info and timestamps",
+        "success_description": "Retrieved messages",
         "sample_output": {
           "messages": [
             {
@@ -233,7 +233,7 @@
         }
       },
       "output_guidance": {
-        "success_description": "Message updated successfully",
+        "success_description": "Updated message",
         "sample_output": {
           "message_timestamp": "1234567890.123456",
           "channel_id": "C1234567890",
@@ -280,7 +280,7 @@
         }
       },
       "output_guidance": {
-        "success_description": "Reaction added successfully",
+        "success_description": "Added reaction",
         "sample_output": {
           "success": true,
           "emoji": "thumbsup",
@@ -326,7 +326,7 @@
         }
       },
       "output_guidance": {
-        "success_description": "Reaction removed successfully",
+        "success_description": "Removed reaction",
         "sample_output": {
           "success": true,
           "emoji": "thumbsup",
@@ -385,7 +385,7 @@
         }
       },
       "output_guidance": {
-        "success_description": "Channel created successfully",
+        "success_description": "Created channel",
         "sample_output": {
           "channel_id": "C1234567890",
           "channel_name": "new-channel",
@@ -456,7 +456,7 @@
         }
       },
       "output_guidance": {
-        "success_description": "Returns list of channels with details",
+        "success_description": "Listed channels",
         "sample_output": {
           "channels": [
             {
@@ -531,7 +531,7 @@
         }
       },
       "output_guidance": {
-        "success_description": "Returns list of workspace users with profile info",
+        "success_description": "Listed users",
         "sample_output": {
           "users": [
             {
@@ -592,7 +592,7 @@
         }
       },
       "output_guidance": {
-        "success_description": "Returns detailed user profile information",
+        "success_description": "Retrieved user profile",
         "sample_output": {
           "user_id": "U1234567890",
           "name": "jsmith",
@@ -672,7 +672,7 @@
         }
       },
       "output_guidance": {
-        "success_description": "File uploaded and shared successfully",
+        "success_description": "Uploaded file",
         "sample_output": {
           "file_id": "F1234567890",
           "filename": "report.pdf",

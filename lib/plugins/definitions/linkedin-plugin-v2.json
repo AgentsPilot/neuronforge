@@ -54,7 +54,7 @@
         }
       },
       "output_guidance": {
-        "success_description": "Returns basic profile information including name and profile picture.",
+        "success_description": "Retrieved profile",
         "sample_output": {
           "id": "abc123xyz",
           "first_name": "John",
@@ -96,7 +96,7 @@
         }
       },
       "output_guidance": {
-        "success_description": "Returns OpenID Connect user info including email and verification status.",
+        "success_description": "Retrieved user info",
         "sample_output": {
           "sub": "abc123xyz",
           "name": "John Doe",
@@ -178,7 +178,7 @@
         }
       },
       "output_guidance": {
-        "success_description": "Returns the created post's ID and URN for reference.",
+        "success_description": "Posted update",
         "sample_output": {
           "post_id": "7123456789012345678",
           "post_urn": "urn:li:ugcPost:7123456789012345678",
@@ -251,7 +251,7 @@
         }
       },
       "output_guidance": {
-        "success_description": "Returns list of user's posts with text content and timestamps.",
+        "success_description": "Retrieved posts",
         "sample_output": {
           "posts": [
             {
@@ -306,7 +306,7 @@
         }
       },
       "output_guidance": {
-        "success_description": "Returns organization details including name, logo, industry, and employee count.",
+        "success_description": "Retrieved organization",
         "sample_output": {
           "organization_id": "123456789",
           "organization_urn": "urn:li:organization:123456789",
@@ -390,7 +390,7 @@
         }
       },
       "output_guidance": {
-        "success_description": "Returns matching organizations with basic info.",
+        "success_description": "Found organizations",
         "sample_output": {
           "organizations": [
             {
@@ -468,7 +468,7 @@
         }
       },
       "output_guidance": {
-        "success_description": "Returns organization posts with text and timestamps.",
+        "success_description": "Retrieved organization posts",
         "sample_output": {
           "organization_id": "123456789",
           "posts": [
@@ -546,7 +546,7 @@
         }
       },
       "output_guidance": {
-        "success_description": "Returns list of connection URNs with pagination info.",
+        "success_description": "Retrieved connections",
         "sample_output": {
           "connections": [
             {

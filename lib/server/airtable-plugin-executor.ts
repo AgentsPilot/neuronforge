@@ -56,12 +56,18 @@ export class AirtablePluginExecutor extends BasePluginExecutor {
     const bases = (data.bases || []).map((base: any) => ({
       id: base.id,
       name: base.name,
-      permission_level: base.permissionLevel
+      // Primary format (snake_case)
+      permission_level: base.permissionLevel,
+      // Legacy format (camelCase)
+      permissionLevel: base.permissionLevel
     }));
 
     return {
       bases: bases,
-      base_count: bases.length
+      // Primary format (snake_case to match schema)
+      base_count: bases.length,
+      // Legacy format (camelCase for backward compatibility)
+      baseCount: bases.length
     };
   }
 
@@ -129,9 +135,13 @@ export class AirtablePluginExecutor extends BasePluginExecutor {
 
     return {
       records: data.records || [],
+      // Primary format (snake_case to match schema)
       record_count: data.records?.length || 0,
       offset: data.offset || null,
-      has_more: !!data.offset
+      has_more: !!data.offset,
+      // Legacy format (camelCase for backward compatibility)
+      recordCount: data.records?.length || 0,
+      hasMore: !!data.offset
     };
   }
 
@@ -153,7 +163,10 @@ export class AirtablePluginExecutor extends BasePluginExecutor {
     return {
       id: data.id,
       fields: data.fields || {},
-      created_time: data.createdTime
+      // Primary format (snake_case to match schema)
+      created_time: data.createdTime,
+      // Legacy format (camelCase for backward compatibility)
+      createdTime: data.createdTime
     };
   }
 
@@ -184,8 +197,12 @@ export class AirtablePluginExecutor extends BasePluginExecutor {
 
     return {
       records: data.records || [],
+      // Primary format (snake_case to match schema)
       record_count: data.records?.length || 0,
-      created_at: new Date().toISOString()
+      created_at: new Date().toISOString(),
+      // Legacy format (camelCase for backward compatibility)
+      recordCount: data.records?.length || 0,
+      createdAt: new Date().toISOString()
     };
   }
 
@@ -219,9 +236,13 @@ export class AirtablePluginExecutor extends BasePluginExecutor {
 
     return {
       records: data.records || [],
+      // Primary format (snake_case to match schema)
       record_count: data.records?.length || 0,
       updated_at: new Date().toISOString(),
-      destructive: destructive
+      destructive: destructive,
+      // Legacy format (camelCase for backward compatibility)
+      recordCount: data.records?.length || 0,
+      updatedAt: new Date().toISOString()
     };
   }
 
@@ -242,14 +263,22 @@ export class AirtablePluginExecutor extends BasePluginExecutor {
     const tables = (data.tables || []).map((table: any) => ({
       id: table.id,
       name: table.name,
+      // Primary format (snake_case)
       primary_field_id: table.primaryFieldId,
       field_count: table.fields?.length || 0,
-      view_count: table.views?.length || 0
+      view_count: table.views?.length || 0,
+      // Legacy format (camelCase)
+      primaryFieldId: table.primaryFieldId,
+      fieldCount: table.fields?.length || 0,
+      viewCount: table.views?.length || 0
     }));
 
     return {
       tables: tables,
-      table_count: tables.length
+      // Primary format (snake_case to match schema)
+      table_count: tables.length,
+      // Legacy format (camelCase for backward compatibility)
+      tableCount: tables.length
     };
   }
 
@@ -308,6 +337,7 @@ export class AirtablePluginExecutor extends BasePluginExecutor {
     const attachments = updatedRecord.fields[field_name] || [];
 
     return {
+      // Primary format (snake_case to match schema)
       record_id: updatedRecord.id,
       field_name: field_name,
       attachments: attachments.map((att: any) => ({
@@ -317,7 +347,11 @@ export class AirtablePluginExecutor extends BasePluginExecutor {
         size: att.size,
         type: att.type
       })),
-      attachment_count: attachments.length
+      attachment_count: attachments.length,
+      // Legacy format (camelCase for backward compatibility)
+      recordId: updatedRecord.id,
+      fieldName: field_name,
+      attachmentCount: attachments.length
     };
   }
 
@@ -347,10 +381,17 @@ export class AirtablePluginExecutor extends BasePluginExecutor {
         type: att.type,
         width: att.width || null,
         height: att.height || null,
-        expires_warning: 'URL expires in approximately 2 hours'
+        // Primary format (snake_case)
+        expires_warning: 'URL expires in approximately 2 hours',
+        // Legacy format (camelCase)
+        expiresWarning: 'URL expires in approximately 2 hours'
       })),
+      // Primary format (snake_case to match schema)
       attachment_count: attachments.length,
-      expiry_note: 'Download URLs expire after ~2 hours for security'
+      expiry_note: 'Download URLs expire after ~2 hours for security',
+      // Legacy format (camelCase for backward compatibility)
+      attachmentCount: attachments.length,
+      expiryNote: 'Download URLs expire after ~2 hours for security'
     };
   }
 

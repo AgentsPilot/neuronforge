@@ -44,6 +44,7 @@ import { VisionContentBuilder } from './utils/VisionContentBuilder';
 import { DeterministicExtractor } from '@/lib/extraction';
 import { IssueCollector } from './shadow/IssueCollector';
 import { FailureClassifier } from './shadow/FailureClassifier';
+import { ExecutionSummaryCollector } from './shadow/ExecutionSummaryCollector';
 
 // Create module-level logger for structured logging to dev.log
 const logger = createLogger({ module: 'StepExecutor', service: 'workflow-pilot' });
@@ -281,7 +282,16 @@ export class StepExecutor {
         if ('maxIterations' in stepAny) fieldsToResolve.maxIterations = stepAny.maxIterations;
         if ('left' in stepAny) fieldsToResolve.left = stepAny.left;
         if ('right' in stepAny) fieldsToResolve.right = stepAny.right;
-        if ('scatter' in stepAny) fieldsToResolve.scatter = stepAny.scatter;
+        if ('scatter' in stepAny) {
+          // Only resolve scatter config, NOT the nested steps
+          // Nested steps will be resolved during each scatter iteration
+          fieldsToResolve.scatter = {
+            input: stepAny.scatter.input,
+            itemVariable: stepAny.scatter.itemVariable,
+            maxConcurrency: stepAny.scatter.maxConcurrency
+            // Deliberately exclude 'steps' - they contain loop variables not yet defined
+          };
+        }
         if ('gather' in stepAny) fieldsToResolve.gather = stepAny.gather;
 
         resolvedParams = context.resolveAllVariables(fieldsToResolve);
@@ -1259,6 +1269,13 @@ export class StepExecutor {
       plugins_required: isAIProcessing ? [] : context.agent.plugins_required
     };
 
+    // CRITICAL: Inject output_schema from step config (for ai_processing steps)
+    // The step.config.output_schema contains the structured output format from IR generation
+    if (isAIProcessing && (step as AIProcessingStep).config?.output_schema) {
+      agentForExecution.output_schema = (step as AIProcessingStep).config.output_schema;
+      logger.debug({ stepId: step.id, hasOutputSchema: true }, 'Injecting output_schema from step config');
+    }
+
     // Override model if selected by routing
     if (selectedModel) {
       agentForExecution.model_preference = selectedModel;
@@ -1380,13 +1397,14 @@ export class StepExecutor {
     logger.info({ stepId: step.id, conditionResult }, 'Condition evaluated');
 
     // V4 Format: Execute nested steps based on condition
-    const hasV4Format = conditionalStep.then_steps || conditionalStep.else_steps;
+    // Support both formats: then_steps/else_steps (DSL) and then/else (PILOT normalized)
+    const hasV4Format = conditionalStep.then_steps || conditionalStep.else_steps || conditionalStep.then || conditionalStep.else;
 
     if (hasV4Format) {
       logger.debug({ stepId: step.id }, 'V4 conditional detected - executing nested steps');
 
-      const branchToExecute = conditionResult ? conditionalStep.then_steps : conditionalStep.else_steps;
-      const branchName = conditionResult ? 'then_steps' : 'else_steps';
+      const branchToExecute = conditionResult ? (conditionalStep.then || conditionalStep.then_steps) : (conditionalStep.else || conditionalStep.else_steps);
+      const branchName = conditionResult ? 'then' : 'else';
 
       if (branchToExecute && Array.isArray(branchToExecute) && branchToExecute.length > 0) {
         logger.info({ stepId: step.id, branchName, stepCount: branchToExecute.length }, 'Executing conditional branch');
@@ -1404,6 +1422,9 @@ export class StepExecutor {
 
             // Store the result in context so subsequent steps can reference it
             context.setStepOutput(branchStep.id, branchStepResult);
+
+            // Collect execution metadata for calibration summaries
+            await this.collectExecutionMetadata(branchStep, branchStepResult, context);
           } catch (error: any) {
             logger.error({ err: error, stepId: step.id, branchName, branchStepId: branchStep.id }, 'Error executing branch step');
 
@@ -4547,5 +4568,110 @@ Respond with a JSON object containing the extracted field values.`;
 
     // Primitive values
     return undefined;
+  }
+
+  /**
+   * Collect execution metadata for calibration summaries from nested steps
+   * (steps inside conditionals, loops, etc.)
+   */
+  private async collectExecutionMetadata(
+    step: WorkflowStep,
+    output: StepOutput,
+    context: ExecutionContext
+  ): Promise<void> {
+    console.log(`📊 [StepExecutor] collectExecutionMetadata called for step ${step.id}, type: ${step.type}, success: ${output.metadata.success}`);
+
+    // Only collect if we're in batch calibration mode
+    if (!context.batchCalibrationMode) {
+      console.log(`📊 [StepExecutor] Skipping - not in batch calibration mode (flag: ${context.batchCalibrationMode})`);
+      return;
+    }
+
+    // Only collect from successful action steps
+    if (step.type !== 'action' || !output.metadata.success) {
+      console.log(`📊 [StepExecutor] Skipping - step type: ${step.type}, success: ${output.metadata.success}`);
+      return;
+    }
+
+    // Get the execution summary collector from the pilot instance (if available)
+    const collector = (context as any).executionSummaryCollector as ExecutionSummaryCollector | null;
+    console.log(`📊 [StepExecutor] Collector available: ${!!collector}`);
+    if (!collector) {
+      console.log(`📊 [StepExecutor] No collector found on context`);
+      return;
+    }
+
+    const actionStep = step as ActionStep;
+    const pluginName = actionStep.plugin;
+    const actionName = actionStep.action;
+
+    try {
+      // Load plugin definition to get metadata
+      const fs = await import('fs');
+      const path = await import('path');
+      const definitionsDir = path.join(process.cwd(), 'lib', 'plugins', 'definitions');
+      const fileName = `${pluginName}-plugin-v2.json`;
+      const filePath = path.join(definitionsDir, fileName);
+      const fileContent = await fs.promises.readFile(filePath, 'utf-8');
+      const pluginDef = JSON.parse(fileContent);
+      const actionDef = pluginDef?.actions?.[actionName];
+
+      if (!actionDef) {
+        return;
+      }
+
+      // Extract count from output schema
+      const itemCount = this.extractItemCount(output.data, actionDef.output_schema);
+
+      // Determine operation type from usage_context
+      const usageContext = actionDef.usage_context || '';
+      const isWriteOperation = usageContext.toLowerCase().includes('add') ||
+                               usageContext.toLowerCase().includes('create') ||
+                               usageContext.toLowerCase().includes('send');
+
+      // Record the data access
+      if (isWriteOperation) {
+        console.log(`📊 [StepExecutor] Recording data write: ${pluginName}.${actionName} (count: ${itemCount})`);
+        await collector.recordDataWrite(pluginName, actionName, itemCount);
+      } else {
+        console.log(`📊 [StepExecutor] Recording data read: ${pluginName}.${actionName} (count: ${itemCount})`);
+        await collector.recordDataRead(pluginName, actionName, itemCount);
+        collector.recordItemsProcessed(itemCount);
+      }
+    } catch (error) {
+      console.warn(`[StepExecutor] Could not collect metadata for ${pluginName}.${actionName}:`, error);
+    }
+  }
+
+  /**
+   * Extract item count from output data using schema as a guide
+   */
+  private extractItemCount(data: any, schema: any): number {
+    if (!data || !schema) return 0;
+    if (Array.isArray(data)) return data.length;
+
+    // Walk the schema to find count fields
+    if (schema.properties) {
+      for (const [fieldName, fieldSchema] of Object.entries(schema.properties)) {
+        const field = fieldSchema as any;
+
+        // Array field
+        if (field.type === 'array' && data[fieldName]) {
+          if (Array.isArray(data[fieldName])) {
+            return data[fieldName].length;
+          }
+        }
+
+        // Count field
+        if (field.type === 'integer' && data[fieldName] !== undefined) {
+          const desc = field.description?.toLowerCase() || '';
+          if (desc.includes('count') || desc.includes('number of') || fieldName.includes('count')) {
+            return data[fieldName];
+          }
+        }
+      }
+    }
+
+    return typeof data === 'object' ? 1 : 0;
   }
 }

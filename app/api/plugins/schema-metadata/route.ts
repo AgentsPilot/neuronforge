@@ -68,6 +68,20 @@ export async function GET(request: NextRequest) {
               source: dynamicOptions.source,
               depends_on: dynamicOptions.depends_on // Include dependency information
             });
+
+            // Also index by base name (e.g., "folder_id" for "parent_folder_id")
+            // This helps calibration match parameterized fields like "step2_folder_id"
+            const baseName = paramName.replace(/^(parent_|target_|source_|from_|to_)/, '');
+            if (baseName !== paramName && !metadata[baseName]) {
+              metadata[baseName] = [];
+              metadata[baseName].push({
+                plugin: pluginName,
+                action: actionName,
+                parameter: paramName, // Keep original parameter name
+                source: dynamicOptions.source,
+                depends_on: dynamicOptions.depends_on
+              });
+            }
           }
         }
       }

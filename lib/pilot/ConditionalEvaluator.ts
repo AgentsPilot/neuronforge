@@ -83,19 +83,68 @@ export class ConditionalEvaluator {
     if (fieldRef.startsWith('{{')) {
       // Already wrapped, use as-is
     } else if (fieldRef.includes('.') || fieldRef.startsWith('step') || fieldRef.startsWith('input')) {
-      // Has a dot or is a known root (step*, input*) - wrap as-is
-      fieldRef = `{{${fieldRef}}}`;
+      // Has a dot - check if it's a custom item variable (e.g., current_attachment.mimeType)
+      // before assuming it's a step reference
+      const potentialRoot = fieldRef.split('.')[0];
+
+      // Check if this root exists in context variables (e.g., current_email, current_attachment)
+      if (context.variables && context.variables.hasOwnProperty(potentialRoot)) {
+        // It's a loop/scatter variable - wrap as-is
+        fieldRef = `{{${fieldRef}}}`;
+      } else if (fieldRef.startsWith('step') || fieldRef.startsWith('input')) {
+        // Known step/input reference - wrap as-is
+        fieldRef = `{{${fieldRef}}}`;
+      } else {
+        // Has a dot but root not found in variables - might be step reference
+        // Wrap and let resolveVariable handle the error
+        fieldRef = `{{${fieldRef}}}`;
+      }
     } else {
-      // Simple field name like "snippet" - resolve from current item
-      // In filter contexts, the item is set via tempContext.setVariable('item', item)
-      fieldRef = `{{item.${fieldRef}}}`;
+      // Simple field name like "snippet" or "gmail_message_link"
+      // Try resolving as top-level variable first (e.g., step output variable)
+      // If not found, fall back to item.field (for filter contexts)
+      const topLevelRef = `{{${fieldRef}}}`;
+      try {
+        const topLevelValue = context.resolveVariable(topLevelRef);
+        if (topLevelValue !== undefined) {
+          // Found as top-level variable (e.g., step output)
+          fieldRef = topLevelRef;
+        } else {
+          // Not found as top-level, try as item field
+          // In filter contexts, the item is set via tempContext.setVariable('item', item)
+          // In scatter_gather, the item variable name is customizable (e.g., 'current_email')
+          // Try to find which item variable is available in context
+          const itemVarName = this.findItemVariable(context);
+          if (itemVarName) {
+            fieldRef = `{{${itemVarName}.${fieldRef}}}`;
+          } else {
+            // Fallback to 'item' for backward compatibility
+            fieldRef = `{{item.${fieldRef}}}`;
+          }
+        }
+      } catch {
+        // If resolution throws, try as item field
+        const itemVarName = this.findItemVariable(context);
+        if (itemVarName) {
+          fieldRef = `{{${itemVarName}.${fieldRef}}}`;
+        } else {
+          fieldRef = `{{item.${fieldRef}}}`;
+        }
+      }
     }
 
     const actualValue = context.resolveVariable(fieldRef);
 
+    // ✅ CRITICAL FIX: Resolve condition.value if it contains variable references
+    // Example: condition.value = "{{existing_sheet_data.values[*][4]}}" needs to be resolved
+    let expectedValue = condition.value;
+    if (typeof expectedValue === 'string' && expectedValue.includes('{{')) {
+      expectedValue = context.resolveVariable(expectedValue);
+    }
+
     return this.compareValues(
       actualValue,
-      condition.value,
+      expectedValue,
       condition.operator
     );
   }
@@ -173,6 +222,42 @@ export class ConditionalEvaluator {
         return match;
       }
     });
+  }
+
+  /**
+   * Find the item variable name in the current context
+   * Dynamically checks all variables in the context to find item-like variables
+   * Returns the first one found, prioritizing common patterns
+   */
+  private findItemVariable(context: ExecutionContext): string | null {
+    // Get all variable names from the context
+    const allVariables = Object.keys(context.variables || {});
+
+    if (allVariables.length === 0) {
+      return null;
+    }
+
+    // Priority order for common patterns (but not hardcoded - just for ordering)
+    const commonPatterns = [
+      /^current_/,    // current_email, current_item, current_row, etc.
+      /^item$/,       // item (default)
+      /^current$/,    // current (legacy)
+      /^entry$/,      // entry
+      /email$/,       // anything ending with 'email'
+      /row$/,         // anything ending with 'row'
+    ];
+
+    // First, try pattern matching in priority order
+    for (const pattern of commonPatterns) {
+      const match = allVariables.find(varName => pattern.test(varName));
+      if (match) {
+        return match;
+      }
+    }
+
+    // If no pattern matches, return the first available variable
+    // This handles custom variable names that don't match common patterns
+    return allVariables[0];
   }
 
   /**

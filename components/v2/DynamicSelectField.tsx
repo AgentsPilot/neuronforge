@@ -97,6 +97,18 @@ export function DynamicSelectField({
       }
 
       const data = await response.json()
+      console.log('[DynamicSelectField] Fetch response:', {
+        success: data.success,
+        optionsCount: data.options?.length || 0,
+        cached: data.cached,
+        error: data.error,
+        fullData: data
+      })
+
+      if (!data.success) {
+        throw new Error(data.error || 'API returned success: false')
+      }
+
       setOptions(data.options || [])
       setCached(data.cached || false)
     } catch (err: any) {

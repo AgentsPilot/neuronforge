@@ -1,40 +1,51 @@
 /**
- * IRFormalizer - Maps Grounded Semantic Plan to Precise IR
+ * IRFormalizer - Maps Enhanced Prompt to Precise IR
  *
+ * WEEK 1 UPDATE: Now uses Enhanced Prompt DIRECTLY (skips semantic plan & grounding phases).
  * This is the FORMALIZATION PHASE (not understanding, not reasoning).
- * Takes a grounded semantic plan (with validated assumptions and resolved field names)
+ * Takes an Enhanced Prompt with structured sections (data, actions, output, delivery, processing_steps)
  * and mechanically maps it to the strict IR schema.
  *
  * Key Principles:
- * 1. Use grounded facts EXACTLY (no modifications)
+ * 1. Use Enhanced Prompt sections EXACTLY (no modifications)
  * 2. Mechanical mapping (no reasoning)
  * 3. Follow IR schema strictly
- * 4. Handle missing facts gracefully
+ * 4. Use plugin schemas for correct action selection
  */
 
 import OpenAI from 'openai'
-import type { GroundedSemanticPlan } from './schemas/semantic-plan-types'
-import type { DeclarativeLogicalIR } from '../logical-ir/schemas/declarative-ir-types'
+import Anthropic from '@anthropic-ai/sdk'
+// WEEK 1: No longer using GroundedSemanticPlan - using Enhanced Prompt directly
+// import type { GroundedSemanticPlan } from './schemas/semantic-plan-types'
+import type { EnhancedPrompt } from './SemanticPlanGenerator'
+import type { DeclarativeLogicalIRv4 } from '../logical-ir/schemas/declarative-ir-types-v4'
+import type { HardRequirements } from '../requirements/HardRequirementsExtractor'
+import { PluginParameterValidator } from '../utils/PluginParameterValidator'
 import { readFileSync } from 'fs'
 import { join } from 'path'
 import type { PluginManagerV2 } from '../../../server/plugin-manager-v2'
 import { createLogger, Logger } from '@/lib/logger'
+import { HardRequirementsFormatter } from '../utils/HardRequirementsFormatter'
+import { getModelMaxOutputTokens } from '@/lib/ai/context-limits'
 
 // Create module-scoped logger
 const moduleLogger = createLogger({ module: 'V6', service: 'IRFormalizer' })
 
 export interface IRFormalizerConfig {
   model?: string
+  model_provider?: 'openai' | 'anthropic'  // NEW: Specify provider
   temperature?: number
   max_tokens?: number
   openai_api_key?: string
+  anthropic_api_key?: string  // NEW: Support Anthropic
   pluginManager?: PluginManagerV2
   servicesInvolved?: string[] // From Enhanced Prompt specifics.services_involved
   resolvedUserInputs?: Array<{ key: string; value: any }> // From Enhanced Prompt specifics.resolved_user_inputs
+  enhancedPrompt?: EnhancedPrompt // Full Enhanced Prompt (WEEK 1: replaces semantic plan)
 }
 
 export interface FormalizationResult {
-  ir: DeclarativeLogicalIR
+  ir: DeclarativeLogicalIRv4  // Using v4.0 Execution Graph format
   formalization_metadata: {
     provider: string
     model: string
@@ -48,77 +59,115 @@ export interface FormalizationResult {
 export class IRFormalizer {
   private config: {
     model: string
+    model_provider: 'openai' | 'anthropic'
     temperature: number
     max_tokens: number
     openai_api_key: string
+    anthropic_api_key: string
     pluginManager?: PluginManagerV2
     servicesInvolved?: string[]
     resolvedUserInputs?: Array<{ key: string; value: any }>
+    enhancedPrompt?: EnhancedPrompt
   }
-  private openai: OpenAI
+  private openai?: OpenAI
+  private anthropic?: Anthropic
   private systemPrompt: string
   private pluginManager?: PluginManagerV2
-  private groundedPlan?: any  // Store current grounded plan for plugin extraction
+  // private groundedPlan?: any  // DEPRECATED - We skip Phases 1 & 2 and use Enhanced Prompt directly
   private servicesInvolved?: string[]  // From Enhanced Prompt
   private resolvedUserInputs?: Array<{ key: string; value: any }>  // From Enhanced Prompt
+  private enhancedPrompt?: EnhancedPrompt  // Full Enhanced Prompt (replaces semantic plan)
   private logger: Logger
 
   constructor(config: IRFormalizerConfig) {
     this.logger = moduleLogger.child({ method: 'constructor' })
 
+    // Auto-detect provider from model name if not specified
+    let provider = config.model_provider
+    if (!provider) {
+      if (config.model?.includes('claude') || config.model?.includes('opus') || config.model?.includes('sonnet')) {
+        provider = 'anthropic'
+      } else {
+        provider = 'openai'
+      }
+    }
+
+    // Determine model name for max_tokens lookup
+    const modelName = config.model || 'gpt-4o-mini'
+    const defaultMaxTokens = getModelMaxOutputTokens(modelName)
+
     this.config = {
-      model: config.model || 'gpt-5.2',
-      temperature: config.temperature ?? 0.0, // Very low - this is mechanical mapping
-      max_tokens: config.max_tokens ?? 4000,
+      model: modelName,
+      model_provider: provider,
+      temperature: config.temperature ?? 0.1, // Low but allows slight reasoning for processing_order
+      max_tokens: config.max_tokens ?? defaultMaxTokens, // Use model's actual limit instead of hardcoded 4000
       openai_api_key: config.openai_api_key || process.env.OPENAI_API_KEY || '',
+      anthropic_api_key: config.anthropic_api_key || process.env.ANTHROPIC_API_KEY || '',
       pluginManager: config.pluginManager,
       servicesInvolved: config.servicesInvolved,
-      resolvedUserInputs: config.resolvedUserInputs
+      resolvedUserInputs: config.resolvedUserInputs,
+      enhancedPrompt: config.enhancedPrompt
     }
 
     this.pluginManager = config.pluginManager
     this.servicesInvolved = config.servicesInvolved
     this.resolvedUserInputs = config.resolvedUserInputs
+    this.enhancedPrompt = config.enhancedPrompt
 
-    // Initialize OpenAI client
-    this.openai = new OpenAI({ apiKey: this.config.openai_api_key })
+    // Initialize LLM client based on provider
+    if (this.config.model_provider === 'anthropic') {
+      this.anthropic = new Anthropic({ apiKey: this.config.anthropic_api_key })
+    } else {
+      this.openai = new OpenAI({ apiKey: this.config.openai_api_key })
+    }
 
     // Load formalization system prompt
     // Use process.cwd() instead of __dirname for Next.js compatibility
-    const promptPath = join(process.cwd(), 'lib', 'agentkit', 'v6', 'semantic-plan', 'prompts', 'formalization-system.md')
+    // UPDATED: Now using IR v4.0 execution graph prompt
+    const promptPath = join(process.cwd(), 'lib', 'agentkit', 'v6', 'semantic-plan', 'prompts', 'formalization-system-v4.md')
     this.systemPrompt = readFileSync(promptPath, 'utf-8')
 
-    this.logger.info({ model: this.config.model, promptPath }, 'Initialized')
+    this.logger.info({
+      model: this.config.model,
+      provider: this.config.model_provider,
+      hasPluginManager: !!this.pluginManager,
+      pluginManagerType: this.pluginManager ? this.pluginManager.constructor.name : 'null',
+      promptPath
+    }, 'Initialized')
     this.logger.debug({ promptLength: this.systemPrompt.length }, 'System prompt loaded')
   }
 
   /**
-   * Formalize a grounded semantic plan to IR
+   * Formalize Enhanced Prompt directly to IR (WEEK 1: Skip Phases 1 & 2)
+   *
+   * @param enhancedPrompt - Enhanced Prompt with sections (data, actions, output, delivery, processing_steps)
+   * @param hardRequirements - Hard requirements extracted from Enhanced Prompt in Phase 0
    */
-  async formalize(groundedPlan: GroundedSemanticPlan): Promise<FormalizationResult> {
+  async formalize(
+    enhancedPrompt: EnhancedPrompt,
+    hardRequirements?: HardRequirements
+  ): Promise<FormalizationResult> {
     const formalizeLogger = moduleLogger.child({ method: 'formalize' })
     const startTime = Date.now()
 
-    formalizeLogger.info('Starting formalization')
-
-    // Store grounded plan for plugin extraction
-    this.groundedPlan = groundedPlan
-
-    // Extract grounded facts
-    const groundedFacts = this.extractGroundedFacts(groundedPlan)
-    const missingFacts = this.identifyMissingFacts(groundedPlan)
+    // Use hard requirements from parameter (Phase 0 → Phase 3 propagation)
+    const requirements = hardRequirements
 
     formalizeLogger.info({
-      groundedFactsCount: Object.keys(groundedFacts).length,
-      missingFactsCount: missingFacts.length
-    }, 'Extracted facts from grounded plan')
+      hasHardRequirements: !!requirements,
+      requirementsCount: requirements?.requirements.length || 0,
+      requirementsSource: 'phase0_extraction'
+    }, 'Starting formalization (direct from Enhanced Prompt)')
 
-    if (missingFacts.length > 0) {
-      formalizeLogger.warn({ missingFacts }, 'Missing grounded facts')
-    }
+    // Store enhanced prompt for section extraction
+    this.enhancedPrompt = enhancedPrompt
 
-    // Build formalization request
-    const userMessage = this.buildFormalizationRequest(groundedPlan, groundedFacts)
+    // WEEK 1: No grounded facts - we skip Phase 2 (grounding is mocked for API workflows)
+    // Enhanced Prompt provides all needed information directly
+    formalizeLogger.info('Building formalization request directly from Enhanced Prompt (Week 1: no grounding phase)')
+
+    // Build formalization request (direct from Enhanced Prompt - no semantic plan)
+    const userMessage = this.buildFormalizationRequest(enhancedPrompt, requirements)
 
     // Debug: Log the available plugins section
     if (process.env.DEBUG_IR_FORMALIZER === 'true') {
@@ -128,37 +177,109 @@ export class IRFormalizer {
       }, 'User message for LLM')
     }
 
-    // Call OpenAI LLM
-    const ir = await this.formalizeWithOpenAI(userMessage)
+    // Call LLM based on provider
+    const ir = this.config.model_provider === 'anthropic'
+      ? await this.formalizeWithAnthropic(userMessage)
+      : await this.formalizeWithOpenAI(userMessage)
 
-    // Ensure goal field is present (required by schema but sometimes omitted by LLM)
+    // Ensure goal field is present (use first processing step or generic goal)
     if (!ir.goal) {
-      ir.goal = groundedPlan.goal
-      formalizeLogger.debug('Added missing goal field from grounded plan')
+      ir.goal = enhancedPrompt.sections?.processing_steps?.[0] || 'Execute workflow based on Enhanced Prompt'
+      formalizeLogger.debug('Added missing goal field from Enhanced Prompt')
     }
 
-    // CRITICAL FIX: Wire up validateFormalization() - was never called before!
-    const validation = this.validateFormalization(ir, groundedFacts)
-    if (!validation.valid) {
-      formalizeLogger.error({ errors: validation.errors }, 'Formalization validation failed')
-      throw new Error(`Formalization validation failed: ${validation.errors.join(', ')}`)
-    }
-    if (validation.warnings.length > 0) {
-      formalizeLogger.warn({ warnings: validation.warnings }, 'Formalization warnings')
+    // Validate v4.0 IR structure
+    if (!ir.execution_graph || !ir.execution_graph.nodes) {
+      formalizeLogger.error('IR missing execution_graph - v4.0 format required')
+      throw new Error('IR formalization failed: missing execution_graph (v4.0 format required)')
     }
 
-    // Calculate confidence based on grounded facts usage
-    const formalizationConfidence = this.calculateFormalizationConfidence(
-      groundedPlan,
-      groundedFacts,
-      missingFacts
-    )
+    if (ir.ir_version !== '4.0') {
+      formalizeLogger.error({ version: ir.ir_version }, 'Invalid IR version - expected 4.0')
+      throw new Error(`Invalid IR version: ${ir.ir_version}. Expected 4.0`)
+    }
+
+    // Post-generation parameter validation and auto-correction
+    if (this.pluginManager) {
+      formalizeLogger.debug('Running parameter validation with PluginManager')
+      const validator = new PluginParameterValidator(this.pluginManager)
+      const paramValidation = validator.validateExecutionGraph(ir.execution_graph)
+
+      formalizeLogger.debug({
+        corrections: paramValidation.corrections,
+        errors: paramValidation.errors.length,
+        msg: 'Parameter validation complete'
+      })
+
+      if (paramValidation.corrections > 0) {
+        formalizeLogger.warn({
+          corrections: paramValidation.corrections,
+          msg: 'Auto-corrected plugin parameters based on schema'
+        })
+      }
+
+      if (paramValidation.errors.length > 0) {
+        formalizeLogger.error({
+          errors: paramValidation.errors,
+          msg: 'Plugin parameter validation errors found'
+        })
+      }
+    } else {
+      formalizeLogger.warn('PluginManager not available - skipping parameter validation')
+    }
+
+    // Embed requirements in IR context (Phase 3: Phase 1 → Phase 3 propagation)
+    if (requirements && requirements.requirements.length > 0) {
+      if (!ir.context) {
+        ir.context = {}
+      }
+      ir.context.hard_requirements = requirements
+
+      formalizeLogger.info({
+        requirementsCount: requirements.requirements.length,
+        hasEnforcementTracking: !!ir.requirements_enforcement
+      }, 'Embedded hard requirements in IR context')
+
+      // Validate that LLM provided requirements_enforcement tracking
+      if (!ir.requirements_enforcement || ir.requirements_enforcement.length === 0) {
+        formalizeLogger.warn(
+          'IR missing requirements_enforcement field - LLM did not track enforcement'
+        )
+      } else {
+        // Log enforcement tracking summary
+        const trackedRequirements = new Set(
+          ir.requirements_enforcement.map(e => e.requirement_id)
+        )
+        const untrackedRequirements = requirements.requirements.filter(
+          req => !trackedRequirements.has(req.id)
+        )
+
+        if (untrackedRequirements.length > 0) {
+          formalizeLogger.warn({
+            untrackedCount: untrackedRequirements.length,
+            untrackedIds: untrackedRequirements.map(r => r.id)
+          }, 'Some requirements not tracked in requirements_enforcement')
+        }
+
+        formalizeLogger.info({
+          trackedCount: ir.requirements_enforcement.length,
+          passedCount: ir.requirements_enforcement.filter(e => e.validation_passed).length
+        }, 'Requirements enforcement tracking embedded in IR')
+      }
+    }
+
+    // ARCHITECTURAL FIX: Validate IR structure before returning
+    // This catches LLM generation errors that would otherwise cause silent failures
+    this.validateIRStructure(ir, formalizeLogger)
+
+    // Calculate confidence based on Enhanced Prompt completeness (WEEK 1: No grounded facts)
+    const formalizationConfidence = this.calculateFormalizationConfidence(enhancedPrompt)
 
     const duration = Date.now() - startTime
     formalizeLogger.info({
       duration,
       confidence: formalizationConfidence,
-      dataSourcesCount: ir.data_sources?.length || 0
+      nodesCount: ir.execution_graph?.nodes ? Object.keys(ir.execution_graph.nodes).length : 0
     }, 'Formalization complete and validated')
 
     return {
@@ -166,8 +287,8 @@ export class IRFormalizer {
       formalization_metadata: {
         provider: 'openai',
         model: this.config.model,
-        grounded_facts_used: groundedFacts,
-        missing_facts: missingFacts,
+        grounded_facts_used: {}, // WEEK 1: Empty - no grounding phase
+        missing_facts: [],       // WEEK 1: Empty - no grounding phase
         formalization_confidence: formalizationConfidence,
         timestamp: new Date().toISOString()
       }
@@ -175,12 +296,14 @@ export class IRFormalizer {
   }
 
   /**
+   * DEPRECATED (WEEK 1): No longer used - we skip Phase 2 (grounding)
+   *
    * Extract grounded facts from validation results
    *
    * Returns validated assumptions as key-value pairs.
    * Logs warnings when grounding results are empty or all validations failed.
    */
-  private extractGroundedFacts(groundedPlan: GroundedSemanticPlan): Record<string, any> {
+  /* private extractGroundedFacts(groundedPlan: GroundedSemanticPlan): Record<string, any> {
     const extractLogger = moduleLogger.child({ method: 'extractGroundedFacts' })
     const facts: Record<string, any> = {}
 
@@ -210,12 +333,14 @@ export class IRFormalizer {
     }
 
     return facts
-  }
+  } */
 
   /**
+   * DEPRECATED (WEEK 1): No longer used - we skip Phase 2 (grounding)
+   *
    * Identify assumptions that failed validation
    */
-  private identifyMissingFacts(groundedPlan: GroundedSemanticPlan): string[] {
+  /* private identifyMissingFacts(groundedPlan: GroundedSemanticPlan): string[] {
     const missing: string[] = []
 
     for (const result of groundedPlan.grounding_results) {
@@ -225,26 +350,71 @@ export class IRFormalizer {
     }
 
     return missing
+  } */
+
+  /**
+   * Build processing_steps section for formalization request
+   * (Hybrid Order Architecture - Phase 1)
+   */
+  private buildProcessingStepsSection(): string {
+    const processingSteps = this.enhancedPrompt?.sections?.processing_steps
+
+    if (!processingSteps || processingSteps.length === 0) {
+      return ''
+    }
+
+    const stepsFormatted = processingSteps
+      .map((step, idx) => `${idx + 1}. ${step}`)
+      .join('\n')
+
+    return `
+## User's Workflow Steps (Execution Order Intent)
+
+${stepsFormatted}
+
+**HYBRID ORDER ARCHITECTURE:**
+
+Generate a \`processing_order\` field in your IR output that contains an ordered array of IR field names reflecting the execution sequence described above.
+
+**What to do:**
+1. After generating all IR fields (data_sources, filters, ai_operations, etc.), determine which order they should execute in
+2. The order should match the sequential logic described in the workflow steps above
+3. Include only the IR field names that are actually present in your output
+4. Populate the \`processing_order\` array with these field names in execution order
+
+**Example IR output:**
+\`\`\`json
+{
+  "processing_order": ["data_sources", "filters", "ai_operations", "conditionals", "file_operations", "delivery_rules"],
+  "data_sources": [...],
+  "filters": {...},
+  "ai_operations": [...],
+  ...
+}
+\`\`\`
+
+The compiler will validate that this order satisfies data dependencies (e.g., conditionals that reference AI output fields must come after ai_operations).
+`
   }
 
   /**
-   * Build formalization request message
+   * Build formalization request message (WEEK 1: No grounded facts needed)
    */
   private buildFormalizationRequest(
-    groundedPlan: GroundedSemanticPlan,
-    groundedFacts: Record<string, any>
+    enhancedPrompt: EnhancedPrompt,
+    hardRequirements?: HardRequirements
   ): string {
     // Get available plugins if plugin manager is provided
     const availablePluginsSection = this.buildAvailablePluginsSection()
 
-    // Check if semantic understanding has search criteria (indicates plugin query needed)
-    const hasSearchCriteria = this.detectSearchCriteria(groundedPlan.understanding)
+    // Always include search criteria instructions (harmless if not needed, critical if needed)
+    const hasSearchCriteria = true
 
     const searchCriteriaInstructions = hasSearchCriteria ? `
 
 ## SPECIAL INSTRUCTION: Search Criteria Handling
 
-The semantic understanding includes search_criteria or filter conditions.
+The Enhanced Prompt includes search_criteria or filter conditions.
 
 **Follow these rules**:
 1. **Time-based filters** (newer_than:7d, older_than:30d, etc.) → Use data_source.config.query
@@ -279,57 +449,104 @@ The semantic understanding includes search_criteria or filter conditions.
 \`\`\`
 ` : ''
 
+    // Build processing_steps section if available (Hybrid Order Architecture)
+    const processingStepsSection = this.buildProcessingStepsSection()
+
     // Build resolved user inputs section if available
     let resolvedUserInputsSection = ''
     if (this.resolvedUserInputs && this.resolvedUserInputs.length > 0) {
       resolvedUserInputsSection = `
-## Resolved User Inputs (USE THESE EXACT VALUES - HIGHEST PRIORITY)
+## Resolved User Inputs (USE LITERAL VALUES - HIGHEST PRIORITY)
 
-These are pre-validated values from the user. Use them EXACTLY as specified:
+These are pre-validated constant values from the user. When a plugin parameter semantically matches a resolved input, use the LITERAL VALUE directly (not as a variable reference).
 
-${this.resolvedUserInputs.map(input => `- **${input.key}**: ${input.value}`).join('\n')}
+${this.resolvedUserInputs.map(input => `- **${input.key}**: \`${input.value}\``).join('\n')}
 
-**CRITICAL**: For filter conditions, parse these values to extract field names and values:
-- If "high_qualified_rule" = "Stage = 4", then filters.conditions[].field MUST be "Stage" and value MUST be "4"
-- If "filter_rule" = "Status equals Active", then filters.conditions[].field MUST be "Status" and value MUST be "Active"
-- These override any field names from grounded facts or plugin output fields
+**CRITICAL Parameter Resolution Rule:**
+- For each plugin parameter, check if a resolved input key semantically matches the parameter
+- If match found → use the LITERAL VALUE from above (e.g., "${this.resolvedUserInputs[0]?.value || 'actual_value_here'}")
+- Do NOT create variable references like \`{{key_name}}\` for resolved inputs
+- Resolved inputs are CONSTANTS, not variables
+
+**Examples:**
+- Resolved input: \`google_sheet_id_candidate: "1pM8Wb..."\`
+- Plugin param: \`spreadsheet_id\`
+- ✅ CORRECT: \`"spreadsheet_id": "1pM8Wb..."\` (literal value)
+- ❌ WRONG: \`"spreadsheet_id": "{{google_sheet_id_candidate}}"\` (variable reference)
+
+**Filter Conditions:**
+- If a resolved input contains comparison logic (e.g., "Stage = 4"), parse it to extract field and value
+- Use the extracted value as a literal in the condition
+`
+    }
+
+    // Build hard requirements section (Phase 0 → Phase 3 propagation)
+    let hardRequirementsSection = ''
+    if (hardRequirements && hardRequirements.requirements.length > 0) {
+      hardRequirementsSection = '\n' + HardRequirementsFormatter.format(hardRequirements, {
+        format: (process.env.HARD_REQS_FORMAT as any) || 'compact_hybrid',
+        phaseContext: 'ir_formalization'
+      })
+    }
+
+    // Build Enhanced Prompt sections (WEEK 1: Direct injection, no semantic plan noise)
+    let dataSectionText = ''
+    if (enhancedPrompt.sections?.data && enhancedPrompt.sections.data.length > 0) {
+      dataSectionText = `
+## Data Sources (from Enhanced Prompt)
+
+${enhancedPrompt.sections.data.join('\n')}
+`
+    }
+
+    let actionsSectionText = ''
+    if (enhancedPrompt.sections?.actions && enhancedPrompt.sections.actions.length > 0) {
+      actionsSectionText = `
+## Actions & Logic (from Enhanced Prompt)
+
+${enhancedPrompt.sections.actions.join('\n')}
+`
+    }
+
+    let outputSectionText = ''
+    if (enhancedPrompt.sections?.output && enhancedPrompt.sections.output.length > 0) {
+      outputSectionText = `
+## Required Output Format (from Enhanced Prompt)
+
+${enhancedPrompt.sections.output.join('\n')}
+`
+    }
+
+    let deliverySectionText = ''
+    if (enhancedPrompt.sections?.delivery && enhancedPrompt.sections.delivery.length > 0) {
+      deliverySectionText = `
+## Delivery Method (from Enhanced Prompt)
+
+${enhancedPrompt.sections.delivery.join('\n')}
 `
     }
 
     return `# Formalization Request
 
-You must map this grounded semantic plan to precise IR.
+You must map this Enhanced Prompt to precise IR (execution graph).
+${processingStepsSection}
 ${resolvedUserInputsSection}
-## Grounded Facts (USE THESE EXACTLY)
-
-\`\`\`json
-${JSON.stringify(groundedFacts, null, 2)}
-\`\`\`
-
-## Semantic Understanding (Map to IR Structure)
-
-\`\`\`json
-${JSON.stringify(groundedPlan.understanding, null, 2)}
-\`\`\`
+${hardRequirementsSection}
+${dataSectionText}
+${actionsSectionText}
+${outputSectionText}
+${deliverySectionText}
 ${searchCriteriaInstructions}
 ${availablePluginsSection}
 
-## Original Goal
-
-${groundedPlan.goal}
-
-## Reasoning Trace (for context only, do not re-reason)
-
-${groundedPlan.reasoning_trace.map(t => `Step ${t.step}: ${t.choice_made} - ${t.reasoning}`).join('\n')}
-
 ## Your Task
 
-Map the semantic understanding to IR structure.
+Map the Enhanced Prompt to IR structure.
 
-**Critical Rules:**
-1. Use grounded facts exactly as provided (no modifications) - these are for TABULAR data sources
+**Critical Rules (WEEK 1 UPDATE):**
+1. WEEK 1: No grounded facts - use Enhanced Prompt sections directly (data, actions, output, delivery)
 2. Follow IR schema enum values strictly
-3. Map semantic concepts to IR structure mechanically
+3. Map Enhanced Prompt concepts to IR structure mechanically
 4. **ALWAYS populate plugin_key and operation_type with actual values (NEVER null)**
 5. **CRITICAL FILTERING RULE**:
    - For time-based filters (newer_than:7d, etc.) → use config.query
@@ -338,15 +555,15 @@ Map the semantic understanding to IR structure.
    - IR filters work on ALL data sources (tabular AND API) - use them for keyword matching
 
 6. **CRITICAL: FILTER FIELD NAMES FOR API SOURCES (MOST IMPORTANT!)**:
-   - For API data sources (google-mail, slack, etc.), grounded facts DO NOT contain filter field names
+   - For API data sources (google-mail, slack, etc.), Enhanced Prompt doesn't contain filter field names
    - You MUST look up the **Output Fields** in the "Available Plugins" section above
    - Find the plugin and action being used (e.g., google-mail → search_emails)
    - Copy the EXACT field name from "Output Fields" (e.g., "snippet", "subject", "from", "body")
    - NEVER use null for filter field names - ALWAYS populate with actual field name from Output Fields
-   - NEVER invent semantic names like "email_content_text" - use ONLY names from Output Fields
+   - NEVER invent names like "email_content_text" - use ONLY names from Output Fields
    - Example: If filtering Gmail for complaints, use "snippet" or "body" (from Output Fields), NOT null
 
-7. **RESOLVED USER INPUTS OVERRIDE**: If "Resolved User Inputs" section exists above, parse the filter rules to extract exact field names and values. These take precedence over plugin output fields for tabular data filtering.
+7. **RESOLVED USER INPUTS OVERRIDE**: If "Resolved User Inputs" section exists above, parse the filter rules to extract exact field names and values. These are validated parameter values from the Enhanced Prompt.
 
 Output ONLY the IR JSON (no explanations, no markdown).`
   }
@@ -390,9 +607,10 @@ Output ONLY the IR JSON (no explanations, no markdown).`
 
   /**
    * Get plugin keys from Enhanced Prompt services_involved (simple, no guessing!)
+   * WEEK 1 RENAMED: Was extractUsedPluginsFromSemanticPlan
    */
-  private extractUsedPluginsFromSemanticPlan(plan: any): string[] {
-    const extractPluginsLogger = moduleLogger.child({ method: 'extractUsedPluginsFromSemanticPlan' })
+  private extractUsedPluginsFromEnhancedPrompt(): string[] {
+    const extractPluginsLogger = moduleLogger.child({ method: 'extractUsedPluginsFromEnhancedPrompt' })
 
     // Use services_involved directly from Enhanced Prompt if available
     if (this.servicesInvolved && this.servicesInvolved.length > 0) {
@@ -407,7 +625,7 @@ Output ONLY the IR JSON (no explanations, no markdown).`
 
   /**
    * Build available plugins section for formalization request
-   * OPTIMIZED: Only inject plugins that are actually used in the semantic plan
+   * OPTIMIZED: Only inject plugins from Enhanced Prompt's services_involved (saves ~800 tokens/plugin)
    */
   private buildAvailablePluginsSection(): string {
     const buildPluginsLogger = moduleLogger.child({ method: 'buildAvailablePluginsSection' })
@@ -418,18 +636,28 @@ Output ONLY the IR JSON (no explanations, no markdown).`
 
     const availablePlugins = this.pluginManager.getAvailablePlugins()
 
-    // Extract only used plugins from semantic plan
-    const usedPluginKeys = this.extractUsedPluginsFromSemanticPlan(this.groundedPlan)
+    // Extract only used plugins from Enhanced Prompt (servicesInvolved)
+    const usedPluginKeys = this.extractUsedPluginsFromEnhancedPrompt()
 
     if (usedPluginKeys.length === 0) {
-      buildPluginsLogger.warn('No plugins detected in semantic plan, injecting all plugins')
+      const totalPlugins = Object.keys(availablePlugins).length
+      buildPluginsLogger.warn({
+        totalPlugins,
+        estimatedTokenCost: totalPlugins * 800,
+        msg: 'No services_involved in Enhanced Prompt, injecting all plugins (performance warning)'
+      })
       // Fallback to all plugins if extraction fails
     } else {
+      const totalPlugins = Object.keys(availablePlugins).length
+      const savings = (totalPlugins - usedPluginKeys.length) * 800
       buildPluginsLogger.info({
         usedPlugins: usedPluginKeys,
         usedCount: usedPluginKeys.length,
-        totalAvailable: Object.keys(availablePlugins).length
-      }, 'Injecting only used plugins')
+        totalAvailable: totalPlugins,
+        estimatedTokenSavings: savings,
+        savingsPercentage: Math.round((savings / (totalPlugins * 800)) * 100),
+        msg: 'Injecting only used plugins (token optimization)'
+      })
     }
 
     // Filter to only used plugins (or all if extraction failed)
@@ -544,14 +772,20 @@ ${pluginDetails}
      * Choose the action that matches the intent (append for adding, write for replacing)
      * Set operation_type to EXACT match of the chosen action name
 
-3. **Config Parameters**:
+3. **Config Parameters** (CRITICAL - USE EXACT PARAMETER NAMES):
    - Look at the parameters listed under the chosen action
+   - Use the EXACT parameter names as shown in the action's parameter list
+   - DO NOT use different parameter names (e.g., do NOT use "sheet_name" if the plugin uses "range")
+   - Copy parameter names character-for-character from the schema
    - Populate config object with required/relevant parameters from the action's parameter list
-   - Use semantic understanding to fill parameter values
+   - Use Enhanced Prompt sections to fill parameter VALUES (but keep parameter NAMES exact)
 
 4. **Parameter Value Population**:
-   - If an action has "query" or "search" parameters, populate from semantic understanding
+   - If an action has "query" or "search" parameters, populate from Enhanced Prompt sections
    - DO NOT leave required parameters empty
+   - Example for google-sheets read_range:
+     * CORRECT: {"spreadsheet_id": "...", "range": "SheetName"}
+     * WRONG: {"spreadsheet_id": "...", "sheet_name": "SheetName"}
 
 5. **Filter Field Names** (CRITICAL FOR FILTERING):
    - When creating filters.conditions[], the "field" property MUST use EXACT field names from "Output Fields"
@@ -599,7 +833,7 @@ ${pluginDetails}
   /**
    * Formalize using OpenAI with timeout protection
    */
-  private async formalizeWithOpenAI(userMessage: string): Promise<DeclarativeLogicalIR> {
+  private async formalizeWithOpenAI(userMessage: string): Promise<DeclarativeLogicalIRv4> {
     const openaiLogger = moduleLogger.child({ method: 'formalizeWithOpenAI', model: this.config.model })
     const startTime = Date.now()
 
@@ -626,7 +860,7 @@ ${pluginDetails}
       throw new Error('No response content from OpenAI')
     }
 
-    const ir = JSON.parse(content) as DeclarativeLogicalIR
+    const ir = JSON.parse(content) as DeclarativeLogicalIRv4
 
     // Fix type coercion: LLM sometimes outputs numeric strings instead of numbers
     this.coerceIRTypes(ir)
@@ -638,55 +872,161 @@ ${pluginDetails}
   }
 
   /**
-   * Coerce IR types: LLM sometimes outputs strings instead of numbers
-   * Fix temperature, max_tokens, and other numeric fields
+   * Formalize using Anthropic with timeout protection
    */
-  private coerceIRTypes(ir: DeclarativeLogicalIR): void {
-    // Fix ai_operations constraints (temperature, max_tokens)
-    if (ir.ai_operations && Array.isArray(ir.ai_operations)) {
-      for (const op of ir.ai_operations) {
-        if (op.constraints) {
-          // Convert temperature string to number
-          if (typeof op.constraints.temperature === 'string') {
-            const temp = parseFloat(op.constraints.temperature)
-            op.constraints.temperature = isNaN(temp) ? undefined : temp
-          }
-          // Convert max_tokens string to number
-          if (typeof op.constraints.max_tokens === 'string') {
-            const tokens = parseInt(op.constraints.max_tokens, 10)
-            op.constraints.max_tokens = isNaN(tokens) ? undefined : tokens
-          }
-        }
-      }
+  private async formalizeWithAnthropic(userMessage: string): Promise<DeclarativeLogicalIRv4> {
+    const anthropicLogger = moduleLogger.child({ method: 'formalizeWithAnthropic', model: this.config.model })
+    const startTime = Date.now()
+
+    if (!this.anthropic) {
+      throw new Error('Anthropic client not initialized')
     }
 
-    // Fix data_sources config fields (max_results, etc.)
-    if (ir.data_sources && Array.isArray(ir.data_sources)) {
-      for (const ds of ir.data_sources) {
-        if (ds.config) {
-          // Convert max_results string to number
-          if (typeof ds.config.max_results === 'string') {
-            const maxResults = parseInt(ds.config.max_results, 10)
-            ds.config.max_results = isNaN(maxResults) ? undefined : maxResults
-          }
-        }
-      }
-    }
+    const maxAttempts = 2
+    let lastError = ''
 
-    // Fix normalization.grounded_facts: LLM sometimes outputs object instead of array
-    // Schema expects: array of strings or null
-    // LLM sometimes outputs: {"A4": true, "A5": "not_executed"}
-    if (ir.normalization && ir.normalization.grounded_facts) {
-      const gf = ir.normalization.grounded_facts as any
-      if (!Array.isArray(gf) && typeof gf === 'object') {
-        // Convert object to array of strings (keys or key=value pairs)
-        const asArray = Object.entries(gf).map(([key, value]) => {
-          if (value === true) return key
-          if (typeof value === 'string') return `${key}=${value}`
-          return key
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      const attemptStartTime = Date.now()
+
+      try {
+        // Log message size for debugging
+        const messageLength = userMessage.length
+        const estimatedTokens = Math.ceil(messageLength / 4) // Rough estimate: 4 chars per token
+        anthropicLogger.info({
+          attempt,
+          maxAttempts,
+          messageLength,
+          estimatedInputTokens: estimatedTokens
+        }, 'Calling Anthropic API')
+
+        // Add retry context to user message if this is a retry
+        const finalUserMessage = attempt > 1 && lastError
+          ? `${userMessage}\n\n---\n\nPREVIOUS ATTEMPT FAILED:\n${lastError}\n\nPlease ensure you generate valid, complete JSON. Do not truncate arrays or objects.`
+          : userMessage
+
+        const apiCall = this.anthropic.messages.create({
+          model: this.config.model,
+          max_tokens: this.config.max_tokens,
+          temperature: this.config.temperature,
+          system: this.systemPrompt,
+          messages: [
+            { role: 'user', content: finalUserMessage }
+          ]
         })
-        ir.normalization.grounded_facts = asArray
-        moduleLogger.debug({ coercedArray: asArray }, 'Coerced normalization.grounded_facts from object to array')
+
+        // Wrap with 90-second timeout (complex workflows need more time)
+        const response = await this.callWithTimeout(apiCall, 90000)
+
+        const content = response.content[0]
+        if (content.type !== 'text') {
+          lastError = 'Unexpected response type from Anthropic'
+          anthropicLogger.warn({ attempt, error: lastError }, 'Attempt failed - unexpected response type')
+          if (attempt === maxAttempts) {
+            throw new Error(lastError)
+          }
+          continue
+        }
+
+        anthropicLogger.debug({ responseLength: content.text.length }, 'Received LLM response')
+
+        // Extract JSON from response (Anthropic may wrap it in markdown code blocks)
+        let jsonText = content.text.trim()
+
+        // Try multiple patterns to extract JSON from markdown code fences
+        const patterns = [
+          /```json\s*\n([\s\S]*?)\n```/,      // Standard: ```json\n{...}\n```
+          /```json\s+([\s\S]*?)```/,          // No newline after json: ```json {...}```
+          /```\s*\n([\s\S]*?)\n```/,          // Generic: ```\n{...}\n```
+          /```([\s\S]*?)```/,                 // Minimal: ```{...}```
+        ]
+
+        for (const pattern of patterns) {
+          const jsonMatch = jsonText.match(pattern)
+          if (jsonMatch && jsonMatch[1]) {
+            jsonText = jsonMatch[1].trim()
+            break
+          }
+        }
+
+        // Final cleanup: remove any remaining backticks and whitespace
+        jsonText = jsonText.trim().replace(/^`+|`+$/g, '').trim()
+
+        // Additional safety: if text starts with "json" (literal word), remove it
+        if (jsonText.startsWith('json')) {
+          jsonText = jsonText.substring(4).trim()
+        }
+
+        const ir = JSON.parse(jsonText) as DeclarativeLogicalIRv4
+
+        // Fix type coercion: LLM sometimes outputs numeric strings instead of numbers
+        this.coerceIRTypes(ir)
+
+        const attemptDuration = Date.now() - attemptStartTime
+        const totalDuration = Date.now() - startTime
+        anthropicLogger.info({
+          attempt,
+          attemptDuration,
+          totalDuration,
+          responseLength: content.text.length
+        }, 'Anthropic response parsed successfully')
+
+        return ir
+      } catch (parseError) {
+        lastError = parseError instanceof Error ? parseError.message : 'Unknown JSON parse error'
+        const attemptDuration = Date.now() - attemptStartTime
+        anthropicLogger.error({ err: parseError, attempt, attemptDuration }, 'Attempt failed with JSON parse error')
+
+        // If this is the last attempt or a non-retryable error, fail immediately
+        if (attempt === maxAttempts || lastError.includes('API key') || lastError.includes('rate limit')) {
+          anthropicLogger.error({ totalAttempts: maxAttempts, lastError }, 'All attempts failed')
+          throw new Error(`IR formalization failed after ${maxAttempts} attempts: ${lastError}`)
+        }
+
+        // Log retry attempt
+        anthropicLogger.info({ nextAttempt: attempt + 1, error: lastError }, 'Retrying with error context...')
+      }
+    }
+
+    // This should never be reached, but TypeScript needs it
+    throw new Error('IR formalization failed: unexpected code path')
+  }
+
+  /**
+   * Coerce IR types: LLM sometimes outputs strings instead of numbers
+   * Fix temperature, max_tokens, and other numeric fields in execution graph nodes (v4.0)
+   */
+  private coerceIRTypes(ir: DeclarativeLogicalIRv4): void {
+    if (!ir.execution_graph || !ir.execution_graph.nodes) {
+      return
+    }
+
+    // Walk through all nodes and fix numeric fields
+    for (const node of Object.values(ir.execution_graph.nodes)) {
+      if (node.type !== 'operation') continue
+
+      const operation = node.operation
+      if (!operation) continue
+
+      // Fix AI operation temperature/model (v4 has direct properties, no constraints object)
+      if (operation.operation_type === 'ai' && operation.ai) {
+        const aiConfig = operation.ai
+
+        // Convert temperature string to number
+        if (typeof aiConfig.temperature === 'string') {
+          const temp = parseFloat(aiConfig.temperature)
+          aiConfig.temperature = isNaN(temp) ? undefined : temp
+        }
+
+        // Model is already a string, no coercion needed
+      }
+
+      // Fix fetch/deliver config numeric fields (max_results, etc.)
+      if (operation.operation_type === 'fetch' && operation.fetch?.config) {
+        const config = operation.fetch.config
+        if (typeof config.max_results === 'string') {
+          const maxResults = parseInt(config.max_results, 10)
+          config.max_results = isNaN(maxResults) ? undefined : maxResults
+        }
       }
     }
   }
@@ -698,106 +1038,148 @@ ${pluginDetails}
    * - Number of critical assumptions validated
    * - Overall grounding confidence
    */
-  private calculateFormalizationConfidence(
-    groundedPlan: GroundedSemanticPlan,
-    groundedFacts: Record<string, any>,
-    missingFacts: string[]
-  ): number {
-    // Start with grounding confidence (handle case where it might be undefined)
-    let confidence = groundedPlan.grounding_confidence ?? 0
+  /**
+   * Calculate formalization confidence based on Enhanced Prompt completeness
+   * WEEK 1: Simplified - no grounding phase to factor in
+   */
+  private calculateFormalizationConfidence(enhancedPrompt: EnhancedPrompt): number {
+    // WEEK 1: Simplified confidence calculation (no grounding phase)
+    // Start with high baseline since Enhanced Prompt is already validated
+    let confidence = 0.95
 
-    // Only apply penalties if we have assumptions with impact ratings
-    if (groundedPlan.assumptions && Array.isArray(groundedPlan.assumptions)) {
-      // Penalize for missing critical facts
-      const criticalMissing = missingFacts.filter(id => {
-        const assumption = groundedPlan.assumptions.find(a => a.id === id)
-        return assumption?.impact_if_wrong === 'critical'
-      })
+    // Check if we have key sections populated
+    const hasSections = enhancedPrompt.sections &&
+      enhancedPrompt.sections.data &&
+      enhancedPrompt.sections.delivery &&
+      enhancedPrompt.sections.data.length > 0 &&
+      enhancedPrompt.sections.delivery.length > 0
 
-      if (criticalMissing.length > 0) {
-        confidence *= 0.5 // Cut confidence in half if critical facts missing
-      }
+    if (!hasSections) {
+      confidence *= 0.8 // Penalize if key sections missing
+    }
 
-      // Penalize for missing major facts
-      const majorMissing = missingFacts.filter(id => {
-        const assumption = groundedPlan.assumptions.find(a => a.id === id)
-        return assumption?.impact_if_wrong === 'major'
-      })
-
-      if (majorMissing.length > 0) {
-        confidence *= 0.8 // 20% penalty for major facts missing
-      }
+    // Check if we have processing steps
+    if (!enhancedPrompt.sections?.processing_steps || enhancedPrompt.sections.processing_steps.length === 0) {
+      confidence *= 0.9 // Small penalty if no processing steps
     }
 
     return confidence
   }
 
   /**
-   * Validate that IR uses grounded facts correctly
-   * (Post-formalization check)
+   * Validate IR structure for common LLM generation errors
+   *
+   * ARCHITECTURAL FIX: This catches errors at formalization time instead of
+   * allowing them to propagate to compilation where they cause silent failures.
+   *
+   * Validates:
+   * 1. Transform operations have required configuration
+   * 2. Variable types match operation requirements
+   * 3. Required fields are present based on operation type
    */
-  validateFormalization(
-    ir: DeclarativeLogicalIR,
-    groundedFacts: Record<string, any>
-  ): {
-    valid: boolean
-    errors: string[]
-    warnings: string[]
-  } {
+  private validateIRStructure(ir: DeclarativeLogicalIRv4, logger: Logger): void {
+    if (!ir.execution_graph) {
+      return // No graph to validate
+    }
+
     const errors: string[] = []
-    const warnings: string[] = []
 
-    // Check that filters use grounded field names
-    if (ir.filters?.conditions) {
-      for (const condition of ir.filters.conditions) {
-        if (condition.field) {
-          const isGrounded = Object.values(groundedFacts).includes(condition.field)
-          if (!isGrounded) {
-            warnings.push(`Filter field "${condition.field}" not found in grounded facts`)
+    // Validate each node
+    for (const [nodeId, node] of Object.entries(ir.execution_graph.nodes)) {
+      if (node.type !== 'operation') continue
+
+      const operation = (node as any).operation
+      if (!operation) continue
+
+      // Validate transform operations
+      if (operation.operation_type === 'transform') {
+        const transform = operation.transform
+        if (!transform) {
+          errors.push(`Node '${nodeId}': transform operation missing transform config`)
+          continue
+        }
+
+        // Validate filter operations
+        if (transform.type === 'filter') {
+          if (!transform.filter_expression) {
+            errors.push(
+              `Node '${nodeId}': filter operation missing filter_expression. ` +
+              `Filter operations MUST have filter_expression to define filtering logic. ` +
+              `Either add filter_expression OR change operation type.`
+            )
+          }
+
+          // Validate input variable is declared as array
+          const inputVar = (node as any).inputs?.[0]?.variable
+          if (inputVar) {
+            const varDecl = ir.execution_graph.variables?.find(v => v.name === inputVar)
+            if (varDecl && varDecl.type !== 'array') {
+              errors.push(
+                `Node '${nodeId}': filter operation requires array input, ` +
+                `but variable '${inputVar}' is declared as type '${varDecl.type}'. ` +
+                `Either change variable type to 'array' OR use different operation type.`
+              )
+            }
+          }
+        }
+
+        // Validate map operations
+        // Note: map_expression is optional for simple operations where transform.input
+        // itself defines the mapping (e.g., "{{item.field}}" extracts field from each item)
+        // Only complex transformations require explicit map_expression
+        if (transform.type === 'map') {
+          // Skip validation - map_expression is optional
+          // The runtime can handle maps with just an input field
+        }
+
+        // Validate reduce operations
+        if (transform.type === 'reduce') {
+          if (!transform.reduce_operation) {
+            errors.push(
+              `Node '${nodeId}': reduce operation missing reduce_operation. ` +
+              `Must specify one of: sum, count, avg, min, max, concat`
+            )
+          }
+        }
+
+        // Validate group_by operations
+        if (transform.type === 'group_by') {
+          if (!transform.group_by_field) {
+            errors.push(
+              `Node '${nodeId}': group_by operation missing group_by_field`
+            )
+          }
+        }
+
+        // Validate sort operations
+        if (transform.type === 'sort') {
+          if (!transform.sort_field) {
+            errors.push(
+              `Node '${nodeId}': sort operation missing sort_field`
+            )
+          }
+          if (!transform.sort_order) {
+            errors.push(
+              `Node '${nodeId}': sort operation missing sort_order (must be 'asc' or 'desc')`
+            )
           }
         }
       }
     }
 
-    // Check that grouping uses grounded field names
-    if (ir.grouping?.group_by) {
-      const isGrounded = Object.values(groundedFacts).includes(ir.grouping.group_by)
-      if (!isGrounded) {
-        warnings.push(`Grouping field "${ir.grouping.group_by}" not found in grounded facts`)
-      }
+    // If errors found, fail formalization
+    if (errors.length > 0) {
+      logger.error({
+        errorsCount: errors.length,
+        errors
+      }, 'IR structure validation failed')
+
+      throw new Error(
+        `IR structure validation failed with ${errors.length} error(s):\n` +
+        errors.map((e, i) => `${i + 1}. ${e}`).join('\n')
+      )
     }
 
-    // Check that partitions use grounded field names
-    if (ir.partitions) {
-      for (const partition of ir.partitions) {
-        if (partition.field) {
-          const isGrounded = Object.values(groundedFacts).includes(partition.field)
-          if (!isGrounded) {
-            warnings.push(`Partition field "${partition.field}" not found in grounded facts`)
-          }
-        }
-      }
-    }
-
-    // Validate rendering columns (check against grounded facts if provided)
-    if (ir.rendering?.columns_in_order && Object.keys(groundedFacts).length > 0) {
-      // Check if any grounded field facts exist in the rendering
-      const groundedFieldFacts = Object.entries(groundedFacts).filter(([key]) => key.endsWith('_field'))
-
-      if (groundedFieldFacts.length > 0) {
-        for (const [fieldKey, fieldValue] of groundedFieldFacts) {
-          if (fieldValue && typeof fieldValue === 'string' && !ir.rendering.columns_in_order.includes(fieldValue)) {
-            // This is just a warning - column might be intentionally excluded
-            // warnings.push(`Expected column "${fieldValue}" from grounded fact "${fieldKey}" not in rendering`)
-          }
-        }
-      }
-    }
-
-    return {
-      valid: errors.length === 0,
-      errors,
-      warnings
-    }
+    logger.info('IR structure validation passed')
   }
 }

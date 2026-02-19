@@ -88,7 +88,7 @@
         }
       },
       "output_guidance": {
-        "success_description": "Returns contact information with properties and optional associations",
+        "success_description": "Retrieved contact",
         "sample_output": {
           "success": true,
           "data": {
@@ -189,7 +189,7 @@
         }
       },
       "output_guidance": {
-        "success_description": "Returns deals associated with the contact including amounts and stages",
+        "success_description": "Retrieved deals",
         "sample_output": {
           "success": true,
           "data": {
@@ -292,7 +292,7 @@
         }
       },
       "output_guidance": {
-        "success_description": "Returns activities chronologically with counts by type",
+        "success_description": "Retrieved activities",
         "sample_output": {
           "success": true,
           "data": {
@@ -400,7 +400,7 @@
         }
       },
       "output_guidance": {
-        "success_description": "Returns contacts matching search criteria",
+        "success_description": "Found contacts",
         "sample_output": {
           "success": true,
           "data": {
@@ -488,7 +488,7 @@
         }
       },
       "output_guidance": {
-        "success_description": "Returns deal information with properties and associations",
+        "success_description": "Retrieved deal",
         "sample_output": {
           "success": true,
           "data": {
@@ -587,7 +587,7 @@
         }
       },
       "output_guidance": {
-        "success_description": "Returns created contact with ID and properties",
+        "success_description": "Created contact",
         "sample_output": {
           "success": true,
           "data": {
@@ -693,7 +693,7 @@
         }
       },
       "output_guidance": {
-        "success_description": "Returns created task with ID and associations",
+        "success_description": "Created task",
         "sample_output": {
           "success": true,
           "data": {
@@ -795,7 +795,7 @@
         }
       },
       "output_guidance": {
-        "success_description": "Returns created deal with ID and associations",
+        "success_description": "Created deal",
         "sample_output": {
           "success": true,
           "data": {
@@ -871,7 +871,7 @@
         }
       },
       "output_guidance": {
-        "success_description": "Returns created note with ID and timestamp",
+        "success_description": "Created note",
         "sample_output": {
           "success": true,
           "data": {

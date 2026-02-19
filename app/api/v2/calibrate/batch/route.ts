@@ -126,8 +126,71 @@ export async function POST(req: NextRequest) {
     sessionId = session.id;
     logger.info({ sessionId, agentId }, 'Calibration session created');
 
+    // 6.5. Scan and auto-fix structural issues before execution
+    logger.info({ sessionId, agentId }, 'Scanning for structural issues');
+    const { StructuralRepairEngine } = await import('@/lib/pilot/shadow/StructuralRepairEngine');
+    const repairEngine = new StructuralRepairEngine();
+
+    const structuralIssues = await repairEngine.scanWorkflow(agent);
+    logger.info({
+      sessionId,
+      agentId,
+      issuesFound: structuralIssues.length,
+      autoFixable: structuralIssues.filter(i => i.autoFixable).length
+    }, 'Structural scan complete');
+
+    let structuralFixes: any[] = [];
+    if (structuralIssues.length > 0) {
+      logger.info({ sessionId, agentId }, 'Attempting to auto-fix structural issues');
+      const fixResults = await repairEngine.autoFixWorkflow(agent);
+      structuralFixes = fixResults.filter(r => r.fixed);
+
+      logger.info({
+        sessionId,
+        agentId,
+        fixedCount: structuralFixes.length,
+        totalIssues: structuralIssues.length
+      }, 'Structural auto-fix complete');
+
+      // Persist structural fixes to database
+      if (structuralFixes.length > 0) {
+        logger.info({ sessionId, agentId }, 'Persisting structural fixes to database');
+
+        const { error: updateError } = await supabase
+          .from('agents')
+          .update({
+            pilot_steps: agent.pilot_steps,
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', agentId);
+
+        if (updateError) {
+          logger.error({ error: updateError, sessionId, agentId }, 'Failed to persist structural fixes');
+        } else {
+          logger.info({
+            sessionId,
+            agentId,
+            fixedCount: structuralFixes.length
+          }, 'Successfully persisted structural fixes to database');
+        }
+      }
+
+      // If critical issues remain unfixed, warn but continue
+      const criticalUnfixed = structuralIssues.filter(i =>
+        i.severity === 'critical' && !i.autoFixable
+      );
+      if (criticalUnfixed.length > 0) {
+        logger.warn({
+          sessionId,
+          agentId,
+          criticalUnfixed: criticalUnfixed.length
+        }, 'Critical structural issues could not be auto-fixed');
+      }
+    }
+
     // 7. Execute workflow in batch calibration mode
-    logger.info({ sessionId, agentId }, 'Starting workflow execution in batch calibration mode');
+    logger.info({ sessionId, agentId, inputValues }, 'Starting workflow execution in batch calibration mode');
+    console.log('[BatchCalibration] Input values received:', JSON.stringify(inputValues, null, 2));
 
     const pilot = new WorkflowPilot(supabase);
     const result = await pilot.execute(
@@ -154,6 +217,17 @@ export async function POST(req: NextRequest) {
 
     // 8. Process collected issues
     const allIssues = result.collectedIssues || [];
+
+    // DEBUG: Log what we received from WorkflowPilot
+    logger.info({
+      sessionId,
+      hasCollectedIssues: !!result.collectedIssues,
+      collectedIssuesLength: result.collectedIssues?.length || 0,
+      allIssuesLength: allIssues.length,
+      issueCategories: allIssues.map(i => i.category),
+      issuesWithProposals: allIssues.filter(i => i.autoRepairProposal).length,
+      dataShapeMismatches: allIssues.filter(i => i.category === 'data_shape_mismatch').length
+    }, 'DEBUG: Received collected issues from WorkflowPilot');
 
     // 8.5. Detect logic issues (even if no execution errors)
     logger.info({ sessionId, agentId, executionId: result.executionId }, 'Running smart logic analysis');
@@ -217,13 +291,18 @@ export async function POST(req: NextRequest) {
       logger.info({ sessionId, agentId }, 'No issues found - workflow is ready!');
 
       // Mark session as completed
+      console.log('📊 [Batch Calibration] Storing execution summary:', {
+        hasExecutionSummary: !!result.execution_summary,
+        executionSummary: result.execution_summary
+      });
       await sessionRepo.update(sessionId, {
         status: 'completed',
         execution_id: result.executionId,
         completed_steps: result.stepsCompleted,
         failed_steps: result.stepsFailed,
         skipped_steps: result.stepsSkipped,
-        completed_at: new Date().toISOString()
+        completed_at: new Date().toISOString(),
+        execution_summary: result.execution_summary || null
       });
 
       return NextResponse.json({
@@ -266,6 +345,181 @@ export async function POST(req: NextRequest) {
       autoRepairs: summary.autoRepairs
     }, 'Issues processed successfully');
 
+    // 9.5. Auto-apply data_shape_mismatch repairs WITHOUT user interaction
+    // Check ALL issue groups (critical, warnings, autoRepairs) for data shape mismatches
+    const allIssuesForRepair = [
+      ...prioritized.critical,
+      ...prioritized.warnings,
+      ...prioritized.autoRepairs
+    ];
+
+    // Debug: Log ALL issues to see what we're working with
+    logger.info({
+      sessionId,
+      allIssuesCount: allIssuesForRepair.length,
+      issueBreakdown: {
+        categories: allIssuesForRepair.map(i => i.category),
+        withProposals: allIssuesForRepair.filter(i => i.autoRepairProposal).length,
+        dataShapeMismatches: allIssuesForRepair.filter(i => i.category === 'data_shape_mismatch').length
+      },
+      detailedIssues: allIssuesForRepair.map(i => ({
+        id: i.id,
+        category: i.category,
+        hasProposal: !!i.autoRepairProposal,
+        proposalAction: i.autoRepairProposal?.action,
+        affectedSteps: i.affectedSteps?.map(s => s.stepId)
+      }))
+    }, 'DEBUG: All collected issues before auto-repair filter');
+
+    const dataShapeMismatchIssues = allIssuesForRepair.filter(
+      issue => issue.category === 'data_shape_mismatch' &&
+               issue.autoRepairProposal &&
+               issue.autoRepairProposal.action !== 'none'
+    );
+
+    logger.info({
+      sessionId,
+      foundDataShapeMismatches: dataShapeMismatchIssues.length,
+      proposals: dataShapeMismatchIssues.map(i => ({
+        action: i.autoRepairProposal?.action,
+        extractField: i.autoRepairProposal?.extractField,
+        targetStepId: i.autoRepairProposal?.targetStepId,
+        confidence: i.autoRepairProposal?.confidence
+      }))
+    }, 'DEBUG: Filtered data_shape_mismatch issues ready for auto-repair');
+
+    if (dataShapeMismatchIssues.length > 0) {
+      logger.info({
+        sessionId,
+        count: dataShapeMismatchIssues.length,
+        actions: dataShapeMismatchIssues.map(i => i.autoRepairProposal?.action),
+        issues: dataShapeMismatchIssues.map(i => ({
+          id: i.id,
+          affectedSteps: i.affectedSteps?.map(s => s.stepId),
+          proposal: {
+            action: i.autoRepairProposal?.action,
+            extractField: i.autoRepairProposal?.extractField,
+            targetStepId: i.autoRepairProposal?.targetStepId
+          }
+        }))
+      }, 'DEBUG: Starting auto-repair of data shape mismatches');
+
+      // Import apply-fixes logic inline to avoid circular dependencies
+      let updatedSteps = [...workflowSteps];
+      let repairsApplied = 0;
+
+      logger.info({
+        sessionId,
+        workflowStepsCount: updatedSteps.length,
+        topLevelStepIds: updatedSteps.map(s => s.id || s.step_id)
+      }, 'DEBUG: Workflow structure before repairs');
+
+      logger.info({
+        sessionId,
+        arrayLength: dataShapeMismatchIssues.length,
+        arrayType: typeof dataShapeMismatchIssues,
+        isArray: Array.isArray(dataShapeMismatchIssues),
+        firstIssueId: dataShapeMismatchIssues[0]?.id
+      }, 'DEBUG: ABOUT TO START FOR LOOP');
+
+      // Try manual iteration to debug
+      logger.info({ sessionId, msg: 'DEBUG: Trying manual iteration' });
+      for (let i = 0; i < dataShapeMismatchIssues.length; i++) {
+        const issue = dataShapeMismatchIssues[i];
+        logger.info({
+          sessionId,
+          index: i,
+          issueId: issue?.id,
+          hasProposal: !!issue?.autoRepairProposal,
+          proposalAction: issue?.autoRepairProposal?.action
+        }, 'DEBUG: MANUAL ITERATION - Processing issue');
+
+        const proposal = issue.autoRepairProposal;
+        if (!proposal) {
+          logger.warn({ issueId: issue.id }, 'DEBUG: Issue has no proposal, skipping');
+          continue;
+        }
+
+        logger.info({
+          issueId: issue.id,
+          proposalAction: proposal.action,
+          extractField: proposal.extractField,
+          targetStepId: proposal.targetStepId
+        }, 'DEBUG: Processing repair for issue');
+
+        try {
+          // Apply the repair directly to updatedSteps
+          if (
+            proposal.action === 'extract_single_array' ||
+            proposal.action === 'extract_named_array' ||
+            proposal.action === 'extract_from_envelope' ||
+            proposal.action === 'extract_paginated_data'
+          ) {
+            const failedStepId = issue.affectedSteps?.[0]?.stepId;
+            if (!failedStepId) {
+              logger.warn({ issueId: issue.id, action: proposal.action },
+                'DEBUG: No failedStepId in issue.affectedSteps');
+              continue;
+            }
+
+            logger.info({ issueId: issue.id, failedStepId, action: proposal.action },
+              'DEBUG: Looking for failed step in workflow');
+
+            const failedStep = findStepByIdRecursive(updatedSteps, failedStepId);
+            if (!failedStep) {
+              logger.warn({ issueId: issue.id, failedStepId, topLevelSteps: updatedSteps.map(s => s.id || s.step_id) },
+                'DEBUG: Failed step not found in workflow');
+              continue;
+            }
+
+            logger.info({ issueId: issue.id, failedStepId, hasInput: !!failedStep.input },
+              'DEBUG: Found failed step');
+
+            const extractField = proposal.extractField || proposal.envelopeKey;
+            if (!extractField) {
+              logger.warn({ issueId: issue.id, action: proposal.action },
+                'DEBUG: No extractField in proposal');
+              continue;
+            }
+
+            if (!failedStep.input) {
+              logger.warn({ issueId: issue.id, failedStepId, stepType: failedStep.type },
+                'DEBUG: Failed step has no input field');
+              continue;
+            }
+
+            // Update input to navigate to array field
+            const originalInput = failedStep.input;
+            const varPattern = /\{\{([a-zA-Z_][a-zA-Z0-9_]*)\}\}/g;
+            failedStep.input = failedStep.input.replace(varPattern, `{{$1.${extractField}}}`);
+
+            repairsApplied++;
+            logger.info({
+              issueId: issue.id,
+              extractField,
+              originalInput,
+              newInput: failedStep.input,
+              action: proposal.action
+            }, 'Auto-repair applied: extract array field');
+          }
+        } catch (err: any) {
+          logger.error({ issueId: issue.id, error: err.message },
+            'Failed to auto-apply repair - will show to user');
+        }
+      }
+
+      // Update agent with repaired workflow
+      if (repairsApplied > 0) {
+        await supabase
+          .from('agents')
+          .update({ pilot_steps: updatedSteps })
+          .eq('id', agentId);
+
+        logger.info({ sessionId, repairsApplied },
+          'Updated agent with auto-repaired workflow');
+      }
+    }
+
     // 10. Update session with results
     await sessionRepo.updateWithIssues(
       sessionId,
@@ -282,7 +536,8 @@ export async function POST(req: NextRequest) {
       execution_id: result.executionId,
       completed_steps: result.stepsCompleted,
       failed_steps: result.stepsFailed,
-      skipped_steps: result.stepsSkipped
+      skipped_steps: result.stepsSkipped,
+      execution_summary: result.execution_summary || null
     });
 
     logger.info({ sessionId, agentId }, 'Batch calibration completed successfully');
@@ -303,7 +558,8 @@ export async function POST(req: NextRequest) {
         failedSteps: result.stepsFailed,
         skippedSteps: result.stepsSkipped,
         totalSteps: workflowSteps.length
-      }
+      },
+      structuralFixes: structuralFixes.length > 0 ? structuralFixes : undefined
     });
 
   } catch (error: any) {
@@ -339,4 +595,53 @@ export async function POST(req: NextRequest) {
       logger.info({ lockKey }, 'Distributed lock released');
     }
   }
+}
+
+/**
+ * Recursively find step by ID (handles nested steps)
+ */
+function findStepByIdRecursive(steps: any[], stepId: string): any {
+  for (const step of steps) {
+    if (step.id === stepId || step.step_id === stepId) {
+      return step;
+    }
+
+    // Search nested parallel steps
+    if (step.type === 'parallel' && step.steps) {
+      const found = findStepByIdRecursive(step.steps, stepId);
+      if (found) return found;
+    }
+
+    // Search nested scatter_gather steps
+    if (step.type === 'scatter_gather' && step.scatter?.steps) {
+      const found = findStepByIdRecursive(step.scatter.steps, stepId);
+      if (found) return found;
+    }
+
+    // Search conditional branches
+    if (step.type === 'conditional') {
+      if (step.then) {
+        const found = findStepByIdRecursive(step.then, stepId);
+        if (found) return found;
+      }
+      if (step.else) {
+        const found = findStepByIdRecursive(step.else, stepId);
+        if (found) return found;
+      }
+    }
+
+    // Search loop steps
+    if (step.type === 'loop' && step.loopSteps) {
+      const found = findStepByIdRecursive(step.loopSteps, stepId);
+      if (found) return found;
+    }
+
+    // Search sub_workflow steps
+    if (step.type === 'sub_workflow' && step.steps) {
+      const found = findStepByIdRecursive(step.steps, stepId);
+      if (found) return found;
+    }
+  }
+
+  return null;
 }

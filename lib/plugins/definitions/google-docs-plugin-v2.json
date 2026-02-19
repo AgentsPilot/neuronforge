@@ -82,7 +82,7 @@
         }
       },
       "output_guidance": {
-        "success_description": "Returns document content as plain text or structured data with character count.",
+        "success_description": "Read document",
         "sample_output": {
           "document_id": "1abc123xyz",
           "title": "Project Proposal",
@@ -150,7 +150,7 @@
         }
       },
       "output_guidance": {
-        "success_description": "Confirms the text insertion with position and character count.",
+        "success_description": "Inserted text",
         "sample_output": {
           "document_id": "1abc123xyz",
           "char_count": 256,
@@ -219,7 +219,7 @@
         }
       },
       "output_guidance": {
-        "success_description": "Confirms the text was appended with document title and character count.",
+        "success_description": "Added text",
         "sample_output": {
           "document_id": "1abc123xyz",
           "title": "Meeting Notes",
@@ -284,7 +284,7 @@
         }
       },
       "output_guidance": {
-        "success_description": "Returns the new document ID, URL, and title.",
+        "success_description": "Created document",
         "sample_output": {
           "document_id": "1newdoc789xyz",
           "document_url": "https://docs.google.com/document/d/1newdoc789xyz/edit",
@@ -338,7 +338,7 @@
         }
       },
       "output_guidance": {
-        "success_description": "Returns document metadata and optionally content statistics.",
+        "success_description": "Retrieved document info",
         "sample_output": {
           "document_id": "1abc123xyz",
           "title": "Project Proposal",

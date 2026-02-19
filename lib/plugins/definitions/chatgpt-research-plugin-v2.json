@@ -109,7 +109,7 @@
         }
       },
       "output_guidance": {
-        "success_description": "Returns comprehensive research summary with key points and source citations.",
+        "success_description": "Completed research",
         "sample_output": {
           "summary": "Based on analysis of multiple sources, the research indicates...",
           "key_points": [
@@ -189,7 +189,7 @@
         }
       },
       "output_guidance": {
-        "success_description": "Returns summarized content with length comparison and tokens used.",
+        "success_description": "Summarized content",
         "sample_output": {
           "summary": "The article discusses the key developments in AI technology, highlighting recent breakthroughs in natural language processing and their impact on various industries.",
           "original_length": 5432,
@@ -269,7 +269,7 @@
         }
       },
       "output_guidance": {
-        "success_description": "Returns the answer with optional source citations and usage statistics.",
+        "success_description": "Got answer",
         "sample_output": {
           "answer": "Based on current information, the answer to your question is...",
           "question": "What are the latest AI trends in 2024?",

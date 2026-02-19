@@ -91,10 +91,16 @@ export class GoogleSheetsPluginExecutor extends GoogleBasePluginExecutor {
     return {
       range: data.range,
       values: values,
+      // Primary format (snake_case to match schema)
       row_count: rowCount,
       column_count: columnCount,
       major_dimension: data.majorDimension || major_dimension || 'ROWS',
-      retrieved_at: new Date().toISOString()
+      retrieved_at: new Date().toISOString(),
+      // Legacy format (camelCase for backward compatibility)
+      rowCount: rowCount,
+      columnCount: columnCount,
+      majorDimension: data.majorDimension || major_dimension || 'ROWS',
+      retrievedAt: new Date().toISOString()
     };
   }
 
@@ -134,12 +140,19 @@ export class GoogleSheetsPluginExecutor extends GoogleBasePluginExecutor {
     const data = await response.json();
 
     return {
+      // Primary format (snake_case to match schema)
       updated_range: data.updatedRange,
       updated_rows: data.updatedRows || 0,
       updated_columns: data.updatedColumns || 0,
       updated_cells: data.updatedCells || 0,
       values: values,
-      updated_at: new Date().toISOString()
+      updated_at: new Date().toISOString(),
+      // Legacy format (camelCase for backward compatibility)
+      updatedRange: data.updatedRange,
+      updatedRows: data.updatedRows || 0,
+      updatedColumns: data.updatedColumns || 0,
+      updatedCells: data.updatedCells || 0,
+      updatedAt: new Date().toISOString()
     };
   }
 
@@ -206,6 +219,7 @@ export class GoogleSheetsPluginExecutor extends GoogleBasePluginExecutor {
     const updates = data.updates || {};
 
     return {
+      // Primary format (snake_case to match schema)
       updated_range: updates.updatedRange,
       appended_rows: updates.updatedRows || 0,
       appended_columns: updates.updatedColumns || 0,
@@ -213,7 +227,15 @@ export class GoogleSheetsPluginExecutor extends GoogleBasePluginExecutor {
       table_range: data.tableRange,
       sheet_name: range.split('!')[0] || range,
       values: values,
-      appended_at: new Date().toISOString()
+      appended_at: new Date().toISOString(),
+      // Legacy format (camelCase for backward compatibility)
+      updatedRange: updates.updatedRange,
+      appendedRows: updates.updatedRows || 0,
+      appendedColumns: updates.updatedColumns || 0,
+      appendedCells: updates.updatedCells || 0,
+      tableRange: data.tableRange,
+      sheetName: range.split('!')[0] || range,
+      appendedAt: new Date().toISOString()
     };
   }
 
@@ -278,6 +300,7 @@ export class GoogleSheetsPluginExecutor extends GoogleBasePluginExecutor {
     }
 
     return {
+      // Primary format (snake_case to match schema)
       spreadsheet_id: data.spreadsheetId,
       spreadsheet_url: data.spreadsheetUrl,
       title: data.properties.title,
@@ -285,9 +308,16 @@ export class GoogleSheetsPluginExecutor extends GoogleBasePluginExecutor {
       sheets: data.sheets?.map((sheet: any) => ({
         sheet_id: sheet.properties.sheetId,
         title: sheet.properties.title,
-        index: sheet.properties.index
+        index: sheet.properties.index,
+        // Legacy format (camelCase)
+        sheetId: sheet.properties.sheetId
       })) || [],
-      created_at: new Date().toISOString()
+      created_at: new Date().toISOString(),
+      // Legacy format (camelCase for backward compatibility)
+      spreadsheetId: data.spreadsheetId,
+      spreadsheetUrl: data.spreadsheetUrl,
+      sheetCount: data.sheets?.length || 1,
+      createdAt: new Date().toISOString()
     };
   }
 
@@ -332,10 +362,14 @@ export class GoogleSheetsPluginExecutor extends GoogleBasePluginExecutor {
     // Format sheet information
     const sheets = (data.sheets || []).map((sheet: any) => {
       const sheetInfo: any = {
+        // Primary format (snake_case)
         sheet_id: sheet.properties.sheetId,
         title: sheet.properties.title,
         index: sheet.properties.index,
-        sheet_type: sheet.properties.sheetType || 'GRID'
+        sheet_type: sheet.properties.sheetType || 'GRID',
+        // Legacy format (camelCase)
+        sheetId: sheet.properties.sheetId,
+        sheetType: sheet.properties.sheetType || 'GRID'
       };
 
       if (include_sheet_data && sheet.properties.gridProperties) {
@@ -343,12 +377,18 @@ export class GoogleSheetsPluginExecutor extends GoogleBasePluginExecutor {
         sheetInfo.column_count = sheet.properties.gridProperties.columnCount;
         sheetInfo.frozen_row_count = sheet.properties.gridProperties.frozenRowCount || 0;
         sheetInfo.frozen_column_count = sheet.properties.gridProperties.frozenColumnCount || 0;
+        // Legacy format (camelCase)
+        sheetInfo.rowCount = sheet.properties.gridProperties.rowCount;
+        sheetInfo.columnCount = sheet.properties.gridProperties.columnCount;
+        sheetInfo.frozenRowCount = sheet.properties.gridProperties.frozenRowCount || 0;
+        sheetInfo.frozenColumnCount = sheet.properties.gridProperties.frozenColumnCount || 0;
       }
 
       return sheetInfo;
     });
 
     return {
+      // Primary format (snake_case to match schema)
       spreadsheet_id: data.spreadsheetId,
       spreadsheet_url: data.spreadsheetUrl,
       title: data.properties.title,
@@ -356,7 +396,13 @@ export class GoogleSheetsPluginExecutor extends GoogleBasePluginExecutor {
       time_zone: data.properties.timeZone,
       sheet_count: sheets.length,
       sheets: sheets,
-      retrieved_at: new Date().toISOString()
+      retrieved_at: new Date().toISOString(),
+      // Legacy format (camelCase for backward compatibility)
+      spreadsheetId: data.spreadsheetId,
+      spreadsheetUrl: data.spreadsheetUrl,
+      timeZone: data.properties.timeZone,
+      sheetCount: sheets.length,
+      retrievedAt: new Date().toISOString()
     };
   }
 

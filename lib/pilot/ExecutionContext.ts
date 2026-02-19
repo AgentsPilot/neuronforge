@@ -584,12 +584,70 @@ export class ExecutionContext implements IExecutionContext {
   }
 
   /**
+   * Find matching key with smart field name resolution
+   * Tries multiple naming conventions: snake_case, camelCase, PascalCase, lowercase
+   */
+  private findMatchingKey(obj: Record<string, any>, requestedKey: string): string | null {
+    const keys = Object.keys(obj);
+
+    // Try exact match first (case-sensitive)
+    if (keys.includes(requestedKey)) {
+      return requestedKey;
+    }
+
+    // Try case-insensitive match
+    const lowerRequested = requestedKey.toLowerCase();
+    const caseInsensitiveMatch = keys.find(k => k.toLowerCase() === lowerRequested);
+    if (caseInsensitiveMatch) {
+      return caseInsensitiveMatch;
+    }
+
+    // Convert snake_case to camelCase and vice versa
+    const snakeToCamel = (str: string) =>
+      str.replace(/_([a-z])/g, (_, letter) => letter.toUpperCase());
+
+    const camelToSnake = (str: string) =>
+      str.replace(/[A-Z]/g, letter => `_${letter.toLowerCase()}`);
+
+    // If requested key is snake_case, try camelCase version
+    if (requestedKey.includes('_')) {
+      const camelVersion = snakeToCamel(requestedKey);
+      if (keys.includes(camelVersion)) {
+        return camelVersion;
+      }
+      // Also try PascalCase (first letter uppercase)
+      const pascalVersion = camelVersion.charAt(0).toUpperCase() + camelVersion.slice(1);
+      if (keys.includes(pascalVersion)) {
+        return pascalVersion;
+      }
+    }
+
+    // If requested key is camelCase, try snake_case version
+    if (/[A-Z]/.test(requestedKey)) {
+      const snakeVersion = camelToSnake(requestedKey);
+      if (keys.includes(snakeVersion)) {
+        return snakeVersion;
+      }
+      // Also try lowercase version
+      const lowerVersion = requestedKey.toLowerCase();
+      if (keys.includes(lowerVersion)) {
+        return lowerVersion;
+      }
+    }
+
+    // No match found
+    return null;
+  }
+
+  /**
    * Get nested value from object using parsed path
    */
   private getNestedValue(obj: any, path: string[]): any {
     let current = obj;
 
-    for (const part of path) {
+    for (let i = 0; i < path.length; i++) {
+      const part = path[i];
+
       // ✅ FIX: Distinguish between null and undefined
       // undefined = key doesn't exist (resolution error)
       // null = key exists but value is explicitly null (preserve it)
@@ -623,7 +681,15 @@ export class ExecutionContext implements IExecutionContext {
               part
             );
           }
-          // Return all items
+          // ✅ CRITICAL FIX: If there are remaining path parts after [*],
+          // map over the array and extract that path from each element
+          const remainingPath = path.slice(i + 1);
+          if (remainingPath.length > 0) {
+            // Extract nested value from each array element
+            // Example: values[*][4] → map each row to row[4]
+            return current.map(item => this.getNestedValue(item, remainingPath));
+          }
+          // No remaining path - return the array as-is
           return current;
         }
         // Handle numeric array index: [0], [1], etc.
@@ -653,12 +719,11 @@ export class ExecutionContext implements IExecutionContext {
         if (part in current) {
           current = current[part];
         }
-        // ✅ CRITICAL FIX: Case-insensitive fallback
-        // rows_to_objects lowercases headers (Stage → stage)
-        // but filter conditions may use original case (Stage)
+        // ✅ CRITICAL FIX: Smart field name resolution (snake_case ↔ camelCase)
+        // Handles naming convention mismatches between schemas and plugin implementations
+        // Example: attachment_id (schema) → attachmentId (runtime data)
         else if (typeof current === 'object' && current !== null) {
-          const lowerPart = part.toLowerCase();
-          const matchingKey = Object.keys(current).find(k => k.toLowerCase() === lowerPart);
+          const matchingKey = this.findMatchingKey(current, part);
           if (matchingKey) {
             current = current[matchingKey];
           } else {
@@ -747,6 +812,11 @@ export class ExecutionContext implements IExecutionContext {
     cloned.orchestrator = this.orchestrator; // Copy orchestrator reference for consistent routing
     cloned.startedAt = this.startedAt;
     cloned.collectedIssues = [...this.collectedIssues];
+
+    // Copy executionSummaryCollector reference for calibration metadata collection
+    if ((this as any).executionSummaryCollector) {
+      (cloned as any).executionSummaryCollector = (this as any).executionSummaryCollector;
+    }
 
     // For parallel execution, reset metrics to 0 so only NEW tokens/time are tracked
     // This prevents double-counting when merging back to parent

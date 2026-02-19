@@ -125,7 +125,7 @@ export interface LoopStep extends WorkflowStepBase {
  */
 export interface TransformStep extends WorkflowStepBase {
   type: 'transform';
-  operation: 'map' | 'filter' | 'reduce' | 'sort' | 'group' | 'aggregate';
+  operation: 'map' | 'filter' | 'reduce' | 'sort' | 'group' | 'group_by' | 'aggregate' | 'deduplicate' | 'flatten' | 'custom';
   input: string;  // Variable reference
   config: TransformConfig;
 }
@@ -828,6 +828,9 @@ export interface WorkflowExecutionResult {
   errorStack?: string;
   failedStep?: string;
 
+  // Execution summary for calibration (aggregated metadata, NO actual client data)
+  execution_summary?: CalibrationExecutionSummary;
+
   // Batch calibration results
   collectedIssues?: CollectedIssue[];
   context?: any; // ExecutionContext (for hardcode detection after execution)
@@ -1428,4 +1431,34 @@ export function isComplexCondition(condition: Condition): condition is ComplexCo
      condition.conditionType === 'complex_or' ||
      condition.conditionType === 'complex_not')
   );
+}
+
+// ============================================================================
+// EXECUTION SUMMARY (for Calibration UI)
+// ============================================================================
+
+/**
+ * Calibration Execution Summary - Aggregated metadata about what was processed
+ * IMPORTANT: This contains counts and descriptions ONLY, never actual client data or PII
+ */
+export interface CalibrationExecutionSummary {
+  data_sources_accessed: DataSourceAccess[];
+  data_written: DataWritten[];
+  items_processed: number;    // Total items that went through the workflow
+  items_filtered?: number;    // Items that didn't match filters
+  items_delivered?: number;   // Items that made it to the final output
+}
+
+export interface DataSourceAccess {
+  plugin: string;
+  action: string;
+  count: number;              // How many items (emails, rows, files, etc.)
+  description: string;        // User-friendly description (e.g., "Searched emails from last 7 days")
+}
+
+export interface DataWritten {
+  plugin: string;
+  action: string;
+  count: number;              // How many items were written/updated/created
+  description: string;        // User-friendly description (e.g., "Added 3 rows to spreadsheet")
 }

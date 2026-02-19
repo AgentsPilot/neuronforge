@@ -98,7 +98,7 @@
         }
       },
       "output_guidance": {
-        "success_description": "Returns cell values as a 2D array with row and column counts.",
+        "success_description": "Read data from spreadsheet",
         "sample_output": {
           "range": "Sheet1!A1:C3",
           "values": [
@@ -201,7 +201,7 @@
         }
       },
       "output_guidance": {
-        "success_description": "Confirms the write with counts of updated rows, columns, and cells.",
+        "success_description": "Updated spreadsheet cells",
         "sample_output": {
           "updated_range": "Sheet1!A1:C3",
           "updated_rows": 3,
@@ -299,7 +299,7 @@
         }
       },
       "output_guidance": {
-        "success_description": "Confirms the append with the updated range and counts of appended rows and cells.",
+        "success_description": "Added rows to spreadsheet",
         "sample_output": {
           "updated_range": "Sheet1!A5:C6",
           "appended_rows": 2,
@@ -406,7 +406,7 @@
         }
       },
       "output_guidance": {
-        "success_description": "Returns the new spreadsheet ID, URL, and list of created sheets.",
+        "success_description": "Created new spreadsheet",
         "sample_output": {
           "spreadsheet_id": "1abc123xyz789",
           "spreadsheet_url": "https://docs.google.com/spreadsheets/d/1abc123xyz789",
@@ -487,7 +487,7 @@
         }
       },
       "output_guidance": {
-        "success_description": "Returns spreadsheet metadata including title, locale, and list of sheets with details.",
+        "success_description": "Retrieved spreadsheet info",
         "sample_output": {
           "spreadsheet_id": "1abc123xyz789",
           "spreadsheet_url": "https://docs.google.com/spreadsheets/d/1abc123xyz789",

@@ -17,17 +17,22 @@
   --v2-text-primary: #1F2937;
   --v2-text-secondary: #6B7280;
   --v2-text-muted: #9CA3AF;
+  --v2-text-tertiary: #9CA3AF;
 
   /* Success & Error States - set dynamically by ThemeProvider */
+  --v2-success: #10B981;
   --v2-success-bg: #ECFDF5;
   --v2-success-border: #BBF7D0;
   --v2-success-text: #065F46;
   --v2-success-icon: #059669;
 
+  --v2-error: #EF4444;
   --v2-error-bg: #FEF2F2;
   --v2-error-border: #FECACA;
   --v2-error-text: #991B1B;
   --v2-error-icon: #DC2626;
+
+  --v2-warning: #F59E0B;
 
   /* Status colors for workflow steps - Light mode */
   --v2-status-success-bg: #F0FDF4;
@@ -63,6 +68,11 @@
   --v2-text-primary: #F1F5F9;
   --v2-text-secondary: #CBD5E1;
   --v2-text-muted: #94A3B8;
+  --v2-text-tertiary: #64748B;
+
+  --v2-success: #10B981;
+  --v2-error: #EF4444;
+  --v2-warning: #F59E0B;
 
   /* Status colors for workflow steps - Dark mode */
   --v2-status-success-bg: #1E293B;

@@ -141,8 +141,25 @@ export class IssueCollector {
       // Find the upstream step that produced the mismatched data
       const upstreamStepId = this.detectUpstreamStepId(stepId, context);
 
+      // Get all step outputs using public API
+      const allStepOutputs = context.getAllStepOutputs();
+
+      logger.info({
+        stepId,
+        upstreamStepId,
+        hasUpstream: !!upstreamStepId,
+        availableOutputs: Array.from(allStepOutputs.keys())
+      }, 'DEBUG: Detecting upstream for data_shape_mismatch repair');
+
       if (upstreamStepId) {
-        const upstreamOutput = context.stepOutputs.get(upstreamStepId);
+        const upstreamOutput = context.getStepOutput(upstreamStepId);
+
+        logger.info({
+          stepId,
+          upstreamStepId,
+          hasOutput: !!upstreamOutput,
+          outputData: upstreamOutput ? Object.keys(upstreamOutput.data || {}) : []
+        }, 'DEBUG: Found upstream output for repair');
 
         if (upstreamOutput) {
           autoRepairProposal = this.repairEngine.proposeRepair(
@@ -152,8 +169,20 @@ export class IssueCollector {
             upstreamOutput
           );
 
+          logger.info({
+            stepId,
+            upstreamStepId,
+            proposalAction: autoRepairProposal?.action,
+            extractField: autoRepairProposal?.extractField,
+            confidence: autoRepairProposal?.confidence
+          }, 'DEBUG: RepairEngine proposal generated');
+
           autoRepairAvailable = autoRepairProposal?.action !== 'none';
+        } else {
+          logger.warn({ stepId, upstreamStepId }, 'DEBUG: No upstream output found in stepOutputs map');
         }
+      } else {
+        logger.warn({ stepId, completedSteps: context.completedSteps }, 'DEBUG: Could not detect upstream step ID');
       }
     }
 
@@ -263,6 +292,145 @@ export class IssueCollector {
 
       return issue;
     });
+  }
+
+  /**
+   * Detect filter operations with missing filter_expression or using wrong operation type
+   * Called after batch calibration run finishes
+   *
+   * Detects:
+   * 1. Transform steps with type="filter" but missing filter_expression
+   * 2. Transform steps with operation="set" but having condition config (should be filter)
+   * 3. Transform steps filtering arrays but using wrong operation type
+   */
+  collectFilterOperationIssues(
+    agent: Agent
+  ): CollectedIssue[] {
+    logger.debug({ agentId: agent.id }, 'Detecting filter operation issues in workflow');
+
+    const pilotSteps = agent.pilot_steps || agent.workflow_steps || [];
+
+    if (pilotSteps.length === 0) {
+      return [];
+    }
+
+    const issues: CollectedIssue[] = [];
+
+    // Recursively search all steps (including nested in conditionals, loops, etc.)
+    const allSteps = this.flattenSteps(pilotSteps);
+
+    for (const step of allSteps) {
+      // Check transform steps
+      if (step.type === 'transform') {
+        const operation = (step as any).operation;
+        const config = (step as any).config;
+        const input = (step as any).input;
+
+        // Issue 1: operation="set" but has condition config (should be filter)
+        if (operation === 'set' && config?.condition) {
+          issues.push({
+            id: crypto.randomUUID(),
+            category: 'logic_error',
+            severity: 'critical',
+            affectedSteps: [{
+              stepId: step.step_id || step.id || 'unknown',
+              stepName: step.name || 'Transform',
+              friendlyName: this.getStepName(agent, step.step_id || step.id || '')
+            }],
+            title: 'Filter operation using wrong operation type',
+            message: `This step should filter data but is using operation "set" which passes all data through without filtering. The condition config is being ignored.`,
+            technicalDetails: `Step has operation: "set" with condition config. The "set" operation does not apply conditions - it should be changed to operation: "filter" to actually filter the data.`,
+            suggestedFix: {
+              type: 'workflow_structure' as const,
+              action: {
+                changeType: 'fix_filter_operation',
+                stepId: step.step_id || step.id || '',
+                from: { operation: 'set' },
+                to: { operation: 'filter' },
+                description: 'Change transform operation from "set" to "filter" to apply the condition logic'
+              },
+              confidence: 0.95
+            },
+            autoRepairAvailable: true,
+            autoRepairProposal: {
+              action: 'fix_filter_operation',
+              description: 'Change operation from "set" to "filter" to enable condition filtering',
+              confidence: 0.95,
+              targetStepId: step.step_id || step.id || '',
+              risk: 'low' as const
+            },
+            requiresUserInput: false,
+            estimatedImpact: 'high'
+          });
+        }
+
+        // Issue 2: operation="filter" but missing filter_expression
+        if (operation === 'filter' && !config?.filter_expression && !config?.condition) {
+          issues.push({
+            id: crypto.randomUUID(),
+            category: 'logic_error',
+            severity: 'critical',
+            affectedSteps: [{
+              stepId: step.step_id || step.id || 'unknown',
+              stepName: step.name || 'Transform',
+              friendlyName: this.getStepName(agent, step.step_id || step.id || '')
+            }],
+            title: 'Filter operation missing filter logic',
+            message: `This filter operation is missing the filter_expression that defines what data to keep. All data will be filtered out.`,
+            technicalDetails: `Step has operation: "filter" but no filter_expression or condition in config. Filter operations require condition logic to determine which items to keep.`,
+            suggestedFix: {
+              type: 'workflow_structure' as const,
+              action: {
+                changeType: 'add_filter_expression',
+                stepId: step.step_id || step.id || '',
+                description: 'Add filter_expression or condition to define filtering logic'
+              },
+              confidence: 0.9
+            },
+            autoRepairAvailable: false,
+            requiresUserInput: true,
+            estimatedImpact: 'high'
+          });
+        }
+      }
+    }
+
+    logger.info({
+      agentId: agent.id,
+      issuesFound: issues.length
+    }, 'Filter operation detection completed');
+
+    return issues;
+  }
+
+  /**
+   * Flatten nested workflow steps for analysis
+   * Handles conditionals, loops, parallel, scatter-gather, etc.
+   */
+  private flattenSteps(steps: any[]): any[] {
+    const flattened: any[] = [];
+
+    for (const step of steps) {
+      flattened.push(step);
+
+      // Recursively flatten nested steps
+      if (step.type === 'conditional') {
+        if (step.then_steps) flattened.push(...this.flattenSteps(step.then_steps));
+        if (step.else_steps) flattened.push(...this.flattenSteps(step.else_steps));
+        if (step.then && Array.isArray(step.then)) flattened.push(...this.flattenSteps(step.then));
+        if (step.else && Array.isArray(step.else)) flattened.push(...this.flattenSteps(step.else));
+      } else if (step.type === 'loop' && step.steps) {
+        flattened.push(...this.flattenSteps(step.steps));
+      } else if (step.type === 'parallel' && step.branches) {
+        for (const branch of step.branches) {
+          if (branch.steps) flattened.push(...this.flattenSteps(branch.steps));
+        }
+      } else if (step.type === 'scatter_gather' && step.scatter?.steps) {
+        flattened.push(...this.flattenSteps(step.scatter.steps));
+      }
+    }
+
+    return flattened;
   }
 
   /**
@@ -550,6 +718,44 @@ export class IssueCollector {
       return failedStep.dependencies[failedStep.dependencies.length - 1];
     }
 
+    // Check for variable references in top-level input field (most common for transform steps)
+    if ('input' in failedStep && typeof failedStep.input === 'string') {
+      // Look for {{variable}} or {{stepX}} references
+      const matches = failedStep.input.match(/\{\{(step\d+|step\w+|[a-zA-Z_][a-zA-Z0-9_]*)[\}\.]*/g);
+
+      if (matches && matches.length > 0) {
+        // Extract variable name from first match
+        const match = matches[0].match(/\{\{(step\d+|step\w+|[a-zA-Z_][a-zA-Z0-9_]*)/);
+        if (match) {
+          const variableName = match[1];
+
+          // If it's a stepX reference, return it directly
+          if (variableName.startsWith('step')) {
+            return variableName;
+          }
+
+          // Otherwise, find the step that outputs this variable
+          for (const step of steps) {
+            if ('output_variable' in step && step.output_variable === variableName) {
+              return step.id;
+            }
+            // Also check outputVariable (camelCase)
+            if ('outputVariable' in step && (step as any).outputVariable === variableName) {
+              return step.id;
+            }
+          }
+
+          // If no match found, try to find by comparing step IDs
+          // (sometimes the variable name is derived from step ID)
+          const stepIdPattern = new RegExp(`^${variableName}`, 'i');
+          const matchingStep = steps.find(s => stepIdPattern.test(s.id));
+          if (matchingStep && matchingStep.id !== failedStepId) {
+            return matchingStep.id;
+          }
+        }
+      }
+    }
+
     // Check for variable references in step params
     if ('params' in failedStep && failedStep.params) {
       const paramsStr = JSON.stringify(failedStep.params);
@@ -562,6 +768,46 @@ export class IssueCollector {
         const match = matches[0].match(/step(\w+)/);
         if (match) {
           return `step${match[1]}`;
+        }
+      }
+    }
+
+    // Check for variable references in transform step config (filter, map, etc.)
+    if ('config' in failedStep && failedStep.config && typeof failedStep.config === 'object') {
+      const configStr = JSON.stringify(failedStep.config);
+
+      // Look for {{stepX}} or {{variable}} references
+      const matches = configStr.match(/\{\{(step\d+|step\w+|[a-zA-Z_][a-zA-Z0-9_]*)[\}\.]*/g);
+
+      if (matches && matches.length > 0) {
+        // Extract variable name from first match
+        const match = matches[0].match(/\{\{(step\d+|step\w+|[a-zA-Z_][a-zA-Z0-9_]*)/);
+        if (match) {
+          const variableName = match[1];
+
+          // If it's a stepX reference, return it directly
+          if (variableName.startsWith('step')) {
+            return variableName;
+          }
+
+          // Otherwise, find the step that outputs this variable
+          for (const step of steps) {
+            if ('output_variable' in step && step.output_variable === variableName) {
+              return step.id;
+            }
+            // Also check outputVariable (camelCase)
+            if ('outputVariable' in step && (step as any).outputVariable === variableName) {
+              return step.id;
+            }
+          }
+
+          // If no match found, try to find by comparing step IDs
+          // (sometimes the variable name is derived from step ID)
+          const stepIdPattern = new RegExp(`^${variableName}`, 'i');
+          const matchingStep = steps.find(s => stepIdPattern.test(s.id));
+          if (matchingStep && matchingStep.id !== failedStepId) {
+            return matchingStep.id;
+          }
         }
       }
     }

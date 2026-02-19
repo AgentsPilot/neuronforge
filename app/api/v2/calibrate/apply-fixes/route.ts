@@ -262,6 +262,181 @@ export async function POST(req: NextRequest) {
 
             logger.debug({ issueId: fix.issueId, stepId }, 'Auto-repair: extract_first_item applied');
           }
+        } else if (
+          proposal.action === 'extract_single_array' ||
+          proposal.action === 'extract_named_array' ||
+          proposal.action === 'extract_from_envelope' ||
+          proposal.action === 'extract_paginated_data'
+        ) {
+          // GENERIC HANDLER: Extract array field from object
+          // Works for ALL these patterns:
+          // - {emails: [...], total: 10}
+          // - {success: true, data: [...]}
+          // - {items: [...], has_more: true, next_cursor: "..."}
+          // RepairEngine already detected the correct field name
+
+          const failedStepId = issue.affectedSteps?.[0]?.stepId;
+          if (!failedStepId) {
+            logger.warn({ issueId: fix.issueId, action: proposal.action }, 'No failed step ID in repair proposal');
+            continue;
+          }
+
+          const failedStep = findStepById(updatedSteps, failedStepId);
+          if (!failedStep) {
+            logger.warn({ issueId: fix.issueId, failedStepId }, 'Failed step not found in workflow');
+            continue;
+          }
+
+          const extractField = proposal.extractField || proposal.envelopeKey;
+          if (!extractField) {
+            logger.warn({ issueId: fix.issueId, action: proposal.action }, 'No extractField in repair proposal');
+            continue;
+          }
+
+          // Update step input to navigate to the array field
+          // Before: {{variable}} → After: {{variable.array_field}}
+          if (failedStep.input) {
+            const originalInput = failedStep.input;
+            const varPattern = /\{\{([a-zA-Z_][a-zA-Z0-9_]*)\}\}/g;
+            failedStep.input = failedStep.input.replace(varPattern, `{{$1.${extractField}}}`);
+
+            logger.info({
+              issueId: fix.issueId,
+              failedStepId,
+              extractField,
+              originalInput,
+              newInput: failedStep.input,
+              action: proposal.action
+            }, 'Auto-repair: Applied field navigation to extract array');
+          } else {
+            logger.warn({ issueId: fix.issueId, failedStepId }, 'Step has no input field to repair');
+          }
+        } else if (proposal.action === 'normalize_to_array') {
+          // Handle polymorphic responses: null | object | array → always array
+          // This is handled at runtime by wrapping, not at workflow level
+          // Just log it - the RepairEngine.applyRepair handles this in-memory
+          logger.info({
+            issueId: fix.issueId,
+            action: proposal.action
+          }, 'Auto-repair: normalize_to_array will be handled at runtime');
+        } else if (proposal.action === 'compact_sparse_array') {
+          // Handle sparse arrays: [{...}, null, {...}] → [{...}, {...}]
+          // Add a filter transform step after the upstream step to remove nulls
+          const upstreamStepId = proposal.targetStepId;
+          const upstreamStepIndex = updatedSteps.findIndex(s => s.id === upstreamStepId);
+
+          if (upstreamStepIndex !== -1) {
+            const compactStepId = `${upstreamStepId}_compact`;
+            const compactStep: any = {
+              id: compactStepId,
+              type: 'transform',
+              operation: 'filter',
+              input: `{{${upstreamStepId}}}`,
+              config: {
+                condition: 'item != null && item != undefined'
+              },
+              description: 'Auto-repair: Remove null/undefined items from array'
+            };
+
+            // Insert compact step after upstream
+            updatedSteps.splice(upstreamStepIndex + 1, 0, compactStep);
+
+            // Update downstream steps to use compacted data
+            for (let i = upstreamStepIndex + 2; i < updatedSteps.length; i++) {
+              const step = updatedSteps[i];
+              if (step.input && typeof step.input === 'string') {
+                step.input = step.input.replace(
+                  new RegExp(`\\{\\{${upstreamStepId}\\}\\}`, 'g'),
+                  `{{${compactStepId}}}`
+                );
+              }
+            }
+
+            logger.info({
+              issueId: fix.issueId,
+              compactStepId,
+              upstreamStepId
+            }, 'Auto-repair: Added compact step to remove nulls');
+          }
+        } else if (proposal.action === 'flatten_hierarchy') {
+          // Handle hierarchical data: {children: [...]} → flat array
+          // Add a flatten transform step
+          const upstreamStepId = proposal.targetStepId;
+          const upstreamStepIndex = updatedSteps.findIndex(s => s.id === upstreamStepId);
+
+          if (upstreamStepIndex !== -1) {
+            const flattenStepId = `${upstreamStepId}_flatten`;
+            const flattenStep: any = {
+              id: flattenStepId,
+              type: 'transform',
+              operation: 'flatten',
+              input: `{{${upstreamStepId}.${proposal.extractField || 'children'}}}`,
+              config: {
+                recursive: true,
+                childrenField: proposal.extractField || 'children'
+              },
+              description: 'Auto-repair: Flatten hierarchical tree structure'
+            };
+
+            updatedSteps.splice(upstreamStepIndex + 1, 0, flattenStep);
+
+            logger.info({
+              issueId: fix.issueId,
+              flattenStepId,
+              upstreamStepId
+            }, 'Auto-repair: Added flatten step for hierarchy');
+          }
+        } else if (proposal.action === 'extract_multiresource') {
+          // Multiple entity arrays - requires user selection
+          // Cannot auto-fix, but we can add a comment or warning
+          logger.warn({
+            issueId: fix.issueId,
+            arrayFields: proposal.arrayFields?.map(f => f.name),
+            action: proposal.action
+          }, 'Auto-repair: Multi-resource detected but requires user to select which array to use');
+        } else if (proposal.action === 'fix_filter_operation') {
+          // Fix filter operation: change operation from "set" to "filter"
+          // This fixes the bug where LLM generates filter intent but uses wrong operation type
+          const targetStepId = proposal.targetStepId;
+          const targetStep = findStepById(updatedSteps, targetStepId);
+
+          if (targetStep && targetStep.type === 'transform') {
+            const oldOperation = (targetStep as any).operation;
+
+            // Change operation from "set" to "filter"
+            (targetStep as any).operation = 'filter';
+
+            // Ensure the filter_expression or condition exists
+            // If there's a condition config, keep it; otherwise log warning
+            const hasCondition = (targetStep as any).config?.condition || (targetStep as any).config?.filter_expression;
+
+            logger.info({
+              issueId: fix.issueId,
+              targetStepId,
+              oldOperation,
+              newOperation: 'filter',
+              hasCondition
+            }, 'Auto-repair: Fixed filter operation type');
+
+            if (!hasCondition) {
+              logger.warn({
+                issueId: fix.issueId,
+                targetStepId
+              }, 'Filter operation fixed but no condition found - step may need manual review');
+            }
+          } else {
+            logger.warn({
+              issueId: fix.issueId,
+              targetStepId,
+              stepFound: !!targetStep,
+              stepType: targetStep?.type
+            }, 'Could not apply fix_filter_operation - step not found or not a transform');
+          }
+        } else {
+          logger.warn({
+            issueId: fix.issueId,
+            action: proposal.action
+          }, 'Auto-repair: Unknown action type');
         }
       }
     }
@@ -1155,4 +1330,53 @@ function replaceInObject(obj: any, paramName: string, newValue: string): void {
       replaceInObject(obj[key], paramName, newValue);
     }
   }
+}
+
+/**
+ * Recursively find step by ID (handles nested steps in scatter_gather, parallel, conditional)
+ * This is essential for auto-repair to work with complex workflows
+ */
+function findStepById(steps: WorkflowStep[], stepId: string): any {
+  for (const step of steps) {
+    if (step.id === stepId) {
+      return step;
+    }
+
+    // Search nested parallel steps
+    if (step.type === 'parallel' && (step as any).steps) {
+      const found = findStepById((step as any).steps, stepId);
+      if (found) return found;
+    }
+
+    // Search nested scatter_gather steps
+    if (step.type === 'scatter_gather' && (step as any).scatter?.steps) {
+      const found = findStepById((step as any).scatter.steps, stepId);
+      if (found) return found;
+    }
+
+    // Search conditional branches (then/else)
+    if (step.type === 'conditional') {
+      if ((step as any).then) {
+        const found = findStepById((step as any).then, stepId);
+        if (found) return found;
+      }
+      if ((step as any).else) {
+        const found = findStepById((step as any).else, stepId);
+        if (found) return found;
+      }
+    }
+
+    // Search loop/sub_workflow steps
+    if (step.type === 'loop' && (step as any).loopSteps) {
+      const found = findStepById((step as any).loopSteps, stepId);
+      if (found) return found;
+    }
+
+    if (step.type === 'sub_workflow' && (step as any).steps) {
+      const found = findStepById((step as any).steps, stepId);
+      if (found) return found;
+    }
+  }
+
+  return null;
 }

@@ -27,10 +27,11 @@ export class FailureClassifier {
    * @returns Classification with category, severity, and auto-retry flag
    */
   classify(
-    error: { message: string; code?: string },
+    error: { message: string; code?: string; details?: { errorCode?: string } },
     _stepContext: StepFailureContext
   ): FailureClassification {
-    const code = (error.code || '').toUpperCase();
+    // Check both error.code (top-level) and error.details.errorCode (ExecutionError pattern)
+    const code = (error.code || error.details?.errorCode || '').toUpperCase();
     const msg = (error.message || '').toLowerCase();
 
     // --- 1. Data shape mismatch ---
@@ -284,6 +285,12 @@ export class FailureClassifier {
 
   private isInvalidStepOrder(code: string, msg: string): boolean {
     if (code === 'DEPENDENCY_NOT_MET' || code === 'INVALID_STEP_ORDER') return true;
+
+    // Variable resolution errors indicate missing dependencies (scatter-gather output not registered)
+    if (code === 'VARIABLE_RESOLUTION_ERROR') return true;
+    if (msg.includes('unknown variable reference')) return true;
+    if (msg.includes('variable') && (msg.includes('not found') || msg.includes('not defined'))) return true;
+
     if (msg.includes('depends on') && msg.includes('not been executed')) return true;
     if (msg.includes('dependencies not met')) return true;
     if (msg.includes('prerequisite step') || msg.includes('required step not completed')) return true;

@@ -99,14 +99,22 @@ export class GoogleCalendarPluginExecutor extends GoogleBasePluginExecutor {
       end: event.end?.dateTime || event.end?.date,
       attendees: event.attendees?.map((a: any) => ({
         email: a.email,
-        response_status: a.responseStatus
+        // Primary format (snake_case)
+        response_status: a.responseStatus,
+        // Legacy format (camelCase)
+        responseStatus: a.responseStatus
       })) || [],
       organizer: event.organizer?.email,
+      // Primary format (snake_case)
       html_link: event.htmlLink,
-      conference_data: event.conferenceData
+      conference_data: event.conferenceData,
+      // Legacy format (camelCase)
+      htmlLink: event.htmlLink,
+      conferenceData: event.conferenceData
     }));
 
     return {
+      // Primary format (snake_case to match schema)
       calendar_id: calendar_id,
       event_count: formattedEvents.length,
       events: formattedEvents,
@@ -114,7 +122,15 @@ export class GoogleCalendarPluginExecutor extends GoogleBasePluginExecutor {
         start: time_min,
         end: time_max || 'unbounded'
       },
-      retrieved_at: new Date().toISOString()
+      retrieved_at: new Date().toISOString(),
+      // Legacy format (camelCase for backward compatibility)
+      calendarId: calendar_id,
+      eventCount: formattedEvents.length,
+      timeRange: {
+        start: time_min,
+        end: time_max || 'unbounded'
+      },
+      retrievedAt: new Date().toISOString()
     };
   }
 
@@ -205,6 +221,7 @@ export class GoogleCalendarPluginExecutor extends GoogleBasePluginExecutor {
     const data = await response.json();
 
     return {
+      // Primary format (snake_case to match schema)
       event_id: data.id,
       summary: data.summary,
       start_time: data.start?.dateTime || data.start?.date,
@@ -213,7 +230,16 @@ export class GoogleCalendarPluginExecutor extends GoogleBasePluginExecutor {
       hangout_link: data.hangoutLink,
       meet_link: data.conferenceData?.entryPoints?.find((ep: any) => ep.entryPointType === 'video')?.uri,
       attendee_count: data.attendees?.length || 0,
-      created_at: new Date().toISOString()
+      created_at: new Date().toISOString(),
+      // Legacy format (camelCase for backward compatibility)
+      eventId: data.id,
+      startTime: data.start?.dateTime || data.start?.date,
+      endTime: data.end?.dateTime || data.end?.date,
+      htmlLink: data.htmlLink,
+      hangoutLink: data.hangoutLink,
+      meetLink: data.conferenceData?.entryPoints?.find((ep: any) => ep.entryPointType === 'video')?.uri,
+      attendeeCount: data.attendees?.length || 0,
+      createdAt: new Date().toISOString()
     };
   }
 
@@ -302,12 +328,19 @@ export class GoogleCalendarPluginExecutor extends GoogleBasePluginExecutor {
     const data = await response.json();
 
     return {
+      // Primary format (snake_case to match schema)
       event_id: data.id,
       summary: data.summary,
       start_time: data.start?.dateTime || data.start?.date,
       end_time: data.end?.dateTime || data.end?.date,
       html_link: data.htmlLink,
-      updated_at: new Date().toISOString()
+      updated_at: new Date().toISOString(),
+      // Legacy format (camelCase for backward compatibility)
+      eventId: data.id,
+      startTime: data.start?.dateTime || data.start?.date,
+      endTime: data.end?.dateTime || data.end?.date,
+      htmlLink: data.htmlLink,
+      updatedAt: new Date().toISOString()
     };
   }
 
@@ -343,9 +376,13 @@ export class GoogleCalendarPluginExecutor extends GoogleBasePluginExecutor {
     }
 
     return {
+      // Primary format (snake_case to match schema)
       event_id: event_id,
       deleted: true,
-      deleted_at: new Date().toISOString()
+      deleted_at: new Date().toISOString(),
+      // Legacy format (camelCase for backward compatibility)
+      eventId: event_id,
+      deletedAt: new Date().toISOString()
     };
   }
 
@@ -377,6 +414,7 @@ export class GoogleCalendarPluginExecutor extends GoogleBasePluginExecutor {
     const data = await response.json();
 
     return {
+      // Primary format (snake_case to match schema)
       event_id: data.id,
       summary: data.summary,
       description: data.description,
@@ -388,11 +426,16 @@ export class GoogleCalendarPluginExecutor extends GoogleBasePluginExecutor {
         display_name: a.displayName,
         organizer: a.organizer || false,
         response_status: a.responseStatus,
-        optional: a.optional || false
+        optional: a.optional || false,
+        // Legacy format (camelCase)
+        displayName: a.displayName,
+        responseStatus: a.responseStatus
       })) || [],
       organizer: {
         email: data.organizer?.email,
-        display_name: data.organizer?.displayName
+        display_name: data.organizer?.displayName,
+        // Legacy format (camelCase)
+        displayName: data.organizer?.displayName
       },
       reminders: data.reminders,
       html_link: data.htmlLink,
@@ -401,7 +444,13 @@ export class GoogleCalendarPluginExecutor extends GoogleBasePluginExecutor {
       status: data.status,
       created: data.created,
       updated: data.updated,
-      retrieved_at: new Date().toISOString()
+      retrieved_at: new Date().toISOString(),
+      // Legacy format (camelCase for backward compatibility)
+      eventId: data.id,
+      htmlLink: data.htmlLink,
+      hangoutLink: data.hangoutLink,
+      meetLink: data.conferenceData?.entryPoints?.find((ep: any) => ep.entryPointType === 'video')?.uri,
+      retrievedAt: new Date().toISOString()
     };
   }
 

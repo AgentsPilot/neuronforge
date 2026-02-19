@@ -118,7 +118,7 @@
         }
       },
       "output_guidance": {
-        "success_description": "Returns message ID for tracking and confirmation of template delivery.",
+        "success_description": "Sent template message",
         "sample_output": {
           "success": true,
           "message_id": "wamid.HBgLMTU1NTEyMzQ1NjcVAgARGBI2QTNEME...",
@@ -189,7 +189,7 @@
         }
       },
       "output_guidance": {
-        "success_description": "Returns message ID for tracking delivery status via webhook.",
+        "success_description": "Sent media message",
         "sample_output": {
           "success": true,
           "message_id": "wamid.HBgLMTU1NTEyMzQ1NjcVAgARGBI2QTNEME...",
@@ -323,7 +323,7 @@
         }
       },
       "output_guidance": {
-        "success_description": "Returns message ID. Customer selections will be delivered via webhook with the button/list item ID.",
+        "success_description": "Sent interactive message",
         "sample_output": {
           "success": true,
           "message_id": "wamid.HBgLMTU1NTEyMzQ1NjcVAgARGBI2QTNEME...",
@@ -400,7 +400,7 @@
         }
       },
       "output_guidance": {
-        "success_description": "Returns list of templates with names, statuses, and parameter requirements.",
+        "success_description": "Listed message templates",
         "sample_output": {
           "success": true,
           "templates": [
@@ -457,7 +457,7 @@
         }
       },
       "output_guidance": {
-        "success_description": "Confirms the message was marked as read. Customer will see blue check marks.",
+        "success_description": "Marked message as read",
         "sample_output": {
           "success": true,
           "message_id": "wamid.HBgLMTU1NTEyMzQ1NjcVAgARGBI2QTNEME...",

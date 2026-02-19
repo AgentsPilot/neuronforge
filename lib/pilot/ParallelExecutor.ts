@@ -360,6 +360,8 @@ export class ParallelExecutor {
         // Merged = { from, subject, body, is_action_required, cta }
         const stepKey = stepResultKeys[0];
         const stepData = itemResults[stepKey];
+        const step = steps.find(s => s.id === stepKey);
+        const outputVariable = (step as any)?.output_variable;
 
         if (typeof item === 'object' && item !== null && typeof stepData === 'object' && stepData !== null && !Array.isArray(stepData)) {
           mergedResult = { ...item, ...stepData };
@@ -368,8 +370,20 @@ export class ParallelExecutor {
             stepFields: Object.keys(stepData).slice(0, 5),
             mergedFields: Object.keys(mergedResult).slice(0, 10)
           }, 'Merged original item with step result');
+        } else if (Array.isArray(stepData) && outputVariable) {
+          // Nested scatter-gather: Step data is an array with output_variable
+          // Merge into parent item using the semantic field name
+          mergedResult = {
+            ...item,
+            [outputVariable]: stepData
+          };
+          logger.debug({
+            originalFields: Object.keys(item).slice(0, 5),
+            outputVariable,
+            arrayLength: stepData.length
+          }, 'Merged original item with array result using output_variable');
         } else {
-          // Step data is not an object, keep structure as-is
+          // Step data is not an object or no output_variable, keep structure as-is
           mergedResult = itemResults;
         }
       } else if (stepResultKeys.length > 1) {

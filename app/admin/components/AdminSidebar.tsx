@@ -23,7 +23,8 @@ import {
   DollarSign,
   MessageCircle,
   HardDrive,
-  UserCheck
+  UserCheck,
+  Sparkles
 } from 'lucide-react';
 
 interface AdminSidebarProps {
@@ -109,6 +110,12 @@ const navigationItems = [
     href: '/admin/orchestration-config',
     icon: Brain,
     description: 'Routing & Workflows'
+  },
+  {
+    name: 'Agent Generation',
+    href: '/admin/agent-generation-config',
+    icon: Sparkles,
+    description: 'Workflow Generation Models'
   },
   {
     name: 'AIS Config',

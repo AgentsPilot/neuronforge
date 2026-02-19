@@ -65,12 +65,25 @@ type DataShapeClass =
   | 'multiple_array_fields'
   | 'single_record'
   | 'deeply_nested'
-  | 'incompatible';
+  | 'incompatible'
+  | 'api_envelope'           // {success: true, data: [...]}
+  | 'paginated_response'     // {items: [...], has_more: true}
+  | 'polymorphic_null'       // null that should be []
+  | 'hierarchical'           // {children: [...]}
+  | 'sparse_array'           // [{...}, null, {...}]
+  | 'multi_resource';        // {users: [...], posts: [...]}
 
 interface DataShapeAnalysis {
   shape: DataShapeClass;
   arrayFields: Array<{ name: string; length: number }>;
   bestMatchField?: string;
+  envelopeKey?: string;      // For api_envelope: 'data', 'result', etc.
+  paginationInfo?: {         // For paginated_response
+    hasMore?: boolean;
+    nextCursor?: string;
+    offset?: number;
+    total?: number;
+  };
 }
 
 export class RepairEngine {
@@ -108,11 +121,54 @@ export class RepairEngine {
     }
 
     const data = upstreamOutput.data;
+
+    // Special case: handle null/undefined polymorphic responses
+    if (data === null || data === undefined) {
+      return {
+        action: 'normalize_to_array',
+        description: 'Convert null/undefined to empty array',
+        confidence: 0.9,
+        targetStepId: upstreamStepId,
+        risk: 'low',
+      };
+    }
+
     const analysis = this.analyzeUpstreamData(data);
 
     switch (analysis.shape) {
       case 'already_array':
+        // Check if it's a sparse array with nulls
+        if (Array.isArray(data) && data.some(item => item === null || item === undefined)) {
+          return {
+            action: 'compact_sparse_array',
+            description: `Remove ${data.filter(i => i == null).length} null/undefined items from array`,
+            confidence: 0.8,
+            targetStepId: upstreamStepId,
+            risk: 'low',
+          };
+        }
         return { ...noRepair, description: 'Upstream data is already an array' };
+
+      case 'api_envelope':
+        return {
+          action: 'extract_from_envelope',
+          description: `Extract array from API envelope (${analysis.envelopeKey} field)`,
+          confidence: 0.9,
+          targetStepId: upstreamStepId,
+          extractField: analysis.envelopeKey,
+          risk: 'low',
+        };
+
+      case 'paginated_response':
+        return {
+          action: 'extract_paginated_data',
+          description: `Extract '${analysis.bestMatchField}' array from paginated response`,
+          confidence: 0.9,
+          targetStepId: upstreamStepId,
+          extractField: analysis.bestMatchField,
+          paginationInfo: analysis.paginationInfo,
+          risk: 'low',
+        };
 
       case 'single_array_field':
         return {
@@ -134,9 +190,29 @@ export class RepairEngine {
           risk: 'medium',
         };
 
+      case 'multi_resource':
+        return {
+          action: 'extract_multiresource',
+          description: `Multiple entity arrays detected (${analysis.arrayFields.map(f => f.name).join(', ')}). User selection required.`,
+          confidence: 0,
+          targetStepId: upstreamStepId,
+          arrayFields: analysis.arrayFields,
+          risk: 'high',
+        };
+
+      case 'hierarchical':
+        return {
+          action: 'flatten_hierarchy',
+          description: `Flatten recursive tree structure (${analysis.bestMatchField} field)`,
+          confidence: 0.7,
+          targetStepId: upstreamStepId,
+          extractField: analysis.bestMatchField,
+          risk: 'medium',
+        };
+
       case 'single_record':
         return {
-          action: 'wrap_in_array',
+          action: 'normalize_to_array',
           description: 'Wrap single object in array',
           confidence: 0.85,
           targetStepId: upstreamStepId,
@@ -145,6 +221,24 @@ export class RepairEngine {
 
       case 'deeply_nested':
         return { ...noRepair, description: 'Data is deeply nested (depth > 3), cannot auto-repair' };
+
+      case 'polymorphic_null':
+        return {
+          action: 'normalize_to_array',
+          description: 'Convert null to empty array',
+          confidence: 0.9,
+          targetStepId: upstreamStepId,
+          risk: 'low',
+        };
+
+      case 'sparse_array':
+        return {
+          action: 'compact_sparse_array',
+          description: 'Remove null/undefined items from array',
+          confidence: 0.8,
+          targetStepId: upstreamStepId,
+          risk: 'low',
+        };
 
       case 'incompatible':
         return { ...noRepair, description: `Upstream data is incompatible type: ${typeof data}` };
@@ -202,16 +296,34 @@ export class RepairEngine {
 
   /**
    * Analyze upstream data to classify its shape and find the best array field.
+   * Detects 10+ generic patterns that work for ANY plugin.
    */
   analyzeUpstreamData(data: any): DataShapeAnalysis {
     // Already an array
     if (Array.isArray(data)) {
+      // Check for sparse array (nulls/undefined)
+      if (data.some(item => item === null || item === undefined)) {
+        return { shape: 'sparse_array', arrayFields: [] };
+      }
       return { shape: 'already_array', arrayFields: [] };
     }
 
     // Not an object → incompatible
     if (!data || typeof data !== 'object') {
       return { shape: 'incompatible', arrayFields: [] };
+    }
+
+    // PATTERN 1: API Envelope - {success: true, data: [...]} or {status: "ok", result: [...]}
+    const envelopeKeys = ['data', 'result', 'results', 'response', 'body', 'payload', 'content'];
+    for (const key of envelopeKeys) {
+      if (data[key] && Array.isArray(data[key]) && (data.success !== undefined || data.status !== undefined)) {
+        return {
+          shape: 'api_envelope',
+          arrayFields: [{ name: key, length: data[key].length }],
+          bestMatchField: key,
+          envelopeKey: key,
+        };
+      }
     }
 
     // Find all non-metadata array fields
@@ -222,7 +334,50 @@ export class RepairEngine {
       }
     }
 
-    // Single array field
+    // PATTERN 2: Paginated Response - has pagination indicators + array
+    const paginationIndicators = ['has_more', 'hasMore', 'next_page_token', 'nextPageToken', 'next_cursor', 'nextCursor', 'offset', 'page', 'total_pages'];
+    const hasPaginationIndicator = paginationIndicators.some(key => data[key] !== undefined);
+
+    if (hasPaginationIndicator && arrayFields.length > 0) {
+      const bestMatch = arrayFields.length === 1 ? arrayFields[0].name : this.findBestArrayField(arrayFields, data);
+      return {
+        shape: 'paginated_response',
+        arrayFields,
+        bestMatchField: bestMatch,
+        paginationInfo: {
+          hasMore: data.has_more ?? data.hasMore,
+          nextCursor: data.next_cursor ?? data.nextCursor ?? data.next_page_token ?? data.nextPageToken,
+          offset: data.offset,
+          total: data.total ?? data.total_count ?? data.totalCount,
+        },
+      };
+    }
+
+    // PATTERN 3: Hierarchical Data - has 'children' field
+    if (data.children && Array.isArray(data.children)) {
+      return {
+        shape: 'hierarchical',
+        arrayFields: [{ name: 'children', length: data.children.length }],
+        bestMatchField: 'children',
+      };
+    }
+
+    // PATTERN 4: Multi-Resource Response - multiple unrelated entity arrays
+    // Example: {users: [...], posts: [...], comments: [...]}
+    if (arrayFields.length >= 3) {
+      // Check if field names suggest different entity types (not just variants)
+      const entityNames = arrayFields.map(f => f.name.toLowerCase());
+      const hasDistinctEntities = new Set(entityNames.map(n => n.replace(/s$/, ''))).size === entityNames.length;
+
+      if (hasDistinctEntities) {
+        return {
+          shape: 'multi_resource',
+          arrayFields,
+        };
+      }
+    }
+
+    // PATTERN 5: Single array field (most common)
     if (arrayFields.length === 1) {
       return {
         shape: 'single_array_field',
@@ -231,7 +386,8 @@ export class RepairEngine {
       };
     }
 
-    // Multiple array fields — find best match using pattern priority
+    // PATTERN 6: Multiple array fields (same entity type, different states)
+    // Example: {files: [...], folders: [...]} or {active_items: [...], archived_items: [...]}
     if (arrayFields.length > 1) {
       const bestMatch = this.findBestArrayField(arrayFields, data);
       return {

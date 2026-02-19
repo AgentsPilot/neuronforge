@@ -19,6 +19,7 @@ import {
   AlertTriangle,
   AlertCircle,
   CheckCircle2,
+  CheckCircle,
   Lightbulb
 } from 'lucide-react'
 import { DynamicSelectField } from '@/components/v2/DynamicSelectField'
@@ -299,89 +300,144 @@ function ParameterErrorCard({ issue, fixes, onFixChange }: IssueCardProps) {
  * Hardcode Card - with parameterization option
  */
 function HardcodeCard({ issue, fixes, onFixChange }: IssueCardProps) {
-  const [wantsParameterization, setWantsParameterization] = useState(false)
   const suggestedParamName = issue.suggestedFix?.action?.paramName || 'value'
   const suggestedDefault = issue.suggestedFix?.action?.defaultValue || ''
+  const hardcodedValue = issue.suggestedFix?.action?.hardcodedValue || issue.technicalDetails
 
-  const currentFix = fixes.parameterizations?.[issue.id] || {
-    approved: false,
-    paramName: suggestedParamName,
-    defaultValue: suggestedDefault
+  const currentFix = fixes.parameterizations?.[issue.id]
+  const isParameterized = currentFix?.approved || false
+
+  // Sync with external changes (e.g., "Parameterize All" button)
+  const [localState, setLocalState] = React.useState(isParameterized)
+  React.useEffect(() => {
+    setLocalState(isParameterized)
+  }, [isParameterized])
+
+  const handleToggle = () => {
+    const newValue = !localState
+    setLocalState(newValue)
+    onFixChange(issue.id, {
+      approved: newValue,
+      paramName: suggestedParamName,
+      defaultValue: suggestedDefault
+    })
   }
 
   return (
     <Card
-      className="!border-l-4 bg-[var(--v2-surface)]"
-      style={{ borderLeftColor: '#F59E0B', borderLeftWidth: '4px', borderLeftStyle: 'solid' }}
+      className={`!border-l-4 transition-all duration-200 ${
+        isParameterized
+          ? 'bg-green-50 dark:bg-green-900/10 border-l-green-500'
+          : 'bg-[var(--v2-surface)] border-l-[#F59E0B]'
+      }`}
+      style={{ borderLeftWidth: '4px', borderLeftStyle: 'solid' }}
     >
       <CardHeader>
         <div className="flex items-start gap-3">
-          <div className="w-10 h-10 rounded-full bg-[var(--v2-status-warning-bg)] flex items-center justify-center flex-shrink-0">
-            <AlertTriangle className="w-5 h-5 text-[var(--v2-status-warning-text)]" />
+          <div className={`w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 transition-colors ${
+            isParameterized
+              ? 'bg-green-100 dark:bg-green-900/30'
+              : 'bg-[var(--v2-status-warning-bg)]'
+          }`}>
+            {isParameterized ? (
+              <CheckCircle className="w-5 h-5 text-green-600 dark:text-green-400" />
+            ) : (
+              <AlertTriangle className="w-5 h-5 text-[var(--v2-status-warning-text)]" />
+            )}
           </div>
           <div className="flex-1">
-            <CardTitle className="text-base text-[var(--v2-text-primary)]">{issue.title}</CardTitle>
+            <CardTitle className="text-base text-[var(--v2-text-primary)]">
+              {issue.title}
+              {isParameterized && (
+                <span className="ml-2 text-xs font-normal text-green-600 dark:text-green-400">
+                  ✓ Will be parameterized
+                </span>
+              )}
+            </CardTitle>
             {issue.affectedSteps.length > 0 && (
               <p className="text-xs text-[var(--v2-text-secondary)] mt-1">
                 In step: {issue.affectedSteps.map(step => step.friendlyName).join(', ')}
               </p>
             )}
           </div>
-          <Badge variant="warning">{issue.severity}</Badge>
+          <Badge variant={isParameterized ? 'success' : 'warning'}>
+            {isParameterized ? 'Fixed' : issue.severity}
+          </Badge>
         </div>
       </CardHeader>
 
       <CardContent>
-        {/* Explanation - What was detected */}
-        <div className="mb-4 p-3 bg-[var(--v2-status-warning-bg)] border border-[var(--v2-status-warning-border)] rounded-lg">
-          <p className="text-sm text-[var(--v2-status-warning-text)]">
-            <span className="font-semibold">What we found:</span> A hardcoded value was detected in this step.
-          </p>
+        {/* Hardcoded value display */}
+        <div className="mb-4 p-3 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg">
+          <p className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">Hardcoded value found:</p>
+          <code className="text-sm font-mono text-gray-900 dark:text-gray-100 break-all">
+            {hardcodedValue}
+          </code>
         </div>
 
-        {/* Recommendation - Why parameterize */}
-        <div className="mb-4 p-3 border-2 border-[var(--v2-primary)] bg-blue-50 dark:bg-blue-900/20 rounded-lg">
-          <p className="text-sm font-medium text-[var(--v2-text-primary)] mb-2 flex items-center gap-2">
-            <Lightbulb className="w-4 h-4 text-[var(--v2-primary)]" />
-            Recommended action:
-          </p>
-          <p className="text-sm text-[var(--v2-text-secondary)]">
-            Convert this to an input parameter so users can provide their own values when running the workflow.
-          </p>
-        </div>
-
-        {/* Parameterization option with toggle */}
-        <div className="flex items-center justify-between p-3 rounded-lg border border-[var(--v2-border)] hover:bg-[var(--v2-surface-hover)] transition-colors">
-          <div className="flex-1">
-            <p className="text-sm font-medium text-[var(--v2-text-primary)]">Convert to input parameter</p>
-            <p className="text-xs text-[var(--v2-text-secondary)] mt-1">
-              Make this value dynamic so users can provide their own input
+        {!isParameterized && (
+          /* Recommendation - Why parameterize */
+          <div className="mb-4 p-3 border-2 border-[var(--v2-primary)] bg-blue-50 dark:bg-blue-900/20 rounded-lg">
+            <p className="text-sm font-medium text-[var(--v2-text-primary)] mb-2 flex items-center gap-2">
+              <Lightbulb className="w-4 h-4 text-[var(--v2-primary)]" />
+              Recommended action:
+            </p>
+            <p className="text-sm text-[var(--v2-text-secondary)]">
+              Convert this to an input parameter so users can provide their own values when running the workflow.
             </p>
           </div>
-          <button
-            type="button"
+        )}
+
+        {isParameterized && (
+          /* Success message */
+          <div className="mb-4 p-3 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg">
+            <p className="text-sm text-green-900 dark:text-green-100">
+              <span className="font-semibold">✓ Parameterized as:</span> <code className="text-xs bg-green-100 dark:bg-green-900 px-1.5 py-0.5 rounded">{suggestedParamName}</code>
+            </p>
+            <p className="text-xs text-green-700 dark:text-green-300 mt-1">
+              Users will be able to provide their own value for this when running the workflow.
+            </p>
+          </div>
+        )}
+
+        {/* Parameterization toggle - large and easy to click */}
+        <button
+          type="button"
+          onClick={handleToggle}
+          className={`w-full flex items-center justify-between p-4 rounded-lg border-2 transition-all ${
+            isParameterized
+              ? 'bg-green-50 dark:bg-green-900/20 border-green-500 hover:bg-green-100 dark:hover:bg-green-900/30'
+              : 'bg-white dark:bg-gray-800 border-[var(--v2-border)] hover:bg-[var(--v2-surface-hover)] hover:border-[var(--v2-primary)]'
+          }`}
+        >
+          <div className="flex-1 text-left">
+            <p className={`text-sm font-semibold ${
+              isParameterized
+                ? 'text-green-900 dark:text-green-100'
+                : 'text-[var(--v2-text-primary)]'
+            }`}>
+              {isParameterized ? 'Parameterized ✓' : 'Convert to input parameter'}
+            </p>
+            <p className="text-xs text-[var(--v2-text-secondary)] mt-1">
+              {isParameterized
+                ? 'Click to undo and keep hardcoded value'
+                : 'Make this value dynamic for users to customize'}
+            </p>
+          </div>
+          <div
             role="switch"
-            aria-checked={wantsParameterization}
-            onClick={() => {
-              const newValue = !wantsParameterization
-              setWantsParameterization(newValue)
-              onFixChange(issue.id, {
-                approved: newValue,
-                paramName: suggestedParamName,
-                defaultValue: suggestedDefault
-              })
-            }}
-            className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-[var(--v2-primary)] focus:ring-offset-2 ${
-              wantsParameterization ? 'bg-[var(--v2-primary)]' : 'bg-gray-200 dark:bg-gray-700'
+            aria-checked={localState}
+            className={`relative inline-flex h-7 w-12 flex-shrink-0 rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out ${
+              localState ? 'bg-[var(--v2-success)]' : 'bg-[var(--v2-border)]'
             }`}
           >
             <span
-              className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
-                wantsParameterization ? 'translate-x-5' : 'translate-x-0'
+              className={`pointer-events-none inline-block h-6 w-6 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                localState ? 'translate-x-5' : 'translate-x-0'
               }`}
             />
-          </button>
-        </div>
+          </div>
+        </button>
       </CardContent>
     </Card>
   )

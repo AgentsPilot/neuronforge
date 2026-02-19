@@ -23,6 +23,8 @@ import type {
   ExecutionStep,
   SubWorkflowStep,
   HumanApprovalStep,
+  StepOutput,
+  ActionStep,
 } from './types';
 import { ExecutionError, ValidationError } from './types';
 import { WorkflowParser } from './WorkflowParser';
@@ -53,6 +55,7 @@ import { ShadowAgent } from './shadow/ShadowAgent';
 import { CheckpointManager } from './shadow/CheckpointManager';
 import { ResumeOrchestrator } from './shadow/ResumeOrchestrator';
 import { IssueCollector } from './shadow/IssueCollector';
+import { ExecutionSummaryCollector } from './shadow/ExecutionSummaryCollector';
 
 // Create admin client inline to avoid module initialization issues
 const supabaseAdmin = createClient(
@@ -299,7 +302,7 @@ export class WorkflowPilot {
       executionPlan,
       inputValues,
       providedExecutionId,
-      runMode
+      runMode === 'batch_calibration' ? 'calibration' : runMode
     );
 
     // Determine if this is batch calibration mode
@@ -313,6 +316,16 @@ export class WorkflowPilot {
       inputValues,
       isBatchCalibration
     );
+
+    // Initialize execution summary collector for calibration runs
+    let executionSummaryCollector: ExecutionSummaryCollector | null = null;
+    if (runMode === 'calibration' || runMode === 'batch_calibration') {
+      executionSummaryCollector = new ExecutionSummaryCollector();
+      (this as any).executionSummaryCollector = executionSummaryCollector;
+      // Attach to context so StepExecutor can access it for nested steps
+      (context as any).executionSummaryCollector = executionSummaryCollector;
+      console.log(`📊 [WorkflowPilot] Execution summary collector initialized for ${runMode} mode`);
+    }
 
     // 2b. Shadow Agent: lifecycle-aware initialization
     let shadowAgent: ShadowAgent | null = null;
@@ -661,6 +674,19 @@ export class WorkflowPilot {
         total_duration_ms: context.totalExecutionTime,
       });
 
+      // Collect execution summary for calibration
+      const executionSummary = executionSummaryCollector ? executionSummaryCollector.getSummary() : undefined;
+      if (executionSummary) {
+        console.log(`📊 [WorkflowPilot] Execution summary collected:`, {
+          data_sources: executionSummary.data_sources_accessed.length,
+          data_written: executionSummary.data_written.length,
+          items_processed: executionSummary.items_processed,
+          full_summary: JSON.stringify(executionSummary, null, 2)
+        });
+      } else {
+        console.log(`📊 [WorkflowPilot] No execution summary collected (collector: ${!!executionSummaryCollector})`);
+      }
+
       return {
         success: true,
         executionId,
@@ -688,6 +714,8 @@ export class WorkflowPilot {
         } : undefined,
         // Batch calibration: include collected issues
         collectedIssues: isBatchCalibration ? context.collectedIssues : undefined,
+        // Calibration: include execution summary (aggregated metadata only, no client data)
+        execution_summary: executionSummary,
       };
     } catch (error: any) {
       console.error(`❌ [WorkflowPilot] Execution failed:`, error);
@@ -785,20 +813,41 @@ export class WorkflowPilot {
         severity: 'critical',
       });
 
-      // In batch calibration mode, collect hardcoded values even if execution failed
+      // In batch calibration mode, collect issues from the execution error
+      // AND collect hardcoded values even if execution failed
       // This ensures we show ALL improvements, not just the first error
       // Allows users to fix both execution errors AND hardcode issues in one go
       if (isBatchCalibration && context) {
         try {
-          console.log('🔍 [WorkflowPilot] Batch calibration mode - collecting hardcoded values after failure');
+          console.log('🔍 [WorkflowPilot] Batch calibration mode - collecting issues after failure');
           const { IssueCollector } = await import('./shadow/IssueCollector');
           const issueCollector = new IssueCollector();
+
+          // CRITICAL: Convert execution error to CollectedIssue with auto-repair proposal
+          // This enables auto-fix for data shape mismatches, filter bugs, etc.
+          const failedStepId = error.stepId || context.currentStep || 'unknown';
+          const pilotSteps = agent.pilot_steps || agent.workflow_steps || [];
+          const failedStepDef = pilotSteps.find(s => s.id === failedStepId || s.step_id === failedStepId);
+          const failedStepName = failedStepDef?.name || failedStepId;
+          const failedStepType = failedStepDef?.type || 'unknown';
+
+          const executionIssue = issueCollector.collectFromError(
+            error,
+            failedStepId,
+            failedStepName,
+            failedStepType,
+            context
+          );
+          context.collectedIssues.push(executionIssue);
+          console.log(`🔍 [WorkflowPilot] Collected execution error issue: ${executionIssue.category}, auto-repair: ${executionIssue.autoRepairAvailable}`);
+
+          // Also collect hardcoded values
           const hardcodeIssues = issueCollector.collectHardcodedValues(agent);
           context.collectedIssues.push(...hardcodeIssues);
           console.log(`🔍 [WorkflowPilot] Detected ${hardcodeIssues.length} hardcoded values (after failure)`);
-        } catch (hardcodeErr: any) {
-          // Non-critical - hardcode detection is best-effort
-          console.error('❌ [WorkflowPilot] Hardcode detection failed (non-critical):', hardcodeErr.message);
+        } catch (issueCollectionErr: any) {
+          // Non-critical - issue collection is best-effort
+          console.error('❌ [WorkflowPilot] Issue collection failed (non-critical):', issueCollectionErr.message);
         }
       }
 
@@ -856,6 +905,102 @@ export class WorkflowPilot {
     }
 
     console.log(`\n✅ [WorkflowPilot] All steps completed`);
+  }
+
+  /**
+   * Collect execution metadata from step output for calibration summaries
+   * Fully dynamic - uses plugin metadata with NO hardcoded logic
+   */
+  private async collectStepMetadata(
+    collector: ExecutionSummaryCollector,
+    step: WorkflowStep,
+    output: StepOutput
+  ): Promise<void> {
+    // Only collect from action steps (plugin executions)
+    if (step.type !== 'action') {
+      return;
+    }
+
+    const actionStep = step as ActionStep;
+    const pluginName = actionStep.plugin;
+    const actionName = actionStep.action;
+
+    // Load plugin metadata to understand operation type and count fields
+    try {
+      // Load plugin definition directly from file system
+      const fs = await import('fs');
+      const path = await import('path');
+      const definitionsDir = path.join(process.cwd(), 'lib', 'plugins', 'definitions');
+      const fileName = `${pluginName}-plugin-v2.json`;
+      const filePath = path.join(definitionsDir, fileName);
+      const fileContent = await fs.promises.readFile(filePath, 'utf-8');
+      const pluginDef = JSON.parse(fileContent);
+      const actionDef = pluginDef?.actions?.[actionName];
+
+      if (!actionDef) {
+        console.warn(`[WorkflowPilot] No action definition found for ${pluginName}.${actionName}`);
+        return;
+      }
+
+      // Use output_schema to dynamically find count field
+      const itemCount = this.extractCountFromSchema(output.data, actionDef.output_schema);
+
+      // Determine operation type from usage_context metadata
+      const usageContext = actionDef.usage_context || '';
+      const isWriteOperation = usageContext.toLowerCase().includes('add') ||
+                               usageContext.toLowerCase().includes('create') ||
+                               usageContext.toLowerCase().includes('send');
+
+      // Record the data access
+      if (isWriteOperation) {
+        console.log(`📊 [WorkflowPilot] Recording data write: ${pluginName}.${actionName} (count: ${itemCount})`);
+        await collector.recordDataWrite(pluginName, actionName, itemCount);
+      } else {
+        console.log(`📊 [WorkflowPilot] Recording data read: ${pluginName}.${actionName} (count: ${itemCount})`);
+        await collector.recordDataRead(pluginName, actionName, itemCount);
+        collector.recordItemsProcessed(itemCount);
+      }
+    } catch (error) {
+      console.warn(`[WorkflowPilot] Could not collect metadata for ${pluginName}.${actionName}:`, error);
+    }
+  }
+
+  /**
+   * Extract count from data using output_schema as a guide
+   * Completely dynamic - walks the schema to find array/count fields
+   */
+  private extractCountFromSchema(data: any, schema: any): number {
+    if (!data || !schema) return 0;
+
+    // If data is an array, return length
+    if (Array.isArray(data)) {
+      return data.length;
+    }
+
+    // Walk the schema to find fields that indicate counts
+    if (schema.properties) {
+      for (const [fieldName, fieldSchema] of Object.entries(schema.properties)) {
+        const field = fieldSchema as any;
+
+        // If schema says this field is an array and we have it in data
+        if (field.type === 'array' && data[fieldName]) {
+          if (Array.isArray(data[fieldName])) {
+            return data[fieldName].length;
+          }
+        }
+
+        // If schema says this field is a count and we have it in data
+        if (field.type === 'integer' && data[fieldName] !== undefined) {
+          const desc = field.description?.toLowerCase() || '';
+          if (desc.includes('count') || desc.includes('number of') || fieldName.includes('count')) {
+            return data[fieldName];
+          }
+        }
+      }
+    }
+
+    // If we got data but can't determine count from schema, default to 1
+    return typeof data === 'object' ? 1 : 0;
   }
 
   /**
@@ -1164,6 +1309,19 @@ export class WorkflowPilot {
     if (outputVariable) {
       context.setVariable(outputVariable, output.data);
       console.log(`  ✓ Registered output variable: ${outputVariable}`);
+    }
+
+    // Collect execution metadata for calibration summaries
+    const summaryCollector = (this as any).executionSummaryCollector as ExecutionSummaryCollector | null;
+    if (summaryCollector) {
+      console.log(`📊 [WorkflowPilot] Step ${stepDef.id} completed - success: ${output.metadata.success}, type: ${stepDef.type}`);
+      if (output.metadata.success) {
+        try {
+          await this.collectStepMetadata(summaryCollector, stepDef, output);
+        } catch (collectorErr) {
+          console.warn(`[WorkflowPilot] Failed to collect step metadata (non-critical):`, collectorErr);
+        }
+      }
     }
 
     // Checkpoint (metadata to DB + in-memory snapshot)
@@ -1557,8 +1715,15 @@ export class WorkflowPilot {
         subAgent,
         parentContext.userId,
         parentContext.sessionId,
-        {} // Empty input values - we'll map them manually
+        {}, // Empty input values - we'll map them manually
+        parentContext.batchCalibrationMode // Inherit batch calibration mode
       );
+
+      // Inherit executionSummaryCollector reference from parent for nested metadata collection
+      if ((parentContext as any).executionSummaryCollector) {
+        (subContext as any).executionSummaryCollector = (parentContext as any).executionSummaryCollector;
+        console.log(`  → Inherited executionSummaryCollector from parent context`);
+      }
 
       // 3. Map inputs from parent context to sub-workflow context
       console.log(`  → Mapping inputs to sub-workflow context`);

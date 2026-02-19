@@ -161,6 +161,25 @@ export const SEMANTIC_PLAN_SCHEMA = {
           }
         },
 
+        file_operations: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['type', 'description', 'target_service', 'trigger', 'content_source', 'folder_structure', 'generate_link', 'additional_config'],
+            additionalProperties: true,
+            properties: {
+              type: { type: 'string' },
+              description: { type: 'string' },
+              target_service: { type: 'string' },
+              trigger: { type: 'string' },
+              content_source: { type: 'string' },
+              folder_structure: { type: 'string' },
+              generate_link: { type: 'boolean' },
+              additional_config: { type: 'string' }
+            }
+          }
+        },
+
         grouping: {
           type: 'object',
           properties: {
@@ -375,9 +394,12 @@ export const SEMANTIC_PLAN_SCHEMA_STRICT = {
       type: 'string',
       description: 'High-level understanding of user\'s goal (at least 10 characters)'
     },
+    // NOTE: processing_steps is intentionally NOT in this strict schema
+    // It's injected after LLM generation from Enhanced Prompt (see SemanticPlanGenerator)
+    // TypeScript type allows it (optional), but LLM doesn't generate it
     understanding: {
       type: 'object',
-      required: ['data_sources', 'filtering', 'ai_processing', 'grouping', 'rendering', 'delivery', 'edge_cases'],
+      required: ['data_sources', 'filtering', 'ai_processing', 'file_operations', 'grouping', 'rendering', 'delivery', 'edge_cases'],
       additionalProperties: false,
       properties: {
         data_sources: {
@@ -428,6 +450,24 @@ export const SEMANTIC_PLAN_SCHEMA_STRICT = {
               instruction: { type: 'string' },
               input_description: { type: 'string' },
               output_description: { type: 'string' }
+            }
+          }
+        },
+        file_operations: {
+          type: ['array', 'null'],
+          items: {
+            type: 'object',
+            required: ['type', 'description', 'target_service', 'trigger', 'content_source', 'folder_structure', 'generate_link', 'additional_config'],
+            additionalProperties: false,
+            properties: {
+              type: { type: 'string' },
+              description: { type: 'string' },
+              target_service: { type: 'string' },
+              trigger: { type: 'string' },
+              content_source: { type: 'string' },
+              folder_structure: { type: 'string' },
+              generate_link: { type: 'boolean' },
+              additional_config: { type: 'string' }
             }
           }
         },

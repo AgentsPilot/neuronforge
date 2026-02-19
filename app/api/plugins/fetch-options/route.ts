@@ -32,7 +32,18 @@ interface OptionItem {
 
 export async function POST(request: NextRequest) {
   try {
-    const body: FetchOptionsRequest = await request.json();
+    // Handle empty request body
+    let body: FetchOptionsRequest;
+    try {
+      body = await request.json();
+    } catch (parseError) {
+      logger.error({ err: parseError }, 'Failed to parse request body');
+      return NextResponse.json(
+        { success: false, error: 'Invalid request body' },
+        { status: 400 }
+      );
+    }
+
     const { plugin, action, parameter, refresh = false, page = 1, limit = 100, dependentValues = {} } = body;
 
     logger.debug({ plugin, action, parameter, refresh, dependentValues }, 'Request received');
@@ -125,9 +136,18 @@ export async function POST(request: NextRequest) {
 
     // Find the parameter schema with x-dynamic-options
     const paramSchema = actionSchema.parameters?.properties?.[parameter];
+    logger.debug({
+      plugin,
+      action,
+      parameter,
+      hasParamSchema: !!paramSchema,
+      hasDynamicOptions: !!paramSchema?.['x-dynamic-options'],
+      availableParameters: Object.keys(actionSchema.parameters?.properties || {})
+    }, 'Checking parameter schema');
+
     if (!paramSchema || !paramSchema['x-dynamic-options']) {
       return NextResponse.json(
-        { success: false, error: `Parameter ${parameter} does not support dynamic options` },
+        { success: false, error: `Parameter ${parameter} does not support dynamic options. Available parameters: ${Object.keys(actionSchema.parameters?.properties || {}).join(', ')}` },
         { status: 400 }
       );
     }
@@ -146,12 +166,16 @@ export async function POST(request: NextRequest) {
     let options: OptionItem[] = [];
 
     try {
+      logger.debug({ plugin, fetchMethod, dependentValues }, 'Calling fetchDynamicOptions');
+
       options = await pluginExecuter.fetchDynamicOptions(
         plugin,
         fetchMethod,
         connection,
         { page, limit, ...dependentValues }
       );
+
+      logger.debug({ plugin, fetchMethod, optionsCount: options.length }, 'fetchDynamicOptions returned');
 
       // Cache the results
       optionsCache.set(cacheKey, {

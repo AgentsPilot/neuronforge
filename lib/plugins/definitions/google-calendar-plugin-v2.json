@@ -178,7 +178,7 @@
         }
       },
       "output_guidance": {
-        "success_description": "Returns calendar events within the specified time range with full details including attendees and conference links.",
+        "success_description": "Found calendar events",
         "sample_output": {
           "calendar_id": "primary",
           "event_count": 2,
@@ -355,7 +355,7 @@
         }
       },
       "output_guidance": {
-        "success_description": "Returns the created event details including ID, calendar link, and any conference links.",
+        "success_description": "Created event",
         "sample_output": {
           "event_id": "abc123xyz",
           "summary": "Team Meeting",
@@ -471,7 +471,7 @@
         }
       },
       "output_guidance": {
-        "success_description": "Returns the updated event details with new values and timestamp.",
+        "success_description": "Updated event",
         "sample_output": {
           "event_id": "abc123xyz",
           "summary": "Updated Team Meeting",
@@ -551,7 +551,7 @@
         }
       },
       "output_guidance": {
-        "success_description": "Confirms the event was deleted with the event ID and timestamp.",
+        "success_description": "Deleted event",
         "sample_output": {
           "event_id": "abc123xyz",
           "deleted": true,
@@ -698,7 +698,7 @@
         }
       },
       "output_guidance": {
-        "success_description": "Returns complete event details including attendees, organizer, reminders, and conference links.",
+        "success_description": "Retrieved event details",
         "sample_output": {
           "event_id": "abc123xyz",
           "summary": "Team Meeting",

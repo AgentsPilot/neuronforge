@@ -47,8 +47,17 @@ const FALLBACK_PRICING = {
     'gpt-3.5-turbo': { input: 0.0005, output: 0.0015 },
   },
   'anthropic': {
+    // Claude 4.6 models (Feb 2026)
+    'claude-opus-4-6': { input: 0.005, output: 0.025 },
+    'claude-sonnet-4-6': { input: 0.003, output: 0.015 },
+    // Claude 4.5 models (2025)
+    'claude-opus-4-5-20251101': { input: 0.015, output: 0.075 },
+    'claude-sonnet-4-5-20250929': { input: 0.003, output: 0.015 },
+    'claude-haiku-4-5-20251001': { input: 0.001, output: 0.005 },
+    // Claude 3.5 models (2024)
     'claude-3-5-sonnet-20241022': { input: 0.003, output: 0.015 },
     'claude-3-5-haiku-20241022': { input: 0.001, output: 0.005 },
+    // Claude 3 models (2024)
     'claude-3-opus-20240229': { input: 0.015, output: 0.075 },
     'claude-3-sonnet-20240229': { input: 0.003, output: 0.015 },
     'claude-3-haiku-20240307': { input: 0.00025, output: 0.00125 },

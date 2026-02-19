@@ -24,6 +24,9 @@ import type {
 import { SEMANTIC_PLAN_SCHEMA, SEMANTIC_PLAN_SCHEMA_STRICT } from './schemas/semantic-plan-schema'
 import Ajv, { Ajv as AjvInstance } from 'ajv'
 import { createLogger, Logger } from '@/lib/logger'
+import type { HardRequirements } from '../requirements/HardRequirementsExtractor'
+import { getModelMaxOutputTokens } from '@/lib/ai/context-limits'
+import { HardRequirementsFormatter } from '../utils/HardRequirementsFormatter'
 
 // Create module-scoped logger
 const moduleLogger = createLogger({ module: 'V6', service: 'SemanticPlanGenerator' })
@@ -79,9 +82,14 @@ export class SemanticPlanGenerator {
     this.logger = moduleLogger.child({ method: 'constructor' })
     this.logger.info({ provider: config.model_provider, model: config.model_name }, 'Initializing')
 
+    // Use model's actual max output tokens from context-limits
+    // Fallback to generic model names if specific name not provided
+    const modelName = config.model_name || (config.model_provider === 'anthropic' ? 'claude-opus-4-6' : 'gpt-4o')
+    const defaultMaxTokens = getModelMaxOutputTokens(modelName)
+
     this.config = {
       temperature: 0.3, // Higher than IR generation - we want reasoning, not just precision
-      max_tokens: 6000, // More tokens for reasoning traces
+      max_tokens: defaultMaxTokens, // Use model's actual max output tokens (16384 for claude-opus-4-6)
       ...config
     }
 
@@ -138,8 +146,14 @@ export class SemanticPlanGenerator {
 
   /**
    * Generate semantic plan from enhanced prompt
+   *
+   * @param enhancedPrompt - The enhanced prompt containing user intent
+   * @param hardRequirements - Hard requirements extracted in Phase 0 that MUST be preserved
    */
-  async generate(enhancedPrompt: EnhancedPrompt): Promise<SemanticPlanGenerationResult> {
+  async generate(
+    enhancedPrompt: EnhancedPrompt,
+    hardRequirements?: HardRequirements
+  ): Promise<SemanticPlanGenerationResult> {
     const generateLogger = moduleLogger.child({ method: 'generate' })
 
     // Validate enhanced prompt structure
@@ -159,11 +173,23 @@ export class SemanticPlanGenerator {
     const sections = Object.keys(enhancedPrompt.sections)
     generateLogger.info({ sections }, 'Starting semantic plan generation')
 
+    // Log hard requirements if provided (Phase 0 → Phase 1 propagation)
+    if (hardRequirements && hardRequirements.requirements.length > 0) {
+      generateLogger.info({
+        hasHardRequirements: true,
+        requirementsCount: hardRequirements.requirements.length,
+        unitOfWork: hardRequirements.unit_of_work,
+        thresholdsCount: hardRequirements.thresholds.length,
+        routingRulesCount: hardRequirements.routing_rules.length,
+        invariantsCount: hardRequirements.invariants.length
+      }, 'Hard requirements will be injected into semantic plan generation')
+    }
+
     const startTime = Date.now()
 
     try {
       // Call LLM in understanding mode
-      const llmResponse = await this.callLLM(enhancedPrompt)
+      const llmResponse = await this.callLLM(enhancedPrompt, hardRequirements)
 
       if (!llmResponse.success || !llmResponse.semantic_plan) {
         const duration = Date.now() - startTime
@@ -202,6 +228,33 @@ export class SemanticPlanGenerator {
       }
 
       const duration = Date.now() - startTime
+
+      // Embed hard requirements in semantic plan (Phase 1)
+      if (hardRequirements && hardRequirements.requirements.length > 0) {
+        semanticPlan.hard_requirements = hardRequirements
+
+        // Validate requirements mapping completeness
+        const mappedRequirementIds = new Set(
+          (semanticPlan.requirements_mapping || []).map(m => m.requirement_id)
+        )
+        const unmappedRequirements = hardRequirements.requirements.filter(
+          req => !mappedRequirementIds.has(req.id)
+        )
+
+        if (unmappedRequirements.length > 0) {
+          generateLogger.warn({
+            unmappedCount: unmappedRequirements.length,
+            unmappedIds: unmappedRequirements.map(r => r.id)
+          }, 'Some requirements were not mapped in semantic plan')
+        }
+
+        generateLogger.info({
+          requirementsCount: hardRequirements.requirements.length,
+          mappedCount: semanticPlan.requirements_mapping?.length || 0,
+          violationsCount: semanticPlan.requirements_violations?.length || 0
+        }, 'Requirements tracking embedded in semantic plan')
+      }
+
       generateLogger.info({
         duration,
         assumptionsCount: semanticPlan.assumptions?.length || 0,
@@ -238,16 +291,19 @@ export class SemanticPlanGenerator {
   /**
    * Call LLM to generate semantic plan
    */
-  private async callLLM(enhancedPrompt: EnhancedPrompt): Promise<{
+  private async callLLM(
+    enhancedPrompt: EnhancedPrompt,
+    hardRequirements?: HardRequirements
+  ): Promise<{
     success: boolean
     semantic_plan?: SemanticPlan
     errors?: string[]
     tokens_used?: number
   }> {
     if (this.config.model_provider === 'openai') {
-      return this.callOpenAI(enhancedPrompt)
+      return this.callOpenAI(enhancedPrompt, hardRequirements)
     } else if (this.config.model_provider === 'anthropic') {
-      return this.callAnthropic(enhancedPrompt)
+      return this.callAnthropic(enhancedPrompt, hardRequirements)
     }
 
     return {
@@ -285,7 +341,10 @@ export class SemanticPlanGenerator {
   /**
    * Call OpenAI API with retry logic and timeout protection
    */
-  private async callOpenAI(enhancedPrompt: EnhancedPrompt): Promise<{
+  private async callOpenAI(
+    enhancedPrompt: EnhancedPrompt,
+    hardRequirements?: HardRequirements
+  ): Promise<{
     success: boolean
     semantic_plan?: SemanticPlan
     errors?: string[]
@@ -358,6 +417,14 @@ export class SemanticPlanGenerator {
           continue
         }
 
+        // Inject processing_steps from Enhanced Prompt (preserve execution order intent)
+        if (enhancedPrompt.sections.processing_steps && enhancedPrompt.sections.processing_steps.length > 0) {
+          semanticPlan.processing_steps = enhancedPrompt.sections.processing_steps
+          openaiLogger.debug({
+            stepsCount: semanticPlan.processing_steps.length
+          }, 'Injected processing_steps from Enhanced Prompt')
+        }
+
         // Validate basic structure
         const validation = this.validateSemanticPlan(semanticPlan)
         if (!validation.valid) {
@@ -411,9 +478,12 @@ export class SemanticPlanGenerator {
   }
 
   /**
-   * Call Anthropic API
+   * Call Anthropic API with retry logic for JSON parsing errors
    */
-  private async callAnthropic(enhancedPrompt: EnhancedPrompt): Promise<{
+  private async callAnthropic(
+    enhancedPrompt: EnhancedPrompt,
+    hardRequirements?: HardRequirements
+  ): Promise<{
     success: boolean
     semantic_plan?: SemanticPlan
     errors?: string[]
@@ -426,84 +496,153 @@ export class SemanticPlanGenerator {
       return { success: false, errors: ['Anthropic client not initialized'] }
     }
 
-    const startTime = Date.now()
+    const maxAttempts = 2
+    let lastError = ''
+    let totalTokens = 0
 
-    try {
-      anthropicLogger.info('Calling Anthropic API')
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      const attemptStartTime = Date.now()
 
-      const userMessage = this.buildUserMessage(enhancedPrompt)
-
-      const apiCall = this.anthropic.messages.create({
-        model: this.getModelName(),
-        max_tokens: this.config.max_tokens || 6000,
-        temperature: this.config.temperature,
-        system: this.systemPrompt,
-        messages: [
-          { role: 'user', content: userMessage }
-        ]
-      })
-
-      // Wrap with 30-second timeout
-      const response = await this.callWithTimeout(apiCall, 30000)
-
-      const content = response.content[0]
-      if (content.type !== 'text') {
-        anthropicLogger.warn('Unexpected response type from Anthropic')
-        return { success: false, errors: ['Unexpected response type from Anthropic'] }
-      }
-
-      anthropicLogger.debug({ responseLength: content.text.length }, 'Received LLM response')
-
-      // Extract JSON from response (Anthropic sometimes wraps it in markdown)
-      let jsonText = content.text.trim()
-      if (jsonText.startsWith('```json')) {
-        jsonText = jsonText.replace(/^```json\n/, '').replace(/\n```$/, '')
-      } else if (jsonText.startsWith('```')) {
-        jsonText = jsonText.replace(/^```\n/, '').replace(/\n```$/, '')
-      }
-
-      // Parse JSON with error handling
-      let semanticPlan: SemanticPlan
       try {
-        semanticPlan = JSON.parse(jsonText) as SemanticPlan
-      } catch (parseError) {
+        const userMessage = this.buildUserMessage(enhancedPrompt, hardRequirements)
+
+        // Log message size for debugging
+        const messageLength = userMessage.length
+        const estimatedTokens = Math.ceil(messageLength / 4) // Rough estimate: 4 chars per token
+        anthropicLogger.info({
+          attempt,
+          maxAttempts,
+          messageLength,
+          estimatedInputTokens: estimatedTokens
+        }, 'Calling Anthropic API')
+
+        // Add retry context to user message if this is a retry
+        const finalUserMessage = attempt > 1 && lastError
+          ? `${userMessage}\n\n---\n\nPREVIOUS ATTEMPT FAILED:\n${lastError}\n\nPlease ensure you generate valid, complete JSON. Do not truncate arrays or objects.`
+          : userMessage
+
+        const apiCall = this.anthropic.messages.create({
+          model: this.getModelName(),
+          max_tokens: this.config.max_tokens || 16384,
+          temperature: this.config.temperature,
+          system: this.systemPrompt,
+          messages: [
+            { role: 'user', content: finalUserMessage }
+          ]
+        })
+
+        // Wrap with 180-second timeout (Opus 4.5 is slower but provides better quality)
+        const response = await this.callWithTimeout(apiCall, 180000)
+
+        const content = response.content[0]
+        if (content.type !== 'text') {
+          lastError = 'Unexpected response type from Anthropic'
+          anthropicLogger.warn({ attempt, error: lastError }, 'Attempt failed - unexpected response type')
+          if (attempt === maxAttempts) {
+            return { success: false, errors: [lastError] }
+          }
+          continue
+        }
+
+        anthropicLogger.debug({ responseLength: content.text.length }, 'Received LLM response')
+
+        // Extract JSON from response (Anthropic sometimes wraps it in markdown)
+        let jsonText = content.text.trim()
+
+        // Try multiple patterns to extract JSON from markdown code fences
+        const patterns = [
+          /```json\s*\n([\s\S]*?)\n```/,      // Standard: ```json\n{...}\n```
+          /```json\s+([\s\S]*?)```/,          // No newline after json: ```json {...}```
+          /```\s*\n([\s\S]*?)\n```/,          // Generic: ```\n{...}\n```
+          /```([\s\S]*?)```/,                 // Minimal: ```{...}```
+        ]
+
+        for (const pattern of patterns) {
+          const jsonMatch = jsonText.match(pattern)
+          if (jsonMatch && jsonMatch[1]) {
+            jsonText = jsonMatch[1].trim()
+            break
+          }
+        }
+
+        // Final cleanup: remove any remaining backticks and whitespace
+        jsonText = jsonText.trim().replace(/^`+|`+$/g, '').trim()
+
+        // Additional safety: if text starts with "json" (literal word), remove it
+        if (jsonText.startsWith('json')) {
+          jsonText = jsonText.substring(4).trim()
+        }
+
+        // Parse JSON with error handling
+        let semanticPlan: SemanticPlan
+        try {
+          semanticPlan = JSON.parse(jsonText) as SemanticPlan
+        } catch (parseError) {
+          const tokensUsed = response.usage.input_tokens + response.usage.output_tokens
+          totalTokens = tokensUsed
+          lastError = `JSON parse error: ${parseError instanceof Error ? parseError.message : 'Invalid JSON'}`
+          anthropicLogger.error({
+            err: parseError,
+            attempt,
+            tokensUsed,
+            responsePreview: jsonText.substring(0, 500)
+          }, 'Attempt failed - JSON parse error')
+
+          // If this is the last attempt, return failure
+          if (attempt === maxAttempts) {
+            return {
+              success: false,
+              errors: [lastError],
+              tokens_used: tokensUsed
+            }
+          }
+          // Otherwise, retry
+          continue
+        }
+
+        // Inject processing_steps from Enhanced Prompt (preserve execution order intent)
+        if (enhancedPrompt.sections.processing_steps && enhancedPrompt.sections.processing_steps.length > 0) {
+          semanticPlan.processing_steps = enhancedPrompt.sections.processing_steps
+          anthropicLogger.debug({
+            stepsCount: semanticPlan.processing_steps.length
+          }, 'Injected processing_steps from Enhanced Prompt')
+        }
+
+        const attemptDuration = Date.now() - attemptStartTime
         const tokensUsed = response.usage.input_tokens + response.usage.output_tokens
-        anthropicLogger.error({
-          err: parseError,
-          tokensUsed,
-          responsePreview: jsonText.substring(0, 500)
-        }, 'JSON parse error')
+        anthropicLogger.info({
+          attempt,
+          duration: attemptDuration,
+          planVersion: semanticPlan.plan_version,
+          tokensUsed
+        }, 'Attempt succeeded')
+
         return {
-          success: false,
-          errors: [`JSON parse error: ${parseError instanceof Error ? parseError.message : 'Invalid JSON'}`],
+          success: true,
+          semantic_plan: semanticPlan,
           tokens_used: tokensUsed
         }
-      }
+      } catch (error) {
+        const attemptDuration = Date.now() - attemptStartTime
+        lastError = error instanceof Error ? error.message : 'Unknown Anthropic error'
+        anthropicLogger.error({ err: error, attempt, duration: attemptDuration }, 'Attempt threw error')
 
-      const duration = Date.now() - startTime
-      const tokensUsed = response.usage.input_tokens + response.usage.output_tokens
-      anthropicLogger.info({
-        duration,
-        planVersion: semanticPlan.plan_version,
-        tokensUsed
-      }, 'Anthropic call succeeded')
-
-      return {
-        success: true,
-        semantic_plan: semanticPlan,
-        tokens_used: tokensUsed
+        // If this is the last attempt or a non-retryable error, fail immediately
+        if (attempt === maxAttempts || lastError.includes('API key') || lastError.includes('rate limit')) {
+          return { success: false, errors: [lastError] }
+        }
+        // Otherwise, continue to next attempt
       }
-    } catch (error) {
-      const duration = Date.now() - startTime
-      anthropicLogger.error({ err: error, duration }, 'Anthropic call failed')
-      return { success: false, errors: [error instanceof Error ? error.message : 'Unknown Anthropic error'] }
     }
+
+    anthropicLogger.error({ totalTokens, lastError }, 'All attempts failed')
+    return { success: false, errors: [lastError] }
   }
 
   /**
    * Build user message from enhanced prompt
    */
-  private buildUserMessage(enhancedPrompt: EnhancedPrompt): string {
+  private buildUserMessage(enhancedPrompt: EnhancedPrompt, hardRequirements?: HardRequirements): string {
     const sections = enhancedPrompt.sections
     const context = enhancedPrompt.user_context
     const specifics = enhancedPrompt.specifics
@@ -551,6 +690,15 @@ export class SemanticPlanGenerator {
       message += '\n'
     }
 
+    // CRITICAL: Include Hard Requirements as constraints (Phase 0 → Phase 1 propagation)
+    if (hardRequirements && hardRequirements.requirements.length > 0) {
+      message += HardRequirementsFormatter.format(hardRequirements, {
+        format: (process.env.HARD_REQS_FORMAT as any) || 'compact_hybrid',
+        phaseContext: 'semantic_plan'
+      })
+      message += '\n'
+    }
+
     message += `---\n\n`
     message += `Generate a Semantic Plan that captures your understanding of this workflow.\n`
     message += `Remember: Focus on understanding, not formalization. Make assumptions explicit, express uncertainty, explain reasoning.`
@@ -592,7 +740,9 @@ export class SemanticPlanGenerator {
     }
 
     if (this.config.model_provider === 'anthropic') {
-      return 'claude-sonnet-4-20250514'
+      // Use Opus 4.5 as default for best workflow understanding
+      // (Complex reasoning, better assumptions, worth the cost for Semantic Plan)
+      return 'claude-opus-4-5-20251101'
     }
 
     return 'unknown'

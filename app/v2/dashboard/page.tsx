@@ -544,19 +544,17 @@ export default function V2DashboardPage() {
         <V2Logo />
       </div>
 
-      {/* Controls - Second Line */}
-      <div className="flex justify-end mb-3">
+      {/* Top Bar: Greeting + Controls on same line */}
+      <div className="flex items-start justify-between mb-4 sm:mb-5 lg:mb-6">
+        <div className="flex-1">
+          <h1 className="text-2xl sm:text-3xl lg:text-4xl font-semibold text-[var(--v2-text-primary)] mb-1 leading-tight">
+            Hi {capitalizedName},
+          </h1>
+          <p className="text-base sm:text-lg lg:text-xl text-[var(--v2-text-secondary)] font-normal">
+            what do you want to automate today?
+          </p>
+        </div>
         <V2Controls />
-      </div>
-
-      {/* Greeting Section */}
-      <div className="mb-4 sm:mb-5 lg:mb-6">
-        <h1 className="text-2xl sm:text-3xl lg:text-4xl font-semibold text-[var(--v2-text-primary)] mb-1 leading-tight">
-          Hi {capitalizedName},
-        </h1>
-        <p className="text-base sm:text-lg lg:text-xl text-[var(--v2-text-secondary)] font-normal">
-          what do you want to automate today?
-        </p>
       </div>
 
       {/* Search Box */}

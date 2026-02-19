@@ -63,7 +63,7 @@
         }
       },
       "output_guidance": {
-        "success_description": "Returns array of bases with IDs, names, and permission details",
+        "success_description": "Listed bases",
         "sample_output": {
           "bases": [
             {
@@ -186,7 +186,7 @@
         }
       },
       "output_guidance": {
-        "success_description": "Returns an array of records with their IDs, fields, and metadata",
+        "success_description": "Retrieved records",
         "sample_output": {
           "records": [
             {
@@ -252,7 +252,7 @@
         }
       },
       "output_guidance": {
-        "success_description": "Returns the record with ID, fields, and metadata",
+        "success_description": "Retrieved record",
         "sample_output": {
           "id": "recXXXXXXXXXXXXXX",
           "fields": {
@@ -353,7 +353,7 @@
         }
       },
       "output_guidance": {
-        "success_description": "Returns array of created records with their new IDs and field values",
+        "success_description": "Created records",
         "sample_output": {
           "records": [
             {
@@ -477,7 +477,7 @@
         }
       },
       "output_guidance": {
-        "success_description": "Returns array of updated records with their IDs and new field values",
+        "success_description": "Updated records",
         "sample_output": {
           "records": [
             {
@@ -540,7 +540,7 @@
         }
       },
       "output_guidance": {
-        "success_description": "Returns array of tables with their IDs, names, and metadata",
+        "success_description": "Listed tables",
         "sample_output": {
           "tables": [
             {
@@ -641,7 +641,7 @@
         }
       },
       "output_guidance": {
-        "success_description": "Returns the updated record with the new attachment added to the specified field",
+        "success_description": "Added attachment",
         "sample_output": {
           "record_id": "recXXXXXXXXXXXXXX",
           "field_name": "Attachments",
@@ -733,7 +733,7 @@
         }
       },
       "output_guidance": {
-        "success_description": "Returns array of attachment objects with temporary download URLs (expire in ~2 hours)",
+        "success_description": "Retrieved attachments",
         "sample_output": {
           "attachments": [
             {

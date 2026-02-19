@@ -1,0 +1,438 @@
+[dotenv@17.2.3] injecting env (47) from .env.local -- tip: 🔐 prevent building .env in docker: https://dotenvx.com/prebuild
+================================================================================
+FULL PIPELINE INTEGRATION TEST (Phase 0 → 1 → 2 → 3 → 4)
+================================================================================
+
+📋 PHASE 0: Extracting Hard Requirements...
+
+✅ Hard Requirements Extracted:
+   Total Requirements: 6
+   Unit of Work: attachment
+   Thresholds: 1
+   Invariants: 2
+   Required Outputs: 1
+   Side Effect Constraints: 1
+
+Detailed Requirements:
+   R1: [unit_of_work] unit_of_work=attachment
+   R2: [invariant] create_folder→upload_file (sequential)
+   R3: [required_output] output.includes('drive_link')
+   R4: [threshold] Amount>50
+   R5: [side_effect_constraint] conditional_action[Amount>50]
+   R6: [invariant] delivery AFTER processing (data availability)
+
+🧠 PHASE 1: Generating Semantic Plan...
+
+{"level":30,"time":"2026-02-09T23:41:01.349Z","module":"V6","service":"SemanticPlanGenerator","method":"constructor","provider":"anthropic","model":"claude-opus-4-5-20251101","msg":"Initializing"}
+{"level":30,"time":"2026-02-09T23:41:01.376Z","module":"V6","service":"SemanticPlanGenerator","method":"generate","sections":["data","output","actions","delivery","processing_steps"],"msg":"Starting semantic plan generation"}
+{"level":30,"time":"2026-02-09T23:41:01.376Z","module":"V6","service":"SemanticPlanGenerator","method":"callAnthropic","model":"claude-opus-4-5-20251101","msg":"Calling Anthropic API"}
+{"level":30,"time":"2026-02-09T23:41:58.719Z","module":"V6","service":"SemanticPlanGenerator","method":"callAnthropic","model":"claude-opus-4-5-20251101","duration":57343,"planVersion":"1.0","tokensUsed":10871,"msg":"Anthropic call succeeded"}
+✅ Semantic Plan Generated Successfully
+
+📊 Validating Phase 1 (Semantic Plan)...
+   Phase 1 Score: 100/100
+
+⚙️  PHASE 2: Grounding (SKIPPED - no tabular metadata for Gmail workflow)
+
+✅ Ungrounded plan structure created
+
+🔧 PHASE 3: Formalizing to IR...
+
+{"level":40,"time":"2026-02-09T23:41:58.723Z","module":"V6","service":"SemanticPlanGenerator","method":"generate","duration":57347,"validationErrors":[{"path":"$","message":"$ must have required property 'clarifications_needed'"},{"path":"$","message":"$ must NOT have additional properties"},{"path":"/understanding","message":"/understanding must have required property 'grouping'"},{"path":"/understanding","message":"/understanding must have required property 'edge_cases'"},{"path":"/understanding","message":"/understanding must NOT have additional properties"},{"path":"/understanding","message":"/understanding must NOT have additional properties"},{"path":"/understanding","message":"/understanding must NOT have additional properties"},{"path":"/understanding/data_sources/0","message":"/understanding/data_sources/0 must have required property 'location'"},{"path":"/understanding/data_sources/0","message":"/understanding/data_sources/0 must have required property 'role'"},{"path":"/understanding/data_sources/0","message":"/understanding/data_sources/0 must NOT have additional properties"},{"path":"/understanding/data_sources/0","message":"/understanding/data_sources/0 must NOT have additional properties"},{"path":"/understanding/data_sources/0","message":"/understanding/data_sources/0 must NOT have additional properties"},{"path":"/understanding/data_sources/0","message":"/understanding/data_sources/0 must NOT have additional properties"},{"path":"/understanding/filtering","message":"/understanding/filtering must have required property 'combination_logic'"},{"path":"/understanding/filtering","message":"/understanding/filtering must have required property 'complex_logic_explanation'"},{"path":"/understanding/filtering","message":"/understanding/filtering must NOT have additional properties"},{"path":"/understanding/filtering/conditions/0","message":"/understanding/filtering/conditions/0 must have required property 'operation'"},{"path":"/understanding/filtering/conditions/0","message":"/understanding/filtering/conditions/0 must NOT have additional properties"},{"path":"/understanding/filtering/conditions/0/value","message":"/understanding/filtering/conditions/0/value must be string"},{"path":"/understanding/filtering/conditions/1","message":"/understanding/filtering/conditions/1 must have required property 'operation'"},{"path":"/understanding/filtering/conditions/1","message":"/understanding/filtering/conditions/1 must NOT have additional properties"},{"path":"/understanding/ai_processing/0","message":"/understanding/ai_processing/0 must have required property 'input_description'"},{"path":"/understanding/ai_processing/0","message":"/understanding/ai_processing/0 must have required property 'output_description'"},{"path":"/understanding/ai_processing/0","message":"/understanding/ai_processing/0 must NOT have additional properties"},{"path":"/understanding/ai_processing/0","message":"/understanding/ai_processing/0 must NOT have additional properties"},{"path":"/understanding/ai_processing/0","message":"/understanding/ai_processing/0 must NOT have additional properties"},{"path":"/understanding/ai_processing/0","message":"/understanding/ai_processing/0 must NOT have additional properties"},{"path":"/understanding/ai_processing/0","message":"/understanding/ai_processing/0 must NOT have additional properties"},{"path":"/understanding/file_operations/0","message":"/understanding/file_operations/0 must NOT have additional properties"},{"path":"/understanding/file_operations/0","message":"/understanding/file_operations/0 must NOT have additional properties"},{"path":"/understanding/file_operations/0","message":"/understanding/file_operations/0 must NOT have additional properties"},{"path":"/understanding/file_operations/1","message":"/understanding/file_operations/1 must NOT have additional properties"},{"path":"/understanding/file_operations/2","message":"/understanding/file_operations/2 must NOT have additional properties"},{"path":"/understanding/file_operations/2","message":"/understanding/file_operations/2 must NOT have additional properties"},{"path":"/understanding/rendering","message":"/understanding/rendering must have required property 'column_order_preference'"},{"path":"/understanding/rendering","message":"/understanding/rendering must have required property 'empty_message'"},{"path":"/understanding/rendering","message":"/understanding/rendering must NOT have additional properties"},{"path":"/understanding/delivery","message":"/understanding/delivery must have required property 'subject_template'"},{"path":"/understanding/delivery","message":"/understanding/delivery must have required property 'cc_recipients'"},{"path":"/understanding/delivery","message":"/understanding/delivery must have required property 'conditions'"},{"path":"/understanding/delivery","message":"/understanding/delivery must NOT have additional properties"},{"path":"/assumptions/0","message":"/assumptions/0 must have required property 'impact_if_wrong'"},{"path":"/assumptions/0","message":"/assumptions/0 must NOT have additional properties"},{"path":"/assumptions/0/validation_strategy","message":"/assumptions/0/validation_strategy must be object"},{"path":"/assumptions/1","message":"/assumptions/1 must have required property 'impact_if_wrong'"},{"path":"/assumptions/1/validation_strategy","message":"/assumptions/1/validation_strategy must be object"},{"path":"/assumptions/2","message":"/assumptions/2 must have required property 'impact_if_wrong'"},{"path":"/assumptions/2/validation_strategy","message":"/assumptions/2/validation_strategy must be object"},{"path":"/assumptions/3","message":"/assumptions/3 must have required property 'impact_if_wrong'"},{"path":"/assumptions/3","message":"/assumptions/3 must NOT have additional properties"},{"path":"/assumptions/3/validation_strategy","message":"/assumptions/3/validation_strategy must be object"},{"path":"/assumptions/4","message":"/assumptions/4 must have required property 'impact_if_wrong'"},{"path":"/assumptions/4/validation_strategy","message":"/assumptions/4/validation_strategy must be object"},{"path":"/assumptions/5","message":"/assumptions/5 must have required property 'impact_if_wrong'"},{"path":"/assumptions/5/validation_strategy","message":"/assumptions/5/validation_strategy must be object"},{"path":"/assumptions/6","message":"/assumptions/6 must have required property 'impact_if_wrong'"},{"path":"/assumptions/6/validation_strategy","message":"/assumptions/6/validation_strategy must be object"},{"path":"/assumptions/7","message":"/assumptions/7 must have required property 'impact_if_wrong'"},{"path":"/assumptions/7","message":"/assumptions/7 must NOT have additional properties"},{"path":"/assumptions/7/validation_strategy","message":"/assumptions/7/validation_strategy must be object"},{"path":"/inferences/0","message":"/inferences/0 must have required property 'field'"},{"path":"/inferences/0","message":"/inferences/0 must have required property 'value'"},{"path":"/inferences/0","message":"/inferences/0 must have required property 'user_overridable'"},{"path":"/inferences/0","message":"/inferences/0 must NOT have additional properties"},{"path":"/inferences/0","message":"/inferences/0 must NOT have additional properties"},{"path":"/inferences/1","message":"/inferences/1 must have required property 'field'"},{"path":"/inferences/1","message":"/inferences/1 must have required property 'value'"},{"path":"/inferences/1","message":"/inferences/1 must have required property 'user_overridable'"},{"path":"/inferences/1","message":"/inferences/1 must NOT have additional properties"},{"path":"/inferences/1","message":"/inferences/1 must NOT have additional properties"},{"path":"/inferences/2","message":"/inferences/2 must have required property 'field'"},{"path":"/inferences/2","message":"/inferences/2 must have required property 'value'"},{"path":"/inferences/2","message":"/inferences/2 must have required property 'user_overridable'"},{"path":"/inferences/2","message":"/inferences/2 must NOT have additional properties"},{"path":"/inferences/2","message":"/inferences/2 must NOT have additional properties"},{"path":"/inferences/3","message":"/inferences/3 must have required property 'field'"},{"path":"/inferences/3","message":"/inferences/3 must have required property 'value'"},{"path":"/inferences/3","message":"/inferences/3 must have required property 'user_overridable'"},{"path":"/inferences/3","message":"/inferences/3 must NOT have additional properties"},{"path":"/inferences/3","message":"/inferences/3 must NOT have additional properties"},{"path":"/inferences/4","message":"/inferences/4 must have required property 'field'"},{"path":"/inferences/4","message":"/inferences/4 must have required property 'value'"},{"path":"/inferences/4","message":"/inferences/4 must have required property 'user_overridable'"},{"path":"/inferences/4","message":"/inferences/4 must NOT have additional properties"},{"path":"/inferences/4","message":"/inferences/4 must NOT have additional properties"},{"path":"/ambiguities/0","message":"/ambiguities/0 must have required property 'field'"},{"path":"/ambiguities/0","message":"/ambiguities/0 must have required property 'possible_resolutions'"},{"path":"/ambiguities/0","message":"/ambiguities/0 must have required property 'recommended_resolution'"},{"path":"/ambiguities/0","message":"/ambiguities/0 must have required property 'requires_user_input'"},{"path":"/ambiguities/0","message":"/ambiguities/0 must NOT have additional properties"},{"path":"/ambiguities/0","message":"/ambiguities/0 must NOT have additional properties"},{"path":"/ambiguities/1","message":"/ambiguities/1 must have required property 'field'"},{"path":"/ambiguities/1","message":"/ambiguities/1 must have required property 'possible_resolutions'"},{"path":"/ambiguities/1","message":"/ambiguities/1 must have required property 'recommended_resolution'"},{"path":"/ambiguities/1","message":"/ambiguities/1 must have required property 'requires_user_input'"},{"path":"/ambiguities/1","message":"/ambiguities/1 must NOT have additional properties"},{"path":"/ambiguities/1","message":"/ambiguities/1 must NOT have additional properties"},{"path":"/ambiguities/2","message":"/ambiguities/2 must have required property 'field'"},{"path":"/ambiguities/2","message":"/ambiguities/2 must have required property 'possible_resolutions'"},{"path":"/ambiguities/2","message":"/ambiguities/2 must have required property 'recommended_resolution'"},{"path":"/ambiguities/2","message":"/ambiguities/2 must have required property 'requires_user_input'"},{"path":"/ambiguities/2","message":"/ambiguities/2 must NOT have additional properties"},{"path":"/ambiguities/2","message":"/ambiguities/2 must NOT have additional properties"},{"path":"/reasoning_trace/0","message":"/reasoning_trace/0 must have required property 'choice_made'"},{"path":"/reasoning_trace/0","message":"/reasoning_trace/0 must have required property 'options_considered'"},{"path":"/reasoning_trace/0","message":"/reasoning_trace/0 must have required property 'confidence'"},{"path":"/reasoning_trace/1","message":"/reasoning_trace/1 must have required property 'choice_made'"},{"path":"/reasoning_trace/1","message":"/reasoning_trace/1 must have required property 'options_considered'"},{"path":"/reasoning_trace/1","message":"/reasoning_trace/1 must have required property 'confidence'"},{"path":"/reasoning_trace/2","message":"/reasoning_trace/2 must have required property 'choice_made'"},{"path":"/reasoning_trace/2","message":"/reasoning_trace/2 must have required property 'options_considered'"},{"path":"/reasoning_trace/2","message":"/reasoning_trace/2 must have required property 'confidence'"},{"path":"/reasoning_trace/3","message":"/reasoning_trace/3 must have required property 'choice_made'"},{"path":"/reasoning_trace/3","message":"/reasoning_trace/3 must have required property 'options_considered'"},{"path":"/reasoning_trace/3","message":"/reasoning_trace/3 must have required property 'confidence'"},{"path":"/reasoning_trace/4","message":"/reasoning_trace/4 must have required property 'choice_made'"},{"path":"/reasoning_trace/4","message":"/reasoning_trace/4 must have required property 'options_considered'"},{"path":"/reasoning_trace/4","message":"/reasoning_trace/4 must have required property 'confidence'"},{"path":"/reasoning_trace/5","message":"/reasoning_trace/5 must have required property 'choice_made'"},{"path":"/reasoning_trace/5","message":"/reasoning_trace/5 must have required property 'options_considered'"},{"path":"/reasoning_trace/5","message":"/reasoning_trace/5 must have required property 'confidence'"},{"path":"/reasoning_trace/6","message":"/reasoning_trace/6 must have required property 'choice_made'"},{"path":"/reasoning_trace/6","message":"/reasoning_trace/6 must have required property 'options_considered'"},{"path":"/reasoning_trace/6","message":"/reasoning_trace/6 must have required property 'confidence'"}],"msg":"Semantic plan has structural issues"}
+{"level":30,"time":"2026-02-09T23:41:58.727Z","module":"V6","service":"IRFormalizer","method":"constructor","model":"gpt-5.2","promptPath":"/Users/yaelomer/Documents/neuronforge/lib/agentkit/v6/semantic-plan/prompts/formalization-system.md","msg":"Initialized"}
+{"level":30,"time":"2026-02-09T23:41:58.727Z","module":"V6","service":"IRFormalizer","method":"formalize","msg":"Starting formalization"}
+{"level":40,"time":"2026-02-09T23:41:58.728Z","module":"V6","service":"IRFormalizer","method":"extractGroundedFacts","msg":"No grounding_results in groundedPlan - formalization will proceed without grounded facts"}
+{"level":40,"time":"2026-02-09T23:41:58.728Z","module":"V6","service":"IRFormalizer","method":"extractGroundedFacts","msg":"This may indicate an API-only workflow (no tabular metadata) or a grounding failure"}
+{"level":30,"time":"2026-02-09T23:41:58.728Z","module":"V6","service":"IRFormalizer","method":"formalize","groundedFactsCount":0,"missingFactsCount":0,"msg":"Extracted facts from grounded plan"}
+{"level":30,"time":"2026-02-09T23:41:58.728Z","module":"V6","service":"IRFormalizer","method":"formalizeWithOpenAI","model":"gpt-5.2","msg":"Calling OpenAI API"}
+{"level":30,"time":"2026-02-09T23:42:19.859Z","module":"V6","service":"IRFormalizer","method":"formalizeWithOpenAI","model":"gpt-5.2","duration":21131,"responseLength":7005,"msg":"OpenAI response parsed successfully"}
+✅ IR Formalized Successfully
+   Grounded facts used: 0
+   Missing facts: 0
+
+📊 Validating Phase 3 (IR)...
+   Phase 3 Score: 100/100
+
+⚙️  PHASE 4: Compiling to DSL...
+
+[PluginResolver] ⚠ Running in legacy mode (no PluginManagerV2)
+[DeclarativeCompiler] Initialized with PluginResolver
+[DeclarativeCompiler] Starting compilation...
+[DeclarativeCompiler] Goal: Automatically process invoice and expense PDF attachments from Gmail, extract financial data, organize files in Google Drive by vendor, conditionally log high-value items to Google Sheets, and send a daily digest email summarizing all processed documents.
+[DeclarativeCompiler] ✓ IR validation passed
+[DeclarativeCompiler] ✓ Semantic validation passed
+[DeclarativeCompiler] ⚠️ Pattern issues detected: 1
+[DeclarativeCompiler] 🔧 Auto-fixing: External Collection → Repeated Append - Add reference data source role hint for compiler to implement deduplication
+[DeclarativeCompiler] ✓ Applied 1 pattern auto-fix(es)
+[DeclarativeCompiler] Compiling primary data sources...
+[DeclarativeCompiler] ⚠ No primary data sources found
+[DeclarativeCompiler] Detected reference data source (role: "Gmail emails matching invoice/expense/bill intent with PDF attachments from last 24 hours (with deduplication against destination)"): google-mail - compiling deduplication pattern
+[DeclarativeCompiler] Reading reference data source: google-mail
+[DeclarativeCompiler] Reference data source resolution: {
+  source: 'google-mail',
+  plugin: 'google-mail',
+  action: 'search_messages',
+  operationType: 'search_messages'
+}
+[DeclarativeCompiler] ✓ Stored config for data source 'google-mail': 
+[DeclarativeCompiler] ✓ Reference data stored in: step1.data (array field: data)
+[DeclarativeCompiler] ✓ Extracting single identifier field: id
+[DeclarativeCompiler] ✓ Extracted existing IDs/keys from reference data (stored in: step2.data)
+[DeclarativeCompiler] ✓ Pre-computed deduplication check with null safety
+[DeclarativeCompiler] ✓ Filtered to new items only
+[DeclarativeCompiler] ✓ ID-based deduplication complete - new items stored in: step5.data
+[DeclarativeCompiler] No processing_order in IR - using default priority-based order
+[DeclarativeCompiler] Compilation order: data_sources → ai_operations → conditionals → delivery_rules → write_operations
+[DeclarativeCompiler] Compiling 1 conditional(s)...
+[DeclarativeCompiler] ✓ Compiled conditional with 1 branch(es)
+[DeclarativeCompiler] Analyzing delivery_rules to infer execution pattern...
+[DeclarativeCompiler] Detected pattern: Multi-Destination Delivery → Will send to 4 destinations in parallel
+[DeclarativeCompiler] Compiling multi-destination delivery to 4 destinations
+[DeclarativeCompiler] Processing 1 AI operations
+[DeclarativeCompiler] Detected 1 extraction operations requiring iteration
+[DeclarativeCompiler] ✓ Auto-injected attachment extraction transform
+[DeclarativeCompiler] ✓ Auto-injected fetch_content step for google-mail files
+[DeclarativeCompiler] ✓ Using deterministic extraction (OCR + LLM) for document extraction (output: object)
+[DeclarativeCompiler] ✓ Created scatter-gather loop with AI extraction
+[DeclarativeCompiler] ✓ Captured 6 extraction output fields for column mapping: type, vendor, date, amount, invoice_receipt_number, category
+[DeclarativeCompiler] ✓ AI output schema type: object - will extract and flatten 'data' field from extraction results
+[DeclarativeCompiler] ✓ Added flatten transform to extract data field from AI extraction results
+[DeclarativeCompiler] Processing destination 1/4: Destination 1 (google-drive)
+[DeclarativeCompiler] ✓ Added delivery action for Destination 1: google-drive.create_folder_message
+[DeclarativeCompiler] Processing destination 2/4: Destination 2 (google-drive)
+[DeclarativeCompiler] ✓ Added delivery action for Destination 2: google-drive.upload_file_message
+[DeclarativeCompiler] Processing destination 3/4: Destination 3 (google-drive)
+[DeclarativeCompiler] ✓ Added delivery action for Destination 3: google-drive.share_file_message
+[DeclarativeCompiler] Processing destination 4/4: Destination 4 (google-sheets)
+[DeclarativeCompiler] ✓ Added delivery action for Destination 4: google-sheets.append_rows_message
+[DeclarativeCompiler] ✓ Created parallel execution of 4 delivery actions
+[DeclarativeCompiler] Compiling write operations...
+[DeclarativeCompiler] No write operations found
+[DeclarativeCompiler] ✓ Compilation successful
+[DeclarativeCompiler] Generated 10 steps
+[DeclarativeCompiler] Compiling 4 edge case handlers...
+[DeclarativeCompiler] ✓ Applied edge case handler: no_rows_after_filter → send_empty_result_message
+[DeclarativeCompiler] ✓ Applied edge case handler: no_attachments_found → send_empty_result_message
+[DeclarativeCompiler] ✓ Applied edge case handler: ai_extraction_failed → alert_admin
+[DeclarativeCompiler] ✓ Applied edge case handler: api_error → alert_admin
+[DeclarativeCompiler] Normalizing step inputs to prevent runtime type errors...
+[DeclarativeCompiler] ✓ No input normalization needed - all references are correct
+✅ DSL Compiled Successfully
+   Workflow steps: 10
+   Plugins used: 3
+
+📊 Validating Phase 4 (DSL)...
+   Phase 4 Score: 33/100
+
+================================================================================
+FINAL VALIDATION SUMMARY
+================================================================================
+
+Requirements Preservation Across All Phases:
+   Phase 1 (Semantic Plan): 100/100
+   Phase 3 (IR):            100/100
+   Phase 4 (DSL):           33/100
+
+Overall Pipeline Score: 78/100
+
+⚠️  PIPELINE VALIDATION FAILED
+   Only 78/100 requirements preserved (need 80%+)
+
+================================================================================
+DSL REQUIREMENTS PRESERVATION (Detailed)
+================================================================================
+
+✅ R1: [unit_of_work]
+   Constraint: unit_of_work=attachment
+   Preserved: YES
+   DSL Mapping: action steps or loop config
+   Evidence: Unit of work (attachment) found in workflow steps
+
+⚠️ R2: [invariant]
+   Constraint: create_folder→upload_file (sequential)
+   Preserved: NO
+   Evidence: Sequential dependency not preserved in DSL
+
+⚠️ R3: [required_output]
+   Constraint: output.includes('drive_link')
+   Preserved: NO
+   Evidence: Output field drive_link not found in DSL
+
+⚠️ R4: [threshold]
+   Constraint: Amount>50
+   Preserved: NO
+   Evidence: Threshold Amount>50 not found in DSL
+
+✅ R5: [side_effect_constraint]
+   Constraint: conditional_action[Amount>50]
+   Preserved: YES
+   DSL Mapping: conditional step
+   Evidence: Conditional logic found in workflow
+
+⚠️ R6: [invariant]
+   Constraint: delivery AFTER processing (data availability)
+   Preserved: NO
+   Evidence: Data availability not clear in DSL
+
+================================================================================
+COMPILED WORKFLOW (JSON)
+================================================================================
+
+[
+  {
+    "id": "step1",
+    "name": "Read google-mail",
+    "step_id": "step1",
+    "type": "action",
+    "plugin": "google-mail",
+    "action": "search_messages",
+    "params": {},
+    "on_error": {
+      "action": "stop",
+      "log_error": true
+    }
+  },
+  {
+    "id": "step2",
+    "name": "Extract Existing IDs",
+    "step_id": "step2",
+    "type": "transform",
+    "operation": "map",
+    "input": "{{step1.data}}",
+    "config": {
+      "expression": "item.map(row => row.id)"
+    },
+    "on_error": {
+      "action": "continue",
+      "log_error": true
+    }
+  },
+  {
+    "id": "step3",
+    "name": "Pre-compute Deduplication Check",
+    "step_id": "step3",
+    "type": "transform",
+    "operation": "map",
+    "input": "{{raw_data}}",
+    "config": {
+      "expression": "item.map(row => [row, !({{step2.data}} || []).includes(row.id)])"
+    },
+    "on_error": {
+      "action": "continue",
+      "log_error": true
+    }
+  },
+  {
+    "id": "step4",
+    "name": "Filter New Items Only",
+    "step_id": "step4",
+    "type": "transform",
+    "operation": "filter",
+    "input": "{{step3.data}}",
+    "config": {
+      "condition": "item[1] == true"
+    },
+    "on_error": {
+      "action": "continue",
+      "log_error": true
+    }
+  },
+  {
+    "id": "step5",
+    "name": "Extract Original Items",
+    "step_id": "step5",
+    "type": "transform",
+    "operation": "map",
+    "input": "{{step4.data}}",
+    "config": {
+      "expression": "item.map(row => row[0])"
+    },
+    "on_error": {
+      "action": "continue",
+      "log_error": true
+    }
+  },
+  {
+    "id": "step7",
+    "name": "Conditional: branching logic",
+    "step_id": "step7",
+    "type": "conditional",
+    "input": "{{step5.data}}",
+    "config": {
+      "condition": {
+        "conditionType": "complex_and",
+        "conditions": [
+          {
+            "conditionType": "simple",
+            "field": "amount",
+            "operator": "greater_than",
+            "value": 50
+          },
+          {
+            "conditionType": "simple",
+            "field": "amount",
+            "operator": "is_not_empty",
+            "value": null
+          }
+        ]
+      },
+      "then": [],
+      "else": []
+    }
+  },
+  {
+    "id": "step8",
+    "name": "Extract Attachments",
+    "step_id": "step8",
+    "type": "transform",
+    "operation": "flatten",
+    "input": "{{step5.data}}",
+    "config": {
+      "field": "attachments"
+    },
+    "on_error": {
+      "action": "continue",
+      "log_error": true
+    }
+  },
+  {
+    "id": "step11",
+    "name": "Loop AI Extraction",
+    "step_id": "step11",
+    "type": "scatter_gather",
+    "scatter": {
+      "input": "{{step8.data}}",
+      "itemVariable": "item",
+      "steps": [
+        {
+          "id": "step9",
+          "name": "Fetch File Content",
+          "step_id": "step9",
+          "type": "transform",
+          "operation": "fetch_content",
+          "input": "{{item}}",
+          "config": {
+            "source_plugin": "google-mail"
+          },
+          "output_variable": "file_with_content"
+        },
+        {
+          "id": "step10",
+          "name": "Deterministic document extraction",
+          "type": "deterministic_extraction",
+          "input": "{{file_with_content}}",
+          "document_type": "auto",
+          "ocr_fallback": true,
+          "output_schema": {
+            "type": "object",
+            "fields": [
+              {
+                "name": "type",
+                "type": "string",
+                "required": true,
+                "description": "Document type: 'expense' or 'invoice'"
+              },
+              {
+                "name": "vendor",
+                "type": "string",
+                "required": true,
+                "description": "Vendor or merchant name from the document"
+              },
+              {
+                "name": "date",
+                "type": "string",
+                "required": true,
+                "description": "Document date in ISO format if possible"
+              },
+              {
+                "name": "amount",
+                "type": "number",
+                "required": false,
+                "description": "Total amount as numeric value, null if cannot be determined"
+              },
+              {
+                "name": "invoice_receipt_number",
+                "type": "string",
+                "required": true,
+                "description": "Invoice number or receipt number"
+              },
+              {
+                "name": "category",
+                "type": "string",
+                "required": true,
+                "description": "Expense category classification"
+              }
+            ]
+          },
+          "instruction": "Extract financial document information from this PDF. Determine: (1) Document type - is this an expense/receipt or an invoice, (2) Vendor or merchant name, (3) Document date, (4) Total amount as a numeric value, (5) Invoice number or receipt number, (6) Expense category (e.g., Office Supplies, Travel, Software, Utilities, etc.). If amount cannot be confidently determined, set amount to null but still extract all other fields.",
+          "output_variable": "extracted_data"
+        }
+      ]
+    },
+    "gather": {
+      "operation": "collect"
+    },
+    "output_variable": "ai_extraction_results"
+  },
+  {
+    "id": "step12",
+    "name": "Flatten AI Results",
+    "step_id": "step12",
+    "type": "transform",
+    "operation": "flatten",
+    "input": "{{ai_extraction_results}}",
+    "config": {
+      "field": "data"
+    },
+    "on_error": {
+      "action": "continue",
+      "log_error": true
+    }
+  },
+  {
+    "id": "step17",
+    "name": "Execute Parallel Deliveries",
+    "step_id": "step17",
+    "type": "parallel",
+    "steps": [
+      {
+        "id": "step13",
+        "name": "Send to Destination 1",
+        "step_id": "step13",
+        "type": "action",
+        "plugin": "google-drive",
+        "action": "create_folder_message",
+        "params": {}
+      },
+      {
+        "id": "step14",
+        "name": "Send to Destination 2",
+        "step_id": "step14",
+        "type": "action",
+        "plugin": "google-drive",
+        "action": "upload_file_message",
+        "params": {}
+      },
+      {
+        "id": "step15",
+        "name": "Send to Destination 3",
+        "step_id": "step15",
+        "type": "action",
+        "plugin": "google-drive",
+        "action": "share_file_message",
+        "params": {}
+      },
+      {
+        "id": "step16",
+        "name": "Send to Destination 4",
+        "step_id": "step16",
+        "type": "action",
+        "plugin": "google-sheets",
+        "action": "append_rows_message",
+        "params": {}
+      }
+    ],
+    "output_variable": "multi_delivery_results"
+  }
+]
+{"level":30,"time":"2026-02-09T23:42:19.860Z","module":"V6","service":"IRFormalizer","method":"formalize","duration":21133,"confidence":0,"dataSourcesCount":1,"msg":"Formalization complete and validated"}

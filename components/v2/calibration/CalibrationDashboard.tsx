@@ -25,6 +25,7 @@ import {
 } from 'lucide-react'
 import { IssueCard } from './IssueCard'
 import { AutoRepairCard } from './AutoRepairCard'
+import { CalibrationWizard } from './CalibrationWizard'
 import type { CollectedIssue } from '@/lib/pilot/types'
 
 export interface IssueGroups {
@@ -49,6 +50,23 @@ export interface CalibrationSession {
   completedSteps: number
   failedSteps: number
   skippedSteps: number
+  execution_summary?: {
+    data_sources_accessed?: Array<{
+      plugin: string
+      action: string
+      count: number
+      description: string
+    }>
+    data_written?: Array<{
+      plugin: string
+      action: string
+      count: number
+      description: string
+    }>
+    items_processed?: number
+    items_filtered?: number
+    items_delivered?: number
+  }
 }
 
 interface CalibrationDashboardProps {
@@ -71,6 +89,7 @@ export function CalibrationDashboard({
   onBackToCalibration
 }: CalibrationDashboardProps) {
   const [warningsExpanded, setWarningsExpanded] = useState(false)
+  const [useWizard, setUseWizard] = useState(true) // Default to simplified wizard mode
 
   console.log('[CalibrationDashboard] Render - issues:', {
     critical: issues.critical.map(i => ({ id: i.id, category: i.category })),
@@ -78,20 +97,51 @@ export function CalibrationDashboard({
     autoRepairs: issues.autoRepairs.map(i => ({ id: i.id, category: i.category }))
   })
 
+  // Combine all issues for wizard
+  const allIssues = [...issues.critical, ...issues.warnings, ...issues.autoRepairs]
+
   // Calculate if all critical issues have fixes
   const allCriticalFixed = issues.critical.every(issue => {
+    console.log('[CalibrationDashboard] Checking critical issue:', {
+      id: issue.id,
+      category: issue.category,
+      requiresUserInput: issue.requiresUserInput
+    })
+
+    // Skip issues that might auto-resolve after fixing other issues
+    if (!issue.requiresUserInput || issue.category === 'data_shape_mismatch') {
+      console.log('[CalibrationDashboard] Skipping auto-fixable issue:', issue.id)
+      return true // Don't block "Apply Fixes" for auto-fixable issues
+    }
+
     if (issue.category === 'parameter_error') {
       // Check by issue ID, not parameter name (different steps can have same param name)
       const paramValue = fixes.parameters?.[issue.id]
-      return paramValue !== undefined && paramValue !== ''
+      const isFixed = paramValue !== undefined && paramValue !== ''
+      console.log('[CalibrationDashboard] Parameter error check:', {
+        issueId: issue.id,
+        paramValue,
+        isFixed,
+        allParams: fixes.parameters
+      })
+      return isFixed
     }
     if (issue.category === 'logic_error') {
       // Check if user has selected an option for this logic error
       const logicFix = (fixes as any).logicFixes?.[issue.id]
-      return logicFix?.selectedOption !== undefined && logicFix?.selectedOption !== null
+      const isFixed = logicFix?.selectedOption !== undefined && logicFix?.selectedOption !== null
+      console.log('[CalibrationDashboard] Logic error check:', {
+        issueId: issue.id,
+        logicFix,
+        isFixed
+      })
+      return isFixed
     }
+    console.log('[CalibrationDashboard] Issue not handled, returning false:', issue.id, issue.category)
     return false
   })
+
+  console.log('[CalibrationDashboard] allCriticalFixed result:', allCriticalFixed, 'Total critical issues:', issues.critical.length)
 
   const totalIssues = issues.critical.length + issues.warnings.length
 
@@ -99,8 +149,45 @@ export function CalibrationDashboard({
   const hasParameterIssues = issues.critical.some(i => i.category === 'parameter_error') ||
                              issues.warnings.some(i => i.category === 'parameter_error')
 
+  // Use wizard mode if enabled
+  if (useWizard && totalIssues > 0) {
+    return (
+      <div className="space-y-4">
+        {/* Toggle between wizard and classic view */}
+        <div className="flex justify-end">
+          <button
+            onClick={() => setUseWizard(false)}
+            className="text-xs text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] underline"
+          >
+            Switch to detailed view
+          </button>
+        </div>
+
+        <CalibrationWizard
+          issues={allIssues}
+          fixes={fixes}
+          onFixesChange={onFixesChange}
+          onComplete={onApplyFixes}
+          onBack={onBackToCalibration}
+        />
+      </div>
+    )
+  }
+
   return (
     <div className="space-y-4 sm:space-y-5 lg:space-y-6">
+
+      {/* Toggle to wizard view */}
+      {totalIssues > 0 && (
+        <div className="flex justify-end">
+          <button
+            onClick={() => setUseWizard(true)}
+            className="text-sm text-[var(--v2-primary)] hover:opacity-80 font-medium"
+          >
+            ✨ Try simplified mode
+          </button>
+        </div>
+      )}
 
       {/* Summary Card */}
       <Card className="border-[var(--v2-border)] bg-[var(--v2-surface)]">
@@ -182,10 +269,44 @@ export function CalibrationDashboard({
       {issues.critical.length > 0 && (
         <Card className="border-[var(--v2-border)] bg-[var(--v2-surface)]">
           <CardHeader className="py-2 pb-2">
-            <CardTitle className="text-base text-[var(--v2-text-primary)]">Issues to Fix</CardTitle>
-            <p className="text-sm text-[var(--v2-text-secondary)] mt-0.5">
-              Fix these to make your workflow run successfully
-            </p>
+            <div className="flex items-center justify-between">
+              <div>
+                <CardTitle className="text-base text-[var(--v2-text-primary)]">Issues to Fix</CardTitle>
+                <p className="text-sm text-[var(--v2-text-secondary)] mt-0.5">
+                  Fix these to make your workflow run successfully
+                </p>
+              </div>
+
+              {/* Bulk Parameterize All button for hardcode issues */}
+              {issues.critical.filter(i => i.category === 'hardcode_detected').length > 0 && (
+                <button
+                  onClick={() => {
+                    // Find all hardcode issues and approve them all
+                    const hardcodeIssues = issues.critical.filter(i => i.category === 'hardcode_detected')
+                    const newParameterizations = { ...fixes.parameterizations }
+
+                    hardcodeIssues.forEach(issue => {
+                      const suggestedParamName = issue.suggestedFix?.action?.paramName || 'value'
+                      const suggestedDefault = issue.suggestedFix?.action?.defaultValue || ''
+                      newParameterizations[issue.id] = {
+                        approved: true,
+                        paramName: suggestedParamName,
+                        defaultValue: suggestedDefault
+                      }
+                    })
+
+                    onFixesChange({
+                      ...fixes,
+                      parameterizations: newParameterizations
+                    })
+                  }}
+                  className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium bg-[var(--v2-primary)] text-white hover:opacity-90 transition-opacity rounded-lg"
+                >
+                  <Wrench className="w-3.5 h-3.5" />
+                  Parameterize All ({issues.critical.filter(i => i.category === 'hardcode_detected').length})
+                </button>
+              )}
+            </div>
           </CardHeader>
 
           <CardContent>
@@ -277,20 +398,53 @@ export function CalibrationDashboard({
       {/* Warnings Section (Collapsible) */}
       {issues.warnings.length > 0 && (
         <Card className="border-[var(--v2-border)] bg-[var(--v2-surface)]">
-          <CardHeader
-            className="py-2 pb-2 cursor-pointer"
-            onClick={() => setWarningsExpanded(!warningsExpanded)}
-          >
+          <CardHeader className="py-2 pb-2">
             <div className="flex items-center justify-between">
-              <div className="flex-1">
-                <CardTitle className="text-base text-[var(--v2-text-primary)]">
-                  Optional Improvements ({issues.warnings.length})
-                </CardTitle>
+              <div
+                className="flex-1 cursor-pointer"
+                onClick={() => setWarningsExpanded(!warningsExpanded)}
+              >
+                <div className="flex items-center gap-2">
+                  <CardTitle className="text-base text-[var(--v2-text-primary)]">
+                    Optional Improvements ({issues.warnings.length})
+                  </CardTitle>
+                  {warningsExpanded ? (
+                    <ChevronDown className="w-5 h-5 text-[var(--v2-text-secondary)]" />
+                  ) : (
+                    <ChevronRight className="w-5 h-5 text-[var(--v2-text-secondary)]" />
+                  )}
+                </div>
               </div>
-              {warningsExpanded ? (
-                <ChevronDown className="w-5 h-5 text-[var(--v2-text-secondary)]" />
-              ) : (
-                <ChevronRight className="w-5 h-5 text-[var(--v2-text-secondary)]" />
+
+              {/* Bulk Parameterize All button for hardcode warnings */}
+              {issues.warnings.filter(i => i.category === 'hardcode_detected').length > 0 && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    // Find all hardcode warnings and approve them all
+                    const hardcodeIssues = issues.warnings.filter(i => i.category === 'hardcode_detected')
+                    const newParameterizations = { ...fixes.parameterizations }
+
+                    hardcodeIssues.forEach(issue => {
+                      const suggestedParamName = issue.suggestedFix?.action?.paramName || 'value'
+                      const suggestedDefault = issue.suggestedFix?.action?.defaultValue || ''
+                      newParameterizations[issue.id] = {
+                        approved: true,
+                        paramName: suggestedParamName,
+                        defaultValue: suggestedDefault
+                      }
+                    })
+
+                    onFixesChange({
+                      ...fixes,
+                      parameterizations: newParameterizations
+                    })
+                  }}
+                  className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium bg-[var(--v2-primary)] text-white hover:opacity-90 transition-opacity rounded-lg"
+                >
+                  <Wrench className="w-3.5 h-3.5" />
+                  Parameterize All ({issues.warnings.filter(i => i.category === 'hardcode_detected').length})
+                </button>
               )}
             </div>
           </CardHeader>

@@ -749,17 +749,31 @@ export default function V2RunAgentPage() {
     // First try exact match
     let matchingParams = schemaMetadata[fieldName]
 
-    // If no exact match, try stripping common prefixes (source_, target_, etc.)
+    // If no exact match, try stripping common prefixes (including step ID prefixes)
     if (!matchingParams || matchingParams.length === 0) {
-      const prefixes = ['source_', 'target_', 'input_', 'output_', 'from_', 'to_']
+      const prefixes = [/^step\d+_/, 'source_', 'target_', 'input_', 'output_', 'from_', 'to_']
       for (const prefix of prefixes) {
-        if (fieldName.startsWith(prefix)) {
-          const baseFieldName = fieldName.substring(prefix.length)
-          matchingParams = schemaMetadata[baseFieldName]
-          if (matchingParams && matchingParams.length > 0) {
-            console.log('[getDynamicOptions] Matched prefixed field:', fieldName, '->', baseFieldName)
-            break
+        let baseFieldName: string
+        if (prefix instanceof RegExp) {
+          // Handle regex for step ID prefix (step8_, step9_, etc.)
+          const match = fieldName.match(prefix)
+          if (match) {
+            baseFieldName = fieldName.substring(match[0].length)
+          } else {
+            continue
           }
+        } else {
+          // Handle string prefix
+          if (fieldName.startsWith(prefix)) {
+            baseFieldName = fieldName.substring(prefix.length)
+          } else {
+            continue
+          }
+        }
+        matchingParams = schemaMetadata[baseFieldName]
+        if (matchingParams && matchingParams.length > 0) {
+          console.log('[getDynamicOptions] Matched prefixed field:', fieldName, '->', baseFieldName)
+          break
         }
       }
     }
@@ -1019,10 +1033,36 @@ export default function V2RunAgentPage() {
 
   const safeInputSchema = Array.isArray(agent.input_schema) ? agent.input_schema : []
 
+  // Sort fields to ensure proper hierarchy (dependencies come after their dependents)
+  // For example, spreadsheet_id should come before range (which depends on it)
+  const sortedInputSchema = [...safeInputSchema].sort((a, b) => {
+    const aDynamicOptions = getDynamicOptionsForInput(a.name)
+    const bDynamicOptions = getDynamicOptionsForInput(b.name)
+
+    // If a depends on b, b should come first
+    if (aDynamicOptions?.depends_on) {
+      const baseNameB = b.name.replace(/^step\d+_/, '')
+      if (aDynamicOptions.depends_on.includes(baseNameB)) {
+        return 1 // a comes after b
+      }
+    }
+
+    // If b depends on a, a should come first
+    if (bDynamicOptions?.depends_on) {
+      const baseNameA = a.name.replace(/^step\d+_/, '')
+      if (bDynamicOptions.depends_on.includes(baseNameA)) {
+        return -1 // a comes before b
+      }
+    }
+
+    // No dependency relationship, maintain original order
+    return 0
+  })
+
   // Debug: log the full input schema from the agent
   console.log('[Agent Run Page] Full input_schema from agent:', {
-    count: safeInputSchema.length,
-    fields: safeInputSchema.map((f: any) => f.name),
+    count: sortedInputSchema.length,
+    fields: sortedInputSchema.map((f: any) => f.name),
     full: agent.input_schema
   })
 
@@ -1104,7 +1144,7 @@ export default function V2RunAgentPage() {
               )}
 
               {/* Input Form */}
-              {safeInputSchema.length === 0 ? (
+              {sortedInputSchema.length === 0 ? (
                 <div className="text-center py-12">
                   <Sparkles className="w-12 h-12 text-[var(--v2-primary)] opacity-20 mx-auto mb-3" />
                   <p className="text-sm text-[var(--v2-text-muted)]">
@@ -1113,7 +1153,7 @@ export default function V2RunAgentPage() {
                 </div>
               ) : (
                 <div className="space-y-5">
-                {safeInputSchema.map((field) => (
+                {sortedInputSchema.map((field) => (
                   <div key={field.name} className="mb-5">
                     <label className="block text-[13px] font-medium text-[var(--v2-text-secondary)] mb-1.5">
                       {field.label || formatFieldName(field.name)}
@@ -1135,12 +1175,22 @@ export default function V2RunAgentPage() {
                               // Build dependent values object from formData if this field has dependencies
                               const dependentValues: Record<string, any> = {}
                               if (dynamicOptions.depends_on && Array.isArray(dynamicOptions.depends_on)) {
+                                // Extract step prefix from current field (e.g., "step2_" from "step2_range")
+                                const stepPrefixMatch = field.name.match(/^(step\d+_)/)
+                                const stepPrefix = stepPrefixMatch ? stepPrefixMatch[1] : ''
+
                                 dynamicOptions.depends_on.forEach((depField: string) => {
-                                  // First try exact match
-                                  if (formData[depField]) {
+                                  // First try with same step prefix (e.g., "step2_spreadsheet_id" for "step2_range")
+                                  const prefixedDepField = stepPrefix + depField
+                                  if (formData[prefixedDepField]) {
+                                    dependentValues[depField] = formData[prefixedDepField]
+                                    console.log('[Agent Run Page] Found step-prefixed dependency:', prefixedDepField, '->', depField)
+                                  } else if (formData[depField]) {
+                                    // Try exact match
                                     dependentValues[depField] = formData[depField]
+                                    console.log('[Agent Run Page] Found exact dependency match:', depField)
                                   } else {
-                                    // If no exact match, try finding prefixed versions
+                                    // If no match, try finding other prefixed versions
                                     // e.g., if looking for "spreadsheet_id", check "source_spreadsheet_id", "target_spreadsheet_id", etc.
                                     const prefixes = ['source_', 'target_', 'input_', 'output_', 'from_', 'to_']
                                     for (const prefix of prefixes) {

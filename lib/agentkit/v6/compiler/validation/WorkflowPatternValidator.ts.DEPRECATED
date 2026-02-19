@@ -1,0 +1,358 @@
+/**
+ * Workflow Pattern Validator
+ * Phase 3: Compile-time pattern detection and automatic fixes
+ *
+ * DESIGN PRINCIPLE: Generic, structural pattern detection
+ * - NO hardcoded field names (classification, attachment, etc.)
+ * - Detects patterns based on IR structure and relationships
+ * - Scalable to any workflow without code changes
+ *
+ * Universal Patterns Detected:
+ * 1. Explode → Extract: Nested data processing with parent field references
+ * 2. Extract → Route: AI output field used for routing to multiple destinations
+ * 3. Collect → Append: External data collection with repeated append operations
+ */
+
+import type { DeclarativeLogicalIR } from '../../logical-ir/schemas/declarative-ir-types'
+
+export interface PatternIssue {
+  pattern: string
+  issue: string
+  severity: 'high' | 'medium' | 'low'
+  autoFixable: boolean
+  fix: string
+  suggestedChanges?: any
+}
+
+export interface ValidationResult {
+  hasIssues: boolean
+  issues: PatternIssue[]
+  autoFixable: number
+}
+
+/**
+ * Generic pattern-based workflow validation
+ * Detects structural patterns without hardcoded assumptions
+ */
+export class WorkflowPatternValidator {
+  /**
+   * Validate IR for common structural bug patterns
+   */
+  validate(ir: DeclarativeLogicalIR): ValidationResult {
+    const issues: PatternIssue[] = []
+
+    // Pattern 1: Explode → Extract (nested processing with parent references)
+    const explodeExtract = this.detectNestedProcessingWithParentRefs(ir)
+    if (explodeExtract) issues.push(explodeExtract)
+
+    // Pattern 2: Extract → Route (AI field used for routing)
+    const extractRoute = this.detectAIFieldRoutingWithoutFilters(ir)
+    if (extractRoute) issues.push(extractRoute)
+
+    // Pattern 3: Collect → Append (external collection without dedup)
+    const collectAppend = this.detectExternalCollectionWithoutDedup(ir)
+    if (collectAppend) issues.push(collectAppend)
+
+    return {
+      hasIssues: issues.length > 0,
+      issues,
+      autoFixable: issues.filter(i => i.autoFixable).length
+    }
+  }
+
+  /**
+   * Apply auto-fixes to IR based on detected patterns
+   */
+  applyFixes(ir: DeclarativeLogicalIR, issues: PatternIssue[]): void {
+    for (const issue of issues) {
+      if (!issue.autoFixable || !issue.suggestedChanges) {
+        continue
+      }
+
+      switch (issue.pattern) {
+        case 'Nested Processing → Parent References':
+          this.fixNestedProcessingContext(ir, issue.suggestedChanges)
+          break
+        case 'AI Output → Multiple Routes':
+          this.fixAIRoutingLogic(ir, issue.suggestedChanges)
+          break
+        case 'External Collection → Repeated Append':
+          this.fixCollectionDeduplication(ir, issue.suggestedChanges)
+          break
+      }
+    }
+  }
+
+  /**
+   * Pattern 1: Detect nested data processing with parent field references
+   *
+   * Structural detection:
+   * - AI operations have nested context (any field referencing sub-items)
+   * - Rendering columns reference fields NOT in AI output schema
+   * = Context loss: parent fields will be lost during flatten
+   */
+  private detectNestedProcessingWithParentRefs(ir: DeclarativeLogicalIR): PatternIssue | null {
+    if (!ir.ai_operations || !ir.rendering) {
+      return null
+    }
+
+    // Get all AI output field names
+    const aiOutputFields = new Set<string>()
+    for (const op of ir.ai_operations) {
+      if (op.output_schema?.fields) {
+        op.output_schema.fields.forEach(f => aiOutputFields.add(f.name))
+      }
+    }
+
+    // Check if rendering references fields NOT in AI output
+    const renderingFields = ir.rendering.columns_in_order || []
+    const parentFields = renderingFields.filter(col => !aiOutputFields.has(col))
+
+    // Check if data sources indicate nested structure (multiple sources or file source after API source)
+    const hasNestedStructure = ir.data_sources.length > 1 ||
+      ir.data_sources.some(ds => ds.type === 'file')
+
+    if (hasNestedStructure && parentFields.length > 0) {
+      return {
+        pattern: 'Nested Processing → Parent References',
+        issue: `Rendering references ${parentFields.length} field(s) not in AI output - parent context may be lost during nested processing`,
+        severity: 'high',
+        autoFixable: true,
+        fix: 'Add preserve_fields hint to maintain parent context during flatten',
+        suggestedChanges: {
+          preserveFields: parentFields
+        }
+      }
+    }
+
+    return null
+  }
+
+  /**
+   * Pattern 2: Detect AI output field used for routing without filtering
+   *
+   * Structural detection:
+   * - AI operations exist (any type)
+   * - Multiple delivery destinations (2+)
+   * - NO conditionals AND NO post_ai_filters
+   * = All AI output goes to all destinations (duplicates)
+   */
+  private detectAIFieldRoutingWithoutFilters(ir: DeclarativeLogicalIR): PatternIssue | null {
+    const hasAIOperations = (ir.ai_operations?.length || 0) > 0
+    const multipleDestinations = (ir.delivery_rules.multiple_destinations?.length || 0) > 1
+
+    // Check for routing logic
+    const hasConditionals = (ir.conditionals?.length || 0) > 0
+    const hasPostFilters = !!ir.post_ai_filters
+
+    if (hasAIOperations && multipleDestinations && !hasConditionals && !hasPostFilters) {
+      // Find any AI output field that could be used for routing
+      const aiFields = ir.ai_operations
+        ?.flatMap(op => op.output_schema?.fields || [])
+        .map(f => f.name) || []
+
+      return {
+        pattern: 'AI Output → Multiple Routes',
+        issue: `AI extracts ${aiFields.length} field(s) but ${ir.delivery_rules.multiple_destinations?.length} destinations have no routing logic - will send all data to all destinations`,
+        severity: 'high',
+        autoFixable: true,
+        fix: 'Add conditionals to route items to different destinations based on AI output field',
+        suggestedChanges: {
+          aiFields,
+          destinations: ir.delivery_rules.multiple_destinations
+        }
+      }
+    }
+
+    return null
+  }
+
+  /**
+   * Pattern 3: Detect external data collection without deduplication
+   *
+   * Structural detection:
+   * - Data source with search/list operation (retrieves changing data)
+   * - Delivery with append/write operation (adds to existing data)
+   * - NO reference data source (no dedup)
+   * = Duplicate records on repeated runs
+   */
+  private detectExternalCollectionWithoutDedup(ir: DeclarativeLogicalIR): PatternIssue | null {
+    // Check for collection operations (search, list, query)
+    const collectionOps = ['search', 'list', 'query', 'find', 'fetch']
+    const hasCollection = ir.data_sources.some(ds =>
+      collectionOps.some(op => ds.operation_type?.includes(op))
+    )
+
+    // Check for append operations (append, write, create, insert)
+    const appendOps = ['append', 'write', 'create', 'insert', 'add']
+    const hasAppend = [
+      ir.delivery_rules.summary_delivery,
+      ir.delivery_rules.per_item_delivery,
+      ir.delivery_rules.per_group_delivery,
+      ...(ir.delivery_rules.multiple_destinations || [])
+    ].some(d => appendOps.some(op => d?.operation_type?.includes(op)))
+
+    // Check for deduplication indicators
+    const dedupRoles = ['reference', 'lookup', 'dedup', 'existing', 'comparison']
+    const hasDedup = ir.data_sources.some(ds =>
+      dedupRoles.some(role => (ds as any).role?.toLowerCase().includes(role))
+    )
+
+    if (hasCollection && hasAppend && !hasDedup) {
+      return {
+        pattern: 'External Collection → Repeated Append',
+        issue: 'Workflow collects external data and appends without deduplication - will create duplicates on repeated runs',
+        severity: 'high',
+        autoFixable: true,
+        fix: 'Add reference data source role hint for compiler to implement deduplication',
+        suggestedChanges: {
+          primarySource: ir.data_sources.find(ds =>
+            collectionOps.some(op => ds.operation_type?.includes(op))
+          ),
+          appendDestination: ir.delivery_rules.multiple_destinations?.[0] ||
+            ir.delivery_rules.per_item_delivery ||
+            ir.delivery_rules.summary_delivery
+        }
+      }
+    }
+
+    return null
+  }
+
+  /**
+   * Auto-fix: Nested Processing Context Loss
+   * Adds preserve_fields hint for compiler
+   */
+  private fixNestedProcessingContext(ir: DeclarativeLogicalIR, changes: any): void {
+    // Add preserve_fields hint to rendering config (compiler will use this)
+    if (!ir.rendering) {
+      ir.rendering = {} as any
+    }
+    // preserve_parent_fields should be a BOOLEAN flag, not the array
+    (ir.rendering as any).preserve_parent_fields = true
+
+    // Also add to partitions if they exist
+    if (ir.partitions && ir.partitions.length > 0) {
+      for (const partition of ir.partitions) {
+        // preserve_fields in partitions is the ARRAY of field names
+        (partition as any).preserve_fields = changes.preserveFields
+      }
+    }
+  }
+
+  /**
+   * Auto-fix: AI Output Routing
+   * Creates conditionals based on AI output field and destinations
+   */
+  private fixAIRoutingLogic(ir: DeclarativeLogicalIR, changes: any): void {
+    // Use first AI output field as routing field (most likely to be classification/category)
+    const routingField = changes.aiFields[0]
+    if (!routingField) return
+
+    const destinations = changes.destinations || []
+
+    // Create conditionals for routing
+    if (!ir.conditionals) {
+      ir.conditionals = []
+    }
+
+    // Build conditional routing based on number of destinations
+    if (destinations.length === 2) {
+      // Binary routing: use simple if/else
+      ir.conditionals.push({
+        condition: {
+          type: 'simple',
+          field: routingField,
+          operator: 'equals',
+          value: 'PLACEHOLDER_VALUE_1' // Compiler will infer from destination config
+        },
+        then_actions: [{
+          type: 'send_to_recipient',
+          params: {
+            plugin_key: destinations[0].plugin_key,
+            operation_type: destinations[0].operation_type,
+            config: destinations[0].config
+          }
+        }],
+        else_actions: [{
+          type: 'send_to_recipient',
+          params: {
+            plugin_key: destinations[1].plugin_key,
+            operation_type: destinations[1].operation_type,
+            config: destinations[1].config
+          }
+        }]
+      })
+    } else {
+      // Multi-way routing: use if/elif/else chain
+      const mainConditional: any = {
+        condition: {
+          type: 'simple',
+          field: routingField,
+          operator: 'equals',
+          value: 'PLACEHOLDER_VALUE_0'
+        },
+        then_actions: [{
+          type: 'send_to_recipient',
+          params: {
+            plugin_key: destinations[0].plugin_key,
+            operation_type: destinations[0].operation_type,
+            config: destinations[0].config
+          }
+        }],
+        elif_branches: [],
+        else_actions: []
+      }
+
+      // Add elif branches for middle destinations
+      for (let i = 1; i < destinations.length - 1; i++) {
+        mainConditional.elif_branches.push({
+          condition: {
+            type: 'simple',
+            field: routingField,
+            operator: 'equals',
+            value: `PLACEHOLDER_VALUE_${i}`
+          },
+          actions: [{
+            type: 'send_to_recipient',
+            params: {
+              plugin_key: destinations[i].plugin_key,
+              operation_type: destinations[i].operation_type,
+              config: destinations[i].config
+            }
+          }]
+        })
+      }
+
+      // Last destination as else
+      mainConditional.else_actions = [{
+        type: 'send_to_recipient',
+        params: {
+          plugin_key: destinations[destinations.length - 1].plugin_key,
+          operation_type: destinations[destinations.length - 1].operation_type,
+          config: destinations[destinations.length - 1].config
+        }
+      }]
+
+      ir.conditionals.push(mainConditional)
+    }
+
+    // Clear multiple_destinations since we've converted to conditionals
+    ir.delivery_rules.multiple_destinations = []
+  }
+
+  /**
+   * Auto-fix: Collection Deduplication
+   * Adds reference source role hint for compiler
+   */
+  private fixCollectionDeduplication(ir: DeclarativeLogicalIR, changes: any): void {
+    const primarySource = changes.primarySource
+    if (!primarySource) return
+
+    // Add role hint to primary source
+    primarySource.role = `${primarySource.role || 'Primary data collection'} (with deduplication against destination)`
+
+    // Note: The compiler will detect this role hint and automatically
+    // add deduplication logic by reading the destination before appending
+  }
+}

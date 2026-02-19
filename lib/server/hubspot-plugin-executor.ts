@@ -121,11 +121,16 @@ export class HubSpotPluginExecutor extends BasePluginExecutor {
 
       // Format the response
       const contact = {
+        // Primary format (snake_case)
         contact_id: contactData.id,
         properties: contactData.properties,
         created_at: contactData.createdAt,
         updated_at: contactData.updatedAt,
-        archived: contactData.archived || false
+        archived: contactData.archived || false,
+        // Legacy format (camelCase)
+        contactId: contactData.id,
+        createdAt: contactData.createdAt,
+        updatedAt: contactData.updatedAt
       };
 
       if (include_associations && contactData.associations) {
@@ -209,6 +214,7 @@ export class HubSpotPluginExecutor extends BasePluginExecutor {
         const dealsData = await this.handleHubSpotResponse(dealsResponse, 'get_deals_batch');
 
         deals = (dealsData.results || []).map((deal: any) => ({
+          // Primary format (snake_case)
           deal_id: deal.id,
           deal_name: deal.properties.dealname,
           amount: deal.properties.amount,
@@ -217,10 +223,19 @@ export class HubSpotPluginExecutor extends BasePluginExecutor {
           pipeline: deal.properties.pipeline,
           owner_id: deal.properties.hubspot_owner_id,
           created_at: deal.properties.createdate,
-          properties: deal.properties
+          properties: deal.properties,
+          // Legacy format (camelCase)
+          dealId: deal.id,
+          dealName: deal.properties.dealname,
+          closeDate: deal.properties.closedate,
+          ownerId: deal.properties.hubspot_owner_id,
+          createdAt: deal.properties.createdate
         }));
       } else {
-        deals = dealIds.map((id: string) => ({ deal_id: id }));
+        deals = dealIds.map((id: string) => ({
+          deal_id: id,
+          dealId: id  // Legacy format
+        }));
       }
 
       // Calculate total deal value if amounts are available
@@ -235,10 +250,15 @@ export class HubSpotPluginExecutor extends BasePluginExecutor {
       return {
         success: true,
         data: {
+          // Primary format (snake_case)
           contact_id: contact_id,
           deals: deals,
           total_count: deals.length,
-          total_deal_value: total_value > 0 ? total_value : undefined
+          total_deal_value: total_value > 0 ? total_value : undefined,
+          // Legacy format (camelCase)
+          contactId: contact_id,
+          totalCount: deals.length,
+          totalDealValue: total_value > 0 ? total_value : undefined
         },
         message: `Found ${deals.length} deal(s) for this contact`
       };
@@ -318,10 +338,15 @@ export class HubSpotPluginExecutor extends BasePluginExecutor {
       return {
         success: true,
         data: {
+          // Primary format (snake_case)
           contact_id: contact_id,
           activities: allActivities,
           total_count: allActivities.length,
-          counts_by_type: countsByType
+          counts_by_type: countsByType,
+          // Legacy format (camelCase)
+          contactId: contact_id,
+          totalCount: allActivities.length,
+          countsByType: countsByType
         },
         message: `Found ${allActivities.length} activit${allActivities.length === 1 ? 'y' : 'ies'} for this contact`
       };
@@ -429,18 +454,27 @@ export class HubSpotPluginExecutor extends BasePluginExecutor {
       const data = await this.handleHubSpotResponse(response, 'search_contacts');
 
       const contacts = (data.results || []).map((contact: any) => ({
+        // Primary format (snake_case)
         contact_id: contact.id,
         properties: contact.properties,
         created_at: contact.createdAt,
-        updated_at: contact.updatedAt
+        updated_at: contact.updatedAt,
+        // Legacy format (camelCase)
+        contactId: contact.id,
+        createdAt: contact.createdAt,
+        updatedAt: contact.updatedAt
       }));
 
       return {
         success: true,
         data: {
           contacts: contacts,
+          // Primary format (snake_case)
           total_count: contacts.length,
-          has_more: data.paging?.next ? true : false
+          has_more: data.paging?.next ? true : false,
+          // Legacy format (camelCase)
+          totalCount: contacts.length,
+          hasMore: data.paging?.next ? true : false
         },
         message: `Found ${contacts.length} contact(s) matching search criteria`
       };
@@ -480,11 +514,16 @@ export class HubSpotPluginExecutor extends BasePluginExecutor {
       const dealData = await this.handleHubSpotResponse(response, 'get_deal');
 
       const deal = {
+        // Primary format (snake_case)
         deal_id: dealData.id,
         properties: dealData.properties,
         created_at: dealData.createdAt,
         updated_at: dealData.updatedAt,
-        archived: dealData.archived || false
+        archived: dealData.archived || false,
+        // Legacy format (camelCase)
+        dealId: dealData.id,
+        createdAt: dealData.createdAt,
+        updatedAt: dealData.updatedAt
       };
 
       if (include_associations !== false && dealData.associations) {
@@ -525,11 +564,16 @@ export class HubSpotPluginExecutor extends BasePluginExecutor {
   private formatActivity(activityType: string, activity: any): any {
     const props = activity.properties;
     const baseActivity = {
+      // Primary format (snake_case)
       activity_id: activity.id,
       type: activityType,
       timestamp: props.hs_timestamp || activity.createdAt,
       owner_id: props.hubspot_owner_id,
-      created_at: activity.createdAt
+      created_at: activity.createdAt,
+      // Legacy format (camelCase)
+      activityId: activity.id,
+      ownerId: props.hubspot_owner_id,
+      createdAt: activity.createdAt
     };
 
     // Add type-specific fields
@@ -554,15 +598,22 @@ export class HubSpotPluginExecutor extends BasePluginExecutor {
         return {
           ...baseActivity,
           body: props.hs_note_body,
-          has_attachments: !!props.hs_attachment_ids
+          // Primary format (snake_case)
+          has_attachments: !!props.hs_attachment_ids,
+          // Legacy format (camelCase)
+          hasAttachments: !!props.hs_attachment_ids
         };
       case 'meetings':
         return {
           ...baseActivity,
           title: props.hs_meeting_title,
           body: props.hs_meeting_body,
+          // Primary format (snake_case)
           start_time: props.hs_meeting_start_time,
-          end_time: props.hs_meeting_end_time
+          end_time: props.hs_meeting_end_time,
+          // Legacy format (camelCase)
+          startTime: props.hs_meeting_start_time,
+          endTime: props.hs_meeting_end_time
         };
       case 'tasks':
         return {

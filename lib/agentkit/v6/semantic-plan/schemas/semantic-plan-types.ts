@@ -18,6 +18,48 @@
  *                      [LLM: Formalize] → IR (fully resolved)
  */
 
+import type { HardRequirements } from '../../requirements/HardRequirementsExtractor'
+
+// ============================================================================
+// Requirements Tracking Types
+// ============================================================================
+
+/**
+ * Mapping of a hard requirement to semantic plan elements
+ * Shows how each requirement was incorporated into the understanding
+ */
+export interface RequirementMapping {
+  /** Requirement ID from Phase 0 (e.g., "R1", "R2") */
+  requirement_id: string
+
+  /** Where in the understanding this requirement was mapped */
+  mapped_to: {
+    /** Path to understanding field (e.g., "ai_processing[0]", "delivery.conditions") */
+    understanding_field: string
+
+    /** How the requirement is preserved */
+    preservation_strategy: string
+
+    /** Confidence that requirement is fully preserved */
+    confidence: 'full' | 'partial' | 'unclear'
+  }
+}
+
+/**
+ * Requirements that couldn't be preserved in the semantic plan
+ * Documents violations with reasons and suggested resolutions
+ */
+export interface RequirementViolation {
+  /** Requirement ID that was violated */
+  requirement_id: string
+
+  /** Why this requirement couldn't be preserved */
+  reason: string
+
+  /** Suggested way to resolve this violation */
+  suggested_resolution: string
+}
+
 // ============================================================================
 // Core Semantic Plan Structure
 // ============================================================================
@@ -46,6 +88,31 @@ export interface SemanticPlan {
 
   /** Questions for the user (if understanding is incomplete) */
   clarifications_needed?: string[]
+
+  /**
+   * Processing steps from Enhanced Prompt (execution order intent)
+   * Preserves the user's intended workflow sequence through the pipeline
+   * Used to generate processing_order in IR without recreation
+   */
+  processing_steps?: string[]
+
+  /**
+   * Hard requirements from Phase 0 that must be preserved
+   * Enables tracking requirements through the pipeline
+   */
+  hard_requirements?: HardRequirements
+
+  /**
+   * Mapping of requirements to understanding elements
+   * Shows how each requirement was incorporated into the semantic plan
+   */
+  requirements_mapping?: RequirementMapping[]
+
+  /**
+   * Requirements that couldn't be preserved
+   * Documents violations with reasons and suggested resolutions
+   */
+  requirements_violations?: RequirementViolation[]
 }
 
 // ============================================================================
@@ -65,13 +132,16 @@ export interface Understanding {
   /** What AI processing is needed */
   ai_processing?: AIProcessingUnderstanding[]
 
+  /** File storage/upload operations (separate from data delivery) */
+  file_operations?: FileOperationUnderstanding[]
+
   /** How to group/partition data */
   grouping?: GroupingUnderstanding
 
   /** How to format/render output */
   rendering?: RenderingUnderstanding
 
-  /** How to deliver results */
+  /** How to deliver results (emails, messages, appends to sheets) */
   delivery: DeliveryUnderstanding
 
   /** Edge cases and error handling */
@@ -209,6 +279,32 @@ export interface AIFieldMapping {
 
   /** Format/transformation needed */
   format?: string
+}
+
+export interface FileOperationUnderstanding {
+  /** Type of file operation */
+  type: 'upload' | 'create_folder' | 'share' | 'generate_pdf' | 'generate_csv' | 'generate_excel' | 'download' | 'move' | 'copy' | 'delete'
+
+  /** What this operation does (business language) */
+  description: string
+
+  /** Target service (e.g., "Google Drive", "AWS S3", "Dropbox") */
+  target_service: string
+
+  /** What triggers this operation */
+  trigger: string
+
+  /** What content to upload/generate */
+  content_source?: string
+
+  /** Folder/path structure requirements */
+  folder_structure?: string
+
+  /** Whether to generate shareable links */
+  generate_link?: boolean
+
+  /** Additional configuration needs */
+  additional_config?: string
 }
 
 export interface GroupingUnderstanding {

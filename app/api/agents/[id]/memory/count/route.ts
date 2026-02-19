@@ -3,7 +3,8 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createLogger } from '@/lib/logger';
-import { agentRepository, memoryRepository } from '@/lib/repositories';
+import { agentRepository } from '@/lib/repositories';
+import { createServerSupabaseClient } from '@/lib/supabaseServer';
 
 const logger = createLogger({ module: 'API', route: '/api/agents/[id]/memory/count' });
 
@@ -47,8 +48,12 @@ export async function GET(
       );
     }
 
-    // Count memories using repository
-    const { data: count, error: countError } = await memoryRepository.countByAgentId(agentId);
+    // Count memories directly from Supabase
+    const supabase = createServerSupabaseClient();
+    const { count, error: countError } = await supabase
+      .from('agent_memories')
+      .select('*', { count: 'exact', head: true })
+      .eq('agent_id', agentId);
 
     if (countError) {
       requestLogger.error({ err: countError }, 'Failed to count memories');

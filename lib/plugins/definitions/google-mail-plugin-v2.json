@@ -152,7 +152,7 @@
         }
       },
       "output_guidance": {
-        "success_description": "Email sent successfully with message ID for tracking",
+        "success_description": "Sent email",
         "sample_output": {
           "message_id": "18abc123def",
           "thread_id": "18abc123def",
@@ -246,7 +246,20 @@
                 "snippet": { "type": "string", "description": "Email preview snippet (first ~200 chars of email body - USE THIS for content matching/filtering)" },
                 "labels": { "type": "array", "items": { "type": "string" }, "description": "Gmail labels" },
                 "body": { "type": "string", "description": "Email body text (NOTE: Usually empty in search results - use 'snippet' field instead for email content)" },
-                "attachments": { "type": "array", "description": "Attachment metadata (if requested)" }
+                "attachments": {
+                  "type": "array",
+                  "description": "Attachment metadata (if include_attachments=true). Each item contains: filename, mimeType, size, attachment_id (use with get_email_attachment), message_id (email ID)",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "filename": { "type": "string", "description": "Attachment filename" },
+                      "mimeType": { "type": "string", "description": "MIME type (application/pdf, image/png, etc.)" },
+                      "size": { "type": "integer", "description": "File size in bytes" },
+                      "attachment_id": { "type": "string", "description": "Attachment ID (required for get_email_attachment action)" },
+                      "message_id": { "type": "string", "description": "Email message ID (required for get_email_attachment action)" }
+                    }
+                  }
+                }
               }
             }
           },
@@ -257,7 +270,7 @@
         }
       },
       "output_guidance": {
-        "success_description": "Returns matching emails with subject, sender, date, and body",
+        "success_description": "Found matching emails",
         "sample_output": {
           "emails": [
             {
@@ -385,7 +398,7 @@
         }
       },
       "output_guidance": {
-        "success_description": "Draft created successfully and saved to Drafts folder",
+        "success_description": "Created draft",
         "sample_output": {
           "draft_id": "r123456789",
           "message_id": "18abc123def",
@@ -464,7 +477,7 @@
         }
       },
       "output_guidance": {
-        "success_description": "Attachment downloaded with base64 content ready for AI processing",
+        "success_description": "Downloaded attachment",
         "sample_output": {
           "filename": "expenses.pdf",
           "mimeType": "application/pdf",

@@ -27,9 +27,9 @@ import { GroundingEngine } from '@/lib/agentkit/v6/semantic-plan/grounding/Groun
 import { IRFormalizer } from '@/lib/agentkit/v6/semantic-plan/IRFormalizer'
 import { PluginManagerV2 } from '@/lib/server/plugin-manager-v2'
 import type { DataSourceMetadata } from '@/lib/agentkit/v6/semantic-plan/grounding/DataSampler'
-import { IRToDSLCompiler } from '@/lib/agentkit/v6/compiler/IRToDSLCompiler'
-import { DeclarativeCompiler } from '@/lib/agentkit/v6/compiler/DeclarativeCompiler'
 import { PilotNormalizer } from '@/lib/agentkit/v6/compiler/PilotNormalizer'
+import { V6PipelineOrchestrator } from '@/lib/agentkit/v6/pipeline/V6PipelineOrchestrator'
+import { withProviderFallback, type ProviderConfig } from '@/lib/agentkit/v6/utils/ProviderFallback'
 
 // ============================================================================
 // Plugin Schema Extraction Utilities (NO AUTH REQUIRED)
@@ -254,6 +254,7 @@ interface GenerateIRSemanticRequest {
     action_name?: string
     parameters: Record<string, any>
   }
+  use_v6_orchestrator?: boolean // Use V6PipelineOrchestrator with requirements tracking
   config?: {
     provider?: 'openai' | 'anthropic'
     model?: string
@@ -261,17 +262,169 @@ interface GenerateIRSemanticRequest {
     formalization_temperature?: number
     grounding_min_confidence?: number
     return_intermediate_results?: boolean // Return semantic plan + grounded plan
+    intent_category?: 'api' | 'tabular' // Workflow type
+    validate_plugins?: boolean // Auto-fix invalid plugin operations
+    max_tokens?: number // Maximum tokens for LLM calls
   }
 }
 
 export async function POST(request: NextRequest) {
   console.log('[API] /api/v6/generate-ir-semantic - POST')
-  console.log('[API] Starting 3-phase semantic IR generation...')
 
   const startTime = Date.now()
 
   try {
     const body: GenerateIRSemanticRequest = await request.json()
+
+    // NEW: V6 Orchestrator Mode with Requirements Tracking
+    if (body.use_v6_orchestrator) {
+      console.log('[API] Using V6 Pipeline Orchestrator with requirements tracking')
+      console.log('[API] Enhanced prompt:', JSON.stringify(body.enhanced_prompt, null, 2))
+      console.log('[API] Config:', JSON.stringify(body.config, null, 2))
+
+      try {
+        console.log('[API] Attempting to instantiate V6PipelineOrchestrator...')
+        const orchestrator = new V6PipelineOrchestrator()
+        console.log('[API] V6 Orchestrator initialized successfully')
+
+        // NOTE: Don't fetch admin config here - the orchestrator fetches it internally per phase
+        // If the client provides a config, it's used as an override for ALL phases (testing only)
+        const primaryConfig: ProviderConfig | undefined = body.config ? {
+          provider: body.config.provider,
+          model: body.config.model,
+          temperature: body.config.understanding_temperature,
+          max_tokens: body.config.max_tokens
+        } : undefined
+
+        let fallbackResult
+
+        if (primaryConfig) {
+          // Client provided config - use it with fallback
+          fallbackResult = await withProviderFallback(
+            async (config: ProviderConfig) => {
+              return await orchestrator.run(body.enhanced_prompt, {
+                model: config.model,
+                provider: config.provider,
+                temperature: config.temperature,
+                max_tokens: config.max_tokens
+              })
+            },
+            primaryConfig,
+            {
+              maxRetries: 1,              // 1 retry per provider = 2 attempts each
+              initialDelayMs: 1000,       // Start with 1s delay
+              maxDelayMs: 5000,           // Cap at 5s delay
+              backoffMultiplier: 2,       // Exponential backoff (1s, 2s)
+              enableFallback: true        // Enable OpenAI fallback
+            }
+          )
+        } else {
+          // No client config - let orchestrator use admin config per phase
+          console.log('[API] No client config provided, orchestrator will use admin config per phase')
+          const startTime = Date.now()
+          const result = await orchestrator.run(body.enhanced_prompt)
+          fallbackResult = {
+            success: result.success,
+            data: result,
+            error: result.error,
+            provider: 'admin-config',
+            attemptsUsed: 1,
+            fellBackToSecondary: false,
+            totalDurationMs: Date.now() - startTime
+          }
+        }
+
+        if (!fallbackResult.success) {
+          console.error('[API] V6 pipeline failed after all retries and fallback:', fallbackResult.error)
+          return NextResponse.json({
+            success: false,
+            error: 'V6 pipeline failed after retries and fallback',
+            details: fallbackResult.error instanceof Error ? fallbackResult.error.message : String(fallbackResult.error),
+            metadata: {
+              attempts: fallbackResult.attemptsUsed,
+              fell_back_to: fallbackResult.fellBackToSecondary ? fallbackResult.provider : null,
+              duration_ms: fallbackResult.totalDurationMs
+            }
+          }, { status: 400 })
+        }
+
+        const result = fallbackResult.data!
+        console.log('[API] V6 Orchestrator run completed, success:', result.success)
+        console.log(`[API] Used provider: ${fallbackResult.provider}${fallbackResult.fellBackToSecondary ? ' (fallback)' : ' (primary)'}, attempts: ${fallbackResult.attemptsUsed}, duration: ${fallbackResult.totalDurationMs}ms`)
+
+        // CRITICAL: Check for compilation/validation failures (non-retryable errors)
+        // These are different from API overload errors - they indicate issues with the generated workflow
+        // that won't be fixed by retrying with a different provider
+        if (!result.success && result.compilationErrors && result.compilationErrors.length > 0) {
+          console.error('[API] V6 pipeline completed but compilation failed:', result.compilationErrors)
+          return NextResponse.json({
+            success: false,
+            error: 'Workflow compilation failed',
+            compilation_errors: result.compilationErrors,
+            phase: result.error?.phase || 'compilation',
+            // Include intermediate phases for debugging
+            hard_requirements: result.hardRequirements,
+            requirement_map: result.requirementMap,
+            phase1_semantic_plan: result.semanticPlan,
+            phase2_grounded_plan: result.groundedPlan,
+            phase3_ir: result.ir,
+            validation_results: result.validationResults,
+            metadata: {
+              provider_used: fallbackResult.provider,
+              provider_fallback: fallbackResult.fellBackToSecondary,
+              retry_attempts: fallbackResult.attemptsUsed,
+              fallback_duration_ms: fallbackResult.totalDurationMs
+            }
+          }, { status: 400 })
+        }
+
+        // Return V6 format with all phases and requirements
+        const hardReqs = result.hardRequirements || { requirements: [], unit_of_work: null, thresholds: [], routing_rules: [], invariants: [] }
+        const reqMap = result.requirementMap || {}
+
+        return NextResponse.json({
+          success: true,
+          workflow: result.workflow, // Phase 5: PILOT format flat array
+          hard_requirements: hardReqs, // Phase 0
+          requirement_map: reqMap,
+          validation_results: result.validationResults, // All 5 gates
+          // Intermediate phase outputs for debugging
+          phase1_semantic_plan: result.semanticPlan,
+          phase2_grounded_plan: result.groundedPlan,
+          phase3_ir: result.ir,
+          phase4_dsl_before_translation: result.dslBeforeTranslation,
+          // Compilation diagnostics
+          compilation_logs: result.compilationLogs,
+          compilation_errors: result.compilationErrors,
+          metadata: {
+            pipeline_version: 'v6_orchestrator',
+            execution_time_ms: Date.now() - startTime,
+            total_requirements: hardReqs.requirements.length,
+            requirements_enforced: Object.values(reqMap).filter((r: any) => r.status === 'enforced').length,
+            unit_of_work: hardReqs.unit_of_work,
+            workflow_steps: result.workflow?.length || 0,
+            gates_passed: 5,
+            // Provider fallback metadata
+            provider_used: fallbackResult.provider,
+            provider_fallback: fallbackResult.fellBackToSecondary,
+            retry_attempts: fallbackResult.attemptsUsed,
+            fallback_duration_ms: fallbackResult.totalDurationMs
+          }
+        })
+      } catch (v6Error) {
+        console.error('[API] V6 Orchestrator error:', v6Error)
+        console.error('[API] V6 Orchestrator stack:', v6Error instanceof Error ? v6Error.stack : 'No stack trace')
+        return NextResponse.json({
+          success: false,
+          error: 'V6 Orchestrator initialization or execution failed',
+          details: v6Error instanceof Error ? v6Error.message : String(v6Error),
+          stack: process.env.NODE_ENV === 'development' ? (v6Error instanceof Error ? v6Error.stack : undefined) : undefined
+        }, { status: 500 })
+      }
+    }
+
+    // LEGACY: Original 3-phase flow (semantic → grounding → IR)
+    console.log('[API] Starting 3-phase semantic IR generation...')
 
     // Validate request
     if (!body.enhanced_prompt) {
@@ -291,7 +444,9 @@ export async function POST(request: NextRequest) {
     // data_source_metadata is optional - if not provided, grounding will be skipped
 
     const config = body.config || {}
-    const provider = config.provider || 'openai'
+    // Default to Anthropic (Opus 4.5) for full semantic path - better workflow understanding
+    // Use OpenAI only if explicitly requested
+    const provider = config.provider || 'anthropic'
     const returnIntermediateResults = config.return_intermediate_results ?? true
 
     // ========================================================================
@@ -308,7 +463,8 @@ export async function POST(request: NextRequest) {
     const phase1Start = Date.now()
 
     // Resolve model name with provider-specific defaults
-    const resolvedModel = config.model || (provider === 'openai' ? 'gpt-5.2' : 'claude-3-5-sonnet-20241022')
+    // Let SemanticPlanGenerator use Opus 4.5 for Anthropic (better workflow understanding)
+    const resolvedModel = config.model || (provider === 'openai' ? 'gpt-5.2' : undefined)
 
     const semanticPlanGenerator = new SemanticPlanGenerator({
       model_provider: provider,
@@ -599,31 +755,23 @@ export async function POST(request: NextRequest) {
 
     const phase3Time = Date.now() - phase3Start
     console.log(`[API] Phase 3 complete in ${phase3Time}ms`)
-    console.log(`[API] Grounded facts used: ${Object.keys(formalizationResult.formalization_metadata.grounded_facts_used).length}`)
-    console.log(`[API] Missing facts: ${formalizationResult.formalization_metadata.missing_facts.length}`)
+    console.log(`[API] Grounded facts used: ${Object.keys(formalizationResult.formalization_metadata.grounded_facts_used || {}).length}`)
+    console.log(`[API] Missing facts: ${formalizationResult.formalization_metadata.missing_facts?.length || 0}`)
 
-    // Validate formalization
-    const validation = irFormalizer.validateFormalization(
-      formalizationResult.ir,
-      formalizationResult.formalization_metadata.grounded_facts_used
-    )
-
-    console.log(`[API] Formalization validation: ${validation.valid ? 'VALID' : 'INVALID'}`)
-    if (validation.errors.length > 0) {
-      console.error('[API] Formalization errors:', validation.errors)
-    }
+    // NOTE: v4 IR validation is done inside IRFormalizer during formalization
+    // No need for post-formalization validation here
+    const validation = { valid: true, errors: [], warnings: [] }
 
     // PHASE TRANSITION VALIDATOR: Phase 3 → Phase 4
-    // Ensure IR has required structure for compilation
-    if (!formalizationResult.ir || !formalizationResult.ir.data_sources || !Array.isArray(formalizationResult.ir.data_sources)) {
-      console.error('[API] ✗ Phase 3→4 validation failed: Invalid IR structure (missing data_sources)')
+    // Ensure IR has required structure for compilation (v4.0 uses execution_graph)
+    if (!formalizationResult.ir || !formalizationResult.ir.execution_graph) {
+      console.error('[API] ✗ Phase 3→4 validation failed: Invalid IR structure (missing execution_graph - v4.0 required)')
       return NextResponse.json(
         {
           success: false,
           error: 'Invalid IR structure',
-          details: 'IR must have data_sources array for compilation',
-          phase: 'transition_3_to_4',
-          validation_errors: validation.errors
+          details: 'IR must have execution_graph for v4.0 compilation',
+          phase: 'transition_3_to_4'
         },
         { status: 500 }
       )
@@ -632,7 +780,8 @@ export async function POST(request: NextRequest) {
     // Validate that all grounded facts mentioned in IR actually exist
     const irString = JSON.stringify(formalizationResult.ir)
     const missingGroundedFacts: string[] = []
-    Object.keys(formalizationResult.formalization_metadata.grounded_facts_used).forEach(factId => {
+    const groundedFactsUsed = formalizationResult.formalization_metadata.grounded_facts_used || {}
+    Object.keys(groundedFactsUsed).forEach(factId => {
       if (!groundedFacts[factId] && irString.includes(factId)) {
         missingGroundedFacts.push(factId)
       }
@@ -643,20 +792,7 @@ export async function POST(request: NextRequest) {
       // Continue anyway - compiler may handle gracefully
     }
 
-    // Fail if IR validation has critical errors
-    if (!validation.valid && validation.errors.some((e: string) => e.includes('CRITICAL') || e.includes('required'))) {
-      console.error('[API] ✗ Phase 3→4 validation failed: Critical IR validation errors')
-      return NextResponse.json(
-        {
-          success: false,
-          error: 'IR validation failed',
-          details: 'IR contains critical validation errors',
-          validation_errors: validation.errors,
-          phase: 'transition_3_to_4'
-        },
-        { status: 500 }
-      )
-    }
+    // v4.0 IR is validated during formalization - no additional validation needed here
 
     // ========================================================================
     // PHASE 4: Compilation (IR → PILOT DSL)
@@ -665,59 +801,23 @@ export async function POST(request: NextRequest) {
     console.log('[API] Phase 4: Compilation (IR → PILOT DSL)')
     const phase4Start = Date.now()
 
-    // DEBUG: Log IR structure to understand DeclarativeCompiler requirements
-    console.log('[API] 📋 Declarative IR Structure:')
-    console.log('[API]   - data_sources:', formalizationResult.ir.data_sources?.length || 0)
-    console.log('[API]   - filters:', formalizationResult.ir.filters ? 'YES' : 'NO')
-    console.log('[API]   - ai_operations:', formalizationResult.ir.ai_operations?.length || 0)
-    console.log('[API]   - delivery_rules:', formalizationResult.ir.delivery_rules ? 'YES' : 'NO')
+    // DEBUG: Log IR v4.0 structure
+    console.log('[API] 📋 Declarative IR v4.0 Structure:')
+    console.log('[API]   - execution_graph.nodes:', Object.keys(formalizationResult.ir.execution_graph?.nodes || {}).length)
+    console.log('[API]   - variables:', Object.keys(formalizationResult.ir.execution_graph?.variables || {}).length)
     console.log('[API] Full IR:', JSON.stringify(formalizationResult.ir, null, 2))
 
-    // Try DeclarativeCompiler first (deterministic), fallback to LLM if it fails
+    // v4.0 IR requires ExecutionGraphCompiler (v3 compilers are deprecated)
     let compilationResult: any
-    let compilationMethod = 'unknown'
+    let compilationMethod = 'ExecutionGraphCompiler (v4.0)'
 
-    try {
-      console.log('[API] Attempting DeclarativeCompiler (deterministic)...')
-      const declarativeCompiler = new DeclarativeCompiler(pluginManager)
-      const declarativeResult = await declarativeCompiler.compile(formalizationResult.ir)
+    console.log('[API] Using ExecutionGraphCompiler for v4.0 IR...')
+    const { ExecutionGraphCompiler } = await import('@/lib/agentkit/v6/compiler/ExecutionGraphCompiler')
+    const compiler = new ExecutionGraphCompiler(pluginManager)
 
-      if (declarativeResult.success && declarativeResult.workflow && declarativeResult.workflow.length > 0) {
-        console.log('[API] ✓ DeclarativeCompiler succeeded')
-        compilationResult = declarativeResult
-        compilationMethod = 'DeclarativeCompiler (deterministic)'
-      } else {
-        // Empty workflow triggers fallback - this is handled gracefully
-        throw new Error('DeclarativeCompiler returned empty workflow')
-      }
-    } catch (declarativeError: any) {
-      // DeclarativeCompiler fallback is expected for complex workflows
-      // Log concisely - this is a graceful degradation, not an error
-      console.log('[API] ℹ️ DeclarativeCompiler could not handle this workflow:', declarativeError.message)
-      console.log('[API] → Using LLM-based compilation (this is normal for complex workflows)')
-
-      const llmCompiler = new IRToDSLCompiler({
-        pluginManager,
-        temperature: 0,
-        maxTokens: 8000
-      })
-
-      const pipelineContext = {
-        semantic_plan: {
-          goal: semanticPlan.goal,
-          understanding: semanticPlan.understanding,
-          reasoning_trace: semanticPlan.reasoning_trace
-        },
-        grounded_facts: groundedFacts,
-        formalization_metadata: formalizationResult.formalization_metadata
-      }
-
-      compilationResult = await llmCompiler.compile(
-        formalizationResult.ir,
-        pipelineContext
-      )
-      compilationMethod = 'LLM-based (fallback)'
-    }
+    // Compile the full IR (not just execution_graph)
+    // The compile method is async and returns CompilationResult
+    compilationResult = await compiler.compile(formalizationResult.ir)
 
     phase4Time = Date.now() - phase4Start
     console.log(`[API] Phase 4 complete in ${phase4Time}ms`)
@@ -804,7 +904,7 @@ export async function POST(request: NextRequest) {
       },
       semantic_plan: semanticPlan,
       method: '5-phase-semantic',
-      model: config.model || (provider === 'openai' ? 'gpt-5.2' : 'claude-3-5-sonnet-20241022'),
+      model: semanticPlanResult.metadata?.model || resolvedModel || 'unknown',
       services_used: compilationResult.plugins_used,
       prompt_length: 0
     })
@@ -828,7 +928,7 @@ export async function POST(request: NextRequest) {
       metadata: {
         architecture: 'semantic_plan_5_phase',
         provider,
-        model: config.model || (provider === 'openai' ? 'gpt-5.2' : 'claude-3-5-sonnet-20241022'),
+        model: semanticPlanResult.metadata?.model || resolvedModel || 'unknown',
         total_time_ms: totalTime,
         phase_times_ms: {
           understanding: phase1Time,

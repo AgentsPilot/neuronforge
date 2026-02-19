@@ -445,13 +445,17 @@ export class GmailPluginExecutor extends GoogleBasePluginExecutor {
       if (part.filename && part.body?.attachmentId) {
         try {
           // Return attachment metadata with IDs needed for get_email_attachment action
+          // Include BOTH snake_case (schema convention) and camelCase (legacy) for compatibility
           attachments.push({
             filename: part.filename,
             mimeType: part.mimeType,
             size: part.body.size || 0,
+            // Primary format (snake_case to match schema parameter names)
+            attachment_id: part.body.attachmentId,
+            message_id: messageId,
+            // Legacy format (camelCase for backward compatibility)
             attachmentId: part.body.attachmentId,
-            messageId: messageId, // Include messageId for get_email_attachment action
-            // Use get_email_attachment action to download content
+            messageId: messageId,
           });
         } catch (error) {
           this.logger.warn({ err: error, filename: part.filename }, 'Failed to process attachment');

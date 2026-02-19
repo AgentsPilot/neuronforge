@@ -161,11 +161,17 @@ export class SlackPluginExecutor extends BasePluginExecutor {
     }
 
     return {
+      // Primary format (snake_case to match schema)
       message_timestamp: responseData.ts,
       channel_id: responseData.channel,
       success: true,
       message_text: message_text,
-      is_threaded: !!thread_timestamp
+      is_threaded: !!thread_timestamp,
+      // Legacy format (camelCase for backward compatibility)
+      messageTimestamp: responseData.ts,
+      channelId: responseData.channel,
+      messageText: message_text,
+      isThreaded: !!thread_timestamp
     };
   }
 
@@ -204,18 +210,28 @@ export class SlackPluginExecutor extends BasePluginExecutor {
       timestamp: msg.ts,
       user: msg.user,
       text: msg.text,
+      // Primary format (snake_case)
       thread_timestamp: msg.thread_ts,
       reply_count: msg.reply_count || 0,
       reactions: include_all_metadata ? msg.reactions : undefined,
       attachments: include_all_metadata ? msg.attachments : undefined,
-      is_thread_parent: !!msg.thread_ts && msg.reply_count > 0
+      is_thread_parent: !!msg.thread_ts && msg.reply_count > 0,
+      // Legacy format (camelCase)
+      threadTimestamp: msg.thread_ts,
+      replyCount: msg.reply_count || 0,
+      isThreadParent: !!msg.thread_ts && msg.reply_count > 0
     }));
 
     return {
       messages: messages,
+      // Primary format (snake_case to match schema)
       message_count: messages.length,
       has_more: data.has_more || false,
-      channel_id: channel_id
+      channel_id: channel_id,
+      // Legacy format (camelCase for backward compatibility)
+      messageCount: messages.length,
+      hasMore: data.has_more || false,
+      channelId: channel_id
     };
   }
 
@@ -243,11 +259,16 @@ export class SlackPluginExecutor extends BasePluginExecutor {
     const data = await this.handleSlackResponse(response, 'update_message');
 
     return {
+      // Primary format (snake_case to match schema)
       message_timestamp: data.ts,
       channel_id: data.channel,
       text: data.text,
       success: true,
-      updated_at: new Date().toISOString()
+      updated_at: new Date().toISOString(),
+      // Legacy format (camelCase for backward compatibility)
+      messageTimestamp: data.ts,
+      channelId: data.channel,
+      updatedAt: new Date().toISOString()
     };
   }
 
@@ -277,8 +298,12 @@ export class SlackPluginExecutor extends BasePluginExecutor {
     return {
       success: true,
       emoji: emoji_name,
+      // Primary format (snake_case to match schema)
       message_timestamp: message_timestamp,
-      channel_id: channel_id
+      channel_id: channel_id,
+      // Legacy format (camelCase for backward compatibility)
+      messageTimestamp: message_timestamp,
+      channelId: channel_id
     };
   }
 
@@ -357,11 +382,17 @@ export class SlackPluginExecutor extends BasePluginExecutor {
     }
 
     return {
+      // Primary format (snake_case to match schema)
       channel_id: channelId,
       channel_name: data.channel.name,
       is_private: data.channel.is_private,
       success: true,
-      created_at: new Date().toISOString()
+      created_at: new Date().toISOString(),
+      // Legacy format (camelCase for backward compatibility)
+      channelId: channelId,
+      channelName: data.channel.name,
+      isPrivate: data.channel.is_private,
+      createdAt: new Date().toISOString()
     };
   }
 
@@ -385,6 +416,7 @@ export class SlackPluginExecutor extends BasePluginExecutor {
     const data = await this.handleSlackResponse(response, 'list_channels');
 
     const channels = (data.channels || []).map((channel: any) => ({
+      // Primary format (snake_case)
       channel_id: channel.id,
       name: channel.name,
       is_private: channel.is_private,
@@ -392,13 +424,22 @@ export class SlackPluginExecutor extends BasePluginExecutor {
       member_count: channel.num_members,
       topic: channel.topic?.value || '',
       purpose: channel.purpose?.value || '',
-      created: channel.created
+      created: channel.created,
+      // Legacy format (camelCase)
+      channelId: channel.id,
+      isPrivate: channel.is_private,
+      isArchived: channel.is_archived,
+      memberCount: channel.num_members
     }));
 
     return {
       channels: channels,
+      // Primary format (snake_case to match schema)
       total_count: channels.length,
-      has_more: !!data.response_metadata?.next_cursor
+      has_more: !!data.response_metadata?.next_cursor,
+      // Legacy format (camelCase for backward compatibility)
+      totalCount: channels.length,
+      hasMore: !!data.response_metadata?.next_cursor
     };
   }
 
@@ -427,6 +468,7 @@ export class SlackPluginExecutor extends BasePluginExecutor {
     }
 
     const formattedUsers = users.map((user: any) => ({
+      // Primary format (snake_case)
       user_id: user.id,
       name: user.name,
       real_name: user.real_name,
@@ -436,12 +478,22 @@ export class SlackPluginExecutor extends BasePluginExecutor {
       is_admin: user.is_admin,
       is_owner: user.is_owner,
       status: user.profile?.status_text || '',
-      avatar: user.profile?.image_72
+      avatar: user.profile?.image_72,
+      // Legacy format (camelCase)
+      userId: user.id,
+      realName: user.real_name,
+      displayName: user.profile?.display_name || user.real_name,
+      isBot: user.is_bot,
+      isAdmin: user.is_admin,
+      isOwner: user.is_owner
     }));
 
     return {
       users: formattedUsers,
-      total_count: formattedUsers.length
+      // Primary format (snake_case to match schema)
+      total_count: formattedUsers.length,
+      // Legacy format (camelCase for backward compatibility)
+      totalCount: formattedUsers.length
     };
   }
 
@@ -465,6 +517,7 @@ export class SlackPluginExecutor extends BasePluginExecutor {
     const user = data.user;
 
     return {
+      // Primary format (snake_case to match schema)
       user_id: user.id,
       name: user.name,
       real_name: user.real_name,
@@ -482,7 +535,21 @@ export class SlackPluginExecutor extends BasePluginExecutor {
       timezone_label: user.tz_label,
       avatar_512: user.profile?.image_512,
       avatar_192: user.profile?.image_192,
-      avatar_72: user.profile?.image_72
+      avatar_72: user.profile?.image_72,
+      // Legacy format (camelCase for backward compatibility)
+      userId: user.id,
+      realName: user.real_name,
+      displayName: user.profile?.display_name || user.real_name,
+      statusText: user.profile?.status_text,
+      statusEmoji: user.profile?.status_emoji,
+      isBot: user.is_bot,
+      isAdmin: user.is_admin,
+      isOwner: user.is_owner,
+      isPrimaryOwner: user.is_primary_owner,
+      timezoneLabel: user.tz_label,
+      avatar512: user.profile?.image_512,
+      avatar192: user.profile?.image_192,
+      avatar72: user.profile?.image_72
     };
   }
 
@@ -563,13 +630,17 @@ export class SlackPluginExecutor extends BasePluginExecutor {
     const uploadedFile = completeData.files?.[0];
 
     return {
+      // Primary format (snake_case to match schema)
       file_id: uploadedFile?.id || fileId,
       filename: uploadedFile?.name || filename,
       title: uploadedFile?.title || title || filename,
       url: uploadedFile?.permalink || uploadedFile?.url_private,
       channels: channel_ids || [],
       success: true,
-      uploaded_at: new Date().toISOString()
+      uploaded_at: new Date().toISOString(),
+      // Legacy format (camelCase for backward compatibility)
+      fileId: uploadedFile?.id || fileId,
+      uploadedAt: new Date().toISOString()
     };
   }
 

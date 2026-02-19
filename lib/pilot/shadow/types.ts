@@ -103,8 +103,15 @@ export interface CaptureResult {
 /** What kind of data shape repair to apply */
 export type RepairActionType =
   | 'extract_single_array'     // Object with single array field → extract it
-  | 'wrap_in_array'            // Single object → wrap in [object]
   | 'extract_named_array'      // Object with multiple arrays → extract best-match
+  | 'extract_from_envelope'    // API envelope: {success: true, data: [...]}
+  | 'extract_paginated_data'   // Paginated: {items: [...], has_more: true}
+  | 'extract_multiresource'    // Multiple entities: {users: [...], posts: [...]}
+  | 'normalize_to_array'       // Polymorphic: null | object | array → always array
+  | 'compact_sparse_array'     // Remove nulls: [{...}, null, {...}] → [{...}, {...}]
+  | 'flatten_hierarchy'        // Tree: {children: [...]} → flat array
+  | 'wrap_in_array'            // Single object → wrap in [object]
+  | 'fix_filter_operation'     // Filter operation missing filter_expression or using wrong operation
   | 'none';                    // No repair possible
 
 /** What happened after attempting repair */
@@ -120,6 +127,14 @@ export interface RepairProposal {
   confidence: number;           // 0-1
   targetStepId: string;         // Upstream step whose output to modify
   extractField?: string;        // Field name to extract (for extract actions)
+  envelopeKey?: string;         // For api_envelope: 'data', 'result', etc.
+  arrayFields?: Array<{ name: string; length: number }>; // For multi_resource
+  paginationInfo?: {            // For paginated_response
+    hasMore?: boolean;
+    nextCursor?: string;
+    offset?: number;
+    total?: number;
+  };
   risk: 'low' | 'medium' | 'high';
 }
 

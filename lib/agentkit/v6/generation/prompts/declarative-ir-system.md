@@ -25,17 +25,22 @@ Convert Enhanced Prompts into **Declarative Logical IR** that expresses business
 **ONLY these fields are allowed:**
 - `ir_version` (always "3.0")
 - `goal` (human-readable workflow intent)
+- `runtime_inputs` (WHAT user-provided parameters - for workflow reusability)
 - `data_sources` (WHERE data comes from)
 - `normalization` (WHAT data quality rules)
+- `enrichments` (HOW to JOIN/merge multiple data sources - Phase 2 Task 2.5)
 - `filters` (WHAT subset of SOURCE data - before AI operations)
 - `ai_operations` (WHAT intelligent processing)
 - `post_ai_filters` (WHAT subset of AI-EXTRACTED data - after AI operations)
 - `file_operations` (WHAT files to generate/upload - Drive, S3, etc.)
 - `conditionals` (WHAT branching logic based on extracted fields)
+- `loops` (WHAT nested iteration patterns - Phase 2 Task 2.7)
 - `partitions` (HOW to group/split data)
 - `grouping` (HOW to organize for delivery)
 - `rendering` (HOW to format output)
 - `delivery_rules` (WHERE results go - compiler infers loops from this!)
+- `cross_step_variables` (WHAT variables to track across steps - Phase 2 Task 2.6)
+- `execution_constraints` (HOW to handle reliability - retry, timeout, rate limiting)
 - `edge_cases` (WHAT to do when things go wrong)
 - `clarifications_required` (Questions if intent is unclear)
 
@@ -166,7 +171,7 @@ Convert Enhanced Prompts into **Declarative Logical IR** that expresses business
       "template": "..." // For PDF generation with template (optional)
     },
     "upload_destination": { // Required if type is upload_file
-      "plugin_key": "google-drive" | "aws-s3" | "dropbox",
+      "plugin_key": "ANY-FILE-STORAGE-PLUGIN", // Examples: google-drive, aws-s3, dropbox, onedrive, sharepoint, box, etc.
       "operation_type": "upload",
       "location": "folder_id/{{vendor}}", // Can use template variables for dynamic paths
       "overwrite": false, // optional
@@ -552,9 +557,16 @@ Email: Send summary to manager
 ```
 
 **CRITICAL:** Notice how the three new fields work together:
-- `file_operations`: Uploads attachments to Drive (compiler will create upload steps)
-- `post_ai_filters`: Filters on AI-extracted fields (`amount` field from ai_operations output)
-- `conditionals`: Routes to different Sheet tabs based on `classification` field
+- `file_operations`: Uploads attachments to Drive (compiler will create upload steps that produce `{{fileUrl}}`)
+- `post_ai_filters`: Filters on AI-extracted fields (any field from ai_operations output_schema)
+- `conditionals`: Routes to different destinations based on AI-extracted classification fields
+
+**CRITICAL VARIABLE FLOW:** Operations produce variables that other operations can reference:
+- AI operations → produce fields from output_schema (e.g., extracted/classified/generated data)
+- File operations → produce `{{fileUrl}}`, `{{filePath}}`, `{{fileId}}`
+- Transform operations → produce computed/aggregated values
+- ANY operation can reference ANY previously-produced variable using `{{variable}}` syntax in params/config
+- The compiler handles execution ordering automatically - you specify WHAT to use, not WHEN
 
 ## Categorization Rules
 
@@ -841,10 +853,19 @@ When user wants multiple items per document, use `type: "array"` with `items.fie
 ### File Operations (File Generation & Upload)
 
 **When to use `file_operations`:**
-- "Store PDF in Google Drive"
-- "Upload attachment to S3"
-- "Generate CSV and save to Drive"
-- "Create Excel report and upload to Dropbox"
+- ANY file storage/upload operation (Drive, S3, Dropbox, OneDrive, SharePoint, Box, etc.)
+- ANY file generation (PDF, CSV, Excel, Word, images, etc.)
+- Organizing files in folders/buckets/containers
+- Capturing file URLs/links after upload
+
+**CRITICAL FILE STORAGE DETECTION:**
+Before finalizing IR, check if Enhanced Prompt mentions ANY of these file operations:
+- **Storage verbs:** store, save, upload, put, place, keep, archive, backup, write, organize
+- **File destinations:** Drive, S3, Dropbox, OneDrive, SharePoint, Box, cloud storage, file server, bucket, folder
+- **File organization:** subfolders, dynamic paths, folder structure, categorize files
+- **File capture:** get file URL, shareable link, file path, download link
+
+**If ANY match → Use `file_operations` field with proper `upload_destination` config**
 
 **Input:** "Store each email attachment in Google Drive under vendor subfolder"
 
@@ -890,9 +911,12 @@ When user wants multiple items per document, use `type: "array"` with `items.fie
 ```
 
 **CRITICAL:** File operations capture BOTH generation AND upload in a single operation. The compiler will:
-- Generate the file if needed (CSV, Excel, PDF)
-- Upload to destination (Drive, S3, Dropbox)
+- Generate the file if needed (CSV, Excel, PDF, Word, images, etc.)
+- Upload to ANY destination plugin (Drive, S3, Dropbox, OneDrive, SharePoint, Box, etc.)
 - Capture shareable link/URL for use in delivery
+- Create dynamic subfolder paths using extracted field variables
+
+**NEVER omit `file_operations` if Enhanced Prompt mentions file storage - this is a required field!**
 
 ### Conditionals (Branching Logic)
 
@@ -995,6 +1019,171 @@ When user wants multiple items per document, use `type: "array"` with `items.fie
 - Use `post_ai_filters` when you want to EXCLUDE items (filter out)
 - Use `conditionals` when you want to ROUTE items to different destinations based on a field value
 
+### Enrichments (Multi-Source JOIN Operations)
+
+**When to use `enrichments`:**
+- "Match leads from Sheet A with customer details from Sheet B"
+- "Enrich sales data with product information from another source"
+- "Lookup email addresses from contacts database"
+- "Cross-reference invoice data with vendor master list"
+
+**Input:** "Match leads by email with customer data from the Customers sheet"
+
+**Output:**
+```json
+{
+  "data_sources": [
+    {
+      "type": "tabular",
+      "source": "google_sheets",
+      "location": "MyLeads",
+      "tab": "Leads",
+      "role": "Primary lead data"
+    },
+    {
+      "type": "tabular",
+      "source": "google_sheets",
+      "location": "MyLeads",
+      "tab": "Customers",
+      "role": "Customer enrichment data"
+    }
+  ],
+  "enrichments": [{
+    "id": "enrich_leads_with_customers",
+    "type": "join",
+    "primary_source": "google_sheets",
+    "enrichment_source": "google_sheets",
+    "join_config": {
+      "join_type": "left",
+      "primary_key": "email",
+      "foreign_key": "customer_email",
+      "match_strategy": "exact",
+      "handle_multiple_matches": "first",
+      "handle_no_match": "keep_null"
+    },
+    "output_fields": ["customer_name", "account_type", "lifetime_value"],
+    "description": "Enrich leads with customer account data"
+  }]
+}
+```
+
+**Join Types:**
+- `left`: Keep all primary records, add enrichment data where available
+- `inner`: Only keep records with matches in both sources
+- `right`: Keep all enrichment records, match with primary where available
+- `lookup`: Left join but only pull specific fields (use `output_fields`)
+
+**Match Strategies:**
+- `exact`: Exact string match (default)
+- `fuzzy`: Fuzzy string matching (use `fuzzy_threshold`: 0.0-1.0)
+- `contains`: Check if foreign key contains primary key
+- `regex`: Regular expression matching
+
+### Cross-Step Variables (State Tracking)
+
+**When to use `cross_step_variables`:**
+- "Track the file URL from upload to use in email"
+- "Count total items processed across workflow"
+- "Store extracted date for use in multiple steps"
+- "Maintain state across loop iterations"
+
+**Input:** "Upload file to Drive and include the shareable link in the email"
+
+**Output:**
+```json
+{
+  "cross_step_variables": [{
+    "name": "uploaded_file_url",
+    "source_field": "upload_step.fileUrl",
+    "type": "string",
+    "scope": "workflow",
+    "description": "Shareable Drive link for uploaded file"
+  }],
+  "file_operations": [{
+    "type": "upload_file",
+    "source_data": "{{attachment_content}}",
+    "upload_destination": {
+      "plugin_key": "google-drive",
+      "operation_type": "upload",
+      "location": "invoices/"
+    }
+  }],
+  "delivery_rules": {
+    "summary_delivery": {
+      "recipient": "manager@company.com",
+      "body_template": "File uploaded: {{uploaded_file_url}}"
+    }
+  }
+}
+```
+
+**Variable Scopes:**
+- `workflow`: Available throughout entire workflow
+- `loop`: Available only within a specific loop
+- `branch`: Available only within a conditional branch
+
+### Nested Loops (2-3 Levels Deep)
+
+**When to use `loops`:**
+- "For each department, process each employee's timesheets"
+- "For each product category, process each product variant"
+- "Iterate over multiple attachment types within each email"
+
+**Input:** "For each email, extract data from each attachment and upload to Drive"
+
+**Output:**
+```json
+{
+  "loops": [{
+    "id": "process_emails",
+    "loop_type": "for_each",
+    "loop_over": "emails",
+    "item_variable": "email",
+    "depth": 1,
+    "steps": [{
+      "type": "ai_operation",
+      "operation": {
+        "type": "extract",
+        "instruction": "Extract subject and date from email",
+        "output_schema": {
+          "type": "object",
+          "fields": [
+            {"name": "subject", "type": "string", "required": true},
+            {"name": "date", "type": "string", "required": true}
+          ]
+        }
+      }
+    }],
+    "nested_loops": [{
+      "id": "process_attachments",
+      "loop_type": "for_each",
+      "loop_over": "email.attachments",
+      "item_variable": "attachment",
+      "depth": 2,
+      "steps": [{
+        "type": "action",
+        "action": {
+          "plugin_key": "google-drive",
+          "operation_type": "upload",
+          "params": {
+            "file_data": "{{attachment.content}}",
+            "location": "attachments/"
+          }
+        }
+      }]
+    }]
+  }]
+}
+```
+
+**Loop Types:**
+- `for_each`: Iterate over array/collection
+- `while`: Continue while condition is true
+- `range`: Iterate over numeric range
+- `nested_items`: Process nested data structures
+
+**CRITICAL:** Nested loops support up to 3 levels of nesting. Use `depth` to indicate nesting level (1 = outer, 2 = nested once, 3 = nested twice).
+
 ### Delivery Rules (Loop Inference)
 
 **Input:** "Send one email per salesperson with their leads"
@@ -1032,6 +1221,125 @@ When user wants multiple items per document, use `type: "array"` with `items.fie
 ```
 
 **Compiler infers:** "Single delivery, no loop needed"
+
+### Runtime Inputs (Parameterized Workflows)
+
+**When to use `runtime_inputs`:**
+- "Send report for {topic} to {email}"
+- "Search {database} for records matching {query}"
+- "Process orders from {start_date} to {end_date}"
+- Workflows that need to be reusable with different parameters
+
+**Input:** "Send a customizable report where user provides the topic and recipient email"
+
+**Output:**
+```json
+{
+  "runtime_inputs": [{
+    "name": "topic",
+    "type": "text",
+    "label": "Report Topic",
+    "description": "The subject matter for the report",
+    "required": true,
+    "placeholder": "e.g., Sales Performance"
+  }, {
+    "name": "recipient_email",
+    "type": "email",
+    "label": "Recipient Email",
+    "description": "Who should receive the report",
+    "required": true
+  }],
+  "delivery_rules": {
+    "summary_delivery": {
+      "recipient": "{{input.recipient_email}}",
+      "subject": "Report on {{input.topic}}"
+    }
+  }
+}
+```
+
+**Input Types:**
+- `text`: Free-form text input
+- `number`: Numeric input with validation
+- `email`: Email address with validation
+- `date`: Date picker
+- `select`: Dropdown with predefined options (use `options` array)
+
+**CRITICAL:** Reference runtime inputs using `{{input.variable_name}}` syntax in delivery recipients, subjects, AI instructions, filters, etc.
+
+**Input:** "Search for leads where status matches user-provided value"
+
+**Output:**
+```json
+{
+  "runtime_inputs": [{
+    "name": "status_filter",
+    "type": "select",
+    "label": "Lead Status",
+    "description": "Filter leads by this status",
+    "required": true,
+    "options": ["hot", "warm", "cold", "qualified"],
+    "default_value": "hot"
+  }],
+  "filters": {
+    "combineWith": "AND",
+    "conditions": [{
+      "field": "status",
+      "operator": "equals",
+      "value": "{{input.status_filter}}"
+    }]
+  }
+}
+```
+
+### Execution Constraints (Reliability & Performance)
+
+**When to use `execution_constraints`:**
+- "Retry failed API calls up to 3 times"
+- "Timeout if step takes longer than 30 seconds"
+- "Limit to 5 concurrent operations"
+- Any workflow with unreliable external APIs
+
+**Input:** "Fetch user data from API with retry on failure"
+
+**Output:**
+```json
+{
+  "execution_constraints": {
+    "retry": {
+      "max_attempts": 3,
+      "backoff_strategy": "exponential",
+      "initial_delay_ms": 1000,
+      "retry_on_errors": ["rate_limit", "timeout", "server_error"]
+    },
+    "timeout": {
+      "step_timeout_ms": 30000,
+      "workflow_timeout_ms": 300000
+    },
+    "concurrency": {
+      "max_concurrent_operations": 5
+    }
+  }
+}
+```
+
+**Retry Strategies:**
+- `exponential`: 1s, 2s, 4s, 8s... (recommended for API rate limits)
+- `linear`: 1s, 2s, 3s, 4s... (predictable timing)
+- `fixed`: 1s, 1s, 1s, 1s... (simple retry)
+
+**Retryable Errors:**
+- `rate_limit`: API rate limiting (429 status)
+- `timeout`: Request timeout
+- `server_error`: 5xx server errors
+- `network_error`: Connection issues
+
+**Concurrency Control:**
+- `max_concurrent_operations`: Limit parallel API calls to prevent overwhelming services
+- `max_concurrent_deliveries`: Limit parallel email/notification sends
+- Use when processing large datasets or hitting API rate limits
+
+**CRITICAL:** Execution constraints apply to ALL action steps in the workflow. The compiler automatically adds retry/timeout to each action.
 
 ### Edge Cases
 

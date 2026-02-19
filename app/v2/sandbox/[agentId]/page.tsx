@@ -322,8 +322,34 @@ export default function BatchCalibrationPage() {
         throw new Error(result.message || 'Batch calibration failed')
       }
 
-      // Store session and issues
-      setSession({
+      // Load the full session data including execution_summary from database
+      const { data: sessionData, error: sessionError } = await supabase
+        .from('calibration_sessions')
+        .select('*')
+        .eq('id', result.sessionId)
+        .single()
+
+      console.log('📊 [Sandbox] Loaded session from database:', {
+        hasSessionData: !!sessionData,
+        sessionError,
+        hasExecutionSummary: !!sessionData?.execution_summary,
+        executionSummary: sessionData?.execution_summary,
+        sessionKeys: sessionData ? Object.keys(sessionData) : []
+      });
+
+      // Store session with full data including execution_summary
+      // Map snake_case from database to camelCase for React
+      setSession(sessionData ? {
+        id: sessionData.id,
+        agentId: sessionData.agent_id,
+        status: sessionData.status,
+        executionId: sessionData.execution_id,
+        totalSteps: sessionData.total_steps,
+        completedSteps: sessionData.completed_steps,
+        failedSteps: sessionData.failed_steps,
+        skippedSteps: sessionData.skipped_steps,
+        execution_summary: sessionData.execution_summary
+      } : {
         id: result.sessionId,
         agentId: agent.id,
         status: result.summary.total === 0 ? 'completed' : 'awaiting_fixes',
@@ -344,7 +370,9 @@ export default function BatchCalibrationPage() {
         const hasHardcoded = await checkForHardcodedValues()
         setHasHardcodedValues(hasHardcoded)
 
-        setFlowState('success')
+        // DON'T change flow state - stay on dashboard to show "All Set!" in right column
+        // setFlowState('success')
+        setFlowState('dashboard')
         setFixesSummary({ parameters: 0, parameterizations: 0, autoRepairs: 0 })
       } else {
         setFlowState('dashboard')
@@ -357,7 +385,100 @@ export default function BatchCalibrationPage() {
     }
   }
 
-  // Apply fixes
+  // Apply fixes without changing flow state (for in-chat application)
+  const handleApplyFixesInChat = async () => {
+    if (!session) return
+
+    try {
+      setIsApplying(true)
+      setError(null)
+
+      // Prepare fixes payload
+      const parameterizationsArray = Object.entries(fixes.parameterizations || {})
+        .map(([issueId, fix]) => ({
+          issueId,
+          approved: fix.approved,
+          paramName: fix.paramName,
+          defaultValue: fix.defaultValue
+        }))
+        // Don't filter here - send ALL choices (both approved and not approved) to API
+        // API will handle filtering, and needs to know what user explicitly rejected
+
+      const autoRepairsArray = Object.entries(fixes.autoRepairs || {})
+        .map(([issueId, fix]) => ({
+          issueId,
+          approved: fix.approved
+        }))
+        .filter(fix => fix.approved)
+
+      const logicFixesArray = Object.entries(fixes.logicFixes || {})
+        .map(([issueId, fix]) => ({
+          issueId,
+          selectedOption: fix.selectedOption,
+          userInput: fix.userInput
+        }))
+
+      // Call apply-fixes API
+      const response = await fetch('/api/v2/calibrate/apply-fixes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sessionId: session.id,
+          parameters: fixes.parameters || {},
+          parameterizations: parameterizationsArray,
+          autoRepairs: autoRepairsArray,
+          logicFixes: logicFixesArray
+        })
+      })
+
+      const result = await response.json()
+
+      if (!response.ok) {
+        throw new Error(result.message || 'Failed to apply fixes')
+      }
+
+      // Store summary for later use
+      setFixesSummary(result.appliedFixes)
+
+      // Re-fetch the agent to get the updated input_schema
+      console.log('[Apply Fixes] Re-fetching agent to get updated input_schema...')
+      const { data: updatedAgent, error: refetchError } = await supabase
+        .from('agents')
+        .select('*')
+        .eq('id', agent.id)
+        .single()
+
+      if (refetchError || !updatedAgent) {
+        console.error('[Apply Fixes] Failed to re-fetch agent:', refetchError)
+        throw new Error('Failed to load updated agent schema')
+      }
+
+      console.log('[Apply Fixes] Updated agent input_schema:', updatedAgent.input_schema)
+
+      // Update agent state with the fresh data
+      setAgent(updatedAgent)
+
+      // Check if workflow has been parameterized
+      if (updatedAgent.input_schema && updatedAgent.input_schema.length > 0) {
+        setHasParameterizedWorkflow(true)
+        console.log('[Apply Fixes] Workflow has been parameterized with', updatedAgent.input_schema.length, 'parameters')
+        setConfigurationSaved(false)
+        setInputValues({})
+      }
+
+      // DON'T change flow state - stay in chat
+      console.log('[Apply Fixes] Fixes applied successfully, staying in chat view')
+
+    } catch (err: any) {
+      console.error('Failed to apply fixes:', err)
+      setError(err.message || 'Failed to apply fixes')
+      throw err // Re-throw so the UI can show error
+    } finally {
+      setIsApplying(false)
+    }
+  }
+
+  // Apply fixes (original - changes flow state)
   const handleApplyFixes = async () => {
     if (!session) return
 
@@ -373,7 +494,8 @@ export default function BatchCalibrationPage() {
           paramName: fix.paramName,
           defaultValue: fix.defaultValue
         }))
-        .filter(fix => fix.approved)
+        // Don't filter here - send ALL choices (both approved and not approved) to API
+        // API will handle filtering, and needs to know what user explicitly rejected
 
       const autoRepairsArray = Object.entries(fixes.autoRepairs || {})
         .map(([issueId, fix]) => ({
@@ -473,12 +595,30 @@ export default function BatchCalibrationPage() {
   const handleRunTestAfterFixes = async (providedInputValues?: Record<string, any>) => {
     if (!agent) return
 
+    // Use provided input values or fall back to stored input values
+    const testInputValues = providedInputValues || inputValues
+
+    // CRITICAL FIX: Validate that all required input_schema parameters are provided
+    // After parameterization, the workflow needs actual values for {{input.X}} templates
+    const requiredParams = agent.input_schema?.filter((p: any) => p.required) || []
+    const missingParams = requiredParams.filter((p: any) => {
+      const value = testInputValues[p.name]
+      return value === undefined || value === '' || value === null
+    })
+
+    if (missingParams.length > 0) {
+      // Missing required parameters - show validation error
+      const missingParamNames = missingParams.map((p: any) => p.label || p.name).join(', ')
+      console.log('[Calibration] Cannot run test - missing required parameters:', missingParamNames)
+
+      setError(`Please provide values for: ${missingParamNames}`)
+      // Stay in current flow state - don't run the test
+      return
+    }
+
     try {
       setFlowState('testing')
       setError(null)
-
-      // Use provided input values or fall back to stored input values
-      const testInputValues = providedInputValues || inputValues
 
       // Run calibration again to verify fixes
       // Use the input values from parameterizations (default values)
@@ -508,8 +648,26 @@ export default function BatchCalibrationPage() {
         const hasHardcoded = await checkForHardcodedValues()
         setHasHardcodedValues(hasHardcoded)
 
-        // Update session and show success!
-        setSession({
+        // Load the full session data including execution_summary from database
+        const { data: sessionData } = await supabase
+          .from('calibration_sessions')
+          .select('*')
+          .eq('id', result.sessionId)
+          .single()
+
+        // Update session with full data including execution_summary
+        // Map snake_case from database to camelCase for React
+        setSession(sessionData ? {
+          id: sessionData.id,
+          agentId: sessionData.agent_id,
+          status: sessionData.status,
+          executionId: sessionData.execution_id,
+          totalSteps: sessionData.total_steps,
+          completedSteps: sessionData.completed_steps,
+          failedSteps: sessionData.failed_steps,
+          skippedSteps: sessionData.skipped_steps,
+          execution_summary: sessionData.execution_summary
+        } : {
           id: result.sessionId,
           agentId: agent.id,
           status: 'completed',
@@ -519,10 +677,30 @@ export default function BatchCalibrationPage() {
           failedSteps: result.summary.failedSteps,
           skippedSteps: result.summary.skippedSteps
         })
-        setFlowState('success')
+        // DON'T change flow state - stay on dashboard to show "All Set!" in right column
+        // setFlowState('success')
+        setFlowState('dashboard')
       } else {
+        // Load the full session data including execution_summary from database
+        const { data: sessionData } = await supabase
+          .from('calibration_sessions')
+          .select('*')
+          .eq('id', result.sessionId)
+          .single()
+
         // Still have issues - back to dashboard with clear message
-        setSession({
+        // Map snake_case from database to camelCase for React
+        setSession(sessionData ? {
+          id: sessionData.id,
+          agentId: sessionData.agent_id,
+          status: sessionData.status,
+          executionId: sessionData.execution_id,
+          totalSteps: sessionData.total_steps,
+          completedSteps: sessionData.completed_steps,
+          failedSteps: sessionData.failed_steps,
+          skippedSteps: sessionData.skipped_steps,
+          execution_summary: sessionData.execution_summary
+        } : {
           id: result.sessionId,
           agentId: agent.id,
           status: 'awaiting_fixes',
@@ -620,6 +798,11 @@ export default function BatchCalibrationPage() {
 
       console.log('[Calibration] Successfully approved agent:', updateData)
 
+      // Update local agent state to reflect production_ready change
+      if (updateData && updateData.length > 0) {
+        setAgent(prev => prev ? { ...prev, production_ready: true } : null)
+      }
+
       // Set flag to show tour on agent page
       if (typeof window !== 'undefined') {
         console.log('[Calibration] Setting calibration-completed flag for agent:', agentId)
@@ -634,11 +817,8 @@ export default function BatchCalibrationPage() {
         console.log('[Calibration] Verified localStorage flag:', verifyFlag)
       }
 
-      // Small delay to ensure localStorage is written
-      await new Promise(resolve => setTimeout(resolve, 100))
-
-      // Navigate to agent page
-      console.log('[Calibration] Navigating to agent page:', `/v2/agents/${agentId}`)
+      // Navigate to agent details page
+      console.log('[Calibration] Agent approved for production - navigating to agent details')
       router.push(`/v2/agents/${agentId}`)
     } catch (err) {
       console.error('[Calibration] Error approving agent:', err)
@@ -823,37 +1003,20 @@ export default function BatchCalibrationPage() {
             </div>
           )}
 
-          {/* Flow States */}
-          {flowState === 'setup' && (
+          {/* Flow States - Unified View */}
+          {(flowState === 'setup' || flowState === 'running' || flowState === 'dashboard') && agent && (
             <CalibrationSetup
               agent={agent}
               onRun={handleRunCalibration}
-              isRunning={false}
+              isRunning={flowState === 'running'}
               initialInputValues={inputValues}
-            />
-          )}
-
-          {flowState === 'running' && (
-            <div className="flex flex-col items-center justify-center py-12 sm:py-16 lg:py-20">
-              <Loader2 className="w-12 h-12 sm:w-14 sm:h-14 lg:w-16 lg:h-16 text-[var(--v2-primary)] animate-spin mb-3 sm:mb-4" />
-              <h2 className="text-xl sm:text-2xl font-semibold text-[var(--v2-text-primary)] mb-1 sm:mb-2">
-                Checking Your Workflow
-              </h2>
-              <p className="text-sm sm:text-base text-[var(--v2-text-secondary)]">
-                Looking for improvements...
-              </p>
-            </div>
-          )}
-
-          {flowState === 'dashboard' && session && issues && (
-            <CalibrationDashboard
-              session={session}
               issues={issues}
               fixes={fixes}
               onFixesChange={setFixes}
-              onApplyFixes={handleApplyFixes}
-              isApplying={isApplying}
-              onBackToCalibration={() => setFlowState('setup')}
+              onApplyFixes={handleApplyFixesInChat}
+              schemaMetadata={schemaMetadata}
+              onApproveForProduction={handleApproveForProduction}
+              session={session}
             />
           )}
 
