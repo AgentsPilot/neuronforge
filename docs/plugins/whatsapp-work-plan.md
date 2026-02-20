@@ -1,7 +1,7 @@
 # WhatsApp Plugin — Work Plan
 
 **Created**: 2026-02-13
-**Status**: Paused — testing outgoing messages before continuing P1
+**Status**: In progress — sandbox setup done, testing outgoing actions via AgentPilot
 **Goal**: Make the WhatsApp plugin fully functional end-to-end
 **Delete this file**: Once all tasks are implemented and verified
 
@@ -15,6 +15,7 @@
 | 2 | Where to store incoming WhatsApp messages? | **Deferred** — see options below. Revisit after outgoing messages are tested. |
 | 3 | Should incoming messages auto-trigger agent workflows? | **Deferred** — requires a platform-level trigger/event system that doesn't exist yet. Not WhatsApp-specific. |
 | 4 | Do we need an OAuth callback route for `/oauth/callback/whatsapp`? | **No** — generic handler at `app/oauth/callback/[plugin]/route.ts` covers this, including `extractPluginProfileData()` for `phone_number_id` and `waba_id` |
+| 5 | How do `phone_number_id` and `waba_id` get into `profile_data`? | **`config_id` required** — Meta only returns these in the callback URL when using Embedded Signup flow with a valid `WHATSAPP_CONFIG_ID`. Without it, standard OAuth only returns `code`+`state`. Current workaround: manually populate in DB. TODO: set up Embedded Signup config in Meta dashboard. |
 
 ### Decision #2 — Options Discussed
 
@@ -150,6 +151,98 @@
 
 ---
 
+## Architecture & Integration Model
+
+### How It Works
+
+AgentPilot uses **Meta's Cloud API (Direct Integration)** — Model 1 of two possible approaches:
+
+| Model | Description | Status |
+|-------|-------------|--------|
+| **1. Direct Integration (current)** | AgentPilot creates one Meta App. Each user brings their own WABA + phone number, connects via OAuth. AgentPilot sends messages on their behalf using their access token. | Active |
+| **2. Tech Provider / BSP** | Become an official Meta partner. Users create a WABA directly inside the app via Embedded Signup. Smoother UX but requires Meta partnership approval. | Future consideration |
+
+### OAuth Connection Flow
+
+1. User clicks "Connect WhatsApp" in AgentPilot settings
+2. OAuth redirects to Meta — user logs into their Facebook/Business Manager
+3. User grants AgentPilot permission to their WABA
+4. AgentPilot receives access token + `phone_number_id` + `waba_id` (stored in `profile_data`)
+5. Agents can now send messages via Cloud API using the user's credentials
+
+### What Users Need Before Connecting
+
+Each user must have the following set up on Meta's side before they can OAuth into AgentPilot:
+
+1. **Meta Business Account** — created at business.facebook.com
+2. **Verified business** — upload business registration docs (takes 2-5 business days)
+3. **WhatsApp Business Account (WABA)** — created in Meta Business Manager
+4. **A phone number** registered to their WABA — can be new or existing (cannot be registered on WhatsApp personal app simultaneously)
+5. **At least one approved message template** — required for business-initiated conversations
+6. **Billing configured** — Meta charges per message (service/user-initiated messages are free, marketing/utility have per-message costs)
+
+### Messaging Rules
+
+| Rule | Details |
+|------|---------|
+| **24-hour window** | Free-form text messages (`send_text_message`) only within 24 hours of the customer's last message |
+| **Template messages** | Required for business-initiated conversations outside the 24-hour window |
+| **Rate limit** | 80 messages/second per phone number |
+| **Messaging limits** | Starts at 1,000 conversations/day, increases automatically with good quality rating |
+| **Free tier** | 1,000 free service conversations per month per WABA |
+
+---
+
+## Sandbox Testing Checklist
+
+### Platform Setup (AgentPilot — done once)
+
+- [x] **Create Meta Developer account** at https://developers.facebook.com
+- [x] **Create a new Meta App** — "AgentsPilot" (App ID: 806710945245098), "Business" type, WhatsApp product added
+- [x] **Copy App credentials to `.env.local`**:
+  - `WHATSAPP_CLIENT_ID` = ✅ set
+  - `WHATSAPP_CLIENT_SECRET` = ✅ set
+  - `WHATSAPP_CONFIG_ID` = ⬜ still placeholder (needed for Embedded Signup — see Decision #5)
+  - `WHATSAPP_VERIFY_TOKEN` = ✅ set
+- [ ] **Configure redirect URI** in Meta App → Facebook Login → Settings: `http://localhost:3000/oauth/callback/whatsapp-business` (skipped for now — works in dev mode without it)
+
+### Sandbox Testing (send test messages)
+
+- [x] **Locate the test sandbox** — Meta test phone number provisioned
+- [x] **Add recipient phone numbers** — test recipient added in Meta dashboard
+- [x] **Send a test message from Meta dashboard** — `hello_world` template sent successfully
+- [x] **Note the sandbox credentials** — Phone Number ID: `944519695419035`, WABA ID: `25567945806209673`
+
+### Webhook Setup
+
+- [ ] **Deploy or expose a public URL** — Meta needs to reach your webhook (use ngrok or deploy to Vercel for testing)
+- [ ] **Configure webhook in Meta dashboard** — WhatsApp > Configuration:
+  - Callback URL: `https://<your-domain>/api/plugins/webhooks/whatsapp-business`
+  - Verify token: same value as `WHATSAPP_VERIFY_TOKEN` in `.env`
+  - Subscribe to: `messages` field
+- [ ] **Test webhook verification** — Meta sends a GET request; your endpoint should respond with the challenge
+
+### End-to-End Test via AgentPilot
+
+- [x] **Connect WhatsApp via OAuth** — connected via `/test-plugins-v2`, token saved (expires 2026-04-15)
+- [~] **Verify `profile_data`** — `phone_number_id` and `waba_id` NOT returned by Meta (see Decision #5). Manually populated in DB as workaround.
+- [ ] **Test `list_message_templates`** — via test page (`/test-plugins-v2`) to verify API access
+- [ ] **Test `send_template_message`** — send `hello_world` to test recipient
+- [x] **Test `send_text_message`** — ✅ worked after opening 24h window. First attempt returned success from API but message not delivered (no open window). After recipient replied to template, text message delivered successfully.
+- [ ] **Test `send_interactive_message`** — send a button or list message
+- [ ] **Test `mark_message_read`** — mark an incoming message as read (requires webhook to be working)
+
+### Sandbox Limitations
+
+| Limitation | Details |
+|------------|---------|
+| Test recipients | Max 5 manually-added phone numbers |
+| Access token | Temporary, expires every 24 hours (not suitable for production) |
+| Templates | Only the default `hello_world` template is pre-approved; custom templates need approval |
+| OAuth testing | Full OAuth flow requires a real WABA with a real phone number — sandbox uses manual token copy |
+
+---
+
 ## Progress Log
 
 | Date | What was done |
@@ -162,3 +255,6 @@
 | 2026-02-13 | P3 complete — Pino logger with correlation ID in webhook route |
 | 2026-02-13 | P1 findUserByPhoneNumberId — added `findActiveConnectionByProfileData()` to UserPluginConnections, JSONB @> query |
 | 2026-02-13 | P1 decisions discussed — incoming message persistence deferred, status persistence deferred. Test outgoing first. |
+| 2026-02-14 | Sandbox setup — Meta App confirmed, `.env.local` credentials set, test message sent from Meta dashboard |
+| 2026-02-14 | OAuth connected — token saved, but `profile_data` missing `phone_number_id`/`waba_id` (needs `config_id` for Embedded Signup). Manually populated in DB. |
+| 2026-02-14 | Testing outgoing actions via `/test-plugins-v2` — in progress |
