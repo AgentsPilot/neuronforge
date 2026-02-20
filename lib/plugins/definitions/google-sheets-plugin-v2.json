@@ -428,6 +428,103 @@
         }
       }
     },
+    "get_or_create_spreadsheet": {
+      "description": "Get existing spreadsheet by title or create if it doesn't exist (prevents duplicates)",
+      "usage_context": "Use this instead of create_spreadsheet when you want idempotent spreadsheet creation. Perfect for recurring workflows to avoid creating duplicate spreadsheets on each run.",
+      "parameters": {
+        "type": "object",
+        "required": ["title"],
+        "properties": {
+          "title": {
+            "type": "string",
+            "maxLength": 255,
+            "description": "Title of the spreadsheet to find or create"
+          },
+          "sheet_names": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Names of sheets to create (only used if creating new spreadsheet)"
+          },
+          "initial_data": {
+            "type": "object",
+            "description": "Optional initial data to populate the first sheet (only used if creating new spreadsheet)",
+            "properties": {
+              "range": {
+                "type": "string",
+                "description": "Starting range for initial data (e.g., 'A1')"
+              },
+              "values": {
+                "type": "array",
+                "description": "2D array of initial values",
+                "items": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "rules": {
+        "limits": {
+          "title_length": {
+            "condition": "title_length > 255",
+            "action": "block",
+            "message": "Spreadsheet title cannot exceed 255 characters."
+          }
+        },
+        "confirmations": {}
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "spreadsheet_id": { "type": "string", "description": "Unique identifier for the spreadsheet (existing or newly created)" },
+          "spreadsheet_url": { "type": "string", "description": "URL to open the spreadsheet in Google Sheets" },
+          "title": { "type": "string", "description": "Title of the spreadsheet" },
+          "created": { "type": "boolean", "description": "True if spreadsheet was newly created, false if it already existed" },
+          "sheet_count": { "type": "integer", "description": "Number of sheets in the spreadsheet" },
+          "sheets": {
+            "type": "array",
+            "description": "List of sheets in the spreadsheet",
+            "items": {
+              "type": "object",
+              "properties": {
+                "sheet_id": { "type": "integer", "description": "Unique sheet ID" },
+                "title": { "type": "string", "description": "Sheet name" },
+                "index": { "type": "integer", "description": "Sheet position (0-based)" }
+              }
+            }
+          },
+          "created_at": { "type": "string", "description": "Timestamp when spreadsheet was created or found (ISO 8601)" }
+        }
+      },
+      "output_guidance": {
+        "success_description": "Got or created spreadsheet",
+        "sample_output": {
+          "spreadsheet_id": "1abc123xyz789",
+          "spreadsheet_url": "https://docs.google.com/spreadsheets/d/1abc123xyz789",
+          "title": "Sales Report Q1 2024",
+          "created": false,
+          "sheet_count": 2,
+          "sheets": [
+            {"sheet_id": 0, "title": "Summary", "index": 0},
+            {"sheet_id": 1234567, "title": "Details", "index": 1}
+          ],
+          "created_at": "2024-01-15T11:30:00Z"
+        },
+        "common_errors": {
+          "auth_failed": "Your Google Sheets connection has expired. Please reconnect in Settings → Connected Apps.",
+          "quota_exceeded": "You've reached your spreadsheet creation limit. Please try again later.",
+          "invalid_title": "The spreadsheet title is invalid or too long. Please use a shorter title.",
+          "api_rate_limit": "Too many requests. Please wait a moment and try again.",
+          "insufficient_permissions": "Google Sheets permissions are insufficient. Please reconnect with full access."
+        }
+      }
+    },
     "get_spreadsheet_info": {
       "description": "Get metadata and information about a spreadsheet",
       "usage_context": "When user wants to explore spreadsheet structure, list available sheets, or get properties before reading/writing",

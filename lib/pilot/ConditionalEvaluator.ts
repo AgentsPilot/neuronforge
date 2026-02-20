@@ -512,26 +512,32 @@ export class ConditionalEvaluator {
     switch (operator) {
       case '==':
       case 'equals':
+      case 'eq':  // Alias for backward compatibility with system prompts
         return left == right;
 
       case '!=':
       case 'not_equals':
+      case 'ne':  // Alias for backward compatibility with system prompts
         return left != right;
 
       case '>':
       case 'greater_than':
+      case 'gt':  // Alias for backward compatibility with system prompts
         return left > right;
 
       case '>=':
       case 'greater_than_or_equal':
+      case 'gte':  // Alias for backward compatibility with system prompts
         return left >= right;
 
       case '<':
       case 'less_than':
+      case 'lt':  // Alias for backward compatibility with system prompts
         return left < right;
 
       case '<=':
       case 'less_than_or_equal':
+      case 'lte':  // Alias for backward compatibility with system prompts
         return left <= right;
 
       case 'contains':

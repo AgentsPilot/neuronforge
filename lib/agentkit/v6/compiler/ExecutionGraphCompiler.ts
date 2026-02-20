@@ -766,7 +766,8 @@ export class ExecutionGraphCompiler {
       },
       gather: {
         operation: loop.collect_outputs ? 'collect' : 'flatten',
-        outputKey: loop.output_variable
+        outputKey: loop.output_variable,
+        ...(loop.collect_from && { from: loop.collect_from })  // ✅ Add collect_from as "from" field
       },
       output_variable: loop.output_variable  // ✅ Register as named variable for access by later steps
     }

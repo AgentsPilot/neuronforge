@@ -64,7 +64,7 @@ import {
   Phone,
   Cloud
 } from 'lucide-react'
-import { DraftAgentTour } from '@/components/agents/DraftAgentTour'
+import DraftAgentTour from '@/components/agents/DraftAgentTour'
 
 // Ultra-Modern Modal with Dynamic Sizing
 const Modal = ({ isOpen, onClose, children }: { isOpen: boolean; onClose: () => void; children: React.ReactNode }) => {

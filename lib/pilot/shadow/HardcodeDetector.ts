@@ -428,7 +428,9 @@ export class HardcodeDetector {
     // Values in .filter/.condition/.where are business logic
     if (path.includes('.filter') || path.includes('.condition') || path.includes('.where')) {
       // Skip MIME type constants - these are workflow logic, not user-configurable
-      if (this.patterns.mime_type.test(strValue)) {
+      // Matches both full MIME types (image/png) and prefixes (image/, application/pdf)
+      if (this.patterns.mime_type.test(strValue) ||
+          /^(application\/pdf|image\/|audio\/|video\/|text\/)$/i.test(strValue)) {
         console.log(`[HardcodeDetector] Skipping MIME type constant: ${strValue} at ${firstLocation.path}`)
         return null
       }

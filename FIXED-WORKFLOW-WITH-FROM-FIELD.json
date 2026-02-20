@@ -1,0 +1,416 @@
+[
+  {
+    "id": "step1",
+    "name": "Fetch Data Using Google-mail",
+    "type": "action",
+    "action": "search_emails",
+    "params": {
+      "query": "is:unread has:attachment",
+      "include_attachments": true
+    },
+    "plugin": "google-mail",
+    "step_id": "step1",
+    "description": "Fetch data using google-mail",
+    "output_variable": "emails_result"
+  },
+  {
+    "id": "step2",
+    "name": "Deliver Using Google-drive",
+    "type": "action",
+    "action": "create_folder",
+    "params": {
+      "folder_name": "Email Attachments - Expenses"
+    },
+    "plugin": "google-drive",
+    "step_id": "step2",
+    "description": "Deliver using google-drive",
+    "output_variable": "drive_folder"
+  },
+  {
+    "id": "step3",
+    "name": "Loop Over Emails_result",
+    "type": "scatter_gather",
+    "gather": {
+      "operation": "collect",
+      "outputKey": "all_transactions",
+      "from": "email_transactions"
+    },
+    "scatter": {
+      "input": "{{emails_result.emails}}",
+      "steps": [
+        {
+          "id": "step4",
+          "name": "Loop Over Current_email",
+          "type": "scatter_gather",
+          "gather": {
+            "operation": "collect",
+            "outputKey": "email_transactions",
+            "from": "transaction_record"
+          },
+          "scatter": {
+            "input": "{{current_email.attachments}}",
+            "steps": [
+              {
+                "id": "step5",
+                "name": "Fetch Data Using Google-mail",
+                "type": "action",
+                "action": "get_email_attachment",
+                "params": {
+                  "message_id": "{{current_email.id}}",
+                  "attachment_id": "{{current_attachment.attachment_id}}"
+                },
+                "plugin": "google-mail",
+                "step_id": "step5",
+                "description": "Fetch data using google-mail",
+                "output_variable": "attachment_content"
+              },
+              {
+                "id": "step6",
+                "name": "Conditional",
+                "then": [
+                  {
+                    "id": "step7",
+                    "name": "Deliver Using Google-drive",
+                    "type": "action",
+                    "action": "upload_file",
+                    "params": {
+                      "file_name": "{{attachment_content.filename}}",
+                      "folder_id": "{{drive_folder.folder_id}}",
+                      "mime_type": "{{attachment_content.mimeType}}",
+                      "file_content": "{{attachment_content.data}}"
+                    },
+                    "plugin": "google-drive",
+                    "step_id": "step7",
+                    "description": "Deliver using google-drive",
+                    "output_variable": "uploaded_file"
+                  },
+                  {
+                    "id": "step8",
+                    "name": "AI",
+                    "type": "ai_processing",
+                    "input": "{{attachment_content.data}}",
+                    "config": {
+                      "ai_type": "extract",
+                      "temperature": 0,
+                      "output_schema": {
+                        "type": "object",
+                        "required": [
+                          "date",
+                          "vendor",
+                          "amount",
+                          "currency",
+                          "invoice_receipt_number",
+                          "amount_missing"
+                        ],
+                        "properties": {
+                          "date": {
+                            "type": "string",
+                            "description": "Date of the transaction (ISO format or as found in document)"
+                          },
+                          "amount": {
+                            "type": "number",
+                            "description": "Total transaction amount as a number. Null if not found."
+                          },
+                          "vendor": {
+                            "type": "string",
+                            "description": "Vendor or merchant name"
+                          },
+                          "currency": {
+                            "type": "string",
+                            "description": "Currency code (e.g. USD, EUR). Default to USD if not specified."
+                          },
+                          "amount_missing": {
+                            "type": "boolean",
+                            "description": "True if the amount could not be confidently extracted"
+                          },
+                          "invoice_receipt_number": {
+                            "type": "string",
+                            "description": "Invoice number or receipt number"
+                          }
+                        }
+                      }
+                    },
+                    "prompt": "Extract standard transaction fields from this attachment content. Look for: date of transaction, vendor/merchant name, total amount (numeric), currency (e.g. USD, EUR), and invoice or receipt number. If you cannot confidently determine the amount, set amount to null and set amount_missing to true. Extract all fields you can find even if some are missing.",
+                    "step_id": "step8",
+                    "description": "AI: extract",
+                    "output_variable": "extracted_data"
+                  },
+                  {
+                    "id": "step9",
+                    "name": "AI",
+                    "type": "ai_processing",
+                    "input": "Extracted data: {{extracted_data}}. Drive link: {{uploaded_file.web_view_link}}. Filename: {{attachment_content.filename}}. Source email from: {{current_email.from}}. Source email subject: {{current_email.subject}}. Source email date: {{current_email.date}}. Email ID: {{current_email.id}}.",
+                    "config": {
+                      "ai_type": "generate",
+                      "temperature": 0,
+                      "output_schema": {
+                        "type": "object",
+                        "required": [
+                          "date",
+                          "vendor",
+                          "amount",
+                          "currency",
+                          "invoice_receipt_number",
+                          "amount_missing",
+                          "drive_link",
+                          "filename",
+                          "source_email_from",
+                          "source_email_subject",
+                          "source_email_date",
+                          "source_email_id"
+                        ],
+                        "properties": {
+                          "date": {
+                            "type": "string",
+                            "description": "Transaction date"
+                          },
+                          "amount": {
+                            "type": "number",
+                            "description": "Transaction amount"
+                          },
+                          "vendor": {
+                            "type": "string",
+                            "description": "Vendor name"
+                          },
+                          "currency": {
+                            "type": "string",
+                            "description": "Currency code"
+                          },
+                          "filename": {
+                            "type": "string",
+                            "description": "Original attachment filename"
+                          },
+                          "drive_link": {
+                            "type": "string",
+                            "description": "Google Drive web view link for the uploaded file"
+                          },
+                          "amount_missing": {
+                            "type": "boolean",
+                            "description": "True if amount was not found"
+                          },
+                          "source_email_id": {
+                            "type": "string",
+                            "description": "Gmail message ID of the source email"
+                          },
+                          "source_email_date": {
+                            "type": "string",
+                            "description": "Date of the source email"
+                          },
+                          "source_email_from": {
+                            "type": "string",
+                            "description": "Sender of the source email"
+                          },
+                          "source_email_subject": {
+                            "type": "string",
+                            "description": "Subject of the source email"
+                          },
+                          "invoice_receipt_number": {
+                            "type": "string",
+                            "description": "Invoice or receipt number"
+                          }
+                        }
+                      }
+                    },
+                    "prompt": "Combine the extracted transaction data with the provided metadata into a single structured transaction record. Output all fields exactly as provided. Do not modify any values, just merge them into one JSON object.",
+                    "step_id": "step9",
+                    "description": "AI: generate",
+                    "output_variable": "transaction_record"
+                  },
+                  {
+                    "id": "step10",
+                    "name": "Conditional",
+                    "then": [
+                      {
+                        "id": "step11",
+                        "name": "Deliver Using Google-sheets",
+                        "type": "action",
+                        "action": "append_rows",
+                        "params": {
+                          "range": "Expenses",
+                          "values": [
+                            [
+                              "{{transaction_record.date}}",
+                              "{{transaction_record.vendor}}",
+                              "{{transaction_record.amount}}",
+                              "{{transaction_record.currency}}",
+                              "{{transaction_record.invoice_receipt_number}}",
+                              "{{transaction_record.drive_link}}",
+                              "{{transaction_record.source_email_from}}",
+                              "{{transaction_record.source_email_subject}}"
+                            ]
+                          ],
+                          "spreadsheet_id": "1pM8WbXtPgaYqokHn_spgQAfR7SBuql3JUtE1ugDtOpc"
+                        },
+                        "plugin": "google-sheets",
+                        "step_id": "step11",
+                        "description": "Deliver using google-sheets"
+                      }
+                    ],
+                    "type": "conditional",
+                    "step_id": "step10",
+                    "condition": {
+                      "conditions": [
+                        {
+                          "field": "transaction_record.amount_missing",
+                          "value": false,
+                          "operator": "equals",
+                          "conditionType": "simple"
+                        },
+                        {
+                          "field": "transaction_record.amount",
+                          "value": 50,
+                          "operator": "greater_than",
+                          "conditionType": "simple"
+                        }
+                      ],
+                      "conditionType": "complex_and"
+                    },
+                    "description": "Conditional: check_amount_for_sheets"
+                  }
+                ],
+                "type": "conditional",
+                "step_id": "step6",
+                "condition": {
+                  "conditions": [
+                    {
+                      "field": "attachment_content.mimeType",
+                      "value": "application/pdf",
+                      "operator": "equals",
+                      "conditionType": "simple"
+                    },
+                    {
+                      "field": "attachment_content.mimeType",
+                      "value": "image/",
+                      "operator": "contains",
+                      "conditionType": "simple"
+                    }
+                  ],
+                  "conditionType": "complex_or"
+                },
+                "description": "Conditional: check_attachment_type"
+              }
+            ],
+            "itemVariable": "current_attachment"
+          },
+          "step_id": "step4",
+          "description": "Loop over current_email",
+          "output_variable": "email_transactions"
+        }
+      ],
+      "itemVariable": "current_email"
+    },
+    "step_id": "step3",
+    "description": "Loop over emails_result",
+    "output_variable": "all_transactions"
+  },
+  {
+    "id": "step12",
+    "name": "Transform",
+    "type": "transform",
+    "input": "{{all_transactions}}",
+    "config": {},
+    "step_id": "step12",
+    "operation": "flatten",
+    "description": "Transform: flatten",
+    "output_variable": "all_transactions"
+  },
+  {
+    "id": "step13",
+    "name": "Transform",
+    "type": "transform",
+    "input": "{{all_transactions}}",
+    "config": {
+      "condition": {
+        "conditions": [
+          {
+            "field": "item.amount_missing",
+            "value": false,
+            "operator": "eq",
+            "conditionType": "simple"
+          },
+          {
+            "field": "item.amount",
+            "value": 50,
+            "operator": "gt",
+            "conditionType": "simple"
+          }
+        ],
+        "conditionType": "complex_and"
+      },
+      "filter_expression": {
+        "type": "complex",
+        "operator": "and",
+        "conditions": [
+          {
+            "type": "simple",
+            "value": false,
+            "operator": "eq",
+            "variable": "item.amount_missing"
+          },
+          {
+            "type": "simple",
+            "value": 50,
+            "operator": "gt",
+            "variable": "item.amount"
+          }
+        ]
+      }
+    },
+    "step_id": "step13",
+    "operation": "filter",
+    "description": "Transform: filter",
+    "output_variable": "high_value_transactions"
+  },
+  {
+    "id": "step14",
+    "name": "AI",
+    "type": "ai_processing",
+    "input": "All transactions: {{all_transactions}}. High value transactions (amount > $50): {{high_value_transactions}}.",
+    "config": {
+      "ai_type": "generate",
+      "temperature": 0.3,
+      "output_schema": {
+        "type": "object",
+        "required": [
+          "summary_email_html",
+          "subject_line"
+        ],
+        "properties": {
+          "subject_line": {
+            "type": "string",
+            "description": "Email subject line summarizing the processing results"
+          },
+          "summary_email_html": {
+            "type": "string",
+            "description": "Complete HTML email body with all required sections: all transactions table, over-$50 table, totals summary, skipped attachments notes, Drive links, and source email info"
+          }
+        }
+      }
+    },
+    "prompt": "Generate a comprehensive HTML-formatted summary email for expense tracking. The email must include ALL of the following sections:\n\n1. **All Transactions Table**: An HTML table listing EVERY transaction (including those with amount <= $50). Columns: Date, Vendor, Amount, Currency, Invoice/Receipt #, Google Drive Link (as clickable hyperlink), Source Email (sender + subject).\n\n2. **Over $50 Transactions Section**: A separate HTML table listing ONLY transactions where amount > $50. Same columns as above.\n\n3. **Totals Summary Section**: Include:\n   - Total number of transactions extracted\n   - Sum of all transaction amounts\n   - Sum of amounts for transactions > $50\n   - Number of transactions > $50\n   - Number of transactions <= $50\n\n4. **Skipped Attachments Section**: List any attachments where amount_missing is true. For each, show: filename, source email sender, source email subject, and Google Drive link. If none were skipped, state 'No attachments were skipped.'\n\nMake the email professional, well-formatted with clear section headers. Use HTML tables with borders for readability. All Drive links must be clickable hyperlinks.",
+    "step_id": "step14",
+    "description": "AI: generate",
+    "output_variable": "summary_email_content"
+  },
+  {
+    "id": "step15",
+    "name": "Deliver Using Google-mail",
+    "type": "action",
+    "action": "send_email",
+    "params": {
+      "content": {
+        "body": "{{summary_email_content.summary_email_html}}",
+        "is_html": true,
+        "subject": "{{summary_email_content.subject_line}}"
+      },
+      "recipients": {
+        "to": [
+          "offir.omer@gmail.com"
+        ]
+      }
+    },
+    "plugin": "google-mail",
+    "step_id": "step15",
+    "description": "Deliver using google-mail"
+  }
+]

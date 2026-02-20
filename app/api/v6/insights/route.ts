@@ -9,6 +9,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createAuthenticatedServerClient } from '@/lib/supabaseServerAuth';
 import { InsightRepository } from '@/lib/repositories/InsightRepository';
 
+// Force dynamic rendering (uses cookies for auth)
+export const dynamic = 'force-dynamic';
+
 export async function GET(request: NextRequest) {
   try {
     // Use createAuthenticatedServerClient for consistent auth

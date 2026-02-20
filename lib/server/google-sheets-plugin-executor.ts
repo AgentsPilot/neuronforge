@@ -37,6 +37,9 @@ export class GoogleSheetsPluginExecutor extends GoogleBasePluginExecutor {
       case 'create_spreadsheet':
         result = await this.createSpreadsheet(connection, parameters);
         break;
+      case 'get_or_create_spreadsheet':
+        result = await this.getOrCreateSpreadsheet(connection, parameters);
+        break;
       case 'get_spreadsheet_info':
         result = await this.getSpreadsheetInfo(connection, parameters);
         break;
@@ -236,6 +239,64 @@ export class GoogleSheetsPluginExecutor extends GoogleBasePluginExecutor {
       tableRange: data.tableRange,
       sheetName: range.split('!')[0] || range,
       appendedAt: new Date().toISOString()
+    };
+  }
+
+  // Get existing spreadsheet by title or create if it doesn't exist (prevents duplicates)
+  private async getOrCreateSpreadsheet(connection: any, parameters: any): Promise<any> {
+    this.logger.debug('Get or create spreadsheet via Google Drive API');
+
+    const title = parameters.title;
+    if (!title) {
+      throw new Error('title is required');
+    }
+
+    // Search for existing spreadsheet by title using Drive API
+    const driveUrl = new URL('https://www.googleapis.com/drive/v3/files');
+    const query = `name='${title.replace(/'/g, "\\'")}' and mimeType='application/vnd.google-apps.spreadsheet' and trashed=false`;
+    driveUrl.searchParams.set('q', query);
+    driveUrl.searchParams.set('pageSize', '1');
+    driveUrl.searchParams.set('fields', 'files(id, name, webViewLink)');
+
+    const searchResponse = await fetch(driveUrl.toString(), {
+      headers: {
+        'Authorization': `Bearer ${connection.access_token}`,
+        'Accept': 'application/json',
+      },
+    });
+
+    if (!searchResponse.ok) {
+      const errorData = await searchResponse.text();
+      this.logger.error({ err: errorData }, 'Spreadsheet search failed');
+      throw new Error(`Failed to search for spreadsheet: ${searchResponse.status} - ${errorData}`);
+    }
+
+    const searchData = await searchResponse.json();
+
+    // If spreadsheet exists, return it
+    if (searchData.files && searchData.files.length > 0) {
+      const existingFile = searchData.files[0];
+      this.logger.debug({ spreadsheetId: existingFile.id }, 'Found existing spreadsheet');
+
+      // Get full spreadsheet info
+      const infoResponse = await this.getSpreadsheetInfo(connection, {
+        spreadsheet_id: existingFile.id,
+        include_sheet_data: false
+      });
+
+      return {
+        ...infoResponse,
+        created: false
+      };
+    }
+
+    // Spreadsheet doesn't exist - create it
+    this.logger.debug('Spreadsheet not found, creating new one');
+    const created = await this.createSpreadsheet(connection, parameters);
+
+    return {
+      ...created,
+      created: true
     };
   }
 

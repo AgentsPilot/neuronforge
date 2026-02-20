@@ -39,6 +39,9 @@ export class GoogleDrivePluginExecutor extends GoogleBasePluginExecutor {
         case 'create_folder':
           result = await this.createFolder(connection, parameters);
           break;
+        case 'get_or_create_folder':
+          result = await this.getOrCreateFolder(connection, parameters);
+          break;
         case 'upload_file':
           result = await this.uploadFile(connection, parameters);
           break;
@@ -476,6 +479,116 @@ export class GoogleDrivePluginExecutor extends GoogleBasePluginExecutor {
       folderId: folder.id,
       folderName: folder.name,
       webViewLink: folder.webViewLink || `https://drive.google.com/drive/folders/${folder.id}`,
+      createdAt: new Date().toISOString()
+    };
+  }
+
+  // Get existing folder by name or create if it doesn't exist (prevents duplicates)
+  private async getOrCreateFolder(connection: any, parameters: any): Promise<any> {
+    this.logger.debug('DEBUG: Get or create folder via Google Drive API');
+
+    const folderName = parameters.folder_name;
+    if (!folderName) {
+      throw new Error('folder_name is required');
+    }
+
+    // Build search query
+    let query = `name='${folderName.replace(/'/g, "\\'")}' and mimeType='application/vnd.google-apps.folder' and trashed=false`;
+
+    // Add parent folder constraint if specified
+    if (parameters.parent_folder_id) {
+      query += ` and '${parameters.parent_folder_id}' in parents`;
+    }
+
+    // Search for existing folder
+    const searchUrl = new URL(`${this.googleApisUrl}/drive/v3/files`);
+    searchUrl.searchParams.set('q', query);
+    searchUrl.searchParams.set('pageSize', '1');
+    searchUrl.searchParams.set('fields', 'files(id, name, webViewLink)');
+
+    const searchResponse = await fetch(searchUrl.toString(), {
+      headers: {
+        'Authorization': `Bearer ${connection.access_token}`,
+        'Accept': 'application/json',
+      },
+    });
+
+    if (!searchResponse.ok) {
+      const errorData = await searchResponse.text();
+      this.logger.error({ err: errorData }, 'DEBUG: Folder search failed:', errorData);
+      throw new Error(`Failed to search for folder: ${searchResponse.status} - ${errorData}`);
+    }
+
+    const searchData = await searchResponse.json();
+
+    // If folder exists, return it
+    if (searchData.files && searchData.files.length > 0) {
+      const existingFolder = searchData.files[0];
+      this.logger.debug({ folderId: existingFolder.id }, 'DEBUG: Found existing folder');
+
+      return {
+        // Primary format (snake_case to match schema)
+        folder_id: existingFolder.id,
+        folder_name: existingFolder.name,
+        web_view_link: existingFolder.webViewLink || `https://drive.google.com/drive/folders/${existingFolder.id}`,
+        parent_folder_id: parameters.parent_folder_id,
+        created: false, // Folder already existed
+        created_at: new Date().toISOString(),
+        // Legacy format (camelCase for backward compatibility)
+        folderId: existingFolder.id,
+        folderName: existingFolder.name,
+        webViewLink: existingFolder.webViewLink || `https://drive.google.com/drive/folders/${existingFolder.id}`,
+        createdAt: new Date().toISOString()
+      };
+    }
+
+    // Folder doesn't exist - create it
+    this.logger.debug('DEBUG: Folder not found, creating new one');
+
+    const requestBody: any = {
+      name: folderName,
+      mimeType: 'application/vnd.google-apps.folder'
+    };
+
+    if (parameters.parent_folder_id) {
+      requestBody.parents = [parameters.parent_folder_id];
+    }
+
+    if (parameters.description) {
+      requestBody.description = parameters.description;
+    }
+
+    const createResponse = await fetch(`${this.googleApisUrl}/drive/v3/files`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${connection.access_token}`,
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
+      body: JSON.stringify(requestBody)
+    });
+
+    if (!createResponse.ok) {
+      const errorData = await createResponse.text();
+      this.logger.error({ err: errorData }, 'DEBUG: Create folder failed:', errorData);
+      throw new Error(`Failed to create folder: ${createResponse.status} - ${errorData}`);
+    }
+
+    const newFolder = await createResponse.json();
+    this.logger.debug({ folderId: newFolder.id }, 'DEBUG: Created new folder');
+
+    return {
+      // Primary format (snake_case to match schema)
+      folder_id: newFolder.id,
+      folder_name: newFolder.name,
+      web_view_link: newFolder.webViewLink || `https://drive.google.com/drive/folders/${newFolder.id}`,
+      parent_folder_id: parameters.parent_folder_id,
+      created: true, // Folder was newly created
+      created_at: new Date().toISOString(),
+      // Legacy format (camelCase for backward compatibility)
+      folderId: newFolder.id,
+      folderName: newFolder.name,
+      webViewLink: newFolder.webViewLink || `https://drive.google.com/drive/folders/${newFolder.id}`,
       createdAt: new Date().toISOString()
     };
   }

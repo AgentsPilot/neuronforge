@@ -66,19 +66,34 @@ export class AIOperationResolver {
     // Select model based on constraints
     const modelConfig = this.selectModel(aiOp.constraints)
 
+    // CRITICAL: deterministic_extract → deterministic_extraction step type
+    // Uses PDF parser + AWS Textract before AI (not pure LLM)
+    const stepType = aiOp.type === 'deterministic_extract'
+      ? 'deterministic_extraction'
+      : 'ai_processing';
+
+    // For deterministic_extraction, set input to the variable reference
+    const stepInput = stepType === 'deterministic_extraction'
+      ? aiOp.input_source
+      : undefined;
+
     return {
       step_id: stepId,
-      type: 'ai_processing',
+      type: stepType,
       operation: this.mapAIOperationType(aiOp.type),
       // Top-level prompt for StepExecutor.executeLLMDecision() compatibility
       prompt: promptTemplate,
+      ...(stepInput && { input: stepInput }),  // Required for deterministic_extraction
+      output_schema: aiOp.output_schema,  // Required for deterministic_extraction
       config: {
         input: aiOp.input_source,
         prompt_template: promptTemplate,
         response_contract: responseContract,
         model: modelConfig.model,
         temperature: modelConfig.temperature,
-        max_tokens: aiOp.constraints?.max_tokens || modelConfig.max_tokens
+        max_tokens: aiOp.constraints?.max_tokens || modelConfig.max_tokens,
+        ai_type: aiOp.type,  // Store original AI type
+        output_schema: aiOp.output_schema  // For deterministic_extraction
       },
       output_variable: `${stepId}_output`,
       description: aiOp.instruction
@@ -94,6 +109,8 @@ export class AIOperationResolver {
         return this.generateSummarizePrompt(aiOp)
       case 'extract':
         return this.generateExtractPrompt(aiOp)
+      case 'deterministic_extract':
+        return this.generateExtractPrompt(aiOp) // Same prompt structure as extract
       case 'classify':
         return this.generateClassifyPrompt(aiOp)
       case 'sentiment':
@@ -102,6 +119,14 @@ export class AIOperationResolver {
         return this.generateGeneratePrompt(aiOp)
       case 'decide':
         return this.generateDecidePrompt(aiOp)
+      case 'normalize':
+        return this.generateNormalizePrompt(aiOp)
+      case 'transform':
+        return this.generateTransformPrompt(aiOp)
+      case 'validate':
+        return this.generateValidatePrompt(aiOp)
+      case 'enrich':
+        return this.generateEnrichPrompt(aiOp)
       default:
         throw new Error(`Unsupported AI operation type: ${aiOp.type}`)
     }
@@ -215,6 +240,62 @@ Respond with your decision.`
   }
 
   /**
+   * Generate normalize prompt
+   */
+  private generateNormalizePrompt(aiOp: AIOperation): string {
+    return `Task: Normalize and standardize the following data.
+
+Instruction: ${aiOp.instruction}
+
+Input data:
+{{${this.extractVariableName(aiOp.input_source)}}}
+
+Provide the normalized data in a consistent format.`
+  }
+
+  /**
+   * Generate transform prompt
+   */
+  private generateTransformPrompt(aiOp: AIOperation): string {
+    return `Task: Transform the data structure as requested.
+
+Instruction: ${aiOp.instruction}
+
+Input data:
+{{${this.extractVariableName(aiOp.input_source)}}}
+
+Provide the transformed data.`
+  }
+
+  /**
+   * Generate validate prompt
+   */
+  private generateValidatePrompt(aiOp: AIOperation): string {
+    return `Task: Validate the data against the specified rules.
+
+Instruction: ${aiOp.instruction}
+
+Data to validate:
+{{${this.extractVariableName(aiOp.input_source)}}}
+
+Respond with validation results indicating whether the data is valid and any errors found.`
+  }
+
+  /**
+   * Generate enrich prompt
+   */
+  private generateEnrichPrompt(aiOp: AIOperation): string {
+    return `Task: Enrich the data with additional information.
+
+Instruction: ${aiOp.instruction}
+
+Input data:
+{{${this.extractVariableName(aiOp.input_source)}}}
+
+Provide the enriched data with additional relevant information.`
+  }
+
+  /**
    * Extract variable name from {{variable}} syntax
    */
   private extractVariableName(inputSource: string): string {
@@ -275,10 +356,15 @@ Respond with your decision.`
     const operationMap: Record<AIOperationType, string> = {
       summarize: 'summarize',
       extract: 'extract_structured',
+      deterministic_extract: 'extract_structured', // Same operation, different step type
       classify: 'classify',
       sentiment: 'sentiment_analysis',
       generate: 'generate_text',
-      decide: 'decision_making'
+      decide: 'decision_making',
+      normalize: 'normalize_data',
+      transform: 'transform_data',
+      validate: 'validate_data',
+      enrich: 'enrich_data'
     }
 
     return operationMap[type] || type

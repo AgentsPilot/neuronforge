@@ -641,6 +641,64 @@
         }
       }
     },
+    "get_or_create_folder": {
+      "description": "Get existing folder by name or create if it doesn't exist (prevents duplicates)",
+      "usage_context": "Use this instead of create_folder when you want idempotent folder creation. Perfect for recurring workflows to avoid creating duplicate folders on each run.",
+      "parameters": {
+        "type": "object",
+        "required": ["folder_name"],
+        "properties": {
+          "folder_name": {
+            "type": "string",
+            "description": "Name of the folder to find or create"
+          },
+          "parent_folder_id": {
+            "type": "string",
+            "description": "ID of the parent folder. If not provided, searches/creates in root",
+            "x-dynamic-options": {
+              "source": "list_folders",
+              "description": "Fetches available folders dynamically"
+            }
+          },
+          "description": {
+            "type": "string",
+            "description": "Optional description (only used when creating new folder)"
+          }
+        }
+      },
+      "rules": {
+        "limits": {},
+        "confirmations": {}
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "folder_id": { "type": "string", "description": "ID of the folder (existing or newly created)" },
+          "folder_name": { "type": "string", "description": "Name of the folder" },
+          "web_view_link": { "type": "string", "description": "URL to view the folder" },
+          "parent_folder_id": { "type": "string", "description": "ID of the parent folder" },
+          "created": { "type": "boolean", "description": "True if folder was newly created, false if it already existed" },
+          "created_at": { "type": "string", "description": "Timestamp when folder was created (if new) or found (if existing)" }
+        }
+      },
+      "output_guidance": {
+        "success_description": "Retrieved or created folder",
+        "sample_output": {
+          "folder_id": "1folder456xyz",
+          "folder_name": "Invoices 2024",
+          "web_view_link": "https://drive.google.com/drive/folders/1folder456xyz",
+          "parent_folder_id": "1parentfolder789",
+          "created": false,
+          "created_at": "2024-01-15T13:00:00Z"
+        },
+        "common_errors": {
+          "auth_failed": "Your Google Drive connection has expired. Please reconnect in Settings → Connected Apps.",
+          "parent_not_found": "The specified parent folder was not found. Please check the folder ID.",
+          "permission_denied": "You don't have permission to access or create folders in this location.",
+          "api_rate_limit": "Too many requests. Please wait a moment and try again."
+        }
+      }
+    },
     "share_file": {
       "description": "Share a file or folder and get a shareable link",
       "usage_context": "When user wants to share files, generate shareable links, or set permissions",

@@ -353,8 +353,16 @@ export class SmartLogicAnalyzer {
       if (step.type === 'scatter_gather' && (step as any).scatter?.steps) {
         for (const nestedStep of (step as any).scatter.steps) {
           const schema = (nestedStep as any).output_schema;
-          if (schema?.fields) {
+          if (!schema) continue;
+
+          // Support both array format (fields) and JSON Schema format (properties)
+          if (Array.isArray(schema.fields)) {
+            // Old format: { fields: [{name, type}, ...] }
             const fieldNames = schema.fields.map((f: any) => f.name);
+            fields.push(...fieldNames);
+          } else if (schema.properties && typeof schema.properties === 'object') {
+            // New format: JSON Schema { properties: { fieldName: {type: "number"} } }
+            const fieldNames = Object.keys(schema.properties);
             fields.push(...fieldNames);
           }
         }
@@ -887,11 +895,24 @@ export class SmartLogicAnalyzer {
     for (const step of pilotSteps) {
       if (step.type === 'deterministic_extraction' || step.type === 'ai_processing') {
         const schema = (step as any).output_schema;
-        if (!schema?.fields) continue;
+        if (!schema) continue;
 
-        const numericFields = schema.fields.filter(
-          (f: any) => f.type === 'number' && (f.name.includes('amount') || f.name.includes('price'))
-        );
+        // Support both array format (fields) and JSON Schema format (properties)
+        let numericFields: Array<{name: string; type: string}> = [];
+
+        if (Array.isArray(schema.fields)) {
+          // Old format: { fields: [{name, type}, ...] }
+          numericFields = schema.fields.filter(
+            (f: any) => f.type === 'number' && (f.name.includes('amount') || f.name.includes('price'))
+          );
+        } else if (schema.properties && typeof schema.properties === 'object') {
+          // New format: JSON Schema { properties: { fieldName: {type: "number"} } }
+          numericFields = Object.entries(schema.properties)
+            .filter(([name, prop]: [string, any]) =>
+              prop.type === 'number' && (name.includes('amount') || name.includes('price'))
+            )
+            .map(([name]) => ({ name, type: 'number' }));
+        }
 
         if (numericFields.length > 0) {
           issues.push({

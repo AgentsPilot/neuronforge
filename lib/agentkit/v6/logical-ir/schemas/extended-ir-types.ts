@@ -135,16 +135,17 @@ export interface Transform {
 // ============================================================================
 
 export type AIOperationType =
-  | 'summarize'      // Text summarization
-  | 'extract'        // Extract structured data
-  | 'classify'       // Categorize into classes
-  | 'sentiment'      // Sentiment analysis
-  | 'generate'       // Generate text
-  | 'decide'         // Make a decision
-  | 'normalize'      // Normalize/standardize data
-  | 'transform'      // Transform data structure
-  | 'validate'       // Validate data against rules
-  | 'enrich'         // Enrich data with additional info
+  | 'summarize'             // Text summarization
+  | 'extract'               // Extract structured data (AI-only)
+  | 'deterministic_extract' // Extract from files (PDF parser + Textract + AI)
+  | 'classify'              // Categorize into classes
+  | 'sentiment'             // Sentiment analysis
+  | 'generate'              // Generate text
+  | 'decide'                // Make a decision
+  | 'normalize'             // Normalize/standardize data
+  | 'transform'             // Transform data structure
+  | 'validate'              // Validate data against rules
+  | 'enrich'                // Enrich data with additional info
 
 export interface OutputSchema {
   type: 'string' | 'object' | 'array' | 'number' | 'boolean'

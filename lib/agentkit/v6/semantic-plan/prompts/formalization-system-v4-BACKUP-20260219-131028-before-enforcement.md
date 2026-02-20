@@ -6,99 +6,11 @@
 3. **Check schemas and variable declarations BEFORE generating**
 4. **If validation fails → FIX the issue, do NOT generate incorrect IR**
 
----
-
-**🛑 ABSOLUTE FORBIDDEN RULE - Transform on Non-Array Variables:**
-
-**DO NOT GENERATE `operation_type: "transform"` IF INPUT VARIABLE TYPE IS NOT "array".**
-
-**This will cause IMMEDIATE COMPILATION FAILURE. Check variable type FIRST:**
-
-1. Find input variable in `variables` array
-2. Check its `type` field
-3. **IF type is "object", "string", "number", etc. (NOT "array") → DO NOT GENERATE TRANSFORM NODE**
-
-**Example of FORBIDDEN pattern (will FAIL compilation):**
-```json
-// Variable declared as:
-{"name": "extracted_data", "type": "object"}
-
-// ❌ FORBIDDEN - Compilation will FAIL:
-{"operation_type": "transform", "transform": {"type": "map", "input": "{{extracted_data}}"}}
-```
-
-**What to do instead:**
-```json
-// ✅ Use variable fields directly:
-{"operation_type": "deliver", "config": {"field": "{{extracted_data.date}}"}}
-```
-
-**Variables with type "object" CANNOT use map/filter/reduce/deduplicate/sort. Skip the transform node entirely.**
-
-**Example - BEFORE generating transform:**
-```
-Planning: I want to use transform map on extracted_data
-↓
-Question 1: Input variable is "extracted_data"
-↓
-Question 2: Check variables array → {"name": "extracted_data", "type": "object", ...}
-↓
-Question 3: Is type "array"? → NO (it's "object")
-↓
-STOP! Cannot use transform!
-↓
-Solution: Use direct field access: {{extracted_data.date}}, {{extracted_data.vendor}}
-```
-
-**This checklist is NON-NEGOTIABLE. If you skip it, compilation will FAIL.**
-
----
-
-**⚠️ BLOCKING PRE-FLIGHT CHECKLIST - Loop Collection:**
-
-**BEFORE you generate a transform node INSIDE a loop (scatter-gather), answer:**
-
-**Question 1:** Is this node inside a loop body? (Are you within a scatter-gather's `steps` array?)
-**Question 2:** What is the transform's input variable? (e.g., `{{all_transactions}}`)
-**Question 3:** Is this input variable the loop's OUTPUT variable? (The one created by `gather.outputKey`)
-- **YES** → **STOP! DO NOT generate this transform!** ❌ The variable doesn't exist yet (loop hasn't finished)
-- **NO** (input is a variable created in CURRENT iteration) → You can proceed ✅
-
-**If you answered YES to Question 3:**
-- The loop's `gather.operation: "collect"` ALREADY builds the array automatically
-- You do NOT need to manually append or build arrays
-- **Remove the transform node entirely**
-- Let the loop's gather mechanism collect the variables
-
-**Example - BEFORE generating transform inside loop:**
-```
-Planning: Inside loop, want to transform all_transactions
-↓
-Question 1: Am I inside a loop? → YES (in scatter-gather steps)
-↓
-Question 2: Input variable → "{{all_transactions}}"
-↓
-Question 3: Is this the loop's output variable? → YES (gather.outputKey: "all_transactions")
-↓
-STOP! Cannot use transform here!
-↓
-Solution: Remove transform, let gather collect automatically
-```
-
-**This checklist is NON-NEGOTIABLE. Transforms inside loops referencing loop output will FAIL.**
-
----
-
 **This prevents bugs where:**
 - Variables reference non-existent fields
-- **Wrong variable scopes are used in nested loops (e.g., using `current_attachment.message_id` when `message_id` belongs to `current_email`)**
+- Wrong variable scopes are used in nested loops
 - AI operations include metadata fields AI cannot generate
 - Transform operations use wrong input types (e.g., map on object instead of array)
-
-**⚠️ SPECIAL ATTENTION REQUIRED:**
-- **When working with nested loops (especially email→attachments), verify WHICH loop variable owns each field**
-- **Common mistake:** Using `{{current_attachment.message_id}}` when it should be `{{current_email.message_id}}`
-- **See Protocol 2 enforcement section for detailed examples**
 
 ### Protocol 1: Field Reference Validation
 
@@ -196,80 +108,6 @@ loop_emails (item: current_email)
 4. Outer loop variable: current_email (from loop_emails)
 5. Use: "{{current_email.message_id}}"
 ```
-
----
-
-**🚨 CRITICAL ENFORCEMENT - Email/Attachment Nested Loops:**
-
-**This is a COMMON BUG that you MUST avoid:**
-
-When processing email attachments in nested loops (`loop_emails` → `loop_attachments`), operations inside the attachment loop that need the email's `message_id` MUST use `{{current_email.message_id}}`, NOT `{{current_attachment.message_id}}`.
-
-**WHY:** Attachment objects do NOT have a `message_id` field. The `message_id` belongs to the EMAIL object (outer loop).
-
-**Email schema (from google-mail.search_emails):**
-```json
-{
-  "id": "string",           // ← THIS is message_id
-  "threadId": "string",
-  "subject": "string",
-  "from": "string",
-  "date": "string",
-  "attachments": [          // ← Array of attachment objects
-    {
-      "filename": "string",
-      "mimeType": "string",
-      "attachment_id": "string",  // ← Note: attachment has attachment_id, NOT message_id
-      "size": "number"
-    }
-  ]
-}
-```
-
-**Common scenario:** Fetching attachment content using `google-mail.get_email_attachment` action
-
-**❌ WRONG - This WILL FAIL:**
-```json
-{
-  "step_id": "fetch_attachment_content",
-  "plugin": "google-mail",
-  "action": "get_email_attachment",
-  "params": {
-    "message_id": "{{current_attachment.message_id}}",        // ❌ WRONG! Field doesn't exist!
-    "attachment_id": "{{current_attachment.attachment_id}}"
-  }
-}
-```
-
-**✅ CORRECT - Use outer loop variable:**
-```json
-{
-  "step_id": "fetch_attachment_content",
-  "plugin": "google-mail",
-  "action": "get_email_attachment",
-  "params": {
-    "message_id": "{{current_email.message_id}}",            // ✅ CORRECT! From outer loop
-    "attachment_id": "{{current_attachment.attachment_id}}"  // ✅ From current loop
-  }
-}
-```
-
-**Before generating ANY operation inside `loop_attachments`, ask yourself:**
-1. Does this parameter need data from the EMAIL (outer loop)? → Use `{{current_email.FIELD}}`
-2. Does this parameter need data from the ATTACHMENT (current loop)? → Use `{{current_attachment.FIELD}}`
-
-**Fields that typically come from EMAIL (outer loop):**
-- `message_id` (or `id`)
-- `from`, `to`, `subject`, `date`
-- `threadId`
-
-**Fields that typically come from ATTACHMENT (current loop):**
-- `attachment_id`
-- `filename`
-- `mimeType`
-- `size`
-
----
 
 ### Protocol 3: AI Operation Boundaries
 
@@ -371,151 +209,6 @@ Enhanced Prompt says: "Extract invoice data and include Drive link in summary em
   }
 }
 ```
-
----
-
-**🚨 CRITICAL ENFORCEMENT - AI Generate/Summary Tasks:**
-
-**When using `ai_type: "generate"` or `ai_type: "summarize"`, the AI is FORMATTING input data, NOT creating new metadata.**
-
-**Principle:** Generate/summary operations receive structured data and format it. The output schema should focus on the FORMATTED RESULT, not re-outputting the input data.
-
-**Common scenario:** Generating email summary from transaction data that already includes Drive links, email info, etc.
-
-**Input to AI:** The AI receives `{{all_transactions}}` which already contains:
-- Transaction fields (from prior extraction steps)
-- Drive links (from file upload operations)
-- Email metadata (from email fetch operations)
-- Source information (from parent loop variables)
-
-**❌ WRONG - Separate metadata outputs in schema:**
-```json
-{
-  "step_id": "generate_summary_email",
-  "type": "operation",
-  "operation_type": "ai",
-  "ai": {
-    "ai_type": "generate",
-    "input": "{{all_transactions}}",
-    "output_schema": {
-      "properties": {
-        "summary_email": {
-          "type": "string",
-          "description": "HTML-formatted email body"
-        },
-        "drive_links": {              // ❌ Already in input!
-          "type": "array",
-          "description": "List of Drive links"
-        },
-        "source_email_info": {        // ❌ Already in input!
-          "type": "array",
-          "description": "Email sender and subject"
-        },
-        "transactions_over_50": {     // ❌ Can derive from input!
-          "type": "array",
-          "description": "High-value transactions"
-        }
-      }
-    }
-  }
-}
-```
-
-**Why this is wrong:**
-- The AI is processing data that ALREADY contains Drive links and email info
-- Asking AI to output these separately suggests AI is generating them
-- This adds complexity and token cost
-- The AI's job is to FORMAT, not to separate data structures
-
-**✅ CORRECT - Single formatted output:**
-```json
-{
-  "step_id": "generate_summary_email",
-  "type": "operation",
-  "operation_type": "ai",
-  "ai": {
-    "ai_type": "generate",
-    "input": "{{all_transactions}}",
-    "prompt": "Generate HTML-formatted email summary with table of all transactions. Each row must include the Google Drive link and source email info that are already in the transaction data. Include totals summary and separate section for transactions over $50.",
-    "output_schema": {
-      "properties": {
-        "summary_email": {
-          "type": "string",
-          "description": "Complete HTML email body with all data embedded: transaction table with Drive links and email info, totals section, high-value transactions section"
-        }
-      },
-      "required": ["summary_email"]
-    }
-  }
-}
-```
-
-**Why this is correct:**
-- Single output field for the formatted result
-- Prompt explains what to include in the HTML
-- AI processes input data (which has Drive links, email info) and formats it
-- Output is the complete formatted email, not separate data structures
-
-**Decision tree for AI Generate/Summary tasks:**
-
-**Before generating output_schema, ask yourself:**
-1. Is this AI operation EXTRACTING from unstructured content (PDF, image, text)?
-   - YES → Use detailed schema (see Protocol 3 extract examples)
-   - NO → Continue to step 2
-
-2. Is this AI operation FORMATTING/GENERATING output from structured input?
-   - YES → Use single output field for formatted result
-   - NO → Re-evaluate the operation type
-
-3. Does the input data already contain the metadata I was about to include in output_schema?
-   - YES → Don't include it in output_schema, just reference it in the prompt
-   - NO → Verify the metadata can actually be extracted by AI from input content
-
-**Key difference between Extract vs Generate:**
-- **Extract:** `ai_type: "extract"` → Detailed schema with specific fields to extract FROM document
-- **Generate:** `ai_type: "generate"` → Single formatted output, AI processes structured input data
-
-**Examples:**
-
-**Extract task (needs detailed schema):**
-```json
-{
-  "ai_type": "extract",
-  "input": "{{invoice_pdf_content}}",  // Unstructured PDF content
-  "output_schema": {
-    "properties": {
-      "vendor": {...},
-      "amount": {...},
-      "date": {...},
-      "invoice_number": {...}
-      // ✅ All fields extracted FROM document
-      // ❌ NO drive_link, NO source_sender (not in PDF)
-    }
-  }
-}
-```
-
-**Generate task (needs single output):**
-```json
-{
-  "ai_type": "generate",
-  "input": "{{all_invoices}}",  // Structured data with extracted fields + metadata
-  "prompt": "Generate HTML report with table including invoice fields, Drive links, and source email",
-  "output_schema": {
-    "properties": {
-      "html_report": {
-        "type": "string",
-        "description": "Complete HTML report with all data embedded"
-      }
-    }
-  }
-  // ✅ Single formatted output
-  // ❌ NO separate drive_links field
-  // ❌ NO separate source_email_info field
-}
-```
-
----
 
 ### Protocol 4: File Operation Output Validation
 
@@ -743,510 +436,6 @@ STOP! Check variable declaration:
 
 ---
 
-**🚨 CRITICAL ENFORCEMENT - Transform Type Validation:**
-
-**This is a COMMON BUG that you MUST avoid:**
-
-Before generating ANY transform operation, you MUST check the input variable's declared type in the `variables` array. Using the WRONG transform type for the variable type will cause compilation failure.
-
-**CRITICAL RULE:** Transform operations `map`, `filter`, `reduce`, `deduplicate`, `sort`, `group_by` ALL require array input. If your variable type is NOT `"array"`, you CANNOT use these transforms!
-
-**Common Bug Pattern - Using reduce on object variable:**
-
-You have a variable declared as:
-```json
-{"name": "extracted_data", "type": "object", "scope": "loop"}
-```
-
-**❌ THIS WILL FAIL - Do NOT generate this:**
-```json
-{
-  "step_id": "build_transaction_record",
-  "type": "operation",
-  "operation_type": "transform",
-  "transform": {
-    "type": "reduce",           // ❌ Reduce requires ARRAY!
-    "input": "{{extracted_data}}",  // ❌ This is "object" type!
-    "reduce_operation": "sum",
-    "reduce_field": "amount"
-  }
-}
-
-// Compilation error: "Transform node 'build_transaction_record' uses operation 'reduce' which requires array input,
-// but variable 'extracted_data' is declared as type 'object'"
-```
-
-**✅ CORRECT - Two options:**
-
-**Option 1: If data is truly single object, DON'T use transform - use direct variable:**
-```json
-{
-  "step_id": "record_transaction",
-  "type": "operation",
-  "operation_type": "deliver",
-  "config": {
-    "spreadsheet_id": "...",
-    "range": "...",
-    "values": [[
-      "{{extracted_data.date}}",      // ✅ Direct field access
-      "{{extracted_data.vendor}}",    // ✅ Direct field access
-      "{{extracted_data.amount}}"     // ✅ Direct field access
-    ]]
-  }
-}
-```
-
-**Option 2: If you need to collect multiple objects into array first:**
-```json
-// First, collect all extracted objects in a loop:
-{
-  "step_id": "loop_attachments",
-  "type": "loop",
-  "iterate_over": "{{current_email.attachments}}",
-  "item_variable": "current_attachment",
-  "body": [
-    {
-      "step_id": "extract_data",
-      "ai": {...},
-      "outputs": [{"variable": "extracted_data"}]  // Type: object (in loop)
-    }
-  ],
-  "collect": {
-    "variable": "all_transactions",  // ✅ Collects into array!
-    "from": "extracted_data"
-  }
-}
-
-// Then, IF needed, use transform on the collected array:
-{
-  "step_id": "calculate_total",
-  "type": "operation",
-  "operation_type": "transform",
-  "transform": {
-    "type": "reduce",
-    "input": "{{all_transactions}}",  // ✅ This is array!
-    "reduce_operation": "sum",
-    "reduce_field": "amount"
-  },
-  "outputs": [{"variable": "total_amount"}]  // Type: number
-}
-```
-
-**Before generating EVERY transform operation, ask yourself:**
-
-1. **What is the input variable?** (e.g., `extracted_data`)
-2. **Find it in variables array** - What is its declared type?
-3. **Is the type "array"?**
-   - YES → You can use transform operations ✅
-   - NO (type is "object", "string", "number", etc.) → DO NOT use transform! ❌
-4. **If you need array operations on loop data:**
-   - Use loop's `collect` to build an array
-   - THEN use transform on the collected array
-
-**Transform Type Requirements Checklist:**
-
-| Transform Operation | Input Type Required | Output Type |
-|---------------------|---------------------|-------------|
-| `map` | `"array"` | `"array"` |
-| `filter` | `"array"` | `"array"` |
-| `reduce` | `"array"` | single value (`"number"`, `"string"`, etc.) |
-| `deduplicate` | `"array"` | `"array"` |
-| `group_by` | `"array"` | `"object"` |
-| `sort` | `"array"` | `"array"` |
-| `flatten` | nested arrays | `"array"` |
-
-**If input type doesn't match → DO NOT generate the transform!**
-
----
-
-**🚨 CRITICAL ENFORCEMENT - Loop Collection vs Transform:**
-
-**This is a COMMON BUG: Using transform INSIDE a loop to "append" items to an array.**
-
-**CRITICAL RULE:** When you have a loop (scatter-gather pattern), the loop's `collect_outputs` mechanism AUTOMATICALLY builds the output array. You do NOT need transform operations to append items!
-
-**🔴 CRITICAL: When generating IR with loops, you MUST specify ALL THREE fields:**
-```
-"loop": {
-  "collect_outputs": true,           // ← Whether to collect
-  "output_variable": "array_name",   // ← Name of collected array
-  "collect_from": "variable_name"    // ← WHICH variable to collect from each iteration
-}
-```
-
-**WITHOUT `collect_from`, the loop won't know WHICH variable to collect!**
-
-**Common Bug Pattern - Transform inside loop trying to append:**
-
-You have a loop structure like:
-```json
-{
-  "type": "scatter_gather",
-  "output_variable": "all_transactions",  // ← Loop will collect into this
-  "scatter": {
-    "input": "{{emails}}",
-    "itemVariable": "current_email",
-    "steps": [
-      {
-        "type": "ai_processing",
-        "output_variable": "extracted_data"  // ← This is created in each iteration
-      }
-      // ... more steps ...
-    ]
-  },
-  "gather": {
-    "operation": "collect",  // ← This AUTOMATICALLY collects!
-    "outputKey": "all_transactions"
-  }
-}
-```
-
-**❌ THIS IS WRONG - Do NOT add transform inside the loop:**
-```json
-{
-  "scatter": {
-    "steps": [
-      {
-        "type": "ai_processing",
-        "output_variable": "extracted_data"
-      },
-      {
-        "type": "transform",  // ❌ WRONG! Trying to append manually
-        "operation": "map",
-        "input": "{{all_transactions}}",  // ❌ Doesn't exist yet! (loop hasn't finished)
-        "config": {
-          "append_item": {  // ❌ This is not how transforms work!
-            "date": "{{extracted_data.date}}",
-            "vendor": "{{extracted_data.vendor}}"
-          }
-        }
-      }
-    ]
-  }
-}
-```
-
-**Why this FAILS:**
-1. **`all_transactions` doesn't exist yet** - it's created AFTER the loop finishes gathering
-2. **Transform map doesn't "append"** - it transforms existing array items, not add new ones
-3. **Loop already collects** - the `gather.operation: "collect"` does this automatically!
-
-**✅ CORRECT - Let the loop collect automatically:**
-```json
-{
-  "type": "scatter_gather",
-  "output_variable": "all_transactions",
-  "scatter": {
-    "input": "{{emails}}",
-    "itemVariable": "current_email",
-    "steps": [
-      {
-        "id": "extract_data",
-        "type": "ai_processing",
-        "output_variable": "extracted_data"  // ✅ Created in each iteration
-      },
-      {
-        "id": "upload_file",
-        "type": "action",
-        "output_variable": "uploaded_file"  // ✅ Created in each iteration
-      },
-      // NO TRANSFORM NEEDED - extracted_data is already the record
-      // The gather will collect extracted_data from each iteration
-    ]
-  },
-  "gather": {
-    "operation": "collect",
-    "from": "extracted_data",  // ✅ Collect extracted_data from each iteration
-    "outputKey": "all_transactions"  // ✅ Array built automatically!
-  }
-}
-
-// Now AFTER the loop, all_transactions contains all records:
-{
-  "id": "process_all",
-  "type": "operation",
-  "operation_type": "transform",
-  "transform": {
-    "type": "filter",  // ✅ NOW you can use transform on the collected array
-    "input": "{{all_transactions}}",  // ✅ Array exists now!
-    "filter_expression": {
-      "variable": "item.amount",
-      "operator": "gt",
-      "value": 50
-    }
-  }
-}
-```
-
-**Even simpler - if you don't need to transform individual items:**
-```json
-{
-  "type": "scatter_gather",
-  "scatter": {
-    "steps": [
-      {
-        "type": "ai_processing",
-        "output_variable": "extracted_data"  // ✅ Just create the data
-      },
-      {
-        "type": "action",
-        "output_variable": "uploaded_file"
-      }
-      // NO transform step needed!
-    ]
-  },
-  "gather": {
-    "operation": "collect",
-    "from": "extracted_data",  // ✅ Collect the raw extracted data
-    "outputKey": "all_transactions"
-  }
-}
-
-// Later, combine fields in delivery step:
-{
-  "type": "action",
-  "plugin": "google-sheets",
-  "action": "append_rows",
-  "params": {
-    "values": [[
-      "{{extracted_data.date}}",  // ✅ From loop variable
-      "{{uploaded_file.web_view_link}}",  // ✅ From loop variable
-      "{{current_email.from}}"  // ✅ From outer loop variable
-    ]]
-  }
-}
-```
-
-**Decision tree before using transform in a loop:**
-
-1. **Are you inside a loop (scatter-gather)?**
-   - NO → You can use transform on existing arrays ✅
-   - YES → Continue to step 2
-
-2. **What are you trying to do?**
-   - Transform the CURRENT item's data? → ✅ OK (transform on loop variable like `{{extracted_data}}`)
-   - "Append" to the final array? → ❌ WRONG! Loop collect does this automatically
-   - Build up an array? → ❌ WRONG! Use `gather.operation: "collect"`
-
-3. **Does the transform input reference the loop's OUTPUT variable?**
-   - YES (e.g., `input: "{{all_transactions}}"` inside the loop) → ❌ WRONG! That variable doesn't exist yet
-   - NO (e.g., `input: "{{extracted_data}}"` - a variable created in current iteration) → ✅ OK
-
-**Key principle:**
-- **Inside loop:** Create variables for each iteration, let loop collect them
-- **Outside loop (after gather):** Use transform operations on the collected array
-
-**If you find yourself trying to:**
-- Use transform with `"append_item"` config → ❌ WRONG! Not a valid transform pattern
-- Reference the loop's output variable inside the loop → ❌ WRONG! It doesn't exist yet
-- Manually build an array inside a loop → ❌ WRONG! Use `gather.operation: "collect"`
-
----
-
-## 🚨 CRITICAL ENFORCEMENT - Collecting Complete Records with Metadata
-
-**THE PROBLEM:** When collecting transaction records in a loop, you need to include BOTH extracted data AND metadata from the workflow (Drive links, email info, etc.).
-
-**WRONG APPROACH #1 - Collecting only extracted data:**
-```json
-{
-  "type": "scatter_gather",
-  "scatter": {
-    "steps": [
-      {
-        "id": "extract_invoice",
-        "type": "ai_processing",
-        "ai": {
-          "ai_type": "extract",
-          "output_schema": {
-            "properties": {
-              "date": {"type": "string"},
-              "vendor": {"type": "string"},
-              "amount": {"type": "number"}
-            }
-          }
-        },
-        "output_variable": "extracted_data"
-      },
-      {
-        "id": "upload_file",
-        "output_variable": "uploaded_file"  // Has web_view_link
-      }
-    ]
-  },
-  "gather": {
-    "operation": "collect",
-    "from": "extracted_data",  // ❌ ONLY collects extracted fields!
-    "outputKey": "all_transactions"
-  }
-}
-
-// Result: all_transactions = [{date, vendor, amount}, ...]
-// Missing: web_view_link, email metadata
-```
-
-**Why this fails:**
-- `all_transactions` only contains the 5 extracted fields
-- When you need to generate a summary email with Drive links → **NOT IN COLLECTED DATA!**
-- When you need source email info (sender, subject) → **NOT IN COLLECTED DATA!**
-
-**WRONG APPROACH #2 - Trying to add metadata to AI output schema:**
-```json
-{
-  "ai": {
-    "ai_type": "extract",
-    "output_schema": {
-      "properties": {
-        "date": {"type": "string"},
-        "vendor": {"type": "string"},
-        "amount": {"type": "number"},
-        "drive_link": {"type": "string"},  // ❌ AI can't generate this!
-        "source_email": {"type": "string"}  // ❌ AI can't generate this!
-      }
-    }
-  }
-}
-```
-
-**Why this fails:**
-- AI can only extract FROM input content (the document itself)
-- Drive link comes from upload_file operation, not from document
-- Email sender/subject come from email object, not from document
-
-**✅ CORRECT APPROACH - Use AI generate to combine data:**
-
-When you need to collect complete records including metadata, use `ai_type: "generate"` to create structured output that combines multiple sources:
-
-```json
-{
-  "type": "scatter_gather",
-  "scatter": {
-    "steps": [
-      // Step 1: Extract data from document
-      {
-        "id": "extract_invoice",
-        "type": "ai_processing",
-        "ai": {
-          "ai_type": "extract",
-          "output_schema": {
-            "properties": {
-              "date": {"type": "string"},
-              "vendor": {"type": "string"},
-              "amount": {"type": "number"}
-            }
-          }
-        },
-        "output_variable": "extracted_data"
-      },
-
-      // Step 2: Upload to Drive
-      {
-        "id": "upload_to_drive",
-        "output_variable": "uploaded_file"  // Contains web_view_link
-      },
-
-      // Step 3: Build complete record using AI generate
-      {
-        "id": "build_complete_record",
-        "type": "ai_processing",
-        "ai": {
-          "ai_type": "generate",
-          "prompt": "Create a transaction record combining the extracted invoice data with metadata. Output as JSON.",
-          "input": "Extracted: {{extracted_data}}, Drive Link: {{uploaded_file.web_view_link}}, Email From: {{current_email.from}}, Subject: {{current_email.subject}}",
-          "output_schema": {
-            "properties": {
-              "date": {"type": "string"},
-              "vendor": {"type": "string"},
-              "amount": {"type": "number"},
-              "drive_link": {"type": "string"},
-              "source_email_from": {"type": "string"},
-              "source_email_subject": {"type": "string"}
-            }
-          }
-        },
-        "output_variable": "transaction_record"  // ✅ Complete record!
-      }
-    ]
-  },
-  "gather": {
-    "operation": "collect",
-    "from": "transaction_record",  // ✅ Collect the COMPLETE record
-    "outputKey": "all_transactions"
-  }
-}
-
-// Result: all_transactions = [
-//   {date, vendor, amount, drive_link, source_email_from, source_email_subject},
-//   ...
-// ]
-```
-
-**🔴 CRITICAL: IR Format for Complete Record Collection**
-
-**When generating IR (not DSL), use this loop structure:**
-```json
-{
-  "id": "loop_attachments",
-  "type": "loop",
-  "loop": {
-    "iterate_over": "current_email",
-    "item_variable": "current_attachment",
-    "body_start": "extract_invoice",
-    "collect_outputs": true,
-    "output_variable": "email_transactions",
-    "collect_from": "transaction_record",  // ← CRITICAL: Collect THIS variable
-    "concurrency": 1
-  },
-  "inputs": [
-    { "variable": "current_email", "path": "attachments" }
-  ],
-  "outputs": [
-    { "variable": "email_transactions" }
-  ],
-  "next": "loop_emails_end"
-}
-```
-
-**Key difference between IR and DSL:**
-- IR uses: `"collect_from": "transaction_record"` (in loop object)
-- DSL uses: `"from": "transaction_record"` (in gather object)
-
-**Without `collect_from` in IR, the compiler won't know which variable to collect!**
-
-**Why this works:**
-1. ✅ AI extract gets ONLY fields from document (date, vendor, amount)
-2. ✅ File operation provides Drive link (uploaded_file.web_view_link)
-3. ✅ Email metadata available from loop variable (current_email.from, current_email.subject)
-4. ✅ AI generate COMBINES all sources into single structured record
-5. ✅ Loop collects the COMPLETE record
-6. ✅ Summary email has ALL required data
-
-**When to use this pattern:**
-- User wants summary email with Drive links → Use AI generate to combine
-- User wants to track source email info → Use AI generate to combine
-- User wants enriched records with workflow metadata → Use AI generate to combine
-
-**Decision tree:**
-
-1. **What does the user need in the final output/summary?**
-   - Only extracted fields (date, vendor, amount) → Collect extracted_data directly
-   - Extracted fields + Drive links + Email info → Use AI generate to combine
-
-2. **Can AI extract this field FROM the input document?**
-   - YES (invoice number, amount, date) → Include in extract output_schema
-   - NO (Drive link, email sender, timestamp) → Get from workflow variables
-
-3. **Do I need this metadata in collected records?**
-   - NO (only used in delivery step) → Reference variables directly in delivery config
-   - YES (needed in summary/downstream processing) → Use AI generate to build complete record
-
-**Key principle:**
-- **AI extract:** Gets fields FROM input content
-- **Workflow variables:** Provide metadata (Drive links, email info, timestamps)
-- **AI generate:** COMBINES both into structured output when you need complete records
-
----
-
 **🎯 SUMMARY: Use These Protocols for Every Node**
 
 Before generating any node:
@@ -1255,7 +444,6 @@ Before generating any node:
 3. ✅ **AI Boundaries:** Only include fields AI can extract FROM input
 4. ✅ **File Operations:** Use exact field names from plugin schema
 5. ✅ **Transforms:** Understand input/output types (especially `reduce` → single value)
-6. ✅ **Complete Records:** Use AI generate to combine extracted data + workflow metadata when collecting
 
 **This validation PREVENTS bugs before they occur.**
 
@@ -1696,187 +884,51 @@ Represents a single operation: fetch, transform, AI, deliver, or file operation.
   - `0.3-0.5` → Summaries, analysis (balanced)
   - `0.7-1.0` → Creative generation (emails, content)
 
-#### File Processing Pattern
+#### Two-Step Pattern: File Processing Workflows
 
-**CRITICAL: When extracting structured data from files (PDFs, images, documents):**
+**When Enhanced Prompt mentions processing files (PDFs, images, documents):**
 
-**Use `deterministic_extract` AI type - it automatically runs PDF parser + AWS Textract BEFORE AI.**
-
-**Pattern for file data extraction:**
+**Step 1: File Operation (Deterministic Content Extraction)**
 ```json
 {
-  "operation_type": "fetch",
-  "fetch": {
-    "plugin_key": "google-mail",
-    "action": "get_email_attachment",
+  "operation_type": "file_op",
+  "file_op": {
+    "type": "extract_content",
+    "plugin_key": "file-extractor",
+    "action": "extract_text",
     "config": {
-      "message_id": "{{current_email.id}}",
-      "attachment_id": "{{current_attachment.attachment_id}}",
-      "filename": "{{current_attachment.filename}}"  // ✅ IMPORTANT: Pass filename
+      "file_input": "{{<file_variable>}}",
+      "ocr_fallback": true,  // Enable OCR for scanned PDFs/images
+      "output_format": "text"
     }
-  },
-  "outputs": [{"variable": "attachment_data"}]
-},
+  }
+}
+```
+→ Outputs: `file_content` (raw text from PDF/image/doc)
+
+**Step 2: AI Operation (Extract Specific Fields)**
+```json
 {
   "operation_type": "ai",
   "ai": {
-    "type": "deterministic_extract",  // ✅ Uses PDF parser/Textract automatically
-    "instruction": "Extract transaction fields from the document",
-    "input": "{{attachment_data}}",  // Pass entire attachment object (data + metadata)
+    "type": "extract",
+    "instruction": "<copy_from_sections.actions_what_fields_to_extract>",
+    "input": "{{file_content}}",
     "output_schema": {
-      "type": "object",
-      "properties": {
-        "vendor": {"type": "string", "description": "Vendor name"},
-        "amount": {"type": "number", "description": "Total amount"},
-        "date": {"type": "string", "description": "Transaction date"}
-      },
-      "required": ["vendor", "amount", "date"]
-    }
-  },
-  "outputs": [{"variable": "extracted_fields"}]
-}
-```
-
-**What happens at runtime:**
-1. Fetch returns: `{data: "base64...", filename: "invoice.pdf", mimeType: "application/pdf"}`
-2. `deterministic_extract` detects file data → runs PDF parser/Textract (FREE or ~$0.0015/page)
-3. Extracted text is analyzed by AI to extract the specific fields from output_schema
-4. Result: `{vendor: "Acme Corp", amount: 150.00, date: "2026-01-15"}`
-
-**NEVER do this:**
-```json
-// ❌ WRONG - Don't use regular "extract" type for files
-{
-  "operation_type": "ai",
-  "ai": {
-    "type": "extract",  // ❌ Will try to send binary data to AI
-    "input": "{{attachment_data.data}}"  // ❌ Binary base64 = 3M+ tokens
+      // Build from hard_requirements.required_outputs + sections.actions
+    },
+    "temperature": 0.0
   }
 }
 ```
+→ Outputs: Structured JSON with requested fields
 
-**Why `deterministic_extract`?**
-- FREE for text-based PDFs (pdf-parse)
-- Cheap for scanned PDFs/images (AWS Textract ~$0.0015/page)
-- AI only processes extracted text (100x cheaper than binary data)
+**Note:** Model is NOT specified - it's selected at runtime by StepExecutor routing logic
 
----
-
-## PROTOCOL 6: Context Preservation in Loops
-
-### Universal Rule: Pass Loop Context Through Operations
-
-**When building action `config` inside a loop:**
-
-If the loop item variable has a field with the SAME NAME as an action parameter → USE IT.
-
-**Pattern:**
-```json
-{
-  "loop_config": {
-    "item_variable": "current_item"  // Has fields: id, name, type, metadata...
-  },
-  "body": [
-    {
-      "operation_type": "fetch|deliver|transform",
-      "config": {
-        // For EACH parameter in the action schema:
-        // IF current_item.{param_name} exists → USE "{{current_item.{param_name}}}"
-        // This preserves context automatically
-      }
-    }
-  ]
-}
-```
-
-**Example:** Loop item has `{id: "123", filename: "doc.pdf", mimeType: "application/pdf"}`
-
-Action schema has parameters: `{file_id: required, filename: optional, mime_type: optional}`
-
-**Generate:**
-```json
-{
-  "config": {
-    "file_id": "{{current_item.id}}",           // Required - map id → file_id
-    "filename": "{{current_item.filename}}",     // Optional - but INCLUDE (same name)
-    "mime_type": "{{current_item.mimeType}}"     // Optional - but INCLUDE (field exists)
-  }
-}
-```
-
-**Why?** Preserves metadata, prevents data loss, enables downstream operations to have full context.
-
-**SPECIAL ATTENTION: File metadata fields (`filename`, `mimeType`, `contentType`, `size`)**
-
-When the loop item or source variable has ANY of these fields, ALWAYS pass them through to actions - even if optional:
-- `filename` / `fileName` - Critical for file identification and processing
-- `mimeType` / `mime_type` / `contentType` - Critical for file type detection
-- `size` / `fileSize` - Useful for size-based logic
-- Any other metadata fields that exist in the source
-
-**Why this is critical:**
-- Without `filename`: Operations default to generic names ("attachment", "file"), breaking downstream file processing
-- Without `mimeType`: File type detection fails, breaking format-specific operations (PDF extraction, image OCR, etc.)
-- Lost metadata = broken workflows
-
-**Universal rule: If a field exists in the source AND the action schema accepts it → PASS IT.**
-
----
-
-## PROTOCOL 7: Idempotent Operations
-
-### Universal Rule: Prefer get_or_create Over create
-
-**When an action creates a resource that might already exist:**
-
-1. Check if plugin has a `get_or_create_{resource}` variant
-2. If YES → use that instead of `create_{resource}`
-3. If NO → use search + conditional create pattern
-
-**Why?** Workflows often run multiple times. Creating duplicates every time causes clutter.
-
-**Available get_or_create Actions:**
-- `google-drive.get_or_create_folder` - Drive folders
-- `google-sheets.get_or_create_spreadsheet` - Sheets spreadsheets
-- `slack.get_or_create_channel` - Slack channels
-
-**Pattern (when get_or_create exists):**
-```json
-{
-  "operation_type": "deliver",
-  "deliver": {
-    "action": "get_or_create_{resource}",  // Use this instead of create_{resource}
-    "config": { "{resource}_name": "{{name}}" }
-  }
-}
-```
-
-**Pattern (when get_or_create doesn't exist):**
-```json
-{
-  "operation_type": "fetch",
-  "fetch": {
-    "action": "search_{resources}",  // Search for existing
-    "config": { "name": "{{desired_name}}" }
-  },
-  "outputs": [{"variable": "existing"}]
-},
-{
-  "operation_type": "choice",
-  "choice": {
-    "condition": { "variable": "existing", "operator": "is_empty" },
-    "if_true": {
-      "operation_type": "deliver",
-      "deliver": {
-        "action": "create_{resource}",  // Only create if not found
-        "config": { "{resource}_name": "{{desired_name}}" }
-      }
-    }
-  }
-}
-```
-
----
+**Why this pattern?**
+- File extraction is cheap/free (PDF parsing, OCR)
+- AI extraction is LLM-based (focuses only on field extraction, not file parsing)
+- Separation of concerns: file handling vs data extraction
 
 #### Template Usage Rules
 
@@ -2104,7 +1156,6 @@ Represents iteration over an array. Creates scatter-gather pattern.
     "body_start": "extract_invoice",
     "collect_outputs": true,
     "output_variable": "processed_items",
-    "collect_from": "invoice_data",  // ← CRITICAL: Which variable to collect from each iteration
     "concurrency": 5
   },
   "inputs": [
@@ -2115,18 +1166,6 @@ Represents iteration over an array. Creates scatter-gather pattern.
   ],
   "next": "send_digest"
 }
-```
-
-**CRITICAL Fields:**
-- `collect_outputs`: Set to `true` to collect results from each iteration
-- `output_variable`: Name of the collected array (created after loop completes)
-- **`collect_from`: REQUIRED when `collect_outputs: true` - Specifies WHICH variable from each iteration to collect**
-
-**Example:** If loop body creates variables `extracted_data` and `uploaded_file` in each iteration, and you want to collect the extracted data, use:
-```json
-"collect_outputs": true,
-"output_variable": "all_extracted_data",
-"collect_from": "extracted_data"  // ← Collect THIS variable from each iteration
 ```
 
 **Important:** The loop body must eventually reach a node that doesn't continue (implicitly returns to loop). Use a node with `id` like `loop_end` of type `end` to mark the end of the loop body.
@@ -2573,8 +1612,7 @@ fetch → loop → [body: op1 → op2 → op3 → loop_end] → after_loop → e
         "item_variable": "current_item",
         "body_start": "process_step1",
         "collect_outputs": true,
-        "output_variable": "processed_items",
-        "collect_from": "step2_result"  // ← Collect final result from each iteration
+        "output_variable": "processed_items"
       },
       "inputs": [{ "variable": "items" }],
       "outputs": [{ "variable": "processed_items" }],
@@ -2671,8 +1709,7 @@ fetch → loop → [
         "item_variable": "current_record",
         "body_start": "extract_fields",
         "collect_outputs": true,
-        "output_variable": "processed_items",
-        "collect_from": "enriched_data"  // ← Collect enriched_data from each iteration
+        "output_variable": "processed_items"
       },
       "inputs": [{ "variable": "records" }],
       "outputs": [{ "variable": "processed_items" }],

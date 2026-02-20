@@ -18,6 +18,7 @@ export type StepType =
   | 'scatter_gather'
   | 'trigger'
   | 'ai_processing'
+  | 'deterministic_extraction'
   | 'decision'
   | 'sub_workflow'
   | 'parallel'

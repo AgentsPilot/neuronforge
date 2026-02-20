@@ -339,6 +339,64 @@
         }
       }
     },
+    "get_or_create_channel": {
+      "description": "Get existing channel by name or create if it doesn't exist (prevents duplicates)",
+      "usage_context": "Use this instead of create_channel when you want idempotent channel creation. Perfect for recurring workflows to avoid creating duplicate channels on each run.",
+      "parameters": {
+        "type": "object",
+        "required": ["channel_name"],
+        "properties": {
+          "channel_name": {
+            "type": "string",
+            "description": "The name of the channel to find or create (lowercase letters, numbers, hyphens, underscores only)"
+          },
+          "is_private": {
+            "type": "boolean",
+            "description": "Whether the channel should be private (default: false, only used if creating new channel)",
+            "default": false
+          },
+          "description": {
+            "type": "string",
+            "description": "Optional: a description for the channel (only used if creating new channel)"
+          }
+        }
+      },
+      "rules": [
+        {
+          "rule_type": "limit",
+          "field": "channel_name",
+          "max_length": 80,
+          "error_message": "Channel name must be 80 characters or less"
+        }
+      ],
+      "output_schema": {
+        "type": "object",
+        "description": "Details of the channel (existing or newly created)",
+        "properties": {
+          "channel_id": { "type": "string", "description": "ID of the channel" },
+          "channel_name": { "type": "string", "description": "Name of the channel" },
+          "is_private": { "type": "boolean", "description": "Whether the channel is private" },
+          "created": { "type": "boolean", "description": "True if channel was newly created, false if it already existed" },
+          "success": { "type": "boolean", "description": "Whether operation was successful" },
+          "created_at": { "type": "string", "description": "ISO 8601 timestamp of operation" }
+        }
+      },
+      "output_guidance": {
+        "success_description": "Got or created channel",
+        "sample_output": {
+          "channel_id": "C1234567890",
+          "channel_name": "project-updates",
+          "is_private": false,
+          "created": false,
+          "success": true,
+          "created_at": "2025-01-01T00:00:00.000Z"
+        },
+        "common_errors": {
+          "invalid_name": "Invalid channel name. Use lowercase letters, numbers, hyphens, and underscores only.",
+          "rate_limited": "Slack rate limit exceeded. Please wait and try again."
+        }
+      }
+    },
     "create_channel": {
       "description": "Create a new Slack channel (public or private)",
       "parameters": {

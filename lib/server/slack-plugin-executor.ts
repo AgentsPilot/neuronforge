@@ -36,6 +36,9 @@ export class SlackPluginExecutor extends BasePluginExecutor {
       case 'remove_reaction':
         result = await this.removeReaction(connection, parameters);
         break;
+      case 'get_or_create_channel':
+        result = await this.getOrCreateChannel(connection, parameters);
+        break;
       case 'create_channel':
         result = await this.createChannel(connection, parameters);
         break;
@@ -335,6 +338,63 @@ export class SlackPluginExecutor extends BasePluginExecutor {
       emoji: emoji_name,
       message_timestamp: message_timestamp,
       channel_id: channel_id
+    };
+  }
+
+  // Get existing channel by name or create if it doesn't exist (prevents duplicates)
+  private async getOrCreateChannel(connection: any, parameters: any): Promise<any> {
+    this.logger.debug('Get or create Slack channel');
+
+    const { channel_name, is_private, description } = parameters;
+
+    if (!channel_name) {
+      throw new Error('channel_name is required');
+    }
+
+    // Search for existing channel by name
+    const url = new URL('https://slack.com/api/conversations.list');
+    url.searchParams.set('types', is_private ? 'private_channel' : 'public_channel');
+    url.searchParams.set('limit', '1000');
+    url.searchParams.set('exclude_archived', 'true');
+
+    const searchResponse = await fetch(url.toString(), {
+      headers: {
+        'Authorization': `Bearer ${connection.access_token}`,
+      },
+    });
+
+    const searchData = await this.handleSlackResponse(searchResponse, 'search_channels');
+
+    // Check if channel with this name exists
+    if (searchData.channels && Array.isArray(searchData.channels)) {
+      const existingChannel = searchData.channels.find((ch: any) => ch.name === channel_name);
+
+      if (existingChannel) {
+        this.logger.debug({ channelId: existingChannel.id }, 'Found existing channel');
+
+        return {
+          channel_id: existingChannel.id,
+          channel_name: existingChannel.name,
+          is_private: existingChannel.is_private,
+          created: false,
+          success: true,
+          created_at: new Date().toISOString(),
+          // Legacy format
+          channelId: existingChannel.id,
+          channelName: existingChannel.name,
+          isPrivate: existingChannel.is_private,
+          createdAt: new Date().toISOString()
+        };
+      }
+    }
+
+    // Channel doesn't exist - create it
+    this.logger.debug('Channel not found, creating new one');
+    const created = await this.createChannel(connection, parameters);
+
+    return {
+      ...created,
+      created: true
     };
   }
 

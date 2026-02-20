@@ -326,8 +326,20 @@ export class StepExecutor {
           break;
 
         case 'ai_processing':  // Smart Agent Builder uses this type
+          // RUNTIME SAFETY: Auto-detect file inputs and use deterministic extraction
+          // This prevents LLM from receiving binary file data even if workflow uses wrong step type
+          if (this.shouldUseDeterministicExtraction(step, resolvedParams, context)) {
+            logger.info({ stepId: step.id }, 'Auto-detected file input in ai_processing step - using deterministic extraction');
+            result = await this.executeDeterministicExtraction(step, resolvedParams, context);
+          } else {
+            const llmResult = await this.executeLLMDecision(step as AIProcessingStep, resolvedParams, context);
+            result = llmResult.data;
+            tokensUsed = llmResult.tokensUsed;
+          }
+          break;
+
         case 'llm_decision':
-          const llmResult = await this.executeLLMDecision(step as LLMDecisionStep | AIProcessingStep, resolvedParams, context);
+          const llmResult = await this.executeLLMDecision(step as LLMDecisionStep, resolvedParams, context);
           result = llmResult.data;
           tokensUsed = llmResult.tokensUsed;
           break;
@@ -1269,12 +1281,10 @@ export class StepExecutor {
       plugins_required: isAIProcessing ? [] : context.agent.plugins_required
     };
 
-    // CRITICAL: Inject output_schema from step config (for ai_processing steps)
-    // The step.config.output_schema contains the structured output format from IR generation
-    if (isAIProcessing && (step as AIProcessingStep).config?.output_schema) {
-      agentForExecution.output_schema = (step as AIProcessingStep).config.output_schema;
-      logger.debug({ stepId: step.id, hasOutputSchema: true }, 'Injecting output_schema from step config');
-    }
+    // IMPORTANT: Do NOT inject step.config.output_schema into agent.output_schema
+    // - agent.output_schema = delivery instructions (array of {type: "EmailDraft", config: {...}})
+    // - step.config.output_schema = JSON Schema for structured extraction (handled by orchestration)
+    // Mixing these two causes "outputSchema.filter is not a function" error in runAgentKit
 
     // Override model if selected by routing
     if (selectedModel) {
@@ -1422,6 +1432,16 @@ export class StepExecutor {
 
             // Store the result in context so subsequent steps can reference it
             context.setStepOutput(branchStep.id, branchStepResult);
+
+            // ✅ FIX: Register output_variable if specified (allows referencing by name)
+            // This was missing - conditional branch steps could only be accessed by step ID, not by output_variable name
+            const outputVariable = (branchStep as any).output_variable;
+            if (outputVariable && branchStepResult) {
+              // Extract the actual data from StepOutput format if needed
+              const dataToRegister = branchStepResult.data !== undefined ? branchStepResult.data : branchStepResult;
+              context.setVariable(outputVariable, dataToRegister);
+              logger.debug({ stepId: branchStep.id, outputVariable }, 'Registered output variable for conditional branch step');
+            }
 
             // Collect execution metadata for calibration summaries
             await this.collectExecutionMetadata(branchStep, branchStepResult, context);
@@ -3931,6 +3951,64 @@ Please analyze the above and provide your decision/response.
   }
 
   /**
+   * Runtime safety check: Detect if ai_processing step input contains file data
+   * If so, it should use deterministic extraction instead of sending binary data to LLM
+   */
+  private shouldUseDeterministicExtraction(
+    step: WorkflowStep,
+    params: any,
+    context: ExecutionContext
+  ): boolean {
+    // Only check ai_processing steps
+    if (step.type !== 'ai_processing') {
+      return false;
+    }
+
+    // Check if step has an input field (like deterministic_extraction would)
+    const inputField = (step as any).input || (step as any).config?.input;
+    if (!inputField) {
+      return false;
+    }
+
+    // Try to resolve the input variable
+    let inputData: any;
+    try {
+      if (typeof inputField === 'string' && inputField.includes('{{')) {
+        // Variable reference like "{{attachment_data}}"
+        inputData = context.resolveVariable(inputField);
+      } else {
+        // Direct value or from params
+        inputData = params.input || params[inputField];
+      }
+    } catch (err) {
+      logger.debug({ stepId: step.id, inputField, err }, 'Could not resolve input for file detection');
+      return false;
+    }
+
+    if (!inputData) {
+      return false;
+    }
+
+    // Check if input looks like file data (has data + mimeType fields)
+    const isFileData =
+      typeof inputData === 'object' &&
+      inputData !== null &&
+      (inputData.data || inputData.content) &&  // Has binary/base64 data
+      (inputData.mimeType || inputData.mime_type || inputData.contentType); // Has MIME type
+
+    if (isFileData) {
+      logger.info({
+        stepId: step.id,
+        mimeType: inputData.mimeType || inputData.mime_type || inputData.contentType,
+        hasFilename: !!(inputData.filename || inputData.fileName)
+      }, '🔒 RUNTIME SAFETY: Detected file input in ai_processing step - will use deterministic extraction');
+      return true;
+    }
+
+    return false;
+  }
+
+  /**
    * Execute deterministic extraction step
    * Extracts text from document (FREE via OCR), then uses LLM to extract structured fields
    */
@@ -4080,60 +4158,26 @@ Please analyze the above and provide your decision/response.
       extractionMethod: result.metadata?.extractionMethod,
     }, 'Deterministic extraction complete');
 
-    // CRITICAL: Check if deterministic extraction was successful
-    // Only use LLM fallback if confidence is low or extraction failed
-    const CONFIDENCE_THRESHOLD = 0.7; // 70% confidence required to skip LLM
-
-    if (result.success && result.confidence >= CONFIDENCE_THRESHOLD) {
-      // Deterministic extraction succeeded with high confidence - use it directly (no LLM cost!)
-      logger.info({
-        stepId: step.id,
-        confidence: result.confidence,
-        fieldsExtracted: result.metadata?.fieldsExtracted,
-        method: result.metadata?.extractionMethod,
-      }, 'Using deterministic extraction result (high confidence, no LLM needed)');
-
-      return {
-        data: result.data,
-        confidence: result.confidence,
-        needsLlmFallback: false,
-        metadata: {
-          ...result.metadata,
-          llmTokensUsed: 0, // No LLM used!
-          outputType: outputSchema?.type || 'object',
-          extractionMethod: result.metadata?.extractionMethod,
-        },
-      };
-    }
-
-    // Deterministic extraction failed or low confidence - fallback to LLM
+    // CRITICAL: NEVER use LLM for file extraction
+    // Always use deterministic extraction results (PDF parser + AWS Textract)
+    // Even if confidence is low, return what was found - NO LLM FALLBACK
     logger.info({
       stepId: step.id,
       confidence: result.confidence,
-      threshold: CONFIDENCE_THRESHOLD,
-      reason: !result.success ? 'extraction_failed' : 'low_confidence',
-      hasInputContext: Object.keys(inputContext).length > 0,
-    }, 'Falling back to LLM for field extraction');
-
-    const llmResult = await this.extractFieldsWithLLM(
-      step.id,
-      outputSchema,
-      result.rawText || '',
-      step.instruction,
-      context,
-      inputContext // Pass context fields to LLM for fields like email_subject, attachment_filename
-    );
+      fieldsExtracted: result.metadata?.fieldsExtracted,
+      method: result.metadata?.extractionMethod,
+      success: result.success,
+    }, 'Using deterministic extraction result (NO LLM fallback for file data)');
 
     return {
-      data: llmResult.data,
-      confidence: llmResult.confidence,
+      data: result.data,
+      confidence: result.confidence,
       needsLlmFallback: false,
       metadata: {
         ...result.metadata,
-        llmTokensUsed: llmResult.tokensUsed,
+        llmTokensUsed: 0, // No LLM ever used for file extraction!
         outputType: outputSchema?.type || 'object',
-        fallbackReason: !result.success ? 'extraction_failed' : 'low_confidence',
-        deterministicConfidence: result.confidence,
+        extractionMethod: result.metadata?.extractionMethod,
       },
     };
   }
