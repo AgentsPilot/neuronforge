@@ -1,577 +1,439 @@
 # V6 Workflow Execution Guide
 
-**Date**: 2025-12-30
-**Status**: ✅ PRODUCTION READY
+> **Last aligned to code**: 2026-02-22
+
+This guide explains how compiled PILOT workflows are executed at runtime — the step-by-step process from a flat `WorkflowStep[]` array to actual API calls and results.
 
 ## Overview
 
-This guide explains how to execute V6 workflows through the complete pipeline from user request to final results.
-
----
-
-## Complete V6 Pipeline (End-to-End)
+After the V6 pipeline compiles an Enhanced Prompt into a `WorkflowStep[]` (Phases 0–5), the **runtime execution engine** takes over:
 
 ```
-User Request
-    ↓
-Phase 0: Enhanced Prompt Generation
-    ↓
-Phase 1: Semantic Plan Generation (Understanding)
-    ↓
-Phase 1.5: Plugin Schema Extraction (Grounding Preparation)
-    ↓
-Phase 2: Grounding (Assumption Validation)
-    ↓
-Phase 3: IR Formalization (Declarative IR)
-    ↓
-Phase 4: DSL Compilation (PILOT DSL)
-    ↓
-Phase 5: Workflow Execution (Runtime)
-    ↓
-Results
-```
-
----
-
-## Execution Methods
-
-### Method 1: Full Pipeline Execution (All Phases)
-
-**Use Case**: Testing the complete V6 pipeline from enhanced prompt to execution
-
-**API Endpoint**: Not yet implemented (requires creating full pipeline endpoint)
-
-**Alternative**: Run phases sequentially via individual endpoints
-
----
-
-### Method 2: Sequential Phase Execution
-
-Execute each phase individually for maximum control and debugging.
-
-#### Step 1: Generate Semantic Plan (Phase 1)
-
-**Endpoint**: `POST /api/v6/generate-semantic-plan`
-
-**Request**:
-```json
-{
-  "enhanced_prompt": {
-    "sections": {
-      "data": [
-        "Fetch emails from Gmail containing complaints"
-      ],
-      "delivery": [
-        "Send summary to admin@company.com"
-      ]
-    },
-    "specifics": {
-      "services_involved": ["google-mail"]
-    }
-  },
-  "config": {
-    "provider": "openai",
-    "model": "gpt-4o"
-  }
-}
-```
-
-**Response**:
-```json
-{
-  "success": true,
-  "semantic_plan": {
-    "plan_version": "1.0",
-    "goal": "...",
-    "understanding": {...},
-    "assumptions": [...],
-    "inferences": [...],
-    "ambiguities": []
-  }
-}
+WorkflowStep[] (PILOT format)
+        │
+        ▼
+┌─────────────────────────────┐
+│  WorkflowPilot.execute()    │
+│  ┌───────────────────────┐  │
+│  │ 1. Parse & Validate   │  │  WorkflowParser builds execution plan
+│  │ 2. Build Dep Graph    │  │  Adjacency map of step dependencies
+│  │ 3. Topological Sort   │  │  Kahn's algorithm
+│  │ 4. Assign Levels      │  │  Level 0, 1, 2, ...
+│  │ 5. Detect Parallel    │  │  Which steps can run concurrently
+│  └───────────────────────┘  │
+│            │                │
+│            ▼                │
+│  ┌───────────────────────┐  │
+│  │ Execute Level 0       │  │  StepExecutor processes each step
+│  │ Execute Level 1       │  │  ParallelExecutor for parallel groups
+│  │ Execute Level 2       │  │  ConditionalEvaluator for branches
+│  │ ...                   │  │  ExecutionContext stores state
+│  └───────────────────────┘  │
+└─────────────────────────────┘
+        │
+        ▼
+  Execution Results
 ```
 
 ---
 
-#### Step 2: Ground Semantic Plan + Formalize to IR (Phase 2 + 3)
+## Main Components
 
-**Endpoint**: `POST /api/v6/generate-ir-semantic`
+| Component | Source | Purpose |
+|-----------|--------|---------|
+| **WorkflowPilot** | [`lib/pilot/WorkflowPilot.ts`](../../lib/pilot/WorkflowPilot.ts) | Main orchestrator — parses workflow, builds plan, manages lifecycle |
+| **StepExecutor** | [`lib/pilot/StepExecutor.ts`](../../lib/pilot/StepExecutor.ts) | Routes each step to the correct handler, resolves variables, tracks metrics |
+| **ConditionalEvaluator** | [`lib/pilot/ConditionalEvaluator.ts`](../../lib/pilot/ConditionalEvaluator.ts) | Evaluates conditions for `conditional` and `switch` steps |
+| **ExecutionContext** | [`lib/pilot/ExecutionContext.ts`](../../lib/pilot/ExecutionContext.ts) | Stores step outputs, resolves `{{variable}}` references, tracks tokens/time |
+| **ParallelExecutor** | [`lib/pilot/ParallelExecutor.ts`](../../lib/pilot/ParallelExecutor.ts) | Handles parallel groups, scatter-gather loops, concurrency limits |
 
-**Request**:
-```json
-{
-  "enhanced_prompt": {
-    "sections": {
-      "data": ["Fetch emails from Gmail containing complaints"],
-      "delivery": ["Send summary to admin@company.com"]
-    },
-    "specifics": {
-      "services_involved": ["google-mail"]
+---
+
+## Execution Plan Building
+
+The WorkflowPilot builds the execution plan in 6 stages:
+
+### Stage 1: Normalization
+- Auto-generate missing step IDs
+- Convert V4 scatter-gather format to internal representation
+
+### Stage 2: Validation
+- Check for dependency cycles
+- Check for missing dependencies (step references non-existent step)
+- Validate required fields per step type
+
+### Stage 3: Dependency Graph
+- Build adjacency map: `stepId → Set<dependencyStepId>`
+- Dependencies come from explicit `dependencies` array and implicit `{{stepX.data}}` variable references
+
+### Stage 4: Topological Sort
+- Uses Kahn's algorithm to determine safe execution order
+- Detects cycles (rejects workflow if found)
+
+### Stage 5: Execution Level Assignment
+- **Level 0**: Steps with no dependencies (can start immediately)
+- **Level N**: `max(dependency levels) + 1`
+
+```
+Level 0: [step1]               ← no deps, runs first
+Level 1: [step2, step3]        ← both depend only on step1
+Level 2: [step4]               ← depends on step2 or step3
+```
+
+### Stage 6: Parallel Group Detection
+
+Steps at the same level are grouped for parallel execution if they meet criteria:
+
+**Can run in parallel**: `action`, `transform`
+**Cannot run in parallel**: `conditional`, `switch`, `loop`, `scatter_gather`, `sub_workflow`, `human_approval`, `llm_decision`, `ai_processing`
+
+---
+
+## Execution Flow
+
+```typescript
+for (const [level, steps] of stepsByLevel) {
+  const parallelGroups = groupByParallelGroup(steps)
+  for (const group of parallelGroups) {
+    if (group.length === 1) {
+      await executeSingleStep(group[0], context)
+    } else {
+      await executeParallelGroup(group, context)  // concurrent, up to maxConcurrency
     }
   }
+  // Wait for all steps in level before moving to next
 }
 ```
 
-**What Happens**:
-1. Generates semantic plan (Phase 1)
-2. Extracts plugin schema metadata (Phase 1.5 - NO AUTH REQUIRED)
-3. Grounds assumptions via field name fuzzy matching (Phase 2)
-4. Formalizes to Declarative IR (Phase 3)
-
-**Response**:
-```json
-{
-  "success": true,
-  "declarative_ir": {
-    "workflow_type": "data_processing",
-    "data_sources": [...],
-    "processing": {...},
-    "outputs": [...]
-  },
-  "grounding_results": {
-    "validated": 5,
-    "total": 5,
-    "confidence": 0.95
-  }
-}
-```
+**Key rules**:
+- Levels execute sequentially (Level 0 finishes before Level 1 starts)
+- Within a level, parallel groups execute concurrently (max concurrency: 3 by default)
+- Within a parallel group, steps are chunked: `[step2, step3, step4, step5]` with maxConcurrency=3 → chunk1: [step2,step3,step4] → chunk2: [step5]
 
 ---
 
-#### Step 3: Compile IR to DSL (Phase 4)
-
-**Endpoint**: `POST /api/v6/compile-declarative`
-
-**Request**:
-```json
-{
-  "declarative_ir": {
-    "workflow_type": "data_processing",
-    "data_sources": [
-      {
-        "id": "ds1",
-        "plugin": "google-mail",
-        "action": "search_emails",
-        "config": {
-          "query": "complaint",
-          "max_results": 100
-        }
-      }
-    ],
-    "processing": {
-      "filters": [
-        {
-          "data_source_id": "ds1",
-          "conditions": [...]
-        }
-      ],
-      "ai_operations": [...]
-    },
-    "outputs": [...]
-  },
-  "enhanced_prompt": {
-    "specifics": {
-      "services_involved": ["google-mail"]
-    }
-  }
-}
-```
-
-**Response**:
-```json
-{
-  "success": true,
-  "dsl": {
-    "workflow": [
-      {
-        "step_id": "step1",
-        "name": "Fetch complaints from Gmail",
-        "type": "action",
-        "dependencies": [],
-        "plugin": "google-mail",
-        "action": "search_emails",
-        "params": {
-          "query": "complaint",
-          "max_results": 100
-        }
-      },
-      {
-        "step_id": "step2",
-        "name": "Filter emails",
-        "type": "transform",
-        "dependencies": ["step1"],
-        "operation": "filter",
-        "input": "{{step1.data}}",
-        "config": {
-          "condition": "item.subject.toLowerCase().includes('complaint')"
-        }
-      }
-    ]
-  },
-  "plugins_required": ["google-mail"]
-}
-```
-
----
-
-#### Step 4: Execute DSL Workflow (Phase 5)
-
-**Endpoint**: `POST /api/v6/execute-test`
-
-**Request**:
-```json
-{
-  "workflow": [
-    {
-      "step_id": "step1",
-      "name": "Fetch complaints from Gmail",
-      "type": "action",
-      "dependencies": [],
-      "plugin": "google-mail",
-      "action": "search_emails",
-      "params": {
-        "query": "complaint",
-        "max_results": 100
-      }
-    },
-    {
-      "step_id": "step2",
-      "name": "Filter emails",
-      "type": "transform",
-      "dependencies": ["step1"],
-      "operation": "filter",
-      "input": "{{step1.data}}",
-      "config": {
-        "condition": "item.subject.toLowerCase().includes('complaint')"
-      }
-    }
-  ],
-  "plugins_required": ["google-mail"],
-  "user_id": "user@example.com"
-}
-```
-
-**Response**:
-```json
-{
-  "success": true,
-  "data": {
-    "stepsCompleted": 2,
-    "stepsFailed": 0,
-    "stepsSkipped": 0,
-    "execution_time_ms": 1234,
-    "tokens_used": 0,
-    "output": {
-      "emails_found": 15,
-      "filtered_emails": 12,
-      "data": [...]
-    },
-    "completedStepIds": ["step1", "step2"],
-    "failedStepIds": [],
-    "skippedStepIds": []
-  }
-}
-```
-
----
-
-### Method 3: Test Page Execution (Recommended for Testing)
-
-**Location**: `/public/test-v6-declarative.html`
-
-**Features**:
-- Interactive UI for testing each phase
-- Visual display of results at each step
-- Auto-fill with example workflows
-- Real-time execution feedback
-- No authentication required for schema-based grounding
-
-**How to Use**:
-
-1. **Open test page**:
-   ```
-   http://localhost:3000/test-v6-declarative.html
-   ```
-
-2. **Fill in Enhanced Prompt** (or use example):
-   ```json
-   {
-     "sections": {
-       "data": ["Fetch emails from Gmail inbox"],
-       "delivery": ["Log to Google Sheets"]
-     },
-     "specifics": {
-       "services_involved": ["google-mail", "google-sheets"]
-     }
-   }
-   ```
-
-3. **Click through phases**:
-   - "Generate Semantic Plan" → See assumptions and understanding
-   - "Generate IR" → See declarative IR with grounded facts
-   - "Compile to DSL" → See executable PILOT DSL workflow
-   - "Execute Workflow" → See actual execution results
-
-4. **View Results**:
-   - Each phase displays formatted JSON output
-   - Errors shown with detailed messages
-   - Execution time and token usage tracked
-
----
-
-## Execution Architecture
-
-### Phase 5: Runtime Execution Engine
-
-**Main Components**:
-
-1. **WorkflowPilot** ([WorkflowPilot.ts](../lib/pilot/WorkflowPilot.ts))
-   - Main orchestrator
-   - Manages execution lifecycle
-   - Coordinates all pilot components
-
-2. **StepExecutor** ([StepExecutor.ts](../lib/pilot/StepExecutor.ts))
-   - Executes individual steps
-   - Routes by step type (action, transform, ai_call, scatter_gather)
-   - Resolves template variables
-   - Handles retries with token de-duplication
-
-3. **ExecutionContext** ([ExecutionContext.ts](../lib/pilot/ExecutionContext.ts))
-   - Manages in-memory execution state
-   - Stores step outputs
-   - Resolves `{{variable}}` references
-   - Tracks token usage and execution time
-
-4. **ParallelExecutor** ([ParallelExecutor.ts](../lib/pilot/ParallelExecutor.ts))
-   - Handles parallel execution with concurrency limits
-   - Executes loops and scatter-gather patterns
-   - Chunks parallel steps for resource management
-
----
-
-## Template Variable Resolution
-
-The execution engine resolves template variables at runtime using the ExecutionContext.
-
-### Supported Syntax
-
-| Syntax | Example | Description |
-|--------|---------|-------------|
-| Step output | `{{step1.data}}` | Access entire step result |
-| Nested field | `{{step1.data.emails[0].subject}}` | Access nested data |
-| Input value | `{{input.recipient}}` | User-provided input |
-| Loop variable | `{{item.id}}` | Current loop item |
-| Loop index | `{{loop.index}}` | Current iteration number |
-
-### Resolution Process
-
-1. **Extract variable path**: `"{{step1.data.emails}}"` → `"step1.data.emails"`
-2. **Identify root**:
-   - `"step1"` → fetch from step outputs
-   - `"input"` → fetch from input variables
-   - `"item"` → fetch from loop context
-3. **Navigate path**: `step1.data.emails` → traverse nested structure
-4. **Return value**: Resolved value or throw `VariableResolutionError`
-
-### Example Variable Resolution
-
-**Step Definition**:
-```json
-{
-  "step_id": "step2",
-  "type": "transform",
-  "operation": "map",
-  "input": "{{step1.data.emails}}",
-  "config": {
-    "expression": "{subject: item.subject, from: item.from}"
-  }
-}
-```
-
-**Runtime Resolution**:
-1. Resolve `{{step1.data.emails}}`:
-   - Get step1 output from context
-   - Access `.data` property
-   - Access `.emails` array
-   - Returns: `[{subject: "...", from: "..."}, ...]`
-
-2. For each item in array, create loop context:
-   - Set `{{item}}` = current email object
-   - Evaluate expression with `item` in scope
-   - Collect mapped results
-
----
-
-## Step Execution Flow
+## Step Execution by Type
 
 ### 1. Action Steps (Plugin Operations)
 
-**Example**:
 ```json
 {
   "step_id": "step1",
   "type": "action",
   "plugin": "google-mail",
   "action": "search_emails",
-  "params": {
-    "query": "complaint",
-    "max_results": 100
-  }
+  "params": { "query": "newer_than:7d", "max_results": 100 },
+  "output_variable": "emails_result"
 }
 ```
 
-**Execution**:
-1. Resolve params template variables
+**Execution flow**:
+1. Resolve `{{variable}}` references in params
 2. Get plugin executor via PluginManagerV2
-3. Execute plugin action with resolved params
+3. Execute plugin action with resolved params (real API call)
 4. Store result in context as `step1.data`
-5. Track tokens used (if AI action)
+5. If `output_variable` is set, also register `context.setVariable("emails_result", data)`
+6. Track tokens if the action involved AI
 
 ---
 
 ### 2. Transform Steps (Data Operations)
 
-**Example**:
 ```json
 {
   "step_id": "step2",
   "type": "transform",
   "operation": "filter",
-  "input": "{{step1.data}}",
+  "input": "{{step1.data.emails}}",
+  "config": { "condition": "item.subject.includes('urgent')" }
+}
+```
+
+**Supported operations**: `map`, `filter`, `reduce`, `sort`, `group`, `group_by`, `aggregate`, `deduplicate`, `flatten`, `set`, `join`, `pivot`, `split`, `expand`, `partition`, `rows_to_objects`, `map_headers`, `render_table`, `fetch_content`
+
+**Execution flow**:
+1. Resolve input variable → get source data
+2. Route to appropriate transform handler
+3. Apply operation (e.g., filter evaluates condition for each item)
+4. Store result in context
+
+---
+
+### 3. AI Processing Steps (LLM Operations)
+
+```json
+{
+  "step_id": "step3",
+  "type": "ai_processing",
+  "input": "{{step2.data}}",
+  "prompt": "Classify each email as urgent, normal, or low priority",
   "config": {
-    "condition": "item.subject.includes('urgent')"
+    "ai_type": "classify",
+    "output_schema": { "fields": [{ "name": "priority", "type": "string" }] },
+    "temperature": 0
   }
 }
 ```
 
-**Execution**:
-1. Resolve input variable → get step1 data
-2. Route to transform operation handler (filter, map, sort, etc.)
-3. Apply operation:
-   - **filter**: Evaluate condition for each item, keep matches
-   - **map**: Transform each item via expression
-   - **sort**: Sort by field
-   - **group_by**: Group items by field value
-4. Store filtered/transformed result in context
+**Execution flow**:
+1. Resolve input variable and template variables in prompt
+2. **Auto-detect file inputs**: If the input data contains file content (PDF, image), redirects to `deterministic_extraction` automatically via `shouldUseDeterministicExtraction()`
+3. Route through AI orchestration (model selection, prompt optimization)
+4. Call LLM with resolved prompt
+5. Parse response (handle JSON mode if configured)
+6. Store result and track tokens
 
 ---
 
-### 3. Scatter-Gather Steps (Loops)
+### 4. Deterministic Extraction Steps
 
-**Example**:
 ```json
 {
-  "step_id": "step3",
-  "type": "scatter_gather",
-  "config": {
-    "data": "{{step1.data}}",
-    "item_variable": "email",
-    "actions": [
-      {
-        "step_id": "step3_1",
-        "type": "ai_call",
-        "params": {
-          "messages": [{
-            "role": "user",
-            "content": "Classify: {{email.subject}}"
-          }]
-        }
-      }
+  "step_id": "step4",
+  "type": "deterministic_extraction",
+  "input": "{{current_attachment.content}}",
+  "prompt": "Extract invoice number, date, vendor, and total amount",
+  "output_schema": {
+    "fields": [
+      { "name": "invoice_number", "type": "string" },
+      { "name": "date", "type": "string" },
+      { "name": "vendor", "type": "string" },
+      { "name": "total_amount", "type": "number" }
     ]
+  }
+}
+```
+
+**Execution flow**:
+1. Resolve input (file content — PDF, image, etc.)
+2. Use PDF parser + Textract + AI pipeline for structured extraction
+3. Validate output against `output_schema`
+4. Store structured result
+
+---
+
+### 5. Conditional Steps (Branching)
+
+```json
+{
+  "step_id": "step5",
+  "type": "conditional",
+  "condition": { "field": "{{emails_result.total_found}}", "operator": "greater_than", "value": 0 },
+  "then": [
+    { "step_id": "step5a", "type": "action", "plugin": "google-mail", "action": "send_email", "params": { "body": "Found results!" } }
+  ],
+  "else": [
+    { "step_id": "step5b", "type": "action", "plugin": "google-mail", "action": "send_email", "params": { "body": "No results found." } }
+  ],
+  "output_variable": "branch_result"
+}
+```
+
+**Execution flow**:
+1. **Evaluate condition** via `ConditionalEvaluator`:
+   - Resolve field reference through ExecutionContext
+   - Apply operator comparison
+   - Return boolean result
+2. **Select branch**: If `true` → execute `then` steps; if `false` → execute `else` steps
+3. **Execute branch steps** sequentially (each step goes through the full StepExecutor pipeline)
+4. **Register output_variable** from the last branch step result if `output_variable` is specified
+
+**Condition formats supported**:
+
+| Format | Example |
+|--------|---------|
+| Simple | `{ field: "score", operator: ">", value: 70 }` |
+| Complex AND | `{ conditionType: "complex_and", conditions: [{...}, {...}] }` |
+| Complex OR | `{ conditionType: "complex_or", conditions: [{...}, {...}] }` |
+| Complex NOT | `{ conditionType: "complex_not", condition: {...} }` |
+| String expression | `"step1.data.score > 70 && step2.success"` |
+
+**Comparison operators**:
+
+| Category | Operators |
+|----------|-----------|
+| Equality | `==`, `equals`, `eq`, `!=`, `not_equals`, `ne` |
+| Numeric | `>`, `>=`, `<`, `<=`, `greater_than`, `greater_than_or_equal`, `less_than`, `less_than_or_equal`, `gt`, `gte`, `lt`, `lte` |
+| Collection | `contains`, `not_contains`, `in`, `not_in` |
+| Existence | `exists`, `not_exists` |
+| Emptiness | `is_empty`, `is_not_empty` |
+| Pattern | `matches`, `matches_regex`, `starts_with`, `ends_with` |
+| Date | `within_last_days`, `before`, `after` |
+
+**Truthiness rules** (when resolving a value without an explicit operator):
+
+| Type | Truthy | Falsy |
+|------|--------|-------|
+| String | Non-empty `"hello"` | Empty `""` |
+| Number | Non-zero `42` | Zero `0` |
+| Boolean | `true` | `false` |
+| null / undefined | — | Always falsy |
+| Array | **Always truthy, even `[]`** | — |
+| Object | Non-empty `{ a: 1 }` | Empty `{}` |
+
+> **Important**: In JavaScript, an empty array `[]` is **truthy**. A condition like `{{emails_result.emails}}` will evaluate to `true` even when the array is empty. To check for empty arrays, use the `is_empty` or `is_not_empty` operator, or check `.length > 0`.
+
+---
+
+### 6. Scatter-Gather Steps (Loops)
+
+```json
+{
+  "step_id": "step6",
+  "type": "scatter_gather",
+  "scatter": {
+    "input": "{{step1.data.emails}}",
+    "itemVariable": "current_email",
+    "steps": [
+      { "step_id": "step6_1", "type": "ai_processing", "input": "{{current_email.body}}", "prompt": "Classify this email" }
+    ],
+    "maxConcurrency": 3
   },
+  "gather": { "operation": "collect", "from": "classifications" },
   "output_variable": "classified_emails"
 }
 ```
 
-**Execution**:
-1. Resolve `data` → get array to iterate
-2. For each item:
-   - Create child context with `{{email}}` = current item
-   - Execute nested actions sequentially
-   - Collect result
-3. Aggregate results based on gather config
-4. Store in context as `classified_emails`
+**Execution flow**:
+1. **Resolve scatter input** → get array to iterate over
+2. **For each item** in the array:
+   a. **Clone context**: `parentContext.clone(resetMetrics: true)` — prevents double-counting tokens
+   b. **Set item variable**: `itemContext.setVariable("current_email", item)`
+   c. **Set index**: `itemContext.setVariable("index", i)`
+   d. **Execute nested steps** sequentially within the item context
+   e. **Register output_variable** for each nested step if specified
+   f. **Collect result** from the last step
+3. **Aggregate results** based on `gather.operation`:
+   - `collect`: Combine all results into an array
+   - `merge`: Deep merge objects
+   - `reduce`: Apply reduce expression
+   - `flatten`: Flatten nested arrays
+4. **Merge metrics** back to parent context (sum tokens, time)
+5. **Store result** as `output_variable` if specified
+
+**Concurrency**: Items are processed in chunks based on `maxConcurrency` (default: 3). Chunk 1 runs in parallel, waits for completion, then chunk 2 runs, etc.
 
 ---
 
-### 4. AI Call Steps (LLM Operations)
+### 7. Switch Steps (Multi-Branch)
 
-**Example**:
 ```json
 {
-  "step_id": "step4",
-  "type": "ai_call",
-  "params": {
-    "messages": [
-      {"role": "system", "content": "You are a complaint classifier"},
-      {"role": "user", "content": "Classify this: {{step1.data[0].subject}}"}
-    ],
-    "temperature": 0,
-    "response_format": "json_object"
-  }
+  "step_id": "step7",
+  "type": "switch",
+  "condition": { "field": "{{step3.data.category}}" },
+  "cases": {
+    "urgent": [{ "step_id": "step7a", "type": "action", ... }],
+    "normal": [{ "step_id": "step7b", "type": "action", ... }]
+  },
+  "default": [{ "step_id": "step7c", "type": "action", ... }]
 }
 ```
 
-**Execution**:
-1. Resolve template variables in messages
-2. Route through orchestration layer (automatic model selection)
-3. Call LLM with resolved messages
-4. Parse response (handle JSON mode if specified)
-5. Store result + track tokens used
+**Execution flow**: Resolves the field value, matches against case keys, executes the matching branch (or default if no match).
 
 ---
 
-## Parallel Execution and Dependencies
+### 8. Other Step Types
 
-### Dependency-Based Execution Levels
-
-The WorkflowPilot organizes steps into **execution levels** based on dependencies:
-
-```
-Level 0: [step1] (no dependencies)
-Level 1: [step2, step3] (both depend on step1 only)
-Level 2: [step4] (depends on step2 or step3)
-```
-
-**Execution Order**:
-1. Execute Level 0 sequentially
-2. Wait for Level 0 completion
-3. Execute Level 1 steps **in parallel** (up to concurrency limit)
-4. Wait for Level 1 completion
-5. Execute Level 2 steps
-6. Continue until all levels complete
-
-### Concurrency Control
-
-**ParallelExecutor** limits concurrent steps to prevent resource exhaustion:
-
-- **Default max concurrency**: 3 steps
-- **Chunking**: Divides parallel group into chunks
-- **Sequential chunks**: Processes chunks one at a time
-- **Parallel within chunk**: All steps in chunk run concurrently
-
-**Example**:
-```
-Parallel group: [step2, step3, step4, step5, step6] (5 steps)
-Max concurrency: 3
-
-Chunk 1: [step2, step3, step4] → Execute in parallel
-Wait for chunk 1 completion
-Chunk 2: [step5, step6] → Execute in parallel
-Wait for chunk 2 completion
-```
+| Type | Description |
+|------|-------------|
+| `delay` | Wait/sleep for specified duration |
+| `validation` | Validate data against schema or rules |
+| `enrichment` | Merge data from multiple sources |
+| `comparison` | Compare two data sources |
+| `sub_workflow` | Execute a nested workflow recursively |
+| `human_approval` | Pause execution and wait for human input |
 
 ---
 
-## Error Handling and Retries
+## Template Variable Resolution
+
+### Supported Syntax
+
+| Syntax | Example | Description |
+|--------|---------|-------------|
+| Step output | `{{step1.data}}` | Entire step result |
+| Nested field | `{{step1.data.emails[0].subject}}` | Nested data access |
+| Named output | `{{emails_result.total_found}}` | Via `output_variable` |
+| Input value | `{{input.recipient}}` | User-provided input |
+| Loop variable | `{{current_email.subject}}` | Current scatter item |
+| Loop index | `{{index}}` | Current iteration number |
+| Array wildcard | `{{step1.data[*].email}}` | All elements of array |
+| Quoted property | `{{step1.data['Sales Person']}}` | Properties with spaces |
+
+### Resolution Process
+
+1. **Extract path**: `"{{step1.data.emails}}"` → `["step1", "data", "emails"]`
+2. **Identify root**:
+   - `step*` → step outputs map
+   - `input` / `inputs` → input values
+   - `var` → runtime variables
+   - `current` / `item` → loop context
+   - Custom names → check variables first, then scatter context
+3. **Navigate path** with smart field matching:
+   - Exact match (case-sensitive)
+   - Case-insensitive fallback
+   - snake_case ↔ camelCase conversion
+   - PascalCase fallback
+4. **Null vs Undefined**:
+   - `undefined` → key doesn't exist → resolution error
+   - `null` → key exists but explicitly null → preserved as-is
+
+### output_variable System
+
+When a step has `output_variable: "emails_result"`:
+
+1. Step executes normally (result stored as `step1.data` in step outputs map)
+2. **Additionally**, the data is registered as a named variable: `context.setVariable("emails_result", data)`
+3. Downstream steps can reference via either path:
+   - `{{step1.data.emails}}` → resolves through step outputs
+   - `{{emails_result.emails}}` → resolves through named variables
+
+This is used by:
+- **Scatter-gather**: Each iteration's output is registered by the loop's `output_variable`
+- **Conditional branches**: Branch step results registered for downstream access
+- **IR formalization**: The LLM assigns meaningful variable names (e.g., `emails_result`, `filtered_invoices`)
+
+---
+
+## Token Usage and Cost Tracking
+
+### Token De-duplication for Retries
+
+ExecutionContext tracks tokens with retry awareness:
+
+```typescript
+setStepOutput(stepId, output) {
+  const previousOutput = this.stepOutputs.get(stepId)
+  if (previousOutput) {
+    // Subtract previous attempt tokens before adding new
+    this.totalTokensUsed -= getTokenTotal(previousOutput.metadata.tokensUsed)
+  }
+  this.stepOutputs.set(stepId, output)
+  this.totalTokensUsed += getTokenTotal(output.metadata.tokensUsed)
+}
+```
+
+This prevents overcharging users for failed AI call attempts.
+
+### Context Cloning for Scatter-Gather
+
+When executing scatter-gather items in parallel:
+- Each item gets a **cloned context** with `resetMetrics: true`
+- Tokens and time start at 0 in the clone (prevents double-counting)
+- After all items complete, metrics are **summed back** to the parent context
+
+---
+
+## Error Handling
 
 ### Retry Logic
 
-StepExecutor supports configurable retry policies:
+Steps can configure retry policies:
 
-```typescript
+```json
 {
-  "step_id": "step1",
   "retry_policy": {
     "max_attempts": 3,
     "backoff_ms": 1000,
@@ -580,372 +442,81 @@ StepExecutor supports configurable retry policies:
 }
 ```
 
-**Retry Behavior**:
-1. Execute step
-2. If fails, wait `backoff_ms` (exponentially if enabled)
-3. Retry up to `max_attempts` times
-4. **Token de-duplication**: Previous attempt tokens subtracted from total
+**Behavior**: Execute → if fails, wait `backoff_ms` → retry → exponential increase → up to `max_attempts`
 
 ### Error Propagation
 
-- **Step failure**: Marks step as failed, stores error
-- **Dependent steps**: Skipped if dependency failed
-- **Workflow result**: `success: false` if any critical step fails
-- **Partial results**: Completed steps still available in output
+1. **Step failure**: Marks step as failed, stores error in context
+2. **Dependent steps**: Skipped if dependency failed (in batch calibration mode: checks for non-recoverable errors)
+3. **Workflow result**: `success: false` if any critical step fails
+4. **Partial results**: Completed steps still available in output
+
+### Common Runtime Errors
+
+| Error | Cause | Solution |
+|-------|-------|----------|
+| `VariableResolutionError: {{step1.data}} not found` | Step1 hasn't executed or failed | Check dependencies array |
+| `Plugin execution failed: Not authenticated` | Missing/expired OAuth tokens | Re-connect plugin in UI |
+| Empty array treated as truthy | Conditional on `{{result.items}}` where items is `[]` | Use `is_empty` / `is_not_empty` operator |
+| Conditional branch steps not executing | `then`/`else` arrays empty after Phase 5 translation | Check Phase 4 DSL output for branch content |
+| `SyntaxError: Unexpected token {{` | Template variable used inside JS expression body | Use `input` field for data, `condition` for logic |
+| Scatter-gather returns empty | Input array was empty — loop body never executes | Add conditional check before scatter-gather |
 
 ---
 
-## Token Usage and Cost Tracking
+## Execution Methods
 
-### Token Accounting
+### Method 1: Test Page (Recommended for Testing)
 
-ExecutionContext tracks tokens with retry de-duplication:
-
-```typescript
-setStepOutput(stepId, output) {
-  // Check if this is a retry
-  const previousOutput = this.stepOutputs.get(stepId);
-
-  if (previousOutput) {
-    // De-duplicate: subtract previous attempt tokens
-    const previousTokens = getTokenTotal(previousOutput.metadata.tokensUsed);
-    this.totalTokensUsed -= previousTokens;
-  }
-
-  // Store new output
-  this.stepOutputs.set(stepId, output);
-
-  // Add new attempt tokens
-  const newTokens = getTokenTotal(output.metadata.tokensUsed);
-  this.totalTokensUsed += newTokens;
-}
+```
+http://localhost:3000/test-v6-declarative.html
 ```
 
-**Why This Matters**: Ensures users aren't charged for failed AI call attempts.
+See [V6_TEST_DECLARATIVE.md](./V6_TEST_DECLARATIVE.md) for the full test page guide.
 
-### Token Tracking Sources
-
-- **AI calls**: Direct LLM token usage
-- **Plugin actions**: AI-powered plugins report tokens
-- **Orchestration**: Compressed prompts track savings
-
----
-
-## Performance Optimizations
-
-### 1. Step Caching
-
-Deterministic steps (no randomness) are cached:
+### Method 2: API Call
 
 ```typescript
-// Check cache before execution
-const cacheKey = generateCacheKey(step, resolvedParams);
-const cachedResult = this.cache.get(cacheKey);
+const result = await fetch('/api/v6/execute-test', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    workflow: compiledWorkflowSteps,
+    plugins_required: ['google-mail', 'google-sheets'],
+    user_id: 'offir.omer@gmail.com',
+    workflow_name: 'Test Workflow',
+    input_variables: {}
+  })
+})
 
-if (cachedResult) {
-  return cachedResult; // Skip re-execution
-}
+const { success, data } = await result.json()
+// data.stepsCompleted, data.stepsFailed, data.execution_time_ms
 ```
 
-**Cacheable Steps**:
-- Transforms (filter, map, sort)
-- Plugin actions with fixed params
-- AI calls with `temperature: 0`
-
-### 2. Orchestration Integration
-
-AI calls route through orchestration for optimization:
-
-- **Prompt compression**: Reduces token usage
-- **Model selection**: Chooses cheapest capable model
-- **Batch processing**: Combines multiple calls when possible
-
-### 3. Concurrency Limits
-
-Prevents resource exhaustion:
-- Max 3 concurrent steps (configurable)
-- Chunked parallel execution
-- Database connection pooling
-
----
-
-## Debugging and Monitoring
-
-### Debug Mode
-
-Enable step-by-step execution tracking:
+### Method 3: Programmatic (Direct)
 
 ```typescript
+const pilot = new WorkflowPilot(supabase, stateManager)
 const result = await pilot.execute(
-  agent,
+  agent,           // Agent object with pilot_steps
   userId,
-  'Test execution',
-  {},
-  undefined, // sessionId
-  undefined, // stepEmitter
-  true // debugMode ← Enable debugging
-);
+  'Execution name',
+  inputVariables,
+  sessionId,
+  stepEmitter,     // Optional: real-time progress events
+  debugMode        // Optional: step-by-step tracing
+)
 ```
-
-**Debug Features**:
-- Step-by-step breakpoints
-- Variable inspection
-- Execution trace logging
-- Performance profiling
-
-### Real-Time Progress
-
-Use StateManager for real-time updates:
-
-```typescript
-const stateManager = new StateManager(supabase);
-
-// Subscribe to execution updates
-stateManager.onStepComplete((stepId, result) => {
-  console.log(`Step ${stepId} completed:`, result);
-});
-
-await pilot.execute(agent, userId, 'Live execution', {});
-```
-
----
-
-## Common Execution Patterns
-
-### Pattern 1: Data Fetch → Transform → AI → Output
-
-```json
-{
-  "workflow": [
-    {
-      "step_id": "step1",
-      "type": "action",
-      "plugin": "google-mail",
-      "action": "search_emails"
-    },
-    {
-      "step_id": "step2",
-      "type": "transform",
-      "operation": "filter",
-      "input": "{{step1.data}}",
-      "dependencies": ["step1"]
-    },
-    {
-      "step_id": "step3",
-      "type": "ai_call",
-      "params": {
-        "messages": [
-          {"role": "user", "content": "Summarize: {{step2.data}}"}
-        ]
-      },
-      "dependencies": ["step2"]
-    },
-    {
-      "step_id": "step4",
-      "type": "action",
-      "plugin": "google-mail",
-      "action": "send_email",
-      "params": {
-        "to": "admin@company.com",
-        "body": "{{step3.data.summary}}"
-      },
-      "dependencies": ["step3"]
-    }
-  ]
-}
-```
-
-**Execution**: Sequential (each step waits for previous)
-
----
-
-### Pattern 2: Parallel Data Sources → Merge → Process
-
-```json
-{
-  "workflow": [
-    {
-      "step_id": "step1",
-      "type": "action",
-      "plugin": "google-mail",
-      "action": "search_emails",
-      "dependencies": []
-    },
-    {
-      "step_id": "step2",
-      "type": "action",
-      "plugin": "google-sheets",
-      "action": "read_range",
-      "dependencies": []
-    },
-    {
-      "step_id": "step3",
-      "type": "transform",
-      "operation": "merge",
-      "config": {
-        "sources": ["{{step1.data}}", "{{step2.data}}"]
-      },
-      "dependencies": ["step1", "step2"]
-    }
-  ]
-}
-```
-
-**Execution**:
-- Level 0: step1 and step2 run in parallel
-- Level 1: step3 waits for both, then merges
-
----
-
-### Pattern 3: Scatter-Gather with Deduplication
-
-```json
-{
-  "workflow": [
-    {
-      "step_id": "step1",
-      "type": "action",
-      "plugin": "google-mail",
-      "action": "search_emails"
-    },
-    {
-      "step_id": "step2",
-      "type": "action",
-      "plugin": "google-sheets",
-      "action": "read_range"
-    },
-    {
-      "step_id": "step3",
-      "type": "scatter_gather",
-      "dependencies": ["step1", "step2"],
-      "config": {
-        "data": "{{step1.data}}",
-        "item_variable": "newEmail",
-        "actions": [
-          {
-            "step_id": "step3_1",
-            "type": "transform",
-            "operation": "filter",
-            "input": "{{step2.data}}",
-            "config": {
-              "condition": "item.email_id !== newEmail.id"
-            }
-          }
-        ]
-      },
-      "output_variable": "deduplicated_emails"
-    }
-  ]
-}
-```
-
-**Execution**:
-- Fetch emails and existing records in parallel
-- Loop over new emails
-- For each email, check if it exists in step2 data
-- Keep only new emails (not in existing records)
-
----
-
-## Troubleshooting
-
-### Issue 1: "Variable not found" Error
-
-**Error**: `VariableResolutionError: Variable {{step1.data}} not found`
-
-**Cause**: Step1 hasn't executed yet or failed
-
-**Fix**: Check dependencies array - ensure step2 depends on step1:
-```json
-{
-  "step_id": "step2",
-  "dependencies": ["step1"],  // ← Add this!
-  "input": "{{step1.data}}"
-}
-```
-
----
-
-### Issue 2: Plugin Authentication Failure
-
-**Error**: `Plugin execution failed: Not authenticated for google-mail`
-
-**Cause**: User hasn't connected plugin OAuth
-
-**Fix**: Ensure user has valid OAuth tokens in database:
-```sql
-SELECT * FROM user_plugins
-WHERE user_id = '...' AND plugin_key = 'google-mail';
-```
-
----
-
-### Issue 3: Template Variables in Function Bodies
-
-**Error**: `SyntaxError: Unexpected token {{`
-
-**Cause**: Template variables used inside JavaScript function closures
-
-**Wrong**:
-```json
-{
-  "condition": "(() => { const x = {{step1.data}}; return x > 5; })()"
-}
-```
-
-**Correct**:
-```json
-{
-  "input": "{{step1.data}}",
-  "condition": "item > 5"
-}
-```
-
----
-
-### Issue 4: High Token Usage
-
-**Cause**: Inefficient prompt construction or missing orchestration
-
-**Fix**:
-1. Enable orchestration routing (automatic model selection)
-2. Use `temperature: 0` for cacheable AI calls
-3. Minimize prompt size - reference only needed data
-4. Use structured `response_format: "json_object"` to reduce output tokens
-
----
-
-## Next Steps
-
-1. **Test the pipeline**: Use `/public/test-v6-declarative.html`
-2. **Monitor executions**: Check `workflow_executions` table in Supabase
-3. **Review logs**: Check console for detailed execution traces
-4. **Optimize workflows**: Use parallel execution and caching
-5. **Handle errors**: Add retry policies for flaky operations
 
 ---
 
 ## Related Documentation
 
-- [V6 Architecture Overview](./V6_DECLARATIVE_ARCHITECTURE.md)
-- [V6 DSL Compiler Fixes](./V6_DSL_COMPILER_FIXES.md)
-- [V6 Schema-Based Grounding](./V6_SCHEMA_BASED_GROUNDING.md)
-- [WorkflowPilot Source](../lib/pilot/WorkflowPilot.ts)
-- [StepExecutor Source](../lib/pilot/StepExecutor.ts)
-- [ExecutionContext Source](../lib/pilot/ExecutionContext.ts)
+- [V6 Architecture](./V6_ARCHITECTURE.md) — Compilation pipeline phases
+- [V6 API Reference](./V6_API_REFERENCE.md) — API schemas for execute-test endpoint
+- [V6 Developer Guide](./V6_DEVELOPER_GUIDE.md) — Debugging execution issues
+- [V6 Test Declarative](./V6_TEST_DECLARATIVE.md) — Test page UI guide
 
 ---
 
-## Status
-
-✅ **All execution components production-ready**
-
-- WorkflowPilot execution engine: ✅ Complete
-- Template variable resolution: ✅ Complete
-- Parallel execution with dependencies: ✅ Complete
-- Token de-duplication on retries: ✅ Complete
-- Error handling and propagation: ✅ Complete
-- Test endpoint `/api/v6/execute-test`: ✅ Complete
-- Test page UI: ✅ Complete
-
-**Ready for production use!**
+*V6 Agent Generation System - Neuronforge*

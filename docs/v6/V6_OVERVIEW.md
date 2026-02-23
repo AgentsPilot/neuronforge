@@ -1,6 +1,7 @@
 # V6 Agent Generation System - Overview
 
 > **Start here** - This document provides a high-level introduction to the V6 system.
+> **Last aligned to code**: 2026-02-22
 
 ## Documentation Guide
 
@@ -13,139 +14,144 @@ This documentation set covers the V6 Agent Generation System. Read in order:
 | 3 | [**V6_API_REFERENCE.md**](./V6_API_REFERENCE.md) | Complete API documentation with request/response schemas |
 | 4 | [**V6_DEVELOPER_GUIDE.md**](./V6_DEVELOPER_GUIDE.md) | Integration, extension, debugging, testing, best practices |
 | 5 | [**V6_TEST_DECLARATIVE.md**](./V6_TEST_DECLARATIVE.md) | Test page UI guide (`/test-v6-declarative.html`) |
+| 6 | [**V6_EXECUTION_GUIDE.md**](./V6_EXECUTION_GUIDE.md) | Runtime execution engine internals |
 
 ### Quick Links - Key Source Files
 
 | File | Purpose |
 |------|---------|
-| `app/api/v6/generate-ir-semantic/route.ts` | Main orchestration API |
-| `lib/agentkit/v6/semantic-plan/SemanticPlanGenerator.ts` | Phase 1: Understanding |
-| `lib/agentkit/v6/semantic-plan/grounding/GroundingEngine.ts` | Phase 2: Grounding |
-| `lib/agentkit/v6/semantic-plan/IRFormalizer.ts` | Phase 3: Formalization |
-| `lib/agentkit/v6/compiler/DeclarativeCompiler.ts` | Phase 4: Compilation |
-| `lib/agentkit/v6/compiler/PilotNormalizer.ts` | Phase 5: Validation |
-
-### Test Suites
-
-| Test File | Coverage |
-|-----------|----------|
-| `__tests__/DeclarativeCompiler-comprehensive.test.ts` | Core compilation |
-| `__tests__/DeclarativeCompiler-dataflow.test.ts` | Variable flow |
-| `__tests__/DeclarativeCompiler-regression.test.ts` | Bug regression |
-| `__tests__/v6-integration.test.ts` | End-to-end |
+| `app/api/v6/generate-ir-semantic/route.ts` | Main orchestration API (two modes) |
+| `lib/agentkit/v6/pipeline/V6PipelineOrchestrator.ts` | Pipeline orchestrator (P0→P3→P4→P5) |
+| `lib/agentkit/v6/requirements/HardRequirementsExtractor.ts` | Phase 0: Requirements extraction |
+| `lib/agentkit/v6/semantic-plan/IRFormalizer.ts` | Phase 3: IR formalization |
+| `lib/agentkit/v6/compiler/ExecutionGraphCompiler.ts` | Phase 4: Deterministic compilation |
+| `lib/agentkit/v6/requirements/ValidationGates.ts` | Gates 1–5 validation |
+| `lib/agentkit/v6/requirements/AutoRecoveryHandler.ts` | Auto-recovery on gate failures |
+| `lib/agentkit/v6/config/AgentGenerationConfigService.ts` | Admin model config per phase |
+| `lib/pilot/WorkflowPilot.ts` | Runtime execution engine |
+| `lib/pilot/StepExecutor.ts` | Step-by-step execution |
+| `lib/pilot/ConditionalEvaluator.ts` | Conditional branch evaluation |
+| `lib/pilot/ExecutionContext.ts` | Variable resolution and state |
 
 ---
 
 ## What is V6?
 
-The V6 Agent Generation System is a **semantic-first, 5-phase pipeline** for converting natural language prompts into executable AI automation workflows. It represents a fundamental architectural shift from previous approaches, solving the "new prompt, new error" problem through deterministic compilation and real-data grounding.
+The V6 Agent Generation System is a **compiler-based pipeline** for converting natural language prompts into executable AI automation workflows. It follows the principle that **workflow creation is compilation, not generation** — every transformation must be lossless, traceable, constraint-preserving, and rejectable.
+
+The system has two sides:
+1. **Compilation** — Converting an Enhanced Prompt into a PILOT workflow (Phases 0–5)
+2. **Execution** — Running the compiled PILOT workflow against real plugins (runtime engine)
 
 ## The Problem V6 Solves
 
 Previous agent generation approaches suffered from:
 - **Field name guessing**: LLMs were forced to guess exact field names (e.g., "email" vs "email_address" vs "emailAddr")
 - **Non-deterministic output**: Same prompt could produce different, potentially invalid workflows
-- **Validation failures**: Generated workflows often failed schema validation
+- **No constraint tracking**: User requirements like "only send email when amount > 50" could be silently dropped
 - **Cascading errors**: One wrong assumption led to multiple downstream failures
 
 ## The V6 Solution
 
-V6 introduces a **separation of concerns** between:
-1. **Understanding** (what the user wants) - handled by LLM with freedom to express uncertainty
-2. **Grounding** (validating against real data) - handled by fuzzy matching algorithms
-3. **Formalization** (precise IR generation) - mechanical mapping using grounded facts
-4. **Compilation** (executable workflow) - deterministic, rule-based compilation
-5. **Validation** (correctness guarantee) - schema-driven post-compilation checks
+V6 introduces a **6-phase pipeline with 5 validation gates**:
 
-## The 5-Phase Pipeline
+1. **Phase 0 — Requirements Extraction** (LLM): Extract machine-checkable constraints from the prompt
+2. **Phase 1 & 2 — SKIPPED**: Semantic planning and grounding are block-commented (Enhanced Prompt has all needed info)
+3. **Phase 3 — IR Formalization** (LLM): Map Enhanced Prompt to a `DeclarativeLogicalIRv4` execution graph
+4. **Phase 4 — Compilation** (deterministic): Compile the graph to PILOT DSL workflow steps
+5. **Phase 5 — PILOT Translation** (deterministic): Normalize to flat PILOT format, validate intent satisfaction
+
+Each requirement extracted in Phase 0 is tracked through the pipeline with a status lifecycle: `pending → compiled → enforced`. Gate 5 rejects workflows where any requirement is not `enforced`.
+
+## Current Pipeline Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                        V6 Agent Generation Pipeline                         │
-└─────────────────────────────────────────────────────────────────────────────┘
-
-     User Prompt
-          │
-          ▼
-   ┌──────────────┐
-   │   Enhanced   │ ──► Structured prompt with sections (data, actions, delivery)
-   │    Prompt    │
-   └──────────────┘
-          │
-          ▼
-   ┌──────────────┐
-   │   Phase 1    │ ──► Semantic Plan with assumptions, ambiguities, reasoning
-   │ UNDERSTANDING│     LLM expresses uncertainty freely
-   └──────────────┘
-          │
-          ▼
-   ┌──────────────┐
-   │   Phase 2    │ ──► Grounded Plan with validated field names
-   │  GROUNDING   │     Fuzzy matching against real data
-   └──────────────┘
-          │
-          ▼
-   ┌──────────────┐
-   │   Phase 3    │ ──► Declarative IR with exact field names
-   │ FORMALIZATION│     Mechanical mapping (no guessing)
-   └──────────────┘
-          │
-          ▼
-   ┌──────────────┐
-   │   Phase 4    │ ──► PILOT DSL Workflow (executable)
-   │ COMPILATION  │     Deterministic, rule-based
-   └──────────────┘
-          │
-          ▼
-   ┌──────────────┐
-   │   Phase 5    │ ──► Validated, normalized workflow
-   │  VALIDATION  │     Schema-driven checks
-   └──────────────┘
-          │
-          ▼
-   Executable Agent
+Enhanced Prompt
+    │
+    ▼
+Phase 0: HardRequirementsExtractor.extract()      ← LLM (gpt-4o-mini, admin-configurable)
+    │   outputs: HardRequirements + RequirementMap
+    │   Gate 0: structural validation
+    ▼
+[Phase 1 & 2 SKIPPED — block-commented]           ← saves ~3500 tokens, 15–30s
+    │   dummy gate results injected
+    ▼
+Phase 3: IRFormalizer.formalize()                  ← LLM (claude-opus-4-6, admin-configurable)
+    │   receives Enhanced Prompt directly (not semantic plan)
+    │   Gate 3: validateIR() + PluginResolver auto-fix + AutoRecoveryHandler
+    ▼
+Phase 4: ExecutionGraphCompiler.compile()          ← deterministic (no LLM)
+    │   topological sort → node-by-node compilation
+    │   Gate 4: validateCompilation()
+    ▼
+Phase 5: translateToPilotFormat()                  ← deterministic (no LLM)
+    │   DSL step mapping → flat PILOT array
+    │   Gate 5: validateFinal() (intent satisfaction)
+    ▼
+Production PILOT Workflow (WorkflowStep[])
+    │
+    ▼
+Runtime: WorkflowPilot → StepExecutor              ← executes against real plugins
+    │   builds execution plan (dependency levels)
+    │   resolves {{variable}} references at runtime
+    │   evaluates conditionals, loops, parallel groups
+    ▼
+Execution Results
 ```
 
-## Key Benefits
+## Key Concepts
 
-### 1. Semantic Understanding Phase
-The LLM can now express uncertainty through:
-- **Assumptions**: "I assume the email field is called 'email' or 'email_address'"
-- **Ambiguities**: "It's unclear if the user wants to filter by date or by status"
-- **Reasoning traces**: Documented decision-making for debugging
+### IR v4.0 Execution Graph
 
-### 2. Real Data Grounding
-Instead of guessing, the system validates assumptions against actual data:
-- **Fuzzy field matching**: "email" matches "email_addr" with 85% confidence
-- **Data type validation**: Confirms field contains email-formatted strings
-- **Pattern matching**: Validates date formats, numeric ranges, etc.
+Phase 3 produces a `DeclarativeLogicalIRv4` with an **execution graph** — a directed acyclic graph (DAG) of typed nodes:
 
-### 3. Deterministic Compilation
-Once grounded facts are established:
-- **No LLM variability**: Same IR always produces same workflow
-- **Predictable output**: Developers can reason about compilation behavior
-- **Testable**: Unit tests can verify compilation rules
+| Node Type | Description |
+|-----------|-------------|
+| `operation` | Plugin call (fetch/deliver), data transform, AI operation, file operation |
+| `choice` | Conditional branching with rules and default path |
+| `loop` | Iteration over arrays with body sub-graph |
+| `parallel` | Concurrent branches with wait strategy |
+| `end` | Graph termination marker |
 
-### 4. Schema-Driven Validation
-Post-compilation validation ensures:
-- **Type correctness**: All parameters match expected types
-- **Plugin compatibility**: Actions use correct parameter schemas
-- **Execution safety**: No runtime type errors
+### PILOT Workflow Steps
 
-## When to Use V6
+Phase 5 produces a flat array of `WorkflowStep[]` — the production format executed by the runtime engine:
 
-Use V6 when you need:
-- **High reliability**: Production workflows that must not fail
-- **Complex data sources**: Multiple sources with varying schemas
-- **AI operations**: Workflows involving LLM processing of data
-- **Auditability**: Need to understand why a workflow was generated
+| Step Type | Description |
+|-----------|-------------|
+| `action` | Plugin API call (e.g., `google-mail.search_emails`) |
+| `transform` | Data transformation (filter, map, sort, group_by, etc.) |
+| `ai_processing` | LLM operation (summarize, classify, extract, etc.) |
+| `deterministic_extraction` | File extraction (PDF parser + Textract + AI) |
+| `scatter_gather` | Loop/iteration with nested steps and gather aggregation |
+| `conditional` | Branching with `then`/`else` step arrays |
+
+### Validation Gates
+
+| Gate | Phase | What It Checks |
+|------|-------|----------------|
+| Gate 0 | P0 | Structural validation of extracted requirements |
+| Gate 1 | P1 (skipped) | Dummy PASS — semantic mapping coverage |
+| Gate 2 | P2 (skipped) | Dummy PASS — grounding coverage |
+| Gate 3 | P3 | Every requirement maps to an IR node; plugin operations are valid |
+| Gate 4 | P4 | Every compiled requirement maps to a DSL step; thresholds have guards |
+| Gate 5 | P5 | All requirements are `enforced`; side effects have guards |
+
+### Admin Model Configuration
+
+Each phase's LLM provider/model/temperature is configurable via the `system_settings_config` Supabase table. Defaults:
+
+| Phase | Provider | Model | Temperature |
+|-------|----------|-------|-------------|
+| P0 (Requirements) | openai | gpt-4o-mini | 0.0 |
+| P1 (Semantic, skipped) | anthropic | claude-opus-4-6 | 0.3 |
+| P3 (Formalization) | anthropic | claude-opus-4-6 | 0.0 |
 
 ## Quick Start
 
-### Basic Usage
+### Generate a Workflow (Orchestrator Mode)
 
 ```typescript
-// POST /api/v6/generate-ir-semantic
 const response = await fetch('/api/v6/generate-ir-semantic', {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
@@ -153,112 +159,68 @@ const response = await fetch('/api/v6/generate-ir-semantic', {
     enhanced_prompt: {
       sections: {
         data: ['Read emails from my Gmail inbox from the last 7 days'],
-        actions: ['Categorize each email as urgent/normal/low-priority'],
-        delivery: ['Write results to my "Email Summary" Google Sheet']
+        actions: ['Filter emails containing keywords: complaint, refund, angry'],
+        output: ['Append matching emails with sender, subject, date, body'],
+        delivery: ['Write to Google Sheets spreadsheet ID abc123, tab UrgentEmails']
       },
-      user_context: {
-        original_request: 'Categorize my recent emails and save to a spreadsheet'
+      specifics: {
+        services_involved: ['google-mail', 'google-sheets'],
+        resolved_user_inputs: [
+          { key: 'filter_keywords', value: ['complaint', 'refund', 'angry'] },
+          { key: 'spreadsheet_id', value: 'abc123' }
+        ]
       }
     },
-    // Optional: provide metadata for grounding
-    data_source_metadata: {
-      headers: ['id', 'subject', 'from', 'snippet', 'date'],
-      sample_rows: [/* sample data */]
-    }
+    userId: 'offir.omer@gmail.com',
+    use_v6_orchestrator: true
   })
-});
+})
+
+const result = await response.json()
+// result.workflow → WorkflowStep[] (flat PILOT array)
+// result.hard_requirements → extracted constraints
+// result.validation_results → gate pass/fail results
+// result.requirement_map → per-requirement enforcement status
 ```
 
-### Response Structure
+### Execute a Compiled Workflow
 
 ```typescript
-{
-  success: true,
-  // The executable workflow
-  workflow: {
-    steps: [...],
-    metadata: {...}
-  },
-  // Intermediate results for debugging
-  intermediate: {
-    semantic_plan: {...},     // Phase 1 output
-    grounded_plan: {...},     // Phase 2 output
-    declarative_ir: {...},    // Phase 3 output
-    compilation_result: {...} // Phase 4 output
-  },
-  // Metrics
-  metadata: {
-    total_time_ms: 2500,
-    phase_times: {
-      understanding: 800,
-      grounding: 150,
-      formalization: 600,
-      compilation: 200,
-      validation: 50
-    }
-  }
-}
+const execResponse = await fetch('/api/v6/execute-test', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    workflow: result.workflow,
+    plugins_required: ['google-mail', 'google-sheets'],
+    user_id: 'offir.omer@gmail.com',
+    workflow_name: 'Complaint Email Logger'
+  })
+})
+
+const execResult = await execResponse.json()
+// execResult.data.stepsCompleted → number of steps that ran
+// execResult.data.execution_time_ms → total execution time
 ```
 
-## Architecture Diagram
+### Use the Test Page
+
+The easiest way to test is via the interactive UI:
 
 ```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                              V6 System Architecture                          │
-└─────────────────────────────────────────────────────────────────────────────┘
-
-                                    API Layer
-                    ┌─────────────────────────────────────┐
-                    │   /api/v6/generate-ir-semantic      │
-                    │   (Main Orchestration Endpoint)     │
-                    └─────────────────────────────────────┘
-                                      │
-              ┌───────────────────────┼───────────────────────┐
-              │                       │                       │
-              ▼                       ▼                       ▼
-    ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-    │ SemanticPlan    │    │  Grounding      │    │  IRFormalizer   │
-    │ Generator       │───►│  Engine         │───►│                 │
-    │ (Phase 1)       │    │  (Phase 2)      │    │  (Phase 3)      │
-    └─────────────────┘    └─────────────────┘    └─────────────────┘
-              │                     │                       │
-              │              ┌──────┴──────┐                │
-              │              │             │                │
-              │        FieldMatcher   DataSampler          │
-              │                                             │
-              │                                             ▼
-              │                               ┌─────────────────────┐
-              │                               │ DeclarativeCompiler │
-              │                               │     (Phase 4)       │
-              │                               └─────────────────────┘
-              │                                         │
-              │                          ┌──────────────┼──────────────┐
-              │                          │              │              │
-              │                   PluginResolver   Resolvers      IRValidator
-              │                                   (AI, Data,
-              │                                    Filter, etc.)
-              │                                         │
-              │                                         ▼
-              │                               ┌─────────────────────┐
-              │                               │  PilotNormalizer    │
-              │                               │  WorkflowValidator  │
-              │                               │     (Phase 5)       │
-              └──────────────────────────────►└─────────────────────┘
-                                                        │
-                                                        ▼
-                                               Executable Workflow
+http://localhost:3000/test-v6-declarative.html
 ```
+
+See [V6_TEST_DECLARATIVE.md](./V6_TEST_DECLARATIVE.md) for full test page documentation.
 
 ## Continue Reading
 
-Now that you understand the V6 system at a high level, continue with:
-
 | Next | Document | What You'll Learn |
 |------|----------|-------------------|
-| 2 | [**V6_ARCHITECTURE.md**](./V6_ARCHITECTURE.md) | Deep dive into each phase, data structures, error handling |
+| 2 | [**V6_ARCHITECTURE.md**](./V6_ARCHITECTURE.md) | Deep dive into each phase, IR v4.0 graph, compilation, execution engine |
 | 3 | [**V6_API_REFERENCE.md**](./V6_API_REFERENCE.md) | Complete API documentation with request/response examples |
 | 4 | [**V6_DEVELOPER_GUIDE.md**](./V6_DEVELOPER_GUIDE.md) | How to integrate, extend, debug, and test V6 |
 | 5 | [**V6_TEST_DECLARATIVE.md**](./V6_TEST_DECLARATIVE.md) | How to use the test UI at `/test-v6-declarative.html` |
+| 6 | [**V6_EXECUTION_GUIDE.md**](./V6_EXECUTION_GUIDE.md) | Runtime execution engine: step types, variables, conditionals |
 
 ---
 
