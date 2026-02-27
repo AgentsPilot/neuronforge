@@ -1445,31 +1445,54 @@ export class ExecutionGraphCompiler {
     const errors: string[] = []
     const warnings: string[] = []
 
-    // Find conditional that evaluates the routing condition
+    // Strategy 1: Find conditional that evaluates the routing condition
     const routingConditional = this.findConditionalEvaluatingField(rule.condition, workflow)
 
-    if (!routingConditional) {
-      errors.push(
-        `Routing rule not enforced: No conditional found that evaluates field "${rule.condition}"`
+    if (routingConditional) {
+      // Verify the conditional routes to the correct destination
+      const routesToCorrectDestination = this.conditionalRoutesToDestination(
+        routingConditional,
+        rule.field_value,
+        rule.destination
       )
+
+      if (!routesToCorrectDestination) {
+        errors.push(
+          `Routing rule incorrectly enforced: Conditional "${routingConditional.step_id || routingConditional.id}" evaluates ${rule.condition} but does not route to "${rule.destination}" when value is "${rule.field_value}"`
+        )
+      } else {
+        this.log(ctx, `✓ Routing rule enforced via conditional: ${rule.condition} = "${rule.field_value}" → ${rule.destination}`)
+      }
       return { errors, warnings }
     }
 
-    // Verify the conditional routes to the correct destination
-    const routesToCorrectDestination = this.conditionalRoutesToDestination(
-      routingConditional,
-      rule.field_value,
-      rule.destination
-    )
-
-    if (!routesToCorrectDestination) {
-      errors.push(
-        `Routing rule incorrectly enforced: Conditional "${routingConditional.step_id || routingConditional.id}" evaluates ${rule.condition} but does not route to "${rule.destination}" when value is "${rule.field_value}"`
-      )
-    } else {
-      this.log(ctx, `✓ Routing rule enforced: ${rule.condition} = "${rule.field_value}" → ${rule.destination}`)
+    // Strategy 2: For group_by routing, a scatter_gather over grouped data is valid enforcement
+    if (rule.condition.startsWith('group_by=')) {
+      const scatterStep = this.findScatterGatherByField(rule.field_value, workflow)
+      if (scatterStep) {
+        this.log(ctx, `✓ Routing rule enforced via scatter_gather: ${rule.condition} — loop iterates per "${rule.field_value}" group`)
+        return { errors, warnings }
+      }
     }
 
+    // Strategy 3: Check IR requirements_enforcement tracking (LLM validated this)
+    if (ctx.ir?.requirements_enforcement) {
+      const fieldLower = rule.field_value.toLowerCase()
+      const enforcement = ctx.ir.requirements_enforcement.find(e =>
+        e.validation_passed &&
+        e.validation_details?.toLowerCase().includes(fieldLower) &&
+        e.validation_details?.toLowerCase().includes('routing') ||
+        e.validation_details?.toLowerCase().includes('group')
+      )
+      if (enforcement) {
+        this.log(ctx, `✓ Routing rule enforced (IR-tracked): ${rule.condition} — ${enforcement.validation_details}`)
+        return { errors, warnings }
+      }
+    }
+
+    errors.push(
+      `Routing rule not enforced: No conditional or scatter_gather found that routes by field "${rule.condition}"`
+    )
     return { errors, warnings }
   }
 
@@ -1636,6 +1659,21 @@ export class ExecutionGraphCompiler {
           // Match by operation type or plugin+operation combination
           if (operation.toLowerCase().replace(/_/g, '').includes(normalizedType) ||
               `${pluginKey}${operation}`.toLowerCase().replace(/_/g, '').includes(normalizedType)) {
+            steps.push(step)
+          }
+        }
+
+        // Also check AI processing and transform steps — filtering/thresholds
+        // are often implemented via AI steps, not plugin actions
+        if (step.type === 'ai_processing' || step.type === 'transform') {
+          const anyStep = step as any
+          const stepId = (anyStep.step_id || anyStep.id || '').toLowerCase().replace(/_/g, '')
+          const description = (anyStep.description || '').toLowerCase().replace(/_/g, '')
+          const operation = (anyStep.operation || '').toLowerCase().replace(/_/g, '')
+
+          if (stepId.includes(normalizedType) ||
+              description.includes(normalizedType) ||
+              operation.includes(normalizedType)) {
             steps.push(step)
           }
         }
@@ -1950,6 +1988,47 @@ export class ExecutionGraphCompiler {
     }
 
     return false
+  }
+
+  /**
+   * Find a scatter_gather step that iterates over data grouped by a specific field.
+   * A scatter_gather satisfies a group_by routing rule when it loops over grouped data,
+   * effectively routing each group's data to its own execution path.
+   */
+  private findScatterGatherByField(fieldValue: string, workflow: WorkflowStep[]): WorkflowStep | null {
+    const fieldLower = fieldValue.toLowerCase().replace(/\s+/g, '_')
+
+    const search = (steps: WorkflowStep[]): WorkflowStep | null => {
+      for (const step of steps) {
+        if (step.type === 'scatter_gather') {
+          const scatter = (step as any).scatter
+          if (scatter) {
+            // Check if the scatter input references grouped data related to the field
+            const inputStr = (scatter.input || '').toLowerCase()
+            if (inputStr.includes('group') || inputStr.includes(fieldLower)) {
+              return step
+            }
+            // Check the step description/output_variable for grouping references
+            const stepStr = JSON.stringify(step).toLowerCase()
+            if (stepStr.includes('group') && stepStr.includes(fieldLower)) {
+              return step
+            }
+          }
+        }
+
+        // Recurse into nested structures
+        if (step.type === 'conditional') {
+          const cond = step as any
+          const thenSteps = cond.then ? (Array.isArray(cond.then) ? cond.then : [cond.then]) : (cond.then_steps || [])
+          const elseSteps = cond.else ? (Array.isArray(cond.else) ? cond.else : [cond.else]) : (cond.else_steps || [])
+          const found = search(thenSteps) || search(elseSteps)
+          if (found) return found
+        }
+      }
+      return null
+    }
+
+    return search(workflow)
   }
 
   /**

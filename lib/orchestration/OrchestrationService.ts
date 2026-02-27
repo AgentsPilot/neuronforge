@@ -163,6 +163,23 @@ export class OrchestrationService {
       if ((step.type === 'loop' || step.type === 'iterate') && step.steps) {
         step.steps.forEach(processStep);
       }
+
+      // Check for nested steps in conditional branches (V4 format)
+      if (step.type === 'conditional') {
+        if (step.then && Array.isArray(step.then)) {
+          step.then.forEach(processStep);
+        }
+        if (step.else && Array.isArray(step.else)) {
+          step.else.forEach(processStep);
+        }
+        // Also support DSL field names
+        if (step.then_steps && Array.isArray(step.then_steps)) {
+          step.then_steps.forEach(processStep);
+        }
+        if (step.else_steps && Array.isArray(step.else_steps)) {
+          step.else_steps.forEach(processStep);
+        }
+      }
     };
 
     steps.forEach(processStep);

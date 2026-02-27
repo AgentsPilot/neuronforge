@@ -27,6 +27,8 @@ import {
 } from '../requirements'
 import { AutoRecoveryHandler } from '../requirements/AutoRecoveryHandler'
 import { createLogger } from '@/lib/logger'
+import * as fs from 'fs'
+import * as path from 'path'
 import { PluginManagerV2 } from '../../../server/plugin-manager-v2'
 import { getAgentGenerationConfig } from '../config/AgentGenerationConfigService'
 
@@ -366,6 +368,20 @@ export class V6PipelineOrchestrator {
         throw error
       }
 
+      // === TRACE DUMP: Phase 3 IR output ===
+      try {
+        const traceDir = path.resolve(process.cwd(), 'dev-traces')
+        if (!fs.existsSync(traceDir)) fs.mkdirSync(traceDir, { recursive: true })
+        fs.writeFileSync(
+          path.join(traceDir, 'phase3-ir.json'),
+          JSON.stringify(ir, null, 2),
+          'utf-8'
+        )
+        logger.info({ phase: 3, msg: '[TRACE] Phase 3 IR dumped to dev-traces/phase3-ir.json' })
+      } catch (traceErr) {
+        logger.warn({ msg: '[TRACE] Failed to write Phase 3 trace', error: String(traceErr) })
+      }
+
       // WEEK 1 FIX: Update requirement map from IR's embedded enforcement tracking
       // Since we skip Phases 1 & 2, the requirement map never gets updated
       // But the IR has requirements_enforcement tracking - use that instead!
@@ -475,6 +491,25 @@ export class V6PipelineOrchestrator {
         }
 
         dsl = compilationResult.workflow
+
+        // === TRACE DUMP: Phase 4 compiled workflow ===
+        try {
+          const traceDir = path.resolve(process.cwd(), 'dev-traces')
+          if (!fs.existsSync(traceDir)) fs.mkdirSync(traceDir, { recursive: true })
+          fs.writeFileSync(
+            path.join(traceDir, 'phase4-compiled.json'),
+            JSON.stringify({
+              workflow: compilationResult.workflow,
+              logs: compilationResult.logs,
+              plugins_used: compilationResult.plugins_used,
+              compilation_time_ms: compilationResult.compilation_time_ms
+            }, null, 2),
+            'utf-8'
+          )
+          logger.info({ phase: 4, msg: '[TRACE] Phase 4 compiled workflow dumped to dev-traces/phase4-compiled.json' })
+        } catch (traceErr) {
+          logger.warn({ msg: '[TRACE] Failed to write Phase 4 trace', error: String(traceErr) })
+        }
       } catch (error) {
         logger.error({
           phase: 4,
@@ -533,6 +568,20 @@ export class V6PipelineOrchestrator {
       logger.info({ phase: 5, msg: 'Translating DSL to PILOT format' })
       dsl = this.translateToPilotFormat(dsl)
       logger.info({ phase: 5, stepCount: dsl.length, msg: 'Translation complete' })
+
+      // === TRACE DUMP: Phase 5 PILOT-format steps ===
+      try {
+        const traceDir = path.resolve(process.cwd(), 'dev-traces')
+        if (!fs.existsSync(traceDir)) fs.mkdirSync(traceDir, { recursive: true })
+        fs.writeFileSync(
+          path.join(traceDir, 'phase5-pilot.json'),
+          JSON.stringify(dsl, null, 2),
+          'utf-8'
+        )
+        logger.info({ phase: 5, msg: '[TRACE] Phase 5 PILOT steps dumped to dev-traces/phase5-pilot.json' })
+      } catch (traceErr) {
+        logger.warn({ msg: '[TRACE] Failed to write Phase 5 trace', error: String(traceErr) })
+      }
 
       // Gate 5: Final Validation (Intent Satisfaction)
       logger.info({ gate: 5, msg: 'Final validation (intent satisfaction)' })

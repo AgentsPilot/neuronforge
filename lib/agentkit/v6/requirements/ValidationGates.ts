@@ -688,10 +688,13 @@ export class ValidationGates {
    */
   private checkRoutingStep(rule: any, dslSteps: any[]): boolean {
     // Check if any step has routing/branching capability
+    // ExecutionGraphCompiler generates 'conditional' and 'scatter_gather' steps
     return dslSteps.some(step =>
       step.type === 'route' ||
       step.type === 'branch' ||
       step.type === 'condition' ||
+      step.type === 'conditional' ||
+      step.type === 'scatter_gather' ||
       step.operation === 'route'
     )
   }

@@ -112,8 +112,15 @@ export class WorkflowParser {
     }
 
     // Normalize nested steps in conditionals
+    // Support both PILOT format (then/else) and DSL format (then_steps/else_steps)
     if (step.type === 'conditional') {
       const normalized: any = { ...step };
+      if (anyStep.then) {
+        normalized.then = this.normalizeSteps(anyStep.then);
+      }
+      if (anyStep.else) {
+        normalized.else = this.normalizeSteps(anyStep.else);
+      }
       if (anyStep.then_steps) {
         normalized.then_steps = this.normalizeSteps(anyStep.then_steps);
       }

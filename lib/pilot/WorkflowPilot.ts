@@ -1084,29 +1084,54 @@ export class WorkflowPilot {
 
     // Handle conditional type
     if (stepDef.type === 'conditional') {
-      const result = this.conditionalEvaluator.evaluate(
-        stepDef.condition!,
-        context
-      );
+      const anyStep = stepDef as any;
+      const hasV4Branches = anyStep.then_steps || anyStep.else_steps || anyStep.then || anyStep.else;
 
-      // Store condition result
-      context.setStepOutput(stepDef.id, {
-        stepId: stepDef.id,
-        plugin: 'system',
-        action: 'conditional',
-        data: { result },
-        metadata: {
-          success: true,
-          executedAt: new Date().toISOString(),
-          executionTime: 0,
-        },
-      });
+      if (hasV4Branches) {
+        // V4 Format: Delegate to StepExecutor which handles branch execution
+        const startTime = Date.now();
+        const output = await this.stepExecutor.execute(stepDef, context);
 
-      console.log(`  ✓ Condition evaluated: ${result}`);
-      await this.stateManager.checkpoint(context);
-      // Emit step completed event
-      if (stepEmitter?.onStepCompleted) {
-        stepEmitter.onStepCompleted(stepDef.id, stepDef.name);
+        context.setStepOutput(stepDef.id, output);
+
+        // Register output_variable if specified
+        const outputVariable = (stepDef as any).output_variable;
+        if (outputVariable && output.data) {
+          context.setVariable(outputVariable, output.data);
+          console.log(`  ✓ Registered output variable: ${outputVariable}`);
+        }
+
+        console.log(`  ✓ Conditional branch executed in ${Date.now() - startTime}ms`);
+        await this.stateManager.checkpoint(context);
+        // Emit step completed event
+        if (stepEmitter?.onStepCompleted) {
+          stepEmitter.onStepCompleted(stepDef.id, stepDef.name);
+        }
+      } else {
+        // Legacy Format: Only evaluate condition (routing handled by orchestrator)
+        const result = this.conditionalEvaluator.evaluate(
+          stepDef.condition!,
+          context
+        );
+
+        context.setStepOutput(stepDef.id, {
+          stepId: stepDef.id,
+          plugin: 'system',
+          action: 'conditional',
+          data: { result },
+          metadata: {
+            success: true,
+            executedAt: new Date().toISOString(),
+            executionTime: 0,
+          },
+        });
+
+        console.log(`  ✓ Condition evaluated: ${result} (legacy - no branches)`);
+        await this.stateManager.checkpoint(context);
+        // Emit step completed event
+        if (stepEmitter?.onStepCompleted) {
+          stepEmitter.onStepCompleted(stepDef.id, stepDef.name);
+        }
       }
       return;
     }
