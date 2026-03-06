@@ -1,0 +1,197 @@
+[
+  {
+    "step_id": "step1",
+    "type": "action",
+    "description": "Search Gmail Inbox for messages from the last 7 days",
+    "plugin": "google-mail",
+    "operation": "search_emails",
+    "config": {
+      "folder": "{{config.gmail_scope}}"
+    },
+    "output_variable": "gmail_messages",
+    "id": "step1"
+  },
+  {
+    "step_id": "step2",
+    "type": "action",
+    "description": "Load existing rows from UrgentEmails tab to identify duplicates",
+    "plugin": "google-sheets",
+    "operation": "read_range",
+    "config": {
+      "spreadsheet_id": "{{config.spreadsheet_id}}",
+      "range": "{{config.sheet_tab_name}}"
+    },
+    "output_variable": "existing_rows",
+    "id": "step2"
+  },
+  {
+    "step_id": "step3",
+    "type": "transform",
+    "operation": "rows_to_objects",
+    "input": "{{existing_rows.values}}",
+    "description": "Auto-normalize: Convert 2D array to objects",
+    "output_variable": "existing_rows_objects",
+    "config": {},
+    "id": "step3"
+  },
+  {
+    "step_id": "step4",
+    "type": "transform",
+    "operation": "map",
+    "input": "{{existing_rows}}",
+    "description": "Extract Gmail message link/id values from existing sheet rows",
+    "config": {
+      "type": "map",
+      "input": "existing_rows",
+      "custom_code": "Extract the Gmail message link/id field from each existing row to build deduplication set",
+      "output_schema": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "message_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "message_id"
+          ]
+        }
+      }
+    },
+    "output_variable": "existing_message_ids",
+    "id": "step4"
+  },
+  {
+    "step_id": "step5",
+    "type": "transform",
+    "operation": "filter",
+    "input": "{{gmail_messages}}",
+    "description": "Filter emails containing complaint keywords (complaint, refund, angry, not working)",
+    "config": {
+      "type": "filter",
+      "input": "gmail_messages",
+      "custom_code": "Keep only emails where content contains any of the complaint keywords (case-insensitive)",
+      "condition": {
+        "conditionType": "complex_or",
+        "conditions": [
+          {
+            "operator": "contains",
+            "value": "complaint",
+            "field": "item.body",
+            "conditionType": "simple"
+          },
+          {
+            "operator": "contains",
+            "value": "refund",
+            "field": "item.body",
+            "conditionType": "simple"
+          },
+          {
+            "operator": "contains",
+            "value": "angry",
+            "field": "item.body",
+            "conditionType": "simple"
+          },
+          {
+            "operator": "contains",
+            "value": "not working",
+            "field": "item.body",
+            "conditionType": "simple"
+          }
+        ]
+      }
+    },
+    "output_variable": "complaint_emails",
+    "id": "step5"
+  },
+  {
+    "step_id": "step6",
+    "type": "transform",
+    "operation": "filter",
+    "input": "{{complaint_emails}}",
+    "description": "Remove complaint emails that already exist in the sheet (deduplication by Gmail message link/id)",
+    "config": {
+      "type": "filter",
+      "input": "complaint_emails",
+      "custom_code": "Keep only complaint emails whose Gmail message link/id is not already present in the existing sheet rows"
+    },
+    "output_variable": "new_complaint_emails",
+    "id": "step6"
+  },
+  {
+    "step_id": "step7",
+    "type": "scatter_gather",
+    "description": "Loop over new_complaint_emails",
+    "scatter": {
+      "input": "{{new_complaint_emails}}",
+      "steps": [
+        {
+          "step_id": "step8",
+          "type": "transform",
+          "operation": "map",
+          "input": "{{complaint_email}}",
+          "description": "Extract required fields from complaint email",
+          "config": {
+            "type": "map",
+            "input": "complaint_email",
+            "custom_code": "Extract sender email, subject, date, full email text, and Gmail message link/id",
+            "output_schema": {
+              "type": "object",
+              "properties": {
+                "sender_email": {
+                  "type": "string"
+                },
+                "subject": {
+                  "type": "string"
+                },
+                "date": {
+                  "type": "string"
+                },
+                "body": {
+                  "type": "string"
+                },
+                "message_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "sender_email",
+                "subject",
+                "date",
+                "body",
+                "message_id"
+              ]
+            },
+            "complaint_email": "{{complaint_email}}"
+          },
+          "output_variable": "email_row_data",
+          "id": "step8"
+        },
+        {
+          "step_id": "step9",
+          "type": "action",
+          "description": "Append complaint email row to UrgentEmails tab",
+          "plugin": "google-sheets",
+          "operation": "append_rows",
+          "config": {
+            "spreadsheet_id": "{{config.spreadsheet_id}}",
+            "fields": {
+              "sender_email": "email_row_data.sender_email",
+              "subject": "email_row_data.subject",
+              "date": "email_row_data.date",
+              "full_email_text": "email_row_data.body",
+              "gmail_message_link_id": "email_row_data.message_id"
+            },
+            "range": "{{config.sheet_tab_name}}",
+            "insert_data_option": "{{config.data_time_window}}"
+          },
+          "output_variable": "appended_row",
+          "id": "step9"
+        }
+      ],
+      "itemVariable": "complaint_email"
+    },
+    "id": "step7"
+  }
+]

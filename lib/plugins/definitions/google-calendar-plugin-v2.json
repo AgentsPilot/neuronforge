@@ -23,15 +23,45 @@
         "https://www.googleapis.com/auth/calendar",
         "https://www.googleapis.com/auth/calendar.events"
       ]
-    }
+    },
+    "provider_family": "google"
   },
   "actions": {
     "list_events": {
       "description": "List calendar events within a specified time range",
       "usage_context": "When user wants to fetch upcoming events, check availability, see scheduled meetings, or retrieve calendar data for a time period",
+      "idempotent": true,
+      "domain": "calendar",
+      "capability": "list",
+      "input_entity": null,
+      "output_entity": "event",
+      "input_cardinality": null,
+      "output_cardinality": "collection",
+      "output_fields": [
+        "id",
+        "summary",
+        "start",
+        "end",
+        "location",
+        "attendees",
+        "description"
+      ],
+      "required_params": [],
+      "optional_params": [
+        "calendar_id",
+        "time_min",
+        "time_max",
+        "max_results"
+      ],
+      "must_support": [
+        "date_range_filter",
+        "timezone_aware"
+      ],
       "parameters": {
         "type": "object",
-        "required": ["time_min"],
+        "required": [
+          "time_min"
+        ],
         "properties": {
           "calendar_id": {
             "type": "string",
@@ -62,7 +92,10 @@
           },
           "order_by": {
             "type": "string",
-            "enum": ["startTime", "updated"],
+            "enum": [
+              "startTime",
+              "updated"
+            ],
             "default": "startTime",
             "description": "Order results by start time or last updated time"
           }
@@ -89,7 +122,8 @@
         "properties": {
           "calendar_id": {
             "type": "string",
-            "description": "The calendar identifier that was queried"
+            "description": "The calendar identifier that was queried",
+            "x-guaranteed": true
           },
           "event_count": {
             "type": "integer",
@@ -173,9 +207,15 @@
           },
           "retrieved_at": {
             "type": "string",
-            "description": "Timestamp when events were retrieved (ISO 8601)"
+            "description": "Timestamp when events were retrieved (ISO 8601)",
+            "x-guaranteed": true
           }
-        }
+        },
+        "required": [
+          "id",
+          "summary",
+          "start"
+        ]
       },
       "output_guidance": {
         "success_description": "Found calendar events",
@@ -191,13 +231,19 @@
               "start": "2024-01-15T10:00:00Z",
               "end": "2024-01-15T11:00:00Z",
               "attendees": [
-                {"email": "john@example.com", "response_status": "accepted"}
+                {
+                  "email": "john@example.com",
+                  "response_status": "accepted"
+                }
               ],
               "organizer": "jane@example.com",
               "html_link": "https://calendar.google.com/event?eid=abc123"
             }
           ],
-          "time_range": {"start": "2024-01-15T00:00:00Z", "end": "2024-01-16T00:00:00Z"},
+          "time_range": {
+            "start": "2024-01-15T00:00:00Z",
+            "end": "2024-01-16T00:00:00Z"
+          },
           "retrieved_at": "2024-01-15T08:30:00Z"
         },
         "common_errors": {
@@ -213,9 +259,44 @@
     "create_event": {
       "description": "Create a new calendar event or meeting",
       "usage_context": "When user wants to schedule a meeting, create an appointment, add calendar events, or set up recurring events with attendees and reminders",
+      "idempotent": false,
+      "domain": "calendar",
+      "capability": "create",
+      "input_entity": null,
+      "output_entity": "event",
+      "input_cardinality": null,
+      "output_cardinality": "single",
+      "output_fields": [
+        "id",
+        "summary",
+        "start",
+        "end",
+        "htmlLink",
+        "created"
+      ],
+      "required_params": [
+        "summary",
+        "start_time",
+        "end_time"
+      ],
+      "optional_params": [
+        "description",
+        "location",
+        "attendees",
+        "calendar_id"
+      ],
+      "must_support": [
+        "attendee_management",
+        "recurring_events",
+        "timezone_aware"
+      ],
       "parameters": {
         "type": "object",
-        "required": ["summary", "start_time", "end_time"],
+        "required": [
+          "summary",
+          "start_time",
+          "end_time"
+        ],
         "properties": {
           "calendar_id": {
             "type": "string",
@@ -268,7 +349,10 @@
                   "properties": {
                     "method": {
                       "type": "string",
-                      "enum": ["email", "popup"]
+                      "enum": [
+                        "email",
+                        "popup"
+                      ]
                     },
                     "minutes": {
                       "type": "number"
@@ -277,7 +361,8 @@
                 },
                 "description": "Custom reminder settings (e.g., [{method: 'email', minutes: 60}])"
               }
-            }
+            },
+            "description": "Reminder settings for the event (time-based notifications before event starts)"
           },
           "send_notifications": {
             "type": "boolean",
@@ -286,7 +371,10 @@
           },
           "conference_solution": {
             "type": "string",
-            "enum": ["hangoutsMeet", "none"],
+            "enum": [
+              "hangoutsMeet",
+              "none"
+            ],
             "default": "none",
             "description": "Generate Google Meet link for the event"
           }
@@ -318,7 +406,8 @@
         "properties": {
           "event_id": {
             "type": "string",
-            "description": "Unique identifier for the created event"
+            "description": "Unique identifier for the created event",
+            "x-guaranteed": true
           },
           "summary": {
             "type": "string",
@@ -350,9 +439,15 @@
           },
           "created_at": {
             "type": "string",
-            "description": "Timestamp when event was created (ISO 8601)"
+            "description": "Timestamp when event was created (ISO 8601)",
+            "x-guaranteed": true
           }
-        }
+        },
+        "required": [
+          "id",
+          "summary",
+          "start"
+        ]
       },
       "output_guidance": {
         "success_description": "Created event",
@@ -380,9 +475,40 @@
     "update_event": {
       "description": "Update an existing calendar event",
       "usage_context": "When user wants to modify event details, reschedule meetings, change attendees, or update event information",
+      "idempotent": true,
+      "domain": "calendar",
+      "capability": "update",
+      "input_entity": "event",
+      "output_entity": "event",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "output_fields": [
+        "id",
+        "summary",
+        "start",
+        "end",
+        "updated"
+      ],
+      "required_params": [
+        "event_id"
+      ],
+      "optional_params": [
+        "summary",
+        "start_time",
+        "end_time",
+        "description",
+        "location",
+        "attendees"
+      ],
+      "must_support": [
+        "partial_update",
+        "attendee_management"
+      ],
       "parameters": {
         "type": "object",
-        "required": ["event_id"],
+        "required": [
+          "event_id"
+        ],
         "properties": {
           "calendar_id": {
             "type": "string",
@@ -446,7 +572,8 @@
         "properties": {
           "event_id": {
             "type": "string",
-            "description": "Unique identifier of the updated event"
+            "description": "Unique identifier of the updated event",
+            "x-guaranteed": true
           },
           "summary": {
             "type": "string",
@@ -466,9 +593,15 @@
           },
           "updated_at": {
             "type": "string",
-            "description": "Timestamp when event was updated (ISO 8601)"
+            "description": "Timestamp when event was updated (ISO 8601)",
+            "x-guaranteed": true
           }
-        }
+        },
+        "required": [
+          "id",
+          "summary",
+          "start"
+        ]
       },
       "output_guidance": {
         "success_description": "Updated event",
@@ -494,9 +627,31 @@
     "delete_event": {
       "description": "Delete a calendar event",
       "usage_context": "When user wants to cancel meetings, remove events, or delete calendar entries",
+      "idempotent": true,
+      "domain": "calendar",
+      "capability": "delete",
+      "input_entity": "event",
+      "output_entity": null,
+      "input_cardinality": "single",
+      "output_cardinality": null,
+      "output_fields": [
+        "deleted",
+        "event_id"
+      ],
+      "required_params": [
+        "event_id"
+      ],
+      "optional_params": [
+        "send_updates"
+      ],
+      "must_support": [
+        "notification_control"
+      ],
       "parameters": {
         "type": "object",
-        "required": ["event_id"],
+        "required": [
+          "event_id"
+        ],
         "properties": {
           "calendar_id": {
             "type": "string",
@@ -538,7 +693,8 @@
         "properties": {
           "event_id": {
             "type": "string",
-            "description": "ID of the deleted event"
+            "description": "ID of the deleted event",
+            "x-guaranteed": true
           },
           "deleted": {
             "type": "boolean",
@@ -546,9 +702,14 @@
           },
           "deleted_at": {
             "type": "string",
-            "description": "Timestamp when event was deleted (ISO 8601)"
+            "description": "Timestamp when event was deleted (ISO 8601)",
+            "x-guaranteed": true
           }
-        }
+        },
+        "required": [
+          "deleted",
+          "event_id"
+        ]
       },
       "output_guidance": {
         "success_description": "Deleted event",
@@ -570,9 +731,37 @@
     "get_event_details": {
       "description": "Get detailed information about a specific calendar event",
       "usage_context": "When user wants to view event details, check meeting information, or retrieve specific event data",
+      "idempotent": true,
+      "domain": "calendar",
+      "capability": "get",
+      "input_entity": "event",
+      "output_entity": "event",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "output_fields": [
+        "id",
+        "summary",
+        "description",
+        "start",
+        "end",
+        "location",
+        "attendees",
+        "htmlLink"
+      ],
+      "required_params": [
+        "event_id"
+      ],
+      "optional_params": [
+        "calendar_id"
+      ],
+      "must_support": [
+        "full_details"
+      ],
       "parameters": {
         "type": "object",
-        "required": ["event_id"],
+        "required": [
+          "event_id"
+        ],
         "properties": {
           "calendar_id": {
             "type": "string",
@@ -598,7 +787,8 @@
         "properties": {
           "event_id": {
             "type": "string",
-            "description": "Unique event identifier"
+            "description": "Unique event identifier",
+            "x-guaranteed": true
           },
           "summary": {
             "type": "string",
@@ -693,9 +883,15 @@
           },
           "retrieved_at": {
             "type": "string",
-            "description": "Timestamp when details were retrieved (ISO 8601)"
+            "description": "Timestamp when details were retrieved (ISO 8601)",
+            "x-guaranteed": true
           }
-        }
+        },
+        "required": [
+          "id",
+          "summary",
+          "description"
+        ]
       },
       "output_guidance": {
         "success_description": "Retrieved event details",
@@ -719,7 +915,9 @@
             "email": "jane@example.com",
             "display_name": "Jane Smith"
           },
-          "reminders": {"useDefault": true},
+          "reminders": {
+            "useDefault": true
+          },
           "html_link": "https://calendar.google.com/event?eid=abc123",
           "meet_link": "https://meet.google.com/abc-defg-hij",
           "status": "confirmed",

@@ -1,0 +1,90 @@
+{
+  "plan_title": "Gmail Expense Attachment Extractor (Email Table Output)",
+  "plan_description": "This agent searches Gmail for expense-related emails, reads PDF receipt attachments, extracts expense details into a combined table, and emails you a short summary with the table embedded in the email body.",
+  "sections": {
+    "data": [
+      "- Search Gmail for emails from the last 7 days where the subject contains the keyword 'expenses' OR the keyword 'receipt'.",
+      "- From each matching email, collect all PDF attachments.",
+      "- For each PDF attachment, capture basic context needed for traceability (email subject and attachment file name) for internal processing, even though the final table will only include the 4 requested columns."
+    ],
+    "actions": [
+      "- For each PDF attachment, read the receipt content and extract expense line items when multiple items are present (create multiple rows).",
+      "- For each extracted row, populate the following fields:",
+      "- Set date&time to the receipt's date and time when present; if time is not present, set date&time to the receipt date and mark the row as 'need review'.",
+      "- Set vendor to the merchant/vendor name on the receipt; if vendor is unclear, set vendor to 'need review'.",
+      "- Set amount to the total amount for the extracted line item; if the amount is unclear, set amount to 'need review'.",
+      "- Infer expense type from the receipt text as best it can (based on wording and context on the receipt); if the inferred type is low-confidence or missing, set expense type to 'need review'.",
+      "- Normalize extracted values:",
+      "- Normalize date&time into a consistent format across all rows.",
+      "- Normalize amount into a consistent numeric format across all rows (preserving the value as shown on the receipt).",
+      "- Combine all extracted rows from all matching emails into one combined table for all expenses."
+    ],
+    "output": [
+      "- Generate a combined table (embedded in the email body) with exactly these columns in this order: date&time, vendor, amount, expense type.",
+      "- Ensure any uncertain or missing field values are explicitly set to the literal text 'need review' in the relevant cell."
+    ],
+    "delivery": [
+      "- Send an email to offir.omer@gmail.com that includes a short summary (for example: number of emails scanned, number of PDFs processed, number of expense rows extracted, number of rows marked 'need review').",
+      "- In the same email, embed the combined expense table in the email body (not as a separate file attachment)."
+    ],
+    "processing_steps": [
+      "- Find matching Gmail emails (subject contains 'expenses' OR 'receipt') from the last 7 days.",
+      "- Download PDF attachments from those emails.",
+      "- Extract receipt text from each PDF.",
+      "- Convert extracted receipt text into structured rows (date&time, vendor, amount, expense type).",
+      "- Mark uncertain fields as 'need review'.",
+      "- Build one combined table for all extracted rows.",
+      "- Compose an email containing a short summary and the embedded table.",
+      "- Send the email to offir.omer@gmail.com."
+    ]
+  },
+  "specifics": {
+    "services_involved": [
+      "google-mail",
+      "chatgpt-research"
+    ],
+    "user_inputs_required": [],
+    "resolved_user_inputs": [
+      {
+        "key": "user_email",
+        "value": "offir.omer@gmail.com"
+      },
+      {
+        "key": "gmail_lookback_window",
+        "value": "last 7 days"
+      },
+      {
+        "key": "gmail_subject_keywords",
+        "value": "expenses, receipt"
+      },
+      {
+        "key": "attachment_types",
+        "value": "PDF"
+      },
+      {
+        "key": "row_granularity",
+        "value": "multiple rows (line items when present)"
+      },
+      {
+        "key": "expense_type_method",
+        "value": "infer from receipt text"
+      },
+      {
+        "key": "uncertain_field_behavior",
+        "value": "set to 'need review'"
+      },
+      {
+        "key": "output_destination",
+        "value": "email body table"
+      },
+      {
+        "key": "table_scope",
+        "value": "combined table for all expenses"
+      },
+      {
+        "key": "notification_style",
+        "value": "email me a short summary"
+      }
+    ]
+  }
+}

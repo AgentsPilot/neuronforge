@@ -68,17 +68,20 @@ export class AutoRecoveryHandler {
         e.type === 'nested_groups' ||
         e.type === 'missing_field' ||
         e.type === 'wrong_type' ||
-        e.type === 'invalid_field'
+        e.type === 'invalid_field' ||
+        // Unit of work violations can be auto-fixed by moving loop collection
+        (e.type === 'constraint_violated' && e.message?.includes('unit_of_work'))
       ),
 
       // Cannot be fixed automatically
       unrecoverable: errors.filter(e =>
-        e.type === 'requirement_missing' ||
-        e.type === 'constraint_violated' ||
+        (e.type === 'requirement_missing' ||
         e.type === 'data_flow_broken' ||
         e.type === 'plugin_missing' ||
         e.type === 'invalid_input' ||
-        e.type === 'schema_violation'
+        e.type === 'schema_violation' ||
+        // Other constraint violations that aren't unit_of_work
+        (e.type === 'constraint_violated' && !e.message?.includes('unit_of_work')))
       )
     }
   }
@@ -114,10 +117,95 @@ export class AutoRecoveryHandler {
             this.deletePath(fixed, error.path)
           }
           break
+
+        case 'constraint_violated':
+          if (error.message?.includes('unit_of_work')) {
+            fixed = this.fixUnitOfWorkViolation(fixed, error)
+          }
+          break
       }
     })
 
     return fixed
+  }
+
+  /**
+   * Fix unit_of_work violations by moving loop collection to correct level
+   *
+   * Issue: Collecting at email-level when unit_of_work=attachment
+   * Fix: Move collect_outputs from outer loop to inner loop
+   */
+  private fixUnitOfWorkViolation(ir: any, error: ValidationError): any {
+    if (!ir.execution_graph?.nodes) return ir
+
+    const nodes = ir.execution_graph.nodes
+
+    // Find nested scatter_gather loops
+    for (const [nodeId, node] of Object.entries(nodes)) {
+      if ((node as any).type === 'scatter_gather') {
+        const scatterNode = node as any
+
+        // If outer loop has collect_outputs, check if there's an inner loop
+        if (scatterNode.gather?.collect_outputs) {
+          const innerLoopId = this.findInnerLoop(nodes, scatterNode.scatter?.body_start)
+
+          if (innerLoopId) {
+            const innerLoop = nodes[innerLoopId] as any
+
+            // Move collection from outer to inner loop
+            if (!innerLoop.gather) {
+              innerLoop.gather = {}
+            }
+
+            // Transfer collection config to inner loop
+            innerLoop.gather.collect_outputs = true
+            innerLoop.gather.collect_from = scatterNode.gather.collect_from
+            innerLoop.gather.output_variable = scatterNode.gather.output_variable
+
+            // Disable collection on outer loop
+            scatterNode.gather.collect_outputs = false
+            delete scatterNode.gather.collect_from
+            delete scatterNode.gather.output_variable
+
+            console.log(`[AutoRecovery] Moved loop collection from ${nodeId} to ${innerLoopId}`)
+          }
+        }
+      }
+    }
+
+    return ir
+  }
+
+  /**
+   * Find inner loop within a loop body
+   */
+  private findInnerLoop(nodes: any, startNodeId: string | undefined): string | null {
+    if (!startNodeId) return null
+
+    const visited = new Set<string>()
+    const queue = [startNodeId]
+
+    while (queue.length > 0) {
+      const currentId = queue.shift()!
+
+      if (visited.has(currentId)) continue
+      visited.add(currentId)
+
+      const node = nodes[currentId]
+      if (!node) continue
+
+      // Found a nested scatter_gather loop
+      if (node.type === 'scatter_gather') {
+        return currentId
+      }
+
+      // Follow next pointer
+      if (node.next && !visited.has(node.next)) {
+        queue.push(node.next)
+      }
+    }
+
+    return null
   }
 
   /**

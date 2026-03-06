@@ -48,10 +48,16 @@ const DEFAULT_CONFIG: AgentGenerationConfig = {
  */
 async function loadConfigFromDatabase(): Promise<AgentGenerationConfig> {
   try {
-    const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
-    );
+    // Check if Supabase credentials are available
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL
+    const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+
+    if (!supabaseUrl || !supabaseKey) {
+      console.warn('[AgentGenerationConfig] Supabase credentials not configured, using defaults')
+      return DEFAULT_CONFIG
+    }
+
+    const supabase = createClient(supabaseUrl, supabaseKey);
 
     const { data: settings, error } = await supabase
       .from('system_settings_config')

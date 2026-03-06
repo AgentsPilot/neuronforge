@@ -18,15 +18,40 @@
       "refresh_url": "",
       "profile_url": "",
       "required_scopes": []
-    }
+    },
+    "provider_family": "openai"
   },
   "actions": {
     "research_topic": {
       "description": "Research a topic using web search and AI analysis - produces comprehensive, ready-to-use output",
       "usage_context": "When user wants to research a topic, find current information, or get comprehensive analysis of a subject using web search and AI. The output is already detailed and complete - do NOT summarize it further.",
+      "idempotent": true,
+      "domain": "web",
+      "capability": "search",
+      "input_entity": null,
+      "output_entity": "document",
+      "input_cardinality": null,
+      "output_cardinality": "single",
+      "output_fields": [
+        "research",
+        "sources",
+        "summary"
+      ],
+      "required_params": [
+        "topic"
+      ],
+      "optional_params": [
+        "depth"
+      ],
+      "must_support": [
+        "web_search",
+        "source_attribution"
+      ],
       "parameters": {
         "type": "object",
-        "required": ["topic"],
+        "required": [
+          "topic"
+        ],
         "properties": {
           "topic": {
             "type": "string",
@@ -36,19 +61,35 @@
           },
           "depth": {
             "type": "string",
-            "enum": ["quick", "standard", "comprehensive", "deep_dive"],
+            "enum": [
+              "quick",
+              "standard",
+              "comprehensive",
+              "deep_dive"
+            ],
             "default": "standard",
             "description": "Research depth: quick (3 sources), standard (5 sources), comprehensive (8 sources), deep_dive (10 sources)"
           },
           "focus": {
             "type": "string",
-            "enum": ["general", "recent", "technical", "academic", "news"],
+            "enum": [
+              "general",
+              "recent",
+              "technical",
+              "academic",
+              "news"
+            ],
             "default": "general",
             "description": "Research focus: general (all sources), recent (latest news), technical (technical docs), academic (scholarly), news (current events)"
           },
           "output_format": {
             "type": "string",
-            "enum": ["summary", "detailed", "bullet_points", "report"],
+            "enum": [
+              "summary",
+              "detailed",
+              "bullet_points",
+              "report"
+            ],
             "default": "detailed",
             "description": "Output format: summary (brief ~200 words), detailed (comprehensive 400-600 words), bullet_points (structured points), report (formal 500-800 words)"
           },
@@ -85,11 +126,16 @@
       "output_schema": {
         "type": "object",
         "properties": {
-          "summary": { "type": "string", "description": "Comprehensive research summary based on analyzed sources" },
+          "summary": {
+            "type": "string",
+            "description": "Comprehensive research summary based on analyzed sources"
+          },
           "key_points": {
             "type": "array",
             "description": "Key findings extracted from research",
-            "items": { "type": "string" }
+            "items": {
+              "type": "string"
+            }
           },
           "sources": {
             "type": "array",
@@ -97,16 +143,39 @@
             "items": {
               "type": "object",
               "properties": {
-                "title": { "type": "string", "description": "Source page title" },
-                "url": { "type": "string", "description": "Source URL" },
-                "snippet": { "type": "string", "description": "Brief excerpt from source" }
+                "title": {
+                  "type": "string",
+                  "description": "Source page title"
+                },
+                "url": {
+                  "type": "string",
+                  "description": "Source URL"
+                },
+                "snippet": {
+                  "type": "string",
+                  "description": "Brief excerpt from source"
+                }
               }
             }
           },
-          "source_count": { "type": "integer", "description": "Number of sources analyzed" },
-          "research_depth": { "type": "string", "description": "Depth level used (quick, standard, comprehensive, deep_dive)" },
-          "focus": { "type": "string", "description": "Research focus used (general, recent, technical, academic, news)" }
-        }
+          "source_count": {
+            "type": "integer",
+            "description": "Number of sources analyzed"
+          },
+          "research_depth": {
+            "type": "string",
+            "description": "Depth level used (quick, standard, comprehensive, deep_dive)"
+          },
+          "focus": {
+            "type": "string",
+            "description": "Research focus used (general, recent, technical, academic, news)"
+          }
+        },
+        "required": [
+          "research",
+          "sources",
+          "summary"
+        ]
       },
       "output_guidance": {
         "success_description": "Completed research",
@@ -118,7 +187,11 @@
             "Key finding 3: Recent developments include..."
           ],
           "sources": [
-            {"title": "Industry Report 2024", "url": "https://example.com/report", "snippet": "The latest findings..."}
+            {
+              "title": "Industry Report 2024",
+              "url": "https://example.com/report",
+              "snippet": "The latest findings..."
+            }
           ],
           "source_count": 5,
           "research_depth": "standard",
@@ -136,25 +209,61 @@
     "summarize_content": {
       "description": "Summarize provided content using AI - for EXISTING external content only",
       "usage_context": "When user wants to summarize existing content, text, articles, or documents without web search. Do NOT use this to summarize results from research_topic - those are already optimized.",
+      "idempotent": true,
+      "domain": "internal",
+      "capability": "summarize",
+      "input_entity": "document",
+      "output_entity": "document",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "output_fields": [
+        "summary",
+        "key_points"
+      ],
+      "required_params": [
+        "content"
+      ],
+      "optional_params": [
+        "max_length"
+      ],
+      "must_support": [
+        "text_summarization"
+      ],
       "parameters": {
         "type": "object",
-        "required": ["content"],
+        "required": [
+          "content"
+        ],
         "properties": {
           "content": {
             "type": "string",
             "minLength": 50,
             "maxLength": 50000,
-            "description": "The content to summarize (text, article, document)"
+            "description": "The content to summarize (text, article, document)",
+            "x-variable-mapping": {
+              "from_type": "file_attachment",
+              "field_path": "content",
+              "description": "Extract content from attachment or file object"
+            }
           },
           "length": {
             "type": "string",
-            "enum": ["brief", "standard", "detailed"],
+            "enum": [
+              "brief",
+              "standard",
+              "detailed"
+            ],
             "default": "standard",
             "description": "Summary length: brief (1-2 sentences), standard (1 paragraph), detailed (multiple paragraphs)"
           },
           "style": {
             "type": "string",
-            "enum": ["professional", "casual", "technical", "academic"],
+            "enum": [
+              "professional",
+              "casual",
+              "technical",
+              "academic"
+            ],
             "default": "professional",
             "description": "Writing style for the summary"
           },
@@ -179,14 +288,39 @@
       "output_schema": {
         "type": "object",
         "properties": {
-          "summary": { "type": "string", "description": "The summarized content" },
-          "original_length": { "type": "integer", "description": "Character count of original content" },
-          "summary_length": { "type": "integer", "description": "Character count of summary" },
-          "style": { "type": "string", "description": "Writing style used (professional, casual, technical, academic)" },
-          "length_type": { "type": "string", "description": "Summary length type (brief, standard, detailed, or original)" },
-          "tokens_used": { "type": "integer", "description": "OpenAI tokens consumed" },
-          "note": { "type": "string", "description": "Optional note if content was already concise" }
-        }
+          "summary": {
+            "type": "string",
+            "description": "The summarized content"
+          },
+          "original_length": {
+            "type": "integer",
+            "description": "Character count of original content"
+          },
+          "summary_length": {
+            "type": "integer",
+            "description": "Character count of summary"
+          },
+          "style": {
+            "type": "string",
+            "description": "Writing style used (professional, casual, technical, academic)"
+          },
+          "length_type": {
+            "type": "string",
+            "description": "Summary length type (brief, standard, detailed, or original)"
+          },
+          "tokens_used": {
+            "type": "integer",
+            "description": "OpenAI tokens consumed"
+          },
+          "note": {
+            "type": "string",
+            "description": "Optional note if content was already concise"
+          }
+        },
+        "required": [
+          "summary",
+          "key_points"
+        ]
       },
       "output_guidance": {
         "success_description": "Summarized content",
@@ -208,9 +342,31 @@
     "answer_question": {
       "description": "Answer questions using AI with optional web research",
       "usage_context": "When user asks a question that may require current information, facts, or analysis",
+      "idempotent": true,
+      "domain": "internal",
+      "capability": "generate",
+      "input_entity": null,
+      "output_entity": "document",
+      "input_cardinality": null,
+      "output_cardinality": "single",
+      "output_fields": [
+        "answer",
+        "confidence"
+      ],
+      "required_params": [
+        "question"
+      ],
+      "optional_params": [
+        "context"
+      ],
+      "must_support": [
+        "question_answering"
+      ],
       "parameters": {
         "type": "object",
-        "required": ["question"],
+        "required": [
+          "question"
+        ],
         "properties": {
           "question": {
             "type": "string",
@@ -225,7 +381,11 @@
           },
           "detail_level": {
             "type": "string",
-            "enum": ["concise", "standard", "detailed"],
+            "enum": [
+              "concise",
+              "standard",
+              "detailed"
+            ],
             "default": "standard",
             "description": "Level of detail in the answer"
           },
@@ -248,25 +408,56 @@
       "output_schema": {
         "type": "object",
         "properties": {
-          "answer": { "type": "string", "description": "The AI-generated answer to the question" },
-          "question": { "type": "string", "description": "The original question asked" },
-          "detail_level": { "type": "string", "description": "Detail level used (concise, standard, detailed)" },
-          "used_web_search": { "type": "boolean", "description": "Whether web search was used for current information" },
+          "answer": {
+            "type": "string",
+            "description": "The AI-generated answer to the question"
+          },
+          "question": {
+            "type": "string",
+            "description": "The original question asked"
+          },
+          "detail_level": {
+            "type": "string",
+            "description": "Detail level used (concise, standard, detailed)"
+          },
+          "used_web_search": {
+            "type": "boolean",
+            "description": "Whether web search was used for current information"
+          },
           "sources": {
             "type": "array",
             "description": "List of sources used (if include_sources was true)",
             "items": {
               "type": "object",
               "properties": {
-                "title": { "type": "string", "description": "Source page title" },
-                "url": { "type": "string", "description": "Source URL" },
-                "snippet": { "type": "string", "description": "Brief excerpt from source" }
+                "title": {
+                  "type": "string",
+                  "description": "Source page title"
+                },
+                "url": {
+                  "type": "string",
+                  "description": "Source URL"
+                },
+                "snippet": {
+                  "type": "string",
+                  "description": "Brief excerpt from source"
+                }
               }
             }
           },
-          "source_count": { "type": "integer", "description": "Number of sources used" },
-          "tokens_used": { "type": "integer", "description": "OpenAI tokens consumed" }
-        }
+          "source_count": {
+            "type": "integer",
+            "description": "Number of sources used"
+          },
+          "tokens_used": {
+            "type": "integer",
+            "description": "OpenAI tokens consumed"
+          }
+        },
+        "required": [
+          "answer",
+          "confidence"
+        ]
       },
       "output_guidance": {
         "success_description": "Got answer",
@@ -276,7 +467,11 @@
           "detail_level": "standard",
           "used_web_search": true,
           "sources": [
-            {"title": "AI Trends Report", "url": "https://example.com/ai-trends", "snippet": "Key developments in AI..."}
+            {
+              "title": "AI Trends Report",
+              "url": "https://example.com/ai-trends",
+              "snippet": "Key developments in AI..."
+            }
           ],
           "source_count": 3,
           "tokens_used": 450

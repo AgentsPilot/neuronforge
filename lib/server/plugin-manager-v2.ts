@@ -20,6 +20,7 @@ const corePluginFiles = [
       'whatsapp-plugin-v2.json',
       'hubspot-plugin-v2.json',
       'chatgpt-research-plugin-v2.json',
+      'document-extractor-plugin-v2.json',
       'linkedin-plugin-v2.json',
       'airtable-plugin-v2.json',
       // Add other plugin files here as you create them
@@ -980,5 +981,95 @@ export class PluginManagerV2 {
     }
 
     return formatted;
+  }
+
+  /**
+   * Check if a plugin action is idempotent
+   * @param pluginKey - Plugin identifier (e.g., 'google-drive')
+   * @param actionName - Action name (e.g., 'create_folder')
+   * @returns true if action is idempotent, false otherwise, undefined if not found
+   */
+  isIdempotent(pluginKey: string, actionName: string): boolean | undefined {
+    const plugin = this.plugins.get(pluginKey);
+    if (!plugin) {
+      logger.warn({ pluginKey }, 'Plugin not found for idempotency check');
+      return undefined;
+    }
+
+    const action = plugin.actions[actionName];
+    if (!action) {
+      logger.warn({ pluginKey, actionName }, 'Action not found for idempotency check');
+      return undefined;
+    }
+
+    return action.idempotent;
+  }
+
+  /**
+   * Get idempotent alternative for a non-idempotent action
+   * @param pluginKey - Plugin identifier (e.g., 'google-drive')
+   * @param actionName - Action name (e.g., 'create_folder')
+   * @returns Alternative action name if available, null otherwise
+   *
+   * @example
+   * // Returns 'get_or_create_folder'
+   * manager.getIdempotentAlternative('google-drive', 'create_folder');
+   */
+  getIdempotentAlternative(pluginKey: string, actionName: string): string | null {
+    const plugin = this.plugins.get(pluginKey);
+    if (!plugin) {
+      logger.warn({ pluginKey }, 'Plugin not found for idempotent alternative lookup');
+      return null;
+    }
+
+    const action = plugin.actions[actionName];
+    if (!action) {
+      logger.warn({ pluginKey, actionName }, 'Action not found for idempotent alternative lookup');
+      return null;
+    }
+
+    return action.idempotent_alternative || null;
+  }
+
+  /**
+   * Get all non-idempotent actions for a plugin
+   * Useful for compiler to warn about unsafe operations
+   * @param pluginKey - Plugin identifier
+   * @returns Array of non-idempotent action names
+   */
+  getNonIdempotentActions(pluginKey: string): string[] {
+    const plugin = this.plugins.get(pluginKey);
+    if (!plugin) {
+      logger.warn({ pluginKey }, 'Plugin not found for non-idempotent actions lookup');
+      return [];
+    }
+
+    return Object.entries(plugin.actions)
+      .filter(([_, action]) => action.idempotent === false)
+      .map(([actionName, _]) => actionName);
+  }
+
+  /**
+   * Get idempotency metadata for all actions in a plugin
+   * @param pluginKey - Plugin identifier
+   * @returns Map of action name to idempotency info
+   */
+  getIdempotencyMetadata(pluginKey: string): Record<string, { idempotent: boolean; alternative?: string }> | null {
+    const plugin = this.plugins.get(pluginKey);
+    if (!plugin) {
+      logger.warn({ pluginKey }, 'Plugin not found for idempotency metadata lookup');
+      return null;
+    }
+
+    const metadata: Record<string, { idempotent: boolean; alternative?: string }> = {};
+
+    for (const [actionName, action] of Object.entries(plugin.actions)) {
+      metadata[actionName] = {
+        idempotent: action.idempotent ?? true, // Default to true for safety
+        ...(action.idempotent_alternative && { alternative: action.idempotent_alternative })
+      };
+    }
+
+    return metadata;
   }
 }

@@ -1,0 +1,256 @@
+[
+  {
+    "step_id": "step1",
+    "type": "action",
+    "description": "Fetch all lead rows from Google Sheets",
+    "plugin": "google-sheets",
+    "operation": "read_range",
+    "config": {
+      "spreadsheet_id": "{{config.google_sheet_id}}",
+      "range": "{{config.sheet_tab_name}}"
+    },
+    "output_variable": "lead_rows",
+    "id": "step1"
+  },
+  {
+    "step_id": "step2",
+    "type": "transform",
+    "operation": "rows_to_objects",
+    "input": "{{lead_rows.values}}",
+    "description": "Auto-normalize: Convert 2D array to objects",
+    "output_variable": "lead_rows_objects",
+    "config": {},
+    "id": "step2"
+  },
+  {
+    "step_id": "step3",
+    "type": "transform",
+    "operation": "filter",
+    "input": "{{lead_rows}}",
+    "description": "Filter leads where score >= threshold",
+    "config": {
+      "type": "filter",
+      "input": "lead_rows",
+      "custom_code": "Keep only leads with score >= threshold",
+      "condition": {
+        "operator": "gte",
+        "value": "{{config.score_threshold}}",
+        "field": "item.{{config.lead_score_column}}",
+        "conditionType": "simple"
+      }
+    },
+    "output_variable": "high_quality_leads",
+    "id": "step3"
+  },
+  {
+    "step_id": "step4",
+    "type": "ai_processing",
+    "input": "high_quality_leads",
+    "prompt": "For each lead, resolve the Sales Person field to an email address. If sales_person_format config is 'email', use the Sales Person value directly as resolved_email. If sales_person_format is 'name', lookup the Sales Person value in the sales_person_email_mapping config to get the resolved_email. If lookup fails or mapping is missing, set resolved_email to null. Return array of leads with all original fields plus resolved_email field.",
+    "description": "Resolve sales person field to email addresses using format and mapping",
+    "config": {
+      "ai_type": "generate",
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "leads": {
+            "type": "array",
+            "description": "Array of lead objects with resolved_email field added"
+          }
+        },
+        "required": [
+          "leads"
+        ]
+      },
+      "type": "generate",
+      "instruction": "For each lead, resolve the Sales Person field to an email address. If sales_person_format config is 'email', use the Sales Person value directly as resolved_email. If sales_person_format is 'name', lookup the Sales Person value in the sales_person_email_mapping config to get the resolved_email. If lookup fails or mapping is missing, set resolved_email to null. Return array of leads with all original fields plus resolved_email field.",
+      "input": "high_quality_leads"
+    },
+    "output_variable": "leads_with_resolved_emails",
+    "id": "step4"
+  },
+  {
+    "step_id": "step5",
+    "type": "transform",
+    "operation": "filter",
+    "input": "{{leads_with_resolved_emails}}",
+    "description": "Filter subset for leads_with_email",
+    "config": {
+      "type": "filter",
+      "input": "leads_with_resolved_emails",
+      "condition": {
+        "operator": "exists",
+        "field": "item.resolved_email",
+        "conditionType": "simple"
+      }
+    },
+    "output_variable": "leads_with_email",
+    "id": "step5"
+  },
+  {
+    "step_id": "step6",
+    "type": "transform",
+    "operation": "filter",
+    "input": "{{leads_with_resolved_emails}}",
+    "description": "Filter subset for leads_without_email",
+    "config": {
+      "type": "filter",
+      "input": "leads_with_resolved_emails",
+      "condition": {
+        "conditionType": "complex_not",
+        "condition": {
+          "operator": "exists",
+          "field": "item.resolved_email",
+          "conditionType": "simple"
+        }
+      }
+    },
+    "output_variable": "leads_without_email",
+    "id": "step6"
+  },
+  {
+    "step_id": "step7",
+    "type": "transform",
+    "operation": "group",
+    "input": "{{leads_with_email}}",
+    "description": "Group leads with resolved emails by sales person email",
+    "config": {
+      "type": "group",
+      "input": "leads_with_email",
+      "custom_code": "Group leads by resolved_email field to create per-salesperson collections",
+      "rules": {
+        "group_by": "resolved_email"
+      }
+    },
+    "output_variable": "leads_by_salesperson",
+    "id": "step7"
+  },
+  {
+    "step_id": "step8",
+    "type": "scatter_gather",
+    "description": "Loop over leads_by_salesperson",
+    "scatter": {
+      "input": "{{leads_by_salesperson}}",
+      "steps": [
+        {
+          "step_id": "step9",
+          "type": "ai_processing",
+          "input": "salesperson_group",
+          "prompt": "Create a sales-friendly follow-up email for this sales person. Include: (1) greeting, (2) HTML table with columns: Date, Lead Name, Company, Email, Phone, Stage, Notes, Lead Score, High-Quality (Yes), Reason/Notes (brief explanation of why high-quality), (3) for each lead, suggest a next step based on Stage and Notes fields, (4) professional closing. Return object with 'subject' and 'body' fields.",
+          "description": "Generate sales-friendly follow-up email with embedded table",
+          "config": {
+            "ai_type": "generate",
+            "output_schema": {
+              "type": "object",
+              "properties": {
+                "subject": {
+                  "type": "string",
+                  "description": "Email subject line"
+                },
+                "body": {
+                  "type": "string",
+                  "description": "HTML email body with embedded table and follow-up guidance"
+                }
+              },
+              "required": [
+                "subject",
+                "body"
+              ]
+            },
+            "type": "generate",
+            "instruction": "Create a sales-friendly follow-up email for this sales person. Include: (1) greeting, (2) HTML table with columns: Date, Lead Name, Company, Email, Phone, Stage, Notes, Lead Score, High-Quality (Yes), Reason/Notes (brief explanation of why high-quality), (3) for each lead, suggest a next step based on Stage and Notes fields, (4) professional closing. Return object with 'subject' and 'body' fields.",
+            "input": "salesperson_group"
+          },
+          "output_variable": "followup_email_content",
+          "id": "step9"
+        },
+        {
+          "step_id": "step10",
+          "type": "action",
+          "description": "Send follow-up email to sales person",
+          "plugin": "google-mail",
+          "operation": "send_email",
+          "config": {
+            "recipients": {
+              "to": [
+                "{{salesperson_group.resolved_email}}"
+              ]
+            },
+            "content": {
+              "subject": "{{followup_email_content.subject}}",
+              "html_body": "{{followup_email_content.body}}"
+            }
+          },
+          "id": "step10"
+        }
+      ],
+      "itemVariable": "salesperson_group"
+    },
+    "id": "step8"
+  },
+  {
+    "step_id": "step11",
+    "type": "conditional",
+    "description": "Conditional: node_9",
+    "condition": {
+      "conditionType": "simple",
+      "field": "leads_without_email.length",
+      "operator": "greater_than",
+      "value": 0
+    },
+    "steps": [
+      {
+        "step_id": "step12",
+        "type": "ai_processing",
+        "input": "leads_without_email",
+        "prompt": "Create an email notifying the user about high-quality leads where the sales person email could not be resolved. Include: (1) explanation of the issue, (2) HTML table with columns: Date, Lead Name, Company, Email, Phone, Stage, Notes, Sales Person, Lead Score, High-Quality (Yes), Reason/Notes, (3) request to update sales person email mapping. Return object with 'subject' and 'body' fields.",
+        "description": "Generate fallback email for unresolved leads",
+        "config": {
+          "ai_type": "generate",
+          "output_schema": {
+            "type": "object",
+            "properties": {
+              "subject": {
+                "type": "string",
+                "description": "Email subject line"
+              },
+              "body": {
+                "type": "string",
+                "description": "HTML email body with embedded table"
+              }
+            },
+            "required": [
+              "subject",
+              "body"
+            ]
+          },
+          "type": "generate",
+          "instruction": "Create an email notifying the user about high-quality leads where the sales person email could not be resolved. Include: (1) explanation of the issue, (2) HTML table with columns: Date, Lead Name, Company, Email, Phone, Stage, Notes, Sales Person, Lead Score, High-Quality (Yes), Reason/Notes, (3) request to update sales person email mapping. Return object with 'subject' and 'body' fields.",
+          "input": "leads_without_email"
+        },
+        "output_variable": "unresolved_email_content",
+        "id": "step12"
+      },
+      {
+        "step_id": "step13",
+        "type": "action",
+        "description": "Send fallback email to user for unresolved leads",
+        "plugin": "google-mail",
+        "operation": "send_email",
+        "config": {
+          "recipients": {
+            "to": [
+              "{{config.user_email}}"
+            ]
+          },
+          "content": {
+            "subject": "{{unresolved_email_content.subject}}",
+            "html_body": "{{unresolved_email_content.body}}"
+          }
+        },
+        "id": "step13"
+      }
+    ],
+    "id": "step11"
+  }
+]

@@ -7,6 +7,7 @@
     "icon": "<Calendar className='w-5 h-5 text-blue-600'/>",
     "category": "productivity",
     "isPopular": true,
+    "provider_family": "google",
     "auth_config": {
       "auth_type": "oauth2_google",
       "client_id": "${GOOGLE_CLIENT_ID}",
@@ -29,6 +30,35 @@
     "list_files": {
       "description": "List files and folders in Google Drive with optional filtering",
       "usage_context": "When user wants to browse their Drive contents, see files in a folder, or list files matching criteria",
+      "idempotent": true,
+      "domain": "storage",
+      "capability": "list",
+      "input_entity": "folder",
+      "output_entity": "file",
+      "input_cardinality": "single",
+      "output_cardinality": "collection",
+      "output_fields": [
+        "id",
+        "name",
+        "mimeType",
+        "size",
+        "createdTime",
+        "modifiedTime",
+        "parents",
+        "webViewLink"
+      ],
+      "required_params": [],
+      "optional_params": [
+        "folder_id",
+        "max_results",
+        "mime_type",
+        "query"
+      ],
+      "must_support": [
+        "folder_browsing",
+        "mime_type_filter",
+        "date_filter"
+      ],
       "parameters": {
         "type": "object",
         "properties": {
@@ -38,6 +68,11 @@
             "x-dynamic-options": {
               "source": "list_folders",
               "description": "Fetches available folders dynamically"
+            },
+            "x-variable-mapping": {
+              "from_type": "folder",
+              "field_path": "folder_id",
+              "description": "Extract folder ID from folder object"
             }
           },
           "max_results": {
@@ -49,7 +84,13 @@
           },
           "order_by": {
             "type": "string",
-            "enum": ["modifiedTime", "name", "createdTime", "folder", "starred"],
+            "enum": [
+              "modifiedTime",
+              "name",
+              "createdTime",
+              "folder",
+              "starred"
+            ],
             "default": "modifiedTime",
             "description": "How to order the file results"
           },
@@ -57,7 +98,16 @@
             "type": "array",
             "items": {
               "type": "string",
-              "enum": ["document", "spreadsheet", "presentation", "pdf", "image", "video", "folder", "all"]
+              "enum": [
+                "document",
+                "spreadsheet",
+                "presentation",
+                "pdf",
+                "image",
+                "video",
+                "folder",
+                "all"
+              ]
             },
             "description": "Filter by specific file types"
           },
@@ -93,24 +143,72 @@
             "items": {
               "type": "object",
               "properties": {
-                "id": { "type": "string", "description": "Unique file ID" },
-                "name": { "type": "string", "description": "File or folder name" },
-                "mimeType": { "type": "string", "description": "MIME type of the file" },
-                "size": { "type": "string", "description": "File size in bytes" },
-                "createdTime": { "type": "string", "description": "Creation timestamp (ISO 8601)" },
-                "modifiedTime": { "type": "string", "description": "Last modification timestamp (ISO 8601)" },
-                "webViewLink": { "type": "string", "description": "URL to view the file" },
-                "shared": { "type": "boolean", "description": "Whether file is shared" },
-                "starred": { "type": "boolean", "description": "Whether file is starred" }
+                "id": {
+                  "type": "string",
+                  "description": "Unique file ID"
+                },
+                "name": {
+                  "type": "string",
+                  "description": "File or folder name"
+                },
+                "mimeType": {
+                  "type": "string",
+                  "description": "MIME type of the file"
+                },
+                "size": {
+                  "type": "string",
+                  "description": "File size in bytes"
+                },
+                "createdTime": {
+                  "type": "string",
+                  "description": "Creation timestamp (ISO 8601)"
+                },
+                "modifiedTime": {
+                  "type": "string",
+                  "description": "Last modification timestamp (ISO 8601)"
+                },
+                "webViewLink": {
+                  "type": "string",
+                  "description": "URL to view the file"
+                },
+                "shared": {
+                  "type": "boolean",
+                  "description": "Whether file is shared"
+                },
+                "starred": {
+                  "type": "boolean",
+                  "description": "Whether file is starred"
+                }
               }
             }
           },
-          "file_count": { "type": "integer", "description": "Number of files returned" },
-          "next_page_token": { "type": "string", "description": "Token for fetching next page of results" },
-          "has_more": { "type": "boolean", "description": "Whether more files are available" },
-          "query_used": { "type": "string", "description": "The query used to filter results" },
-          "retrieved_at": { "type": "string", "description": "Timestamp when data was retrieved (ISO 8601)" }
-        }
+          "file_count": {
+            "type": "integer",
+            "description": "Number of files returned"
+          },
+          "next_page_token": {
+            "type": "string",
+            "description": "Token for fetching next page of results"
+          },
+          "has_more": {
+            "type": "boolean",
+            "description": "Whether more files are available"
+          },
+          "query_used": {
+            "type": "string",
+            "description": "The query used to filter results"
+          },
+          "retrieved_at": {
+            "type": "string",
+            "description": "Timestamp when data was retrieved (ISO 8601)",
+            "x-guaranteed": true
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "mimeType"
+        ]
       },
       "output_guidance": {
         "success_description": "Listed files and folders",
@@ -145,9 +243,41 @@
     "search_files": {
       "description": "Search for files and folders using Google Drive's query syntax",
       "usage_context": "When user wants to find specific files by name, content, type, or other criteria",
+      "idempotent": true,
+      "domain": "storage",
+      "capability": "search",
+      "input_entity": null,
+      "output_entity": "file",
+      "input_cardinality": null,
+      "output_cardinality": "collection",
+      "output_fields": [
+        "id",
+        "name",
+        "mimeType",
+        "size",
+        "createdTime",
+        "modifiedTime",
+        "parents",
+        "webViewLink",
+        "description"
+      ],
+      "required_params": [],
+      "optional_params": [
+        "query",
+        "max_results",
+        "mime_type",
+        "folder_id"
+      ],
+      "must_support": [
+        "full_text_search",
+        "mime_type_filter",
+        "folder_scoped_search"
+      ],
       "parameters": {
         "type": "object",
-        "required": ["query"],
+        "required": [
+          "query"
+        ],
         "properties": {
           "query": {
             "type": "string",
@@ -162,7 +292,12 @@
           },
           "search_scope": {
             "type": "string",
-            "enum": ["all", "owned_by_me", "shared_with_me", "starred"],
+            "enum": [
+              "all",
+              "owned_by_me",
+              "shared_with_me",
+              "starred"
+            ],
             "default": "all",
             "description": "Scope of the search"
           },
@@ -170,7 +305,15 @@
             "type": "array",
             "items": {
               "type": "string",
-              "enum": ["document", "spreadsheet", "presentation", "pdf", "image", "video", "folder"]
+              "enum": [
+                "document",
+                "spreadsheet",
+                "presentation",
+                "pdf",
+                "image",
+                "video",
+                "folder"
+              ]
             },
             "description": "Filter search by specific file types"
           }
@@ -201,25 +344,76 @@
             "items": {
               "type": "object",
               "properties": {
-                "id": { "type": "string", "description": "Unique file ID" },
-                "name": { "type": "string", "description": "File or folder name" },
-                "mimeType": { "type": "string", "description": "MIME type of the file" },
-                "size": { "type": "string", "description": "File size in bytes" },
-                "createdTime": { "type": "string", "description": "Creation timestamp (ISO 8601)" },
-                "modifiedTime": { "type": "string", "description": "Last modification timestamp (ISO 8601)" },
-                "webViewLink": { "type": "string", "description": "URL to view the file" },
-                "shared": { "type": "boolean", "description": "Whether file is shared" },
-                "starred": { "type": "boolean", "description": "Whether file is starred" }
+                "id": {
+                  "type": "string",
+                  "description": "Unique file ID"
+                },
+                "name": {
+                  "type": "string",
+                  "description": "File or folder name"
+                },
+                "mimeType": {
+                  "type": "string",
+                  "description": "MIME type of the file"
+                },
+                "size": {
+                  "type": "string",
+                  "description": "File size in bytes"
+                },
+                "createdTime": {
+                  "type": "string",
+                  "description": "Creation timestamp (ISO 8601)"
+                },
+                "modifiedTime": {
+                  "type": "string",
+                  "description": "Last modification timestamp (ISO 8601)"
+                },
+                "webViewLink": {
+                  "type": "string",
+                  "description": "URL to view the file"
+                },
+                "shared": {
+                  "type": "boolean",
+                  "description": "Whether file is shared"
+                },
+                "starred": {
+                  "type": "boolean",
+                  "description": "Whether file is starred"
+                }
               }
             }
           },
-          "file_count": { "type": "integer", "description": "Number of files found" },
-          "search_query": { "type": "string", "description": "The search query that was executed" },
-          "next_page_token": { "type": "string", "description": "Token for fetching next page of results" },
-          "has_more": { "type": "boolean", "description": "Whether more results are available" },
-          "searched_at": { "type": "string", "description": "Timestamp when search was performed (ISO 8601)" },
-          "message": { "type": "string", "description": "Status message if no results found" }
-        }
+          "file_count": {
+            "type": "integer",
+            "description": "Number of files found"
+          },
+          "search_query": {
+            "type": "string",
+            "description": "The search query that was executed"
+          },
+          "next_page_token": {
+            "type": "string",
+            "description": "Token for fetching next page of results"
+          },
+          "has_more": {
+            "type": "boolean",
+            "description": "Whether more results are available"
+          },
+          "searched_at": {
+            "type": "string",
+            "description": "Timestamp when search was performed (ISO 8601)",
+            "x-guaranteed": true
+          },
+          "message": {
+            "type": "string",
+            "description": "Status message if no results found"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "mimeType"
+        ]
       },
       "output_guidance": {
         "success_description": "Found matching files",
@@ -253,9 +447,40 @@
     "get_file_metadata": {
       "description": "Get detailed information about a specific file or folder",
       "usage_context": "When user wants to see properties, permissions, or details about a specific file",
+      "idempotent": true,
+      "domain": "storage",
+      "capability": "get",
+      "input_entity": "file",
+      "output_entity": "file",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "output_fields": [
+        "id",
+        "name",
+        "mimeType",
+        "size",
+        "createdTime",
+        "modifiedTime",
+        "parents",
+        "webViewLink",
+        "owners",
+        "permissions"
+      ],
+      "required_params": [
+        "file_id"
+      ],
+      "optional_params": [
+        "include_permissions"
+      ],
+      "must_support": [
+        "metadata_fetch",
+        "permission_info"
+      ],
       "parameters": {
         "type": "object",
-        "required": ["file_id"],
+        "required": [
+          "file_id"
+        ],
         "properties": {
           "file_id": {
             "type": "string",
@@ -284,19 +509,64 @@
       "output_schema": {
         "type": "object",
         "properties": {
-          "file": { "type": "object", "description": "Complete file metadata from Google Drive API" },
-          "file_id": { "type": "string", "description": "Unique file identifier" },
-          "file_name": { "type": "string", "description": "Name of the file or folder" },
-          "file_type": { "type": "string", "description": "Friendly file type (document, spreadsheet, folder, etc.)" },
-          "mime_type": { "type": "string", "description": "MIME type of the file" },
-          "size_bytes": { "type": "integer", "description": "File size in bytes" },
-          "created_at": { "type": "string", "description": "Creation timestamp (ISO 8601)" },
-          "modified_at": { "type": "string", "description": "Last modification timestamp (ISO 8601)" },
-          "owner": { "type": "string", "description": "File owner name or email" },
-          "web_view_link": { "type": "string", "description": "URL to view the file in browser" },
-          "is_folder": { "type": "boolean", "description": "Whether this is a folder" },
-          "retrieved_at": { "type": "string", "description": "Timestamp when metadata was retrieved (ISO 8601)" }
-        }
+          "file": {
+            "type": "object",
+            "description": "Complete file metadata from Google Drive API"
+          },
+          "file_id": {
+            "type": "string",
+            "description": "Unique file identifier",
+            "x-guaranteed": true
+          },
+          "file_name": {
+            "type": "string",
+            "description": "Name of the file or folder"
+          },
+          "file_type": {
+            "type": "string",
+            "description": "Friendly file type (document, spreadsheet, folder, etc.)"
+          },
+          "mime_type": {
+            "type": "string",
+            "description": "MIME type of the file"
+          },
+          "size_bytes": {
+            "type": "integer",
+            "description": "File size in bytes"
+          },
+          "created_at": {
+            "type": "string",
+            "description": "Creation timestamp (ISO 8601)",
+            "x-guaranteed": true
+          },
+          "modified_at": {
+            "type": "string",
+            "description": "Last modification timestamp (ISO 8601)",
+            "x-guaranteed": true
+          },
+          "owner": {
+            "type": "string",
+            "description": "File owner name or email"
+          },
+          "web_view_link": {
+            "type": "string",
+            "description": "URL to view the file in browser"
+          },
+          "is_folder": {
+            "type": "boolean",
+            "description": "Whether this is a folder"
+          },
+          "retrieved_at": {
+            "type": "string",
+            "description": "Timestamp when metadata was retrieved (ISO 8601)",
+            "x-guaranteed": true
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "mimeType"
+        ]
       },
       "output_guidance": {
         "success_description": "Retrieved file details",
@@ -325,9 +595,37 @@
     "read_file_content": {
       "description": "Read and extract text content from a file",
       "usage_context": "When user wants to read the contents of a document, view text from files, or extract information",
+      "idempotent": true,
+      "domain": "storage",
+      "capability": "fetch_content",
+      "input_entity": "file",
+      "output_entity": "file",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "output_fields": [
+        "id",
+        "name",
+        "mimeType",
+        "content",
+        "text_content",
+        "size"
+      ],
+      "required_params": [
+        "file_id"
+      ],
+      "optional_params": [
+        "export_mime_type"
+      ],
+      "must_support": [
+        "text_extraction",
+        "google_docs_export",
+        "binary_download"
+      ],
       "parameters": {
         "type": "object",
-        "required": ["file_id"],
+        "required": [
+          "file_id"
+        ],
         "properties": {
           "file_id": {
             "type": "string",
@@ -339,7 +637,11 @@
           },
           "export_format": {
             "type": "string",
-            "enum": ["text/plain", "text/html", "application/pdf"],
+            "enum": [
+              "text/plain",
+              "text/html",
+              "application/pdf"
+            ],
             "default": "text/plain",
             "description": "Format to export Google Workspace files (Docs, Sheets, Slides)"
           },
@@ -371,15 +673,45 @@
       "output_schema": {
         "type": "object",
         "properties": {
-          "file_id": { "type": "string", "description": "ID of the file that was read" },
-          "file_name": { "type": "string", "description": "Name of the file" },
-          "file_size": { "type": "string", "description": "Human-readable file size (e.g., '1.5 MB')" },
-          "mime_type": { "type": "string", "description": "MIME type of the file" },
-          "content": { "type": "string", "description": "Text content extracted from the file" },
-          "content_length": { "type": "integer", "description": "Length of the extracted content in characters" },
-          "export_format": { "type": "string", "description": "Format the file was exported as (text/plain, text/html, or 'original')" },
-          "read_at": { "type": "string", "description": "Timestamp when file was read (ISO 8601)" }
-        }
+          "file_id": {
+            "type": "string",
+            "description": "ID of the file that was read",
+            "x-guaranteed": true
+          },
+          "file_name": {
+            "type": "string",
+            "description": "Name of the file"
+          },
+          "file_size": {
+            "type": "string",
+            "description": "Human-readable file size (e.g., '1.5 MB')"
+          },
+          "mime_type": {
+            "type": "string",
+            "description": "MIME type of the file"
+          },
+          "content": {
+            "type": "string",
+            "description": "Text content extracted from the file"
+          },
+          "content_length": {
+            "type": "integer",
+            "description": "Length of the extracted content in characters"
+          },
+          "export_format": {
+            "type": "string",
+            "description": "Format the file was exported as (text/plain, text/html, or 'original')"
+          },
+          "read_at": {
+            "type": "string",
+            "description": "Timestamp when file was read (ISO 8601)"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "mimeType"
+        ]
       },
       "output_guidance": {
         "success_description": "Read file content",
@@ -407,9 +739,38 @@
     "get_folder_contents": {
       "description": "Get all files and subfolders within a specific folder",
       "usage_context": "When user wants to explore a folder's contents, browse folder hierarchy, or organize files",
+      "idempotent": true,
+      "domain": "storage",
+      "capability": "list",
+      "input_entity": "folder",
+      "output_entity": "file",
+      "input_cardinality": "single",
+      "output_cardinality": "collection",
+      "output_fields": [
+        "id",
+        "name",
+        "mimeType",
+        "size",
+        "createdTime",
+        "modifiedTime",
+        "webViewLink"
+      ],
+      "required_params": [
+        "folder_id"
+      ],
+      "optional_params": [
+        "max_results",
+        "include_subfolders"
+      ],
+      "must_support": [
+        "recursive_listing",
+        "folder_browsing"
+      ],
       "parameters": {
         "type": "object",
-        "required": ["folder_id"],
+        "required": [
+          "folder_id"
+        ],
         "properties": {
           "folder_id": {
             "type": "string",
@@ -417,6 +778,11 @@
             "x-dynamic-options": {
               "source": "list_folders",
               "description": "Fetches available folders dynamically"
+            },
+            "x-variable-mapping": {
+              "from_type": "folder",
+              "field_path": "folder_id",
+              "description": "Extract folder ID from folder object"
             }
           },
           "max_results": {
@@ -433,7 +799,12 @@
           },
           "order_by": {
             "type": "string",
-            "enum": ["name", "modifiedTime", "createdTime", "folder"],
+            "enum": [
+              "name",
+              "modifiedTime",
+              "createdTime",
+              "folder"
+            ],
             "default": "name",
             "description": "How to order the results"
           }
@@ -458,32 +829,87 @@
       "output_schema": {
         "type": "object",
         "properties": {
-          "folder_id": { "type": "string", "description": "ID of the folder that was explored" },
-          "folder_name": { "type": "string", "description": "Name of the folder" },
+          "folder_id": {
+            "type": "string",
+            "description": "ID of the folder that was explored",
+            "x-guaranteed": true
+          },
+          "folder_name": {
+            "type": "string",
+            "description": "Name of the folder"
+          },
           "items": {
             "type": "array",
             "description": "All items (files and folders) in the folder",
             "items": {
               "type": "object",
               "properties": {
-                "id": { "type": "string", "description": "Unique item ID" },
-                "name": { "type": "string", "description": "Item name" },
-                "mimeType": { "type": "string", "description": "MIME type" },
-                "size": { "type": "string", "description": "Size in bytes (files only)" },
-                "modifiedTime": { "type": "string", "description": "Last modification timestamp" },
-                "webViewLink": { "type": "string", "description": "URL to view the item" }
+                "id": {
+                  "type": "string",
+                  "description": "Unique item ID"
+                },
+                "name": {
+                  "type": "string",
+                  "description": "Item name"
+                },
+                "mimeType": {
+                  "type": "string",
+                  "description": "MIME type"
+                },
+                "size": {
+                  "type": "string",
+                  "description": "Size in bytes (files only)"
+                },
+                "modifiedTime": {
+                  "type": "string",
+                  "description": "Last modification timestamp"
+                },
+                "webViewLink": {
+                  "type": "string",
+                  "description": "URL to view the item"
+                }
               }
             }
           },
-          "item_count": { "type": "integer", "description": "Total number of items" },
-          "folder_count": { "type": "integer", "description": "Number of subfolders" },
-          "file_count": { "type": "integer", "description": "Number of files" },
-          "folders": { "type": "array", "description": "List of subfolders only" },
-          "files": { "type": "array", "description": "List of files only" },
-          "next_page_token": { "type": "string", "description": "Token for fetching next page of results" },
-          "has_more": { "type": "boolean", "description": "Whether more items are available" },
-          "retrieved_at": { "type": "string", "description": "Timestamp when data was retrieved (ISO 8601)" }
-        }
+          "item_count": {
+            "type": "integer",
+            "description": "Total number of items"
+          },
+          "folder_count": {
+            "type": "integer",
+            "description": "Number of subfolders"
+          },
+          "file_count": {
+            "type": "integer",
+            "description": "Number of files"
+          },
+          "folders": {
+            "type": "array",
+            "description": "List of subfolders only"
+          },
+          "files": {
+            "type": "array",
+            "description": "List of files only"
+          },
+          "next_page_token": {
+            "type": "string",
+            "description": "Token for fetching next page of results"
+          },
+          "has_more": {
+            "type": "boolean",
+            "description": "Whether more items are available"
+          },
+          "retrieved_at": {
+            "type": "string",
+            "description": "Timestamp when data was retrieved (ISO 8601)",
+            "x-guaranteed": true
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "mimeType"
+        ]
       },
       "output_guidance": {
         "success_description": "Listed folder contents",
@@ -491,14 +917,36 @@
           "folder_id": "1folder789xyz",
           "folder_name": "Projects",
           "items": [
-            {"id": "1abc", "name": "Project A", "mimeType": "application/vnd.google-apps.folder"},
-            {"id": "2def", "name": "Report.docx", "mimeType": "application/vnd.google-apps.document", "size": "10240"}
+            {
+              "id": "1abc",
+              "name": "Project A",
+              "mimeType": "application/vnd.google-apps.folder"
+            },
+            {
+              "id": "2def",
+              "name": "Report.docx",
+              "mimeType": "application/vnd.google-apps.document",
+              "size": "10240"
+            }
           ],
           "item_count": 2,
           "folder_count": 1,
           "file_count": 1,
-          "folders": [{"id": "1abc", "name": "Project A", "mimeType": "application/vnd.google-apps.folder"}],
-          "files": [{"id": "2def", "name": "Report.docx", "mimeType": "application/vnd.google-apps.document", "size": "10240"}],
+          "folders": [
+            {
+              "id": "1abc",
+              "name": "Project A",
+              "mimeType": "application/vnd.google-apps.folder"
+            }
+          ],
+          "files": [
+            {
+              "id": "2def",
+              "name": "Report.docx",
+              "mimeType": "application/vnd.google-apps.document",
+              "size": "10240"
+            }
+          ],
           "has_more": false,
           "retrieved_at": "2024-01-15T12:00:00Z"
         },
@@ -515,17 +963,57 @@
     "upload_file": {
       "description": "Upload a file to Google Drive",
       "usage_context": "When user wants to store a file, upload an attachment, or save content to Drive",
+      "idempotent": false,
+      "domain": "storage",
+      "capability": "upload",
+      "input_entity": "file",
+      "output_entity": "file",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "output_fields": [
+        "id",
+        "name",
+        "mimeType",
+        "size",
+        "webViewLink",
+        "createdTime"
+      ],
+      "required_params": [
+        "file_data"
+      ],
+      "optional_params": [
+        "file_name",
+        "parent_folder_id",
+        "mime_type"
+      ],
+      "must_support": [
+        "folder_upload",
+        "overwrite_prevention"
+      ],
       "parameters": {
         "type": "object",
-        "required": ["file_content", "file_name"],
+        "required": [
+          "file_content",
+          "file_name"
+        ],
         "properties": {
           "file_content": {
             "type": "string",
-            "description": "File content (base64 encoded for binary files, or plain text)"
+            "description": "File content (base64 encoded for binary files, or plain text)",
+            "x-variable-mapping": {
+              "from_type": "file_attachment",
+              "field_path": "content",
+              "description": "Extract content from attachment object"
+            }
           },
           "file_name": {
             "type": "string",
-            "description": "Name for the uploaded file"
+            "description": "Name for the uploaded file",
+            "x-variable-mapping": {
+              "from_type": "file_attachment",
+              "field_path": "filename",
+              "description": "Extract filename from attachment object"
+            }
           },
           "folder_id": {
             "type": "string",
@@ -533,6 +1021,11 @@
             "x-dynamic-options": {
               "source": "list_folders",
               "description": "Fetches available folders dynamically"
+            },
+            "x-variable-mapping": {
+              "from_type": "folder",
+              "field_path": "folder_id",
+              "description": "Extract folder ID from folder object"
             }
           },
           "mime_type": {
@@ -551,15 +1044,51 @@
       },
       "output_schema": {
         "type": "object",
+        "required": [
+          "file_id",
+          "file_name",
+          "web_view_link"
+        ],
         "properties": {
-          "file_id": { "type": "string", "description": "ID of the uploaded file" },
-          "file_name": { "type": "string", "description": "Name of the uploaded file" },
-          "file_size": { "type": "string", "description": "Size of the uploaded file" },
-          "mime_type": { "type": "string", "description": "MIME type of the file" },
-          "web_view_link": { "type": "string", "description": "URL to view the file" },
-          "web_content_link": { "type": "string", "description": "URL to download the file" },
-          "folder_id": { "type": "string", "description": "ID of the folder containing the file" },
-          "uploaded_at": { "type": "string", "description": "Timestamp when file was uploaded (ISO 8601)" }
+          "file_id": {
+            "type": "string",
+            "description": "ID of the uploaded file",
+            "x-guaranteed": true
+          },
+          "file_name": {
+            "type": "string",
+            "description": "Name of the uploaded file",
+            "x-guaranteed": true
+          },
+          "file_size": {
+            "type": "string",
+            "description": "Size of the uploaded file",
+            "x-guaranteed": true
+          },
+          "mime_type": {
+            "type": "string",
+            "description": "MIME type of the file",
+            "x-guaranteed": true
+          },
+          "web_view_link": {
+            "type": "string",
+            "description": "URL to view the file",
+            "x-guaranteed": true
+          },
+          "web_content_link": {
+            "type": "string",
+            "description": "URL to download the file"
+          },
+          "folder_id": {
+            "type": "string",
+            "description": "ID of the folder containing the file",
+            "x-guaranteed": true
+          },
+          "uploaded_at": {
+            "type": "string",
+            "description": "Timestamp when file was uploaded (ISO 8601)",
+            "x-guaranteed": true
+          }
         }
       },
       "output_guidance": {
@@ -587,9 +1116,34 @@
     "create_folder": {
       "description": "Create a new folder in Google Drive",
       "usage_context": "When user wants to organize files, create folder structure, or set up new directories",
+      "idempotent": false,
+      "domain": "storage",
+      "capability": "create",
+      "input_entity": "folder",
+      "output_entity": "folder",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "output_fields": [
+        "id",
+        "name",
+        "mimeType",
+        "webViewLink",
+        "createdTime"
+      ],
+      "required_params": [
+        "folder_name"
+      ],
+      "optional_params": [
+        "parent_folder_id"
+      ],
+      "must_support": [
+        "nested_folders"
+      ],
       "parameters": {
         "type": "object",
-        "required": ["folder_name"],
+        "required": [
+          "folder_name"
+        ],
         "properties": {
           "folder_name": {
             "type": "string",
@@ -615,12 +1169,37 @@
       },
       "output_schema": {
         "type": "object",
+        "required": [
+          "folder_id",
+          "folder_name",
+          "web_view_link"
+        ],
         "properties": {
-          "folder_id": { "type": "string", "description": "ID of the created folder" },
-          "folder_name": { "type": "string", "description": "Name of the created folder" },
-          "web_view_link": { "type": "string", "description": "URL to view the folder" },
-          "parent_folder_id": { "type": "string", "description": "ID of the parent folder" },
-          "created_at": { "type": "string", "description": "Timestamp when folder was created (ISO 8601)" }
+          "folder_id": {
+            "type": "string",
+            "description": "ID of the created folder",
+            "x-guaranteed": true
+          },
+          "folder_name": {
+            "type": "string",
+            "description": "Name of the created folder",
+            "x-guaranteed": true
+          },
+          "web_view_link": {
+            "type": "string",
+            "description": "URL to view the folder",
+            "x-guaranteed": true
+          },
+          "parent_folder_id": {
+            "type": "string",
+            "description": "ID of the parent folder",
+            "x-guaranteed": true
+          },
+          "created_at": {
+            "type": "string",
+            "description": "Timestamp when folder was created (ISO 8601)",
+            "x-guaranteed": true
+          }
         }
       },
       "output_guidance": {
@@ -639,14 +1218,42 @@
           "permission_denied": "You don't have permission to create folders in this location.",
           "api_rate_limit": "Too many requests. Please wait a moment and try again."
         }
-      }
+      },
+      "idempotent_alternative": "get_or_create_folder"
     },
     "get_or_create_folder": {
       "description": "Get existing folder by name or create if it doesn't exist (prevents duplicates)",
       "usage_context": "Use this instead of create_folder when you want idempotent folder creation. Perfect for recurring workflows to avoid creating duplicate folders on each run.",
+      "idempotent": true,
+      "domain": "storage",
+      "capability": "upsert",
+      "input_entity": "folder",
+      "output_entity": "folder",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "output_fields": [
+        "id",
+        "name",
+        "mimeType",
+        "webViewLink",
+        "existed",
+        "createdTime"
+      ],
+      "required_params": [
+        "folder_name"
+      ],
+      "optional_params": [
+        "parent_folder_id"
+      ],
+      "must_support": [
+        "idempotent_folder_creation",
+        "nested_folders"
+      ],
       "parameters": {
         "type": "object",
-        "required": ["folder_name"],
+        "required": [
+          "folder_name"
+        ],
         "properties": {
           "folder_name": {
             "type": "string",
@@ -673,13 +1280,39 @@
       "output_schema": {
         "type": "object",
         "properties": {
-          "folder_id": { "type": "string", "description": "ID of the folder (existing or newly created)" },
-          "folder_name": { "type": "string", "description": "Name of the folder" },
-          "web_view_link": { "type": "string", "description": "URL to view the folder" },
-          "parent_folder_id": { "type": "string", "description": "ID of the parent folder" },
-          "created": { "type": "boolean", "description": "True if folder was newly created, false if it already existed" },
-          "created_at": { "type": "string", "description": "Timestamp when folder was created (if new) or found (if existing)" }
-        }
+          "folder_id": {
+            "type": "string",
+            "description": "ID of the folder (existing or newly created)",
+            "x-guaranteed": true
+          },
+          "folder_name": {
+            "type": "string",
+            "description": "Name of the folder"
+          },
+          "web_view_link": {
+            "type": "string",
+            "description": "URL to view the folder"
+          },
+          "parent_folder_id": {
+            "type": "string",
+            "description": "ID of the parent folder",
+            "x-guaranteed": true
+          },
+          "created": {
+            "type": "boolean",
+            "description": "True if folder was newly created, false if it already existed"
+          },
+          "created_at": {
+            "type": "string",
+            "description": "Timestamp when folder was created (if new) or found (if existing)",
+            "x-guaranteed": true
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "mimeType"
+        ]
       },
       "output_guidance": {
         "success_description": "Retrieved or created folder",
@@ -702,9 +1335,39 @@
     "share_file": {
       "description": "Share a file or folder and get a shareable link",
       "usage_context": "When user wants to share files, generate shareable links, or set permissions",
+      "idempotent": true,
+      "domain": "storage",
+      "capability": "update",
+      "input_entity": "file",
+      "output_entity": "file",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "output_fields": [
+        "id",
+        "name",
+        "webViewLink",
+        "permissions",
+        "shared_link"
+      ],
+      "required_params": [
+        "file_id"
+      ],
+      "optional_params": [
+        "email",
+        "role",
+        "type",
+        "send_notification"
+      ],
+      "must_support": [
+        "permission_management",
+        "link_sharing",
+        "email_sharing"
+      ],
       "parameters": {
         "type": "object",
-        "required": ["file_id"],
+        "required": [
+          "file_id"
+        ],
         "properties": {
           "file_id": {
             "type": "string",
@@ -716,19 +1379,30 @@
           },
           "permission_type": {
             "type": "string",
-            "enum": ["anyone_with_link", "anyone_can_view", "anyone_can_edit", "specific_users"],
+            "enum": [
+              "anyone_with_link",
+              "anyone_can_view",
+              "anyone_can_edit",
+              "specific_users"
+            ],
             "default": "anyone_with_link",
             "description": "Type of sharing permission"
           },
           "role": {
             "type": "string",
-            "enum": ["reader", "commenter", "writer"],
+            "enum": [
+              "reader",
+              "commenter",
+              "writer"
+            ],
             "default": "reader",
             "description": "Role for the permission"
           },
           "email_addresses": {
             "type": "array",
-            "items": { "type": "string" },
+            "items": {
+              "type": "string"
+            },
             "description": "Email addresses to share with (for specific_users permission type)"
           }
         }
@@ -740,15 +1414,47 @@
       "output_schema": {
         "type": "object",
         "properties": {
-          "file_id": { "type": "string", "description": "ID of the shared file" },
-          "file_name": { "type": "string", "description": "Name of the shared file" },
-          "web_view_link": { "type": "string", "description": "Shareable URL to view the file" },
-          "web_content_link": { "type": "string", "description": "URL to download the file (if applicable)" },
-          "permission_id": { "type": "string", "description": "ID of the created permission" },
-          "permission_type": { "type": "string", "description": "Type of permission granted" },
-          "shared_with": { "type": "array", "description": "List of users the file was shared with" },
-          "shared_at": { "type": "string", "description": "Timestamp when file was shared (ISO 8601)" }
-        }
+          "file_id": {
+            "type": "string",
+            "description": "ID of the shared file",
+            "x-guaranteed": true
+          },
+          "file_name": {
+            "type": "string",
+            "description": "Name of the shared file"
+          },
+          "web_view_link": {
+            "type": "string",
+            "description": "Shareable URL to view the file"
+          },
+          "web_content_link": {
+            "type": "string",
+            "description": "URL to download the file (if applicable)"
+          },
+          "permission_id": {
+            "type": "string",
+            "description": "ID of the created permission",
+            "x-guaranteed": true
+          },
+          "permission_type": {
+            "type": "string",
+            "description": "Type of permission granted"
+          },
+          "shared_with": {
+            "type": "array",
+            "description": "List of users the file was shared with"
+          },
+          "shared_at": {
+            "type": "string",
+            "description": "Timestamp when file was shared (ISO 8601)",
+            "x-guaranteed": true
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "webViewLink"
+        ]
       },
       "output_guidance": {
         "success_description": "Shared file",
@@ -759,7 +1465,9 @@
           "web_content_link": "https://drive.google.com/uc?id=1sharefile789xyz&export=download",
           "permission_id": "perm123xyz",
           "permission_type": "anyone_with_link",
-          "shared_with": ["anyone"],
+          "shared_with": [
+            "anyone"
+          ],
           "shared_at": "2024-01-15T13:30:00Z"
         },
         "common_errors": {

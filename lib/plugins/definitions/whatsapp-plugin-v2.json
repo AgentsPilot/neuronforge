@@ -28,10 +28,16 @@
     "webhook_config": {
       "required": true,
       "endpoint_path": "/api/plugins/webhooks/whatsapp",
-      "events": ["messages", "message_status"],
+      "events": [
+        "messages",
+        "message_status"
+      ],
       "setup_instructions": "After OAuth, configure webhook in Meta App Dashboard > WhatsApp > Configuration. Subscribe to 'messages' field. Webhook URL will be provided after connection.",
       "verify_token_required": true,
-      "profile_data_required": ["phone_number_id", "waba_id"]
+      "profile_data_required": [
+        "phone_number_id",
+        "waba_id"
+      ]
     },
     "additional_config": {
       "enabled": true,
@@ -53,15 +59,42 @@
           "placeholder": "Enter WABA ID"
         }
       ]
-    }
+    },
+    "provider_family": "meta"
   },
   "actions": {
     "send_template_message": {
       "description": "Send a pre-approved template message to initiate or continue a conversation with a customer",
       "usage_context": "Use this to send notifications, reminders, confirmations, or marketing messages using approved templates. Required for business-initiated conversations outside the 24-hour customer service window. Templates must be pre-approved by WhatsApp.",
+      "idempotent": false,
+      "domain": "messaging",
+      "capability": "send_message",
+      "input_entity": null,
+      "output_entity": "message",
+      "input_cardinality": null,
+      "output_cardinality": "single",
+      "output_fields": [
+        "message_id",
+        "status"
+      ],
+      "required_params": [
+        "to",
+        "template_name"
+      ],
+      "optional_params": [
+        "parameters"
+      ],
+      "must_support": [
+        "templates",
+        "parameters"
+      ],
       "parameters": {
         "type": "object",
-        "required": ["recipient_phone", "template_name", "language_code"],
+        "required": [
+          "recipient_phone",
+          "template_name",
+          "language_code"
+        ],
         "properties": {
           "recipient_phone": {
             "type": "string",
@@ -110,12 +143,32 @@
       "output_schema": {
         "type": "object",
         "properties": {
-          "success": { "type": "boolean", "description": "Whether the message was sent successfully" },
-          "message_id": { "type": "string", "description": "WhatsApp message ID (WAMID) for tracking" },
-          "recipient": { "type": "string", "description": "Phone number message was sent to" },
-          "template_name": { "type": "string", "description": "Name of the template used" },
-          "message": { "type": "string", "description": "Status message describing the result" }
-        }
+          "success": {
+            "type": "boolean",
+            "description": "Whether the message was sent successfully"
+          },
+          "message_id": {
+            "type": "string",
+            "description": "WhatsApp message ID (WAMID) for tracking",
+            "x-guaranteed": true
+          },
+          "recipient": {
+            "type": "string",
+            "description": "Phone number message was sent to"
+          },
+          "template_name": {
+            "type": "string",
+            "description": "Name of the template used"
+          },
+          "message": {
+            "type": "string",
+            "description": "Status message describing the result"
+          }
+        },
+        "required": [
+          "message_id",
+          "status"
+        ]
       },
       "output_guidance": {
         "success_description": "Sent template message",
@@ -140,9 +193,31 @@
     "send_text_message": {
       "description": "Send a free-form text message to a customer within the 24-hour customer service window",
       "usage_context": "Use this for real-time conversational responses to customer inquiries. Can only be sent within 24 hours after the customer's last message. Supports URLs, formatting, and emojis for natural conversations.",
+      "idempotent": false,
+      "domain": "messaging",
+      "capability": "send_message",
+      "input_entity": null,
+      "output_entity": "message",
+      "input_cardinality": null,
+      "output_cardinality": "single",
+      "output_fields": [
+        "message_id",
+        "status"
+      ],
+      "required_params": [
+        "to",
+        "body"
+      ],
+      "optional_params": [],
+      "must_support": [
+        "phone_numbers"
+      ],
       "parameters": {
         "type": "object",
-        "required": ["recipient_phone", "message_text"],
+        "required": [
+          "recipient_phone",
+          "message_text"
+        ],
         "properties": {
           "recipient_phone": {
             "type": "string",
@@ -181,12 +256,32 @@
       "output_schema": {
         "type": "object",
         "properties": {
-          "success": { "type": "boolean", "description": "Whether the message was sent successfully" },
-          "message_id": { "type": "string", "description": "WhatsApp message ID (WAMID) for tracking" },
-          "recipient": { "type": "string", "description": "Phone number message was sent to" },
-          "is_reply": { "type": "boolean", "description": "Whether this was a reply to another message" },
-          "message": { "type": "string", "description": "Status message describing the result" }
-        }
+          "success": {
+            "type": "boolean",
+            "description": "Whether the message was sent successfully"
+          },
+          "message_id": {
+            "type": "string",
+            "description": "WhatsApp message ID (WAMID) for tracking",
+            "x-guaranteed": true
+          },
+          "recipient": {
+            "type": "string",
+            "description": "Phone number message was sent to"
+          },
+          "is_reply": {
+            "type": "boolean",
+            "description": "Whether this was a reply to another message"
+          },
+          "message": {
+            "type": "string",
+            "description": "Status message describing the result"
+          }
+        },
+        "required": [
+          "message_id",
+          "status"
+        ]
       },
       "output_guidance": {
         "success_description": "Sent media message",
@@ -210,9 +305,32 @@
     "send_interactive_message": {
       "description": "Send a message with interactive buttons or selection lists to guide customer through workflows",
       "usage_context": "Use this to provide structured options, menus, or quick replies to customers. Improves user experience by reducing typing. Can only be sent within 24-hour customer service window. Supports up to 3 buttons or 10 list items.",
+      "idempotent": false,
+      "domain": "messaging",
+      "capability": "send_message",
+      "input_entity": null,
+      "output_entity": "message",
+      "input_cardinality": null,
+      "output_cardinality": "single",
+      "output_fields": [
+        "message_id",
+        "status"
+      ],
+      "required_params": [
+        "to",
+        "interactive"
+      ],
+      "optional_params": [],
+      "must_support": [
+        "interactive_buttons"
+      ],
       "parameters": {
         "type": "object",
-        "required": ["recipient_phone", "body_text", "interaction_type"],
+        "required": [
+          "recipient_phone",
+          "body_text",
+          "interaction_type"
+        ],
         "properties": {
           "recipient_phone": {
             "type": "string",
@@ -225,7 +343,10 @@
           "interaction_type": {
             "type": "string",
             "description": "Type of interaction: 'button' for quick reply buttons or 'list' for selection menu",
-            "enum": ["button", "list"]
+            "enum": [
+              "button",
+              "list"
+            ]
           },
           "header_text": {
             "type": "string",
@@ -315,12 +436,32 @@
       "output_schema": {
         "type": "object",
         "properties": {
-          "success": { "type": "boolean", "description": "Whether the message was sent successfully" },
-          "message_id": { "type": "string", "description": "WhatsApp message ID (WAMID) for tracking" },
-          "recipient": { "type": "string", "description": "Phone number message was sent to" },
-          "interaction_type": { "type": "string", "description": "Type of interactive message (button or list)" },
-          "message": { "type": "string", "description": "Status message describing the result" }
-        }
+          "success": {
+            "type": "boolean",
+            "description": "Whether the message was sent successfully"
+          },
+          "message_id": {
+            "type": "string",
+            "description": "WhatsApp message ID (WAMID) for tracking",
+            "x-guaranteed": true
+          },
+          "recipient": {
+            "type": "string",
+            "description": "Phone number message was sent to"
+          },
+          "interaction_type": {
+            "type": "string",
+            "description": "Type of interactive message (button or list)"
+          },
+          "message": {
+            "type": "string",
+            "description": "Status message describing the result"
+          }
+        },
+        "required": [
+          "message_id",
+          "status"
+        ]
       },
       "output_guidance": {
         "success_description": "Sent interactive message",
@@ -345,6 +486,24 @@
     "list_message_templates": {
       "description": "Retrieve all approved message templates available for your WhatsApp Business Account",
       "usage_context": "Use this to discover which templates are available and approved for sending. Essential for template-based automation and knowing which templates can be used with send_template_message. Returns template names, languages, statuses, and parameter requirements.",
+      "idempotent": true,
+      "domain": "messaging",
+      "capability": "list",
+      "input_entity": null,
+      "output_entity": "message",
+      "input_cardinality": null,
+      "output_cardinality": "collection",
+      "output_fields": [
+        "name",
+        "language",
+        "status",
+        "category"
+      ],
+      "required_params": [],
+      "optional_params": [],
+      "must_support": [
+        "templates"
+      ],
       "parameters": {
         "type": "object",
         "required": [],
@@ -357,7 +516,12 @@
           "status_filter": {
             "type": "string",
             "description": "Filter templates by status: 'APPROVED', 'PENDING', 'REJECTED', or leave empty for all",
-            "enum": ["APPROVED", "PENDING", "REJECTED", ""]
+            "enum": [
+              "APPROVED",
+              "PENDING",
+              "REJECTED",
+              ""
+            ]
           },
           "name_filter": {
             "type": "string",
@@ -378,26 +542,61 @@
       "output_schema": {
         "type": "object",
         "properties": {
-          "success": { "type": "boolean", "description": "Whether templates were retrieved successfully" },
+          "success": {
+            "type": "boolean",
+            "description": "Whether templates were retrieved successfully"
+          },
           "templates": {
             "type": "array",
             "description": "List of available message templates",
             "items": {
               "type": "object",
               "properties": {
-                "name": { "type": "string", "description": "Template name for use with send_template_message" },
-                "status": { "type": "string", "description": "Template approval status (APPROVED, PENDING, REJECTED)" },
-                "language": { "type": "string", "description": "Language code (e.g., en_US)" },
-                "category": { "type": "string", "description": "Template category (MARKETING, UTILITY, etc.)" },
-                "components": { "type": "array", "description": "Template components (header, body, footer, buttons)" },
-                "parameter_count": { "type": "integer", "description": "Number of parameters required in body" }
+                "name": {
+                  "type": "string",
+                  "description": "Template name for use with send_template_message"
+                },
+                "status": {
+                  "type": "string",
+                  "description": "Template approval status (APPROVED, PENDING, REJECTED)"
+                },
+                "language": {
+                  "type": "string",
+                  "description": "Language code (e.g., en_US)"
+                },
+                "category": {
+                  "type": "string",
+                  "description": "Template category (MARKETING, UTILITY, etc.)"
+                },
+                "components": {
+                  "type": "array",
+                  "description": "Template components (header, body, footer, buttons)"
+                },
+                "parameter_count": {
+                  "type": "integer",
+                  "description": "Number of parameters required in body"
+                }
               }
             }
           },
-          "total_count": { "type": "integer", "description": "Total number of templates returned" },
-          "has_more": { "type": "boolean", "description": "Whether more templates are available" },
-          "message": { "type": "string", "description": "Status message describing the result" }
-        }
+          "total_count": {
+            "type": "integer",
+            "description": "Total number of templates returned"
+          },
+          "has_more": {
+            "type": "boolean",
+            "description": "Whether more templates are available"
+          },
+          "message": {
+            "type": "string",
+            "description": "Status message describing the result"
+          }
+        },
+        "required": [
+          "name",
+          "language",
+          "status"
+        ]
       },
       "output_guidance": {
         "success_description": "Listed message templates",
@@ -434,9 +633,28 @@
     "mark_message_read": {
       "description": "Mark an incoming customer message as read to improve customer experience and conversation management",
       "usage_context": "Use this to acknowledge receipt of customer messages and show responsiveness. Helps manage conversation state and provides better customer experience by showing read status. Message ID is obtained from webhook notifications.",
+      "idempotent": true,
+      "domain": "messaging",
+      "capability": "update",
+      "input_entity": "message",
+      "output_entity": "message",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "output_fields": [
+        "success"
+      ],
+      "required_params": [
+        "message_id"
+      ],
+      "optional_params": [],
+      "must_support": [
+        "read_receipts"
+      ],
       "parameters": {
         "type": "object",
-        "required": ["message_id"],
+        "required": [
+          "message_id"
+        ],
         "properties": {
           "message_id": {
             "type": "string",
@@ -451,10 +669,23 @@
       "output_schema": {
         "type": "object",
         "properties": {
-          "success": { "type": "boolean", "description": "Whether the message was marked as read successfully" },
-          "message_id": { "type": "string", "description": "The message ID that was marked as read" },
-          "message": { "type": "string", "description": "Status message describing the result" }
-        }
+          "success": {
+            "type": "boolean",
+            "description": "Whether the message was marked as read successfully"
+          },
+          "message_id": {
+            "type": "string",
+            "description": "The message ID that was marked as read",
+            "x-guaranteed": true
+          },
+          "message": {
+            "type": "string",
+            "description": "Status message describing the result"
+          }
+        },
+        "required": [
+          "success"
+        ]
       },
       "output_guidance": {
         "success_description": "Marked message as read",

@@ -23,15 +23,42 @@
         "https://www.googleapis.com/auth/documents",
         "https://www.googleapis.com/auth/drive"
       ]
-    }
+    },
+    "provider_family": "google"
   },
   "actions": {
     "read_document": {
       "description": "Read the full content and structure of a Google Docs document",
       "usage_context": "When user wants to read document text, extract content for processing, or retrieve structured document data",
+      "idempotent": true,
+      "domain": "document",
+      "capability": "fetch_content",
+      "input_entity": "document",
+      "output_entity": "document",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "output_fields": [
+        "document_id",
+        "title",
+        "content",
+        "plain_text",
+        "url"
+      ],
+      "required_params": [
+        "document_id"
+      ],
+      "optional_params": [
+        "format"
+      ],
+      "must_support": [
+        "plain_text_export",
+        "rich_text_export"
+      ],
       "parameters": {
         "type": "object",
-        "required": ["document_id"],
+        "required": [
+          "document_id"
+        ],
         "properties": {
           "document_id": {
             "type": "string",
@@ -72,14 +99,43 @@
       "output_schema": {
         "type": "object",
         "properties": {
-          "document_id": { "type": "string", "description": "Unique document identifier" },
-          "title": { "type": "string", "description": "Document title" },
-          "char_count": { "type": "integer", "description": "Total character count in the document" },
-          "content": { "type": "string", "description": "Plain text content of the document" },
-          "structured_content": { "type": "array", "description": "Document structure with paragraphs and elements (when plain_text_only is false)" },
-          "full_document": { "type": "object", "description": "Complete document object with formatting (when include_formatting is true)" },
-          "retrieved_at": { "type": "string", "description": "Timestamp when document was retrieved (ISO 8601)" }
-        }
+          "document_id": {
+            "type": "string",
+            "description": "Unique document identifier",
+            "x-guaranteed": true
+          },
+          "title": {
+            "type": "string",
+            "description": "Document title",
+            "x-guaranteed": true
+          },
+          "char_count": {
+            "type": "integer",
+            "description": "Total character count in the document"
+          },
+          "content": {
+            "type": "string",
+            "description": "Plain text content of the document"
+          },
+          "structured_content": {
+            "type": "array",
+            "description": "Document structure with paragraphs and elements (when plain_text_only is false)"
+          },
+          "full_document": {
+            "type": "object",
+            "description": "Complete document object with formatting (when include_formatting is true)"
+          },
+          "retrieved_at": {
+            "type": "string",
+            "description": "Timestamp when document was retrieved (ISO 8601)",
+            "x-guaranteed": true
+          }
+        },
+        "required": [
+          "document_id",
+          "title",
+          "content"
+        ]
       },
       "output_guidance": {
         "success_description": "Read document",
@@ -102,9 +158,36 @@
     "insert_text": {
       "description": "Insert text at a specific position in the document",
       "usage_context": "When user wants to insert text at a specific location, add content to existing sections, or update document content precisely",
+      "idempotent": false,
+      "domain": "document",
+      "capability": "update",
+      "input_entity": "document",
+      "output_entity": "document",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "output_fields": [
+        "document_id",
+        "title",
+        "updated_at",
+        "document_url"
+      ],
+      "required_params": [
+        "document_id",
+        "text",
+        "index"
+      ],
+      "optional_params": [],
+      "must_support": [
+        "insert_at_position",
+        "rich_text"
+      ],
       "parameters": {
         "type": "object",
-        "required": ["document_id", "text", "index"],
+        "required": [
+          "document_id",
+          "text",
+          "index"
+        ],
         "properties": {
           "document_id": {
             "type": "string",
@@ -143,11 +226,30 @@
       "output_schema": {
         "type": "object",
         "properties": {
-          "document_id": { "type": "string", "description": "ID of the document that was modified" },
-          "char_count": { "type": "integer", "description": "Number of characters inserted" },
-          "index": { "type": "integer", "description": "Position where text was inserted" },
-          "inserted_at": { "type": "string", "description": "Timestamp when text was inserted (ISO 8601)" }
-        }
+          "document_id": {
+            "type": "string",
+            "description": "ID of the document that was modified",
+            "x-guaranteed": true
+          },
+          "char_count": {
+            "type": "integer",
+            "description": "Number of characters inserted"
+          },
+          "index": {
+            "type": "integer",
+            "description": "Position where text was inserted"
+          },
+          "inserted_at": {
+            "type": "string",
+            "description": "Timestamp when text was inserted (ISO 8601)",
+            "x-guaranteed": true
+          }
+        },
+        "required": [
+          "document_id",
+          "title",
+          "updated_at"
+        ]
       },
       "output_guidance": {
         "success_description": "Inserted text",
@@ -170,9 +272,36 @@
     "append_text": {
       "description": "Append text to the end of the document",
       "usage_context": "When user wants to add content to the end of document, continuously append information, or log data without specifying positions",
+      "idempotent": false,
+      "domain": "document",
+      "capability": "append",
+      "input_entity": "document",
+      "output_entity": "document",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "output_fields": [
+        "document_id",
+        "title",
+        "updated_at",
+        "document_url"
+      ],
+      "required_params": [
+        "document_id",
+        "text"
+      ],
+      "optional_params": [
+        "location"
+      ],
+      "must_support": [
+        "append_text",
+        "rich_text"
+      ],
       "parameters": {
         "type": "object",
-        "required": ["document_id", "text"],
+        "required": [
+          "document_id",
+          "text"
+        ],
         "properties": {
           "document_id": {
             "type": "string",
@@ -212,11 +341,31 @@
       "output_schema": {
         "type": "object",
         "properties": {
-          "document_id": { "type": "string", "description": "ID of the document that was modified" },
-          "title": { "type": "string", "description": "Title of the document" },
-          "char_count": { "type": "integer", "description": "Number of characters appended" },
-          "appended_at": { "type": "string", "description": "Timestamp when text was appended (ISO 8601)" }
-        }
+          "document_id": {
+            "type": "string",
+            "description": "ID of the document that was modified",
+            "x-guaranteed": true
+          },
+          "title": {
+            "type": "string",
+            "description": "Title of the document",
+            "x-guaranteed": true
+          },
+          "char_count": {
+            "type": "integer",
+            "description": "Number of characters appended"
+          },
+          "appended_at": {
+            "type": "string",
+            "description": "Timestamp when text was appended (ISO 8601)",
+            "x-guaranteed": true
+          }
+        },
+        "required": [
+          "document_id",
+          "title",
+          "updated_at"
+        ]
       },
       "output_guidance": {
         "success_description": "Added text",
@@ -238,9 +387,35 @@
     "create_document": {
       "description": "Create a new Google Docs document",
       "usage_context": "When user wants to create a new document for writing content, starting a new project, or generating reports",
+      "idempotent": false,
+      "domain": "document",
+      "capability": "create",
+      "input_entity": null,
+      "output_entity": "document",
+      "input_cardinality": null,
+      "output_cardinality": "single",
+      "output_fields": [
+        "document_id",
+        "title",
+        "document_url",
+        "created_at"
+      ],
+      "required_params": [
+        "title"
+      ],
+      "optional_params": [
+        "content",
+        "folder_id"
+      ],
+      "must_support": [
+        "rich_text",
+        "url_access"
+      ],
       "parameters": {
         "type": "object",
-        "required": ["title"],
+        "required": [
+          "title"
+        ],
         "properties": {
           "title": {
             "type": "string",
@@ -277,11 +452,31 @@
       "output_schema": {
         "type": "object",
         "properties": {
-          "document_id": { "type": "string", "description": "Unique identifier for the new document" },
-          "document_url": { "type": "string", "description": "URL to open the document in Google Docs" },
-          "title": { "type": "string", "description": "Title of the created document" },
-          "created_at": { "type": "string", "description": "Timestamp when document was created (ISO 8601)" }
-        }
+          "document_id": {
+            "type": "string",
+            "description": "Unique identifier for the new document",
+            "x-guaranteed": true
+          },
+          "document_url": {
+            "type": "string",
+            "description": "URL to open the document in Google Docs"
+          },
+          "title": {
+            "type": "string",
+            "description": "Title of the created document",
+            "x-guaranteed": true
+          },
+          "created_at": {
+            "type": "string",
+            "description": "Timestamp when document was created (ISO 8601)",
+            "x-guaranteed": true
+          }
+        },
+        "required": [
+          "document_id",
+          "title",
+          "document_url"
+        ]
       },
       "output_guidance": {
         "success_description": "Created document",
@@ -303,9 +498,32 @@
     "get_document_info": {
       "description": "Get metadata and information about a document",
       "usage_context": "When user wants to explore document properties, get title and ID, or check document metadata before reading/writing",
+      "idempotent": true,
+      "domain": "document",
+      "capability": "get",
+      "input_entity": "document",
+      "output_entity": "document",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "output_fields": [
+        "document_id",
+        "title",
+        "document_url",
+        "created_time",
+        "modified_time"
+      ],
+      "required_params": [
+        "document_id"
+      ],
+      "optional_params": [],
+      "must_support": [
+        "metadata_fetch"
+      ],
       "parameters": {
         "type": "object",
-        "required": ["document_id"],
+        "required": [
+          "document_id"
+        ],
         "properties": {
           "document_id": {
             "type": "string",
@@ -329,13 +547,39 @@
       "output_schema": {
         "type": "object",
         "properties": {
-          "document_id": { "type": "string", "description": "Unique document identifier" },
-          "title": { "type": "string", "description": "Document title" },
-          "char_count": { "type": "integer", "description": "Character count (when include_content_summary is true)" },
-          "paragraph_count": { "type": "integer", "description": "Paragraph count (when include_content_summary is true)" },
-          "end_index": { "type": "integer", "description": "End index of document content for positioning text" },
-          "retrieved_at": { "type": "string", "description": "Timestamp when info was retrieved (ISO 8601)" }
-        }
+          "document_id": {
+            "type": "string",
+            "description": "Unique document identifier",
+            "x-guaranteed": true
+          },
+          "title": {
+            "type": "string",
+            "description": "Document title",
+            "x-guaranteed": true
+          },
+          "char_count": {
+            "type": "integer",
+            "description": "Character count (when include_content_summary is true)"
+          },
+          "paragraph_count": {
+            "type": "integer",
+            "description": "Paragraph count (when include_content_summary is true)"
+          },
+          "end_index": {
+            "type": "integer",
+            "description": "End index of document content for positioning text"
+          },
+          "retrieved_at": {
+            "type": "string",
+            "description": "Timestamp when info was retrieved (ISO 8601)",
+            "x-guaranteed": true
+          }
+        },
+        "required": [
+          "document_id",
+          "title",
+          "document_url"
+        ]
       },
       "output_guidance": {
         "success_description": "Retrieved document info",

@@ -1,0 +1,146 @@
+{
+  "timestamp": "2026-03-05T23:12:05.278Z",
+  "summary": {
+    "totalTests": 5,
+    "passed": 1,
+    "failed": 4,
+    "errors": 0,
+    "avgExecutability": 63.2,
+    "totalIssues": 5,
+    "totalWarnings": 7
+  },
+  "results": [
+    {
+      "promptFile": "enhanced-prompt-lead-sales-followup.json",
+      "workflowName": "High-Quality Lead Checker + Sales Follow-up Agent",
+      "status": "PASS",
+      "pipelineTime": 46046,
+      "llmTime": 0,
+      "deterministicTime": 0,
+      "intentSteps": 0,
+      "pilotSteps": 0,
+      "executability": 100,
+      "issues": 0,
+      "warnings": 0,
+      "schemaValidation": "PASS",
+      "businessValidation": "PASS",
+      "errors": [],
+      "insights": [
+        "✅ Uses plugin actions",
+        "✅ Includes data transformations",
+        "✅ Uses AI processing",
+        "✅ Includes loop patterns",
+        "✅ Has conditional logic",
+        "✅ Runtime configurable",
+        "✅ Uses direct filter pattern (optimal)",
+        "📊 Simple workflow (0 steps)",
+        "🎯 Zero issues or warnings - production ready"
+      ]
+    },
+    {
+      "promptFile": "enhanced-prompt-complaint-logger.json",
+      "workflowName": "Customer Complaint Email Logger (Gmail to Google Sheets)",
+      "status": "FAIL",
+      "pipelineTime": 32366,
+      "llmTime": 0,
+      "deterministicTime": 0,
+      "intentSteps": 0,
+      "pilotSteps": 0,
+      "executability": 20,
+      "issues": 4,
+      "warnings": 5,
+      "schemaValidation": "FAIL",
+      "businessValidation": "PASS",
+      "errors": [
+        "Schema validation failed"
+      ],
+      "insights": [
+        "✅ Uses plugin actions",
+        "✅ Includes data transformations",
+        "✅ Uses AI processing",
+        "✅ Includes loop patterns",
+        "✅ Runtime configurable",
+        "📊 Simple workflow (0 steps)"
+      ]
+    },
+    {
+      "promptFile": "enhanced-prompt-invoice-extraction.json",
+      "workflowName": "Invoice & Receipt Extraction Agent (Gmail → Drive + Sheets + Summary Email)",
+      "status": "FAIL",
+      "pipelineTime": 59216,
+      "llmTime": 0,
+      "deterministicTime": 0,
+      "intentSteps": 0,
+      "pilotSteps": 0,
+      "executability": 70,
+      "issues": 0,
+      "warnings": 0,
+      "schemaValidation": "FAIL",
+      "businessValidation": "PASS",
+      "errors": [
+        "Schema validation failed"
+      ],
+      "insights": [
+        "✅ Uses plugin actions",
+        "✅ Includes data transformations",
+        "✅ Uses AI processing",
+        "✅ Includes loop patterns",
+        "✅ Runtime configurable",
+        "📊 Simple workflow (0 steps)",
+        "🎯 Zero issues or warnings - production ready"
+      ]
+    },
+    {
+      "promptFile": "enhanced-prompt-expense-extractor.json",
+      "workflowName": "Gmail Expense Attachment Extractor (Email Table Output)",
+      "status": "FAIL",
+      "pipelineTime": 45605,
+      "llmTime": 0,
+      "deterministicTime": 0,
+      "intentSteps": 0,
+      "pilotSteps": 0,
+      "executability": 70,
+      "issues": 0,
+      "warnings": 0,
+      "schemaValidation": "FAIL",
+      "businessValidation": "PASS",
+      "errors": [
+        "Schema validation failed"
+      ],
+      "insights": [
+        "✅ Uses plugin actions",
+        "✅ Includes data transformations",
+        "✅ Uses AI processing",
+        "✅ Includes loop patterns",
+        "✅ Runtime configurable",
+        "📊 Simple workflow (0 steps)",
+        "🎯 Zero issues or warnings - production ready"
+      ]
+    },
+    {
+      "promptFile": "enhanced-prompt-leads-filter.json",
+      "workflowName": "High-Qualified Leads Filter + Dual Email Notification",
+      "status": "FAIL",
+      "pipelineTime": 32247,
+      "llmTime": 0,
+      "deterministicTime": 0,
+      "intentSteps": 0,
+      "pilotSteps": 0,
+      "executability": 56,
+      "issues": 1,
+      "warnings": 2,
+      "schemaValidation": "FAIL",
+      "businessValidation": "PASS",
+      "errors": [
+        "Schema validation failed"
+      ],
+      "insights": [
+        "✅ Uses plugin actions",
+        "✅ Includes data transformations",
+        "✅ Has conditional logic",
+        "✅ Runtime configurable",
+        "📊 Simple workflow (0 steps)"
+      ]
+    }
+  ]
+}

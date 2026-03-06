@@ -258,15 +258,19 @@ export interface FetchConfig {
  */
 export interface TransformConfig {
   /** Transform type */
-  type: 'map' | 'filter' | 'reduce' | 'group_by' | 'sort' | 'deduplicate' | 'flatten' | 'custom'
+  type: 'map' | 'filter' | 'reduce' | 'group_by' | 'sort' | 'deduplicate' | 'flatten' | 'merge' | 'custom'
 
-  /** Input variable to transform */
+  /** Primary input variable to transform */
   input: string
+
+  /** Additional input variables (for multi-input transforms like merge/custom) */
+  additional_inputs?: string[]
 
   /** Transform-specific configuration */
   map_expression?: string
   filter_expression?: ConditionExpression
   reduce_operation?: 'sum' | 'count' | 'avg' | 'min' | 'max' | 'concat'
+  reduce_field?: string  // Field to reduce over (e.g., 'amount' for sum)
   group_by_field?: string
   sort_field?: string
   sort_order?: 'asc' | 'desc'

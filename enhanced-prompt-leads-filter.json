@@ -1,0 +1,62 @@
+{
+  "plan_title": "High-Qualified Leads Filter + Dual Email Notification",
+  "plan_description": "Filters a Google Sheet of leads to those marked as high qualified (Stage = 4), builds an HTML summary table, and sends two separate email notifications to end users. If there are no matching leads, it emails the group manager.",
+  "sections": {
+    "data": [
+      "- Read lead rows from the Google Sheet with ID \"1pM8WbXtPgaYqokHn_spgQAfR7SBuql3JUtE1ugDtOpc\".",
+      "- Use the tab named \"Leads tab\".",
+      "- Use the lead status field described as \"column stage = 4\" to determine whether a lead is high qualified.",
+      "- Treat the status match rule as: the status field contains the value \"4\" (because you selected contains match)."
+    ],
+    "actions": [
+      "- Filter the Sheet rows to only those where the Stage/status field contains \"4\".",
+      "- Build a summary table from the filtered rows.",
+      "- Keep the summary table columns in this exact order: Date, Lead Name, Company, Email, Phone, Stage, Notes, Sales Person, Source.",
+      "- If there are zero matching rows after filtering, do not send the normal end-user emails; instead, send a no high qualified leads found email to the group manager."
+    ],
+    "output": [
+      "- Format the summary as an HTML table embedded directly in the email body (not as an attachment).",
+      "- Include one row per matching lead.",
+      "- Include a short header line above the table stating that these are the leads with Stage = 4 (high qualified)."
+    ],
+    "delivery": [
+      "- Send two separate emails (one per recipient) with the same subject and HTML body.",
+      "- Send the end-user emails to: meiribarak@gmail.com and eomer3@gmail.com.",
+      "- If there are zero matching leads, send the no results email to avital.livovsky@gmail.com."
+    ],
+    "processing_steps": [
+      "- Load all rows from the specified Sheet tab.",
+      "- Identify the column that represents Stage/status.",
+      "- Apply the contains 4 filter to that column.",
+      "- Select and order the requested output columns.",
+      "- Render the selected rows as an HTML table.",
+      "- Send emails according to the delivery rules (two separate emails, or manager-only email when there are no matches)."
+    ]
+  },
+  "specifics": {
+    "services_involved": [
+      "google-mail",
+      "google-sheets",
+      "chatgpt-research"
+    ],
+    "user_inputs_required": [],
+    "resolved_user_inputs": [
+      {
+        "key": "user_email",
+        "value": "avital.livovsky@gmail.com"
+      },
+      {
+        "key": "google_sheet_id",
+        "value": "1pM8WbXtPgaYqokHn_spgQAfR7SBuql3JUtE1ugDtOpc"
+      },
+      {
+        "key": "sheet_tab_name",
+        "value": "Leads tab"
+      },
+      {
+        "key": "end_user_recipient_emails",
+        "value": "meiribarak@gmail.com, eomer3@gmail.com"
+      }
+    ]
+  }
+}

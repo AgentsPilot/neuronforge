@@ -250,15 +250,76 @@ export class ExecutionGraphValidator {
       return
     }
 
-    // Check if all leaf nodes (nodes with no outgoing edges) are end nodes
+    // Identify loop body nodes (nodes reachable from loop.body_start without passing through another loop)
+    const loopBodyNodes = this.identifyLoopBodyNodes(graph)
+
+    // Check if all leaf nodes (nodes with no outgoing edges) are end nodes or loop body terminal nodes
     for (const [nodeId, node] of Object.entries(graph.nodes)) {
       if (node.type === 'end') continue
 
       const outgoing = this.getOutgoingNodes(node)
       if (outgoing.length === 0) {
-        this.addError('control_flow', nodeId, `Node "${nodeId}" has no outgoing edges and is not an end node`, 'Add a "next" field or change type to "end"')
+        // Allow loop body nodes to have no outgoing edges (they implicitly return to the loop)
+        if (!loopBodyNodes.has(nodeId)) {
+          this.addError('control_flow', nodeId, `Node "${nodeId}" has no outgoing edges and is not an end node`, 'Add a "next" field or change type to "end"')
+        }
       }
     }
+  }
+
+  /**
+   * Identify all nodes that are part of loop bodies
+   * These nodes are reachable from loop.body_start and may have no next field
+   */
+  private identifyLoopBodyNodes(graph: ExecutionGraph): Set<string> {
+    const loopBodyNodes = new Set<string>()
+
+    // Find all loop nodes
+    const loopNodes = Object.entries(graph.nodes).filter(([_, node]) => node.type === 'loop')
+
+    // For each loop, traverse from body_start to identify body nodes
+    for (const [loopId, loopNode] of loopNodes) {
+      if (!loopNode.loop?.body_start) continue
+
+      const visited = new Set<string>()
+      const queue: string[] = [loopNode.loop.body_start]
+
+      while (queue.length > 0) {
+        const nodeId = queue.shift()!
+        if (visited.has(nodeId)) continue
+        visited.add(nodeId)
+        loopBodyNodes.add(nodeId)
+
+        const node = graph.nodes[nodeId]
+        if (!node) continue
+
+        // Don't traverse into nested loops (their bodies will be handled separately)
+        if (node.type === 'loop') continue
+
+        // Follow next edges
+        if (node.next) {
+          const nextIds = Array.isArray(node.next) ? node.next : [node.next]
+          queue.push(...nextIds)
+        }
+
+        // Follow choice branches
+        if (node.type === 'choice' && node.choice) {
+          for (const rule of node.choice.rules) {
+            queue.push(rule.next)
+          }
+          queue.push(node.choice.default)
+        }
+
+        // Follow parallel branches
+        if (node.type === 'parallel' && node.parallel) {
+          for (const branch of node.parallel.branches) {
+            queue.push(branch.start)
+          }
+        }
+      }
+    }
+
+    return loopBodyNodes
   }
 
   /**
@@ -419,6 +480,10 @@ export class ExecutionGraphValidator {
    * Extract variable name from potentially dotted path
    */
   private extractVariableName(variableRef: string): string {
+    // Handle undefined or non-string inputs
+    if (!variableRef || typeof variableRef !== 'string') {
+      return ''
+    }
     // Handle "variable.path" → extract "variable"
     const parts = variableRef.split('.')
     return parts[0]

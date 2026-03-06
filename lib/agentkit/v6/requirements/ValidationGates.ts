@@ -614,13 +614,81 @@ export class ValidationGates {
    * Supports both V3 IR (sections) and V4 IR (execution_graph)
    */
   private checkAttachmentLevelProcessing(ir: any): boolean {
-    // V4 IR: Check for loop nodes in execution_graph
+    // V4 IR: Check for nested loops with collection at inner (attachment) level
     if (ir.execution_graph && ir.execution_graph.nodes) {
-      return Object.values(ir.execution_graph.nodes).some((node: any) => node.type === 'loop')
+      const nodes = ir.execution_graph.nodes
+
+      // Find loop nodes (v4.0 schema uses type='loop')
+      const loops = Object.entries(nodes).filter(([_, node]: [string, any]) =>
+        node.type === 'loop'
+      )
+
+      if (loops.length === 0) return false
+
+      // For nested loops (email → attachments), check if collection is at inner loop level
+      for (const [loopId, loop] of loops) {
+        const loopNode = loop as any
+
+        // If this loop has collection enabled
+        if (loopNode.loop?.collect_outputs) {
+          // Check if there's an inner loop (nested)
+          const innerLoopId = this.findInnerLoop(nodes, loopNode.loop?.body_start)
+
+          if (innerLoopId) {
+            // Nested loops exist. Collection should be on INNER loop, not outer.
+            // If outer loop is collecting, it's flattening to email-level
+            return false // VIOLATION: collecting at outer (email) level
+          }
+        }
+
+        // Check if there's an inner loop that's collecting
+        const innerLoopId = this.findInnerLoop(nodes, loopNode.loop?.body_start)
+        if (innerLoopId) {
+          const innerLoop = nodes[innerLoopId] as any
+          if (innerLoop.loop?.collect_outputs) {
+            return true // ✓ Collecting at inner (attachment) level
+          }
+        }
+      }
+
+      // No nested loops found, single loop is acceptable
+      return loops.length > 0
     }
 
     // V3 IR: Check if IR has per-item delivery or iteration constructs
     return this.hasProperty(ir, ['per_item_delivery', 'per_item', 'iteration', 'for_each'])
+  }
+
+  /**
+   * Find inner loop within a loop body (helper for checkAttachmentLevelProcessing)
+   */
+  private findInnerLoop(nodes: any, startNodeId: string | undefined): string | null {
+    if (!startNodeId) return null
+
+    const visited = new Set<string>()
+    const queue = [startNodeId]
+
+    while (queue.length > 0) {
+      const currentId = queue.shift()!
+
+      if (visited.has(currentId)) continue
+      visited.add(currentId)
+
+      const node = nodes[currentId]
+      if (!node) continue
+
+      // Found a nested loop
+      if (node.type === 'loop') {
+        return currentId
+      }
+
+      // Follow next pointer
+      if (node.next && !visited.has(node.next)) {
+        queue.push(node.next)
+      }
+    }
+
+    return null
   }
 
   /**

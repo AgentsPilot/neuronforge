@@ -285,8 +285,96 @@ export class V6PipelineOrchestrator {
       logger.info({ gate: 2, result: 'PASS', msg: 'Grounding validated' })
       */
 
-      // Phase 3: Generate IR (NOW USES ENHANCED PROMPT DIRECTLY)
-      logger.info({ phase: 3, msg: 'Formalizing to IR' })
+      // Phase 1: Generate Semantic Skeleton (OPTIONAL - FEATURE FLAG)
+      const useSemanticSkeleton = process.env.V6_SEMANTIC_SKELETON_ENABLED === 'true'
+      let semanticSkeleton: any = null
+
+      if (useSemanticSkeleton) {
+        logger.info({ phase: 1, msg: 'Generating semantic skeleton (2-stage approach)' })
+
+        try {
+          const { SemanticSkeletonGenerator } = await import('../semantic-plan/SemanticSkeletonGenerator')
+          const { SkeletonValidator } = await import('../validators/SkeletonValidator')
+
+          // Initialize skeleton generator
+          const skeletonConfig = {
+            model: config?.model || adminConfig.semantic.model,
+            temperature: 0.0, // Deterministic for structure generation
+            anthropic_api_key: config?.anthropic_api_key || process.env.ANTHROPIC_API_KEY,
+          }
+
+          const skeletonGenerator = new SemanticSkeletonGenerator(skeletonConfig)
+          semanticSkeleton = await skeletonGenerator.generate(enhancedPrompt)
+
+          logger.info({
+            phase: 1,
+            goal: semanticSkeleton.goal,
+            unitOfWork: semanticSkeleton.unit_of_work,
+            flowLength: semanticSkeleton.flow.length,
+            skeletonFlow: JSON.stringify(semanticSkeleton.flow, null, 2),
+            msg: 'Semantic skeleton generated'
+          })
+
+          // Validate skeleton structure
+          const skeletonValidator = new SkeletonValidator()
+          const skeletonErrors = skeletonValidator.validate(semanticSkeleton)
+          const validationSummary = skeletonValidator.getValidationSummary(skeletonErrors)
+
+          if (!validationSummary.isValid) {
+            logger.error({
+              phase: 1,
+              errorCount: validationSummary.errorCount,
+              warningCount: validationSummary.warningCount,
+              errors: skeletonErrors.filter(e => e.severity === 'error'),
+              msg: 'Semantic skeleton validation failed'
+            })
+            return {
+              success: false,
+              hardRequirements: hardReqs,
+              requirementMap,
+              error: {
+                phase: 'semantic_skeleton',
+                message: `Skeleton validation failed: ${validationSummary.summary}`
+              }
+            }
+          }
+
+          if (validationSummary.warningCount > 0) {
+            logger.warn({
+              phase: 1,
+              warningCount: validationSummary.warningCount,
+              warnings: skeletonErrors.filter(e => e.severity === 'warning'),
+              msg: 'Semantic skeleton has warnings (non-blocking)'
+            })
+          }
+
+          logger.info({
+            phase: 1,
+            validationSummary: validationSummary.summary,
+            msg: 'Semantic skeleton validated successfully'
+          })
+        } catch (error) {
+          logger.error({
+            phase: 1,
+            error: error instanceof Error ? error.message : String(error),
+            msg: 'Semantic skeleton generation failed'
+          })
+          return {
+            success: false,
+            hardRequirements: hardReqs,
+            requirementMap,
+            error: {
+              phase: 'semantic_skeleton',
+              message: error instanceof Error ? error.message : 'Semantic skeleton generation failed'
+            }
+          }
+        }
+      } else {
+        logger.info({ phase: 1, msg: 'Semantic skeleton disabled - using direct IR generation' })
+      }
+
+      // Phase 3: Generate IR (NOW USES ENHANCED PROMPT DIRECTLY OR WITH SKELETON)
+      logger.info({ phase: 3, msg: useSemanticSkeleton ? 'Formalizing to IR (skeleton-guided)' : 'Formalizing to IR' })
 
       let ir: DeclarativeLogicalIRv4
       try {
@@ -325,8 +413,8 @@ export class V6PipelineOrchestrator {
         }
 
         const formalizer = new IRFormalizer(irConfig)
-        // Pass Enhanced Prompt directly (skip Phase 1 & 2 rephrasing)
-        const formalizationResult = await formalizer.formalize(enhancedPrompt, hardReqs)
+        // Pass Enhanced Prompt directly (with optional semantic skeleton for 2-stage approach)
+        const formalizationResult = await formalizer.formalize(enhancedPrompt, hardReqs, semanticSkeleton)
 
         if (!formalizationResult.ir) {
           logger.error({ phase: 3, msg: 'IR formalization failed - no IR generated' })
@@ -396,7 +484,7 @@ export class V6PipelineOrchestrator {
         })
 
         // Create validation errors from gate result
-        const errors = (irGate.violated_constraints || []).map(constraint => ({
+        const errors = (irGate.violated_constraints || []).map((constraint: string) => ({
           type: 'nested_groups' as const,
           message: constraint,
           severity: 'error' as const

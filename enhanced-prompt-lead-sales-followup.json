@@ -1,0 +1,80 @@
+{
+  "plan_title": "High-Quality Lead Checker + Sales Follow-up Agent",
+  "plan_description": "Reads your lead list from Google Sheets, identifies high-quality leads using a score threshold, produces an email-embedded summary table, and emails each sales person a follow-up message with their high-quality leads.",
+  "sections": {
+    "data": [
+      "- Read lead rows from Google Sheet with ID \"1LKhXUzV9xh-q1NZJKHDjJWPdwFHXalV6amwLJwX8JkE\".",
+      "- Use the sheet tab specified by the user (if not provided, ask for the tab name).",
+      "- Treat the following columns as the lead fields to use in the summary and follow-up context: Date, Lead Name, Company, Email, Phone, Stage, Notes, Sales Person.",
+      "- Identify (or ask for) the numeric column that represents the lead score used for the score threshold."
+    ],
+    "actions": [
+      "- For each lead row, read the lead score from the specified score column.",
+      "- Classify a lead as high-quality if its score is greater than or equal to the user-provided threshold value.",
+      "- Group high-quality leads by the Sales Person field.",
+      "- If the Sales Person email address is present in the Sales Person field, use it as the recipient for that sales person's follow-up email.",
+      "- If the Sales Person field is not an email address (for example, it is a name), use the user-provided mapping rules (to be provided) to resolve it to an email address.",
+      "- If a lead is high-quality but the sales person email cannot be resolved, include the lead in the summary table and email the details to avital.livovsky@gmail.com instead of emailing a sales person.",
+      "- Generate a short, sales-friendly follow-up message per sales person that includes: the list of their high-quality leads, key context from Stage and Notes, and a suggested next step per lead."
+    ],
+    "output": [
+      "- Create a summary table of results formatted for embedding in an email body.",
+      "- Include one row per lead in the summary table.",
+      "- Include at least these columns in the summary table: Date, Lead Name, Company, Email, Phone, Stage, Notes, Sales Person.",
+      "- Include additional columns for the agent's evaluation: Lead Score, High-Quality (Yes/No), and Reason/Notes (brief explanation)."
+    ],
+    "delivery": [
+      "- Send one email per sales person that contains an embedded table of that sales person's high-quality leads and the follow-up guidance.",
+      "- Send a separate email to avital.livovsky@gmail.com listing any high-quality leads where the sales person email could not be resolved.",
+      "- Use Gmail as the delivery channel for all emails."
+    ],
+    "processing_steps": [
+      "- Load rows from the specified Google Sheet.",
+      "- Validate required columns exist (Sales Person and the score column).",
+      "- Apply the score threshold to classify leads.",
+      "- Build (1) the overall summary table and (2) per-sales-person tables.",
+      "- Draft the follow-up email content per sales person.",
+      "- Send the emails."
+    ]
+  },
+  "specifics": {
+    "services_involved": [
+      "google-mail",
+      "google-sheets",
+      "chatgpt-research"
+    ],
+    "user_inputs_required": [
+      "sheet tab name",
+      "lead score column name",
+      "high-quality score threshold value",
+      "confirm whether the Sales Person column contains email addresses or names",
+      "if Sales Person is names: sales person name-to-email mapping (or a lookup source)"
+    ],
+    "resolved_user_inputs": [
+      {
+        "key": "user_email",
+        "value": "avital.livovsky@gmail.com"
+      },
+      {
+        "key": "google_sheet_id",
+        "value": "1LKhXUzV9xh-q1NZJKHDjJWPdwFHXalV6amwLJwX8JkE"
+      },
+      {
+        "key": "lead_fields_columns",
+        "value": "Date, Lead Name, Company, Email, Phone, Stage, Notes, Sales Person"
+      },
+      {
+        "key": "summary_table_destination",
+        "value": "email_embedded_table"
+      },
+      {
+        "key": "followup_email_strategy",
+        "value": "one_email_per_salesperson"
+      },
+      {
+        "key": "missing_owner_behavior",
+        "value": "email_you_only"
+      }
+    ]
+  }
+}

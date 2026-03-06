@@ -24,12 +24,30 @@
       ],
       "token_expiry_seconds": 3600,
       "requires_pkce": true
-    }
+    },
+    "provider_family": "airtable"
   },
   "actions": {
     "list_bases": {
       "description": "List all accessible Airtable bases for the authenticated user",
       "usage_context": "Use this action first to discover which bases you have access to. Returns base IDs, names, and permission levels. Essential for getting the base_id needed for other actions.",
+      "idempotent": true,
+      "domain": "database",
+      "capability": "list",
+      "input_entity": null,
+      "output_entity": "record",
+      "input_cardinality": null,
+      "output_cardinality": "collection",
+      "output_fields": [
+        "id",
+        "name",
+        "permissionLevel"
+      ],
+      "required_params": [],
+      "optional_params": [],
+      "must_support": [
+        "base_discovery"
+      ],
       "parameters": {
         "type": "object",
         "properties": {}
@@ -50,9 +68,18 @@
             "items": {
               "type": "object",
               "properties": {
-                "id": { "type": "string", "description": "Base ID (starts with 'app')" },
-                "name": { "type": "string", "description": "Base display name" },
-                "permission_level": { "type": "string", "description": "User's permission level (owner, editor, commenter, read)" }
+                "id": {
+                  "type": "string",
+                  "description": "Base ID (starts with 'app')"
+                },
+                "name": {
+                  "type": "string",
+                  "description": "Base display name"
+                },
+                "permission_level": {
+                  "type": "string",
+                  "description": "User's permission level (owner, editor, commenter, read)"
+                }
               }
             }
           },
@@ -60,7 +87,12 @@
             "type": "integer",
             "description": "Total number of bases returned"
           }
-        }
+        },
+        "required": [
+          "id",
+          "name",
+          "permissionLevel"
+        ]
       },
       "output_guidance": {
         "success_description": "Listed bases",
@@ -73,15 +105,51 @@
             }
           ],
           "base_count": 1
+        },
+        "common_errors": {
+          "auth_failed": "Your Airtable connection has expired. Please go to Settings → Connected Apps to reconnect Airtable.",
+          "not_found": "The specified base, table, or record was not found. Please check the ID and try again.",
+          "permission_denied": "You don't have permission to access this resource. Please request access from the base owner or check your Airtable permissions.",
+          "rate_limit": "Too many requests to Airtable API. Please wait a moment and try again.",
+          "invalid_data": "The provided data is invalid. Please check field types and required fields match the table schema.",
+          "api_error": "Airtable API error occurred. Please try again or contact support if the issue persists."
         }
       }
     },
     "list_records": {
       "description": "List and query records from a table with filtering, sorting, and pagination",
       "usage_context": "Use this action to retrieve multiple records from an Airtable table. Supports filtering by formula, sorting by fields, selecting specific fields, and pagination. Perfect for querying data sets, generating reports, or syncing data.",
+      "idempotent": true,
+      "domain": "database",
+      "capability": "list",
+      "input_entity": null,
+      "output_entity": "record",
+      "input_cardinality": null,
+      "output_cardinality": "collection",
+      "output_fields": [
+        "id",
+        "fields",
+        "createdTime"
+      ],
+      "required_params": [
+        "base_id",
+        "table_name"
+      ],
+      "optional_params": [
+        "max_records",
+        "view",
+        "formula"
+      ],
+      "must_support": [
+        "formula_filter",
+        "view_filter"
+      ],
       "parameters": {
         "type": "object",
-        "required": ["base_id", "table_name"],
+        "required": [
+          "base_id",
+          "table_name"
+        ],
         "properties": {
           "base_id": {
             "type": "string",
@@ -127,7 +195,10 @@
                 },
                 "direction": {
                   "type": "string",
-                  "enum": ["asc", "desc"]
+                  "enum": [
+                    "asc",
+                    "desc"
+                  ]
                 }
               }
             }
@@ -165,9 +236,18 @@
             "items": {
               "type": "object",
               "properties": {
-                "id": { "type": "string", "description": "Unique record ID (starts with 'rec')" },
-                "fields": { "type": "object", "description": "Record field values as key-value pairs" },
-                "createdTime": { "type": "string", "description": "ISO 8601 timestamp of record creation" }
+                "id": {
+                  "type": "string",
+                  "description": "Unique record ID (starts with 'rec')"
+                },
+                "fields": {
+                  "type": "object",
+                  "description": "Record field values as key-value pairs"
+                },
+                "createdTime": {
+                  "type": "string",
+                  "description": "ISO 8601 timestamp of record creation"
+                }
               }
             }
           },
@@ -183,7 +263,12 @@
             "type": "boolean",
             "description": "Whether more records are available via pagination"
           }
-        }
+        },
+        "required": [
+          "id",
+          "fields",
+          "createdTime"
+        ]
       },
       "output_guidance": {
         "success_description": "Retrieved records",
@@ -201,15 +286,46 @@
           "record_count": 1,
           "offset": "itrXXXXXXXXXXXXXX/recXXXXXXXXXXXXXX",
           "has_more": true
+        },
+        "common_errors": {
+          "auth_failed": "Your Airtable connection has expired. Please go to Settings → Connected Apps to reconnect Airtable.",
+          "not_found": "The specified base, table, or record was not found. Please check the ID and try again.",
+          "permission_denied": "You don't have permission to access this resource. Please request access from the base owner or check your Airtable permissions.",
+          "rate_limit": "Too many requests to Airtable API. Please wait a moment and try again.",
+          "invalid_data": "The provided data is invalid. Please check field types and required fields match the table schema.",
+          "api_error": "Airtable API error occurred. Please try again or contact support if the issue persists."
         }
       }
     },
     "get_record": {
       "description": "Get a single record by ID with all field details",
       "usage_context": "Use this action to retrieve detailed information about a specific record when you know its record ID. Returns all fields and metadata for that record.",
+      "idempotent": true,
+      "domain": "database",
+      "capability": "get",
+      "input_entity": "record",
+      "output_entity": "record",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "output_fields": [
+        "id",
+        "fields",
+        "createdTime"
+      ],
+      "required_params": [
+        "base_id",
+        "table_name",
+        "record_id"
+      ],
+      "optional_params": [],
+      "must_support": [],
       "parameters": {
         "type": "object",
-        "required": ["base_id", "table_name", "record_id"],
+        "required": [
+          "base_id",
+          "table_name",
+          "record_id"
+        ],
         "properties": {
           "base_id": {
             "type": "string",
@@ -246,10 +362,25 @@
         "type": "object",
         "description": "Single record with all field values and metadata",
         "properties": {
-          "id": { "type": "string", "description": "Unique record ID (starts with 'rec')" },
-          "fields": { "type": "object", "description": "Record field values as key-value pairs" },
-          "created_time": { "type": "string", "description": "ISO 8601 timestamp of record creation" }
-        }
+          "id": {
+            "type": "string",
+            "description": "Unique record ID (starts with 'rec')",
+            "x-guaranteed": true
+          },
+          "fields": {
+            "type": "object",
+            "description": "Record field values as key-value pairs"
+          },
+          "created_time": {
+            "type": "string",
+            "description": "ISO 8601 timestamp of record creation"
+          }
+        },
+        "required": [
+          "id",
+          "fields",
+          "createdTime"
+        ]
       },
       "output_guidance": {
         "success_description": "Retrieved record",
@@ -261,15 +392,49 @@
             "Created": "2025-01-01"
           },
           "created_time": "2025-01-01T00:00:00.000Z"
+        },
+        "common_errors": {
+          "auth_failed": "Your Airtable connection has expired. Please go to Settings → Connected Apps to reconnect Airtable.",
+          "not_found": "The specified base, table, or record was not found. Please check the ID and try again.",
+          "permission_denied": "You don't have permission to access this resource. Please request access from the base owner or check your Airtable permissions.",
+          "rate_limit": "Too many requests to Airtable API. Please wait a moment and try again.",
+          "invalid_data": "The provided data is invalid. Please check field types and required fields match the table schema.",
+          "api_error": "Airtable API error occurred. Please try again or contact support if the issue persists."
         }
       }
     },
     "create_records": {
       "description": "Create one or multiple new records in a table",
       "usage_context": "Use this action to add new records to an Airtable table. Can create up to 10 records in a single request. Provide field names and values according to the table schema.",
+      "idempotent": false,
+      "domain": "database",
+      "capability": "create",
+      "input_entity": null,
+      "output_entity": "record",
+      "input_cardinality": null,
+      "output_cardinality": "collection",
+      "output_fields": [
+        "id",
+        "fields",
+        "createdTime"
+      ],
+      "required_params": [
+        "base_id",
+        "table_name",
+        "records"
+      ],
+      "optional_params": [],
+      "must_support": [
+        "batch_create",
+        "flexible_schema"
+      ],
       "parameters": {
         "type": "object",
-        "required": ["base_id", "table_name", "records"],
+        "required": [
+          "base_id",
+          "table_name",
+          "records"
+        ],
         "properties": {
           "base_id": {
             "type": "string",
@@ -296,7 +461,9 @@
             "maxItems": 10,
             "items": {
               "type": "object",
-              "required": ["fields"],
+              "required": [
+                "fields"
+              ],
               "properties": {
                 "fields": {
                   "type": "object",
@@ -336,9 +503,18 @@
             "items": {
               "type": "object",
               "properties": {
-                "id": { "type": "string", "description": "Assigned record ID (starts with 'rec')" },
-                "fields": { "type": "object", "description": "Record field values as key-value pairs" },
-                "createdTime": { "type": "string", "description": "ISO 8601 timestamp of record creation" }
+                "id": {
+                  "type": "string",
+                  "description": "Assigned record ID (starts with 'rec')"
+                },
+                "fields": {
+                  "type": "object",
+                  "description": "Record field values as key-value pairs"
+                },
+                "createdTime": {
+                  "type": "string",
+                  "description": "ISO 8601 timestamp of record creation"
+                }
               }
             }
           },
@@ -348,9 +524,15 @@
           },
           "created_at": {
             "type": "string",
-            "description": "ISO 8601 timestamp of when the operation completed"
+            "description": "ISO 8601 timestamp of when the operation completed",
+            "x-guaranteed": true
           }
-        }
+        },
+        "required": [
+          "id",
+          "fields",
+          "createdTime"
+        ]
       },
       "output_guidance": {
         "success_description": "Created records",
@@ -367,15 +549,49 @@
           ],
           "record_count": 1,
           "created_at": "2025-01-01T00:00:00.000Z"
+        },
+        "common_errors": {
+          "auth_failed": "Your Airtable connection has expired. Please go to Settings → Connected Apps to reconnect Airtable.",
+          "not_found": "The specified base, table, or record was not found. Please check the ID and try again.",
+          "permission_denied": "You don't have permission to access this resource. Please request access from the base owner or check your Airtable permissions.",
+          "rate_limit": "Too many requests to Airtable API. Please wait a moment and try again.",
+          "invalid_data": "The provided data is invalid. Please check field types and required fields match the table schema.",
+          "api_error": "Airtable API error occurred. Please try again or contact support if the issue persists."
         }
       }
     },
     "update_records": {
       "description": "Update existing records with new field values",
       "usage_context": "Use this action to modify existing records in an Airtable table. Can update up to 10 records in a single request. Supports both full replacement and partial updates of fields.",
+      "idempotent": true,
+      "domain": "database",
+      "capability": "update",
+      "input_entity": "record",
+      "output_entity": "record",
+      "input_cardinality": "collection",
+      "output_cardinality": "collection",
+      "output_fields": [
+        "id",
+        "fields",
+        "createdTime"
+      ],
+      "required_params": [
+        "base_id",
+        "table_name",
+        "records"
+      ],
+      "optional_params": [],
+      "must_support": [
+        "batch_update",
+        "partial_update"
+      ],
       "parameters": {
         "type": "object",
-        "required": ["base_id", "table_name", "records"],
+        "required": [
+          "base_id",
+          "table_name",
+          "records"
+        ],
         "properties": {
           "base_id": {
             "type": "string",
@@ -402,7 +618,10 @@
             "maxItems": 10,
             "items": {
               "type": "object",
-              "required": ["id", "fields"],
+              "required": [
+                "id",
+                "fields"
+              ],
               "properties": {
                 "id": {
                   "type": "string",
@@ -456,9 +675,18 @@
             "items": {
               "type": "object",
               "properties": {
-                "id": { "type": "string", "description": "Record ID (starts with 'rec')" },
-                "fields": { "type": "object", "description": "Updated record field values as key-value pairs" },
-                "createdTime": { "type": "string", "description": "ISO 8601 timestamp of original record creation" }
+                "id": {
+                  "type": "string",
+                  "description": "Record ID (starts with 'rec')"
+                },
+                "fields": {
+                  "type": "object",
+                  "description": "Updated record field values as key-value pairs"
+                },
+                "createdTime": {
+                  "type": "string",
+                  "description": "ISO 8601 timestamp of original record creation"
+                }
               }
             }
           },
@@ -468,13 +696,19 @@
           },
           "updated_at": {
             "type": "string",
-            "description": "ISO 8601 timestamp of when the operation completed"
+            "description": "ISO 8601 timestamp of when the operation completed",
+            "x-guaranteed": true
           },
           "destructive": {
             "type": "boolean",
             "description": "Whether destructive mode was used (true = full replacement, false = partial update)"
           }
-        }
+        },
+        "required": [
+          "id",
+          "fields",
+          "createdTime"
+        ]
       },
       "output_guidance": {
         "success_description": "Updated records",
@@ -492,15 +726,44 @@
           "record_count": 1,
           "updated_at": "2025-01-01T00:00:00.000Z",
           "destructive": false
+        },
+        "common_errors": {
+          "auth_failed": "Your Airtable connection has expired. Please go to Settings → Connected Apps to reconnect Airtable.",
+          "not_found": "The specified base, table, or record was not found. Please check the ID and try again.",
+          "permission_denied": "You don't have permission to access this resource. Please request access from the base owner or check your Airtable permissions.",
+          "rate_limit": "Too many requests to Airtable API. Please wait a moment and try again.",
+          "invalid_data": "The provided data is invalid. Please check field types and required fields match the table schema.",
+          "api_error": "Airtable API error occurred. Please try again or contact support if the issue persists."
         }
       }
     },
     "list_tables": {
       "description": "List all tables in a specific base with metadata",
       "usage_context": "Use this action to discover available tables in an Airtable base. Returns table names, IDs, and basic metadata. Helpful for dynamically working with bases where table structure may vary.",
+      "idempotent": true,
+      "domain": "database",
+      "capability": "list",
+      "input_entity": null,
+      "output_entity": "record",
+      "input_cardinality": null,
+      "output_cardinality": "collection",
+      "output_fields": [
+        "id",
+        "name",
+        "fields"
+      ],
+      "required_params": [
+        "base_id"
+      ],
+      "optional_params": [],
+      "must_support": [
+        "schema_discovery"
+      ],
       "parameters": {
         "type": "object",
-        "required": ["base_id"],
+        "required": [
+          "base_id"
+        ],
         "properties": {
           "base_id": {
             "type": "string",
@@ -525,11 +788,26 @@
             "items": {
               "type": "object",
               "properties": {
-                "id": { "type": "string", "description": "Table ID (starts with 'tbl')" },
-                "name": { "type": "string", "description": "Table display name" },
-                "primary_field_id": { "type": "string", "description": "ID of the primary field (starts with 'fld')" },
-                "field_count": { "type": "integer", "description": "Number of fields in the table" },
-                "view_count": { "type": "integer", "description": "Number of views in the table" }
+                "id": {
+                  "type": "string",
+                  "description": "Table ID (starts with 'tbl')"
+                },
+                "name": {
+                  "type": "string",
+                  "description": "Table display name"
+                },
+                "primary_field_id": {
+                  "type": "string",
+                  "description": "ID of the primary field (starts with 'fld')"
+                },
+                "field_count": {
+                  "type": "integer",
+                  "description": "Number of fields in the table"
+                },
+                "view_count": {
+                  "type": "integer",
+                  "description": "Number of views in the table"
+                }
               }
             }
           },
@@ -537,7 +815,12 @@
             "type": "integer",
             "description": "Total number of tables in the base"
           }
-        }
+        },
+        "required": [
+          "id",
+          "name",
+          "fields"
+        ]
       },
       "output_guidance": {
         "success_description": "Listed tables",
@@ -552,15 +835,52 @@
             }
           ],
           "table_count": 1
+        },
+        "common_errors": {
+          "auth_failed": "Your Airtable connection has expired. Please go to Settings → Connected Apps to reconnect Airtable.",
+          "not_found": "The specified base, table, or record was not found. Please check the ID and try again.",
+          "permission_denied": "You don't have permission to access this resource. Please request access from the base owner or check your Airtable permissions.",
+          "rate_limit": "Too many requests to Airtable API. Please wait a moment and try again.",
+          "invalid_data": "The provided data is invalid. Please check field types and required fields match the table schema.",
+          "api_error": "Airtable API error occurred. Please try again or contact support if the issue persists."
         }
       }
     },
     "upload_attachment": {
       "description": "Upload a file attachment to a record's attachment field",
       "usage_context": "Use this action to add file attachments to a record. The file must be provided as a Base64-encoded string or a publicly accessible URL. Airtable will process and store the attachment.",
+      "idempotent": false,
+      "domain": "database",
+      "capability": "upload",
+      "input_entity": "file",
+      "output_entity": "file",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "output_fields": [
+        "id",
+        "url",
+        "filename"
+      ],
+      "required_params": [
+        "base_id",
+        "table_name",
+        "record_id",
+        "field_name",
+        "file"
+      ],
+      "optional_params": [],
+      "must_support": [
+        "file_attachments"
+      ],
       "parameters": {
         "type": "object",
-        "required": ["base_id", "table_name", "record_id", "field_name", "attachment"],
+        "required": [
+          "base_id",
+          "table_name",
+          "record_id",
+          "field_name",
+          "attachment"
+        ],
         "properties": {
           "base_id": {
             "type": "string",
@@ -593,7 +913,10 @@
           "attachment": {
             "type": "object",
             "description": "The attachment to upload",
-            "required": ["url", "filename"],
+            "required": [
+              "url",
+              "filename"
+            ],
             "properties": {
               "url": {
                 "type": "string",
@@ -618,19 +941,41 @@
         "type": "object",
         "description": "Updated record with attachment details",
         "properties": {
-          "record_id": { "type": "string", "description": "Record ID that was updated (starts with 'rec')" },
-          "field_name": { "type": "string", "description": "Name of the attachment field" },
+          "record_id": {
+            "type": "string",
+            "description": "Record ID that was updated (starts with 'rec')",
+            "x-guaranteed": true
+          },
+          "field_name": {
+            "type": "string",
+            "description": "Name of the attachment field"
+          },
           "attachments": {
             "type": "array",
             "description": "Array of all attachments in the field (including newly added)",
             "items": {
               "type": "object",
               "properties": {
-                "id": { "type": "string", "description": "Attachment ID (starts with 'att')" },
-                "url": { "type": "string", "description": "URL to download the attachment" },
-                "filename": { "type": "string", "description": "Original filename" },
-                "size": { "type": "integer", "description": "File size in bytes" },
-                "type": { "type": "string", "description": "MIME type of the file" }
+                "id": {
+                  "type": "string",
+                  "description": "Attachment ID (starts with 'att')"
+                },
+                "url": {
+                  "type": "string",
+                  "description": "URL to download the attachment"
+                },
+                "filename": {
+                  "type": "string",
+                  "description": "Original filename"
+                },
+                "size": {
+                  "type": "integer",
+                  "description": "File size in bytes"
+                },
+                "type": {
+                  "type": "string",
+                  "description": "MIME type of the file"
+                }
               }
             }
           },
@@ -638,7 +983,12 @@
             "type": "integer",
             "description": "Total number of attachments in the field after upload"
           }
-        }
+        },
+        "required": [
+          "id",
+          "url",
+          "filename"
+        ]
       },
       "output_guidance": {
         "success_description": "Added attachment",
@@ -655,15 +1005,50 @@
             }
           ],
           "attachment_count": 1
+        },
+        "common_errors": {
+          "auth_failed": "Your Airtable connection has expired. Please go to Settings → Connected Apps to reconnect Airtable.",
+          "not_found": "The specified base, table, or record was not found. Please check the ID and try again.",
+          "permission_denied": "You don't have permission to access this resource. Please request access from the base owner or check your Airtable permissions.",
+          "rate_limit": "Too many requests to Airtable API. Please wait a moment and try again.",
+          "invalid_data": "The provided data is invalid. Please check field types and required fields match the table schema.",
+          "api_error": "Airtable API error occurred. Please try again or contact support if the issue persists."
         }
       }
     },
     "get_attachment_urls": {
       "description": "Get download URLs for attachments from a record (URLs expire after 2 hours)",
       "usage_context": "Use this action to retrieve temporary download URLs for file attachments stored in an Airtable record. Note: URLs expire after approximately 2 hours for security reasons and must be downloaded before expiration.",
+      "idempotent": true,
+      "domain": "database",
+      "capability": "get",
+      "input_entity": "file",
+      "output_entity": "file",
+      "input_cardinality": "collection",
+      "output_cardinality": "collection",
+      "output_fields": [
+        "url",
+        "filename",
+        "size"
+      ],
+      "required_params": [
+        "base_id",
+        "table_name",
+        "record_id",
+        "field_name"
+      ],
+      "optional_params": [],
+      "must_support": [
+        "attachment_access"
+      ],
       "parameters": {
         "type": "object",
-        "required": ["base_id", "table_name", "record_id", "field_name"],
+        "required": [
+          "base_id",
+          "table_name",
+          "record_id",
+          "field_name"
+        ],
         "properties": {
           "base_id": {
             "type": "string",
@@ -711,14 +1096,38 @@
             "items": {
               "type": "object",
               "properties": {
-                "id": { "type": "string", "description": "Attachment ID (starts with 'att')" },
-                "url": { "type": "string", "description": "Temporary download URL (expires in ~2 hours)" },
-                "filename": { "type": "string", "description": "Original filename" },
-                "size": { "type": "integer", "description": "File size in bytes" },
-                "type": { "type": "string", "description": "MIME type of the file" },
-                "width": { "type": "integer", "description": "Image width in pixels (null for non-images)" },
-                "height": { "type": "integer", "description": "Image height in pixels (null for non-images)" },
-                "expires_warning": { "type": "string", "description": "Warning about URL expiration" }
+                "id": {
+                  "type": "string",
+                  "description": "Attachment ID (starts with 'att')"
+                },
+                "url": {
+                  "type": "string",
+                  "description": "Temporary download URL (expires in ~2 hours)"
+                },
+                "filename": {
+                  "type": "string",
+                  "description": "Original filename"
+                },
+                "size": {
+                  "type": "integer",
+                  "description": "File size in bytes"
+                },
+                "type": {
+                  "type": "string",
+                  "description": "MIME type of the file"
+                },
+                "width": {
+                  "type": "integer",
+                  "description": "Image width in pixels (null for non-images)"
+                },
+                "height": {
+                  "type": "integer",
+                  "description": "Image height in pixels (null for non-images)"
+                },
+                "expires_warning": {
+                  "type": "string",
+                  "description": "Warning about URL expiration"
+                }
               }
             }
           },
@@ -730,7 +1139,12 @@
             "type": "string",
             "description": "Note about URL expiration policy"
           }
-        }
+        },
+        "required": [
+          "url",
+          "filename",
+          "size"
+        ]
       },
       "output_guidance": {
         "success_description": "Retrieved attachments",
@@ -749,6 +1163,14 @@
           ],
           "attachment_count": 1,
           "expiry_note": "Download URLs expire after ~2 hours for security"
+        },
+        "common_errors": {
+          "auth_failed": "Your Airtable connection has expired. Please go to Settings → Connected Apps to reconnect Airtable.",
+          "not_found": "The specified base, table, or record was not found. Please check the ID and try again.",
+          "permission_denied": "You don't have permission to access this resource. Please request access from the base owner or check your Airtable permissions.",
+          "rate_limit": "Too many requests to Airtable API. Please wait a moment and try again.",
+          "invalid_data": "The provided data is invalid. Please check field types and required fields match the table schema.",
+          "api_error": "Airtable API error occurred. Please try again or contact support if the issue persists."
         }
       }
     }

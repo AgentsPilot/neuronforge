@@ -1,0 +1,364 @@
+[
+  {
+    "step_id": "step1",
+    "type": "action",
+    "description": "Fetch unread emails from Gmail",
+    "plugin": "google-mail",
+    "operation": "search_emails",
+    "config": {
+      "query": "is:unread has:attachment",
+      "include_attachments": true,
+      "read_status": false,
+      "has_attachments": true
+    },
+    "output_variable": "unread_emails",
+    "id": "step1"
+  },
+  {
+    "step_id": "step2",
+    "type": "action",
+    "description": "Create Google Drive folder for storing invoice/receipt files",
+    "plugin": "google-drive",
+    "operation": "get_or_create_folder",
+    "config": {},
+    "output_variable": "drive_folder",
+    "id": "step2"
+  },
+  {
+    "step_id": "step3",
+    "type": "transform",
+    "operation": "flatten",
+    "input": "{{unread_emails}}",
+    "description": "Extract PDF and image attachments from emails with metadata",
+    "config": {
+      "type": "flatten",
+      "input": "unread_emails",
+      "custom_code": "Flatten email attachments into individual items, filtering for PDF and image types, and enriching with email metadata (sender, subject)"
+    },
+    "output_variable": "candidate_attachments",
+    "id": "step3"
+  },
+  {
+    "step_id": "step4",
+    "type": "scatter_gather",
+    "description": "Loop over candidate_attachments",
+    "scatter": {
+      "input": "{{candidate_attachments}}",
+      "steps": [
+        {
+          "step_id": "step5",
+          "type": "action",
+          "description": "Upload attachment file to Google Drive folder",
+          "plugin": "google-drive",
+          "operation": "upload_file",
+          "config": {
+            "file_name": "{{attachment.filename}}",
+            "data": "attachment",
+            "destination": "drive_folder"
+          },
+          "output_variable": "uploaded_file",
+          "id": "step5"
+        },
+        {
+          "step_id": "step6",
+          "type": "action",
+          "description": "Extract structured transaction fields from attachment",
+          "plugin": "document-extractor",
+          "operation": "extract_structured_data",
+          "config": {
+            "fields": [
+              {
+                "name": "date",
+                "type": "date",
+                "required": false
+              },
+              {
+                "name": "vendor",
+                "type": "string",
+                "required": false
+              },
+              {
+                "name": "amount",
+                "type": "number",
+                "required": true
+              },
+              {
+                "name": "currency",
+                "type": "string",
+                "required": false
+              },
+              {
+                "name": "invoice_number",
+                "type": "string",
+                "required": false
+              }
+            ],
+            "input": "uploaded_file"
+          },
+          "output_variable": "extracted_fields",
+          "id": "step6"
+        },
+        {
+          "step_id": "step7",
+          "type": "conditional",
+          "description": "Conditional: node_6",
+          "condition": {
+            "conditionType": "simple",
+            "field": "extracted_fields.amount",
+            "operator": "exists"
+          },
+          "steps": [
+            {
+              "step_id": "step8",
+              "type": "transform",
+              "operation": "map",
+              "input": "{{extracted_fields}}",
+              "description": "Build complete transaction record with all metadata",
+              "config": {
+                "type": "map",
+                "input": "extracted_fields",
+                "custom_code": "Combine extracted fields with file metadata and email source info",
+                "attachment": "{{attachment}}",
+                "uploaded_file": "{{uploaded_file}}"
+              },
+              "output_variable": "transaction_record",
+              "id": "step8"
+            }
+          ],
+          "else_steps": [
+            {
+              "step_id": "step9",
+              "type": "transform",
+              "operation": "map",
+              "input": "{{extracted_fields}}",
+              "description": "Skip transaction record creation (no amount found)",
+              "config": {
+                "type": "custom",
+                "input": "extracted_fields",
+                "custom_code": "Return null/empty record"
+              },
+              "output_variable": "transaction_record",
+              "id": "step9"
+            }
+          ],
+          "id": "step7"
+        }
+      ],
+      "itemVariable": "attachment"
+    },
+    "gather": {
+      "operation": "collect"
+    },
+    "output_variable": "processed_transactions",
+    "id": "step4"
+  },
+  {
+    "step_id": "step10",
+    "type": "transform",
+    "operation": "filter",
+    "input": "{{processed_transactions}}",
+    "description": "Filter out transactions without valid amounts",
+    "config": {
+      "type": "filter",
+      "input": "processed_transactions",
+      "custom_code": "Remove null/empty transaction records where amount extraction failed",
+      "output_schema": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "amount": {
+              "type": "string"
+            }
+          },
+          "required": []
+        }
+      }
+    },
+    "output_variable": "valid_transactions",
+    "id": "step10"
+  },
+  {
+    "step_id": "step11",
+    "type": "transform",
+    "operation": "filter",
+    "input": "{{valid_transactions}}",
+    "description": "Filter subset for high_value_transactions",
+    "config": {
+      "type": "filter",
+      "input": "valid_transactions",
+      "condition": {
+        "operator": "gt",
+        "value": "{{config.amount_threshold_usd}}",
+        "field": "item.amount",
+        "conditionType": "simple"
+      }
+    },
+    "output_variable": "high_value_transactions",
+    "id": "step11"
+  },
+  {
+    "step_id": "step12",
+    "type": "transform",
+    "operation": "filter",
+    "input": "{{valid_transactions}}",
+    "description": "Filter subset for low_value_transactions",
+    "config": {
+      "type": "filter",
+      "input": "valid_transactions",
+      "condition": {
+        "operator": "lte",
+        "value": "{{config.amount_threshold_usd}}",
+        "field": "item.amount",
+        "conditionType": "simple"
+      }
+    },
+    "output_variable": "low_value_transactions",
+    "id": "step12"
+  },
+  {
+    "step_id": "step13",
+    "type": "transform",
+    "operation": "reduce",
+    "input": "{{valid_transactions}}",
+    "description": "Count items for total_count",
+    "config": {
+      "type": "reduce",
+      "input": "valid_transactions",
+      "reduce_operation": "count",
+      "reducer": "count"
+    },
+    "output_variable": "total_count",
+    "id": "step13"
+  },
+  {
+    "step_id": "step14",
+    "type": "transform",
+    "operation": "reduce",
+    "input": "{{valid_transactions}}",
+    "description": "Aggregate sum for total_amount",
+    "config": {
+      "type": "reduce",
+      "input": "valid_transactions",
+      "reduce_operation": "sum",
+      "reducer": "sum",
+      "field": "amount"
+    },
+    "output_variable": "total_amount",
+    "id": "step14"
+  },
+  {
+    "step_id": "step15",
+    "type": "action",
+    "description": "Reference existing Google Sheets spreadsheet",
+    "plugin": "google-sheets",
+    "operation": "read_range",
+    "config": {
+      "spreadsheet_id": "{{config.google_sheet_id}}",
+      "tab_name": "{{config.sheet_tab_name}}"
+    },
+    "output_variable": "expense_sheet",
+    "id": "step15"
+  },
+  {
+    "step_id": "step16",
+    "type": "transform",
+    "operation": "rows_to_objects",
+    "input": "{{expense_sheet.values}}",
+    "description": "Auto-normalize: Convert 2D array to objects",
+    "output_variable": "expense_sheet_objects",
+    "config": {},
+    "id": "step16"
+  },
+  {
+    "step_id": "step17",
+    "type": "scatter_gather",
+    "description": "Loop over high_value_transactions",
+    "scatter": {
+      "input": "{{high_value_transactions}}",
+      "steps": [
+        {
+          "step_id": "step18",
+          "type": "action",
+          "description": "Append transaction row to Google Sheets",
+          "plugin": "google-sheets",
+          "operation": "append_rows",
+          "config": {
+            "spreadsheet_id": "{{config.google_sheet_id}}",
+            "data": "transaction",
+            "fields": {
+              "Date": "transaction.date",
+              "Vendor": "transaction.vendor",
+              "Amount": "transaction.amount",
+              "Currency": "transaction.currency",
+              "Invoice Number": "transaction.invoice_number",
+              "Drive Link": "transaction.drive_link",
+              "Email Sender": "transaction.email_sender",
+              "Email Subject": "transaction.email_subject"
+            },
+            "destination": "expense_sheet",
+            "tab_name": "{{config.sheet_tab_name}}"
+          },
+          "output_variable": "append_transaction_row_result",
+          "id": "step18"
+        }
+      ],
+      "itemVariable": "transaction"
+    },
+    "id": "step17"
+  },
+  {
+    "step_id": "step19",
+    "type": "ai_processing",
+    "input": {
+      "valid_transactions": "{{valid_transactions}}",
+      "high_value_transactions": "{{high_value_transactions}}",
+      "low_value_transactions": "{{low_value_transactions}}"
+    },
+    "prompt": "Create an email-friendly HTML summary with: 1) A table of ALL extracted transactions with columns for date, vendor, amount, currency, invoice number, Drive link, email sender, and email subject. 2) A separate section listing only transactions with amount > $50. 3) A totals summary showing total number of transactions and sum of all amounts. Include proper HTML formatting with tables.",
+    "description": "Generate email summary with transaction tables and totals",
+    "config": {
+      "ai_type": "generate",
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "subject": {
+            "type": "string",
+            "description": "Email subject line"
+          },
+          "body": {
+            "type": "string",
+            "description": "HTML email body with tables and summary"
+          }
+        },
+        "required": [
+          "subject",
+          "body"
+        ]
+      },
+      "type": "generate",
+      "instruction": "Create an email-friendly HTML summary with: 1) A table of ALL extracted transactions with columns for date, vendor, amount, currency, invoice number, Drive link, email sender, and email subject. 2) A separate section listing only transactions with amount > $50. 3) A totals summary showing total number of transactions and sum of all amounts. Include proper HTML formatting with tables."
+    },
+    "output_variable": "summary_email_content",
+    "id": "step19"
+  },
+  {
+    "step_id": "step20",
+    "type": "action",
+    "description": "Send summary email to user",
+    "plugin": "google-mail",
+    "operation": "send_email",
+    "config": {
+      "recipients": {
+        "to": [
+          "{{config.user_email}}"
+        ]
+      },
+      "content": {
+        "subject": "{{summary_email_content.subject}}",
+        "html_body": "{{summary_email_content.body}}"
+      }
+    },
+    "id": "step20"
+  }
+]

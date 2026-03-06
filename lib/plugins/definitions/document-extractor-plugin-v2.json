@@ -1,0 +1,179 @@
+{
+  "plugin": {
+    "name": "document-extractor",
+    "version": "1.0.0",
+    "description": "Extract structured data from documents (PDFs, images, invoices, receipts) using deterministic OCR and parsing",
+    "context": "Use for extracting structured fields from documents, invoices, receipts, forms, and images. Provides deterministic OCR-based extraction without AI (fast and cost-effective).",
+    "icon": "<FileText className='w-5 h-5 text-blue-600'/>",
+    "category": "data_extraction",
+    "isPopular": true,
+    "isSystem": true,
+    "auth_config": {
+      "auth_type": "platform_key",
+      "client_id": "platform",
+      "client_secret": "platform",
+      "redirect_uri": "",
+      "auth_url": "",
+      "token_url": "",
+      "refresh_url": "",
+      "profile_url": "",
+      "required_scopes": []
+    },
+    "provider_family": "internal"
+  },
+  "actions": {
+    "extract_structured_data": {
+      "description": "Extract structured fields from document files (PDF, images, invoices, receipts)",
+      "usage_context": "When you need to extract specific fields from documents, invoices, receipts, forms, or images. Uses OCR and deterministic parsing for fast, reliable extraction.",
+      "idempotent": true,
+      "domain": "document",
+      "capability": "extract_structured_data",
+      "input_entity": "file",
+      "output_entity": "structured_data",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "output_fields": [
+        "extracted_fields",
+        "confidence",
+        "raw_text"
+      ],
+      "required_params": [
+        "file_url",
+        "fields"
+      ],
+      "optional_params": [
+        "use_ai"
+      ],
+      "must_support": [
+        "pdf_extraction",
+        "image_extraction",
+        "ocr"
+      ],
+      "parameters": {
+        "type": "object",
+        "required": [
+          "file_url",
+          "fields"
+        ],
+        "properties": {
+          "file_url": {
+            "type": "string",
+            "description": "URL or path to the document file (PDF, JPG, PNG)",
+            "x-input-mapping": {
+              "accepts": [
+                "file_object",
+                "url_string"
+              ],
+              "from_file_object": "web_view_link",
+              "description": "Can accept file object (extracts web_view_link) or direct URL string"
+            }
+          },
+          "fields": {
+            "type": "array",
+            "description": "List of fields to extract from the document",
+            "items": {
+              "type": "object",
+              "required": [
+                "name",
+                "type"
+              ],
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "description": "Field name (e.g., 'date', 'amount', 'vendor')"
+                },
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "string",
+                    "number",
+                    "date",
+                    "currency",
+                    "boolean"
+                  ],
+                  "description": "Expected data type of the field"
+                },
+                "required": {
+                  "type": "boolean",
+                  "default": false,
+                  "description": "Whether this field is required"
+                },
+                "description": {
+                  "type": "string",
+                  "description": "Hint for what this field represents"
+                }
+              }
+            }
+          },
+          "use_ai": {
+            "type": "boolean",
+            "default": false,
+            "description": "Use AI-assisted extraction for better accuracy (slower, costs more)"
+          },
+          "language": {
+            "type": "string",
+            "default": "en",
+            "description": "Document language code (e.g., 'en', 'es', 'fr')"
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "extracted_fields": {
+            "type": "object",
+            "description": "Object containing extracted field values"
+          },
+          "confidence": {
+            "type": "number",
+            "description": "Overall extraction confidence (0-1)",
+            "x-guaranteed": true
+          },
+          "raw_text": {
+            "type": "string",
+            "description": "Full OCR text extracted from document"
+          },
+          "method": {
+            "type": "string",
+            "enum": [
+              "deterministic_ocr",
+              "ai_assisted"
+            ],
+            "description": "Extraction method used"
+          },
+          "processing_time_ms": {
+            "type": "integer",
+            "description": "Time taken to process the document"
+          }
+        },
+        "required": [
+          "extracted_fields",
+          "confidence",
+          "raw_text"
+        ]
+      },
+      "output_guidance": {
+        "success_description": "Extracted structured data",
+        "sample_output": {
+          "extracted_fields": {
+            "date": "2024-01-15",
+            "vendor": "Acme Corporation",
+            "amount": 125.5,
+            "currency": "USD",
+            "invoice_number": "INV-2024-001"
+          },
+          "confidence": 0.92,
+          "raw_text": "Invoice Date: 2024-01-15\\nVendor: Acme Corporation\\nAmount: $125.50\\nInvoice #: INV-2024-001",
+          "method": "deterministic_ocr",
+          "processing_time_ms": 450
+        },
+        "common_errors": {
+          "file_not_found": "Document file not found at the specified URL",
+          "unsupported_format": "File format not supported. Use PDF, JPG, or PNG files",
+          "ocr_failed": "OCR extraction failed. File may be corrupted or image quality too low",
+          "field_not_found": "One or more required fields could not be extracted from the document"
+        }
+      }
+    }
+  }
+}

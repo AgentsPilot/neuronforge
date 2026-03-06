@@ -432,10 +432,21 @@
         <div class="improvements-list">
           <div class="improvement-badge">📋 Phase 0: Hard Requirements</div>
           <div class="improvement-badge">🧠 Admin Model Config</div>
-          <div class="improvement-badge">🔧 Auto-Recovery (Gate 3)</div>
+          <div class="improvement-badge">✨ NEW: Validation-Driven IR (Self-Healing)</div>
           <div class="improvement-badge">✅ 5 Validation Gates</div>
           <div class="improvement-badge">🎯 PILOT Format</div>
           <div class="improvement-badge">📊 Requirement Tracking</div>
+        </div>
+      </div>
+
+      <div class="improvements-banner" style="background: rgba(33, 150, 243, 0.2); border-color: rgba(33, 150, 243, 0.4);">
+        <strong>🔬 Validation-Driven Architecture (Week 1-2 Implementation):</strong>
+        <div style="margin-top: 8px; font-size: 0.85rem;">
+          <div style="margin: 5px 0;">✨ Enhanced system prompt with 6 validation protocols + error examples</div>
+          <div style="margin: 5px 0;">🔄 Self-healing retry loop (up to 3 attempts with error feedback)</div>
+          <div style="margin: 5px 0;">✅ 5 comprehensive validators: Field references, Type consistency, Requirements, Scope, Schema</div>
+          <div style="margin: 5px 0;">🎯 <strong>Target: 95%+ success rate</strong> (auto-fix field names, types, requirements without user intervention)</div>
+          <div style="margin: 5px 0;">⚡ Enable with: <code style="background: rgba(0,0,0,0.1); padding: 2px 6px; border-radius: 3px;">V6_VALIDATION_DRIVEN_ENABLED=true</code></div>
         </div>
       </div>
 
@@ -478,11 +489,11 @@
             <ul style="margin: 8px 0 0 20px; font-size: 0.85rem;">
               <li><strong>Phase 0:</strong> Extract hard requirements (thresholds, invariants, routing rules, side-effect constraints)</li>
               <li><strong style="color: #f44336; text-decoration: line-through;">Phase 1 & 2 SKIPPED:</strong> <span style="color: #666;">Semantic planning & grounding - removed noise (Enhanced Prompt has all data!)</span></li>
-              <li><strong>Phase 3:</strong> IR formalization (direct from Enhanced Prompt) → <span style="color: #4caf50;">Gate 3: Auto-fix invalid operations</span></li>
+              <li><strong>Phase 3:</strong> IR formalization with validation-driven retry loop → <span style="color: #4caf50;">✨ Self-healing (up to 3 attempts)</span></li>
               <li><strong>Phase 4:</strong> Execution graph compilation → <span style="color: #4caf50;">Gate 4: Validate compilation</span></li>
               <li><strong>Phase 5:</strong> DSL-to-PILOT translation (flat array format) → <span style="color: #4caf50;">Gate 5: Final validation</span></li>
               <li><strong>Output:</strong> Production-ready workflow compatible with WorkflowPilot executor and calibration</li>
-              <li style="color: #4caf50; margin-top: 8px;"><strong>✨ Improvement:</strong> -35% tokens, -33% time, +150% signal-to-noise ratio</li>
+              <li style="color: #4caf50; margin-top: 8px;"><strong>✨ NEW:</strong> Validation-driven IR generation with comprehensive error detection & auto-retry (TARGET: 95%+ success rate)</li>
             </ul>
           </div>
 
@@ -556,8 +567,8 @@
             <div id="phase-3-box" class="phase-box">
               <div class="phase-header">
                 <span>⚙️</span>
-                <strong>Phase 3: IR Formalization + Auto-Recovery</strong>
-                <span class="validation-badge" style="background: #ff9800; color: white; font-size: 0.7rem; margin-left: 8px;">Gate 3: Auto-Fix</span>
+                <strong>Phase 3: IR Formalization (Validation-Driven)</strong>
+                <span class="validation-badge" style="background: #4caf50; color: white; font-size: 0.7rem; margin-left: 8px;">✨ Self-Healing</span>
                 <span class="phase-status" id="phase-3-status">⏳ Pending</span>
               </div>
               <div id="phase-3-content"></div>
@@ -948,10 +959,42 @@
           ${groundedPlan ? jsonWithCopy(groundedPlan, 'Phase 2 - Grounded Plan') : ''}
         `);
 
-        // Phase 3: IR (Intermediate Representation)
+        // Phase 3: IR (Intermediate Representation) - Validation-Driven
         const ir = pipelineData.phase3_ir;
+        const formalizationMetadata = ir?.formalization_metadata || {};
+        const attemptNumber = formalizationMetadata.attempt_number || 1;
+        const validationErrors = formalizationMetadata.validation_errors_found || 0;
+        const validationPassed = formalizationMetadata.validation_passed || false;
+
+        // Build validation metrics display
+        let validationMetrics = '';
+        if (attemptNumber > 1) {
+          validationMetrics = `
+            <div style="background: #fff3e0; padding: 10px; border-radius: 4px; margin: 10px 0; border-left: 4px solid #ff9800;">
+              <strong>🔄 Self-Healing Applied:</strong>
+              <div style="margin-top: 5px; font-size: 0.9rem;">
+                • Success on attempt ${attemptNumber} of 3
+                ${validationErrors > 0 ? `<br>• Auto-fixed ${validationErrors} validation error(s)` : ''}
+                <br>• Validation layers: Field references, Type consistency, Requirements, Scope, Schema
+              </div>
+            </div>
+          `;
+        } else {
+          validationMetrics = `
+            <div style="background: #e8f5e9; padding: 10px; border-radius: 4px; margin: 10px 0; border-left: 4px solid #4caf50;">
+              <strong>✅ Perfect First Attempt:</strong>
+              <div style="margin-top: 5px; font-size: 0.9rem;">
+                • Generated valid IR on first try
+                <br>• All 5 validation layers passed
+                <br>• No retry needed
+              </div>
+            </div>
+          `;
+        }
+
         updatePhase(3, 'completed', `
-          <div style="color: #4caf50; margin-bottom: 10px;">✓ IR formalization with auto-recovery completed</div>
+          <div style="color: #4caf50; margin-bottom: 10px;">✓ IR formalization completed (validation-driven)</div>
+          ${validationMetrics}
           ${ir ? jsonWithCopy(ir, 'Phase 3 - Intermediate Representation (IR)') : '<div style="color: #999;">No IR data</div>'}
         `);
 

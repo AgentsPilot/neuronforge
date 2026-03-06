@@ -1,0 +1,1033 @@
+{
+  "ir_version": "4.0",
+  "goal": "Scan Gmail for unread emails, extract PDF/image attachments, upload to Google Drive, extract transaction fields via AI, append transactions over $50 to Google Sheets, and send a comprehensive summary email with all transactions, >$50 section, totals, and skipped attachment notes.",
+  "processing_order": [
+    "data_sources",
+    "file_operations",
+    "filters",
+    "ai_operations",
+    "conditionals",
+    "delivery_rules"
+  ],
+  "execution_graph": {
+    "start": "fetch_unread_emails",
+    "nodes": {
+      "fetch_unread_emails": {
+        "id": "fetch_unread_emails",
+        "type": "operation",
+        "operation": {
+          "operation_type": "fetch",
+          "fetch": {
+            "plugin_key": "google-mail",
+            "action": "search_emails",
+            "config": {
+              "query": "is:unread",
+              "include_attachments": true
+            }
+          }
+        },
+        "inputs": [],
+        "outputs": [
+          {
+            "variable": "emails"
+          }
+        ],
+        "next": "create_drive_folder"
+      },
+      "create_drive_folder": {
+        "id": "create_drive_folder",
+        "type": "operation",
+        "operation": {
+          "operation_type": "fetch",
+          "fetch": {
+            "plugin_key": "google-drive",
+            "action": "get_or_create_folder",
+            "config": {
+              "folder_name": "Email Attachment Expenses"
+            }
+          }
+        },
+        "inputs": [],
+        "outputs": [
+          {
+            "variable": "drive_folder"
+          }
+        ],
+        "next": "loop_emails"
+      },
+      "loop_emails": {
+        "id": "loop_emails",
+        "type": "loop",
+        "loop": {
+          "iterate_over": "{{emails}}",
+          "item_variable": "current_email",
+          "body_start": "extract_email_metadata",
+          "collect_outputs": false
+        },
+        "inputs": [
+          {
+            "variable": "emails"
+          }
+        ],
+        "outputs": [],
+        "next": "aggregate_results"
+      },
+      "extract_email_metadata": {
+        "id": "extract_email_metadata",
+        "type": "operation",
+        "operation": {
+          "operation_type": "transform",
+          "transform": {
+            "type": "select",
+            "input": "{{current_email}}",
+            "fields": {
+              "sender": "{{current_email.from}}",
+              "subject": "{{current_email.subject}}",
+              "message_id": "{{current_email.id}}"
+            }
+          }
+        },
+        "inputs": [
+          {
+            "variable": "current_email"
+          }
+        ],
+        "outputs": [
+          {
+            "variable": "email_metadata"
+          }
+        ],
+        "next": "filter_attachments"
+      },
+      "filter_attachments": {
+        "id": "filter_attachments",
+        "type": "operation",
+        "operation": {
+          "operation_type": "transform",
+          "transform": {
+            "type": "filter",
+            "input": "{{current_email.attachments}}",
+            "filter_expression": {
+              "type": "complex_or",
+              "conditions": [
+                {
+                  "type": "simple",
+                  "variable": "item.mimeType",
+                  "operator": "eq",
+                  "value": "application/pdf"
+                },
+                {
+                  "type": "simple",
+                  "variable": "item.mimeType",
+                  "operator": "eq",
+                  "value": "image/jpeg"
+                },
+                {
+                  "type": "simple",
+                  "variable": "item.mimeType",
+                  "operator": "eq",
+                  "value": "image/png"
+                },
+                {
+                  "type": "simple",
+                  "variable": "item.filename",
+                  "operator": "ends_with",
+                  "value": ".pdf"
+                },
+                {
+                  "type": "simple",
+                  "variable": "item.filename",
+                  "operator": "ends_with",
+                  "value": ".jpg"
+                },
+                {
+                  "type": "simple",
+                  "variable": "item.filename",
+                  "operator": "ends_with",
+                  "value": ".png"
+                }
+              ]
+            }
+          }
+        },
+        "inputs": [
+          {
+            "variable": "current_email"
+          }
+        ],
+        "outputs": [
+          {
+            "variable": "filtered_attachments"
+          }
+        ],
+        "next": "loop_attachments"
+      },
+      "loop_attachments": {
+        "id": "loop_attachments",
+        "type": "loop",
+        "loop": {
+          "iterate_over": "{{filtered_attachments}}",
+          "item_variable": "current_attachment",
+          "body_start": "download_attachment",
+          "collect_outputs": true,
+          "collect_from": "attachment_result",
+          "output_variable": "all_attachment_results"
+        },
+        "inputs": [
+          {
+            "variable": "filtered_attachments"
+          }
+        ],
+        "outputs": [
+          {
+            "variable": "all_attachment_results"
+          }
+        ],
+        "next": "loop_emails_end"
+      },
+      "download_attachment": {
+        "id": "download_attachment",
+        "type": "operation",
+        "operation": {
+          "operation_type": "fetch",
+          "fetch": {
+            "plugin_key": "google-mail",
+            "action": "get_email_attachment",
+            "config": {
+              "message_id": "{{current_attachment.message_id}}",
+              "attachment_id": "{{current_attachment.attachment_id}}"
+            }
+          }
+        },
+        "inputs": [
+          {
+            "variable": "current_attachment"
+          }
+        ],
+        "outputs": [
+          {
+            "variable": "attachment_content"
+          }
+        ],
+        "next": "upload_to_drive"
+      },
+      "upload_to_drive": {
+        "id": "upload_to_drive",
+        "type": "operation",
+        "operation": {
+          "operation_type": "deliver",
+          "deliver": {
+            "plugin_key": "google-drive",
+            "action": "upload_file",
+            "config": {
+              "file_content": "{{attachment_content.data}}",
+              "file_name": "{{attachment_content.filename}}",
+              "mime_type": "{{attachment_content.mimeType}}",
+              "folder_id": "{{drive_folder.folder_id}}"
+            }
+          }
+        },
+        "inputs": [
+          {
+            "variable": "attachment_content"
+          },
+          {
+            "variable": "drive_folder"
+          }
+        ],
+        "outputs": [
+          {
+            "variable": "uploaded_file"
+          }
+        ],
+        "next": "extract_transaction_fields"
+      },
+      "extract_transaction_fields": {
+        "id": "extract_transaction_fields",
+        "type": "operation",
+        "operation": {
+          "operation_type": "ai",
+          "ai": {
+            "ai_type": "deterministic_extract",
+            "instruction": "Extract transaction/invoice/receipt fields from this attachment. Look for date, vendor/merchant name, total amount, currency, and invoice or receipt number. If any field is not clearly present, return null for that field. For the amount field, only return a value if you are confident it represents the total transaction amount.",
+            "input": "{{attachment_content}}",
+            "output_schema": {
+              "type": "object",
+              "properties": {
+                "date": {
+                  "type": "string",
+                  "description": "Transaction or invoice date"
+                },
+                "vendor": {
+                  "type": "string",
+                  "description": "Vendor or merchant name"
+                },
+                "amount": {
+                  "type": "number",
+                  "description": "Total transaction amount as a number"
+                },
+                "currency": {
+                  "type": "string",
+                  "description": "Currency code (e.g., USD, EUR)"
+                },
+                "invoice_or_receipt_number": {
+                  "type": "string",
+                  "description": "Invoice or receipt number"
+                },
+                "extraction_confidence": {
+                  "type": "string",
+                  "description": "Confidence level for amount extraction: high, medium, or low"
+                }
+              },
+              "required": [
+                "amount",
+                "extraction_confidence"
+              ]
+            }
+          }
+        },
+        "inputs": [
+          {
+            "variable": "attachment_content"
+          }
+        ],
+        "outputs": [
+          {
+            "variable": "extracted_fields"
+          }
+        ],
+        "next": "build_attachment_record"
+      },
+      "build_attachment_record": {
+        "id": "build_attachment_record",
+        "type": "operation",
+        "operation": {
+          "operation_type": "ai",
+          "ai": {
+            "ai_type": "generate",
+            "instruction": "Combine the extracted transaction fields with the file metadata and email metadata into a single structured record. Include all fields: date, vendor, amount, currency, invoice_or_receipt_number, drive_file_link, sender, subject, filename, extraction_confidence. Preserve all values exactly as provided.",
+            "input": "{{extracted_fields}}",
+            "output_schema": {
+              "type": "object",
+              "properties": {
+                "date": {
+                  "type": "string",
+                  "description": "Transaction date"
+                },
+                "vendor": {
+                  "type": "string",
+                  "description": "Vendor name"
+                },
+                "amount": {
+                  "type": "number",
+                  "description": "Transaction amount"
+                },
+                "currency": {
+                  "type": "string",
+                  "description": "Currency code"
+                },
+                "invoice_or_receipt_number": {
+                  "type": "string",
+                  "description": "Invoice/receipt number"
+                },
+                "drive_file_link": {
+                  "type": "string",
+                  "description": "Google Drive link to the uploaded file"
+                },
+                "sender": {
+                  "type": "string",
+                  "description": "Email sender"
+                },
+                "subject": {
+                  "type": "string",
+                  "description": "Email subject"
+                },
+                "filename": {
+                  "type": "string",
+                  "description": "Attachment filename"
+                },
+                "extraction_confidence": {
+                  "type": "string",
+                  "description": "Confidence level for amount extraction"
+                }
+              }
+            },
+            "context": [
+              "{{uploaded_file.web_view_link}}",
+              "{{email_metadata.sender}}",
+              "{{email_metadata.subject}}",
+              "{{attachment_content.filename}}",
+              "{{extracted_fields}}"
+            ]
+          }
+        },
+        "inputs": [
+          {
+            "variable": "extracted_fields"
+          },
+          {
+            "variable": "uploaded_file"
+          },
+          {
+            "variable": "email_metadata"
+          },
+          {
+            "variable": "attachment_content"
+          }
+        ],
+        "outputs": [
+          {
+            "variable": "full_record"
+          }
+        ],
+        "next": "check_amount_confidence"
+      },
+      "check_amount_confidence": {
+        "id": "check_amount_confidence",
+        "type": "choice",
+        "choice": {
+          "rules": [
+            {
+              "condition": {
+                "type": "complex_or",
+                "conditions": [
+                  {
+                    "type": "simple",
+                    "variable": "extracted_fields.amount",
+                    "operator": "is_empty"
+                  },
+                  {
+                    "type": "simple",
+                    "variable": "extracted_fields.extraction_confidence",
+                    "operator": "eq",
+                    "value": "low"
+                  }
+                ]
+              },
+              "next": "mark_skipped"
+            }
+          ],
+          "default": "check_amount_threshold"
+        },
+        "inputs": [
+          {
+            "variable": "extracted_fields"
+          }
+        ]
+      },
+      "mark_skipped": {
+        "id": "mark_skipped",
+        "type": "operation",
+        "operation": {
+          "operation_type": "ai",
+          "ai": {
+            "ai_type": "generate",
+            "instruction": "Create a result record marking this attachment as skipped due to missing or unclear amount. Set status to 'skipped', include the sender, subject, filename, and drive_file_link from the full record. Set amount to null and over_50 to false.",
+            "input": "{{full_record}}",
+            "output_schema": {
+              "type": "object",
+              "properties": {
+                "status": {
+                  "type": "string",
+                  "description": "Processing status: skipped"
+                },
+                "date": {
+                  "type": "string"
+                },
+                "vendor": {
+                  "type": "string"
+                },
+                "amount": {
+                  "type": "number"
+                },
+                "currency": {
+                  "type": "string"
+                },
+                "invoice_or_receipt_number": {
+                  "type": "string"
+                },
+                "drive_file_link": {
+                  "type": "string"
+                },
+                "sender": {
+                  "type": "string"
+                },
+                "subject": {
+                  "type": "string"
+                },
+                "filename": {
+                  "type": "string"
+                },
+                "over_50": {
+                  "type": "boolean",
+                  "description": "Always false for skipped"
+                }
+              }
+            }
+          }
+        },
+        "inputs": [
+          {
+            "variable": "full_record"
+          }
+        ],
+        "outputs": [
+          {
+            "variable": "attachment_result"
+          }
+        ],
+        "next": "loop_attachments_end"
+      },
+      "check_amount_threshold": {
+        "id": "check_amount_threshold",
+        "type": "choice",
+        "choice": {
+          "rules": [
+            {
+              "condition": {
+                "type": "simple",
+                "variable": "extracted_fields.amount",
+                "operator": "gt",
+                "value": 50
+              },
+              "next": "append_to_sheet"
+            }
+          ],
+          "default": "mark_under_50"
+        },
+        "inputs": [
+          {
+            "variable": "extracted_fields"
+          }
+        ]
+      },
+      "append_to_sheet": {
+        "id": "append_to_sheet",
+        "type": "operation",
+        "operation": {
+          "operation_type": "deliver",
+          "deliver": {
+            "plugin_key": "google-sheets",
+            "action": "append_rows",
+            "config": {
+              "spreadsheet_id": "1pM8WbXtPgaYqokHn_spgQAfR7SBuql3JUtE1ugDtOpc",
+              "range": "Expenses",
+              "values": [
+                [
+                  "{{full_record.date}}",
+                  "{{full_record.vendor}}",
+                  "{{full_record.amount}}",
+                  "{{full_record.currency}}",
+                  "{{full_record.invoice_or_receipt_number}}",
+                  "{{full_record.drive_file_link}}",
+                  "{{full_record.sender}}",
+                  "{{full_record.subject}}"
+                ]
+              ]
+            }
+          }
+        },
+        "inputs": [
+          {
+            "variable": "full_record"
+          }
+        ],
+        "outputs": [
+          {
+            "variable": "sheet_append_result"
+          }
+        ],
+        "next": "mark_over_50"
+      },
+      "mark_over_50": {
+        "id": "mark_over_50",
+        "type": "operation",
+        "operation": {
+          "operation_type": "ai",
+          "ai": {
+            "ai_type": "generate",
+            "instruction": "Create a result record for this successfully extracted transaction with amount > $50. Set status to 'extracted', over_50 to true. Include all fields from the full record.",
+            "input": "{{full_record}}",
+            "output_schema": {
+              "type": "object",
+              "properties": {
+                "status": {
+                  "type": "string",
+                  "description": "Processing status: extracted"
+                },
+                "date": {
+                  "type": "string"
+                },
+                "vendor": {
+                  "type": "string"
+                },
+                "amount": {
+                  "type": "number"
+                },
+                "currency": {
+                  "type": "string"
+                },
+                "invoice_or_receipt_number": {
+                  "type": "string"
+                },
+                "drive_file_link": {
+                  "type": "string"
+                },
+                "sender": {
+                  "type": "string"
+                },
+                "subject": {
+                  "type": "string"
+                },
+                "filename": {
+                  "type": "string"
+                },
+                "over_50": {
+                  "type": "boolean",
+                  "description": "true for amount > 50"
+                }
+              }
+            }
+          }
+        },
+        "inputs": [
+          {
+            "variable": "full_record"
+          }
+        ],
+        "outputs": [
+          {
+            "variable": "attachment_result"
+          }
+        ],
+        "next": "loop_attachments_end"
+      },
+      "mark_under_50": {
+        "id": "mark_under_50",
+        "type": "operation",
+        "operation": {
+          "operation_type": "ai",
+          "ai": {
+            "ai_type": "generate",
+            "instruction": "Create a result record for this successfully extracted transaction with amount <= $50. Set status to 'extracted', over_50 to false. Include all fields from the full record.",
+            "input": "{{full_record}}",
+            "output_schema": {
+              "type": "object",
+              "properties": {
+                "status": {
+                  "type": "string",
+                  "description": "Processing status: extracted"
+                },
+                "date": {
+                  "type": "string"
+                },
+                "vendor": {
+                  "type": "string"
+                },
+                "amount": {
+                  "type": "number"
+                },
+                "currency": {
+                  "type": "string"
+                },
+                "invoice_or_receipt_number": {
+                  "type": "string"
+                },
+                "drive_file_link": {
+                  "type": "string"
+                },
+                "sender": {
+                  "type": "string"
+                },
+                "subject": {
+                  "type": "string"
+                },
+                "filename": {
+                  "type": "string"
+                },
+                "over_50": {
+                  "type": "boolean",
+                  "description": "false for amount <= 50"
+                }
+              }
+            }
+          }
+        },
+        "inputs": [
+          {
+            "variable": "full_record"
+          }
+        ],
+        "outputs": [
+          {
+            "variable": "attachment_result"
+          }
+        ],
+        "next": "loop_attachments_end"
+      },
+      "loop_attachments_end": {
+        "id": "loop_attachments_end",
+        "type": "end",
+        "loop_end": true
+      },
+      "loop_emails_end": {
+        "id": "loop_emails_end",
+        "type": "end",
+        "loop_end": true
+      },
+      "aggregate_results": {
+        "id": "aggregate_results",
+        "type": "operation",
+        "operation": {
+          "operation_type": "ai",
+          "ai": {
+            "ai_type": "generate",
+            "instruction": "Analyze the collected attachment results and produce a comprehensive summary. Group the results into three categories: 1) All successfully extracted transactions (status='extracted'), 2) Transactions with amount > $50 only (over_50=true), 3) Skipped attachments (status='skipped'). Compute totals: total number of extracted transactions, sum of all extracted amounts, sum of amounts for the >$50 subset. Format the output as structured data with these three groups and the computed totals.",
+            "input": "{{all_attachment_results}}",
+            "output_schema": {
+              "type": "object",
+              "properties": {
+                "all_extracted_transactions": {
+                  "type": "array",
+                  "description": "All successfully extracted transactions with date, vendor, amount, currency, invoice_or_receipt_number, drive_file_link, sender, subject"
+                },
+                "over_50_transactions": {
+                  "type": "array",
+                  "description": "Only transactions with amount > $50"
+                },
+                "skipped_attachments": {
+                  "type": "array",
+                  "description": "Attachments skipped due to missing/unclear amounts, with sender, subject, drive_file_link, filename"
+                },
+                "total_extracted_count": {
+                  "type": "number",
+                  "description": "Total number of successfully extracted transactions"
+                },
+                "total_all_amounts": {
+                  "type": "number",
+                  "description": "Sum of all extracted transaction amounts"
+                },
+                "total_over_50_amounts": {
+                  "type": "number",
+                  "description": "Sum of amounts for transactions > $50"
+                }
+              }
+            }
+          }
+        },
+        "inputs": [
+          {
+            "variable": "all_attachment_results"
+          }
+        ],
+        "outputs": [
+          {
+            "variable": "aggregated_summary"
+          }
+        ],
+        "next": "generate_summary_email"
+      },
+      "generate_summary_email": {
+        "id": "generate_summary_email",
+        "type": "operation",
+        "operation": {
+          "operation_type": "ai",
+          "ai": {
+            "ai_type": "generate",
+            "instruction": "Generate a professional HTML email body for a summary report of extracted expense transactions. The email must include:\n\n1. A header: 'Expense Extraction Summary'\n\n2. A table titled 'All Extracted Transactions' with columns: Date, Vendor, Amount, Currency, Invoice/Receipt #, Drive Link (as clickable hyperlink), Sender, Subject. Include ALL extracted transactions from all_extracted_transactions.\n\n3. A separate section titled 'Transactions Over $50' with the same table format but only including transactions from over_50_transactions.\n\n4. A 'Totals Summary' section showing:\n   - Total transactions extracted: {{total_extracted_count}}\n   - Sum of all extracted amounts: {{total_all_amounts}}\n   - Sum of amounts > $50: {{total_over_50_amounts}}\n\n5. A 'Skipped Attachments' note section listing attachments that were skipped due to missing/unclear amounts. For each, show: Sender, Subject, Drive File Link (as clickable hyperlink), Filename.\n\nUse clean HTML tables with borders. Make Drive links clickable. If any section has no items, show 'None' or 'No items'.",
+            "input": "{{aggregated_summary}}",
+            "output_schema": {
+              "type": "object",
+              "properties": {
+                "email_subject": {
+                  "type": "string",
+                  "description": "Email subject line"
+                },
+                "email_html_body": {
+                  "type": "string",
+                  "description": "Full HTML email body with all sections"
+                }
+              }
+            }
+          }
+        },
+        "inputs": [
+          {
+            "variable": "aggregated_summary"
+          }
+        ],
+        "outputs": [
+          {
+            "variable": "summary_email_content"
+          }
+        ],
+        "next": "send_summary_email"
+      },
+      "send_summary_email": {
+        "id": "send_summary_email",
+        "type": "operation",
+        "operation": {
+          "operation_type": "deliver",
+          "deliver": {
+            "plugin_key": "google-mail",
+            "action": "send_email",
+            "config": {
+              "recipients": {
+                "to": [
+                  "offir.omer@gmail.com"
+                ]
+              },
+              "content": {
+                "subject": "{{summary_email_content.email_subject}}",
+                "html_body": "{{summary_email_content.email_html_body}}"
+              }
+            }
+          }
+        },
+        "inputs": [
+          {
+            "variable": "summary_email_content"
+          }
+        ],
+        "outputs": [
+          {
+            "variable": "sent_email_result"
+          }
+        ],
+        "next": "end"
+      },
+      "end": {
+        "id": "end",
+        "type": "end",
+        "loop_end": false
+      }
+    },
+    "variables": [
+      {
+        "name": "emails",
+        "type": "array",
+        "scope": "global",
+        "source": "Fetched unread emails from Gmail via search_emails"
+      },
+      {
+        "name": "drive_folder",
+        "type": "object",
+        "scope": "global",
+        "source": "Created or retrieved Google Drive folder via get_or_create_folder"
+      },
+      {
+        "name": "current_email",
+        "type": "object",
+        "scope": "loop",
+        "source": "Loop item variable for email iteration"
+      },
+      {
+        "name": "email_metadata",
+        "type": "object",
+        "scope": "loop",
+        "source": "Extracted sender and subject from current email via select transform"
+      },
+      {
+        "name": "filtered_attachments",
+        "type": "array",
+        "scope": "loop",
+        "source": "PDF and image attachments filtered from current email"
+      },
+      {
+        "name": "current_attachment",
+        "type": "object",
+        "scope": "loop",
+        "source": "Loop item variable for attachment iteration"
+      },
+      {
+        "name": "attachment_content",
+        "type": "object",
+        "scope": "loop",
+        "source": "Downloaded attachment content via get_email_attachment"
+      },
+      {
+        "name": "uploaded_file",
+        "type": "object",
+        "scope": "loop",
+        "source": "Uploaded file metadata from Google Drive upload_file"
+      },
+      {
+        "name": "extracted_fields",
+        "type": "object",
+        "scope": "loop",
+        "source": "AI-extracted transaction fields from attachment"
+      },
+      {
+        "name": "full_record",
+        "type": "object",
+        "scope": "loop",
+        "source": "Combined record with extracted fields, file metadata, and email metadata"
+      },
+      {
+        "name": "sheet_append_result",
+        "type": "object",
+        "scope": "loop",
+        "source": "Result from appending row to Google Sheets"
+      },
+      {
+        "name": "attachment_result",
+        "type": "object",
+        "scope": "loop",
+        "source": "Final per-attachment result record with status and all fields"
+      },
+      {
+        "name": "all_attachment_results",
+        "type": "array",
+        "scope": "global",
+        "source": "Collected results from all processed attachments across all emails"
+      },
+      {
+        "name": "aggregated_summary",
+        "type": "object",
+        "scope": "global",
+        "source": "Aggregated summary with grouped transactions and computed totals"
+      },
+      {
+        "name": "summary_email_content",
+        "type": "object",
+        "scope": "global",
+        "source": "Generated HTML email content for summary"
+      },
+      {
+        "name": "sent_email_result",
+        "type": "object",
+        "scope": "global",
+        "source": "Result from sending summary email via Gmail"
+      }
+    ]
+  },
+  "requirements_enforcement": [
+    {
+      "requirement_id": "R1",
+      "enforced_by": {
+        "node_ids": [
+          "loop_attachments"
+        ],
+        "enforcement_mechanism": "loop_collection"
+      },
+      "validation_passed": true,
+      "validation_details": "Inner loop (loop_attachments) has collect_outputs=true, producing one record per attachment. Outer loop (loop_emails) has collect_outputs=false. This ensures unit_of_work=attachment granularity."
+    },
+    {
+      "requirement_id": "R2",
+      "enforced_by": {
+        "node_ids": [
+          "check_amount_threshold",
+          "append_to_sheet"
+        ],
+        "enforcement_mechanism": "choice"
+      },
+      "validation_passed": true,
+      "validation_details": "Choice node check_amount_threshold evaluates extracted_fields.amount > 50. Only when true does execution proceed to append_to_sheet. Amounts <= 50 go to mark_under_50 and are NOT appended to the sheet."
+    },
+    {
+      "requirement_id": "R3",
+      "enforced_by": {
+        "node_ids": [
+          "check_amount_confidence",
+          "mark_skipped"
+        ],
+        "enforcement_mechanism": "choice"
+      },
+      "validation_passed": true,
+      "validation_details": "Choice node check_amount_confidence checks if amount is empty or extraction_confidence is low. When true, the attachment is marked as skipped via mark_skipped node and no transaction record is created. Skipped attachments are included in the summary email note section."
+    },
+    {
+      "requirement_id": "R4",
+      "enforced_by": {
+        "node_ids": [
+          "aggregate_results",
+          "generate_summary_email",
+          "send_summary_email"
+        ],
+        "enforcement_mechanism": "sequence"
+      },
+      "validation_passed": true,
+      "validation_details": "All processing (email loops, attachment extraction, sheet appending) completes before aggregate_results. The summary email is generated and sent only after aggregation, enforced by sequential next pointers: loop_emails → aggregate_results → generate_summary_email → send_summary_email."
+    }
+  ],
+  "resolved_user_inputs": {
+    "user_email": "offir.omer@gmail.com",
+    "email_scope": "unread_only",
+    "attachment_types": "pdf_attachments, image_attachments",
+    "drive_folder_strategy": "new_folder",
+    "sheet_destination_strategy": "existing_sheet",
+    "extraction_fields_profile": "standard (date, vendor, amount, currency, invoice/receipt #)",
+    "multi_attachment_handling": "separate_transactions",
+    "summary_email_includes": "all_transactions_table, over_50_section, drive_links, source_email_links, totals_summary",
+    "missing_amount_handling": "skip_and_note",
+    "amount_threshold_usd": "50",
+    "sheet_tab_name": "Expenses",
+    "google_sheet_id_candidate": "1pM8WbXtPgaYqokHn_spgQAfR7SBuql3JUtE1ugDtOpc"
+  },
+  "context": {
+    "hard_requirements": {
+      "requirements": [
+        {
+          "id": "R1",
+          "type": "unit_of_work",
+          "constraint": "unit_of_work=attachment",
+          "source": "data[1]"
+        },
+        {
+          "id": "R2",
+          "type": "threshold",
+          "constraint": "amount>50",
+          "source": "actions[2]"
+        },
+        {
+          "id": "R3",
+          "type": "empty_behavior",
+          "constraint": "empty_behavior=skip",
+          "source": "actions[1]"
+        },
+        {
+          "id": "R4",
+          "type": "invariant",
+          "constraint": "delivery AFTER processing (data availability)",
+          "source": "delivery[0]"
+        }
+      ],
+      "unit_of_work": "attachment",
+      "thresholds": [
+        {
+          "field": "amount",
+          "operator": "gt",
+          "value": "50",
+          "applies_to": [
+            "append_to_google_sheet"
+          ]
+        }
+      ],
+      "routing_rules": [],
+      "invariants": [
+        {
+          "type": "data_availability",
+          "description": "All data must be ready before sending summary email",
+          "check": "all(processing_steps).complete BEFORE delivery"
+        }
+      ],
+      "empty_behavior": "skip",
+      "required_outputs": [
+        "all_transactions_table",
+        "over_50_section",
+        "drive_links",
+        "source_email_info",
+        "totals_summary",
+        "note_section_for_skipped_attachments"
+      ],
+      "side_effect_constraints": [
+        {
+          "action": "append_to_google_sheet",
+          "allowed_when": "amount>50",
+          "forbidden_when": "NOT(amount>50)"
+        }
+      ]
+    }
+  }
+}

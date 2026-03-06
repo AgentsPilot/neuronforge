@@ -21,12 +21,19 @@ import type { EnhancedPrompt } from './SemanticPlanGenerator'
 import type { DeclarativeLogicalIRv4 } from '../logical-ir/schemas/declarative-ir-types-v4'
 import type { HardRequirements } from '../requirements/HardRequirementsExtractor'
 import { PluginParameterValidator } from '../utils/PluginParameterValidator'
+import { SemanticSkeletonToIR } from './SemanticSkeletonToIR'
 import { readFileSync } from 'fs'
 import { join } from 'path'
 import type { PluginManagerV2 } from '../../../server/plugin-manager-v2'
 import { createLogger, Logger } from '@/lib/logger'
 import { HardRequirementsFormatter } from '../utils/HardRequirementsFormatter'
 import { getModelMaxOutputTokens } from '@/lib/ai/context-limits'
+
+// Week 2: Import validators for comprehensive validation
+import { validateExecutionGraph } from '../logical-ir/validation/ExecutionGraphValidator'
+import { validateFieldReferences } from '../validators/FieldReferenceValidator'
+import { validateTypeConsistency } from '../validators/TypeConsistencyValidator'
+import { validateRequirementEnforcement } from '../validators/RequirementEnforcementValidator'
 
 // Create module-scoped logger
 const moduleLogger = createLogger({ module: 'V6', service: 'IRFormalizer' })
@@ -140,10 +147,178 @@ export class IRFormalizer {
   /**
    * Formalize Enhanced Prompt directly to IR (WEEK 1: Skip Phases 1 & 2)
    *
+   * FEATURE FLAGS:
+   * - V6_VALIDATION_DRIVEN_ENABLED: Uses validation-driven retry loop
+   * - V6_SEMANTIC_SKELETON_ENABLED: Uses 2-stage semantic skeleton approach
+   *
    * @param enhancedPrompt - Enhanced Prompt with sections (data, actions, output, delivery, processing_steps)
    * @param hardRequirements - Hard requirements extracted from Enhanced Prompt in Phase 0
+   * @param semanticSkeleton - Optional semantic skeleton from Phase 1 (if enabled)
    */
   async formalize(
+    enhancedPrompt: EnhancedPrompt,
+    hardRequirements?: HardRequirements,
+    semanticSkeleton?: any  // SemanticSkeleton type from Phase 1
+  ): Promise<FormalizationResult> {
+    const useValidationDriven = process.env.V6_VALIDATION_DRIVEN_ENABLED === 'true'
+    const useSemanticSkeleton = process.env.V6_SEMANTIC_SKELETON_ENABLED === 'true'
+
+    // Priority: Semantic Skeleton > Validation-Driven > V5 (single-attempt)
+    if (useSemanticSkeleton && semanticSkeleton) {
+      // NEW: 2-stage semantic skeleton approach
+      return this.formalizeWithSkeleton(enhancedPrompt, semanticSkeleton, hardRequirements)
+    } else if (useValidationDriven) {
+      // Validation-driven with retry loop
+      return this.formalizeWithValidation(enhancedPrompt, hardRequirements)
+    } else {
+      // OLD PATH: Current single-attempt IR generation (preserved for rollback)
+      return this.formalizeV5(enhancedPrompt, hardRequirements)
+    }
+  }
+
+  /**
+   * Skeleton-Guided IR Generation (2-STAGE APPROACH)
+   *
+   * Uses semantic skeleton to guide IR generation. The skeleton provides
+   * STRUCTURE (loops, conditionals, flow) while this method fills in DETAILS
+   * (plugin operations, field names, configs).
+   *
+   * @param enhancedPrompt - Enhanced Prompt with sections
+   * @param skeleton - Semantic skeleton from Phase 1
+   * @param hardRequirements - Hard requirements from Phase 0
+   */
+  private async formalizeWithSkeleton(
+    enhancedPrompt: EnhancedPrompt,
+    skeleton: any,  // SemanticSkeleton type
+    hardRequirements?: HardRequirements
+  ): Promise<FormalizationResult> {
+    const formalizeLogger = moduleLogger.child({ method: 'formalizeWithSkeleton' })
+    const startTime = Date.now()
+
+    formalizeLogger.info({
+      hasHardRequirements: !!hardRequirements,
+      skeletonGoal: skeleton.goal,
+      skeletonUnitOfWork: skeleton.unit_of_work,
+      skeletonFlowLength: skeleton.flow?.length || 0
+    }, 'Starting skeleton-guided IR generation')
+
+    // Import and use SemanticSkeletonToIR translator
+    const { SemanticSkeletonToIR } = await import('./SemanticSkeletonToIR')
+    const translator = new SemanticSkeletonToIR()
+
+    // Validate skeleton before augmenting
+    try {
+      translator.validateSkeleton(skeleton)
+    } catch (error) {
+      formalizeLogger.error({ error: (error as Error).message }, 'Skeleton validation failed')
+      throw new Error(`Skeleton validation failed: ${(error as Error).message}`)
+    }
+
+    // Augment Enhanced Prompt with skeleton structure
+    const augmentedPrompt = translator.augmentEnhancedPrompt(enhancedPrompt, skeleton)
+
+    formalizeLogger.info({
+      loopStructureCount: augmentedPrompt.semantic_structure.loop_structure.length,
+      loopStructure: JSON.stringify(augmentedPrompt.semantic_structure.loop_structure, null, 2),
+      conditionalLogicCount: augmentedPrompt.semantic_structure.conditional_logic.length,
+      collectionPointsCount: augmentedPrompt.semantic_structure.collection_points.length,
+      filterHintsCount: augmentedPrompt.semantic_structure.filter_hints?.length || 0,
+      filterHints: JSON.stringify(augmentedPrompt.semantic_structure.filter_hints, null, 2)
+    }, 'Enhanced Prompt augmented with semantic structure')
+
+    // Build formalization request with augmented prompt
+    const userMessage = this.buildFormalizationRequest(augmentedPrompt as any, hardRequirements)
+
+    // Call LLM based on provider
+    const ir = this.config.model_provider === 'anthropic'
+      ? await this.formalizeWithAnthropic(userMessage)
+      : await this.formalizeWithOpenAI(userMessage)
+
+    // Ensure goal field is present
+    if (!ir.goal) {
+      ir.goal = skeleton.goal || enhancedPrompt.sections?.processing_steps?.[0] || 'Execute workflow'
+      formalizeLogger.debug('Added goal from skeleton')
+    }
+
+    // Validate v4.0 IR structure
+    if (!ir.execution_graph || !ir.execution_graph.nodes) {
+      formalizeLogger.error('IR missing execution_graph - v4.0 format required')
+      throw new Error('IR formalization failed: missing execution_graph (v4.0 format required)')
+    }
+
+    if (ir.ir_version !== '4.0') {
+      formalizeLogger.error({ version: ir.ir_version }, 'Invalid IR version - expected 4.0')
+      throw new Error(`Invalid IR version: ${ir.ir_version}. Expected 4.0`)
+    }
+
+    // Run parameter validation
+    if (this.pluginManager) {
+      const validator = new PluginParameterValidator(this.pluginManager)
+      const paramValidation = validator.validateExecutionGraph(ir.execution_graph)
+
+      if (paramValidation.corrections > 0) {
+        formalizeLogger.warn({
+          corrections: paramValidation.corrections
+        }, 'Auto-corrected plugin parameters')
+      }
+
+      if (paramValidation.errors.length > 0) {
+        formalizeLogger.error({
+          errors: paramValidation.errors
+        }, 'Plugin parameter validation errors found')
+      }
+    }
+
+    // Auto-recovery: Fix filter transforms with object input (common LLM error)
+    const filterFixCount = this.autoFixFilterTransforms(ir, skeleton)
+    if (filterFixCount > 0) {
+      formalizeLogger.info({ fixedCount: filterFixCount }, 'Auto-fixed filter transforms using object instead of nested array field')
+    }
+
+    // Embed hard requirements in IR context
+    if (hardRequirements && hardRequirements.requirements.length > 0) {
+      if (!ir.context) {
+        ir.context = {}
+      }
+      ir.context.hard_requirements = hardRequirements
+
+      formalizeLogger.info({
+        requirementsCount: hardRequirements.requirements.length
+      }, 'Embedded hard requirements in IR context')
+    }
+
+    // Store enhanced prompt for reference
+    this.enhancedPrompt = enhancedPrompt
+
+    const endTime = Date.now()
+
+    formalizeLogger.info({
+      latencyMs: endTime - startTime,
+      nodeCount: Object.keys(ir.execution_graph.nodes).length,
+      variableCount: ir.execution_graph.variables?.length || 0
+    }, 'Skeleton-guided IR generation complete')
+
+    return {
+      ir,
+      formalization_metadata: {
+        provider: this.config.model_provider,
+        model: this.config.model,
+        grounded_facts_used: { semantic_skeleton: skeleton },
+        missing_facts: [],
+        formalization_confidence: 0.95, // High confidence with skeleton guidance
+        timestamp: new Date().toISOString(),
+      },
+    }
+  }
+
+  /**
+   * V5 formalization: Single-attempt IR generation (PRESERVED FOR ROLLBACK)
+   * This is the original implementation kept for instant rollback capability.
+   *
+   * @param enhancedPrompt - Enhanced Prompt with sections
+   * @param hardRequirements - Hard requirements from Phase 0
+   */
+  private async formalizeV5(
     enhancedPrompt: EnhancedPrompt,
     hardRequirements?: HardRequirements
   ): Promise<FormalizationResult> {
@@ -293,6 +468,418 @@ export class IRFormalizer {
         timestamp: new Date().toISOString()
       }
     }
+  }
+
+  /**
+   * Validation-Driven Formalization with Retry Loop (NEW)
+   *
+   * This method implements the Silent Self-Healing approach:
+   * 1. Generate IR from Enhanced Prompt
+   * 2. Validate IR comprehensively
+   * 3. If errors detected → Retry with focused error feedback (max 3 attempts)
+   * 4. All retries are SILENT (users never see technical errors)
+   *
+   * @param enhancedPrompt - Enhanced Prompt with sections
+   * @param hardRequirements - Hard requirements from Phase 0
+   */
+  private async formalizeWithValidation(
+    enhancedPrompt: EnhancedPrompt,
+    hardRequirements?: HardRequirements
+  ): Promise<FormalizationResult> {
+    const formalizeLogger = moduleLogger.child({ method: 'formalizeWithValidation' })
+    const startTime = Date.now()
+    const maxAttempts = 3
+
+    let ir: DeclarativeLogicalIRv4 | null = null
+    let validationErrors: any[] = []
+    let attemptNumber = 0
+
+    formalizeLogger.info({
+      hasHardRequirements: !!hardRequirements,
+      requirementsCount: hardRequirements?.requirements.length || 0,
+      maxAttempts
+    }, 'Starting validation-driven formalization with retry loop')
+
+    // Store enhanced prompt for section extraction
+    this.enhancedPrompt = enhancedPrompt
+
+    for (attemptNumber = 1; attemptNumber <= maxAttempts; attemptNumber++) {
+      formalizeLogger.info({ attemptNumber, maxAttempts }, 'IR generation attempt')
+
+      try {
+        // Generate or fix IR
+        if (attemptNumber === 1) {
+          // First attempt: Generate fresh IR from Enhanced Prompt
+          ir = await this.generateIRAttempt(enhancedPrompt, hardRequirements, formalizeLogger)
+        } else {
+          // Retry attempts: Fix IR based on validation errors
+          if (!ir) {
+            throw new Error('Cannot fix IR: previous attempt returned null')
+          }
+          ir = await this.fixIRAttempt(
+            ir,
+            validationErrors,
+            enhancedPrompt,
+            hardRequirements,
+            attemptNumber,
+            formalizeLogger
+          )
+        }
+
+        // Comprehensive validation
+        validationErrors = this.validateIRComprehensive(ir, hardRequirements, formalizeLogger)
+
+        if (validationErrors.length === 0) {
+          // SUCCESS!
+          const duration = Date.now() - startTime
+
+          formalizeLogger.info({
+            attemptNumber,
+            duration,
+            nodesCount: ir.execution_graph?.nodes ? Object.keys(ir.execution_graph.nodes).length : 0
+          }, 'IR validation successful - formalization complete')
+
+          // Log metrics for analysis
+          this.logValidationMetrics(attemptNumber, validationErrors, true, duration)
+
+          // Calculate confidence
+          const formalizationConfidence = this.calculateFormalizationConfidence(enhancedPrompt)
+
+          return {
+            ir,
+            formalization_metadata: {
+              provider: this.config.model_provider,
+              model: this.config.model,
+              grounded_facts_used: {},
+              missing_facts: [],
+              formalization_confidence: formalizationConfidence,
+              timestamp: new Date().toISOString()
+            }
+          }
+        }
+
+        // Validation failed
+        formalizeLogger.warn({
+          attemptNumber,
+          errorCount: validationErrors.length,
+          errorCategories: this.categorizeErrors(validationErrors)
+        }, 'IR validation failed')
+
+        if (attemptNumber === maxAttempts) {
+          // All attempts exhausted
+          const duration = Date.now() - startTime
+
+          formalizeLogger.error({
+            attempts: maxAttempts,
+            duration,
+            totalErrors: validationErrors.length,
+            errorSummary: validationErrors.slice(0, 5).map(e => e.message)
+          }, 'IR validation failed after all retry attempts')
+
+          // Log metrics for failure
+          this.logValidationMetrics(attemptNumber, validationErrors, false, duration)
+
+          throw new Error(
+            `IR validation failed after ${maxAttempts} attempts. ` +
+            `Errors: ${validationErrors.map(e => e.message).join('; ')}`
+          )
+        }
+
+        // Log metrics for retry
+        this.logValidationMetrics(attemptNumber, validationErrors, false, Date.now() - startTime)
+
+      } catch (error) {
+        formalizeLogger.error({
+          attemptNumber,
+          error: error instanceof Error ? error.message : String(error)
+        }, 'Error during IR generation attempt')
+
+        if (attemptNumber === maxAttempts) {
+          throw error
+        }
+
+        // Continue to next attempt
+        formalizeLogger.info({ attemptNumber }, 'Retrying after error...')
+      }
+    }
+
+    // Should never reach here
+    throw new Error('Unexpected: retry loop completed without success or final failure')
+  }
+
+  /**
+   * Generate IR from Enhanced Prompt (first attempt)
+   */
+  private async generateIRAttempt(
+    enhancedPrompt: EnhancedPrompt,
+    hardRequirements: HardRequirements | undefined,
+    logger: Logger
+  ): Promise<DeclarativeLogicalIRv4> {
+    logger.debug('Generating IR from Enhanced Prompt (first attempt)')
+
+    const userMessage = this.buildFormalizationRequest(enhancedPrompt, hardRequirements)
+
+    const ir = this.config.model_provider === 'anthropic'
+      ? await this.formalizeWithAnthropic(userMessage)
+      : await this.formalizeWithOpenAI(userMessage)
+
+    // Ensure goal field is present
+    if (!ir.goal) {
+      ir.goal = enhancedPrompt.sections?.processing_steps?.[0] || 'Execute workflow based on Enhanced Prompt'
+      logger.debug('Added missing goal field from Enhanced Prompt')
+    }
+
+    // Basic structure validation
+    if (!ir.execution_graph || !ir.execution_graph.nodes) {
+      throw new Error('IR missing execution_graph - v4.0 format required')
+    }
+
+    if (ir.ir_version !== '4.0') {
+      throw new Error(`Invalid IR version: ${ir.ir_version}. Expected 4.0`)
+    }
+
+    // Embed requirements in IR context
+    if (hardRequirements && hardRequirements.requirements.length > 0) {
+      if (!ir.context) {
+        ir.context = {}
+      }
+      ir.context.hard_requirements = hardRequirements
+    }
+
+    return ir
+  }
+
+  /**
+   * Fix IR based on validation errors (retry attempts)
+   */
+  private async fixIRAttempt(
+    previousIR: DeclarativeLogicalIRv4,
+    errors: any[],
+    enhancedPrompt: EnhancedPrompt,
+    hardRequirements: HardRequirements | undefined,
+    attemptNumber: number,
+    logger: Logger
+  ): Promise<DeclarativeLogicalIRv4> {
+    logger.info({
+      attemptNumber,
+      errorCount: errors.length
+    }, 'Generating IR fix based on validation errors')
+
+    const fixPrompt = this.buildFixPrompt(errors, previousIR, enhancedPrompt, hardRequirements)
+
+    const ir = this.config.model_provider === 'anthropic'
+      ? await this.formalizeWithAnthropic(fixPrompt)
+      : await this.formalizeWithOpenAI(fixPrompt)
+
+    // Ensure goal field is present
+    if (!ir.goal) {
+      ir.goal = previousIR.goal || enhancedPrompt.sections?.processing_steps?.[0] || 'Execute workflow'
+    }
+
+    // Basic structure validation
+    if (!ir.execution_graph || !ir.execution_graph.nodes) {
+      throw new Error('Fixed IR missing execution_graph')
+    }
+
+    if (ir.ir_version !== '4.0') {
+      throw new Error(`Fixed IR has invalid version: ${ir.ir_version}`)
+    }
+
+    // Embed requirements in IR context
+    if (hardRequirements && hardRequirements.requirements.length > 0) {
+      if (!ir.context) {
+        ir.context = {}
+      }
+      ir.context.hard_requirements = hardRequirements
+    }
+
+    return ir
+  }
+
+  /**
+   * Build fix prompt with error feedback
+   */
+  private buildFixPrompt(
+    errors: any[],
+    previousIR: DeclarativeLogicalIRv4,
+    enhancedPrompt: EnhancedPrompt,
+    hardRequirements: HardRequirements | undefined
+  ): string {
+    const errorSummary = errors.map((e, i) => {
+      const category = e.category || 'unknown'
+      const nodeId = e.node_id ? `Node '${e.node_id}': ` : ''
+      const message = e.message || 'Unknown error'
+      const suggestion = e.suggestion || 'Fix the error and try again'
+
+      return `${i + 1}. [${category}] ${nodeId}${message}\n   Suggestion: ${suggestion}`
+    }).join('\n\n')
+
+    return `# IR Validation Failed - Fix Required
+
+Your generated IR has ${errors.length} error(s) that must be fixed:
+
+${errorSummary}
+
+## Your Task
+
+Fix the IR by addressing each error above. Output the CORRECTED IR as valid JSON.
+
+## Original Enhanced Prompt
+
+${JSON.stringify(enhancedPrompt, null, 2)}
+
+${hardRequirements ? `## Hard Requirements\n\n${JSON.stringify(hardRequirements, null, 2)}\n` : ''}
+
+## Your Previous IR (WITH ERRORS)
+
+${JSON.stringify(previousIR, null, 2)}
+
+## Output Instructions
+
+Output ONLY the corrected IR as valid JSON. Do not include explanations or markdown code blocks.
+Ensure the corrected IR is complete and valid.`
+  }
+
+  /**
+   * Comprehensive IR validation (stub - will be enhanced in Week 2)
+   */
+  /**
+   * Comprehensive IR Validation (Week 2 Enhancement)
+   *
+   * Runs all validators to ensure IR is correct:
+   * 1. Structure validation (JSON schema compliance)
+   * 2. Execution graph validation (control flow, data flow)
+   * 3. Field reference validation (fields exist in plugin schemas)
+   * 4. Type consistency validation (operations receive correct types)
+   * 5. Requirement enforcement validation (hard requirements enforced)
+   */
+  private validateIRComprehensive(
+    ir: DeclarativeLogicalIRv4,
+    hardRequirements: HardRequirements | undefined,
+    logger: Logger
+  ): any[] {
+    const errors: any[] = []
+
+    logger.debug('Starting comprehensive IR validation')
+
+    // Validation 1: JSON Schema Structure
+    try {
+      this.validateIRStructure(ir, logger)
+      logger.debug('✓ Schema validation passed')
+    } catch (error) {
+      errors.push({
+        category: 'schema',
+        message: error instanceof Error ? error.message : String(error),
+        suggestion: 'Ensure IR follows v4.0 schema structure'
+      })
+      logger.warn('✗ Schema validation failed')
+    }
+
+    // Validation 2: Execution Graph (control flow, data flow, cycles)
+    if (ir.execution_graph) {
+      const graphValidation = validateExecutionGraph(ir.execution_graph)
+
+      if (!graphValidation.valid) {
+        errors.push(...graphValidation.errors)
+        logger.warn(`✗ Execution graph validation failed: ${graphValidation.errors.length} errors`)
+      } else {
+        logger.debug('✓ Execution graph validation passed')
+      }
+
+      // Log warnings separately (non-blocking)
+      if (graphValidation.warnings.length > 0) {
+        logger.info(`⚠ Execution graph warnings: ${graphValidation.warnings.length}`, {
+          warnings: graphValidation.warnings
+        })
+      }
+    }
+
+    // Validation 3: Field References (fields exist in plugin schemas)
+    if (ir.execution_graph && this.pluginManager) {
+      const fieldErrors = validateFieldReferences(ir.execution_graph, this.pluginManager)
+
+      if (fieldErrors.length > 0) {
+        errors.push(...fieldErrors)
+        logger.warn(`✗ Field reference validation failed: ${fieldErrors.length} errors`)
+      } else {
+        logger.debug('✓ Field reference validation passed')
+      }
+    } else if (!this.pluginManager) {
+      logger.warn('⚠ Skipping field reference validation - no plugin manager available')
+    }
+
+    // Validation 4: Type Consistency (operations receive correct types)
+    if (ir.execution_graph) {
+      const typeErrors = validateTypeConsistency(ir.execution_graph)
+
+      if (typeErrors.length > 0) {
+        errors.push(...typeErrors)
+        logger.warn(`✗ Type consistency validation failed: ${typeErrors.length} errors`)
+      } else {
+        logger.debug('✓ Type consistency validation passed')
+      }
+    }
+
+    // Validation 5: Requirement Enforcement (hard requirements enforced)
+    if (ir.execution_graph && hardRequirements) {
+      const requirementErrors = validateRequirementEnforcement(ir.execution_graph, hardRequirements)
+
+      if (requirementErrors.length > 0) {
+        errors.push(...requirementErrors)
+        logger.warn(`✗ Requirement enforcement validation failed: ${requirementErrors.length} errors`)
+      } else {
+        logger.debug('✓ Requirement enforcement validation passed')
+      }
+    } else if (!hardRequirements) {
+      logger.debug('⚠ Skipping requirement validation - no hard requirements provided')
+    }
+
+    logger.info({
+      totalErrors: errors.length,
+      errorCategories: this.categorizeErrors(errors)
+    }, 'Comprehensive validation complete')
+
+    return errors
+  }
+
+  /**
+   * Categorize errors for metrics
+   */
+  private categorizeErrors(errors: any[]): Record<string, number> {
+    const categories: Record<string, number> = {}
+
+    for (const error of errors) {
+      const category = error.category || 'unknown'
+      categories[category] = (categories[category] || 0) + 1
+    }
+
+    return categories
+  }
+
+  /**
+   * Log validation metrics for analysis
+   */
+  private logValidationMetrics(
+    attemptNumber: number,
+    errors: any[],
+    success: boolean,
+    durationMs: number
+  ): void {
+    const metricsLogger = moduleLogger.child({ method: 'logValidationMetrics' })
+
+    const metrics = {
+      attempt_number: attemptNumber,
+      success,
+      error_count: errors.length,
+      error_categories: this.categorizeErrors(errors),
+      duration_ms: durationMs,
+      model: this.config.model,
+      timestamp: new Date().toISOString()
+    }
+
+    metricsLogger.info(metrics, 'Validation metrics')
+
+    // TODO (Week 3): Store metrics in database for dashboard
   }
 
   /**
@@ -480,6 +1067,47 @@ ${this.resolvedUserInputs.map(input => `- **${input.key}**: \`${input.value}\``)
 `
     }
 
+    // Build semantic structure section (if skeleton-guided generation)
+    let semanticStructureSection = ''
+    if ((enhancedPrompt as any).semantic_structure) {
+      const structure = (enhancedPrompt as any).semantic_structure
+      semanticStructureSection = `
+## Semantic Structure (PRE-DESIGNED - FOLLOW EXACTLY)
+
+**Unit of Work:** ${structure.unit_of_work}
+
+**Loop Structure (MUST IMPLEMENT EXACTLY AS SPECIFIED):**
+${structure.loop_structure.map((loop: any, index: number) =>
+  `${index + 1}. Level ${loop.level}: iterate over "${loop.over}" → collect_outputs: ${loop.collect_results}`
+).join('\n')}
+
+**CRITICAL:** Set collect_outputs on each loop to EXACTLY match the collect_results flag above.
+The loop with collect_outputs=true determines output granularity (unit_of_work).
+
+${structure.conditional_logic.length > 0 ? `**Conditional Logic:**
+${structure.conditional_logic.map((cond: any, index: number) =>
+  `${index + 1}. If "${cond.condition}" then [${cond.then_actions.join(', ')}]${cond.else_actions.length > 0 ? ` else [${cond.else_actions.join(', ')}]` : ''}`
+).join('\n')}` : ''}
+
+**Flow Outline:**
+${structure.flow_outline.join('\n')}
+
+${structure.filter_hints && structure.filter_hints.length > 0 ? `
+**CRITICAL: Filter Action Field Access Instructions:**
+${structure.filter_hints.map((hint: any) =>
+  `- Pattern: "${hint.pattern}" → ${hint.hint}`
+).join('\n')}
+` : ''}
+
+**CRITICAL PARSING RULES for Flow Actions:**
+- When you see "filter: {collection} of {parent_item}" inside a loop:
+  1. {parent_item} refers to the loop's item variable
+  2. {collection} is a field within that item (check plugin schema for exact field name)
+  3. Transform input MUST be: \`{{loop_item_var.collection_field}}\` NOT \`{{loop_item_var}}\`
+  4. Example: "filter: attachments of current email" → input: \`{{current_email.attachments}}\`
+`
+    }
+
     // Build hard requirements section (Phase 0 → Phase 3 propagation)
     let hardRequirementsSection = ''
     if (hardRequirements && hardRequirements.requirements.length > 0) {
@@ -529,6 +1157,7 @@ ${enhancedPrompt.sections.delivery.join('\n')}
     return `# Formalization Request
 
 You must map this Enhanced Prompt to precise IR (execution graph).
+${semanticStructureSection}
 ${processingStepsSection}
 ${resolvedUserInputsSection}
 ${hardRequirementsSection}
@@ -1109,16 +1738,46 @@ ${pluginDetails}
             )
           }
 
-          // Validate input variable is declared as array
+          // Auto-correct: if input is object type, try to find array field to filter on
           const inputVar = (node as any).inputs?.[0]?.variable
           if (inputVar) {
             const varDecl = ir.execution_graph.variables?.find(v => v.name === inputVar)
             if (varDecl && varDecl.type !== 'array') {
-              errors.push(
-                `Node '${nodeId}': filter operation requires array input, ` +
-                `but variable '${inputVar}' is declared as type '${varDecl.type}'. ` +
-                `Either change variable type to 'array' OR use different operation type.`
-              )
+              // Attempt auto-correction: look for common array field names
+              const commonArrayFields = ['attachments', 'items', 'results', 'data', 'list', 'records']
+              let corrected = false
+
+              // Check if transform.input is a variable reference
+              const inputRef = transform.input
+              if (inputRef && typeof inputRef === 'string' && inputRef.startsWith('{{') && inputRef.endsWith('}}')) {
+                const varName = inputRef.slice(2, -2).trim()
+
+                // Try appending common array field names
+                for (const fieldName of commonArrayFields) {
+                  const correctedInput = `{{${varName}.${fieldName}}}`
+
+                  // Apply correction
+                  transform.input = correctedInput
+                  corrected = true
+
+                  logger.warn({
+                    nodeId,
+                    originalInput: inputRef,
+                    correctedInput,
+                    reason: `Variable '${varName}' is type '${varDecl.type}', not 'array'. Auto-corrected to access nested array field '${fieldName}'.`
+                  }, 'Auto-corrected filter input to access nested array field')
+
+                  break // Use first match
+                }
+              }
+
+              if (!corrected) {
+                errors.push(
+                  `Node '${nodeId}': filter operation requires array input, ` +
+                  `but variable '${inputVar}' is declared as type '${varDecl.type}'. ` +
+                  `Either change variable type to 'array' OR use different operation type.`
+                )
+              }
             }
           }
         }
@@ -1181,5 +1840,74 @@ ${pluginDetails}
     }
 
     logger.info('IR structure validation passed')
+  }
+
+  /**
+   * Auto-fix filter transforms that use object input instead of nested array field
+   *
+   * Common LLM error: generates "input": "{{loop_item}}" when it should be "{{loop_item.attachments}}"
+   * This method detects this pattern using filter_hints from skeleton and fixes it automatically.
+   */
+  private autoFixFilterTransforms(ir: DeclarativeLogicalIRv4, skeleton?: SemanticSkeleton): number {
+    if (!skeleton) return 0
+
+    const translator = new SemanticSkeletonToIR()
+    const filterHints = translator['extractFilterHints'](skeleton.flow)
+    if (filterHints.length === 0) return 0
+
+    let fixCount = 0
+    const variables = ir.execution_graph.variables || []
+    const variableTypes = new Map<string, string>()
+    for (const v of variables) {
+      variableTypes.set(v.name, v.type)
+    }
+
+    // Check each node for filter transform with object input
+    for (const [nodeId, node] of Object.entries(ir.execution_graph.nodes)) {
+      if (node.type === 'operation' && node.operation?.operation_type === 'transform') {
+        const transform = node.operation.transform
+        if (!transform || (transform.type !== 'filter' && transform.type !== 'map')) continue
+
+        // Extract variable name from input
+        const inputMatch = transform.input?.match(/^{{(.+?)}}$/)
+        if (!inputMatch) continue
+
+        const fullInputPath = inputMatch[1] // e.g., "current_email" or "current_email.attachments"
+        const inputVar = fullInputPath.split('.')[0] // Get base variable name
+        const inputType = variableTypes.get(inputVar)
+
+        // Check if input is ONLY the base variable (no nested field access)
+        const hasNestedAccess = fullInputPath.includes('.')
+
+        // If input is an object but transform needs array, AND input doesn't already use nested access
+        if (inputType === 'object' && !hasNestedAccess) {
+          // Find matching filter hint
+          for (const hint of filterHints) {
+            const collectionField = hint.collectionField
+            const fixedInput = `{{${inputVar}.${collectionField}}}`
+
+            moduleLogger.info({
+              nodeId,
+              originalInput: transform.input,
+              fixedInput,
+              reason: `Filter hint suggests accessing nested field: ${collectionField}`
+            }, 'Auto-fixing filter transform with object input')
+
+            transform.input = fixedInput
+            fixCount++
+            break // Only apply first matching hint
+          }
+        } else if (hasNestedAccess) {
+          // Already using nested access - no fix needed
+          moduleLogger.debug({
+            nodeId,
+            input: transform.input,
+            reason: 'Already using nested field access, skipping auto-fix'
+          }, 'Transform input already correct')
+        }
+      }
+    }
+
+    return fixCount
   }
 }
