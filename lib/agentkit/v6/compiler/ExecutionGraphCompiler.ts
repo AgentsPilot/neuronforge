@@ -32,6 +32,7 @@ import type {
   SimpleCondition,
   ComplexCondition
 } from '../logical-ir/schemas/declarative-ir-types-v4'
+import type { SchemaField, WorkflowDataSchema } from '../logical-ir/schemas/workflow-data-schema'
 import type { HardRequirements } from '../requirements/HardRequirementsExtractor'
 import type { WorkflowStep, Condition } from '@/lib/pilot/types/pilot-dsl-types'
 import { validateExecutionGraph, type ValidationResult } from '../logical-ir/validation/ExecutionGraphValidator'
@@ -61,7 +62,6 @@ interface CompilerContext {
   logs: string[]
   warnings: string[]
   pluginsUsed: Set<string>
-  variableMap: Map<string, any> // Track variable values/types
   currentScope: 'global' | 'loop' | 'branch'
   loopDepth: number
   hardRequirements?: HardRequirements // Hard requirements to enforce during compilation
@@ -96,7 +96,6 @@ export class ExecutionGraphCompiler {
       logs: [],
       warnings: [],
       pluginsUsed: new Set(),
-      variableMap: new Map(),
       currentScope: 'global',
       loopDepth: 0,
       hardRequirements,
@@ -151,12 +150,14 @@ export class ExecutionGraphCompiler {
         }
       }
 
-      // Phase 2: Initialize variable map from declarations
-      this.log(ctx, 'Phase 2: Initializing variable declarations')
-      this.initializeVariables(graph, ctx)
+      // Phase 1.5: Validate data_schema (if present)
+      if (graph.data_schema) {
+        this.log(ctx, 'Phase 1.5: Validating data_schema')
+        this.validateDataSchemaInCompiler(graph, ctx)
+      }
 
-      // Phase 3: Traverse graph and compile nodes
-      this.log(ctx, 'Phase 3: Compiling execution graph to workflow steps')
+      // Phase 2: Traverse graph and compile nodes
+      this.log(ctx, 'Phase 2: Compiling execution graph to workflow steps')
       let workflow = await this.compileGraph(graph, ctx)
 
       // Phase 3.5: Normalize data formats (auto-insert rows_to_objects for 2D arrays)
@@ -208,22 +209,6 @@ export class ExecutionGraphCompiler {
         logs: ctx.logs,
         errors: [errorMessage]
       }
-    }
-  }
-
-  /**
-   * Initialize variable map from graph variable declarations
-   */
-  private initializeVariables(graph: ExecutionGraph, ctx: CompilerContext) {
-    if (!graph.variables) return
-
-    for (const variable of graph.variables) {
-      ctx.variableMap.set(variable.name, {
-        type: variable.type,
-        scope: variable.scope,
-        default_value: variable.default_value
-      })
-      this.log(ctx, `Declared variable: ${variable.name} (${variable.type}, ${variable.scope})`)
     }
   }
 
@@ -363,6 +348,9 @@ export class ExecutionGraphCompiler {
       }
     }
 
+    // Attach output_schema and input_schema from data_schema slots (if available)
+    this.attachSlotSchemas(workflowStep, node, graph)
+
     steps.push(workflowStep)
     this.log(ctx, `  → Generated step: ${stepId} (${workflowStep.type})`)
   }
@@ -474,14 +462,14 @@ export class ExecutionGraphCompiler {
     const node = graph.nodes[nodeId]
     const inputVar = node.inputs?.[0]?.variable
     if (inputVar && ['map', 'filter', 'reduce'].includes(pilotOperation)) {
-      const varDecl = graph.variables?.find(v => v.name === inputVar)
-      if (varDecl && varDecl.type !== 'array') {
+      const slotSchema = graph.data_schema?.slots?.[inputVar]?.schema
+      if (slotSchema && slotSchema.type !== 'array') {
         throw new Error(
           `Transform node '${nodeId}' uses operation '${pilotOperation}' which requires array input, ` +
-          `but variable '${inputVar}' is declared as type '${varDecl.type}'. ` +
-          `This is an IR generation error - the variable type or operation type must be fixed in the IR. ` +
-          `Options: (1) Change variable '${inputVar}' type to 'array' if it holds array data, ` +
-          `OR (2) Change transform operation from '${pilotOperation}' to appropriate operation for ${varDecl.type} data.`
+          `but slot '${inputVar}' is declared as type '${slotSchema.type}'. ` +
+          `This is an IR generation error - the slot type or operation type must be fixed in the IR. ` +
+          `Options: (1) Change slot '${inputVar}' schema type to 'array' if it holds array data, ` +
+          `OR (2) Change transform operation from '${pilotOperation}' to appropriate operation for ${slotSchema.type} data.`
         )
       }
     }
@@ -2143,6 +2131,21 @@ export class ExecutionGraphCompiler {
 
           this.log(ctx, `  → Auto-inserted rows_to_objects for ${step.plugin}.${step.operation} (${step.output_variable}.${detection.arrayFieldName} → ${normalizedVarName})`)
 
+          // Register the new variable as an inferred slot in data_schema (Task 7.6)
+          const dataSchema = ctx.ir?.execution_graph?.data_schema
+          if (dataSchema) {
+            dataSchema.slots[normalizedVarName] = {
+              schema: {
+                type: 'array',
+                items: { type: 'object', properties: {} },
+                source: 'inferred'
+              },
+              scope: 'global',
+              produced_by: convertStepId
+            }
+            this.log(ctx, `  → Registered inferred data_schema slot: ${normalizedVarName}`)
+          }
+
           // Update all subsequent references to use the normalized variable
           for (let j = i + 1; j < workflow.length; j++) {
             this.updateVariableReferences(workflow[j], step.output_variable, normalizedVarName, detection.arrayFieldName)
@@ -2721,11 +2724,11 @@ export class ExecutionGraphCompiler {
       // Check if input is scalar (not array)
       const inputVar = inputBindings[0]?.variable
       if (inputVar) {
-        const varDecl = graph.variables?.find(v => v.name === inputVar)
-        if (varDecl && varDecl.type !== 'array') {
+        const slotSchema = graph.data_schema?.slots?.[inputVar]?.schema
+        if (slotSchema && slotSchema.type !== 'array') {
           return {
             isUnnecessary: true,
-            reason: `${transform.type} operation requires array input, but '${inputVar}' is ${varDecl.type}`,
+            reason: `${transform.type} operation requires array input, but '${inputVar}' is ${slotSchema.type}`,
             suggestion: `Remove this transform step and use direct variable interpolation in downstream nodes`,
             canInline: true
           }
@@ -2771,6 +2774,279 @@ export class ExecutionGraphCompiler {
   /**
    * Logging helpers
    */
+  // ============================================================================
+  // Data Schema — schema attachment and validation (Phase 3)
+  // ============================================================================
+
+  /**
+   * Attach output_schema and input_schema from data_schema slots to a compiled step.
+   * (Task 3.3)
+   */
+  private attachSlotSchemas(step: WorkflowStep, node: ExecutionNode, graph: ExecutionGraph): void {
+    const dataSchema = graph.data_schema
+    if (!dataSchema) return
+
+    // Attach output_schema from the slot this node writes to
+    if (node.outputs && node.outputs.length > 0) {
+      const outputVar = node.outputs[0].variable.split('.')[0]
+      const outputSlot = dataSchema.slots[outputVar]
+      if (outputSlot) {
+        step.output_schema = outputSlot.schema
+      }
+    }
+
+    // Attach input_schema from the slot this node reads from
+    if (node.inputs && node.inputs.length > 0) {
+      const inputVar = node.inputs[0].variable.split('.')[0]
+      const inputSlot = dataSchema.slots[inputVar]
+      if (inputSlot) {
+        step.input_schema = inputSlot.schema
+      }
+    }
+  }
+
+  /**
+   * Validate data_schema slots against plugin output_schemas.
+   * Called during compilation when data_schema is present.
+   * (Task 3.2)
+   */
+  private validateSchemaAgainstPlugins(graph: ExecutionGraph, ctx: CompilerContext): void {
+    const dataSchema = graph.data_schema
+    if (!dataSchema || !this.pluginManager) return
+
+    let plugins: Record<string, any>
+    try {
+      plugins = this.pluginManager.getAvailablePlugins()
+    } catch {
+      return
+    }
+
+    for (const [nodeId, node] of Object.entries(graph.nodes)) {
+      if (node.type !== 'operation' || !node.operation) continue
+
+      const op = node.operation
+      let pluginKey: string | undefined
+      let actionName: string | undefined
+
+      if (op.operation_type === 'fetch' && op.fetch) {
+        pluginKey = op.fetch.plugin_key
+        actionName = op.fetch.action
+      } else if (op.operation_type === 'deliver' && op.deliver) {
+        pluginKey = op.deliver.plugin_key
+        actionName = op.deliver.action
+      } else if (op.operation_type === 'file_op' && op.file_op) {
+        pluginKey = op.file_op.plugin_key
+        actionName = op.file_op.action
+      }
+
+      if (!pluginKey || !actionName) continue
+
+      // Get plugin output_schema
+      const pluginDef = plugins[pluginKey]
+      if (!pluginDef?.actions?.[actionName]?.output_schema) continue
+
+      const pluginOutputSchema = pluginDef.actions[actionName].output_schema
+
+      // Find the declared slot for this node's output
+      if (!node.outputs || node.outputs.length === 0) continue
+      const outputVar = node.outputs[0].variable.split('.')[0]
+      const declaredSlot = dataSchema.slots[outputVar]
+      if (!declaredSlot) continue
+
+      // Cross-validate: check declared slot fields exist in plugin schema
+      if (declaredSlot.schema.properties && pluginOutputSchema.properties) {
+        for (const fieldName of Object.keys(declaredSlot.schema.properties)) {
+          if (!(fieldName in pluginOutputSchema.properties)) {
+            this.warn(ctx,
+              `Schema mismatch: slot "${outputVar}" declares field "${fieldName}" ` +
+              `but plugin ${pluginKey}.${actionName} output_schema does not have this field. ` +
+              `Available: [${Object.keys(pluginOutputSchema.properties).join(', ')}]`)
+          }
+        }
+      }
+    }
+  }
+
+  /**
+   * Validate shape-preserving transforms: output schema should match input schema type.
+   * (Task 3.4)
+   */
+  private validateShapePreservingTransform(
+    nodeId: string,
+    node: ExecutionNode,
+    graph: ExecutionGraph,
+    ctx: CompilerContext
+  ): void {
+    const dataSchema = graph.data_schema
+    if (!dataSchema || !node.operation?.transform) return
+
+    const transformType = node.operation.transform.type
+    const shapePreserving = ['filter', 'sort', 'deduplicate']
+    if (!shapePreserving.includes(transformType)) return
+
+    // Get input and output slot schemas
+    const inputVar = node.inputs?.[0]?.variable?.split('.')[0]
+    const outputVar = node.outputs?.[0]?.variable?.split('.')[0]
+    if (!inputVar || !outputVar) return
+
+    const inputSlot = dataSchema.slots[inputVar]
+    const outputSlot = dataSchema.slots[outputVar]
+    if (!inputSlot || !outputSlot) return
+
+    if (inputSlot.schema.type !== outputSlot.schema.type) {
+      this.warn(ctx,
+        `Shape-preserving transform "${nodeId}" (${transformType}): ` +
+        `input type "${inputSlot.schema.type}" doesn't match output type "${outputSlot.schema.type}". ` +
+        `Filter/sort/deduplicate should preserve the input shape.`)
+    }
+  }
+
+  /**
+   * Validate loop node: item schema matches parent array's items, gather output is array.
+   * (Task 3.5)
+   */
+  private validateLoopSchema(
+    nodeId: string,
+    node: ExecutionNode,
+    graph: ExecutionGraph,
+    ctx: CompilerContext
+  ): void {
+    const dataSchema = graph.data_schema
+    if (!dataSchema || !node.loop) return
+
+    // Check iterate_over slot is array type
+    const iterateVar = node.loop.iterate_over.split('.')[0]
+    const iterateSlot = dataSchema.slots[iterateVar]
+    if (iterateSlot && iterateSlot.schema.type !== 'array') {
+      this.warn(ctx,
+        `Loop "${nodeId}" iterates over "${iterateVar}" which is declared as type ` +
+        `"${iterateSlot.schema.type}" — expected "array"`)
+    }
+
+    // Check gather output is array type
+    if (node.loop.output_variable) {
+      const gatherSlot = dataSchema.slots[node.loop.output_variable]
+      if (gatherSlot && gatherSlot.schema.type !== 'array') {
+        this.warn(ctx,
+          `Loop "${nodeId}" gather output "${node.loop.output_variable}" is declared as type ` +
+          `"${gatherSlot.schema.type}" — expected "array"`)
+      }
+    }
+
+    // Check item_variable schema matches array's items schema
+    const itemSlot = dataSchema.slots[node.loop.item_variable]
+    if (iterateSlot?.schema.items && itemSlot) {
+      if (iterateSlot.schema.items.type !== itemSlot.schema.type) {
+        this.warn(ctx,
+          `Loop "${nodeId}": item variable "${node.loop.item_variable}" type ` +
+          `"${itemSlot.schema.type}" doesn't match array items type ` +
+          `"${iterateSlot.schema.items.type}"`)
+      }
+    }
+  }
+
+  /**
+   * Validate choice node: if using oneOf schema, branch count should match rule count.
+   * (Task 3.6)
+   */
+  private validateChoiceSchema(
+    nodeId: string,
+    node: ExecutionNode,
+    graph: ExecutionGraph,
+    ctx: CompilerContext
+  ): void {
+    const dataSchema = graph.data_schema
+    if (!dataSchema || !node.choice) return
+
+    // Find any output slot with oneOf for this choice
+    if (!node.outputs) return
+
+    for (const output of node.outputs) {
+      const slotName = output.variable.split('.')[0]
+      const slot = dataSchema.slots[slotName]
+      if (!slot?.schema.oneOf) continue
+
+      // +1 for default branch
+      const branchCount = node.choice.rules.length + 1
+      const oneOfCount = slot.schema.oneOf.length
+
+      if (oneOfCount !== branchCount) {
+        this.warn(ctx,
+          `Choice "${nodeId}": slot "${slotName}" has ${oneOfCount} oneOf branches ` +
+          `but choice has ${branchCount} paths (${node.choice.rules.length} rules + 1 default)`)
+      }
+    }
+  }
+
+  /**
+   * Run all data_schema validations during compilation.
+   * Called after graph validation, before step compilation.
+   * (Tasks 3.2, 3.4, 3.5, 3.6, 3.9)
+   */
+  private validateDataSchemaInCompiler(graph: ExecutionGraph, ctx: CompilerContext): void {
+    if (!graph.data_schema) return
+
+    this.log(ctx, 'Validating data_schema in compiler')
+
+    // Plugin cross-validation (3.2)
+    this.validateSchemaAgainstPlugins(graph, ctx)
+
+    // Per-node schema validations
+    for (const [nodeId, node] of Object.entries(graph.nodes)) {
+      // Shape-preserving transform validation (3.4)
+      if (node.type === 'operation' && node.operation?.operation_type === 'transform') {
+        this.validateShapePreservingTransform(nodeId, node, graph, ctx)
+      }
+
+      // Loop schema validation (3.5)
+      if (node.type === 'loop') {
+        this.validateLoopSchema(nodeId, node, graph, ctx)
+      }
+
+      // Choice schema validation (3.6)
+      if (node.type === 'choice') {
+        this.validateChoiceSchema(nodeId, node, graph, ctx)
+      }
+    }
+
+    // Cross-step type compatibility (3.9)
+    this.validateCrossStepTypeCompatibility(graph, ctx)
+  }
+
+  /**
+   * Cross-step type compatibility: verify AI output field types match
+   * downstream plugin input parameter types.
+   * (Task 3.9)
+   */
+  private validateCrossStepTypeCompatibility(graph: ExecutionGraph, ctx: CompilerContext): void {
+    const dataSchema = graph.data_schema
+    if (!dataSchema) return
+
+    // For each node, check if its input slot type is compatible with what was produced
+    for (const [nodeId, node] of Object.entries(graph.nodes)) {
+      if (!node.inputs || node.inputs.length === 0) continue
+
+      for (const input of node.inputs) {
+        const parts = input.variable.split('.')
+        const rootVar = parts[0]
+        const slot = dataSchema.slots[rootVar]
+        if (!slot) continue
+
+        // If accessing a sub-field, resolve the expected type
+        if (parts.length > 1 && slot.schema.properties) {
+          const fieldName = parts[1]
+          const fieldSchema = slot.schema.properties[fieldName]
+          if (!fieldSchema) {
+            this.warn(ctx,
+              `Node "${nodeId}" references "${input.variable}" but slot "${rootVar}" ` +
+              `has no field "${fieldName}" in its schema. ` +
+              `Available fields: [${Object.keys(slot.schema.properties).join(', ')}]`)
+          }
+        }
+      }
+    }
+  }
+
   private log(ctx: CompilerContext, message: string) {
     ctx.logs.push(message)
     this.logger.info(message)

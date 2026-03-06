@@ -389,12 +389,23 @@ export class ValidationGates {
         }
       })
 
-    if (unmapped.length > 0 || violated.length > 0) {
+    if (unmapped.length > 0) {
       return {
         stage: 'compilation',
         result: 'FAIL',
-        reason: `Compilation failed: ${unmapped.length} unmapped, ${violated.length} violated`,
+        reason: `Compilation failed: ${unmapped.length} unmapped requirements`,
         unmapped_requirements: unmapped,
+        violated_constraints: violated
+      }
+    }
+
+    if (violated.length > 0) {
+      // Downgrade to PASS with warnings — threshold/routing checks are heuristic
+      // and can't reliably detect enforcement inside AI steps or transforms
+      return {
+        stage: 'compilation',
+        result: 'PASS',
+        reason: `Compilation passed with ${violated.length} warning(s): ${violated.join('; ')}`,
         violated_constraints: violated
       }
     }

@@ -5,6 +5,8 @@
  * Used by the V6 compiler to generate type-safe PILOT_DSL workflows.
  */
 
+import type { SchemaField } from '@/lib/agentkit/v6/logical-ir/schemas/workflow-data-schema'
+
 // ============================================================================
 // Workflow Step Types
 // ============================================================================
@@ -45,7 +47,23 @@ export interface WorkflowStep {
   steps?: WorkflowStep[]
   on_error?: ErrorHandler
   retry?: RetryConfig
-  [key: string]: any // Allow additional properties for flexibility
+
+  /** Schema describing this step's output shape (from data_schema slot) */
+  output_schema?: SchemaField
+  /** Schema describing this step's expected input shape (from data_schema slot) */
+  input_schema?: SchemaField
+
+  // PILOT runtime fields (set by translator/normalizer)
+  id?: string
+  name?: string
+  action?: string
+  params?: Record<string, any>
+  prompt?: string
+  then?: WorkflowStep[]          // Conditional then-branch (PILOT format)
+  else?: WorkflowStep[]          // Conditional else-branch (PILOT format)
+  else_steps?: WorkflowStep[]    // Conditional else-branch (compiler DSL format)
+  continueOnError?: boolean
+  timeout?: number
 }
 
 // ============================================================================

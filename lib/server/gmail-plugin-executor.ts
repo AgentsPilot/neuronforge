@@ -297,14 +297,15 @@ export class GmailPluginExecutor extends GoogleBasePluginExecutor {
     
     // MIME headers for content type
     message += `MIME-Version: 1.0\r\n`;
-    if (content?.html_body) {
+    const isHtml = content?.html_body || content?.isHtml || content?.is_html;
+    if (isHtml) {
       message += `Content-Type: text/html; charset=utf-8\r\n`;
     } else {
       message += `Content-Type: text/plain; charset=utf-8\r\n`;
     }
-    
+
     message += '\r\n'; // Empty line between headers and body
-    
+
     // Body
     if (content?.html_body) {
       message += content.html_body;

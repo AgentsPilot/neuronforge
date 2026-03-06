@@ -950,8 +950,21 @@
 
         // Phase 3: IR (Intermediate Representation)
         const ir = pipelineData.phase3_ir;
+        const dataSchema = ir?.execution_graph?.data_schema;
+        const slotCount = dataSchema ? Object.keys(dataSchema.slots || {}).length : 0;
         updatePhase(3, 'completed', `
           <div style="color: #4caf50; margin-bottom: 10px;">✓ IR formalization with auto-recovery completed</div>
+          ${dataSchema ? `
+            <div style="margin: 10px 0; background: #e8f5e9; padding: 10px; border-radius: 4px; border-left: 4px solid #4caf50;">
+              <strong>📐 Workflow Data Schema:</strong> ${slotCount} slots declared
+              <span style="margin-left: 8px; color: #666; font-size: 0.85rem;">
+                (${Object.values(dataSchema.slots || {}).filter(s => s.schema?.source === 'plugin').length} plugin,
+                 ${Object.values(dataSchema.slots || {}).filter(s => s.schema?.source === 'ai_declared').length} ai_declared,
+                 ${Object.values(dataSchema.slots || {}).filter(s => s.schema?.source === 'inferred').length} inferred)
+              </span>
+            </div>
+            ${jsonWithCopy(dataSchema, 'Workflow Data Schema')}
+          ` : '<div style="color: #999; margin: 10px 0;">No data_schema in IR</div>'}
           ${ir ? jsonWithCopy(ir, 'Phase 3 - Intermediate Representation (IR)') : '<div style="color: #999;">No IR data</div>'}
         `);
 
@@ -982,6 +995,7 @@
               </div>
             </details>
           ` : ''}
+          ${dataSchema ? jsonWithCopy(dataSchema, 'Shared Data Schema (all steps read/write to these slots)') : ''}
           ${dslBeforeTranslation ? jsonWithCopy(dslBeforeTranslation, 'Phase 4 - DSL (Before Translation to PILOT)') : '<div style="color: #999;">No DSL data</div>'}
         `);
 
@@ -1004,6 +1018,7 @@
               <strong>Production PILOT (Flat Array)</strong>
             </div>
           </div>
+          ${dataSchema ? jsonWithCopy(dataSchema, 'Shared Data Schema (all steps read/write to these slots)') : ''}
           ${jsonWithCopy(workflowSteps, 'Phase 5 - PILOT Workflow')}
         `);
 
@@ -1049,6 +1064,7 @@
         // Store workflow for execution
         window.currentWorkflow = {
           workflow_steps: workflowSteps,
+          ir: ir,
           hard_requirements: hardReqs,
           requirement_map: requirementMap,
           validation_results: validationResults,
@@ -1223,6 +1239,8 @@
           </div>
         `);
 
+        const vpDataSchema = data.data_schema;
+        const vpSlotCount = vpDataSchema ? Object.keys(vpDataSchema.slots || {}).length : 0;
         updatePhase(5, 'completed', `
           <div><strong>Final Validation:</strong></div>
           <div class="phase-metric">
@@ -1232,12 +1250,24 @@
           <div style="margin-top: 10px; color: #666;">
             <strong>Pipeline Complete:</strong> ${data.metadata?.pipeline_complete ? '✅ Yes' : '⚠️ No'}
           </div>
+          ${vpDataSchema ? `
+            <div style="margin: 10px 0; background: #e8f5e9; padding: 10px; border-radius: 4px; border-left: 4px solid #4caf50;">
+              <strong>📐 Workflow Data Schema:</strong> ${vpSlotCount} slots declared
+              <span style="margin-left: 8px; color: #666; font-size: 0.85rem;">
+                (${Object.values(vpDataSchema.slots || {}).filter(s => s.schema?.source === 'plugin').length} plugin,
+                 ${Object.values(vpDataSchema.slots || {}).filter(s => s.schema?.source === 'ai_declared').length} ai_declared,
+                 ${Object.values(vpDataSchema.slots || {}).filter(s => s.schema?.source === 'inferred').length} inferred)
+              </span>
+            </div>
+            ${jsonWithCopy(vpDataSchema, 'Workflow Data Schema')}
+          ` : ''}
           ${jsonWithCopy(data.workflow, 'Final Validated Workflow')}
         `);
 
         // Store workflow
         window.currentWorkflow = {
           workflow_steps: data.workflow?.steps || data.workflow,
+          ir: { goal: data.workflow_name, execution_graph: { data_schema: data.data_schema } },
           userId: userId,
           compiledAt: new Date().toISOString(),
           validated: true,
@@ -1580,7 +1610,8 @@
             plugins_required: pluginsRequired,
             user_id: window.currentWorkflow.userId,
             workflow_name: window.currentWorkflow.ir?.goal || 'Test Workflow',
-            input_variables: {}
+            input_variables: {},
+            data_schema: window.currentWorkflow.ir?.execution_graph?.data_schema
           })
         });
 

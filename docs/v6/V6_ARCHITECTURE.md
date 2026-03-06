@@ -142,7 +142,7 @@ interface DeclarativeLogicalIRv4 {
   execution_graph: {
     start: string                           // Entry node ID
     nodes: Record<string, ExecutionNode>    // Flat node map
-    variables?: VariableDefinition[]        // Variable declarations
+    data_schema?: WorkflowDataSchema        // Field-level type declarations for all data flow
   }
   requirements_enforcement?: RequirementEnforcement[]
 }

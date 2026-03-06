@@ -520,7 +520,8 @@ export abstract class BaseHandler implements IntentHandler {
     systemPrompt: string,
     userPrompt: string | any[],  // Support multimodal content for vision
     temperature: number,
-    maxTokens?: number
+    maxTokens?: number,
+    responseFormat?: { type: 'json_object' }
   ): Promise<{
     text: string;
     inputTokens: number;
@@ -562,6 +563,7 @@ export abstract class BaseHandler implements IntentHandler {
           ],
           temperature,
           max_tokens: maxTokens || Math.min(context.budget.remaining, 4096),
+          ...(responseFormat ? { response_format: responseFormat } : {}),
         },
         {
           userId: context.userId,  // ✅ Use userId from context (passed from WorkflowOrchestrator)

@@ -38,21 +38,27 @@ export class GenerateHandler extends BaseHandler {
         return this.createErrorResult('Insufficient budget for generation');
       }
 
+      // Check if this step has an output_schema (from data_schema system)
+      // When present, we must instruct the LLM to return structured JSON
+      const outputSchema = context.input?.step?.output_schema
+        || context.input?.step?.config?.output_schema;
+
       // Prepare prompts
       const { system, user } = this.formatPrompt(
-        this.buildSystemPrompt(context),
+        this.buildSystemPrompt(context, outputSchema),
         input,
         context
       );
 
       // Execute generation using provider-agnostic method
-      const temperature = this.getTemperature(context);
+      const temperature = outputSchema ? 0.2 : this.getTemperature(context);
       const llmResponse = await this.callLLM(
         context,
         system,
         user,
         temperature,
-        Math.min(context.budget.remaining, 4096) // Generation needs more tokens
+        Math.min(context.budget.remaining, 4096), // Generation needs more tokens
+        outputSchema ? { type: 'json_object' as const } : undefined
       );
 
       // Parse response
@@ -104,7 +110,12 @@ export class GenerateHandler extends BaseHandler {
   /**
    * Build system prompt for generation
    */
-  private buildSystemPrompt(context: HandlerContext): string {
+  private buildSystemPrompt(context: HandlerContext, outputSchema?: any): string {
+    // When output_schema is present, use a structured-output prompt instead of generic content prompt
+    if (outputSchema) {
+      return this.buildStructuredOutputPrompt(outputSchema);
+    }
+
     // Extract generation type from input
     const genType = this.extractGenerationType(context.input);
 
@@ -133,6 +144,52 @@ INSTRUCTIONS:
     }
 
     return basePrompt;
+  }
+
+  /**
+   * Build a structured-output system prompt when output_schema is present.
+   * Instructs the LLM to return JSON matching the schema exactly.
+   */
+  private buildStructuredOutputPrompt(outputSchema: any): string {
+    const schemaJson = JSON.stringify(outputSchema, null, 2);
+
+    return `You are a data processing specialist. Your task is to process the provided input and return structured JSON data.
+
+CRITICAL RULES:
+- You MUST respond with ONLY valid JSON — no markdown, no code blocks, no explanation, no prose.
+- Do NOT wrap your response in \`\`\`json or any code fence.
+- Do NOT return code (JavaScript, Python, etc.) — return the actual DATA.
+- Your response must be a single JSON object that matches the schema below exactly.
+
+OUTPUT SCHEMA:
+${schemaJson}
+
+FIELD RULES:
+${this.formatFieldRules(outputSchema)}
+- Every field marked as required MUST be present in your response.
+- Use the exact field names shown in the schema.
+- Arrays must contain items of the specified type.
+- If the schema specifies nested objects, include all their required fields.
+
+Remember: respond with raw JSON only. No wrapping, no explanation.`;
+  }
+
+  /**
+   * Format field-level rules from the output_schema for the prompt.
+   */
+  private formatFieldRules(schema: any): string {
+    if (!schema?.fields && !schema?.properties) {
+      return '- Follow the schema structure above.';
+    }
+
+    const fields = schema.fields || schema.properties || [];
+    if (!Array.isArray(fields)) return '- Follow the schema structure above.';
+
+    return fields.map((f: any) => {
+      const req = f.required ? '(required)' : '(optional)';
+      const desc = f.description ? ` — ${f.description}` : '';
+      return `- "${f.name}": ${f.type} ${req}${desc}`;
+    }).join('\n');
   }
 
   /**

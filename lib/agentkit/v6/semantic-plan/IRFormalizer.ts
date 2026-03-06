@@ -272,6 +272,9 @@ export class IRFormalizer {
     // This catches LLM generation errors that would otherwise cause silent failures
     this.validateIRStructure(ir, formalizeLogger)
 
+    // Validate data_schema structure if present (Phase 4: Workflow Data Schema)
+    this.validateDataSchema(ir, formalizeLogger)
+
     // Calculate confidence based on Enhanced Prompt completeness (WEEK 1: No grounded facts)
     const formalizationConfidence = this.calculateFormalizationConfidence(enhancedPrompt)
 
@@ -739,6 +742,10 @@ Output ONLY the IR JSON (no explanations, no markdown).`
           if (outputFields.length > 0) {
             paramInfo += `\n      **Output Fields (use these EXACT names in filters and rendering.columns_in_order):**\n${outputFields.join('\n')}`
           }
+
+          // Inject full output_schema JSON for data_schema slot declarations
+          // The LLM uses this to populate data_schema.slots with source: "plugin"
+          paramInfo += `\n      **output_schema (use for data_schema.slots):**\n      \`\`\`json\n      ${JSON.stringify(outputSchema, null, 2).split('\n').join('\n      ')}\n      \`\`\``
         }
 
         return paramInfo
@@ -1181,5 +1188,124 @@ ${pluginDetails}
     }
 
     logger.info('IR structure validation passed')
+  }
+
+  /**
+   * Validate data_schema structure produced by LLM (Phase 4: Workflow Data Schema)
+   *
+   * Validates:
+   * 1. data_schema exists and has slots
+   * 2. Each slot has required fields (schema, scope, produced_by)
+   * 3. produced_by references an existing node
+   * 4. Schema fields have valid types
+   * 5. AI-declared schemas have full depth (arrays have items, objects have properties)
+   */
+  private validateDataSchema(ir: DeclarativeLogicalIRv4, logger: Logger): void {
+    if (!ir.execution_graph?.data_schema) {
+      logger.warn('IR missing data_schema — LLM did not produce Workflow Data Schema')
+      return // Not a hard error during transition period
+    }
+
+    const dataSchema = ir.execution_graph.data_schema
+    const errors: string[] = []
+    const warnings: string[] = []
+
+    if (!dataSchema.slots || typeof dataSchema.slots !== 'object') {
+      errors.push('data_schema.slots is missing or not an object')
+    } else {
+      const nodeIds = new Set(Object.keys(ir.execution_graph.nodes || {}))
+      const validTypes = new Set(['string', 'number', 'boolean', 'object', 'array', 'any'])
+      const validScopes = new Set(['global', 'loop', 'branch'])
+
+      for (const [slotName, slot] of Object.entries(dataSchema.slots)) {
+        // Validate required fields
+        if (!slot.schema) {
+          errors.push(`Slot '${slotName}': missing schema`)
+          continue
+        }
+        if (!slot.scope) {
+          errors.push(`Slot '${slotName}': missing scope`)
+        } else if (!validScopes.has(slot.scope)) {
+          errors.push(`Slot '${slotName}': invalid scope '${slot.scope}' (must be global, loop, or branch)`)
+        }
+        if (!slot.produced_by) {
+          errors.push(`Slot '${slotName}': missing produced_by`)
+        } else if (!nodeIds.has(slot.produced_by)) {
+          warnings.push(`Slot '${slotName}': produced_by '${slot.produced_by}' does not reference an existing node`)
+        }
+
+        // Validate schema type
+        if (!slot.schema.type) {
+          errors.push(`Slot '${slotName}': schema missing type`)
+        } else if (!validTypes.has(slot.schema.type)) {
+          errors.push(`Slot '${slotName}': invalid schema type '${slot.schema.type}'`)
+        }
+
+        // Validate AI-declared schema depth — auto-repairs shallow schemas
+        if (slot.schema.source === 'ai_declared') {
+          this.validateSchemaDepth(slotName, slot.schema, errors, warnings)
+        }
+      }
+    }
+
+    if (warnings.length > 0) {
+      logger.warn({ warnings }, `data_schema validation warnings (${warnings.length})`)
+    }
+
+    if (errors.length > 0) {
+      logger.error({ errors }, `data_schema validation failed with ${errors.length} error(s)`)
+      throw new Error(
+        `data_schema validation failed with ${errors.length} error(s):\n` +
+        errors.map((e, i) => `${i + 1}. ${e}`).join('\n')
+      )
+    }
+
+    logger.info({
+      slotCount: Object.keys(dataSchema.slots || {}).length,
+      slotNames: Object.keys(dataSchema.slots || {})
+    }, 'data_schema validation passed')
+  }
+
+  /**
+   * Recursively validate that AI-declared schemas have full depth.
+   * Auto-repairs shallow schemas (missing properties/items) with permissive defaults
+   * instead of hard-failing, since the LLM sometimes omits them non-deterministically.
+   */
+  private validateSchemaDepth(
+    path: string,
+    schema: { type?: string; properties?: Record<string, any>; items?: any; description?: string },
+    errors: string[],
+    warnings?: string[]
+  ): void {
+    if (schema.type === 'array' && !schema.items) {
+      // Auto-repair: add permissive items schema
+      schema.items = { type: 'any' }
+      if (warnings) {
+        warnings.push(
+          `Slot '${path}': AI-declared array missing 'items' — auto-repaired with { type: "any" }`
+        )
+      }
+    }
+    if (schema.type === 'object' && !schema.properties) {
+      // Auto-repair: add empty properties (allows any fields at runtime)
+      schema.properties = {}
+      if (warnings) {
+        warnings.push(
+          `Slot '${path}': AI-declared object missing 'properties' — auto-repaired with {}`
+        )
+      }
+    }
+
+    // Recurse into properties
+    if (schema.properties) {
+      for (const [fieldName, fieldSchema] of Object.entries(schema.properties)) {
+        this.validateSchemaDepth(`${path}.${fieldName}`, fieldSchema as any, errors, warnings)
+      }
+    }
+
+    // Recurse into items
+    if (schema.items) {
+      this.validateSchemaDepth(`${path}.items`, schema.items, errors, warnings)
+    }
   }
 }

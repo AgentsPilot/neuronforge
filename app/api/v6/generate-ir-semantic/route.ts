@@ -385,6 +385,7 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({
           success: true,
           workflow: result.workflow, // Phase 5: PILOT format flat array
+          data_schema: result.data_schema, // Phase 5 Addendum: Workflow Data Schema
           hard_requirements: hardReqs, // Phase 0
           requirement_map: reqMap,
           validation_results: result.validationResults, // All 5 gates

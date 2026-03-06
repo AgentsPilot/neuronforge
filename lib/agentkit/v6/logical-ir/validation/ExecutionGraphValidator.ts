@@ -15,15 +15,15 @@
 import type {
   ExecutionGraph,
   ExecutionNode,
-  VariableDefinition,
   InputBinding,
   OutputBinding,
   ConditionExpression
 } from '../schemas/declarative-ir-types-v4'
+import type { SchemaField, WorkflowDataSchema } from '../schemas/workflow-data-schema'
 
 export interface ValidationError {
   type: 'error' | 'warning'
-  category: 'structure' | 'data_flow' | 'control_flow' | 'semantics'
+  category: 'structure' | 'data_flow' | 'control_flow' | 'semantics' | 'schema'
   node_id?: string
   message: string
   suggestion?: string
@@ -63,6 +63,11 @@ export class ExecutionGraphValidator {
 
     // Phase 5: Node-specific validation
     this.validateAllNodes(graph)
+
+    // Phase 6: Data schema validation (only if data_schema is present)
+    if (graph.data_schema) {
+      this.validateDataSchema(graph, graph.data_schema)
+    }
 
     return {
       valid: this.errors.length === 0,
@@ -552,6 +557,143 @@ export class ExecutionGraphValidator {
       }
       branchIds.add(branch.id)
     }
+  }
+
+  // ============================================================================
+  // Phase 6: Data Schema Validation
+  // ============================================================================
+
+  /**
+   * Validate data_schema consistency:
+   * - All input/output bindings reference declared slots
+   * - All produced_by fields reference existing nodes
+   * - AI output_schema depth enforcement (CRITICAL)
+   */
+  private validateDataSchema(graph: ExecutionGraph, dataSchema: WorkflowDataSchema) {
+    const slotNames = new Set(Object.keys(dataSchema.slots))
+    const nodeIds = new Set(Object.keys(graph.nodes))
+
+    // 6a. Validate produced_by references existing nodes
+    for (const [slotName, slot] of Object.entries(dataSchema.slots)) {
+      if (!nodeIds.has(slot.produced_by)) {
+        this.addError('schema', slot.produced_by,
+          `Data slot "${slotName}" has produced_by="${slot.produced_by}" which does not exist in nodes`,
+          `Ensure produced_by references a valid node ID`)
+      }
+    }
+
+    // 6b. Validate all input bindings reference declared slots
+    for (const [nodeId, node] of Object.entries(graph.nodes)) {
+      if (node.inputs) {
+        for (const input of node.inputs) {
+          const rootVar = this.extractVariableName(input.variable)
+          if (!slotNames.has(rootVar) && rootVar !== 'input' && rootVar !== 'inputs') {
+            this.addWarning('schema', nodeId,
+              `Node "${nodeId}" reads from "${rootVar}" which is not declared in data_schema.slots`,
+              `Add a slot for "${rootVar}" in data_schema.slots or verify the variable name`)
+          }
+        }
+      }
+
+      // 6c. Validate output bindings reference declared slots
+      if (node.outputs) {
+        for (const output of node.outputs) {
+          const rootVar = this.extractVariableName(output.variable)
+          if (!slotNames.has(rootVar)) {
+            this.addWarning('schema', nodeId,
+              `Node "${nodeId}" writes to "${rootVar}" which is not declared in data_schema.slots`,
+              `Add a slot for "${rootVar}" in data_schema.slots`)
+          }
+        }
+      }
+
+      // 6d. Validate loop iterate_over and item_variable reference slots
+      if (node.type === 'loop' && node.loop) {
+        const iterateRoot = this.extractVariableName(node.loop.iterate_over)
+        if (!slotNames.has(iterateRoot)) {
+          this.addWarning('schema', nodeId,
+            `Loop "${nodeId}" iterates over "${iterateRoot}" which is not declared in data_schema.slots`,
+            `Add a slot for "${iterateRoot}" in data_schema.slots`)
+        }
+
+        if (!slotNames.has(node.loop.item_variable)) {
+          this.addWarning('schema', nodeId,
+            `Loop "${nodeId}" item_variable "${node.loop.item_variable}" not declared in data_schema.slots`,
+            `Add a loop-scoped slot for "${node.loop.item_variable}" in data_schema.slots`)
+        }
+      }
+
+      // 6e. Validate choice condition variables reference slots
+      if (node.type === 'choice' && node.choice) {
+        for (const rule of node.choice.rules) {
+          const conditionVars = this.extractConditionVariables(rule.condition)
+          for (const varName of conditionVars) {
+            if (!slotNames.has(varName) && varName !== 'input' && varName !== 'inputs') {
+              this.addWarning('schema', nodeId,
+                `Choice condition references "${varName}" which is not declared in data_schema.slots`,
+                `Add a slot for "${varName}" in data_schema.slots`)
+            }
+          }
+        }
+      }
+    }
+
+    // 6f. [CRITICAL] AI output_schema depth enforcement
+    this.validateAISchemaDepth(graph, dataSchema)
+  }
+
+  /**
+   * [CRITICAL] Enforce AI output_schema depth.
+   * Reject array fields without `items` and object fields without `properties`
+   * in AI-declared schemas.
+   */
+  private validateAISchemaDepth(graph: ExecutionGraph, dataSchema: WorkflowDataSchema) {
+    for (const [slotName, slot] of Object.entries(dataSchema.slots)) {
+      if (slot.schema.source !== 'ai_declared') continue
+
+      const depthErrors = this.checkSchemaDepth(slot.schema, slotName)
+      for (const err of depthErrors) {
+        this.addError('schema', slot.produced_by, err,
+          `AI-declared schemas must include full item-level depth. ` +
+          `Arrays need "items" with properties, objects need "properties".`)
+      }
+    }
+  }
+
+  /**
+   * Recursively check that arrays have items and objects have properties.
+   */
+  private checkSchemaDepth(schema: SchemaField, path: string): string[] {
+    const errors: string[] = []
+
+    if (schema.type === 'array' && !schema.items) {
+      errors.push(`${path}: array field missing "items" schema`)
+    }
+
+    if (schema.type === 'object' && !schema.properties) {
+      errors.push(`${path}: object field missing "properties" schema`)
+    }
+
+    // Recurse into properties
+    if (schema.properties) {
+      for (const [key, fieldSchema] of Object.entries(schema.properties)) {
+        errors.push(...this.checkSchemaDepth(fieldSchema, `${path}.${key}`))
+      }
+    }
+
+    // Recurse into items
+    if (schema.items) {
+      errors.push(...this.checkSchemaDepth(schema.items, `${path}.items`))
+    }
+
+    // Recurse into oneOf branches
+    if (schema.oneOf) {
+      for (let i = 0; i < schema.oneOf.length; i++) {
+        errors.push(...this.checkSchemaDepth(schema.oneOf[i], `${path}.oneOf[${i}]`))
+      }
+    }
+
+    return errors
   }
 
   private addError(category: ValidationError['category'], nodeId: string | undefined, message: string, suggestion?: string) {

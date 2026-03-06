@@ -206,11 +206,52 @@ export class StepExecutor {
             tokensSaved: orchestrationResult.tokensSaved
           }, 'Orchestration executed step successfully');
 
+          // Unwrap orchestration envelope for AI steps.
+          // GenerateHandler returns { result: "<raw text>", response, output, quality, ... }
+          // but downstream steps expect the parsed data directly (e.g., filter_result.filtered_leads).
+          let outputData = orchestrationResult.output;
+          const rawText = outputData?.result ?? outputData?.output;
+          logger.debug({
+            stepId: step.id,
+            outputDataKeys: outputData ? Object.keys(outputData) : 'null',
+            rawTextType: typeof rawText,
+            rawTextPreview: typeof rawText === 'string' ? rawText.substring(0, 200) : JSON.stringify(rawText)?.substring(0, 200)
+          }, 'Orchestration output envelope inspection');
+          if (typeof rawText === 'string') {
+            // Try to parse the raw text as JSON.
+            // First try the full string (expected when response_format: json_object is used).
+            // Then try stripping markdown code fences (```json ... ```).
+            // Avoid greedy regex that matches code block braces.
+            let jsonCandidate: string | null = null;
+            const trimmed = rawText.trim();
+            if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+              jsonCandidate = trimmed;
+            } else {
+              // Strip markdown code fences: ```json\n...\n``` or ```\n...\n```
+              const fenceMatch = trimmed.match(/^```(?:json)?\s*\n([\s\S]*?)\n\s*```\s*$/);
+              if (fenceMatch) {
+                jsonCandidate = fenceMatch[1].trim();
+              }
+            }
+            if (jsonCandidate) {
+              try {
+                outputData = JSON.parse(jsonCandidate);
+                logger.debug({ stepId: step.id }, 'Parsed JSON from orchestration text output');
+              } catch {
+                // Not valid JSON — keep the envelope as-is
+              }
+            }
+          } else if (typeof rawText === 'object' && rawText !== null) {
+            // Provider already returned parsed JSON (e.g., structured output mode)
+            outputData = rawText;
+            logger.debug({ stepId: step.id }, 'Using pre-parsed object from orchestration output');
+          }
+
           return {
             stepId: step.id,
             plugin: (step as any).plugin || 'system',
             action: (step as any).action || step.type,
-            data: orchestrationResult.output,
+            data: outputData,
             metadata: {
               success: true,
               executedAt: new Date().toISOString(),
@@ -1381,9 +1422,7 @@ export class StepExecutor {
 
   /**
    * Execute conditional step
-   * Supports two modes:
-   * 1. Legacy: Only evaluates condition (routing handled by orchestrator)
-   * 2. V4: Evaluates condition AND executes nested then_steps/else_steps
+   * Evaluates condition AND executes nested then/else branch steps
    */
   private async executeConditional(
     step: WorkflowStep,
@@ -1406,82 +1445,67 @@ export class StepExecutor {
 
     logger.info({ stepId: step.id, conditionResult }, 'Condition evaluated');
 
-    // V4 Format: Execute nested steps based on condition
-    // Support both formats: then_steps/else_steps (DSL) and then/else (PILOT normalized)
-    const hasV4Format = conditionalStep.then_steps || conditionalStep.else_steps || conditionalStep.then || conditionalStep.else;
+    const branchToExecute = conditionResult ? conditionalStep.then : conditionalStep.else;
+    const branchName = conditionResult ? 'then' : 'else';
 
-    if (hasV4Format) {
-      logger.debug({ stepId: step.id }, 'V4 conditional detected - executing nested steps');
+    if (branchToExecute && Array.isArray(branchToExecute) && branchToExecute.length > 0) {
+      logger.info({ stepId: step.id, branchName, stepCount: branchToExecute.length }, 'Executing conditional branch');
 
-      const branchToExecute = conditionResult ? (conditionalStep.then || conditionalStep.then_steps) : (conditionalStep.else || conditionalStep.else_steps);
-      const branchName = conditionResult ? 'then' : 'else';
+      const branchResults: any[] = [];
 
-      if (branchToExecute && Array.isArray(branchToExecute) && branchToExecute.length > 0) {
-        logger.info({ stepId: step.id, branchName, stepCount: branchToExecute.length }, 'Executing conditional branch');
+      // Execute each step in the branch sequentially
+      for (let i = 0; i < branchToExecute.length; i++) {
+        const branchStep = branchToExecute[i];
+        logger.debug({ stepId: step.id, branchName, index: i, branchStepId: branchStep.id, branchStepType: branchStep.type }, 'Executing branch step');
 
-        const branchResults: any[] = [];
+        try {
+          const branchStepResult = await this.execute(branchStep, context);
+          branchResults.push(branchStepResult);
 
-        // Execute each step in the branch sequentially
-        for (let i = 0; i < branchToExecute.length; i++) {
-          const branchStep = branchToExecute[i];
-          logger.debug({ stepId: step.id, branchName, index: i, branchStepId: branchStep.id, branchStepType: branchStep.type }, 'Executing branch step');
+          // Store the result in context so subsequent steps can reference it
+          context.setStepOutput(branchStep.id, branchStepResult);
 
-          try {
-            const branchStepResult = await this.execute(branchStep, context);
-            branchResults.push(branchStepResult);
+          // Register output_variable if specified (allows referencing by name)
+          const outputVariable = (branchStep as any).output_variable;
+          if (outputVariable && branchStepResult) {
+            // Extract the actual data from StepOutput format if needed
+            const dataToRegister = branchStepResult.data !== undefined ? branchStepResult.data : branchStepResult;
+            context.setVariable(outputVariable, dataToRegister);
+            logger.debug({ stepId: branchStep.id, outputVariable }, 'Registered output variable for conditional branch step');
+          }
 
-            // Store the result in context so subsequent steps can reference it
-            context.setStepOutput(branchStep.id, branchStepResult);
+          // Collect execution metadata for calibration summaries
+          await this.collectExecutionMetadata(branchStep, branchStepResult, context);
+        } catch (error: any) {
+          logger.error({ err: error, stepId: step.id, branchName, branchStepId: branchStep.id }, 'Error executing branch step');
 
-            // ✅ FIX: Register output_variable if specified (allows referencing by name)
-            // This was missing - conditional branch steps could only be accessed by step ID, not by output_variable name
-            const outputVariable = (branchStep as any).output_variable;
-            if (outputVariable && branchStepResult) {
-              // Extract the actual data from StepOutput format if needed
-              const dataToRegister = branchStepResult.data !== undefined ? branchStepResult.data : branchStepResult;
-              context.setVariable(outputVariable, dataToRegister);
-              logger.debug({ stepId: branchStep.id, outputVariable }, 'Registered output variable for conditional branch step');
-            }
-
-            // Collect execution metadata for calibration summaries
-            await this.collectExecutionMetadata(branchStep, branchStepResult, context);
-          } catch (error: any) {
-            logger.error({ err: error, stepId: step.id, branchName, branchStepId: branchStep.id }, 'Error executing branch step');
-
-            // If continueOnError is set, log and continue
-            if (branchStep.continueOnError) {
-              logger.warn({ stepId: step.id, branchStepId: branchStep.id }, 'continueOnError=true - continuing despite error');
-              branchResults.push({ error: error.message, stepId: branchStep.id });
-            } else {
-              throw error;
-            }
+          // If continueOnError is set, log and continue
+          if (branchStep.continueOnError) {
+            logger.warn({ stepId: step.id, branchStepId: branchStep.id }, 'continueOnError=true - continuing despite error');
+            branchResults.push({ error: error.message, stepId: branchStep.id });
+          } else {
+            throw error;
           }
         }
-
-        return {
-          result: conditionResult,
-          condition: stepCondition,
-          branch: branchName,
-          branchResults,
-          executedSteps: branchToExecute.length,
-        };
-      } else {
-        logger.debug({ stepId: step.id, branchName }, 'No steps to execute in branch');
-        return {
-          result: conditionResult,
-          condition: stepCondition,
-          branch: branchName,
-          branchResults: [],
-          executedSteps: 0,
-        };
       }
+
+      return {
+        result: conditionResult,
+        condition: stepCondition,
+        branch: branchName,
+        branchResults,
+        executedSteps: branchToExecute.length,
+      };
     }
 
-    // Legacy Format: Only evaluate condition (orchestrator handles routing)
-    logger.debug({ stepId: step.id }, 'Legacy conditional - returning evaluation only');
+    // No steps in selected branch
+    logger.debug({ stepId: step.id, branchName }, 'No steps to execute in branch');
     return {
       result: conditionResult,
       condition: stepCondition,
+      branch: branchName,
+      branchResults: [],
+      executedSteps: 0,
     };
   }
 

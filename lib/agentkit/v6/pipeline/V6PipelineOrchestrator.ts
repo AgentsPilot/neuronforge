@@ -18,6 +18,7 @@ import { SemanticPlanGenerator, type EnhancedPrompt } from '../semantic-plan/Sem
 import { IRFormalizer } from '../semantic-plan/IRFormalizer'
 import { ExecutionGraphCompiler } from '../compiler/ExecutionGraphCompiler'
 import type { DeclarativeLogicalIRv4 } from '../logical-ir/schemas/declarative-ir-types-v4'
+import type { WorkflowDataSchema } from '../logical-ir/schemas/workflow-data-schema'
 import {
   HardRequirementsExtractor,
   HardRequirements,
@@ -48,6 +49,8 @@ export interface PipelineResult {
   workflow?: any
   hardRequirements?: HardRequirements
   requirementMap?: RequirementMap
+  /** Workflow Data Schema extracted from IR (Phase 5 Addendum) */
+  data_schema?: WorkflowDataSchema
   validationResults?: {
     semantic: GateResult
     grounding: GateResult
@@ -622,6 +625,8 @@ export class V6PipelineOrchestrator {
         workflow: dsl,
         hardRequirements: hardReqs,
         requirementMap,
+        // Extract data_schema from IR to top level (Phase 5 Addendum: plumbing)
+        data_schema: ir.execution_graph?.data_schema,
         validationResults: {
           semantic: semanticGate,
           grounding: groundingGate,
@@ -708,6 +713,14 @@ export class V6PipelineOrchestrator {
       pilotStep.description = dslStep.description
     }
 
+    // Pass through schema fields (Phase 5: Workflow Data Schema)
+    if (dslStep.output_schema) {
+      pilotStep.output_schema = dslStep.output_schema
+    }
+    if (dslStep.input_schema) {
+      pilotStep.input_schema = dslStep.input_schema
+    }
+
     // Handle action steps
     if (dslStep.type === 'action') {
       pilotStep.plugin = dslStep.plugin
@@ -781,16 +794,14 @@ export class V6PipelineOrchestrator {
     else if (dslStep.type === 'conditional') {
       pilotStep.condition = dslStep.condition
 
-      // DSL uses 'steps' for then branch, but PILOT expects 'then'
-      const thenSteps = dslStep.then || dslStep.steps
-      if (thenSteps && Array.isArray(thenSteps)) {
-        pilotStep.then = thenSteps.map((s: any, i: number) => this.translateStep(s, i))
+      // Compiler produces 'steps' for then-branch → PILOT expects 'then'
+      if (dslStep.steps && Array.isArray(dslStep.steps)) {
+        pilotStep.then = dslStep.steps.map((s: any, i: number) => this.translateStep(s, i))
       }
 
-      // DSL uses 'else_steps', but PILOT expects 'else'
-      const elseSteps = dslStep.else || dslStep.else_steps
-      if (elseSteps && Array.isArray(elseSteps)) {
-        pilotStep.else = elseSteps.map((s: any, i: number) => this.translateStep(s, i))
+      // Compiler produces 'else_steps' for else-branch → PILOT expects 'else'
+      if (dslStep.else_steps && Array.isArray(dslStep.else_steps)) {
+        pilotStep.else = dslStep.else_steps.map((s: any, i: number) => this.translateStep(s, i))
       }
     }
 

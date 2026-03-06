@@ -16,6 +16,7 @@
  */
 
 import type { HardRequirements } from '../../requirements/HardRequirementsExtractor'
+import type { WorkflowDataSchema } from './workflow-data-schema'
 
 // ============================================================================
 // Requirements Enforcement Tracking
@@ -58,39 +59,8 @@ export interface RequirementEnforcement {
 }
 
 // ============================================================================
-// Variable and Data Flow Types
+// Data Flow Types
 // ============================================================================
-
-/**
- * Variable Definition
- *
- * Declares a variable that can be used across the execution graph.
- * Variables track data flow and dependencies between nodes.
- *
- * @example
- * {
- *   name: "emails",
- *   type: "array",
- *   scope: "global",
- *   description: "List of email messages fetched from Gmail"
- * }
- */
-export interface VariableDefinition {
-  /** Unique variable name (must be valid identifier) */
-  name: string
-
-  /** Data type of the variable */
-  type: 'string' | 'number' | 'boolean' | 'object' | 'array' | 'any'
-
-  /** Variable scope - determines visibility and lifetime */
-  scope: 'global' | 'loop' | 'branch'
-
-  /** Optional human-readable description */
-  description?: string
-
-  /** Optional default value */
-  default_value?: any
-}
 
 /**
  * Input Binding
@@ -597,11 +567,12 @@ export interface ExecutionNode {
  *     "extract_invoice": { id: "extract_invoice", type: "operation", ... },
  *     ...
  *   },
- *   variables: [
- *     { name: "emails", type: "array", scope: "global" },
- *     { name: "current_email", type: "object", scope: "loop" },
- *     ...
- *   ]
+ *   data_schema: {
+ *     slots: {
+ *       "emails": { schema: { type: "array", items: { type: "object" } }, scope: "global", produced_by: "fetch_emails" },
+ *       ...
+ *     }
+ *   }
  * }
  */
 export interface ExecutionGraph {
@@ -611,8 +582,12 @@ export interface ExecutionGraph {
   /** All nodes in the graph (flat structure, keyed by node ID) */
   nodes: Record<string, ExecutionNode>
 
-  /** Global and loop-scoped variable declarations */
-  variables?: VariableDefinition[]
+  /**
+   * Workflow data schema — centralized, field-level type declarations
+   * for all data flowing through the workflow. Replaces `variables`.
+   * @see docs/v6/V6_WORKFLOW_DATA_SCHEMA_DESIGN.md
+   */
+  data_schema?: WorkflowDataSchema
 
   /** Optional metadata */
   metadata?: {
@@ -636,7 +611,7 @@ export interface ExecutionGraph {
  *   execution_graph: {
  *     start: "fetch_emails",
  *     nodes: { ... },
- *     variables: [ ... ]
+ *     data_schema: { slots: { ... } }
  *   }
  * }
  */
@@ -677,3 +652,8 @@ export interface DeclarativeLogicalIRv4 {
  * Export type alias for convenience
  */
 export type DeclarativeLogicalIR = DeclarativeLogicalIRv4
+
+/**
+ * Re-export workflow data schema types for convenience
+ */
+export type { SchemaFieldType, SchemaField, DataSlot, WorkflowDataSchema } from './workflow-data-schema'

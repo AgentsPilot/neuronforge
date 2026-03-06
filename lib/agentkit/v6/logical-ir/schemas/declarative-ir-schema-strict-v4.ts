@@ -13,29 +13,6 @@
  * - No discriminated union violations (e.g., operation node must have operation config)
  */
 
-export const VariableDefinitionSchema = {
-  type: 'object',
-  required: ['name', 'type', 'scope'],
-  properties: {
-    name: {
-      type: 'string',
-      pattern: '^[a-zA-Z_][a-zA-Z0-9_]*$',
-      description: 'Valid identifier name'
-    },
-    type: {
-      type: 'string',
-      enum: ['string', 'number', 'boolean', 'object', 'array', 'any']
-    },
-    scope: {
-      type: 'string',
-      enum: ['global', 'loop', 'branch']
-    },
-    description: { type: 'string' },
-    default_value: {}
-  },
-  additionalProperties: false
-}
-
 export const InputBindingSchema = {
   type: 'object',
   required: ['variable'],
@@ -474,6 +451,67 @@ export const ExecutionNodeSchema = {
   ]
 }
 
+// ============================================================================
+// Workflow Data Schema definitions
+// ============================================================================
+
+export const SchemaFieldSchema: any = {
+  type: 'object',
+  required: ['type'],
+  properties: {
+    type: {
+      type: 'string',
+      enum: ['string', 'number', 'boolean', 'object', 'array', 'any']
+    },
+    description: { type: 'string' },
+    required: { type: 'boolean' },
+    properties: {
+      type: 'object',
+      additionalProperties: { $ref: '#/definitions/SchemaField' }
+    },
+    items: { $ref: '#/definitions/SchemaField' },
+    oneOf: {
+      type: 'array',
+      items: { $ref: '#/definitions/SchemaField' }
+    },
+    source: {
+      type: 'string',
+      enum: ['plugin', 'ai_declared', 'inferred', 'user_input']
+    }
+  },
+  additionalProperties: false
+}
+
+export const DataSlotSchema = {
+  type: 'object',
+  required: ['schema', 'scope', 'produced_by'],
+  properties: {
+    schema: { $ref: '#/definitions/SchemaField' },
+    scope: {
+      type: 'string',
+      enum: ['global', 'loop', 'branch']
+    },
+    produced_by: { type: 'string' },
+    consumed_by: {
+      type: 'array',
+      items: { type: 'string' }
+    }
+  },
+  additionalProperties: false
+}
+
+export const WorkflowDataSchemaSchema = {
+  type: 'object',
+  required: ['slots'],
+  properties: {
+    slots: {
+      type: 'object',
+      additionalProperties: { $ref: '#/definitions/DataSlot' }
+    }
+  },
+  additionalProperties: false
+}
+
 export const ExecutionGraphSchema = {
   type: 'object',
   required: ['start', 'nodes'],
@@ -486,10 +524,7 @@ export const ExecutionGraphSchema = {
       },
       additionalProperties: false
     },
-    variables: {
-      type: 'array',
-      items: { $ref: '#/definitions/VariableDefinition' }
-    },
+    data_schema: { $ref: '#/definitions/WorkflowDataSchema' },
     metadata: {
       type: 'object',
       properties: {
@@ -545,7 +580,6 @@ export const DeclarativeLogicalIRv4Schema = {
     required: ['execution_graph']
   },
   definitions: {
-    VariableDefinition: VariableDefinitionSchema,
     InputBinding: InputBindingSchema,
     OutputBinding: OutputBindingSchema,
     SimpleCondition: SimpleConditionSchema,
@@ -563,7 +597,10 @@ export const DeclarativeLogicalIRv4Schema = {
     ParallelConfig: ParallelConfigSchema,
     ErrorHandler: ErrorHandlerSchema,
     ExecutionNode: ExecutionNodeSchema,
-    ExecutionGraph: ExecutionGraphSchema
+    ExecutionGraph: ExecutionGraphSchema,
+    SchemaField: SchemaFieldSchema,
+    DataSlot: DataSlotSchema,
+    WorkflowDataSchema: WorkflowDataSchemaSchema
   }
 }
 

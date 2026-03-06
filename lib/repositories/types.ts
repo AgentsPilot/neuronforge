@@ -40,6 +40,8 @@ export interface Agent {
   pilot_steps?: unknown[] | null;
   system_prompt?: string | null;
   enhanced_prompt?: string | null;
+  // V6 Workflow Data Schema
+  data_schema?: Record<string, unknown> | null;
   trigger_condintion?: Record<string, unknown> | null;
   // Intelligence features
   insights_enabled?: boolean;

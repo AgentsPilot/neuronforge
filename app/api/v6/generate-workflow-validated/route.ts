@@ -82,6 +82,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       success: true,
       workflow: result.workflow,
+      data_schema: result.data_schema,
       hard_requirements: {
         count: result.hardRequirements?.requirements.length,
         unit_of_work: result.hardRequirements?.unit_of_work,

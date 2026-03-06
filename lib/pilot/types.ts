@@ -987,6 +987,7 @@ export interface Agent {
   // Workflow
   workflow_steps?: WorkflowStep[];  // Legacy format (backward compatibility with old agents)
   pilot_steps?: WorkflowStep[];     // Pilot format (default for all new agents)
+  data_schema?: import('@/lib/agentkit/v6/logical-ir/schemas/workflow-data-schema').WorkflowDataSchema;  // V6 Workflow Data Schema
 
   // Plugins
   plugins_required: string[];

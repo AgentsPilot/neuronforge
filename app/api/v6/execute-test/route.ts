@@ -23,6 +23,7 @@ interface ExecuteTestRequest {
   user_id?: string
   workflow_name?: string
   input_variables?: Record<string, any>
+  data_schema?: any  // Workflow Data Schema (Phase 5 Addendum)
 }
 
 interface ExecuteTestResponse {
@@ -119,6 +120,7 @@ export async function POST(request: NextRequest) {
       status: 'active' as const,
       input_schema: undefined,
       output_schema: undefined,
+      data_schema: body.data_schema || undefined,  // Workflow Data Schema (Phase 5 Addendum)
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString()
     }

@@ -317,6 +317,12 @@ export class WorkflowPilot {
       isBatchCalibration
     );
 
+    // Register Workflow Data Schema if available (Phase 5: V6 Data Schema)
+    if (agent.data_schema) {
+      context.registerDataSchema(agent.data_schema);
+      console.log(`📐 [WorkflowPilot] Registered data_schema with ${Object.keys(agent.data_schema.slots || {}).length} slots`);
+    }
+
     // Initialize execution summary collector for calibration runs
     let executionSummaryCollector: ExecutionSummaryCollector | null = null;
     if (runMode === 'calibration' || runMode === 'batch_calibration') {
@@ -1099,6 +1105,7 @@ export class WorkflowPilot {
         if (outputVariable && output.data) {
           context.setVariable(outputVariable, output.data);
           console.log(`  ✓ Registered output variable: ${outputVariable}`);
+          this.validateStepOutputAgainstSchema(context, outputVariable, output.data, stepDef.id);
         }
 
         console.log(`  ✓ Conditional branch executed in ${Date.now() - startTime}ms`);
@@ -1158,6 +1165,7 @@ export class WorkflowPilot {
       if (outputVariable) {
         context.setVariable(outputVariable, results);
         console.log(`  ✓ Registered output variable: ${outputVariable}`);
+        this.validateStepOutputAgainstSchema(context, outputVariable, results, stepDef.id);
       }
 
       console.log(`  ✓ Loop completed: ${results.length} iterations`);
@@ -1193,6 +1201,7 @@ export class WorkflowPilot {
       if (outputVariable) {
         context.setVariable(outputVariable, results);
         console.log(`  ✓ Registered output variable: ${outputVariable}`);
+        this.validateStepOutputAgainstSchema(context, outputVariable, results, stepDef.id);
       }
 
       console.log(`  ✓ Scatter-gather completed in ${Date.now() - startTime}ms`);
@@ -1334,6 +1343,9 @@ export class WorkflowPilot {
     if (outputVariable) {
       context.setVariable(outputVariable, output.data);
       console.log(`  ✓ Registered output variable: ${outputVariable}`);
+
+      // Validate output against data_schema if registered (Phase 5: Workflow Data Schema)
+      this.validateStepOutputAgainstSchema(context, outputVariable, output.data, stepDef.id);
     }
 
     // Collect execution metadata for calibration summaries
@@ -2827,5 +2839,24 @@ export class WorkflowPilot {
     await this.stateManager.cancelExecution(executionId);
 
     console.log(`✅ [WorkflowPilot] Execution cancelled`);
+  }
+
+  /**
+   * Validate step output against the registered data_schema (Phase 5: Workflow Data Schema)
+   * Logs validation errors as warnings — does not throw to avoid breaking execution during transition.
+   */
+  private validateStepOutputAgainstSchema(
+    context: ExecutionContext,
+    slotName: string,
+    data: any,
+    stepId: string
+  ): void {
+    if (!context.getDataSchema()) return;
+
+    const errors = context.validateAgainstSchema(slotName, data);
+    if (errors.length > 0) {
+      console.warn(`⚠️  [WorkflowPilot] Schema validation warnings for step '${stepId}', slot '${slotName}':`);
+      errors.forEach(err => console.warn(`    - ${err}`));
+    }
   }
 }

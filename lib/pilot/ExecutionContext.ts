@@ -3,7 +3,7 @@
  *
  * Responsibilities:
  * - Store step outputs
- * - Resolve variable references (e.g., {{step1.data.email}})
+ * - Resolve variable references (e.g., {{raw_emails}}, {{invoice_data.amount}})
  * - Track execution progress
  * - Provide context to ConditionalEvaluator
  *
@@ -22,6 +22,7 @@ import type {
   CollectedIssue,
 } from './types';
 import { VariableResolutionError, getTokenTotal } from './types';
+import type { WorkflowDataSchema, SchemaField } from '@/lib/agentkit/v6/logical-ir/schemas/workflow-data-schema';
 import { createLogger } from '@/lib/logger';
 
 // Create module-level logger for structured logging
@@ -50,6 +51,9 @@ export class ExecutionContext implements IExecutionContext {
 
   // Runtime variables
   public variables: Record<string, any>;
+
+  // Workflow data schema (from Phase 1 types)
+  private dataSchema: WorkflowDataSchema | null = null;
 
   // Memory context (from MemoryInjector)
   public memoryContext?: MemoryContext;
@@ -228,14 +232,99 @@ export class ExecutionContext implements IExecutionContext {
   }
 
   /**
-   * Resolve variable reference like {{step1.data.email}}
+   * Register the workflow data schema for validation.
+   * Called once at execution start by WorkflowPilot.
+   */
+  registerDataSchema(schema: WorkflowDataSchema): void {
+    this.dataSchema = schema;
+    logger.info({
+      slotCount: Object.keys(schema.slots).length,
+      slotNames: Object.keys(schema.slots),
+      executionId: this.executionId
+    }, 'Workflow data schema registered');
+  }
+
+  /**
+   * Get the registered data schema (if any).
+   */
+  getDataSchema(): WorkflowDataSchema | null {
+    return this.dataSchema;
+  }
+
+  /**
+   * Validate data against a named slot's schema.
+   * Returns an array of error strings (empty = valid).
+   * If no schema is registered or the slot doesn't exist, returns empty (skip validation).
+   */
+  validateAgainstSchema(slotName: string, data: any): string[] {
+    if (!this.dataSchema) return [];
+
+    const slot = this.dataSchema.slots[slotName];
+    if (!slot) return [];
+
+    return this.validateValue(data, slot.schema, slotName);
+  }
+
+  /**
+   * Recursive type/field validation against a SchemaField.
+   * Returns an array of error strings (empty = valid).
+   */
+  private validateValue(value: any, schema: SchemaField, path: string): string[] {
+    const errors: string[] = [];
+
+    // 1. Null/undefined check against required
+    if (value === null || value === undefined) {
+      if (schema.required) {
+        errors.push(`${path}: required field missing`);
+      }
+      return errors;
+    }
+
+    // 2. oneOf validation — at least one branch must match
+    if (schema.oneOf && schema.oneOf.length > 0) {
+      const branchResults = schema.oneOf.map(branch => this.validateValue(value, branch, path));
+      const anyBranchValid = branchResults.some(errs => errs.length === 0);
+      if (!anyBranchValid) {
+        errors.push(`${path}: value does not match any oneOf branch`);
+      }
+      return errors;
+    }
+
+    // 3. Type check
+    const actualType = Array.isArray(value) ? 'array' : typeof value;
+
+    if (schema.type !== 'any' && schema.type !== actualType) {
+      errors.push(
+        `${path}: expected type "${schema.type}" but got "${actualType}". Value: ${JSON.stringify(value).slice(0, 100)}`
+      );
+      return errors; // No point recursing into wrong type
+    }
+
+    // 4. Object property validation (recurse into properties)
+    if (schema.type === 'object' && schema.properties) {
+      for (const [key, fieldSchema] of Object.entries(schema.properties)) {
+        const fieldValue = value[key];
+        const fieldErrors = this.validateValue(fieldValue, fieldSchema, `${path}.${key}`);
+        errors.push(...fieldErrors);
+      }
+    }
+
+    // 5. Array item validation (validate first item as representative)
+    if (schema.type === 'array' && schema.items && Array.isArray(value) && value.length > 0) {
+      const itemErrors = this.validateValue(value[0], schema.items, `${path}[0]`);
+      errors.push(...itemErrors);
+    }
+
+    return errors;
+  }
+
+  /**
+   * Resolve variable reference like {{raw_emails}} or {{invoice_data.amount}}
    *
    * Supports:
-   * - {{step1.data.email}} - Step output field
-   * - {{step1.data[0].email}} - Array access
+   * - {{raw_emails}} - Data schema slot value
+   * - {{raw_emails[0].subject}} - Nested field with array access
    * - {{input.recipient}} - User input value
-   * - {{var.counter}} - Runtime variable
-   * - {{current.item}} - Loop current item
    * - ["{{email.id}}"] - Literal expressions with embedded variables
    */
   resolveVariable(reference: VariableReference): any {
@@ -293,7 +382,7 @@ export class ExecutionContext implements IExecutionContext {
         return this.resolveVariable(obj);
       }
 
-      // Replace inline variables: "Email from {{step1.data.sender}}"
+      // Replace inline variables: "Email from {{raw_emails[0].sender}}"
       return obj.replace(/\{\{([^}]+)\}\}/g, (match) => {
         try {
           const value = this.resolveVariable(match);
@@ -333,7 +422,7 @@ export class ExecutionContext implements IExecutionContext {
    *
    * Handles cases where LLM outputs JSON literals with template variables:
    * - "[\"{{email.id}}\"]" → ["resolved_id_value"]
-   * - "{\"key\": \"{{step1.value}}\"}" → {key: "resolved_value"}
+   * - "{\"key\": \"{{slot_name.value}}\"}" → {key: "resolved_value"}
    *
    * This is needed because the LLM doesn't distinguish between:
    * - JSON structure (what it's outputting)
@@ -430,7 +519,12 @@ export class ExecutionContext implements IExecutionContext {
 
   /**
    * Resolve a simple variable path without the surrounding {{}}
-   * Used internally for variable resolution
+   * Used internally for variable resolution.
+   *
+   * Resolution order:
+   *   1. User inputs ({{input.*}} / {{inputs.*}})
+   *   2. Data schema slots — all step outputs, named variables, loop items
+   *   3. Error with available slot names
    */
   private resolveSimpleVariable(path: string): any {
     const parts = this.parsePath(path);
@@ -444,95 +538,31 @@ export class ExecutionContext implements IExecutionContext {
 
     const root = parts[0];
 
-    // Check if it's a step output reference
-    if (root.startsWith('step')) {
-      const stepId = root;
-      const stepOutput = this.stepOutputs.get(stepId);
-
-      if (!stepOutput) {
-        throw new VariableResolutionError(
-          `Step ${stepId} has not been executed yet or does not exist`,
-          path,
-          stepId
-        );
-      }
-
-      const remainingPath = parts.slice(1);
-
-      // ✅ USABILITY FIX: Auto-navigate into .data for step outputs
-      // StepOutput structure is: { stepId, plugin, action, data, metadata }
-      // If user writes {{step4.assigned}}, they likely mean {{step4.data.assigned}}
-      // Only auto-navigate if the first property isn't 'data' or 'metadata'
-      if (remainingPath.length > 0) {
-        const firstProp = remainingPath[0];
-        const isDirectProperty = ['data', 'metadata', 'stepId', 'plugin', 'action'].includes(firstProp);
-
-        if (!isDirectProperty) {
-          // Auto-navigate into .data
-          logger.debug({
-            stepId,
-            originalPath: path,
-            autoNavigatedPath: `${stepId}.data.${remainingPath.join('.')}`
-          }, 'Auto-navigating into step.data for convenience');
-          return this.getNestedValue(stepOutput.data, remainingPath);
-        }
-      }
-
-      return this.getNestedValue(stepOutput, remainingPath);
-    }
-
-    // Check if it's an input value reference
+    // 1. User inputs
     // Wave 9: Support both 'input' and 'inputs' (plural) for flexibility
     // DSLWrapper generates {{inputs.xyz}} while legacy uses {{input.xyz}}
     if (root === 'input' || root === 'inputs') {
       return this.getNestedValue(this.inputValues, parts.slice(1));
     }
 
-    // Check if it's a variable reference
-    if (root === 'var') {
-      return this.getNestedValue(this.variables, parts.slice(1));
-    }
-
-    // Check if it's a current item reference (for loops/filters)
-    if (root === 'current' || root === 'item') {
-      const itemValue = this.variables[root];
-
-      if (itemValue === undefined) {
-        // Provide helpful error message explaining when 'item' is available
-        throw new VariableResolutionError(
-          `Variable '${root}' is not defined in current context. ` +
-          `'${root}' is only available inside: (1) transform filter/map operations, ` +
-          `(2) loop iterations, or (3) scatter-gather steps. ` +
-          `If you need to filter an array, use a transform step with operation='filter' instead of a conditional step.`,
-          path,
-          root
-        );
-      }
-
-      return parts.length > 1 ? this.getNestedValue(itemValue, parts.slice(1)) : itemValue;
-    }
-
-    // Check if it's a loop variable reference
-    if (root === 'loop') {
-      return this.getNestedValue(this.variables, parts);
-    }
-
-    // Check if root is a custom scatter/loop variable (e.g., 'email', 'customer', etc.)
+    // 2. Data schema slots (all step outputs, named variables, loop items)
     if (this.variables.hasOwnProperty(root)) {
-      const itemValue = this.variables[root];
-      return parts.length > 1 ? this.getNestedValue(itemValue, parts.slice(1)) : itemValue;
+      const value = this.variables[root];
+      return parts.length > 1 ? this.getNestedValue(value, parts.slice(1)) : value;
     }
 
+    // 3. Not found → descriptive error with available slot names
+    const available = Object.keys(this.variables);
     throw new VariableResolutionError(
-      `Unknown variable reference root: ${root}`,
+      `Unknown data slot: "${root}". Available slots: [${available.join(', ')}]`,
       path
     );
   }
 
   /**
    * Parse variable path into parts
-   * Example: "step1.data[0].email" → ["step1", "data", "[0]", "email"]
-   * Example: "loop.item['Sales Person']" → ["loop", "item", "['Sales Person']"]
+   * Example: "raw_emails[0].subject" → ["raw_emails", "[0]", "subject"]
+   * Example: "filtered_rows['Sales Person']" → ["filtered_rows", "['Sales Person']"]
    */
   private parsePath(path: string): string[] {
     const parts: string[] = [];
@@ -808,6 +838,7 @@ export class ExecutionContext implements IExecutionContext {
     cloned.skippedSteps = [...this.skippedSteps];
     cloned.stepOutputs = new Map(this.stepOutputs);
     cloned.variables = { ...this.variables };
+    cloned.dataSchema = this.dataSchema; // Schema is immutable — share reference
     cloned.memoryContext = this.memoryContext;
     cloned.orchestrator = this.orchestrator; // Copy orchestrator reference for consistent routing
     cloned.startedAt = this.startedAt;

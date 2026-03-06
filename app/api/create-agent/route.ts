@@ -132,6 +132,7 @@ export async function POST(request: NextRequest) {
       plugins_required: agent.plugins_required || null,
       workflow_steps: agent.workflow_steps || null,
       pilot_steps: agent.pilot_steps || null, // PILOT: Normalized steps for Pilot execution
+      data_schema: agent.data_schema || null, // V6 Workflow Data Schema
       generated_plan: agent.generated_plan || null, // Added missing field
       detected_categories: agent.detected_categories || null,
       ai_reasoning: aiReasoning,

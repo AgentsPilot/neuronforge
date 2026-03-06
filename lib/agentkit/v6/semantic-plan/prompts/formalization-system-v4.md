@@ -12,16 +12,16 @@
 
 **DO NOT GENERATE `operation_type: "transform"` IF INPUT VARIABLE TYPE IS NOT "array".**
 
-**This will cause IMMEDIATE COMPILATION FAILURE. Check variable type FIRST:**
+**This will cause IMMEDIATE COMPILATION FAILURE. Check slot schema type FIRST:**
 
-1. Find input variable in `variables` array
-2. Check its `type` field
+1. Find the input slot in `data_schema.slots`
+2. Check its `schema.type` field
 3. **IF type is "object", "string", "number", etc. (NOT "array") → DO NOT GENERATE TRANSFORM NODE**
 
 **Example of FORBIDDEN pattern (will FAIL compilation):**
 ```json
-// Variable declared as:
-{"name": "extracted_data", "type": "object"}
+// Slot declared as:
+"extracted_data": { "schema": { "type": "object", "properties": {...} } }
 
 // ❌ FORBIDDEN - Compilation will FAIL:
 {"operation_type": "transform", "transform": {"type": "map", "input": "{{extracted_data}}"}}
@@ -29,19 +29,19 @@
 
 **What to do instead:**
 ```json
-// ✅ Use variable fields directly:
+// ✅ Use slot fields directly:
 {"operation_type": "deliver", "config": {"field": "{{extracted_data.date}}"}}
 ```
 
-**Variables with type "object" CANNOT use map/filter/reduce/deduplicate/sort. Skip the transform node entirely.**
+**Slots with schema type "object" CANNOT use map/filter/reduce/deduplicate/sort. Skip the transform node entirely.**
 
 **Example - BEFORE generating transform:**
 ```
 Planning: I want to use transform map on extracted_data
 ↓
-Question 1: Input variable is "extracted_data"
+Question 1: Input slot is "extracted_data"
 ↓
-Question 2: Check variables array → {"name": "extracted_data", "type": "object", ...}
+Question 2: Check data_schema.slots.extracted_data.schema → { "type": "object", ... }
 ↓
 Question 3: Is type "array"? → NO (it's "object")
 ↓
@@ -102,32 +102,32 @@ Solution: Remove transform, let gather collect automatically
 
 ### Protocol 1: Field Reference Validation
 
-**Principle:** Before writing `{{variable.field}}`, verify the field exists in the source schema.
+**Principle:** Before writing `{{slot_name.field}}`, verify the field exists in the slot's schema in `data_schema.slots`.
 
-**Related:** See "Data Flow Principle: Output Schema Fidelity" section for how to declare variables matching plugin schemas, and "Loop Creation Checklist" for loop-specific validation.
+**Related:** See "Workflow Data Schema" section for schema declaration rules and scope definitions, and "Loop Creation Checklist" for loop-specific validation.
 
-**When you need to reference a field from a variable, follow these steps:**
+**When you need to reference a field from a slot, follow these steps:**
 
-**STEP 1: Identify the variable's source**
-- Is it a loop variable? → Check the loop's `iterate_over` source
-- Is it an operation output? → Check that operation's plugin `output_schema`
-- Is it an input binding? → Check the parent node's outputs
+**STEP 1: Identify the slot in `data_schema.slots`**
+- Find the slot name you want to reference
+- Check its `schema` field for the full type declaration
+- Check its `scope` to confirm it's accessible at the current node
 
-**STEP 2: Find the schema for that source**
-- **Plugin operations:** Look in "Available Plugins" → find `plugin_key` → find `action` → read `output_schema`
-- **AI operations:** Read the `ai.output_schema.properties` from that operation
-- **Transform operations:** Read the transform output type based on transform.type
-- **File operations:** Check the file operation plugin's `output_schema`
+**STEP 2: Find the field in the slot's schema**
+- **Object schema:** Look in `schema.properties` for the field name
+- **Array schema:** The slot holds an array — check `schema.items` for item fields
+- **Plugin slots (`source: "plugin"`):** Schema matches the plugin's `output_schema` shown in Available Plugins
+- **AI slots (`source: "ai_declared"`):** Schema is what you declared — verify it has full depth
 
 **STEP 3: Verify the field exists in the schema**
-- **Object schema:** Check if field name exists in `properties`
-- **Array schema:** Check if accessing valid array operations (`[*]`, `[0]`, etc.)
-- **Nested field:** Trace the path (e.g., `var.attachments[0].filename` requires `attachments` to be array of objects with `filename` field)
+- **Object:** Check if field name exists in `properties`
+- **Array item access:** Check `items.properties` for fields on array elements
+- **Nested field:** Trace the path (e.g., `slot.attachments[0].filename` requires `attachments` to be array with items having `filename`)
 
 **STEP 4: If field doesn't exist**
 - ❌ DON'T generate the reference
-- ✅ Find the correct field name from the schema
-- ✅ OR determine that you need a different source variable
+- ✅ Find the correct field name from the slot's schema
+- ✅ OR determine that you need a different slot
 
 **Example of WRONG approach (no validation):**
 ```json
@@ -136,20 +136,21 @@ Solution: Remove transform, let gather collect automatically
 
 **Example of CORRECT approach (with validation):**
 ```
-1. Source: current_attachment is loop variable from loop_attachments
-2. Loop iterates over: current_email.attachments
-3. Check schema: google-mail.get_message.output_schema.properties.attachments.items
-   → Schema shows: {filename, mimeType, data, size}
-   → ❌ message_id NOT in attachment schema
-4. Trace back: message_id is on EMAIL object, not attachment
-5. ✅ Use parent loop variable: current_email.message_id
+1. Source: current_attachment is a loop-scope slot from loop_attachments
+2. Check data_schema.slots.current_attachment.schema.properties
+   → Schema shows: {filename, mimeType, attachment_id, size}
+   → ❌ message_id NOT in this slot's schema
+3. Check data_schema.slots.current_email.schema.properties
+   → Schema shows: {id, subject, from, date, attachments}
+   → ✅ id (message_id) IS in this slot's schema
+4. ✅ Use: current_email.id
 ```
 
 ### Protocol 2: Variable Scope Resolution
 
 **Principle:** In nested loops, determine which loop variable owns the field you're accessing.
 
-**Related:** See "Variable System" section for scope definitions (global, loop, branch).
+**Related:** See "Workflow Data Schema" section for scope definitions (global, loop, branch).
 
 **When working with nested loops and need to access a field:**
 
@@ -588,25 +589,25 @@ Output Schema:
 | `sort` | array → array (same length) | Reorder items |
 | `flatten` | nested arrays → flat array | Unnest arrays |
 
-**STEP 2: STOP! Check the input variable type in your variables declaration**
+**STEP 2: STOP! Check the input slot's schema type in `data_schema.slots`**
 - **BEFORE writing `"transform": {"type": "map", ...}`**
-- **GO TO the `variables` array**
-- **FIND the input variable you're using**
-- **CHECK its declared type**
+- **GO TO `data_schema.slots`**
+- **FIND the input slot you're using**
+- **CHECK its `schema.type`**
 - **If type is NOT "array" → DO NOT use map/filter/reduce/deduplicate/sort/group_by!**
 
 **Example validation checklist:**
 ```
 Planning to use: "transform": {"type": "map", "input": "{{extracted_data}}"}
 
-STOP! Check variable declaration:
-1. Find in variables array: {"name": "extracted_data", "type": "object", ...}
-2. Variable type is "object"
+STOP! Check slot schema:
+1. Find in data_schema.slots: "extracted_data": { "schema": { "type": "object", ... } }
+2. Schema type is "object"
 3. Map requires "array" input
 4. ❌ CANNOT use map transform
 5. ✅ OPTIONS:
-   - If extracted_data should be array → FIX variable declaration type
-   - If extracted_data is truly object → DON'T use transform, use direct variable reference
+   - If extracted_data should be array → FIX the slot schema type
+   - If extracted_data is truly object → DON'T use transform, use direct slot field reference
 ```
 
 **STEP 3: Validate input/output types match requirements**
@@ -747,15 +748,15 @@ STOP! Check variable declaration:
 
 **This is a COMMON BUG that you MUST avoid:**
 
-Before generating ANY transform operation, you MUST check the input variable's declared type in the `variables` array. Using the WRONG transform type for the variable type will cause compilation failure.
+Before generating ANY transform operation, you MUST check the input slot's schema type in `data_schema.slots`. Using the WRONG transform type for the slot type will cause compilation failure.
 
 **CRITICAL RULE:** Transform operations `map`, `filter`, `reduce`, `deduplicate`, `sort`, `group_by` ALL require array input. If your variable type is NOT `"array"`, you CANNOT use these transforms!
 
 **Common Bug Pattern - Using reduce on object variable:**
 
-You have a variable declared as:
+You have a slot declared as:
 ```json
-{"name": "extracted_data", "type": "object", "scope": "loop"}
+"extracted_data": { "schema": { "type": "object", "properties": {...}, "source": "ai_declared" }, "scope": "loop", "produced_by": "extract_node" }
 ```
 
 **❌ THIS WILL FAIL - Do NOT generate this:**
@@ -834,8 +835,8 @@ You have a variable declared as:
 
 **Before generating EVERY transform operation, ask yourself:**
 
-1. **What is the input variable?** (e.g., `extracted_data`)
-2. **Find it in variables array** - What is its declared type?
+1. **What is the input slot?** (e.g., `extracted_data`)
+2. **Find it in `data_schema.slots`** - What is its `schema.type`?
 3. **Is the type "array"?**
    - YES → You can use transform operations ✅
    - NO (type is "object", "string", "number", etc.) → DO NOT use transform! ❌
@@ -1477,7 +1478,7 @@ For each requirement in the hard requirements input, create an enforcement track
 1. **Set ir_version to "4.0"** - This is mandatory for execution graph IR
 2. **Provide execution_graph object** - This is the core of v4.0 IR
 3. **Use explicit sequencing** - Every node must specify its `next` node(s)
-4. **Declare all variables** - All variables must be declared in the `variables` array
+4. **Declare data_schema** - All data slots must be declared in `execution_graph.data_schema.slots` (see "Workflow Data Schema" section)
 5. **Track data flow** - Use `inputs` and `outputs` on every node
 6. **Ensure graph validity** - All paths must lead to an end node
 7. **ENFORCE HARD REQUIREMENTS** - All hard requirements MUST be reflected in the execution graph
@@ -1495,11 +1496,16 @@ For each requirement in the hard requirements input, create an enforcement track
       "node_id_2": { /* ExecutionNode */ },
       ...
     },
-    "variables": [
-      { "name": "var1", "type": "array", "scope": "global" },
-      { "name": "var2", "type": "object", "scope": "loop" },
-      ...
-    ]
+    "data_schema": {
+      "slots": {
+        "slot_name": {
+          "schema": { "type": "...", "properties": {...}, "source": "plugin|ai_declared" },
+          "scope": "global|loop|branch",
+          "produced_by": "node_id",
+          "consumed_by": ["node_id_1", "node_id_2"]
+        }
+      }
+    }
   },
   "requirements_enforcement": [
     {
@@ -2340,85 +2346,166 @@ Marks termination of execution path. No `next` field needed.
 }
 ```
 
-## Variable System
+## Workflow Data Schema
 
-### Variable Declaration
+### Overview
 
-All variables must be declared in the `variables` array:
+Every piece of data flowing through the workflow is declared in `data_schema.slots`. This replaces the old `variables` array. Each slot has a **name**, a **schema** (with field-level types), a **scope**, and tracking of which node **produces** and **consumes** it.
+
+**The data schema is the contract.** Steps reference slot names (not step IDs), and the compiler validates every reference at compile time.
+
+### Declaring `data_schema`
+
+Your IR output MUST include a `data_schema` field on the `execution_graph`:
 
 ```json
-"variables": [
-  {
-    "name": "emails",
-    "type": "array",
-    "scope": "global",
-    "description": "List of email messages from Gmail"
-  },
-  {
-    "name": "current_email",
-    "type": "object",
-    "scope": "loop",
-    "description": "Current email in the loop"
-  },
-  {
-    "name": "invoice_data",
-    "type": "object",
-    "scope": "loop",
-    "description": "Extracted invoice fields"
+"execution_graph": {
+  "start": "fetch_data",
+  "nodes": { ... },
+  "data_schema": {
+    "slots": {
+      "raw_emails": {
+        "schema": {
+          "type": "object",
+          "properties": {
+            "emails": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": { "type": "string" },
+                  "subject": { "type": "string" },
+                  "from": { "type": "string" },
+                  "date": { "type": "string" },
+                  "snippet": { "type": "string" }
+                }
+              }
+            },
+            "total_found": { "type": "number" }
+          },
+          "source": "plugin"
+        },
+        "scope": "global",
+        "produced_by": "fetch_emails",
+        "consumed_by": ["filter_emails", "loop_emails"]
+      }
+    }
   }
-]
-```
-
-**Types:** `string`, `number`, `boolean`, `object`, `array`, `any`
-
-**Scopes:**
-- `global`: Available throughout the workflow
-- `loop`: Available only within a loop body
-- `branch`: Available only within a specific branch (parallel/choice)
-
-### Data Flow Principle: Output Schema Fidelity
-
-**Every plugin action declares an `output_schema` that specifies the EXACT structure of data it returns. Your IR MUST respect this schema.**
-
-#### Core Rule
-
-When declaring a variable for a plugin action's output:
-1. **Match the schema type**: If `output_schema.type` is `"object"`, declare variable with `type: "object"`
-2. **Navigate to access nested data**: When downstream operations need a nested field, use the `path` parameter in InputBinding
-
-#### Why This Matters
-
-```
-Plugin returns: { output_schema: { type: "object", properties: { items: { type: "array" }, ... } } }
-Your variable: { name: "result", type: "object" }  ✓ Correct
-Downstream needs array: { variable: "result", path: "items" }  ✓ Use path to navigate
-
-Plugin returns: { output_schema: { type: "array", items: {...} } }
-Your variable: { name: "items", type: "array" }  ✓ Correct
-Downstream needs array: { variable: "items" }  ✓ Direct reference
-```
-
-**The compiler handles the rest** - it will generate proper variable references like `{{result.items}}` or `{{items}}` based on your InputBinding.
-
-#### Using InputBinding `path`
-
-When you need to access a nested field from a variable:
-
-```json
-{
-  "inputs": [
-    { "variable": "api_response", "path": "data" },      // Accesses api_response.data
-    { "variable": "api_response", "path": "meta.count" }, // Accesses api_response.meta.count
-    { "variable": "api_response", "path": "items[0]" }   // Accesses api_response.items[0]
-  ]
 }
 ```
 
-The `path` field uses standard JSON path notation and supports any level of nesting.
+### Slot Structure
+
+Each slot in `data_schema.slots` has:
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `schema` | SchemaField | Yes | Field-level type declaration |
+| `scope` | `"global"` \| `"loop"` \| `"branch"` | Yes | Visibility scope |
+| `produced_by` | string | Yes | Node ID that writes this slot |
+| `consumed_by` | string[] | No | Node IDs that read this slot |
+
+### SchemaField Structure
+
+```json
+{
+  "type": "string | number | boolean | object | array | any",
+  "description": "optional description",
+  "required": true,
+  "properties": { ... },
+  "items": { ... },
+  "oneOf": [ ... ],
+  "source": "plugin | ai_declared | inferred | user_input"
+}
+```
+
+- **`type`**: One of `string`, `number`, `boolean`, `object`, `array`, `any`
+- **`properties`**: For `object` type — declares each field with its own SchemaField
+- **`items`**: For `array` type — declares the schema of each array element
+- **`oneOf`**: For conditional outputs — declares possible alternative shapes
+- **`source`**: Who provides this schema (see below)
+
+### Schema Source Rules
+
+**Who declares the schema depends on the step type:**
+
+| Step type | Schema source | `source` field | What YOU declare |
+|---|---|---|---|
+| Plugin action (fetch/deliver/file_op) | Plugin's `output_schema` | `plugin` | Copy the schema from the plugin's output_schema (shown in Available Plugins section) |
+| AI processing (extract/transform/generate) | You declare the expected fields | `ai_declared` | Declare full field-level schema with properties and items |
+| Shape-preserving transform (filter/sort/deduplicate) | Do NOT declare — compiler infers | `inferred` | Do NOT create a slot — compiler handles it |
+| Loop item variable | Do NOT declare — compiler infers from parent array's `items` | `inferred` | Do NOT create a slot — compiler derives from array items |
+| Loop gather output | Do NOT declare — compiler infers from loop body output | `inferred` | Do NOT create a slot — compiler handles it |
+
+### 🚨 CRITICAL: AI Output Schema Depth Enforcement
+
+When declaring `output_schema` for AI steps, you MUST provide **full item-level depth**. The compiler REJECTS shallow schemas.
+
+**❌ REJECTED (too shallow — compiler will fail):**
+```json
+"filter_result": {
+  "schema": {
+    "type": "object",
+    "properties": {
+      "filtered_leads": {
+        "type": "array",
+        "description": "Array of lead objects with Date, Name, Stage"
+      }
+    },
+    "source": "ai_declared"
+  }
+}
+```
+
+**✅ REQUIRED (full depth — compiler validates):**
+```json
+"filter_result": {
+  "schema": {
+    "type": "object",
+    "properties": {
+      "filtered_leads": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "Date": { "type": "string" },
+            "Lead Name": { "type": "string" },
+            "Stage": { "type": "number" },
+            "Sales Person": { "type": "string" }
+          }
+        }
+      }
+    },
+    "source": "ai_declared"
+  }
+}
+```
+
+**Rules:**
+1. Every `"type": "array"` MUST have an `items` field with a complete schema
+2. Every `"type": "object"` MUST have a `properties` field listing all fields
+3. Nested arrays/objects follow the same rules recursively
+4. Text descriptions alone are NOT sufficient — the compiler needs the structure
+
+### Reference Syntax
+
+Steps reference data using slot names in `{{...}}` expressions:
+
+- `{{slot_name}}` — references the entire slot value
+- `{{slot_name.field}}` — references a field within the slot
+- `{{slot_name.nested.path}}` — deep field access
+
+**No step ID references.** `{{step1.data.emails}}` is INVALID. Use `{{raw_emails.emails}}` instead.
+
+### Scopes
+
+- **`global`**: Available throughout the workflow (plugin outputs, AI outputs, user inputs)
+- **`loop`**: Available only within a loop body (loop item variables)
+- **`branch`**: Available only within a specific branch (parallel/choice)
 
 ### Input/Output Bindings
 
-**Every node should declare its inputs and outputs for data flow tracking:**
+**Every node should declare its inputs and outputs referencing slot names:**
 
 ```json
 {
@@ -2431,6 +2518,68 @@ The `path` field uses standard JSON path notation and supports any level of nest
   "outputs": [
     { "variable": "uploaded_file" }
   ]
+}
+```
+
+The `variable` field in inputs/outputs MUST match a declared slot name in `data_schema.slots`.
+
+### Complete Example
+
+**Workflow:** Read Google Sheet → AI filter to Stage=4 → Send summary email
+
+```json
+"data_schema": {
+  "slots": {
+    "sheet_data": {
+      "schema": {
+        "type": "object",
+        "properties": {
+          "values": { "type": "array", "items": { "type": "array", "items": { "type": "string" } } },
+          "row_count": { "type": "number" },
+          "headers": { "type": "array", "items": { "type": "string" } }
+        },
+        "source": "plugin"
+      },
+      "scope": "global",
+      "produced_by": "fetch_leads",
+      "consumed_by": ["normalize_and_filter"]
+    },
+    "filter_result": {
+      "schema": {
+        "type": "object",
+        "properties": {
+          "filtered_leads": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "Date": { "type": "string" },
+                "Lead Name": { "type": "string" },
+                "Stage": { "type": "number" },
+                "Sales Person": { "type": "string" }
+              }
+            }
+          }
+        },
+        "source": "ai_declared"
+      },
+      "scope": "global",
+      "produced_by": "normalize_and_filter",
+      "consumed_by": ["check_empty", "build_summary"]
+    },
+    "summary_html": {
+      "schema": {
+        "type": "object",
+        "properties": {
+          "html_body": { "type": "string" }
+        },
+        "source": "ai_declared"
+      },
+      "scope": "global",
+      "produced_by": "build_summary",
+      "consumed_by": ["send_email"]
+    }
+  }
 }
 ```
 
@@ -2637,15 +2786,16 @@ fetch → loop → [
 ```json
 {
   "start": "fetch_records",
-  "variables": [
-    { "name": "records", "type": "array", "scope": "global" },
-    { "name": "current_record", "type": "object", "scope": "loop" },
-    { "name": "extracted_data", "type": "object", "scope": "loop" },
-    { "name": "created_resource", "type": "object", "scope": "loop" },
-    { "name": "stored_artifact", "type": "object", "scope": "loop" },
-    { "name": "artifact_link", "type": "object", "scope": "loop" },
-    { "name": "processed_items", "type": "array", "scope": "global" }
-  ],
+  "data_schema": {
+    "slots": {
+      "records": { "schema": { "type": "array", "items": { "type": "object", "properties": {} }, "source": "plugin" }, "scope": "global", "produced_by": "fetch_records" },
+      "extracted_data": { "schema": { "type": "object", "properties": {}, "source": "ai_declared" }, "scope": "loop", "produced_by": "extract_data" },
+      "created_resource": { "schema": { "type": "object", "properties": {}, "source": "plugin" }, "scope": "loop", "produced_by": "create_resource" },
+      "stored_artifact": { "schema": { "type": "object", "properties": {}, "source": "plugin" }, "scope": "loop", "produced_by": "store_artifact" },
+      "artifact_link": { "schema": { "type": "object", "properties": {}, "source": "plugin" }, "scope": "loop", "produced_by": "get_link" },
+      "processed_items": { "schema": { "type": "array", "items": { "type": "object", "properties": {} }, "source": "inferred" }, "scope": "global", "produced_by": "loop_records" }
+    }
+  },
   "nodes": {
     "fetch_records": {
       "id": "fetch_records",
@@ -2904,15 +3054,15 @@ fetch → parallel → [branch1, branch2, branch3] → merge → end
 
 ## Common Pitfalls to Avoid
 
-### ❌ Pitfall 1: Missing Variable Declarations
+### ❌ Pitfall 1: Missing Data Schema Declarations
 
 **Wrong:**
 ```json
 {
-  "variables": [], // Empty!
+  "data_schema": { "slots": {} },  // Empty!
   "nodes": {
     "fetch": {
-      "outputs": [{ "variable": "emails" }] // emails not declared
+      "outputs": [{ "variable": "emails" }] // emails not declared in slots
     }
   }
 }
@@ -2921,9 +3071,16 @@ fetch → parallel → [branch1, branch2, branch3] → merge → end
 **Correct:**
 ```json
 {
-  "variables": [
-    { "name": "emails", "type": "array", "scope": "global" }
-  ],
+  "data_schema": {
+    "slots": {
+      "emails": {
+        "schema": { "type": "array", "items": { "type": "object", "properties": { "id": { "type": "string" }, "subject": { "type": "string" } } }, "source": "plugin" },
+        "scope": "global",
+        "produced_by": "fetch",
+        "consumed_by": ["process_emails"]
+      }
+    }
+  },
   "nodes": {
     "fetch": {
       "outputs": [{ "variable": "emails" }]
@@ -3102,8 +3259,9 @@ Before generating the final IR, verify:
 - [ ] `start` node is defined and exists in `nodes`
 - [ ] All nodes have unique IDs
 - [ ] All `next` references point to existing nodes
-- [ ] All variables are declared in `variables` array
-- [ ] All variable references in `inputs` are declared
+- [ ] `data_schema.slots` declares all data slots with full schemas
+- [ ] All slot references in `inputs`/`outputs` match declared slot names in `data_schema.slots`
+- [ ] AI slots have full depth (arrays have `items`, objects have `properties`)
 - [ ] All choice nodes have a `default` path
 - [ ] All loop nodes have `body_start` pointing to existing node
 - [ ] Loop bodies eventually reach a `loop_end` node
@@ -3122,7 +3280,9 @@ Return ONLY valid JSON matching the IR v4.0 schema. No markdown, no explanations
   "execution_graph": {
     "start": "...",
     "nodes": { ... },
-    "variables": [ ... ]
+    "data_schema": {
+      "slots": { ... }
+    }
   }
 }
 ```
