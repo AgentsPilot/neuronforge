@@ -44,59 +44,69 @@ if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_
 // Production user ID (Offir)
 const TEST_USER_ID = process.env.TEST_USER_ID || '08456106-aa50-4810-b12c-7ca84102da31'
 
-// REAL Enhanced Prompt from production
-const enhancedPrompt = {
-  "plan_title": "Invoice & Receipt Extraction Agent (Gmail → Drive + Sheets + Summary Email)",
-  "plan_description": "Extracts invoices/receipts from unread Gmail emails, stores the files in Google Drive, logs transactions over $50 to a Google Sheet tab, and emails you a summary of all extracted transactions.",
-  "sections": {
-    "data": [
-      "- Scan Gmail for unread emails only.",
-      "- From each unread email, consider PDF attachments and image attachments (e.g., .pdf, .jpg, .png) as candidate invoices/receipts.",
-      "- Treat each attachment as a separate candidate transaction (do not combine multiple attachments into one transaction).",
-      "- Capture source email metadata for each attachment: sender and subject.",
-      "- Store each attachment file in a newly created Google Drive folder (folder name to be confirmed).",
-      "- Extract standard transaction fields from each attachment: date, vendor, amount, currency, and invoice/receipt number."
-    ],
-    "actions": [
-      "- For each candidate attachment, extract the standard fields (date, vendor, amount, currency, invoice/receipt number) as structured data.",
-      "- If the agent cannot confidently find an amount for an attachment, skip creating a transaction record for it and add a note about it in the summary email (include sender + subject and the Drive file link).",
-      "- If the extracted amount is greater than $50, append a new row to the specified Google Sheet tab (\"Expenses\").",
-      "- If the extracted amount is $50 or less, do not write it to Google Sheets, but still include it in the summary email's \"all transactions\" table."
-    ],
-    "output": [
-      "- Produce an email-friendly summary that includes a table of all extracted transactions (including transactions with amount <= $50).",
-      "- Include a separate section listing only transactions with amount > $50.",
-      "- Include a Google Drive link for each stored file.",
-      "- Include source email info for each transaction (sender and subject).",
-      "- Include totals summary (at minimum: number of transactions extracted, sum of amounts for all extracted transactions, and sum of amounts for the > $50 subset).",
-      "- Include a separate note section listing any attachments that were skipped because the amount was missing/unclear."
-    ],
-    "delivery": [
-      "- Send the summary email to offir.omer@gmail.com."
-    ],
-    "processing_steps": [
-      "- Find unread emails in Gmail.",
-      "- For each unread email, collect PDF and image attachments.",
-      "- Create (or ensure) the target Google Drive folder exists, then upload/store each attachment there.",
-      "- Extract standard fields from each stored attachment.",
-      "- Split extracted transactions into two groups: amount > $50 and amount <= $50.",
-      "- Append only the amount > $50 group to the specified Google Sheet tab.",
-      "- Generate the summary email content with the required tables/sections and send it."
-    ]
-  },
-  "specifics": {
-    "services_involved": [
-      "google-mail",
-      "google-drive",
-      "google-sheets",
-      "chatgpt-research"
-    ],
-    "resolved_user_inputs": [
-      { "key": "user_email", "value": "offir.omer@gmail.com" },
-      { "key": "amount_threshold_usd", "value": "50" },
-      { "key": "sheet_tab_name", "value": "Expenses" },
-      { "key": "google_sheet_id_candidate", "value": "1pM8WbXtPgaYqokHn_spgQAfR7SBuql3JUtE1ugDtOpc" }
-    ]
+// Try to load Enhanced Prompt from external JSON file, fall back to hardcoded
+const externalPromptPath = join(__dirname, 'test-intent-contract-generation-enhanced-prompt.json')
+let enhancedPrompt: any
+
+try {
+  const externalContent = readFileSync(externalPromptPath, 'utf-8')
+  enhancedPrompt = JSON.parse(externalContent)
+  logger.info(`Loaded Enhanced Prompt from ${externalPromptPath}`)
+} catch {
+  logger.info('No external Enhanced Prompt found, using hardcoded default')
+  enhancedPrompt = {
+    "plan_title": "Invoice & Receipt Extraction Agent (Gmail → Drive + Sheets + Summary Email)",
+    "plan_description": "Extracts invoices/receipts from unread Gmail emails, stores the files in Google Drive, logs transactions over $50 to a Google Sheet tab, and emails you a summary of all extracted transactions.",
+    "sections": {
+      "data": [
+        "- Scan Gmail for unread emails only.",
+        "- From each unread email, consider PDF attachments and image attachments (e.g., .pdf, .jpg, .png) as candidate invoices/receipts.",
+        "- Treat each attachment as a separate candidate transaction (do not combine multiple attachments into one transaction).",
+        "- Capture source email metadata for each attachment: sender and subject.",
+        "- Store each attachment file in a newly created Google Drive folder (folder name to be confirmed).",
+        "- Extract standard transaction fields from each attachment: date, vendor, amount, currency, and invoice/receipt number."
+      ],
+      "actions": [
+        "- For each candidate attachment, extract the standard fields (date, vendor, amount, currency, invoice/receipt number) as structured data.",
+        "- If the agent cannot confidently find an amount for an attachment, skip creating a transaction record for it and add a note about it in the summary email (include sender + subject and the Drive file link).",
+        "- If the extracted amount is greater than $50, append a new row to the specified Google Sheet tab (\"Expenses\").",
+        "- If the extracted amount is $50 or less, do not write it to Google Sheets, but still include it in the summary email's \"all transactions\" table."
+      ],
+      "output": [
+        "- Produce an email-friendly summary that includes a table of all extracted transactions (including transactions with amount <= $50).",
+        "- Include a separate section listing only transactions with amount > $50.",
+        "- Include a Google Drive link for each stored file.",
+        "- Include source email info for each transaction (sender and subject).",
+        "- Include totals summary (at minimum: number of transactions extracted, sum of amounts for all extracted transactions, and sum of amounts for the > $50 subset).",
+        "- Include a separate note section listing any attachments that were skipped because the amount was missing/unclear."
+      ],
+      "delivery": [
+        "- Send the summary email to offir.omer@gmail.com."
+      ],
+      "processing_steps": [
+        "- Find unread emails in Gmail.",
+        "- For each unread email, collect PDF and image attachments.",
+        "- Create (or ensure) the target Google Drive folder exists, then upload/store each attachment there.",
+        "- Extract standard fields from each stored attachment.",
+        "- Split extracted transactions into two groups: amount > $50 and amount <= $50.",
+        "- Append only the amount > $50 group to the specified Google Sheet tab.",
+        "- Generate the summary email content with the required tables/sections and send it."
+      ]
+    },
+    "specifics": {
+      "services_involved": [
+        "google-mail",
+        "google-drive",
+        "google-sheets",
+        "chatgpt-research"
+      ],
+      "resolved_user_inputs": [
+        { "key": "user_email", "value": "offir.omer@gmail.com" },
+        { "key": "amount_threshold_usd", "value": "50" },
+        { "key": "sheet_tab_name", "value": "Expenses" },
+        { "key": "google_sheet_id_candidate", "value": "1pM8WbXtPgaYqokHn_spgQAfR7SBuql3JUtE1ugDtOpc" }
+      ]
+    }
   }
 }
 
