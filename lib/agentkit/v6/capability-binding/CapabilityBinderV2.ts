@@ -21,8 +21,10 @@ import type {
 } from '../semantic-plan/types/intent-schema-types'
 import type { PluginManagerV2 } from '@/lib/server/plugin-manager-v2'
 import type { ActionDefinition, PluginDefinition } from '@/lib/types/plugin-types'
+import type { WorkflowDataSchema } from '../logical-ir/schemas/workflow-data-schema'
 import { createLogger } from '@/lib/logger'
 import { SubsetRefResolver, type SubsetResolutionResult } from './SubsetRefResolver'
+import { DataSchemaBuilder } from './DataSchemaBuilder'
 
 const logger = createLogger({ module: 'CapabilityBinderV2', service: 'V6' })
 
@@ -40,6 +42,8 @@ export type BoundStep = IntentStep & {
 export type BoundIntentContract = IntentContract & {
   steps: BoundStep[]
   subset_resolution?: SubsetResolutionResult
+  /** Workflow data schema — constructed deterministically after binding from plugin output schemas + step declarations */
+  data_schema?: WorkflowDataSchema
 }
 
 /**
@@ -148,6 +152,24 @@ export class CapabilityBinderV2 {
       )
     } else {
       logger.info('[CapabilityBinderV2] All steps successfully bound')
+    }
+
+    // Phase 2: Build data_schema from bound steps + plugin output schemas
+    const schemaBuilder = new DataSchemaBuilder(this.pluginManager)
+    const { schema: dataSchema, warnings: schemaWarnings } = schemaBuilder.build(boundSteps)
+
+    boundIntent.data_schema = dataSchema
+
+    if (schemaWarnings.length > 0) {
+      logger.warn(
+        { warningCount: schemaWarnings.length, warnings: schemaWarnings },
+        '[CapabilityBinderV2] data_schema built with warnings'
+      )
+    } else {
+      logger.info(
+        { slotCount: Object.keys(dataSchema.slots).length },
+        '[CapabilityBinderV2] data_schema built successfully'
+      )
     }
 
     return boundIntent

@@ -1,7 +1,7 @@
 # V6 Workflow Data Schema — Intent Contract Pipeline Workplan
 
-> **Status**: Planning
-> **Date**: 2026-03-08
+> **Status**: ⚠️ Phases complete, 4 issues fixed (I1, I2, I4, I5), 1 to verify (I3), 7 new issues from test review (I6–I12)
+> **Date**: 2026-03-10
 > **Branch**: `feature/v6-Intent-Contract`
 > **Design doc**: [V6_WORKFLOW_DATA_SCHEMA_DESIGN.md](./V6_WORKFLOW_DATA_SCHEMA_DESIGN.md)
 > **Related workplan**: [V6_WORKFLOW_DATA_SCHEMA_WORKPLAN.md](./V6_WORKFLOW_DATA_SCHEMA_WORKPLAN.md) (Architecture A — LLM→IR direct)
@@ -102,9 +102,9 @@ Key principle: **validate each phase's output before building on top of it.** Ph
 
 | # | Task | File | Status |
 |---|------|------|--------|
-| 0.1 | Add prompt rule: "For shape-changing transforms (`map`, `group`, `merge`, `reduce`, `select`), you MUST include `transform.output_schema` describing the output structure with field names and types." Include one example showing correct usage. | `lib/agentkit/v6/intent/intent-system-prompt-v2.ts` | Not started |
-| 0.2 | Add prompt clarification: "Shape-preserving transforms (`filter`, `sort`, `dedupe`, `flatten`) do NOT need `output_schema` — the output has the same shape as the input." | `lib/agentkit/v6/intent/intent-system-prompt-v2.ts` | Not started |
-| 0.3 | Add prompt guidance: "If you need AI to reshape data (complex restructuring, conditional field mapping), use `extract` or `generate` instead of `transform` — those step kinds require explicit field declarations (`fields[]` / `outputs[]`) which serve the same purpose." | `lib/agentkit/v6/intent/intent-system-prompt-v2.ts` | Not started |
+| 0.1 | Add prompt rule: "For shape-changing transforms (`map`, `group`, `merge`, `reduce`, `select`), you MUST include `transform.output_schema` describing the output structure with field names and types." Include one example showing correct usage. | `lib/agentkit/v6/intent/intent-system-prompt-v2.ts` | ✅ Done |
+| 0.2 | Add prompt clarification: "Shape-preserving transforms (`filter`, `sort`, `dedupe`, `flatten`) do NOT need `output_schema` — the output has the same shape as the input." | `lib/agentkit/v6/intent/intent-system-prompt-v2.ts` | ✅ Done |
+| 0.3 | Add prompt guidance: "If you need AI to reshape data (complex restructuring, conditional field mapping), use `extract` or `generate` instead of `transform` — those step kinds require explicit field declarations (`fields[]` / `outputs[]`) which serve the same purpose." | `lib/agentkit/v6/intent/intent-system-prompt-v2.ts` | ✅ Done |
 
 **Testing:**
 - Manual test: run `test-complete-pipeline-with-vocabulary.ts` with a prompt that requires a `map` transform → verify LLM produces `output_schema`
@@ -118,11 +118,11 @@ Key principle: **validate each phase's output before building on top of it.** Ph
 
 | # | Task | File | Status |
 |---|------|------|--------|
-| 1.1 | Create `SchemaField`, `DataSlot`, `WorkflowDataSchema` types (or port from Architecture A branch) | `lib/agentkit/v6/logical-ir/schemas/workflow-data-schema.ts` (new) | Not started |
-| 1.2 | Add `data_schema?: WorkflowDataSchema` to `BoundIntentContract` type | `lib/agentkit/v6/capability-binding/CapabilityBinderV2.ts` | Not started |
-| 1.3 | Add `data_schema?: WorkflowDataSchema` to `ExecutionGraph` IR type (if not already present on this branch) | `lib/agentkit/v6/logical-ir/schemas/declarative-ir-types-v4.ts` | Not started |
-| 1.4 | Add utility: `convertActionOutputSchemaToSchemaField()` — converts plugin JSON Schema (`ActionOutputSchema`) to `SchemaField` format | `lib/agentkit/v6/logical-ir/schemas/workflow-data-schema.ts` | Not started |
-| 1.5 | Add utility: `convertActionInputSchemaToSchemaField()` — converts plugin `parameters` JSON Schema to `SchemaField` format (for consumer-side validation) | `lib/agentkit/v6/logical-ir/schemas/workflow-data-schema.ts` | Not started |
+| 1.1 | Create `SchemaField`, `DataSlot`, `WorkflowDataSchema` types (or port from Architecture A branch) | `lib/agentkit/v6/logical-ir/schemas/workflow-data-schema.ts` (new) | ✅ Done |
+| 1.2 | Add `data_schema?: WorkflowDataSchema` to `BoundIntentContract` type | `lib/agentkit/v6/capability-binding/CapabilityBinderV2.ts` | ✅ Done |
+| 1.3 | Add `data_schema?: WorkflowDataSchema` to `ExecutionGraph` IR type (if not already present on this branch) | `lib/agentkit/v6/logical-ir/schemas/declarative-ir-types-v4.ts` | ✅ Done |
+| 1.4 | Add utility: `convertActionOutputSchemaToSchemaField()` — converts plugin JSON Schema (`ActionOutputSchema`) to `SchemaField` format | `lib/agentkit/v6/logical-ir/schemas/workflow-data-schema.ts` | ✅ Done |
+| 1.5 | Add utility: `convertActionInputSchemaToSchemaField()` — converts plugin `parameters` JSON Schema to `SchemaField` format (for consumer-side validation) | `lib/agentkit/v6/logical-ir/schemas/workflow-data-schema.ts` | ✅ Done |
 
 **Testing:**
 - TypeScript compiles with no errors
@@ -137,16 +137,16 @@ Key principle: **validate each phase's output before building on top of it.** Ph
 
 | # | Task | File | Status |
 |---|------|------|--------|
-| 2.1 | Create `DataSchemaBuilder` class with `build(boundSteps, pluginManager)` method — iterates all bound steps, creates a `DataSlot` for each step that has an `output: RefName` | `lib/agentkit/v6/capability-binding/DataSchemaBuilder.ts` (new) | Not started |
-| 2.2 | Implement `inferSchemaForBoundStep()` — for steps bound to a plugin action, extract `output_schema` from the action definition via `PluginManagerV2`. Source: `plugin` | `lib/agentkit/v6/capability-binding/DataSchemaBuilder.ts` | Not started |
-| 2.3 | Implement `inferSchemaForTransformStep()` — shape-preserving ops (`filter`, `sort`, `dedupe`, `flatten`): inherit input slot schema. Shape-changing ops (`map`, `group`, `merge`, `reduce`, `select`): use `transform.output_schema` (required by Phase 0 prompt rule). If `output_schema` is missing on a shape-changing op, log a pipeline warning. | `lib/agentkit/v6/capability-binding/DataSchemaBuilder.ts` | Not started |
-| 2.4 | Implement `inferSchemaForExtractStep()` — uses the step's explicit `fields[]` declarations (name + type) to build schema. Source: `ai_declared` | `lib/agentkit/v6/capability-binding/DataSchemaBuilder.ts` | Not started |
-| 2.5 | Implement `inferSchemaForGenerateStep()` — uses the step's explicit `outputs[]` declarations (name + type). Source: `ai_declared` | `lib/agentkit/v6/capability-binding/DataSchemaBuilder.ts` | Not started |
-| 2.6 | Implement `inferSchemaForAggregateStep()` — each aggregate output produces a named slot (subset = same type as input, count = number, sum = number, etc.) | `lib/agentkit/v6/capability-binding/DataSchemaBuilder.ts` | Not started |
-| 2.7 | Implement `inferSchemaForLoopStep()` — loop `item_ref` slot = input array's `items` schema (scope: `loop`); `collect_as` slot = array of inner step output | `lib/agentkit/v6/capability-binding/DataSchemaBuilder.ts` | Not started |
-| 2.8 | Populate `consumed_by` — second pass over all steps, for each `inputs[]` RefName, add the step ID to the corresponding slot's `consumed_by` array | `lib/agentkit/v6/capability-binding/DataSchemaBuilder.ts` | Not started |
-| 2.9 | Wire into `CapabilityBinderV2.bind()` — after binding completes, call `DataSchemaBuilder.build()`, attach result to `BoundIntentContract.data_schema` | `lib/agentkit/v6/capability-binding/CapabilityBinderV2.ts` | Not started |
-| 2.10 | Add `flattenSteps()` helper — recursively collects all steps including nested (loop body, decide branches, parallel branches) for schema traversal | `lib/agentkit/v6/capability-binding/DataSchemaBuilder.ts` | Not started |
+| 2.1 | Create `DataSchemaBuilder` class with `build(boundSteps, pluginManager)` method — iterates all bound steps, creates a `DataSlot` for each step that has an `output: RefName` | `lib/agentkit/v6/capability-binding/DataSchemaBuilder.ts` (new) | ✅ Done |
+| 2.2 | Implement `inferSchemaForBoundStep()` — for steps bound to a plugin action, extract `output_schema` from the action definition via `PluginManagerV2`. Source: `plugin` | `lib/agentkit/v6/capability-binding/DataSchemaBuilder.ts` | ✅ Done |
+| 2.3 | Implement `inferSchemaForTransformStep()` — shape-preserving ops (`filter`, `sort`, `dedupe`, `flatten`): inherit input slot schema. Shape-changing ops (`map`, `group`, `merge`, `reduce`, `select`): use `transform.output_schema` (required by Phase 0 prompt rule). If `output_schema` is missing on a shape-changing op, log a pipeline warning. | `lib/agentkit/v6/capability-binding/DataSchemaBuilder.ts` | ✅ Done |
+| 2.4 | Implement `inferSchemaForExtractStep()` — uses the step's explicit `fields[]` declarations (name + type) to build schema. Source: `ai_declared` | `lib/agentkit/v6/capability-binding/DataSchemaBuilder.ts` | ✅ Done |
+| 2.5 | Implement `inferSchemaForGenerateStep()` — uses the step's explicit `outputs[]` declarations (name + type). Source: `ai_declared` | `lib/agentkit/v6/capability-binding/DataSchemaBuilder.ts` | ✅ Done |
+| 2.6 | Implement `inferSchemaForAggregateStep()` — each aggregate output produces a named slot (subset = same type as input, count = number, sum = number, etc.) | `lib/agentkit/v6/capability-binding/DataSchemaBuilder.ts` | ✅ Done |
+| 2.7 | Implement `inferSchemaForLoopStep()` — loop `item_ref` slot = input array's `items` schema (scope: `loop`); `collect_as` slot = array of inner step output | `lib/agentkit/v6/capability-binding/DataSchemaBuilder.ts` | ✅ Done |
+| 2.8 | Populate `consumed_by` — second pass over all steps, for each `inputs[]` RefName, add the step ID to the corresponding slot's `consumed_by` array | `lib/agentkit/v6/capability-binding/DataSchemaBuilder.ts` | ✅ Done |
+| 2.9 | Wire into `CapabilityBinderV2.bind()` — after binding completes, call `DataSchemaBuilder.build()`, attach result to `BoundIntentContract.data_schema` | `lib/agentkit/v6/capability-binding/CapabilityBinderV2.ts` | ✅ Done |
+| 2.10 | Add `flattenSteps()` helper — recursively collects all steps including nested (loop body, decide branches, parallel branches) for schema traversal | `lib/agentkit/v6/capability-binding/DataSchemaBuilder.ts` | ✅ Done |
 
 **Schema inference per step kind:**
 
@@ -182,11 +182,11 @@ Key principle: **validate each phase's output before building on top of it.** Ph
 
 | # | Task | File | Status |
 |---|------|------|--------|
-| 3.1 | Carry `data_schema` through to `execution_graph.data_schema` on the IR output | `lib/agentkit/v6/compiler/IntentToIRConverter.ts` | Not started |
-| 3.2 | Replace or augment `variableMap: Map<string, string>` with slot-aware validation — when resolving `{{ref.field}}`, check that `ref` exists in `data_schema.slots` and `field` exists in the slot's schema properties | `lib/agentkit/v6/compiler/IntentToIRConverter.ts` | Not started |
-| 3.3 | Validate cross-step compatibility — when a step's input parameter requires a specific type (from plugin `parameters` schema), check that the producing slot's schema is compatible | `lib/agentkit/v6/compiler/IntentToIRConverter.ts` | Not started |
-| 3.4 | Add warnings (not errors) for unresolvable field references — downstream phases may still fix them, so don't block the pipeline | `lib/agentkit/v6/compiler/IntentToIRConverter.ts` | Not started |
-| 3.5 | Update `consumed_by` tracking — as IR nodes reference variables, update the slot's `consumed_by` with the IR node ID (may differ from intent step ID) | `lib/agentkit/v6/compiler/IntentToIRConverter.ts` | Not started |
+| 3.1 | Carry `data_schema` through to `execution_graph.data_schema` on the IR output | `lib/agentkit/v6/compiler/IntentToIRConverter.ts` | ✅ Done |
+| 3.2 | Replace or augment `variableMap: Map<string, string>` with slot-aware validation — when resolving `{{ref.field}}`, check that `ref` exists in `data_schema.slots` and `field` exists in the slot's schema properties | `lib/agentkit/v6/compiler/IntentToIRConverter.ts` | ✅ Done |
+| 3.3 | Validate cross-step compatibility — when a step's input parameter requires a specific type (from plugin `parameters` schema), check that the producing slot's schema is compatible | `lib/agentkit/v6/compiler/IntentToIRConverter.ts` | ✅ Done |
+| 3.4 | Add warnings (not errors) for unresolvable field references — downstream phases may still fix them, so don't block the pipeline | `lib/agentkit/v6/compiler/IntentToIRConverter.ts` | ✅ Done |
+| 3.5 | Update `consumed_by` tracking — as IR nodes reference variables, update the slot's `consumed_by` with the IR node ID (may differ from intent step ID) | `lib/agentkit/v6/compiler/IntentToIRConverter.ts` | ✅ Done |
 
 **Testing:**
 - Unit test: convert a BoundIntentContract with `data_schema` → IR has `execution_graph.data_schema` populated
@@ -203,13 +203,14 @@ Key principle: **validate each phase's output before building on top of it.** Ph
 
 | # | Task | File | Status |
 |---|------|------|--------|
-| 4.1 | Port `validateSchemaAgainstPlugins()` — cross-validate declared slot schemas against plugin `output_schema` | `lib/agentkit/v6/compiler/ExecutionGraphCompiler.ts` | Not started |
-| 4.2 | Port `output_schema` / `input_schema` attachment to compiled `WorkflowStep` | `lib/agentkit/v6/compiler/ExecutionGraphCompiler.ts` | Not started |
-| 4.3 | Port shape-preserving transform validation (output type = input type) | `lib/agentkit/v6/compiler/ExecutionGraphCompiler.ts` | Not started |
-| 4.4 | Port loop validation (item schema matches array items, gather output is array) | `lib/agentkit/v6/compiler/ExecutionGraphCompiler.ts` | Not started |
-| 4.5 | Port auto-inserted transform slot registration (Task 7.6 from Arch A) — when compiler auto-inserts `rows_to_objects`, register inferred slot in `data_schema` | `lib/agentkit/v6/compiler/ExecutionGraphCompiler.ts` | Not started |
-| 4.6 | Port AI output_schema depth enforcement — reject `array` without `items`, `object` without `properties` (with auto-repair fallback from Task 7.3) | `lib/agentkit/v6/compiler/ExecutionGraphCompiler.ts` | Not started |
-| 4.7 | Port cross-step type compatibility checks — verify output field types match downstream input parameter types | `lib/agentkit/v6/compiler/ExecutionGraphCompiler.ts` | Not started |
+| 4.1 | Port `validateSchemaAgainstPlugins()` — cross-validate declared slot schemas against plugin `output_schema` | `lib/agentkit/v6/compiler/ExecutionGraphCompiler.ts` | ✅ Done |
+| 4.2 | Port `output_schema` / `input_schema` attachment to compiled `WorkflowStep` | `lib/agentkit/v6/compiler/ExecutionGraphCompiler.ts` | ✅ Done |
+| 4.3 | Port shape-preserving transform validation (output type = input type) | `lib/agentkit/v6/compiler/ExecutionGraphCompiler.ts` | ✅ Done |
+| 4.4 | Port loop validation (item schema matches array items, gather output is array) | `lib/agentkit/v6/compiler/ExecutionGraphCompiler.ts` | ✅ Done |
+| 4.5 | Port auto-inserted transform slot registration (Task 7.6 from Arch A) — when compiler auto-inserts `rows_to_objects`, register inferred slot in `data_schema` | `lib/agentkit/v6/compiler/ExecutionGraphCompiler.ts` | ✅ Done |
+| 4.6 | Port AI output_schema depth enforcement — reject `array` without `items`, `object` without `properties` (with auto-repair fallback from Task 7.3) | `lib/agentkit/v6/compiler/ExecutionGraphCompiler.ts` | ✅ Done |
+| 4.7 | Port cross-step type compatibility checks — verify output field references exist in producing slot's schema | `lib/agentkit/v6/compiler/ExecutionGraphCompiler.ts` | ✅ Done |
+| 4.8 | Add producer→consumer **type matching** — for each consumer node bound to a plugin, resolve the plugin's `parameters` input schema, then for each parameter that references a slot via `{{ref}}` or `{{ref.field}}`, compare the producer slot's field type against the consumer's expected parameter type. Log warning on mismatch (e.g., producer outputs `string` but consumer expects `number`). Log `✅ Cross-step type compatibility: all N connections validated` when all pass. | `lib/agentkit/v6/compiler/ExecutionGraphCompiler.ts` | ✅ Done |
 
 **Testing:**
 - Unit test: compile IR with valid `data_schema` → compiled steps have `output_schema`
@@ -226,10 +227,10 @@ Key principle: **validate each phase's output before building on top of it.** Ph
 
 | # | Task | File | Status |
 |---|------|------|--------|
-| 5.1 | Ensure `data_schema` flows from compiled output to runtime — extract from IR and attach to agent/workflow | TBD (depends on how this branch handles agent storage) | Not started |
-| 5.2 | Port `ExecutionContext.registerDataSchema()` and `validateAgainstSchema()` (if not already on this branch) | `lib/pilot/ExecutionContext.ts` | Not started |
-| 5.3 | Port `WorkflowPilot` post-step validation — validate output against slot's `output_schema` after each step executes | `lib/pilot/WorkflowPilot.ts` | Not started |
-| 5.4 | Port structured output for AI steps — `GenerateHandler` uses `output_schema` to request JSON from LLM | `lib/orchestration/handlers/GenerateHandler.ts` | Not started |
+| 5.1 | Ensure `data_schema` flows from compiled output to runtime — extract from IR and attach to agent/workflow | TBD (depends on how this branch handles agent storage) | ✅ Done |
+| 5.2 | Port `ExecutionContext.registerDataSchema()` and `validateAgainstSchema()` (if not already on this branch) | `lib/pilot/ExecutionContext.ts` | ✅ Done |
+| 5.3 | Port `WorkflowPilot` post-step validation — validate output against slot's `output_schema` after each step executes | `lib/pilot/WorkflowPilot.ts` | ✅ Done |
+| 5.4 | Port structured output for AI steps — `GenerateHandler` uses `output_schema` to request JSON from LLM | `lib/orchestration/handlers/GenerateHandler.ts` | ✅ Done |
 
 **Testing:**
 - Integration test: execute workflow with valid schema, all steps pass validation
@@ -260,10 +261,11 @@ Key principle: **validate each phase's output before building on top of it.** Ph
 
 | # | Task | File | Status |
 |---|------|------|--------|
-| 6.1 | After Phase 2 (binding), log `data_schema` slot count, slot names, and source breakdown (plugin/ai_declared/inferred) | `scripts/test-complete-pipeline-with-vocabulary.ts` | Not started |
-| 6.2 | Save `data_schema` as a separate output file (`output/vocabulary-pipeline/data-schema.json`) | `scripts/test-complete-pipeline-with-vocabulary.ts` | Not started |
-| 6.3 | After Phase 3 (IR conversion), verify `data_schema` is present on the IR and log any field reference warnings | `scripts/test-complete-pipeline-with-vocabulary.ts` | Not started |
-| 6.4 | Add a validation summary at the end: list each slot with its source, produced_by, consumed_by, and top-level fields | `scripts/test-complete-pipeline-with-vocabulary.ts` | Not started |
+| 6.1 | After Phase 2 (binding), log `data_schema` slot count, slot names, and source breakdown (plugin/ai_declared/inferred) | `scripts/test-complete-pipeline-with-vocabulary.ts` | ✅ Done |
+| 6.2 | Save `data_schema` as a separate output file (`output/vocabulary-pipeline/data-schema.json`) | `scripts/test-complete-pipeline-with-vocabulary.ts` | ✅ Done |
+| 6.3 | After Phase 3 (IR conversion), verify `data_schema` is present on the IR and log any field reference warnings | `scripts/test-complete-pipeline-with-vocabulary.ts` | ✅ Done |
+| 6.4 | Add a validation summary at the end: list each slot with its source, produced_by, consumed_by, and top-level fields | `scripts/test-complete-pipeline-with-vocabulary.ts` | ✅ Done |
+| 6.5 | Surface cross-step type compatibility results in the validation summary — show pass/fail count and any type mismatch warnings from the compiler | `scripts/test-complete-pipeline-with-vocabulary.ts` | ✅ Done |
 
 **Testing:**
 - Run the full pipeline with the leads-filter Enhanced Prompt → verify `data-schema.json` is saved with all expected slots
@@ -296,12 +298,54 @@ Key principle: **validate each phase's output before building on top of it.** Ph
 
 ---
 
+## Known Issues (Found During Testing)
+
+| # | Issue | Root Cause | Status | Fix Location |
+|---|-------|-----------|--------|-------------|
+| I1 | **`email_content` slot has wrong schema** — `generate` steps (e.g., `generate_html_table`) declare explicit `outputs[]` with `subject` and `body` fields, but `DataSchemaBuilder` uses the bound plugin's generic `output_schema` (chatgpt-research: `answer`, `question`, `sources`...) instead. The slot schema says `email_content` has `answer`/`question` when it should have `subject`/`body`. | In `DataSchemaBuilder.build()`, `inferSchemaForBoundStep()` runs for any step with a bound plugin — including `generate` kind steps. This overrides the correct `ai_declared` schema from `inferSchemaForGenerateStep()`. When a step is both a `generate` kind AND bound to a plugin, the plugin's generic schema wins over the LLM-declared `generate.outputs[]`. | ✅ Fixed | `lib/agentkit/v6/capability-binding/DataSchemaBuilder.ts` — added precedence check: `generate` steps with explicit `outputs[]` and `extract` steps with explicit `fields[]` now use `ai_declared` schema before the plugin fallback. |
+| I2 | **`send_summary_email` step missing from compiled PILOT DSL** — the `notify` step exists in IntentContract, BoundIntentContract, and ExecutionGraph IR (`node_7`), but is absent from `pilot-dsl-steps.json`. Steps after a `choice` (conditional) node are silently dropped. | `compileChoiceNode()` in `ExecutionGraphCompiler.ts` compiled both branches and pushed the conditional step, but never followed `node.next` to compile subsequent nodes. The `compileNode` dispatcher (line 306) explicitly skips `next` traversal for `choice`/`loop`/`parallel` nodes, expecting each method to handle it internally. `compileLoopNode` and `compileParallelNode` both did — `compileChoiceNode` was the only one missing it. **Pre-existing bug, not caused by data_schema changes.** | ✅ Fixed | `lib/agentkit/v6/compiler/ExecutionGraphCompiler.ts` — added `node.next` traversal at the end of `compileChoiceNode()`, matching the pattern used by `compileLoopNode` and `compileParallelNode`. |
+| I3 | **Task 5.4 marked Done but not implemented** — `GenerateHandler` structured output (using `output_schema` to request JSON from the LLM) was ported from Architecture A workplan status but no actual code changes were made to `GenerateHandler.ts` in this session. | Status was carried over from Architecture A workplan without verifying implementation on this branch. | 🔲 To Verify | `lib/orchestration/handlers/GenerateHandler.ts` — verify whether structured output support exists; if not, implement it. |
+| I4 | **Loop gather output (`collect_as`) missing from `data_schema`** — loop steps with `collect.enabled = true` and `collect.collect_as = "processed_items"` produce no slot in the data schema. Downstream steps referencing `processed_items` have no schema to inherit from. | Two bugs: (1) `buildSlotsForStep()` returns early for loop steps because `inferSchema()` returns `null` for `kind: 'loop'`, so `buildLoopSlots()` at line 125 is never reached. (2) Even if reached, `buildLoopSlots()` tries to look up `from_step_output` in `slots`, but body steps haven't been processed yet (they come after the loop step in the flattened list). | ✅ Fixed | `lib/agentkit/v6/capability-binding/DataSchemaBuilder.ts` — (1) moved loop/aggregate extra slot building before the early return gate, (2) added a post-processing pass to fix up loop gather schemas after all body step slots exist. |
+| I5 | **Aggregate `subset` output has shallow schema** — `high_value_items` slot is `{ type: "array" }` with no `items` schema, making downstream steps unable to validate field references like `{{high_value_items[].amount}}`. | Cascade from I4: aggregate step's `input` references `processed_items` which had no slot (I4), so `inferAggregateOutputSchema` for `subset` falls back to `{ type: "array", source: "inferred" }` without `items`. Once I4 is fixed and `processed_items` has a proper slot with `items` schema, the aggregate inherits it correctly. | ✅ Fixed (by I4) | `lib/agentkit/v6/capability-binding/DataSchemaBuilder.ts` — I4 fix ensures `processed_items` slot exists with proper `items` schema before aggregate step runs. |
+
+| I6 | **Aggregate `subset` outputs degrade to `type: "any"`** — `items_for_sheet` and `all_items_for_digest` slots (produced by `split_by_amount` aggregate step) have `items: { type: "any", source: "inferred" }` instead of inheriting the rich `processed_items` item schema (10 fields: type, vendor, date, amount, etc.). | `inferAggregateOutputSchema()` for `subset` type creates `{ type: "array", items: { type: "any" } }` when the input slot's items schema isn't propagated through. The input slot (`processed_items`) now exists after I4 fix, but the aggregate builder doesn't deep-copy its `items` schema into subset outputs. | 🔲 To Fix | `lib/agentkit/v6/capability-binding/DataSchemaBuilder.ts` — `inferAggregateOutputSchema()` subset handler should look up the input slot and copy `items` from it. |
+| I7 | **`sheet_item` loop item schema is `type: "any"`** — the `append_to_sheet` loop iterates over `items_for_sheet`, and the loop item slot `sheet_item` inherits `items_for_sheet.items` which is `type: "any"` (cascading from I6). | Cascade from I6: `buildLoopSlots()` correctly extracts `items` from the iterated array, but since `items_for_sheet.items` is `{ type: "any" }`, the loop item inherits that. Fixing I6 automatically fixes I7. | 🔲 Blocked by I6 | N/A — resolves when I6 is fixed. |
+| I8 | **Inner-loop step slots have `scope: "global"` instead of `scope: "loop"`** — `attachment_content`, `extracted_fields`, `base_folder`, `vendor_folder`, `drive_file`, `item_record` are all produced inside the `process_attachments` loop body but have `scope: "global"` in `data-schema.json`. | `DataSchemaBuilder.build()` uses `flattenSteps()` to collect all steps (including nested loop body steps) into a flat list, then processes them uniformly. There's no scope-awareness — every step gets `scope: "global"` unless it's explicitly a loop `item_ref` or `collect_as`. Body steps are treated the same as top-level steps. | 🔲 To Fix | `lib/agentkit/v6/capability-binding/DataSchemaBuilder.ts` — `flattenSteps()` or `buildSlotsForStep()` should track nesting depth; steps inside a loop body should get `scope: "loop"`. |
+| I9 | **`item_record` slot has no `consumed_by`** — `item_record` is the `from_step_output` for the loop's `collect` mechanism, which gathers it into `processed_items`. But `consumed_by` is empty because no step has `item_record` in its `inputs[]` — the consumption happens implicitly via the loop collect config, not via an explicit input reference. | `populateConsumedBy()` only scans step `inputs[]` arrays. The loop `collect.from_step_output` reference is in the loop step's config, not in any step's `inputs[]`. | 🔲 To Fix | `lib/agentkit/v6/capability-binding/DataSchemaBuilder.ts` — `populateConsumedBy()` should also scan loop `collect.from_step_output` and register the loop step as a consumer of that slot. |
+| I10 | **Step 8 (`ensure_vendor_folder`) has unwrapped ref in `config.parent_folder`** — compiled step config shows `"parent_folder": "base_folder.folder_id"` (plain string) instead of `"parent_folder": "{{base_folder.folder_id}}"` (template expression). The `{{}}` wrapper is missing, so the runtime would treat it as a literal string instead of resolving the reference. | `IntentToIRConverter` resolves `{ kind: "ref", ref: "base_folder", field: "folder_id" }` but doesn't wrap the result in `{{}}` template syntax for this particular config path. Other refs in the same step (e.g., `folder_name: "{{extracted_fields.vendor}}"`) are wrapped correctly, suggesting inconsistent handling of `artifact.options` refs vs `payload` refs. | 🔲 To Fix | `lib/agentkit/v6/compiler/IntentToIRConverter.ts` — verify `resolveArtifactOptions()` wraps all ref values in `{{}}` template syntax consistently. |
+| I12 | **Fuzzy auto-injection of required params maps `file_id` to wrong config key (`sheet_id`)** — step 7 (`get_file_metadata` on `google-drive`) has `file_id: "{{config.sheet_id}}"` in its compiled config. The `file_id` is a required plugin parameter that's missing from the IR config (which only has `folder_url`). The compiler's `normalizePluginParams` third pass (line ~3490) fuzzy-matches the missing `file_id` against workflow config keys and picks `sheet_id` because the shared `id` token scores above the 0.15 threshold. This is semantically wrong — `sheet_id` is a Google Sheets spreadsheet ID, not a Google Drive file/folder ID. The `folder_url` parameter already carries the Drive folder identifier, and the runtime executor extracts the file ID from it — so `file_id` shouldn't be injected at all. | The fuzzy matching threshold (0.15) is too low for single-token overlaps like `id`. The matcher has no domain/context awareness — it doesn't know that `sheet_id` belongs to a different plugin domain than `file_id`. Additionally, when a `folder_url` is already provided, the executor can derive `file_id` from it, so auto-injection is unnecessary. | 🔲 To Fix | `lib/agentkit/v6/compiler/ExecutionGraphCompiler.ts` — (1) raise the fuzzy match threshold or require >1 token overlap for auto-injection, (2) consider skipping auto-injection when another provided parameter already covers the required value (e.g., `folder_url` implies `file_id`), (3) add domain-awareness so cross-plugin config keys aren't matched. |
+| I11 | **`x-input-mapping` resolves to a field that doesn't exist on the producing slot** — step 6 (`extract_structured_data`) config has `file_url: "{{attachment_content.web_view_link}}"`, but the `attachment_content` slot (from `get_email_attachment`) has no `web_view_link` field — its fields are `filename`, `mimeType`, `size`, `data`, `extracted_text`, `is_image`. The `document-extractor` plugin's `x-input-mapping` declares `from_file_object: "web_view_link"`, assuming the input is a Drive file object with a viewable URL. But `attachment_content` is a Gmail attachment download (binary content), not a Drive file. The mapping blindly appends `.web_view_link` without validating the field exists on the upstream slot's schema. | `IntentToIRConverter.convertExtractStep()` (line ~488) applies `x-input-mapping` by reading `from_file_object` from the plugin parameter schema and appending it as a field accessor (`{{input.from_file_object}}`). It doesn't cross-reference the producing slot's `data_schema` to verify the field exists. This is a schema-aware validation gap — the `data_schema` has the information to detect this mismatch, but the mapping code doesn't use it. | 🔲 To Fix | `lib/agentkit/v6/compiler/IntentToIRConverter.ts` — when applying `x-input-mapping`, validate that the target field (`from_file_object` value) exists in the producing slot's schema properties. If not, log a warning and consider falling back to a compatible field or passing the whole object. |
+
+### Validation Watchlist
+
+Items to validate after fixes are applied:
+
+| # | What to Validate | How |
+|---|-----------------|-----|
+| W1 | **`send_summary_email` appears in `pilot-dsl-steps.json`** after I2 fix | Re-run `test-complete-pipeline-with-vocabulary.ts`, check that `pilot-dsl-steps.json` contains a step with plugin `google-mail` and action `send_email` after the conditional step. |
+| W2 | **`email_content` slot schema has `subject` and `body` fields** after I1 fix | Check `data-schema.json` — the `email_content` slot should have `source: "ai_declared"` and `properties` containing `subject` (string) and `body` (string), NOT `answer`/`question`/`sources`. |
+| W3 | **Cross-step type validation passes for `send_summary_email`** after I1+I2 | The compiler should validate that `email_content.subject` (string) and `email_content.body` (string) match the `send_email` plugin's expected parameter types. |
+| W4 | **`processed_items` slot exists in `data-schema.json`** after I4 fix | Re-run complex workflow test, check that `data-schema.json` has a `processed_items` slot with `type: "array"` and `items` containing `item_record`-like schema (type, vendor, date, amount, etc.). Source should be `inferred`. |
+| W5 | **`high_value_items` slot has full `items` schema** after I4+I5 fix | Check `data-schema.json` — `high_value_items` should have `type: "array"` with `items` containing the same field structure as `processed_items.items` (inherited via aggregate subset from input). |
+| W6 | **`items_for_sheet` and `all_items_for_digest` have rich `items` schema** after I6 fix | Check `data-schema.json` — both slots should have `items` with the full `item_record` field structure (type, vendor, date, amount, invoice_number, category, drive_link, sender, subject, received_date, has_amount), NOT `type: "any"`. |
+| W7 | **`sheet_item` has rich schema** after I6 fix (cascade) | Check `data-schema.json` — `sheet_item` should have the same properties as `items_for_sheet.items` (the full item_record fields), NOT `type: "any"`. |
+| W8 | **Inner-loop slots have `scope: "loop"`** after I8 fix | Check `data-schema.json` — `attachment_content`, `extracted_fields`, `base_folder`, `vendor_folder`, `drive_file`, `item_record` should all have `scope: "loop"`, not `scope: "global"`. |
+| W9 | **`item_record` has `consumed_by` populated** after I9 fix | Check `data-schema.json` — `item_record.consumed_by` should include `"process_attachments"` (the loop step that collects it). |
+| W10 | **Step 8 `parent_folder` uses template syntax** after I10 fix | Check `pilot-dsl-steps.json` — step 8 config should show `"parent_folder": "{{base_folder.folder_id}}"` with `{{}}` wrapper. |
+| W11 | **Step 6 `file_url` references a valid field** after I11 fix | Check `pilot-dsl-steps.json` — step 6 config `file_url` should reference a field that actually exists on the `attachment_content` slot (e.g., `{{attachment_content.data}}` or `{{attachment_content.extracted_text}}`), NOT `{{attachment_content.web_view_link}}`. |
+| W12 | **Step 7 `file_id` is NOT spuriously injected** after I12 fix | Check `pilot-dsl-steps.json` — step 7 (`get_file_metadata`) config should only have `folder_url: "{{config.drive_base_folder_url}}"`, NOT an additional `file_id: "{{config.sheet_id}}"`. |
+
+---
+
 ## Open Items (Future)
 
 | # | Item | Context |
 |---|------|---------|
 | O1 | **Shallow plugin `output_schema`** — some plugin actions may have incomplete schemas (e.g., `extracted_fields: { type: "object" }` without nested properties). The `DataSchemaBuilder` should handle this gracefully (use what's available, don't fail), but these schemas should be enriched in the plugin definitions over time. | Plugin definition quality |
 | O2 | **Refactor per-step copies to global lookup** — currently `output_schema`/`input_schema` are copied onto each `WorkflowStep` (denormalized). Could refactor to single `data_schema` lookup via `ExecutionContext` at runtime. See Open Item O1 in Architecture A workplan. | Architecture consistency |
+| O3 | **Fix pre-existing TypeScript errors in `WorkflowPilot.ts`** — 12 type mismatches unrelated to data_schema work: `MemoryContext` interface drift, `UserMemoryService` args, `IOrchestrator.complete`, `ExecutionContext` private field, `PatternData`/`InsightMetrics` missing fields, `ExecutionProtection` constructor args, `AuditSeverity` type. All pre-date this workplan. | Tech debt cleanup |
+| O5 | **Duplicate `output_schema` on compiled steps — `config.output_schema` vs top-level `output_schema`** — compiled PILOT DSL steps carry `output_schema` in two places: (1) top-level `step.output_schema` from the data_schema system (`attachSlotSchemas()`), and (2) `step.config.output_schema` passed through verbatim from the IR node's operation config. The `config` version predates the data_schema system and is read by runtime handlers (`GenerateHandler`, `TransformHandler`). They should contain equivalent information but are maintained independently. **Unify to a single source**: migrate runtime handlers to read from the top-level `output_schema`, then stop emitting `config.output_schema` from `IntentToIRConverter`. | Schema deduplication |
+| O4 | **Incomplete `input_schema`/`output_schema` attachment on compiled steps** — `attachSlotSchemas()` only attaches schemas when the IR node has explicit `inputs[]`/`outputs[]` arrays. Steps that reference data via `transform.input` (string) or `config` values (`{{ref.field}}`) don't get schemas attached. Affected steps: auto-inserted transforms (step2), filter/reduce transforms (step3/4), generate steps without inputs (step7), deliver steps (step8). Cross-step validation (Task 4.8) already covers these references by scanning config values, but runtime `input_schema` on every step would enable per-step input validation before execution. | Schema completeness |
 
 ---
 

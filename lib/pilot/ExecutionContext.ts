@@ -21,6 +21,7 @@ import type {
   IExecutionContext,
   CollectedIssue,
 } from './types';
+import type { WorkflowDataSchema, SchemaField } from '@/lib/agentkit/v6/logical-ir/schemas/workflow-data-schema';
 import { VariableResolutionError, getTokenTotal } from './types';
 import { createLogger } from '@/lib/logger';
 
@@ -69,6 +70,9 @@ export class ExecutionContext implements IExecutionContext {
   // Batch calibration mode
   public batchCalibrationMode: boolean = false;
   public collectedIssues: CollectedIssue[] = [];
+
+  // Workflow data schema for runtime validation (Phase 5)
+  private dataSchema: WorkflowDataSchema | null = null;
 
   constructor(
     executionId: string,
@@ -942,5 +946,96 @@ export class ExecutionContext implements IExecutionContext {
   resume(): void {
     this.status = 'running';
     logger.info({ executionId: this.executionId, currentStep: this.currentStep }, 'Execution resumed');
+  }
+
+  // ============================================================================
+  // Workflow Data Schema — Runtime Validation (Phase 5)
+  // ============================================================================
+
+  /**
+   * Register the workflow data schema for runtime validation.
+   * Called once at execution start by WorkflowPilot.
+   */
+  registerDataSchema(schema: WorkflowDataSchema): void {
+    this.dataSchema = schema;
+    logger.info({
+      slotCount: Object.keys(schema.slots).length,
+      slotNames: Object.keys(schema.slots),
+      executionId: this.executionId
+    }, 'Workflow data schema registered');
+  }
+
+  /**
+   * Get the registered data schema (if any).
+   */
+  getDataSchema(): WorkflowDataSchema | null {
+    return this.dataSchema;
+  }
+
+  /**
+   * Validate data against a named slot's schema.
+   * Returns an array of error strings (empty = valid).
+   * If no schema is registered or the slot doesn't exist, returns empty (skip validation).
+   */
+  validateAgainstSchema(slotName: string, data: any): string[] {
+    if (!this.dataSchema) return [];
+
+    const slot = this.dataSchema.slots[slotName];
+    if (!slot) return [];
+
+    return this.validateValue(data, slot.schema, slotName);
+  }
+
+  /**
+   * Recursive type/field validation against a SchemaField.
+   * Returns an array of error strings (empty = valid).
+   */
+  private validateValue(value: any, schema: SchemaField, path: string): string[] {
+    const errors: string[] = [];
+
+    // 1. Null/undefined check against required
+    if (value === null || value === undefined) {
+      if (schema.required) {
+        errors.push(`${path}: required field missing`);
+      }
+      return errors;
+    }
+
+    // 2. oneOf validation — at least one branch must match
+    if (schema.oneOf && schema.oneOf.length > 0) {
+      const branchResults = schema.oneOf.map(branch => this.validateValue(value, branch, path));
+      const anyBranchValid = branchResults.some(errs => errs.length === 0);
+      if (!anyBranchValid) {
+        errors.push(`${path}: value does not match any oneOf branch`);
+      }
+      return errors;
+    }
+
+    // 3. Type check
+    const actualType = Array.isArray(value) ? 'array' : typeof value;
+
+    if (schema.type !== 'any' && schema.type !== actualType) {
+      errors.push(
+        `${path}: expected type "${schema.type}" but got "${actualType}". Value: ${JSON.stringify(value).slice(0, 100)}`
+      );
+      return errors;
+    }
+
+    // 4. Object property validation (recurse into properties)
+    if (schema.type === 'object' && schema.properties) {
+      for (const [key, fieldSchema] of Object.entries(schema.properties)) {
+        const fieldValue = value[key];
+        const fieldErrors = this.validateValue(fieldValue, fieldSchema, `${path}.${key}`);
+        errors.push(...fieldErrors);
+      }
+    }
+
+    // 5. Array item validation (validate first item as representative)
+    if (schema.type === 'array' && schema.items && Array.isArray(value) && value.length > 0) {
+      const itemErrors = this.validateValue(value[0], schema.items, `${path}[0]`);
+      errors.push(...itemErrors);
+    }
+
+    return errors;
   }
 }

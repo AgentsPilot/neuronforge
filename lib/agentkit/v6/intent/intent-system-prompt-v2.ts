@@ -344,7 +344,13 @@ If you cannot express the transformation with structured fields/conditions/rules
 - Decompose: When logic can be expressed as sequence of filters, maps, merges
 - Use GENERATE: When transformation requires conditional logic, lookups, or complex computation that cannot be declaratively expressed
 
-**CRITICAL: Declare Output Schema When Fields Will Be Accessed**
+**CRITICAL: output_schema Rules for Transform Steps**
+
+Shape-changing transforms (\`map\`, \`group\`, \`merge\`, \`reduce\`, \`select\`) MUST include \`transform.output_schema\` describing the output structure with field names and types. The deterministic compiler cannot infer the output shape for these operations — only you know the intended structure.
+
+Shape-preserving transforms (\`filter\`, \`sort\`, \`dedupe\`, \`flatten\`) do NOT need \`output_schema\` — the output has the same shape as the input. Exception: \`flatten\` that extracts nested objects into a new structure SHOULD include \`output_schema\`.
+
+If you need AI to reshape data (complex restructuring, conditional field mapping, lookups), use \`extract\` or \`generate\` instead of \`transform\` — those step kinds require explicit field declarations (\`fields[]\` / \`outputs[]\`) which serve the same purpose and are designed for AI-driven operations.
 
 If downstream steps will access SPECIFIC FIELDS from a transform output (e.g., using dot notation like output_var.field_name), you MUST declare an output_schema listing those fields:
 
@@ -391,8 +397,10 @@ Process for flatten:
 
 Field Name Consistency: If a data_source action outputs a field with name "X", and a downstream action requires a parameter "X", your transform MUST preserve the field name "X" exactly (not rename it to "Y").
 
-WHEN NOT NEEDED:
-- Filter/reduce where output structure = input structure
+WHEN NOT NEEDED (shape-preserving operations):
+- filter: output structure = input structure (just fewer items)
+- sort: same items, different order
+- dedupe: same items, duplicates removed
 - Output only used as whole value (no field access)
 
 **CRITICAL: Use Structured Conditions for Filter Operations**

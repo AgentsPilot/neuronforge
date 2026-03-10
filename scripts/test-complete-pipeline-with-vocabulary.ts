@@ -209,6 +209,34 @@ async function main() {
   fs.writeFileSync(boundIntentPath, JSON.stringify(boundIntent, null, 2))
   console.log(`   Saved: ${boundIntentPath}`)
 
+  // Log data_schema
+  if (boundIntent.data_schema) {
+    const slots = boundIntent.data_schema.slots
+    const slotNames = Object.keys(slots)
+    const sourceBreakdown = { plugin: 0, ai_declared: 0, inferred: 0 }
+    for (const slot of Object.values(slots)) {
+      const src = slot.schema.source || 'inferred'
+      if (src in sourceBreakdown) sourceBreakdown[src as keyof typeof sourceBreakdown]++
+    }
+
+    console.log(`\n   📊 data_schema: ${slotNames.length} slots`)
+    console.log(`      Sources: ${sourceBreakdown.plugin} plugin, ${sourceBreakdown.ai_declared} ai_declared, ${sourceBreakdown.inferred} inferred`)
+    for (const [name, slot] of Object.entries(slots)) {
+      const fields = slot.schema.properties ? Object.keys(slot.schema.properties).join(', ') : '-'
+      console.log(`      • ${name} [${slot.schema.type}] (${slot.schema.source || 'inferred'}) → produced_by: ${slot.produced_by}`)
+      if (slot.schema.properties) {
+        console.log(`        fields: ${fields}`)
+      }
+    }
+
+    // Save data_schema as separate file
+    const dataSchemaPath = path.join(outputDir, 'data-schema.json')
+    fs.writeFileSync(dataSchemaPath, JSON.stringify(boundIntent.data_schema, null, 2))
+    console.log(`   Saved: ${dataSchemaPath}`)
+  } else {
+    console.log('\n   ⚠️  No data_schema generated')
+  }
+
   // =======================
   // PHASE 3: Intent → IR Conversion (Deterministic)
   // =======================
@@ -238,6 +266,17 @@ async function main() {
 
   if (conversionResult.warnings.length > 0) {
     console.log(`   ⚠️  Warnings: ${conversionResult.warnings.length}`)
+    for (const w of conversionResult.warnings) {
+      console.log(`      - ${w}`)
+    }
+  }
+
+  // Verify data_schema carried through to IR
+  if (executionGraphIR.execution_graph?.data_schema) {
+    const irSlots = Object.keys(executionGraphIR.execution_graph.data_schema.slots)
+    console.log(`   📊 data_schema on IR: ${irSlots.length} slots ✅`)
+  } else {
+    console.log(`   ⚠️  data_schema NOT present on IR`)
   }
 
   // Save IR
@@ -285,6 +324,77 @@ async function main() {
   const pilotPath = path.join(outputDir, 'pilot-dsl-steps.json')
   fs.writeFileSync(pilotPath, JSON.stringify(pilotSteps, null, 2))
   console.log(`   Saved: ${pilotPath}`)
+
+  // =======================
+  // DATA SCHEMA VALIDATION SUMMARY (Phase 6.4)
+  // =======================
+  if (boundIntent.data_schema) {
+    console.log('\n📐 Data Schema Validation Summary')
+    console.log('-'.repeat(80))
+
+    const slots = boundIntent.data_schema.slots
+    const slotEntries = Object.entries(slots)
+    let hasAnyType = false
+
+    for (const [name, slot] of slotEntries) {
+      const schema = slot.schema
+      const fields = schema.properties ? Object.keys(schema.properties) : []
+      const consumers = slot.consumed_by?.length || 0
+
+      let status = '✅'
+      if (schema.type === 'any') {
+        status = '⚠️'
+        hasAnyType = true
+      }
+      if (schema.type === 'array' && !schema.items) {
+        status = '⚠️'
+      }
+      if (schema.type === 'object' && !schema.properties) {
+        status = '⚠️'
+      }
+
+      console.log(`   ${status} ${name}`)
+      console.log(`      type: ${schema.type} | source: ${schema.source || 'inferred'} | scope: ${slot.scope}`)
+      console.log(`      produced_by: ${slot.produced_by} | consumed_by: ${consumers} step(s)`)
+      if (fields.length > 0) {
+        console.log(`      fields: ${fields.join(', ')}`)
+      }
+      if (schema.items) {
+        console.log(`      items: ${schema.items.type}${schema.items.properties ? ` (${Object.keys(schema.items.properties).join(', ')})` : ''}`)
+      }
+    }
+
+    console.log(`\n   Total slots: ${slotEntries.length}`)
+    console.log(`   Has type "any": ${hasAnyType ? '⚠️  YES' : '✅ NO'}`)
+
+    // Check compilation warnings for schema-related issues
+    const schemaWarnings = (compilationResult.logs || []).filter((l: string) =>
+      l.includes('Schema mismatch') || l.includes('Shape-preserving') ||
+      l.includes('Loop "') || l.includes('AI-declared slot') || l.includes('Type mismatch')
+    )
+    if (schemaWarnings.length > 0) {
+      console.log(`\n   ⚠️  Schema validation warnings from compiler:`)
+      schemaWarnings.forEach((w: string) => console.log(`      - ${w}`))
+    } else {
+      console.log(`   ✅ No schema validation warnings from compiler`)
+    }
+
+    // Cross-step type compatibility summary (Task 6.5)
+    const crossStepLog = (compilationResult.logs || []).find((l: string) =>
+      l.includes('Cross-step type compatibility')
+    )
+    if (crossStepLog) {
+      console.log(`   ${crossStepLog}`)
+    }
+
+    const typeMismatches = (compilationResult.logs || []).filter((l: string) =>
+      l.includes('Type mismatch:')
+    )
+    if (typeMismatches.length > 0) {
+      console.log(`\n   ⚠️  Producer→Consumer type mismatches:`)
+      typeMismatches.forEach((w: string) => console.log(`      - ${w}`))
+    }
+  }
 
   // =======================
   // PHASE 5: Summary

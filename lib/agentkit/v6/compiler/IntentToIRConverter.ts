@@ -28,6 +28,7 @@ import type {
   Condition,
 } from '../semantic-plan/types/intent-schema-types'
 import type { BoundIntentContract, BoundStep } from '../capability-binding/CapabilityBinderV2'
+import type { WorkflowDataSchema } from '../logical-ir/schemas/workflow-data-schema'
 import { validateSchemaCompatibility } from '../logical-ir/validation/SchemaCompatibilityValidator'
 import type {
   DeclarativeLogicalIRv4,
@@ -58,6 +59,7 @@ interface ConversionContext {
   errors: string[]
   warnings: string[]
   config?: Array<{ key: string; type: string; description?: string; default?: any }> // Intent config for field resolution
+  dataSchema?: WorkflowDataSchema // data_schema from binding phase for field reference validation
 }
 
 /**
@@ -100,6 +102,7 @@ export class IntentToIRConverter {
       errors: [],
       warnings: [],
       config: boundIntent.config,
+      dataSchema: boundIntent.data_schema,
     }
 
     try {
@@ -134,6 +137,8 @@ export class IntentToIRConverter {
       const executionGraph: ExecutionGraph = {
         start: startNode,
         nodes: Object.fromEntries(ctx.nodes.entries()),
+        // Carry data_schema from binding phase through to IR
+        data_schema: boundIntent.data_schema,
       }
 
       // CRITICAL: Run schema compatibility validation (auto-fixes mismatches)
@@ -1172,6 +1177,10 @@ export class IntentToIRConverter {
 
       case 'ref':
         const varName = this.resolveRefName(valueRef.ref, ctx)
+        if (valueRef.field && typeof valueRef.field === 'string') {
+          this.validateFieldReference(valueRef.ref, valueRef.field, ctx)
+          return `${varName}.${valueRef.field}`
+        }
         return valueRef.field ? `${varName}.${valueRef.field}` : varName
 
       case 'config':
@@ -1241,6 +1250,34 @@ export class IntentToIRConverter {
     }
 
     return fieldName
+  }
+
+  /**
+   * Validate that a field reference exists in the data_schema slot.
+   * Logs warnings (not errors) for unresolvable references — downstream phases may still fix them.
+   */
+  private validateFieldReference(refName: string, fieldName: string, ctx: ConversionContext): void {
+    if (!ctx.dataSchema) return // No data_schema available, skip validation
+
+    const slot = ctx.dataSchema.slots[refName]
+    if (!slot) {
+      ctx.warnings.push(
+        `Field reference: "${refName}.${fieldName}" — slot "${refName}" not found in data_schema`
+      )
+      return
+    }
+
+    // Only validate field access on object schemas with declared properties
+    if (slot.schema.type === 'object' && slot.schema.properties) {
+      if (!slot.schema.properties[fieldName]) {
+        ctx.warnings.push(
+          `Field reference: "${refName}.${fieldName}" — field "${fieldName}" not found in slot schema ` +
+            `(available: ${Object.keys(slot.schema.properties).join(', ')})`
+        )
+      }
+    }
+    // For array types, field access may target item properties — skip validation here
+    // (would need to check items.properties which is a deeper validation)
   }
 
   /**

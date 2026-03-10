@@ -16,6 +16,7 @@
  */
 
 import type { HardRequirements } from '../../requirements/HardRequirementsExtractor'
+import type { WorkflowDataSchema } from './workflow-data-schema'
 
 // ============================================================================
 // Requirements Enforcement Tracking
@@ -617,6 +618,9 @@ export interface ExecutionGraph {
 
   /** Global and loop-scoped variable declarations */
   variables?: VariableDefinition[]
+
+  /** Centralized field-level type declarations for all data flowing between steps */
+  data_schema?: WorkflowDataSchema
 
   /** Optional metadata */
   metadata?: {
