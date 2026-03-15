@@ -673,6 +673,18 @@ export interface DeclarativeLogicalIRv4 {
    */
   requirements_enforcement?: RequirementEnforcement[]
 
+  /**
+   * Config defaults from IntentContract config[] array.
+   * Each entry has a key, type, optional default value, and optional description.
+   * Used by the compiler to merge with user-provided workflowConfig (resolved_user_inputs).
+   */
+  config_defaults?: Array<{
+    key: string
+    type: string
+    description?: string
+    default?: any
+  }>
+
   /** Optional metadata */
   metadata?: {
     generated_at?: string

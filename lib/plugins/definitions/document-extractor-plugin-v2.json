@@ -62,10 +62,12 @@
             "x-input-mapping": {
               "accepts": [
                 "file_object",
-                "url_string"
+                "url_string",
+                "base64_content"
               ],
               "from_file_object": "web_view_link",
-              "description": "Can accept file object (extracts web_view_link) or direct URL string"
+              "from_base64_content": "data",
+              "description": "Can accept file object (extracts web_view_link), direct URL string, or base64 content (extracts data field from attachment downloads)"
             }
           },
           "fields": {

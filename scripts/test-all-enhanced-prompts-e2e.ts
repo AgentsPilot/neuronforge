@@ -39,8 +39,10 @@ class EnhancedPromptTester {
   private results: TestResult[] = [];
   private outputDir: string;
 
-  constructor() {
-    this.outputDir = path.join(__dirname, '..', 'output', 'e2e-test-results');
+  constructor(outputRoot?: string) {
+    this.outputDir = outputRoot
+      ? path.resolve(outputRoot)
+      : path.join(__dirname, '..', 'output', 'e2e-test-results');
 
     // Create output directory
     if (!fs.existsSync(this.outputDir)) {
@@ -73,18 +75,26 @@ class EnhancedPromptTester {
 
     try {
       // Read enhanced prompt
-      const promptPath = path.join(__dirname, '..', promptFile);
+      const promptPath = path.resolve(promptFile);
       const promptContent = JSON.parse(fs.readFileSync(promptPath, 'utf-8'));
       result.workflowName = promptContent.plan_title || promptFile;
 
+      // Create per-prompt output subfolder
+      const promptBaseName = path.basename(promptFile, '.json');
+      const promptOutputDir = path.join(this.outputDir, promptBaseName);
+      if (!fs.existsSync(promptOutputDir)) {
+        fs.mkdirSync(promptOutputDir, { recursive: true });
+      }
+
       console.log(`\n📋 Workflow: ${result.workflowName}`);
+      console.log(`📂 Output: ${promptOutputDir}`);
 
       // Run complete pipeline
       const pipelineStart = Date.now();
 
       console.log('\n⏳ Running V6 pipeline...');
       const pipelineOutput = execSync(
-        `npx tsx scripts/test-complete-pipeline-with-vocabulary.ts ${promptFile}`,
+        `npx tsx scripts/test-complete-pipeline-with-vocabulary.ts "${promptFile}" --output-dir "${promptOutputDir}"`,
         {
           encoding: 'utf-8',
           maxBuffer: 10 * 1024 * 1024 // 10MB buffer
@@ -125,7 +135,7 @@ class EnhancedPromptTester {
 
       // Analyze business requirements
       console.log('\n📊 Analyzing business requirements...');
-      this.analyzeBusinessRequirements(promptContent, result);
+      this.analyzeBusinessRequirements(promptContent, result, promptOutputDir);
 
       // Calculate executability
       this.calculateExecutability(result);
@@ -188,9 +198,9 @@ class EnhancedPromptTester {
     result.warnings = warningMatches ? warningMatches.length : 0;
   }
 
-  private analyzeBusinessRequirements(promptContent: any, result: TestResult): void {
-    // Read generated PILOT DSL
-    const pilotPath = path.join(__dirname, '..', 'output', 'vocabulary-pipeline', 'pilot-dsl-steps.json');
+  private analyzeBusinessRequirements(promptContent: any, result: TestResult, promptOutputDir: string): void {
+    // Read generated PILOT DSL from per-prompt output directory
+    const pilotPath = path.join(promptOutputDir, 'phase4-pilot-dsl-steps.json');
 
     if (!fs.existsSync(pilotPath)) {
       result.businessValidation = 'FAIL';
@@ -383,16 +393,47 @@ class EnhancedPromptTester {
     console.log(`\n📄 Detailed report saved to: ${reportPath}\n`);
   }
 
-  public async runAll(): Promise<void> {
-    const promptFiles = [
+  private loadPromptFiles(folderArg?: string): string[] {
+    if (folderArg) {
+      const resolvedDir = path.resolve(folderArg);
+      if (!fs.existsSync(resolvedDir) || !fs.statSync(resolvedDir).isDirectory()) {
+        console.error(`❌ Provided path is not a valid directory: ${resolvedDir}`);
+        process.exit(1);
+      }
+
+      const jsonFiles = fs.readdirSync(resolvedDir)
+        .filter(f => f.endsWith('.json'))
+        .sort();
+
+      if (jsonFiles.length === 0) {
+        console.error(`❌ No .json files found in: ${resolvedDir}`);
+        process.exit(1);
+      }
+
+      // Return paths relative to the project root so runPipeline resolves them correctly
+      const projectRoot = path.join(__dirname, '..');
+      return jsonFiles.map(f => path.relative(projectRoot, path.join(resolvedDir, f)));
+    }
+
+    // Fallback to hardcoded defaults
+    return [
       'enhanced-prompt-lead-sales-followup.json',
       'enhanced-prompt-complaint-logger.json',
       'enhanced-prompt-invoice-extraction.json',
       'enhanced-prompt-expense-extractor.json',
       'enhanced-prompt-leads-filter.json'
     ];
+  }
+
+  public async runAll(): Promise<void> {
+    const folderArg = process.argv[2];
+    const promptFiles = this.loadPromptFiles(folderArg);
 
     console.log('🚀 Starting End-to-End Test Suite for All Enhanced Prompts\n');
+    if (folderArg) {
+      console.log(`📂 Loading prompts from: ${path.resolve(folderArg)}`);
+    }
+    console.log(`📂 Output root: ${this.outputDir}`);
     console.log(`Testing ${promptFiles.length} workflows...\n`);
 
     for (const promptFile of promptFiles) {
@@ -409,7 +450,10 @@ class EnhancedPromptTester {
 }
 
 // Run tests
-const tester = new EnhancedPromptTester();
+// Usage: npx tsx scripts/test-all-enhanced-prompts-e2e.ts [input-folder] [output-folder]
+// If output-folder is omitted, defaults to input-folder (when provided) or output/e2e-test-results/
+const outputArg = process.argv[3] || process.argv[2];
+const tester = new EnhancedPromptTester(outputArg);
 tester.runAll().catch(error => {
   console.error('Fatal error:', error);
   process.exit(1);

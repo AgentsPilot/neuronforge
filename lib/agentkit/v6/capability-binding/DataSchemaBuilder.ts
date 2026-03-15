@@ -62,29 +62,50 @@ export class DataSchemaBuilder {
     this.warnings = []
     const slots: Record<string, DataSlot> = {}
 
-    // Pass 1: Build slots from all steps (including nested)
-    const allSteps = this.flattenSteps(boundSteps)
+    // Pass 1: Build slots from all steps (including nested, with depth tracking)
+    const allEntries = this.flattenSteps(boundSteps, 0)
 
-    for (const step of allSteps) {
-      this.buildSlotsForStep(step, slots)
+    for (const { step, depth } of allEntries) {
+      this.buildSlotsForStep(step, slots, depth)
     }
 
-    // Pass 2: Fix up loop gather schemas — body step slots now exist
-    this.fixupLoopGatherSchemas(allSteps, slots)
+    // Pass 2: Fix up derived schemas via convergence loop.
+    // Schemas cascade through multiple levels (loop gather → transform → aggregate → loop item),
+    // so we re-run all fixups until no more changes occur (typically 2-3 iterations).
+    const allSteps = allEntries.map(e => e.step)
+    const MAX_FIXUP_ITERATIONS = 5
+    for (let iteration = 0; iteration < MAX_FIXUP_ITERATIONS; iteration++) {
+      const slotSnapshot = JSON.stringify(slots)
+
+      // Pass 2a: Fix loop gather schemas — body step slots now exist
+      this.fixupLoopGatherSchemas(allSteps, slots)
+
+      // Pass 2b: Fix aggregate subset schemas — input arrays may now have full items
+      this.fixupAggregateSubsetSchemas(allSteps, slots)
+
+      // Pass 2c: Fix shape-preserving transform + loop item schemas
+      this.fixupDerivedTransformSchemas(allEntries, slots)
+
+      if (JSON.stringify(slots) === slotSnapshot) {
+        break // Converged — no more changes
+      }
+    }
 
     // Pass 3: Populate consumed_by
-    for (const step of allSteps) {
-      if (!step.inputs) continue
-      for (const inputRef of step.inputs) {
-        if (slots[inputRef]) {
-          if (!slots[inputRef].consumed_by) {
-            slots[inputRef].consumed_by = []
+    for (const { step } of allEntries) {
+      // Explicit inputs[]
+      if (step.inputs) {
+        for (const inputRef of step.inputs) {
+          if (slots[inputRef]) {
+            if (!slots[inputRef].consumed_by) {
+              slots[inputRef].consumed_by = []
+            }
+            slots[inputRef].consumed_by!.push(step.id)
           }
-          slots[inputRef].consumed_by!.push(step.id)
         }
       }
 
-      // Also check transform.input, extract.input, aggregate.input, deliver.input, loop.over
+      // Implicit inputs: transform.input, extract.input, aggregate.input, deliver.input, loop.over
       const implicitInput = this.getImplicitInput(step)
       if (implicitInput && slots[implicitInput]) {
         if (!slots[implicitInput].consumed_by) {
@@ -92,6 +113,20 @@ export class DataSchemaBuilder {
         }
         if (!slots[implicitInput].consumed_by!.includes(step.id)) {
           slots[implicitInput].consumed_by!.push(step.id)
+        }
+      }
+
+      // Loop collect.from_step_output — the loop step consumes the inner output
+      if (step.kind === 'loop') {
+        const loopStep = step as BoundStep & LoopStep
+        const fromRef = loopStep.loop?.collect?.from_step_output
+        if (fromRef && slots[fromRef]) {
+          if (!slots[fromRef].consumed_by) {
+            slots[fromRef].consumed_by = []
+          }
+          if (!slots[fromRef].consumed_by!.includes(step.id)) {
+            slots[fromRef].consumed_by!.push(step.id)
+          }
         }
       }
     }
@@ -111,7 +146,7 @@ export class DataSchemaBuilder {
   /**
    * Build slot(s) for a single step based on its kind.
    */
-  private buildSlotsForStep(step: BoundStep, slots: Record<string, DataSlot>): void {
+  private buildSlotsForStep(step: BoundStep, slots: Record<string, DataSlot>, depth: number = 0): void {
     // Loop and aggregate steps produce extra slots (item_ref, collect_as, named outputs)
     // regardless of whether they have a main output. Build these first.
     if (step.kind === 'loop') {
@@ -128,7 +163,7 @@ export class DataSchemaBuilder {
 
     slots[step.output] = {
       schema,
-      scope: 'global', // Default; loop steps override for item_ref
+      scope: depth > 0 ? 'loop' : 'global', // Steps inside loop body get loop scope
       produced_by: step.id,
     }
   }
@@ -488,6 +523,123 @@ export class DataSchemaBuilder {
   }
 
   /**
+   * Fix up aggregate subset schemas after loop gather slots have been resolved.
+   * During Pass 1, aggregate steps may reference loop gather outputs (e.g., processed_items)
+   * whose items schema was still `any` at the time. Now that fixupLoopGatherSchemas has run,
+   * the input slots have full items schemas, so we can re-derive subset outputs.
+   */
+  private fixupAggregateSubsetSchemas(allSteps: BoundStep[], slots: Record<string, DataSlot>): void {
+    for (const step of allSteps) {
+      if (step.kind !== 'aggregate') continue
+      const aggStep = step as BoundStep & AggregateStep
+      if (!aggStep.aggregate?.outputs) continue
+
+      const inputRef = aggStep.aggregate.input
+      const inputSlot = inputRef ? slots[inputRef] : null
+      if (!inputSlot) continue
+
+      for (const output of aggStep.aggregate.outputs) {
+        if (output.type !== 'subset') continue
+
+        const slotName = output.name
+        const slot = slots[slotName]
+        if (!slot) continue
+
+        // Check if items is still shallow (type: "any") but input now has rich items
+        if (slot.schema.type === 'array' &&
+            slot.schema.items?.type === 'any' &&
+            inputSlot.schema.type === 'array' &&
+            inputSlot.schema.items?.type !== 'any') {
+          slot.schema = { ...this.deepCopySchema(inputSlot.schema), source: 'inferred' }
+          logger.debug(
+            { slotName, inputRef },
+            '[DataSchemaBuilder] Fixed up aggregate subset items schema'
+          )
+        }
+      }
+
+      // Also fix the main step.output if it's an object containing subset properties
+      if (step.output && slots[step.output] && slots[step.output].schema.properties) {
+        for (const output of aggStep.aggregate.outputs) {
+          if (output.type !== 'subset') continue
+          const prop = slots[step.output].schema.properties![output.name]
+          if (prop && prop.type === 'array' && prop.items?.type === 'any' &&
+              inputSlot.schema.type === 'array' && inputSlot.schema.items?.type !== 'any') {
+            slots[step.output].schema.properties![output.name] = {
+              ...this.deepCopySchema(inputSlot.schema),
+              source: 'inferred',
+            }
+          }
+        }
+      }
+    }
+  }
+
+  /**
+   * Fix up shape-preserving transform schemas after Passes 2/2b have resolved
+   * upstream slots. During Pass 1, shape-preserving transforms (filter, sort, dedupe)
+   * inherit their input slot's schema, but if the input was a loop gather or aggregate
+   * output, its items may have been `type: "any"` at that time. Now that upstream
+   * slots are resolved, re-derive these transform outputs.
+   * Also fixes cascading loop item schemas (same pattern as I7 fixed by I6).
+   */
+  private fixupDerivedTransformSchemas(
+    allEntries: Array<{ step: BoundStep; depth: number }>,
+    slots: Record<string, DataSlot>
+  ): void {
+    for (const { step } of allEntries) {
+      if (step.kind !== 'transform') continue
+      const transformStep = step as BoundStep & TransformStep
+      const op = transformStep.transform?.op
+      if (!op || !SHAPE_PRESERVING_OPS.has(op)) continue
+      if (!step.output || !slots[step.output]) continue
+
+      const inputRef = transformStep.transform.input
+      const inputSlot = inputRef ? slots[inputRef] : null
+      if (!inputSlot) continue
+
+      const outputSlot = slots[step.output]
+
+      // Check if output has stale items (type: "any") but input now has rich items
+      if (outputSlot.schema.type === 'array' &&
+          outputSlot.schema.items?.type === 'any' &&
+          inputSlot.schema.type === 'array' &&
+          inputSlot.schema.items?.type !== 'any') {
+        outputSlot.schema = { ...this.deepCopySchema(inputSlot.schema), source: 'inferred' }
+        logger.debug(
+          { slotName: step.output, inputRef },
+          '[DataSchemaBuilder] Fixed up shape-preserving transform schema'
+        )
+      }
+    }
+
+    // Second pass: fix up loop item_ref slots that iterate over now-resolved transform outputs
+    for (const { step } of allEntries) {
+      if (step.kind !== 'loop') continue
+      const loopStep = step as BoundStep & LoopStep
+      if (!loopStep.loop?.item_ref) continue
+
+      const overRef = loopStep.loop.over
+      const overSlot = overRef ? slots[overRef] : null
+      if (!overSlot) continue
+
+      const itemSlot = slots[loopStep.loop.item_ref]
+      if (!itemSlot) continue
+
+      // If item schema is still "any" but the iterated array now has rich items
+      if (itemSlot.schema.type === 'any' &&
+          overSlot.schema.type === 'array' &&
+          overSlot.schema.items?.type !== 'any') {
+        itemSlot.schema = { ...this.deepCopySchema(overSlot.schema.items!), source: 'inferred' }
+        logger.debug(
+          { itemRef: loopStep.loop.item_ref, overRef },
+          '[DataSchemaBuilder] Fixed up loop item schema from resolved transform'
+        )
+      }
+    }
+  }
+
+  /**
    * Build additional named slots for aggregate outputs.
    * Each named aggregate output (subset, count, etc.) gets its own slot.
    */
@@ -546,30 +698,31 @@ export class DataSchemaBuilder {
 
   /**
    * Recursively flatten all steps including nested (loop body, decide branches, parallel branches).
+   * Returns tuples of { step, depth } where depth tracks nesting level (0 = top-level).
    */
-  private flattenSteps(steps: BoundStep[]): BoundStep[] {
-    const result: BoundStep[] = []
+  private flattenSteps(steps: BoundStep[], depth: number = 0): Array<{ step: BoundStep; depth: number }> {
+    const result: Array<{ step: BoundStep; depth: number }> = []
 
     for (const step of steps) {
-      result.push(step)
+      result.push({ step, depth })
 
       if (step.kind === 'loop' && (step as any).loop?.do) {
-        result.push(...this.flattenSteps((step as any).loop.do))
+        result.push(...this.flattenSteps((step as any).loop.do, depth + 1))
       }
 
       if (step.kind === 'decide' && (step as any).decide) {
         if ((step as any).decide.then) {
-          result.push(...this.flattenSteps((step as any).decide.then))
+          result.push(...this.flattenSteps((step as any).decide.then, depth + 1))
         }
         if ((step as any).decide.else) {
-          result.push(...this.flattenSteps((step as any).decide.else))
+          result.push(...this.flattenSteps((step as any).decide.else, depth + 1))
         }
       }
 
       if (step.kind === 'parallel' && (step as any).parallel?.branches) {
         for (const branch of (step as any).parallel.branches) {
           if (branch.steps) {
-            result.push(...this.flattenSteps(branch.steps))
+            result.push(...this.flattenSteps(branch.steps, depth + 1))
           }
         }
       }

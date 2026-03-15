@@ -11,6 +11,16 @@ import { createLogger } from '@/lib/logger'
 
 const logger = createLogger({ module: 'PluginVocabularyExtractor', service: 'V6' })
 
+export interface ActionParamInfo {
+  name: string
+  type: string
+  required: boolean
+  description?: string
+  format?: string       // e.g., "email", "Gmail search syntax"
+  enum?: string[]       // allowed values
+  default?: any
+}
+
 export interface PluginActionInfo {
   plugin_key: string
   plugin_name: string
@@ -18,6 +28,7 @@ export interface PluginActionInfo {
   domain: string
   capability: string
   description: string
+  input_params?: ActionParamInfo[]
 }
 
 export interface PluginVocabulary {
@@ -127,14 +138,21 @@ export class PluginVocabularyExtractor {
         }
 
         if (action.domain && action.capability) {
-          actions.push({
+          const actionInfo: PluginActionInfo = {
             plugin_key: pluginKey,
             plugin_name: plugin.plugin.name,
             action_name: actionName,
             domain: action.domain,
             capability: action.capability,
             description: action.description,
-          })
+          }
+
+          // Extract input parameters from action schema
+          if (action.parameters?.properties) {
+            actionInfo.input_params = this.extractParamInfo(action)
+          }
+
+          actions.push(actionInfo)
         }
       }
 
@@ -189,15 +207,22 @@ export class PluginVocabularyExtractor {
       sections.push(`  Domains: ${plugin.domains.join(', ')}`)
       sections.push(`  Capabilities: ${plugin.capabilities.join(', ')}`)
 
-      // Show a few example actions
-      const exampleActions = plugin.actions.slice(0, 3)
-      if (exampleActions.length > 0) {
-        sections.push(`  Example actions:`)
-        for (const action of exampleActions) {
-          sections.push(`    - ${action.action_name}: ${action.domain}/${action.capability}`)
+      // Show all actions with input parameters
+      sections.push(`  Actions:`)
+      for (const action of plugin.actions) {
+        sections.push(`    - ${action.action_name} (${action.domain}/${action.capability}): ${action.description}`)
+        if (action.input_params && action.input_params.length > 0) {
+          for (const param of action.input_params) {
+            let line = `        ${param.required ? '*' : ' '} ${param.name}: ${param.type}`
+            if (param.enum) line += ` [${param.enum.join(' | ')}]`
+            if (param.default !== undefined) line += ` (default: ${JSON.stringify(param.default)})`
+            if (param.description) line += ` — ${param.description}`
+            sections.push(line)
+          }
         }
       }
     }
+    sections.push('\n(* = required parameter)')
 
     return sections.join('\n')
   }
@@ -222,5 +247,65 @@ Examples:
 - For Sheets append: domain="table", capability="create", provider_family="google"
 - For AI extraction: domain="internal", capability="generate"
 `.trim()
+  }
+
+  /**
+   * Extract flattened parameter info from an action's parameter schema.
+   * Handles nested objects by flattening to dot-notation (e.g., recipients.to).
+   * Keeps descriptions concise — truncates at 120 chars.
+   */
+  private extractParamInfo(action: ActionDefinition): ActionParamInfo[] {
+    const params: ActionParamInfo[] = []
+    const requiredSet = new Set(action.parameters?.required || [])
+
+    const flattenProps = (
+      properties: Record<string, any>,
+      parentRequired: Set<string>,
+      prefix: string = ''
+    ) => {
+      for (const [name, prop] of Object.entries(properties)) {
+        const fullName = prefix ? `${prefix}.${name}` : name
+        const isRequired = parentRequired.has(name)
+
+        // If it's a nested object with properties, flatten recursively
+        if (prop.type === 'object' && prop.properties && !prop['x-variable-mapping'] && !prop['x-input-mapping']) {
+          const nestedRequired = new Set<string>(prop.required || [])
+          flattenProps(prop.properties, nestedRequired, fullName)
+          continue
+        }
+
+        const paramInfo: ActionParamInfo = {
+          name: fullName,
+          type: prop.type || 'string',
+          required: isRequired,
+        }
+
+        // Add description (truncated)
+        if (prop.description) {
+          paramInfo.description = prop.description.length > 120
+            ? prop.description.slice(0, 117) + '...'
+            : prop.description
+        }
+
+        // Add format hint (from JSON Schema format or enum)
+        if (prop.format) {
+          paramInfo.format = prop.format
+        }
+        if (prop.enum && prop.enum.length <= 8) {
+          paramInfo.enum = prop.enum
+        }
+        if (prop.default !== undefined) {
+          paramInfo.default = prop.default
+        }
+
+        params.push(paramInfo)
+      }
+    }
+
+    if (action.parameters?.properties) {
+      flattenProps(action.parameters.properties, requiredSet)
+    }
+
+    return params
   }
 }

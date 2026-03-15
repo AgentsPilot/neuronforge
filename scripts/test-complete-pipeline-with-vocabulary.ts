@@ -31,8 +31,11 @@ async function main() {
 
   const userId = '08456106-aa50-4810-b12c-7ca84102da31'
 
-  // Output directory
-  const outputDir = path.join(process.cwd(), 'output', 'vocabulary-pipeline')
+  // Output directory: use --output-dir arg if provided, otherwise default
+  const outputDirArgIndex = process.argv.indexOf('--output-dir')
+  const outputDir = outputDirArgIndex !== -1 && process.argv[outputDirArgIndex + 1]
+    ? path.resolve(process.argv[outputDirArgIndex + 1])
+    : path.join(process.cwd(), 'output', 'vocabulary-pipeline')
   if (!fs.existsSync(outputDir)) {
     fs.mkdirSync(outputDir, { recursive: true })
   }
@@ -63,12 +66,12 @@ async function main() {
   console.log(`   Plugin keys: ${vocabulary.plugins.map(p => p.key).join(', ')}`)
 
   // Save vocabulary
-  const vocabPath = path.join(outputDir, 'plugin-vocabulary.json')
+  const vocabPath = path.join(outputDir, 'phase0-plugin-vocabulary.json')
   fs.writeFileSync(vocabPath, JSON.stringify(vocabulary, null, 2))
   console.log(`   Saved: ${vocabPath}`)
 
   // Save formatted vocabulary
-  const vocabTextPath = path.join(outputDir, 'vocabulary-for-prompt.txt')
+  const vocabTextPath = path.join(outputDir, 'phase0-vocabulary-for-prompt.txt')
   const vocabText = vocabularyExtractor.formatForPrompt(vocabulary)
   fs.writeFileSync(vocabTextPath, vocabText)
   console.log(`   Saved: ${vocabTextPath}`)
@@ -85,7 +88,7 @@ async function main() {
 
   if (customPromptFile) {
     console.log(`Loading custom prompt from: ${customPromptFile}`)
-    const promptPath = path.join(process.cwd(), customPromptFile)
+    const promptPath = path.resolve(customPromptFile)
     const promptContent = fs.readFileSync(promptPath, 'utf-8')
     enhancedPrompt = JSON.parse(promptContent)
   } else {
@@ -164,12 +167,12 @@ async function main() {
   console.log(`   Steps: ${intentContract.steps.length}`)
 
   // Save IntentContract
-  const intentPath = path.join(outputDir, 'intent-contract.json')
+  const intentPath = path.join(outputDir, 'phase1-intent-contract.json')
   fs.writeFileSync(intentPath, JSON.stringify(intentContract, null, 2))
   console.log(`   Saved: ${intentPath}`)
 
   // Save raw LLM output
-  const rawPath = path.join(outputDir, 'intent-raw-llm-output.txt')
+  const rawPath = path.join(outputDir, 'phase1-intent-raw-llm-output.txt')
   fs.writeFileSync(rawPath, rawText)
 
   // =======================
@@ -205,7 +208,7 @@ async function main() {
   console.log(`\n   Summary: ${successfulBindings} bound, ${failedBindings} unbound`)
 
   // Save BoundIntent
-  const boundIntentPath = path.join(outputDir, 'bound-intent-contract.json')
+  const boundIntentPath = path.join(outputDir, 'phase2-bound-intent-contract.json')
   fs.writeFileSync(boundIntentPath, JSON.stringify(boundIntent, null, 2))
   console.log(`   Saved: ${boundIntentPath}`)
 
@@ -230,7 +233,7 @@ async function main() {
     }
 
     // Save data_schema as separate file
-    const dataSchemaPath = path.join(outputDir, 'data-schema.json')
+    const dataSchemaPath = path.join(outputDir, 'phase2-data-schema.json')
     fs.writeFileSync(dataSchemaPath, JSON.stringify(boundIntent.data_schema, null, 2))
     console.log(`   Saved: ${dataSchemaPath}`)
   } else {
@@ -280,7 +283,7 @@ async function main() {
   }
 
   // Save IR
-  const irPath = path.join(outputDir, 'execution-graph-ir-v4.json')
+  const irPath = path.join(outputDir, 'phase3-execution-graph-ir-v4.json')
   fs.writeFileSync(irPath, JSON.stringify(executionGraphIR, null, 2))
   console.log(`   Saved: ${irPath}`)
 
@@ -297,7 +300,25 @@ async function main() {
   for (const input of enhancedPrompt.specifics.resolved_user_inputs) {
     workflowConfig[input.key] = input.value
   }
-  console.log(`Extracted workflow config: ${Object.keys(workflowConfig).length} parameters`)
+  console.log(`   User-provided config: ${Object.keys(workflowConfig).length} parameters`)
+
+  // Log IntentContract config defaults (carried through IR)
+  if (executionGraphIR.config_defaults && executionGraphIR.config_defaults.length > 0) {
+    console.log(`   IntentContract config_defaults: ${executionGraphIR.config_defaults.length} entries`)
+    for (const entry of executionGraphIR.config_defaults) {
+      const hasDefault = entry.default !== undefined
+      const inUserConfig = entry.key in workflowConfig
+      const status = inUserConfig ? '(user override)' : hasDefault ? '(default)' : '(no value!)'
+      console.log(`      ${status} ${entry.key}: ${inUserConfig ? workflowConfig[entry.key] : hasDefault ? JSON.stringify(entry.default) : 'MISSING'}`)
+    }
+  } else {
+    console.log(`   ⚠️  No config_defaults on IR — IntentContract config not carried through`)
+  }
+
+  // Save user-provided config (pre-merge)
+  const configPath = path.join(outputDir, 'phase0-workflow-config.json')
+  fs.writeFileSync(configPath, JSON.stringify(workflowConfig, null, 2))
+  console.log(`   Saved: ${configPath}`)
 
   console.log('Compiling ExecutionGraph → PILOT DSL Steps...')
   const compilationStart = Date.now()
@@ -321,7 +342,7 @@ async function main() {
   console.log(`   PILOT Steps: ${pilotSteps.length}`)
 
   // Save PILOT DSL
-  const pilotPath = path.join(outputDir, 'pilot-dsl-steps.json')
+  const pilotPath = path.join(outputDir, 'phase4-pilot-dsl-steps.json')
   fs.writeFileSync(pilotPath, JSON.stringify(pilotSteps, null, 2))
   console.log(`   Saved: ${pilotPath}`)
 

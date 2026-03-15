@@ -172,6 +172,20 @@ export class IntentToIRConverter {
         execution_graph: executionGraph,
       }
 
+      // Carry IntentContract config[] through as config_defaults for compiler merging
+      if (ctx.config && ctx.config.length > 0) {
+        ir.config_defaults = ctx.config.map((c: any) => ({
+          key: c.key,
+          type: c.type || 'string',
+          ...(c.description ? { description: c.description } : {}),
+          ...(c.default !== undefined ? { default: c.default } : {}),
+        }))
+        logger.debug(
+          { configKeys: ir.config_defaults.map(c => c.key) },
+          '[IntentToIRConverter] Attached config_defaults to IR'
+        )
+      }
+
       logger.info(
         {
           nodeCount: ctx.nodes.size,
@@ -345,25 +359,28 @@ export class IntentToIRConverter {
       }
     }
 
-    // Add query if present (but skip structured ref objects - those should use inputs instead)
+    // Add query if present — resolve structured ValueRef objects (config refs, data refs)
     if (step.query) {
-      // Skip structured query objects like {"kind": "ref", "ref": "...", "field": "..."}
-      // The compiler will extract needed fields from inputs using x-variable-mapping
-      const isStructuredRef = typeof step.query === 'object' && step.query !== null && 'kind' in step.query
-      if (!isStructuredRef) {
-        params.query = step.query
-      } else {
-        logger.debug(`[IntentToIRConverter] Skipping structured query object - using inputs instead`)
-      }
+      params.query = this.normalizeValueReference(step.query, ctx)
+      logger.debug(`[IntentToIRConverter] Resolved query: ${JSON.stringify(step.query)} → ${params.query}`)
     }
 
-    // Add filters if present
+    // Add filters if present — fold into query_filters array for downstream merging
+    // Filters represent constraints (e.g., time windows, field conditions) that the LLM
+    // declared separately from the query. Many plugins (e.g., Gmail) expect these folded
+    // into the query string rather than as standalone params. We emit them as structured
+    // metadata so the compiler/runtime can merge them appropriately.
     if (step.filters && step.filters.length > 0) {
-      // Convert filters to plugin-specific params
-      // This is simplified - real implementation would need plugin schema awareness
+      const resolvedFilters: Array<{ field: string; op: string; value: any }> = []
       for (const filter of step.filters) {
-        params[filter.field] = this.resolveValueRef(filter.value, ctx)
+        resolvedFilters.push({
+          field: filter.field,
+          op: filter.op,
+          value: this.normalizeValueReference(filter.value, ctx)
+        })
       }
+      params.query_filters = resolvedFilters
+      logger.debug(`[IntentToIRConverter] Resolved ${resolvedFilters.length} query filter(s)`)
     }
 
     // Add retrieval options if present
@@ -1224,7 +1241,14 @@ export class IntentToIRConverter {
   private normalizeValueReference(value: any, ctx: ConversionContext): any {
     // If it's an object with 'kind' field, it's a ValueRef
     if (value && typeof value === 'object' && 'kind' in value) {
-      return this.resolveValueRef(value as ValueRef, ctx)
+      const resolved = this.resolveValueRef(value as ValueRef, ctx)
+      // Wrap bare ref values in {{}} template syntax for IR config values.
+      // Config refs (kind: "config") already return {{config.key}}, but
+      // data refs (kind: "ref") return bare "varName.field" — wrap them.
+      if (typeof resolved === 'string' && !resolved.includes('{{') && value.kind === 'ref') {
+        return `{{${resolved}}}`
+      }
+      return resolved
     }
     // Otherwise, return as-is (literal value)
     return value

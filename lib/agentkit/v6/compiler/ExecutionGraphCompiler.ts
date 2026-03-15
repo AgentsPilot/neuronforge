@@ -127,6 +127,33 @@ export class ExecutionGraphCompiler {
     }
 
     try {
+      // Merge IntentContract config defaults with user-provided workflowConfig
+      // IntentContract defaults serve as base; user-provided values override
+      if (ir.config_defaults && ir.config_defaults.length > 0) {
+        const mergedConfig: Record<string, any> = {}
+
+        // Step 1: Load IntentContract defaults as base
+        for (const configEntry of ir.config_defaults) {
+          if (configEntry.default !== undefined) {
+            mergedConfig[configEntry.key] = configEntry.default
+          }
+        }
+
+        // Step 2: Overlay user-provided workflowConfig (exact key match wins)
+        if (ctx.workflowConfig) {
+          for (const [key, value] of Object.entries(ctx.workflowConfig)) {
+            mergedConfig[key] = value
+          }
+        }
+
+        const defaultsOnly = ir.config_defaults
+          .filter(c => c.default !== undefined && !(ctx.workflowConfig && c.key in ctx.workflowConfig))
+          .map(c => c.key)
+
+        ctx.workflowConfig = mergedConfig
+        this.log(ctx, `Merged config: ${Object.keys(mergedConfig).length} keys (${defaultsOnly.length} from IntentContract defaults: ${defaultsOnly.join(', ') || 'none'})`)
+      }
+
       this.log(ctx, `Starting execution graph compilation`)
 
       // Validate IR version
@@ -3200,6 +3227,26 @@ export class ExecutionGraphCompiler {
    * Now uses plugin schema metadata for intelligent normalization
    */
   private async normalizeActionStepRefs(step: any, variables: Set<string>, ctx: CompilerContext): Promise<any> {
+    // Pre-process: fold query_filters into the query parameter.
+    // The IntentContract separates query and filters, but many plugins (e.g., Gmail)
+    // use a single query string where time/field constraints are part of the syntax.
+    // Fold filters into the query so the plugin receives a single search expression.
+    if (step.config?.query_filters && Array.isArray(step.config.query_filters)) {
+      const filters = step.config.query_filters as Array<{ field: string; op: string; value: any }>
+      if (filters.length > 0) {
+        // Ensure query param exists (may be a config template like {{config.gmail_search_query}})
+        if (!step.config.query) {
+          step.config.query = ''
+        }
+        // Attach filters as structured metadata on the query for runtime merging.
+        // The runtime or plugin executor can use these to augment the query string
+        // with plugin-native syntax (e.g., Gmail: newer_than:1d, after:YYYY/MM/DD).
+        step.config._query_filters = filters
+        this.log(ctx, `  → Folded ${filters.length} query filter(s) into _query_filters metadata`)
+      }
+      delete step.config.query_filters
+    }
+
     if (step.config && this.pluginManager) {
       // Get plugin schema for this action
       const pluginSchema = await this.getPluginActionSchema(step.plugin, step.operation)
@@ -3417,11 +3464,39 @@ export class ExecutionGraphCompiler {
         const mapping = paramDef['x-input-mapping']
         const varName = configValue.replace(/[{}]/g, '')
 
-        // Check if this is a file object that needs URL extraction
-        if (variables.has(varName) && mapping.from_file_object) {
-          const mappedValue = `{{${varName}.${mapping.from_file_object}}}`
-          normalized[paramName] = mappedValue
-          this.log(ctx, `  → Applied input mapping: ${paramName} = ${configValue} → ${mappedValue}`)
+        if (variables.has(varName)) {
+          // Schema-aware: check producing slot to determine which accepts type matches
+          const dataSchema = ctx.ir?.execution_graph?.data_schema
+          const slotSchema = dataSchema?.slots?.[varName]?.schema
+
+          let fieldAccessor: string | null = null
+          let matchedType: string = 'unknown'
+
+          if (slotSchema && slotSchema.properties) {
+            // Check each accepted type against the slot's actual fields
+            if (mapping.from_file_object && slotSchema.properties[mapping.from_file_object]) {
+              fieldAccessor = mapping.from_file_object
+              matchedType = 'file_object'
+            } else if (mapping.from_base64_content && slotSchema.properties[mapping.from_base64_content]) {
+              fieldAccessor = mapping.from_base64_content
+              matchedType = 'base64_content'
+            }
+            // url_string: no field accessor needed (pass as-is)
+          } else if (mapping.from_file_object) {
+            // No schema available — fall back to from_file_object (legacy behavior)
+            fieldAccessor = mapping.from_file_object
+            matchedType = 'file_object (fallback)'
+          }
+
+          if (fieldAccessor) {
+            const mappedValue = `{{${varName}.${fieldAccessor}}}`
+            normalized[paramName] = mappedValue
+            this.log(ctx, `  → Applied input mapping (${matchedType}): ${paramName} = ${configValue} → ${mappedValue}`)
+          } else {
+            // No matching accessor — pass the whole object reference
+            normalized[paramName] = `{{${varName}}}`
+            this.log(ctx, `  → x-input-mapping: no matching field on slot '${varName}', passing whole object`)
+          }
           continue
         }
       }
@@ -3489,15 +3564,9 @@ export class ExecutionGraphCompiler {
 
     // Third pass: Auto-inject missing REQUIRED parameters from workflow config using fuzzy matching
     // This handles cases where plugin schema doesn't have x-context-binding but the parameter is required
+    // NOTE: Uses higher threshold (0.4) than x-context-binding pass to avoid cross-domain false positives
+    // (e.g., matching "file_id" to "sheet_id" when only "id" token overlaps)
     if (ctx.workflowConfig && parameterSchema) {
-      // Get the parent schema that contains the 'required' array
-      // Note: parameterSchema is the 'properties' object, we need to find if there's a required array
-      // We'll need to access this from the action schema passed to this method
-
-      // WORKAROUND: Since we only have parameterSchema (properties), we'll iterate all params
-      // and check if they are in normalized. If not, try fuzzy matching from workflowConfig.
-      // This is safe because we only inject if the parameter is NOT already present.
-
       for (const [paramName, paramDef] of Object.entries(parameterSchema as Record<string, any>)) {
         // Skip if already processed
         if (paramName in normalized) {
@@ -3515,7 +3584,7 @@ export class ExecutionGraphCompiler {
         const searchKey = artifactHint || paramName
 
         this.log(ctx, `  → Checking for fuzzy match for missing parameter '${paramName}'${artifactHint ? ` (hint: ${artifactHint})` : ''}...`)
-        const fuzzyMatch = this.findBestConfigMatch(searchKey, ctx.workflowConfig, 0.15, ctx)
+        const fuzzyMatch = this.findBestConfigMatch(searchKey, ctx.workflowConfig, 0.4, ctx)
 
         if (fuzzyMatch) {
           const configVal = ctx.workflowConfig[fuzzyMatch]

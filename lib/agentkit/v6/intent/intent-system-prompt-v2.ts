@@ -1268,16 +1268,40 @@ function buildVocabularyInjection(vocabulary: PluginVocabulary): string {
   }
   sections.push('')
 
-  // Connected plugins with their domains/capabilities
-  sections.push('**CONNECTED PLUGINS:**')
+  // Connected plugins with actions and input parameters
+  sections.push('**CONNECTED PLUGINS AND ACTIONS:**')
+  sections.push('(Each action shows its input parameters — use these for config defaults and query syntax)')
+  sections.push('')
   for (const plugin of vocabulary.plugins.slice(0, 10)) { // Show first 10 plugins
-    sections.push(`- ${plugin.name} (${plugin.key})${plugin.provider_family ? ` [${plugin.provider_family}]` : ''}`)
-    sections.push(`  Domains: ${plugin.domains.join(', ')}`)
-    sections.push(`  Capabilities: ${plugin.capabilities.slice(0, 5).join(', ')}${plugin.capabilities.length > 5 ? '...' : ''}`)
+    sections.push(`**${plugin.name}** (${plugin.key})${plugin.provider_family ? ` [${plugin.provider_family}]` : ''}`)
+    sections.push(`  Domains: ${plugin.domains.join(', ')} | Capabilities: ${plugin.capabilities.join(', ')}`)
+
+    // Show all actions with their input params
+    for (const action of plugin.actions) {
+      sections.push(`  - ${action.action_name} (${action.domain}/${action.capability}): ${action.description}`)
+      if (action.input_params && action.input_params.length > 0) {
+        sections.push(`    Parameters:`)
+        for (const param of action.input_params) {
+          let paramLine = `      ${param.required ? '*' : ' '} ${param.name}: ${param.type}`
+          if (param.enum) {
+            paramLine += ` [${param.enum.join(' | ')}]`
+          }
+          if (param.default !== undefined) {
+            paramLine += ` (default: ${JSON.stringify(param.default)})`
+          }
+          if (param.description) {
+            paramLine += ` — ${param.description}`
+          }
+          sections.push(paramLine)
+        }
+      }
+    }
+    sections.push('')
   }
   if (vocabulary.plugins.length > 10) {
     sections.push(`... and ${vocabulary.plugins.length - 10} more plugins`)
   }
+  sections.push('(* = required parameter)')
   sections.push('')
 
   sections.push('**CRITICAL RULES:**')
@@ -1324,7 +1348,11 @@ function buildVocabularyInjection(vocabulary: PluginVocabulary): string {
       sections.push('')
     }
 
-    sections.push('**Note:** Configuration values above indicate which fields and parameters are available.')
+    sections.push('**CRITICAL CONFIG KEY RULE:** When you declare `config` entries in the IntentContract,')
+    sections.push('you MUST reuse the exact keys listed above (e.g., `user_email`, `sheet_tab_name`).')
+    sections.push('DO NOT invent new key names for values already provided above.')
+    sections.push('You MAY add additional config entries for values NOT listed above (e.g., search queries, time windows).')
+    sections.push('This ensures the user\'s provided values are resolved correctly at runtime.')
     sections.push('')
   }
 
