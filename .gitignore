@@ -12,6 +12,10 @@
 
 # testing
 /coverage
+/output/
+
+# windows artifacts
+nul
 
 # next.js
 /.next/
@@ -40,3 +44,4 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 .env.local
+output/e2e-test-results/e2e-test-report.json
