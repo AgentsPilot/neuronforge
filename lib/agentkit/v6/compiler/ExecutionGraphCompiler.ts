@@ -222,6 +222,18 @@ export class ExecutionGraphCompiler {
       // Phase 3.6: Renumber steps sequentially after normalization
       workflow = this.renumberSteps(workflow)
 
+      // Phase 3.7: Field name reconciliation (O10)
+      // Auto-correct field references that don't match upstream output schemas
+      this.log(ctx, 'Phase 3.7: Reconciling field name references')
+      workflow = this.reconcileFieldReferences(workflow, ctx)
+
+      // Phase 3.8: Config reference consistency (O11)
+      // Detect config keys that are declared but never referenced, auto-replace hardcoded values
+      if (ir.config_defaults && ir.config_defaults.length > 0) {
+        this.log(ctx, 'Phase 3.8: Checking config reference consistency')
+        workflow = this.enforceConfigReferences(workflow, ir.config_defaults, ctx)
+      }
+
       // Phase 4: Post-compilation optimization
       this.log(ctx, 'Phase 4: Running post-compilation optimizations')
       const optimizedWorkflow = await this.optimizeWorkflow(workflow, ctx)
@@ -2403,6 +2415,695 @@ export class ExecutionGraphCompiler {
     }
 
     return renumberRecursive(workflow)
+  }
+
+  // ============================================================================
+  // Phase 3.7: Field Name Reconciliation (O10)
+  // ============================================================================
+
+  /**
+   * Reconcile field name references across compiled workflow steps.
+   *
+   * Fixes two classes of field name mismatches:
+   * (a) Casing mismatch: LLM used snake_case (mime_type) but plugin returns camelCase (mimeType)
+   * (b) Wrong field name: compiler guessed a field name (content) that doesn't exist in upstream output (data)
+   *
+   * Algorithm:
+   * 1. Build a map of output_variable → output_schema from all steps
+   * 2. Walk all steps and find {{variable.field}} references in config values
+   * 3. If field doesn't exist in upstream schema, resolve via fuzzy or semantic match
+   * 4. Apply corrections and propagate downstream
+   */
+  private reconcileFieldReferences(workflow: WorkflowStep[], ctx: CompilerContext): WorkflowStep[] {
+    // Step 1: Build variable → output_schema map from all steps (including nested)
+    const schemaMap = new Map<string, Record<string, any>>()
+    // Also build a full schema map (not flattened) for deep nested field extraction
+    const fullSchemaMap = new Map<string, any>()
+    this.buildSchemaMap(workflow, schemaMap, ctx, fullSchemaMap)
+
+    if (schemaMap.size === 0) {
+      this.log(ctx, '  → No output schemas found, skipping reconciliation')
+      return workflow
+    }
+
+    this.log(ctx, `  → Built schema map: ${schemaMap.size} variables with output schemas`)
+
+    // Step 2: Collect all corrections needed
+    const corrections = new Map<string, string>() // "variable.wrongField" → "variable.correctField"
+    this.findFieldMismatches(workflow, schemaMap, corrections, ctx)
+
+    if (corrections.size === 0) {
+      this.log(ctx, '  → No field mismatches found')
+      return workflow
+    }
+
+    this.log(ctx, `  → Found ${corrections.size} field corrections to apply`)
+
+    // Step 3: Apply corrections across entire workflow
+    const corrected = this.applyFieldCorrections(workflow, corrections, ctx)
+
+    return corrected
+  }
+
+  /**
+   * Build a map of output_variable → output_schema properties from all compiled steps.
+   * Recursively walks into scatter_gather, conditional, etc.
+   */
+  private buildSchemaMap(steps: WorkflowStep[], schemaMap: Map<string, Record<string, any>>, ctx?: CompilerContext, fullSchemaMap?: Map<string, any>) {
+    for (const step of steps) {
+      // Extract output_schema properties for this step's output_variable
+      if (step.output_variable && step.output_schema) {
+        let props = this.extractSchemaProperties(step.output_schema)
+
+        // Store full (un-flattened) schema for deep nested field extraction
+        if (fullSchemaMap) {
+          fullSchemaMap.set(step.output_variable, step.output_schema)
+        }
+
+        if (props && Object.keys(props).length > 0) {
+          // O10a: For transform steps (flatten, filter, map), cross-check declared field names
+          // against the upstream plugin source's actual field names.
+          // The LLM may have normalized casing (e.g., mime_type) but the runtime data
+          // preserves the plugin's original casing (e.g., mimeType).
+          if (step.type === 'transform' && step.config?.input) {
+            const inputVar = String(step.config.input).replace(/[{}]/g, '')
+            // Use the FULL upstream schema (not flattened) for deep nested field extraction
+            const upstreamFullSchema = fullSchemaMap?.get(inputVar)
+            if (upstreamFullSchema) {
+              props = this.reconcileTransformSchemaWithUpstream(props, upstreamFullSchema, step, ctx)
+            }
+          }
+
+          schemaMap.set(step.output_variable, props)
+          if (ctx) {
+            this.log(ctx, `  → Schema map: ${step.output_variable} → [${Object.keys(props).join(', ')}]`)
+          }
+        }
+      }
+
+      // Recurse into nested steps
+      if (step.type === 'scatter_gather' && step.scatter?.steps) {
+        this.buildSchemaMap(step.scatter.steps, schemaMap, ctx, fullSchemaMap)
+      }
+      if (step.steps && Array.isArray(step.steps)) {
+        this.buildSchemaMap(step.steps, schemaMap, ctx, fullSchemaMap)
+      }
+      const conditionalStep = step as any
+      if (conditionalStep.else_steps && Array.isArray(conditionalStep.else_steps)) {
+        this.buildSchemaMap(conditionalStep.else_steps, schemaMap, ctx, fullSchemaMap)
+      }
+    }
+  }
+
+  /**
+   * O10a: Reconcile a transform step's declared field names with the upstream source.
+   *
+   * When a flatten/filter/map declares `mime_type` but upstream has `mimeType`,
+   * the runtime data will have `mimeType` (plugin's original). Update the schema map
+   * to use the upstream field names so downstream references get corrected.
+   *
+   * Accepts the FULL upstream output_schema (not flattened) so it can extract
+   * deeply nested field names (e.g., emails[].attachments[].mimeType).
+   */
+  private reconcileTransformSchemaWithUpstream(
+    transformProps: Record<string, { type: string; description?: string }>,
+    upstreamFullSchema: any,
+    step: WorkflowStep,
+    ctx?: CompilerContext
+  ): Record<string, { type: string; description?: string }> {
+    const normalizeForFuzzy = (s: string): string => s.toLowerCase().replace(/[_\-]/g, '')
+
+    // Build a lookup of ALL upstream field names (including deeply nested) by normalized form
+    const upstreamByNormalized = new Map<string, string>()
+
+    // Extract all field names from the full schema tree
+    this.extractAllFieldNames(upstreamFullSchema, upstreamByNormalized)
+
+    const corrected: Record<string, { type: string; description?: string }> = {}
+    let hasCasingFixes = false
+
+    for (const [declaredField, info] of Object.entries(transformProps)) {
+      const normalized = normalizeForFuzzy(declaredField)
+      const upstreamField = upstreamByNormalized.get(normalized)
+
+      if (upstreamField && upstreamField !== declaredField) {
+        // Casing mismatch — use upstream's canonical name
+        corrected[upstreamField] = info
+        hasCasingFixes = true
+        if (ctx) {
+          this.log(ctx, `  → [O10a] Transform ${step.step_id}: "${declaredField}" → "${upstreamField}" (upstream casing)`)
+        }
+      } else {
+        corrected[declaredField] = info
+      }
+    }
+
+    return hasCasingFixes ? corrected : transformProps
+  }
+
+  /**
+   * Extract ALL field names from a full output_schema tree, at every nesting level.
+   * Handles: object.properties, array.items.properties, and arbitrarily deep nesting.
+   * Populates targetMap with normalizedName → canonicalName.
+   */
+  private extractAllFieldNames(
+    schema: any,
+    targetMap: Map<string, string>
+  ) {
+    if (!schema || typeof schema !== 'object') return
+
+    const normalizeForFuzzy = (s: string): string => s.toLowerCase().replace(/[_\-]/g, '')
+
+    // If this schema level has properties, extract all field names
+    if (schema.properties) {
+      for (const [fieldName, fieldValue] of Object.entries(schema.properties)) {
+        targetMap.set(normalizeForFuzzy(fieldName), fieldName)
+        // Recurse into each property's schema
+        this.extractAllFieldNames(fieldValue as any, targetMap)
+      }
+    }
+
+    // If this is an array type, recurse into items
+    if (schema.type === 'array' && schema.items) {
+      this.extractAllFieldNames(schema.items, targetMap)
+    }
+  }
+
+  /**
+   * Extract flat property map from an output_schema.
+   * Handles both direct object schemas and array schemas (extracts items.properties).
+   * Returns { fieldName: { type, description } } or null.
+   */
+  private extractSchemaProperties(schema: any): Record<string, { type: string; description?: string }> | null {
+    if (!schema) return null
+
+    // Direct object with properties
+    if (schema.properties) {
+      const result: Record<string, { type: string; description?: string }> = {}
+      for (const [key, value] of Object.entries(schema.properties)) {
+        const field = value as any
+        result[key] = { type: field.type || 'unknown', description: field.description }
+      }
+      return result
+    }
+
+    // Array type — extract from items.properties
+    if (schema.type === 'array' && schema.items?.properties) {
+      const result: Record<string, { type: string; description?: string }> = {}
+      for (const [key, value] of Object.entries(schema.items.properties)) {
+        const field = value as any
+        result[key] = { type: field.type || 'unknown', description: field.description }
+      }
+      return result
+    }
+
+    return null
+  }
+
+  /**
+   * Walk all steps and find {{variable.field}} references where field doesn't exist
+   * in the upstream output_schema. Populate corrections map.
+   */
+  private findFieldMismatches(
+    steps: WorkflowStep[],
+    schemaMap: Map<string, Record<string, any>>,
+    corrections: Map<string, string>,
+    ctx: CompilerContext
+  ) {
+    for (const step of steps) {
+      // Determine input variable for transform/filter steps (for bare ref checking)
+      const inputVariable = (step.type === 'transform' && step.config?.input)
+        ? String(step.config.input).replace(/[{}]/g, '')
+        : undefined
+
+      // Check config values for {{variable.field}} references
+      if (step.config) {
+        this.findMismatchesInObject(step.config, schemaMap, corrections, ctx, `step ${step.step_id}`, inputVariable)
+      }
+
+      // Check condition fields
+      if (step.condition) {
+        this.findMismatchesInObject(step.condition, schemaMap, corrections, ctx, `step ${step.step_id} condition`, inputVariable)
+      }
+
+      // Check input references
+      if (typeof step.input === 'string') {
+        this.checkSingleRef(step.input, schemaMap, corrections, ctx, `step ${step.step_id} input`)
+      }
+
+      // Recurse into nested steps
+      if (step.type === 'scatter_gather' && step.scatter?.steps) {
+        this.findFieldMismatches(step.scatter.steps, schemaMap, corrections, ctx)
+      }
+      if (step.steps && Array.isArray(step.steps)) {
+        this.findFieldMismatches(step.steps, schemaMap, corrections, ctx)
+      }
+      const conditionalStep = step as any
+      if (conditionalStep.else_steps && Array.isArray(conditionalStep.else_steps)) {
+        this.findFieldMismatches(conditionalStep.else_steps, schemaMap, corrections, ctx)
+      }
+    }
+  }
+
+  /**
+   * Recursively scan an object (config, condition, etc.) for {{variable.field}} template references
+   * and check each against the schema map.
+   */
+  private findMismatchesInObject(
+    obj: any,
+    schemaMap: Map<string, Record<string, any>>,
+    corrections: Map<string, string>,
+    ctx: CompilerContext,
+    location: string,
+    inputVariable?: string
+  ) {
+    if (typeof obj === 'string') {
+      this.checkSingleRef(obj, schemaMap, corrections, ctx, location, inputVariable)
+    } else if (Array.isArray(obj)) {
+      for (const item of obj) {
+        this.findMismatchesInObject(item, schemaMap, corrections, ctx, location, inputVariable)
+      }
+    } else if (obj && typeof obj === 'object') {
+      for (const value of Object.values(obj)) {
+        this.findMismatchesInObject(value, schemaMap, corrections, ctx, location, inputVariable)
+      }
+    }
+  }
+
+  /**
+   * Check a single string value for field references.
+   * Handles both template refs ({{variable.field}}) and bare refs (item.field, element.field)
+   * used in filter/transform conditions.
+   */
+  private checkSingleRef(
+    value: string,
+    schemaMap: Map<string, Record<string, any>>,
+    corrections: Map<string, string>,
+    ctx: CompilerContext,
+    location: string,
+    inputVariable?: string
+  ) {
+    // Match {{variable.field}} patterns (not {{config.X}} which are user configs)
+    const refPattern = /\{\{(\w+)\.(\w+)\}\}/g
+    let match: RegExpExecArray | null
+
+    while ((match = refPattern.exec(value)) !== null) {
+      const variable = match[1]
+      const field = match[2]
+
+      // Skip config references — those are user-provided, not upstream output
+      if (variable === 'config') continue
+
+      // Check if we have a schema for this variable
+      const props = schemaMap.get(variable)
+      if (!props) continue // Unknown variable, can't validate
+
+      // Check if field exists exactly
+      if (field in props) continue // Exact match, no correction needed
+
+      // Field doesn't exist — try to resolve
+      const correctedField = this.resolveFieldMismatch(field, props, ctx, location, variable)
+
+      if (correctedField) {
+        const oldRef = `${variable}.${field}`
+        const newRef = `${variable}.${correctedField}`
+        corrections.set(oldRef, newRef)
+        this.log(ctx, `  → [O10] ${location}: {{${oldRef}}} → {{${newRef}}} (field reconciled)`)
+      } else {
+        this.warn(ctx, `[O10] ${location}: {{${variable}.${field}}} — field "${field}" not found in ${variable} output schema. Available: [${Object.keys(props).join(', ')}]`)
+      }
+    }
+
+    // Also check bare references: item.field, element.field (used in filter/transform conditions)
+    // These reference the input variable's schema (the array items being iterated)
+    if (inputVariable) {
+      const bareRefPattern = /\b(?:item|element)\.(\w+)\b/g
+      let bareMatch: RegExpExecArray | null
+
+      while ((bareMatch = bareRefPattern.exec(value)) !== null) {
+        const field = bareMatch[1]
+
+        const props = schemaMap.get(inputVariable)
+        if (!props) continue
+
+        if (field in props) continue // Exact match
+
+        const correctedField = this.resolveFieldMismatch(field, props, ctx, location, `item(${inputVariable})`)
+
+        if (correctedField) {
+          // Store as a bare field correction (oldField → newField) for item/element references
+          const oldRef = `__bare__.${field}`
+          const newRef = `__bare__.${correctedField}`
+          if (!corrections.has(oldRef)) {
+            corrections.set(oldRef, newRef)
+            this.log(ctx, `  → [O10a] ${location}: item.${field} → item.${correctedField} (upstream casing, input: ${inputVariable})`)
+          }
+        }
+      }
+    }
+  }
+
+  /**
+   * Attempt to resolve a mismatched field name against an output schema's properties.
+   *
+   * Resolution priority:
+   * 1. Fuzzy casing match (normalize to lowercase-no-separators)
+   * 2. Type + description semantic match
+   *
+   * Returns the correct field name or null if no match found.
+   */
+  private resolveFieldMismatch(
+    wrongField: string,
+    schemaProps: Record<string, { type: string; description?: string }>,
+    ctx: CompilerContext,
+    location: string,
+    variable: string
+  ): string | null {
+    // Strategy 1: Fuzzy casing match
+    // Normalize both to lowercase with no separators: mime_type → mimetype, mimeType → mimetype
+    const normalizeForFuzzy = (s: string): string => s.toLowerCase().replace(/[_\-]/g, '')
+    const normalizedWrong = normalizeForFuzzy(wrongField)
+
+    for (const [schemaField] of Object.entries(schemaProps)) {
+      if (normalizeForFuzzy(schemaField) === normalizedWrong) {
+        this.log(ctx, `  → [O10a] Casing match: "${wrongField}" → "${schemaField}" (${variable})`)
+        return schemaField
+      }
+    }
+
+    // Strategy 2: Type + description semantic match
+    // Look for a field whose description contains the wrong field name as a keyword
+    // e.g., wrongField="content" → field "data" described as "Base64-encoded file content for processing"
+    const wrongLower = wrongField.toLowerCase()
+    let bestMatch: string | null = null
+    let bestScore = 0
+
+    for (const [schemaField, info] of Object.entries(schemaProps)) {
+      const desc = (info.description || '').toLowerCase()
+      let score = 0
+
+      // Check if the wrong field name appears in the description
+      if (desc.includes(wrongLower)) {
+        score += 3
+      }
+
+      // Check if the wrong field name is a substring of the schema field or vice versa
+      const schemaLower = schemaField.toLowerCase()
+      if (schemaLower.includes(wrongLower) || wrongLower.includes(schemaLower)) {
+        score += 2
+      }
+
+      // Check common semantic synonyms
+      const synonyms: Record<string, string[]> = {
+        'content': ['data', 'body', 'payload', 'text'],
+        'data': ['content', 'body', 'payload'],
+        'body': ['content', 'data', 'html_body', 'text'],
+        'name': ['title', 'label', 'filename', 'file_name'],
+        'url': ['link', 'href', 'web_view_link', 'web_content_link'],
+        'id': ['identifier', 'key'],
+      }
+      const synonymsForWrong = synonyms[wrongLower] || []
+      if (synonymsForWrong.includes(schemaLower)) {
+        score += 2
+      }
+
+      if (score > bestScore) {
+        bestScore = score
+        bestMatch = schemaField
+      }
+    }
+
+    // Only accept semantic match if score is strong enough (at least description match)
+    if (bestMatch && bestScore >= 3) {
+      this.log(ctx, `  → [O10b] Semantic match: "${wrongField}" → "${bestMatch}" (${variable}, score=${bestScore})`)
+      return bestMatch
+    }
+
+    return null
+  }
+
+  /**
+   * Apply field corrections across the entire workflow.
+   * Replaces all occurrences of {{variable.wrongField}} with {{variable.correctField}}.
+   * Also fixes field references in output_schema properties and filter conditions.
+   */
+  private applyFieldCorrections(
+    workflow: WorkflowStep[],
+    corrections: Map<string, string>,
+    ctx: CompilerContext
+  ): WorkflowStep[] {
+    // Build string replacement pairs: "{{old}}" → "{{new}}"
+    // Also handle bare references without braces (e.g., "item.mime_type" in conditions)
+    const replacements: Array<{ pattern: RegExp; replacement: string; barePattern?: RegExp; bareReplacement?: string }> = []
+
+    // Track unique field renames for schema property key correction
+    const fieldRenames = new Map<string, string>() // oldField → newField
+
+    corrections.forEach((newRef, oldRef) => {
+      const oldField = oldRef.split('.').pop()!
+      const newField = newRef.split('.').pop()!
+      fieldRenames.set(oldField, newField)
+
+      if (oldRef.startsWith('__bare__.')) {
+        // Bare field correction (from item.field in filter conditions)
+        // Only add bare pattern, no template pattern
+        replacements.push({
+          pattern: new RegExp(`(item|element)\\.${this.escapeRegex(oldField)}\\b`, 'g'),
+          replacement: `$1.${newField}`
+        })
+      } else {
+        // Template reference: {{variable.field}}
+        replacements.push({
+          pattern: new RegExp(`\\{\\{${this.escapeRegex(oldRef)}\\}\\}`, 'g'),
+          replacement: `{{${newRef}}}`,
+          // Also fix bare field references like "item.mime_type" in filter conditions
+          barePattern: new RegExp(`(item|element)\\.${this.escapeRegex(oldField)}\\b`, 'g'),
+          bareReplacement: `$1.${newField}`
+        })
+      }
+    })
+
+    let result = this.applyReplacementsToSteps(workflow, replacements, ctx)
+
+    // Also fix output_schema property keys structurally (not via regex, to avoid
+    // changing plugin parameter names like config.mime_type)
+    if (fieldRenames.size > 0) {
+      result = this.fixOutputSchemaKeys(result, fieldRenames, ctx)
+    }
+
+    return result
+  }
+
+  /**
+   * Recursively apply string replacements across all steps.
+   */
+  private applyReplacementsToSteps(
+    steps: WorkflowStep[],
+    replacements: Array<{ pattern: RegExp; replacement: string; barePattern?: RegExp; bareReplacement?: string }>,
+    ctx: CompilerContext
+  ): WorkflowStep[] {
+    return steps.map(step => {
+      let fixed: any = JSON.parse(JSON.stringify(step)) // Deep clone
+
+      // Apply replacements to the entire step (serialized)
+      let serialized = JSON.stringify(fixed)
+      for (const { pattern, replacement, barePattern, bareReplacement } of replacements) {
+        serialized = serialized.replace(pattern, replacement)
+        if (barePattern && bareReplacement) {
+          serialized = serialized.replace(barePattern, bareReplacement)
+        }
+      }
+      fixed = JSON.parse(serialized)
+
+      return fixed as WorkflowStep
+    })
+  }
+
+  /**
+   * Fix output_schema property keys to match corrected field names.
+   * Only renames keys inside output_schema objects — does NOT touch config parameter names.
+   * Recursively walks all steps including nested scatter_gather/conditional.
+   */
+  private fixOutputSchemaKeys(
+    steps: WorkflowStep[],
+    fieldRenames: Map<string, string>,
+    ctx: CompilerContext
+  ): WorkflowStep[] {
+    return steps.map(step => {
+      const fixed: any = { ...step }
+
+      // Fix output_schema at step level
+      if (fixed.output_schema) {
+        fixed.output_schema = this.renameSchemaPropertyKeys(fixed.output_schema, fieldRenames)
+      }
+
+      // Fix output_schema inside config (some transforms have config.output_schema)
+      if (fixed.config?.output_schema) {
+        fixed.config = { ...fixed.config, output_schema: this.renameSchemaPropertyKeys(fixed.config.output_schema, fieldRenames) }
+      }
+
+      // Fix input_schema if present
+      if (fixed.input_schema) {
+        fixed.input_schema = this.renameSchemaPropertyKeys(fixed.input_schema, fieldRenames)
+      }
+
+      // Recurse into nested steps
+      if (fixed.type === 'scatter_gather' && fixed.scatter?.steps) {
+        fixed.scatter = { ...fixed.scatter, steps: this.fixOutputSchemaKeys(fixed.scatter.steps, fieldRenames, ctx) }
+      }
+      if (fixed.steps && Array.isArray(fixed.steps)) {
+        fixed.steps = this.fixOutputSchemaKeys(fixed.steps, fieldRenames, ctx)
+      }
+      if (fixed.else_steps && Array.isArray(fixed.else_steps)) {
+        fixed.else_steps = this.fixOutputSchemaKeys(fixed.else_steps, fieldRenames, ctx)
+      }
+
+      return fixed as WorkflowStep
+    })
+  }
+
+  /**
+   * Rename property keys in a schema object.
+   * Recursively handles properties, items.properties, etc.
+   */
+  private renameSchemaPropertyKeys(schema: any, fieldRenames: Map<string, string>): any {
+    if (!schema || typeof schema !== 'object') return schema
+
+    const result = { ...schema }
+
+    if (result.properties) {
+      const newProps: Record<string, any> = {}
+      for (const [key, value] of Object.entries(result.properties)) {
+        const newKey = fieldRenames.get(key) || key
+        newProps[newKey] = this.renameSchemaPropertyKeys(value as any, fieldRenames)
+      }
+      result.properties = newProps
+    }
+
+    if (result.items) {
+      result.items = this.renameSchemaPropertyKeys(result.items, fieldRenames)
+    }
+
+    return result
+  }
+
+  /**
+   * Escape special regex characters in a string
+   */
+  private escapeRegex(str: string): string {
+    return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  }
+
+  // ============================================================================
+  // Phase 3.8: Config Reference Consistency (O11)
+  // ============================================================================
+
+  /**
+   * Detect config keys that are declared in IntentContract but never referenced
+   * in the compiled DSL. For unreferenced keys with defaults, scan all steps for
+   * hardcoded values matching the default and auto-replace with {{config.key}}.
+   */
+  private enforceConfigReferences(
+    workflow: WorkflowStep[],
+    configDefaults: Array<{ key: string; type: string; description?: string; default?: any }>,
+    ctx: CompilerContext
+  ): WorkflowStep[] {
+    // Step 1: Collect all {{config.X}} references from the compiled workflow
+    const referencedConfigKeys = new Set<string>()
+    const serializedWorkflow = JSON.stringify(workflow)
+    const configRefPattern = /\{\{config\.(\w+)\}\}/g
+    let match: RegExpExecArray | null
+    while ((match = configRefPattern.exec(serializedWorkflow)) !== null) {
+      referencedConfigKeys.add(match[1])
+    }
+
+    this.log(ctx, `  → Referenced config keys: [${Array.from(referencedConfigKeys).join(', ')}]`)
+
+    // Step 2: Find unreferenced config keys
+    const unreferenced: Array<{ key: string; default_value: any }> = []
+    for (const entry of configDefaults) {
+      if (!referencedConfigKeys.has(entry.key)) {
+        unreferenced.push({ key: entry.key, default_value: entry.default })
+        this.warn(ctx, `[O11] Config key "${entry.key}" declared but never referenced in workflow`)
+      }
+    }
+
+    if (unreferenced.length === 0) {
+      this.log(ctx, '  → All config keys are referenced')
+      return workflow
+    }
+
+    this.log(ctx, `  → ${unreferenced.length} unreferenced config key(s): [${unreferenced.map(u => u.key).join(', ')}]`)
+
+    // Step 3: For unreferenced keys with defaults, scan for hardcoded values and replace
+    let result = JSON.stringify(workflow)
+    let replacements = 0
+
+    for (const { key, default_value } of unreferenced) {
+      if (default_value === undefined || default_value === null) continue
+
+      // Build a pattern to find the hardcoded value in step configs
+      // Match JSON patterns like: "param_name": 50  or  "param_name": "value"
+      // We need to find the right parameter name — derive it from the config key
+      // e.g., gmail_search_max_results → max_results (strip plugin prefix)
+      const paramCandidates = this.deriveParamCandidates(key)
+
+      for (const paramName of paramCandidates) {
+        let pattern: RegExp
+        let replacement: string
+
+        if (typeof default_value === 'number') {
+          // Match: "paramName": 50 (number, no quotes around value)
+          pattern = new RegExp(`"${this.escapeRegex(paramName)}"\\s*:\\s*${default_value}(?=[,}\\s])`, 'g')
+          replacement = `"${paramName}": "{{config.${key}}}"`
+        } else if (typeof default_value === 'string') {
+          // Match: "paramName": "value" (string, quoted value)
+          pattern = new RegExp(`"${this.escapeRegex(paramName)}"\\s*:\\s*"${this.escapeRegex(default_value)}"`, 'g')
+          replacement = `"${paramName}": "{{config.${key}}}"`
+        } else if (typeof default_value === 'boolean') {
+          // Match: "paramName": true/false
+          pattern = new RegExp(`"${this.escapeRegex(paramName)}"\\s*:\\s*${default_value}(?=[,}\\s])`, 'g')
+          replacement = `"${paramName}": "{{config.${key}}}"`
+        } else {
+          continue // Skip complex types (objects, arrays)
+        }
+
+        const before = result
+        result = result.replace(pattern, replacement)
+        if (result !== before) {
+          replacements++
+          this.log(ctx, `  → [O11] Auto-replaced hardcoded "${paramName}": ${JSON.stringify(default_value)} → "{{config.${key}}}"`)
+        }
+      }
+    }
+
+    if (replacements === 0) {
+      this.log(ctx, '  → No hardcoded values matched unreferenced config defaults')
+      return workflow
+    }
+
+    this.log(ctx, `  → Applied ${replacements} config reference replacement(s)`)
+    return JSON.parse(result)
+  }
+
+  /**
+   * Derive candidate parameter names from a config key.
+   * Strips common prefixes to find the likely plugin parameter name.
+   * e.g., "gmail_search_max_results" → ["max_results", "gmail_search_max_results"]
+   * e.g., "amount_threshold" → ["amount_threshold", "threshold"]
+   */
+  private deriveParamCandidates(configKey: string): string[] {
+    const candidates = [configKey] // Always include the full key
+
+    const parts = configKey.split('_')
+
+    // Try removing first N prefix parts (1, 2, 3)
+    // gmail_search_max_results → search_max_results, max_results, results
+    for (let i = 1; i < parts.length; i++) {
+      candidates.push(parts.slice(i).join('_'))
+    }
+
+    return candidates
   }
 
   /**

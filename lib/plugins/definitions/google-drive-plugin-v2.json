@@ -1002,8 +1002,8 @@
             "description": "File content (base64 encoded for binary files, or plain text)",
             "x-variable-mapping": {
               "from_type": "file_attachment",
-              "field_path": "content",
-              "description": "Extract content from attachment object"
+              "field_path": "data",
+              "description": "Extract base64 file data from attachment object"
             }
           },
           "file_name": {

@@ -1,6 +1,6 @@
 # V6 Workflow Data Schema — Enhanced Prompt Key Hints for IntentContract
 
-> **Status**: Draft — Pending Implementation
+> **Status**: In Progress — Phases 1-4 Complete, Phase 5 (E2E Testing) Pending
 > **Date**: 2026-03-15
 > **Branch**: `feature/v6-intent-contract-data-schema`
 > **Parent workplan**: [V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_INTENT_CONTRACT.md](./V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_INTENT_CONTRACT.md)
@@ -263,7 +263,15 @@ Sub-problem 4 specifically prevents cases like `sheet_tab_name` — where the th
 - Phase 1 LLM translates values to plugin-native syntax
 - Phase 1 LLM composes related entries into single parameters
 
-**Status:** ⬜ Todo
+**Status:** ✅ Done (2026-03-16)
+
+**Implementation Notes:**
+- `buildVocabularyInjection()` refactored into three functions: dispatcher (prefix detection), `buildGroupedUserContext()` (prefixed path), `buildFlatUserContext()` (backward-compatible path)
+- `parsePrefixedKey()` helper parses `plugin__capability__param` format, handles edge cases (param names containing `__`)
+- Grouped path renders 3 rules (CONFIG KEY, VALUE TRANSLATION, VALUE COMPOSITION) + grouped display
+- Flat path preserves original O7 behavior with `CRITICAL CONFIG KEY RULE`
+- Validated with `scripts/test-ep-key-hints-validation.ts` (3 tests: prefixed, non-prefixed, mixed)
+- Test JSON (`scripts/test-intent-contract-generation-enhanced-prompt.json`) updated with prefixed keys
 
 ---
 
@@ -301,7 +309,14 @@ Sub-problem 4 specifically prevents cases like `sheet_tab_name` — where the th
 - Include only actions that have both `domain` and `capability` defined
 - Limit to **required + commonly-used** parameters per action (cap at ~5) to keep token cost manageable
 
-**Status:** ⬜ Todo
+**Status:** ✅ Done (2026-03-16)
+
+**Implementation Notes:**
+- Added `toActionSummaryContext()` (structured) and `toActionSummaryText()` (formatted text) to `PluginDefinitionContext`
+- Exported `ActionParamHint`, `ActionSummaryEntry`, `PluginActionSummary` interfaces
+- Parameters sorted required-first, capped at 5 per action
+- Constraints extracted from description parentheticals or enum values
+- Validated with `scripts/test-action-summary.ts` against Gmail, Sheets, Drive plugins
 
 ---
 
@@ -327,7 +342,12 @@ Sub-problem 4 specifically prevents cases like `sheet_tab_name` — where the th
   ```
 - Include `plugin_action_summary` in Phase 2 and Phase 3 messages as well, so the LLM has consistent context across all phases
 
-**Status:** ⬜ Todo
+**Status:** ✅ Done (2026-03-16)
+
+**Implementation Notes:**
+- Added `plugin_action_summary_text` variable built from connected plugins' `toActionSummaryText()`
+- Scoped to `user_connected_services` only (not all available plugins) for token efficiency
+- Injected into Phase 1, 2, and 3 user messages as `plugin_action_summary` field
 
 ---
 
@@ -419,7 +439,16 @@ Example:
 const aiAgentPromptTemplate = "Workflow-Agent-Creation-Prompt-v14-chatgpt";
 ```
 
-**Status:** ⬜ Todo
+**Status:** ✅ Done (2026-03-16)
+
+**Implementation Notes:**
+- Created `Workflow-Agent-Creation-Prompt-v14-chatgpt.txt` from v13 base
+- Added "Plugin Action Reference (EP Key Hints)" section with `plugin_action_summary` awareness
+- Added "resolved_user_inputs Key Naming" section with `plugin__capability__param` prefix rules + examples + fallback
+- Updated Phase 2 behavior rules with parameter-aware question guidance (BAD/GOOD examples)
+- Updated Phase 3 resolved_user_inputs rules to reference prefix naming section
+- Updated all resource identifier examples to show prefixed keys when `plugin_action_summary` available
+- Updated `init-thread/route.ts` to reference v14 template
 
 ---
 
@@ -508,7 +537,7 @@ Example:
 
 **1c. Backward compatibility** — if keys don't contain `__`, fall back to current behavior (flat list, no grouping).
 
-**Status:** ⬜ Todo
+**Status:** ✅ Done (2026-03-16) — see Phase 1 implementation notes above
 
 ---
 
@@ -599,3 +628,5 @@ Phase 5: End-to-end testing (T6-T10)
 | 2026-03-15 | Review amendments | Added value translation rule (vocabulary-based, no plugin changes), value composition rule, clean config key rule (O7 alignment), scope note |
 | 2026-03-15 | Parameter hints addition | Extended action summary with key parameter hints (name, type, constraint) to solve `sheet_tab_name` missing-value issue. Updated Phase 2 interface, Phase 4c question guidance, action summary format, scope, tests T9/T10, success criteria 6-7 |
 | 2026-03-15 | Reordered phases | Consumer-first strategy: Phase 1 = V6 vocabulary injection (testable with simulated inputs), Phases 2-4 = thread-based producer, Phase 5 = E2E. Renumbered all phases and sub-sections accordingly. |
+| 2026-03-16 | Phase 1 implemented | `buildVocabularyInjection()` refactored with `parsePrefixedKey()`, `buildGroupedUserContext()`, `buildFlatUserContext()`. Validated with 3-test script. Test JSON updated with prefixed keys. |
+| 2026-03-16 | Phases 2-4 implemented | Phase 2: `toActionSummaryContext()` + `toActionSummaryText()` on PluginDefinitionContext. Phase 3: action summary injected into process-message phases 1-3. Phase 4: v14 prompt template with prefix rules, parameter-aware questions, updated examples. |

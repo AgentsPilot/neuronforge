@@ -45,48 +45,48 @@
         ],
         "resolved_user_inputs": [
             {
-                "key": "user_email",
+                "key": "gmail__send_message__recipient",
                 "value": "meiribarak@gmail.com"
             },
             {
-                "key": "gmail_search_query",
+                "key": "gmail__search__filter_criteria",
                 "value": "subject include: Invoice or Expenses or Bill and has:attachment filename:pdf"
             },
             {
-                "key": "scan_time_window",
+                "key": "gmail__search__time_window",
                 "value": "last 24 hours"
             },
             {
-                "key": "drive_base_folder_url",
-                "value": "https://drive.google.com/drive/folders/1BoYgIIQj5QB6F0mWLzD_0-2pMLoxHVp-?usp=drive_link"
-            },
-            {
-                "key": "sheet_id",
-                "value": "1RHLbBXzrKv24gNgp7a4Lr7RlMIrP9fjacfGWjhPAbOE"
-            },
-            {
-                "key": "candidate_sheet_tab_names",
-                "value": "Invoices, Expenses"
-            },
-            {
-                "key": "attachment_type_filter",
+                "key": "gmail__search__attachment_type",
                 "value": "PDF attachments"
             },
             {
-                "key": "summary_delivery_style",
+                "key": "google_drive__create__base_folder_url",
+                "value": "https://drive.google.com/drive/folders/1BoYgIIQj5QB6F0mWLzD_0-2pMLoxHVp-?usp=drive_link"
+            },
+            {
+                "key": "google_drive__create__storage_rule",
+                "value": "attachments only; create a folder per vendor and store the attachment in it"
+            },
+            {
+                "key": "google_sheets__create__sheet_id",
+                "value": "1RHLbBXzrKv24gNgp7a4Lr7RlMIrP9fjacfGWjhPAbOE"
+            },
+            {
+                "key": "google_sheets__create__tab_name",
+                "value": "Invoices, Expenses"
+            },
+            {
+                "key": "google_sheets__create__write_rule",
+                "value": "append only if amount is greater than 50 in the document currency"
+            },
+            {
+                "key": "gmail__send_message__delivery_style",
                 "value": "single digest email"
             },
             {
                 "key": "summary_columns",
                 "value": "Type, Vendor / merchant, Date, Amount, Invoice/receipt #, Category, Drive link"
-            },
-            {
-                "key": "drive_storage_rule",
-                "value": "attachments only; create a folder per vendor and store the attachment in it"
-            },
-            {
-                "key": "sheet_write_rule",
-                "value": "append only if amount is greater than 50 in the document currency"
             },
             {
                 "key": "missing_amount_handling",

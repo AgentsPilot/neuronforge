@@ -158,6 +158,7 @@ export async function POST(request: NextRequest) {
 
     let user_connected_services: string[] = [];
     let user_available_services: ConnectedService[] = [];
+    let plugin_action_summary_text = '';  // EP Key Hints (O8): action summary for connected plugins
 
     // Step 4: Get User's Connected Plugins (simple string array of plugin keys)
     if (!connected_services || connected_services.length === 0)
@@ -213,6 +214,22 @@ export async function POST(request: NextRequest) {
         availablePlugins: availablePluginsKeys,
         totalAvailable: user_available_services.length
       }, 'Available plugins retrieved');
+
+      // Step 4.6: Build action summary for connected plugins (EP Key Hints — O8)
+      // Scoped to connected services only to keep token cost low (~200-300 tokens for 3-4 plugins)
+      if (user_connected_services.length > 0) {
+        const connectedPluginContexts = allPluginsContext.filter(
+          (p: PluginDefinitionContext) => user_connected_services.includes(p.key)
+        );
+        plugin_action_summary_text = connectedPluginContexts
+          .map((p: PluginDefinitionContext) => p.toActionSummaryText())
+          .join('\n');
+
+        requestLogger.debug({
+          connectedPluginsWithSummary: connectedPluginContexts.length,
+          summaryLength: plugin_action_summary_text.length
+        }, 'Plugin action summary built for EP Key Hints');
+      }
     } catch (error: any) {
       requestLogger.error({ err: error }, 'Failed to fetch available plugins');
       // Don't fail the request, just log the error
@@ -314,7 +331,8 @@ export async function POST(request: NextRequest) {
         user_context: mergedUserContext,
         analysis: null,
         connected_services: user_connected_services,
-        available_services: user_available_services
+        available_services: user_available_services,
+        plugin_action_summary: plugin_action_summary_text || undefined  // EP Key Hints (O8)
       };
     } else if (phase === 2) {
       // V10: Phase 2 can receive connected_services, enhanced_prompt, declined_services, and user_feedback for refinement
@@ -324,7 +342,8 @@ export async function POST(request: NextRequest) {
         connected_services: connected_services || threadRecord.metadata?.phase1_connected_services || null,
         enhanced_prompt: enhanced_prompt || null,
         declined_services: declined_services || [],   // V10: services user refused to connect
-        user_feedback: user_feedback || null          // V10: refinement feedback for mini-cycle
+        user_feedback: user_feedback || null,         // V10: refinement feedback for mini-cycle
+        plugin_action_summary: plugin_action_summary_text || undefined  // EP Key Hints (O8)
       };
     } else if (phase === 3) {
       // V10: Phase 3 needs connected_services for OAuth gate re-call, declined_services, and enhanced_prompt for refinement
@@ -333,7 +352,8 @@ export async function POST(request: NextRequest) {
         clarification_answers: clarification_answers || {},
         connected_services: connected_services || threadRecord.metadata?.phase1_connected_services || [],
         declined_services: declined_services || [],   // V10: services user refused to connect
-        enhanced_prompt: enhanced_prompt || null      // V10: for refinement cycles
+        enhanced_prompt: enhanced_prompt || null,     // V10: for refinement cycles
+        plugin_action_summary: plugin_action_summary_text || undefined  // EP Key Hints (O8)
       };
     } else if (phase === 4) {
       // Phase 4: Technical Workflow Generation

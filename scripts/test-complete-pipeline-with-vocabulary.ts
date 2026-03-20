@@ -346,6 +346,26 @@ async function main() {
   fs.writeFileSync(pilotPath, JSON.stringify(pilotSteps, null, 2))
   console.log(`   Saved: ${pilotPath}`)
 
+  // Save merged workflow config (IntentContract config defaults + user overrides)
+  const mergedConfig: Record<string, any> = {}
+  // Start with IntentContract config defaults (LLM-produced clean keys + translated values)
+  if (executionGraphIR.config_defaults) {
+    for (const entry of executionGraphIR.config_defaults) {
+      if (entry.default !== undefined) {
+        mergedConfig[entry.key] = entry.default
+      }
+    }
+  }
+  // Override with user-provided config where keys match
+  for (const [key, value] of Object.entries(workflowConfig)) {
+    if (key in mergedConfig) {
+      mergedConfig[key] = value
+    }
+  }
+  const mergedConfigPath = path.join(outputDir, 'phase4-workflow-config.json')
+  fs.writeFileSync(mergedConfigPath, JSON.stringify(mergedConfig, null, 2))
+  console.log(`   Saved: ${mergedConfigPath}`)
+
   // =======================
   // DATA SCHEMA VALIDATION SUMMARY (Phase 6.4)
   // =======================
@@ -387,6 +407,26 @@ async function main() {
 
     console.log(`\n   Total slots: ${slotEntries.length}`)
     console.log(`   Has type "any": ${hasAnyType ? '⚠️  YES' : '✅ NO'}`)
+
+    // Check O10 field reconciliation results
+    const reconciliationLogs = (compilationResult.logs || []).filter((l: string) =>
+      l.includes('O10') || l.includes('Phase 3.7') || l.includes('reconcil') || l.includes('schema map') || l.includes('field mismatch') || l.includes('field correction')
+    )
+    if (reconciliationLogs.length > 0) {
+      console.log(`\n   🔧 O10 Field Reconciliation:`)
+      reconciliationLogs.forEach((l: string) => console.log(`      ${l}`))
+    } else {
+      console.log(`\n   ⚠️  No O10 reconciliation logs found`)
+    }
+
+    // Check O11 config reference consistency results
+    const configConsistencyLogs = (compilationResult.logs || []).filter((l: string) =>
+      l.includes('O11') || l.includes('Phase 3.8') || l.includes('config key') || l.includes('Config reference') || l.includes('unreferenced')
+    )
+    if (configConsistencyLogs.length > 0) {
+      console.log(`\n   🔧 O11 Config Reference Consistency:`)
+      configConsistencyLogs.forEach((l: string) => console.log(`      ${l}`))
+    }
 
     // Check compilation warnings for schema-related issues
     const schemaWarnings = (compilationResult.logs || []).filter((l: string) =>

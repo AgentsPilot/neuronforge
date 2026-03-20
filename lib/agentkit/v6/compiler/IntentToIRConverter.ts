@@ -415,14 +415,19 @@ export class IntentToIRConverter {
       }
     }
 
-    // SCHEMA-DRIVEN: Map artifact.name_hint to the plugin's required parameter
-    // Use the FIRST required parameter as the name parameter (most artifact creation actions have one required param: the name)
+    // SCHEMA-DRIVEN: Map artifact.name_hint to the plugin's first required parameter as FALLBACK only.
+    // Options take precedence — name_hint only fills in if the parameter wasn't already set.
+    // (name_hint is a label like "vendor_folder" or "sheet_tab", not the actual parameter value.)
     if (step.artifact.name_hint && step.plugin_key && step.action) {
       const schema = this.getPluginActionSchema(step.plugin_key, step.action)
       if (schema && schema.parameters.required && schema.parameters.required.length > 0) {
         const firstRequiredParam = schema.parameters.required[0]
-        params[firstRequiredParam] = step.artifact.name_hint
-        logger.debug(`[IntentToIRConverter] Mapped artifact.name_hint → ${firstRequiredParam} (first required param from schema)`)
+        if (!params[firstRequiredParam]) {
+          params[firstRequiredParam] = step.artifact.name_hint
+          logger.debug(`[IntentToIRConverter] Mapped artifact.name_hint → ${firstRequiredParam} (fallback, first required param from schema)`)
+        } else {
+          logger.debug(`[IntentToIRConverter] Skipped artifact.name_hint → ${firstRequiredParam} (already set from options: ${params[firstRequiredParam]})`)
+        }
       }
     }
 

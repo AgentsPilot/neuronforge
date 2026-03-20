@@ -201,12 +201,128 @@ export class PluginDefinitionContext implements IPluginDefinitionContext {
    * Returns plugin basic information and actions names formatted for LLM consumption
    */
   toShortLLMContext(): IPluginContext {
-    return {      
+    return {
       key: this.key,
       displayName: this.getDisplayName(),
       context: this.plugin.context,
-      category: this.plugin.category,      
+      category: this.plugin.category,
       capabilities: this.capabilities,
     };
   }
+
+  /**
+   * Generate a compact action summary for the thread-based enhanced prompt flow.
+   * Includes domain/capability pairs, descriptions, and key parameter hints
+   * so the LLM can associate clarification answers with specific plugin actions
+   * and constrain questions to match parameter types.
+   *
+   * Used by the EP Key Hints feature (O8 resolution).
+   */
+  toActionSummaryContext(): PluginActionSummary {
+    const actionEntries: ActionSummaryEntry[] = []
+
+    for (const [actionName, actionDef] of Object.entries(this.actions)) {
+      // Only include actions with domain and capability defined
+      if (!actionDef.domain || !actionDef.capability) continue
+
+      // Extract key parameters (required + commonly-used, capped at 5)
+      const keyParams: ActionParamHint[] = []
+      const params = actionDef.parameters
+      if (params?.properties) {
+        const requiredSet = new Set(params.required || [])
+
+        // Add required params first, then non-required, up to 5 total
+        const sortedParamNames = Object.keys(params.properties).sort((a, b) => {
+          const aReq = requiredSet.has(a) ? 0 : 1
+          const bReq = requiredSet.has(b) ? 0 : 1
+          return aReq - bReq
+        })
+
+        for (const paramName of sortedParamNames) {
+          if (keyParams.length >= 5) break
+          const prop = params.properties[paramName]
+          const hint: ActionParamHint = {
+            name: paramName,
+            type: prop.type + (prop.items ? '[]' : ''),
+            required: requiredSet.has(paramName),
+          }
+          // Extract constraint from description if useful (short hint)
+          if (prop.description) {
+            // Look for parenthetical hints or key constraints
+            const constraintMatch = prop.description.match(/\(([^)]{5,60})\)/)
+            if (constraintMatch) {
+              hint.constraint = constraintMatch[1]
+            }
+          }
+          if (prop.enum) {
+            hint.constraint = prop.enum.join(' | ')
+          }
+          keyParams.push(hint)
+        }
+      }
+
+      actionEntries.push({
+        action_name: actionName,
+        domain: actionDef.domain,
+        capability: actionDef.capability,
+        description: actionDef.description,
+        key_params: keyParams,
+      })
+    }
+
+    return {
+      key: this.key,
+      displayName: this.getDisplayName(),
+      actions: actionEntries,
+    }
+  }
+
+  /**
+   * Format the action summary as a compact text string for LLM prompt injection.
+   * Produces the format defined in the EP Key Hints workplan.
+   */
+  toActionSummaryText(): string {
+    const summary = this.toActionSummaryContext()
+    const lines: string[] = []
+
+    lines.push(`- ${summary.displayName} (${summary.key}):`)
+    for (const action of summary.actions) {
+      lines.push(`    ${action.action_name} [${action.domain}/${action.capability}]: ${action.description}`)
+      if (action.key_params.length > 0) {
+        const paramParts = action.key_params.map(p => {
+          let part = `${p.name} (${p.type}`
+          if (p.constraint) part += ` — ${p.constraint}`
+          part += ')'
+          if (p.required) part = `*${part}`
+          return part
+        })
+        lines.push(`      params: ${paramParts.join(', ')}`)
+      }
+    }
+
+    return lines.join('\n')
+  }
+}
+
+// ----- EP Key Hints types (O8 resolution) -----
+
+export interface ActionParamHint {
+  name: string
+  type: string
+  required?: boolean
+  constraint?: string
+}
+
+export interface ActionSummaryEntry {
+  action_name: string
+  domain: string
+  capability: string
+  description: string
+  key_params: ActionParamHint[]
+}
+
+export interface PluginActionSummary {
+  key: string
+  displayName: string
+  actions: ActionSummaryEntry[]
 }

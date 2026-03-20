@@ -1315,46 +1315,198 @@ function buildVocabularyInjection(vocabulary: PluginVocabulary): string {
 
   // Add user context if provided
   if (vocabulary.userContext && vocabulary.userContext.length > 0) {
-    sections.push('**USER CONFIGURATION (resolved inputs):**')
-    sections.push('')
-    sections.push('The user has provided these specific configuration values:')
-    sections.push('')
+    // Check if any keys use the plugin__capability__param prefix format
+    const hasPrefixedKeys = vocabulary.userContext.some(input => {
+      const parts = input.key.split('__')
+      return parts.length >= 3
+    })
 
-    // Separate config values by type for clarity
-    const fieldConfigs: typeof vocabulary.userContext = []
-    const otherConfigs: typeof vocabulary.userContext = []
-
-    for (const input of vocabulary.userContext) {
-      if (input.key.includes('_column_name') || input.key.includes('_field_name') || input.key.includes('fields_columns')) {
-        fieldConfigs.push(input)
-      } else {
-        otherConfigs.push(input)
-      }
+    if (hasPrefixedKeys) {
+      // Phase 1a: Group prefixed keys by plugin/capability
+      sections.push(...buildGroupedUserContext(vocabulary.userContext))
+    } else {
+      // Backward compatible: flat display for non-prefixed keys
+      sections.push(...buildFlatUserContext(vocabulary.userContext))
     }
-
-    if (fieldConfigs.length > 0) {
-      sections.push('**Field Name Mappings:**')
-      for (const input of fieldConfigs) {
-        sections.push(`  - ${input.key} = "${input.value}"`)
-      }
-      sections.push('')
-    }
-
-    if (otherConfigs.length > 0) {
-      sections.push('**Other Configuration Values:**')
-      for (const input of otherConfigs) {
-        sections.push(`  - ${input.key}: ${input.value}`)
-      }
-      sections.push('')
-    }
-
-    sections.push('**CRITICAL CONFIG KEY RULE:** When you declare `config` entries in the IntentContract,')
-    sections.push('you MUST reuse the exact keys listed above (e.g., `user_email`, `sheet_tab_name`).')
-    sections.push('DO NOT invent new key names for values already provided above.')
-    sections.push('You MAY add additional config entries for values NOT listed above (e.g., search queries, time windows).')
-    sections.push('This ensures the user\'s provided values are resolved correctly at runtime.')
-    sections.push('')
   }
 
   return sections.join('\n')
+}
+
+/**
+ * Parse a prefixed key (plugin__capability__param) into its parts.
+ * Returns null if the key doesn't match the prefix format.
+ */
+function parsePrefixedKey(key: string): { plugin: string; capability: string; param: string } | null {
+  const parts = key.split('__')
+  if (parts.length >= 3) {
+    return {
+      plugin: parts[0],
+      capability: parts[1],
+      param: parts.slice(2).join('__'), // Handle param names that might contain __
+    }
+  }
+  return null
+}
+
+/**
+ * Build grouped user context display for prefixed keys (plugin__capability__param).
+ * Groups configs by plugin/capability and displays them under their target action.
+ * Non-prefixed keys are shown in a separate "General Configuration" section.
+ */
+function buildGroupedUserContext(userContext: Array<{ key: string; value: string }>): string[] {
+  const lines: string[] = []
+
+  // Group by plugin/capability
+  const groups = new Map<string, Array<{ param: string; value: string }>>()
+  const ungrouped: Array<{ key: string; value: string }> = []
+  const fieldConfigs: Array<{ key: string; value: string }> = []
+
+  for (const input of userContext) {
+    const parsed = parsePrefixedKey(input.key)
+    if (parsed) {
+      const groupKey = `${parsed.plugin} / ${parsed.capability}`
+      if (!groups.has(groupKey)) {
+        groups.set(groupKey, [])
+      }
+      groups.get(groupKey)!.push({ param: parsed.param, value: input.value })
+    } else if (input.key.includes('_column_name') || input.key.includes('_field_name') || input.key.includes('fields_columns')) {
+      fieldConfigs.push(input)
+    } else {
+      ungrouped.push(input)
+    }
+  }
+
+  lines.push('**USER CONFIGURATION (resolved inputs, grouped by plugin action):**')
+  lines.push('')
+  lines.push('The user has provided these specific configuration values, grouped by the plugin action they relate to:')
+  lines.push('')
+
+  // Render grouped configs
+  groups.forEach((params, groupKey) => {
+    lines.push(`  ${groupKey}:`)
+    for (const { param, value } of params) {
+      lines.push(`    - ${param}: "${value}"`)
+    }
+    lines.push('')
+  })
+
+  // Render field mappings (non-prefixed)
+  if (fieldConfigs.length > 0) {
+    lines.push('**Field Name Mappings:**')
+    for (const input of fieldConfigs) {
+      lines.push(`  - ${input.key} = "${input.value}"`)
+    }
+    lines.push('')
+  }
+
+  // Render ungrouped configs (non-prefixed, non-field)
+  if (ungrouped.length > 0) {
+    lines.push('**General Configuration:**')
+    for (const input of ungrouped) {
+      lines.push(`  - ${input.key}: ${input.value}`)
+    }
+    lines.push('')
+  }
+
+  // Config key, value translation, and value composition rules
+  lines.push('**CONFIG KEY RULE:**')
+  lines.push('The plugin__capability__ prefix on resolved_user_inputs tells you which plugin')
+  lines.push('action each config value belongs to. Use this to:')
+  lines.push('1. Match the config to the correct IntentStep (by domain/capability)')
+  lines.push('2. Declare a clean config key that matches the plugin parameter name from')
+  lines.push('   the vocabulary (e.g., "gmail_search_query", not "gmail__search__filter_criteria")')
+  lines.push('This ensures config keys stay aligned with the vocabulary and the O7 merge logic.')
+  lines.push('')
+
+  lines.push('**VALUE TRANSLATION RULE:**')
+  lines.push('When declaring a config value that targets a plugin parameter, check the')
+  lines.push('parameter\'s description in the CONNECTED PLUGINS AND ACTIONS section above.')
+  lines.push('If the description indicates a specific syntax (e.g., "supports Gmail search')
+  lines.push('operators like \'from:\', \'subject:\', \'in:\'"), translate the user\'s natural-language')
+  lines.push('value to that syntax.')
+  lines.push('Example:')
+  lines.push('  Input:  gmail / search / filter_criteria: "invoices with PDF attachments"')
+  lines.push('  Vocab:  query: string — Search query (supports Gmail search operators...)')
+  lines.push('  Output: config default = "subject:(Invoice OR Expenses OR Bill) has:attachment filename:pdf"')
+  lines.push('')
+
+  lines.push('**VALUE COMPOSITION RULE:**')
+  lines.push('When multiple resolved_user_inputs share the same plugin/capability group,')
+  lines.push('check if they map to a single plugin parameter. If so, compose them into')
+  lines.push('one config entry whose value combines the information from all related inputs.')
+  lines.push('Example:')
+  lines.push('  Input:  gmail / search / filter_criteria: "invoices with PDF attachments"')
+  lines.push('          gmail / search / time_window: "last 24 hours"')
+  lines.push('  Vocab:  query: string — Search query (supports Gmail search operators...)')
+  lines.push('  Output: single config "gmail_search_query" with default =')
+  lines.push('          "subject:(Invoice OR Expenses OR Bill) has:attachment filename:pdf newer_than:1d"')
+  lines.push('          (time_window composed into the query using Gmail\'s newer_than operator)')
+  lines.push('')
+
+  // General config key rule for non-prefixed keys
+  if (ungrouped.length > 0 || fieldConfigs.length > 0) {
+    lines.push('For non-prefixed config keys listed above, you MUST reuse the exact keys as provided.')
+    lines.push('DO NOT invent new key names for values already provided above.')
+    lines.push('')
+  }
+
+  return lines
+}
+
+/**
+ * Build flat user context display for non-prefixed keys (backward compatible).
+ * This is the original behavior before EP Key Hints.
+ */
+function buildFlatUserContext(userContext: Array<{ key: string; value: string }>): string[] {
+  const lines: string[] = []
+
+  lines.push('**USER CONFIGURATION (resolved inputs):**')
+  lines.push('')
+  lines.push('The user has provided these specific configuration values:')
+  lines.push('')
+
+  // Separate config values by type for clarity
+  const fieldConfigs: typeof userContext = []
+  const otherConfigs: typeof userContext = []
+
+  for (const input of userContext) {
+    if (input.key.includes('_column_name') || input.key.includes('_field_name') || input.key.includes('fields_columns')) {
+      fieldConfigs.push(input)
+    } else {
+      otherConfigs.push(input)
+    }
+  }
+
+  if (fieldConfigs.length > 0) {
+    lines.push('**Field Name Mappings:**')
+    for (const input of fieldConfigs) {
+      lines.push(`  - ${input.key} = "${input.value}"`)
+    }
+    lines.push('')
+  }
+
+  if (otherConfigs.length > 0) {
+    lines.push('**Other Configuration Values:**')
+    for (const input of otherConfigs) {
+      lines.push(`  - ${input.key}: ${input.value}`)
+    }
+    lines.push('')
+  }
+
+  lines.push('**CRITICAL CONFIG KEY RULE:** When you declare `config` entries in the IntentContract,')
+  lines.push('you MUST reuse the exact keys listed above (e.g., `user_email`, `sheet_tab_name`).')
+  lines.push('DO NOT invent new key names for values already provided above.')
+  lines.push('You MAY add additional config entries for values NOT listed above (e.g., search queries, time windows).')
+  lines.push('This ensures the user\'s provided values are resolved correctly at runtime.')
+  lines.push('')
+  lines.push('**CRITICAL CONFIG REFERENCE RULE:** Every config entry you declare MUST be referenced')
+  lines.push('in at least one step via `{ kind: "config", key: "..." }`. NEVER hardcode a value')
+  lines.push('in a step when you have declared a config entry for it. For example, if you declare')
+  lines.push('`gmail_search_max_results` with default 50, the step MUST use')
+  lines.push('`{ kind: "config", key: "gmail_search_max_results" }` — NOT `"max_results": 50`.')
+  lines.push('Hardcoding makes the config entry dead and uncontrollable at runtime.')
+  lines.push('')
+
+  return lines
 }
