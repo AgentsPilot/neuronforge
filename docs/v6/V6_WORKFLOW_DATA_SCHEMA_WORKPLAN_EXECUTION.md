@@ -1,6 +1,6 @@
 # V6 Workflow Data Schema — Execution Simulator Workplan
 
-> **Status**: Phase A — ✅ Core simulation passed (28 steps, 0 errors). Extending scope with A+.
+> **Status**: Phase A ✅, A+ ✅, Pre-B ✅ — DSL is Pilot-compatible. Ready for Phase B.
 > **Date**: 2026-03-22
 > **Branch**: `feature/v6-intent-contract-data-schema`
 > **Parent workplan**: [V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_INTENT_CONTRACT.md](./V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_INTENT_CONTRACT.md)
@@ -409,7 +409,89 @@ Phase A validated that the DSL is structurally executable. Phase A+ adds **deepe
 
 ---
 
+## Pre-B: DSL-to-Pilot Compatibility Fix ✅
+
+> **Status:** ✅ Implemented and verified — 13/13 simulator checks pass with Pilot-compatible format.
+
+Before Phase B can use real Pilot components, the compiled DSL must match the field names the Pilot engine expects. Analysis of `StepExecutor.ts` and `lib/pilot/types.ts` revealed **2 critical mismatches** and **1 medium issue** in the compiler output for action-type steps:
+
+### Mismatches
+
+| # | Field | DSL Outputs | Pilot Expects | Severity | Impact |
+|---|-------|-------------|---------------|----------|--------|
+| B0-1 | **Action name** | `operation: "search_emails"` | `action: "search_emails"` | 🔴 Critical | `StepExecutor.executeAction()` reads `step.action` (line 713). With `operation`, this is `undefined` → throws `"missing plugin or action"` error. |
+| B0-2 | **Parameters** | `config: { query: "..." }` | `params: { query: "..." }` | 🔴 Critical | `StepExecutor` reads `(step as ActionStep).params` (line 152, 322). With `config`, params are `undefined` → plugin receives no parameters. |
+| B0-3 | **Step identity** | `step_id` + `id` (both) | `id` only, `name` required | 🟡 Medium | `WorkflowStepBase` requires `id: string` and `name: string`. DSL outputs redundant `step_id` and missing `name`. |
+
+> **Note:** Transform steps are NOT affected — they correctly use `operation` and `config` which matches the Pilot's `TransformStep` interface.
+
+### Why This Happens
+
+The `ExecutionGraphCompiler` was built to produce a human-readable DSL format. The Pilot engine's `ActionStep` interface uses different field names:
+
+```typescript
+// ActionStep (lib/pilot/types.ts)
+interface ActionStep extends WorkflowStepBase {
+  type: 'action'
+  plugin: string
+  action: string           // ← Pilot reads this
+  params: Record<string, any>  // ← Pilot reads this
+}
+```
+
+```typescript
+// Compiler output (ExecutionGraphCompiler.ts, compileFetchOperation)
+{
+  step_id: stepId,
+  type: 'action',
+  plugin: fetch.plugin_key,
+  operation: fetch.action,  // ← Compiler writes this
+  config: { ... }           // ← Compiler writes this
+}
+```
+
+### Fix — Implemented
+
+**Approach:** Added a **Phase 5: `toPilotFormat()`** pass at the end of the `compile()` method in `ExecutionGraphCompiler.ts`. This converts field names at the output boundary, keeping all internal compiler logic (normalization, reconciliation, schema extraction) untouched — they still use `operation`/`config` internally.
+
+The `toPilotFormat()` method:
+1. **Renames `operation` → `action`** for `type: 'action'` steps only
+2. **Renames `config` → `params`** for `type: 'action'` steps only
+3. **Ensures `id`** is set (from `step_id` if needed)
+4. **Adds `name`** field (uses `description` value)
+5. **Recurses** into nested steps (scatter-gather, conditional branches)
+
+Transform steps keep `operation` and `config` unchanged.
+
+**File:** `lib/agentkit/v6/compiler/ExecutionGraphCompiler.ts` — `toPilotFormat()` method, called in `compile()` after Phase 4 optimization.
+
+**Simulator:** Already handled both formats via `||` fallbacks (`step.operation || step.action`, `step.config || step.params`) — no changes needed.
+
+### Implementation Tasks
+
+| # | Task | Status | Description |
+|---|------|--------|-------------|
+| B0-1 | Rename `operation` → `action` in compiler | ✅ | `toPilotFormat()` converts action steps |
+| B0-2 | Rename `config` → `params` in compiler | ✅ | Same method — action steps only |
+| B0-3 | Fix step identity fields | ✅ | `id` ensured, `name` added from description |
+| B0-4 | Update execution simulator | ✅ | Already handled both formats via fallbacks |
+| B0-5 | Re-run pipeline + simulator | ✅ | 25 steps, 13/13 checks passed, 0 errors |
+
+### Pre-B Results
+
+> **Date**: 2026-03-22
+> **Status**: ✅ Passed — pipeline re-run with new compiler, simulator verified 25 steps, 13/13 checks, 0 errors
+
+Confirmed in compiled output:
+- Action steps: `action: "search_emails"`, `params: { query: "..." }` ✅
+- Transform steps: `operation: "flatten"`, `config: { ... }` ✅ (unchanged)
+- All steps: `id: "step1"`, `name: "Search Gmail for..."` ✅
+
+---
+
 ## Phase B — Design Notes (Future)
+
+> **Prerequisite:** Pre-B compatibility fix must be complete.
 
 Replace DSLSimulator's custom execution with real Pilot components:
 
@@ -439,4 +521,6 @@ Full `WorkflowPilot.execute()` with:
 |------|--------|---------|
 | 2026-03-22 | Initial design | Phase A-C strategy, Phase A implementation design |
 | 2026-03-22 | Phase A complete | Core simulation passed (28 steps, 0 errors). Switched config input to `phase4-workflow-config.json` (post-O7 merge). |
-| 2026-03-22 | A+ design | Added 7 extended validation checks (cross-step field tracing, scatter item validation, conditional field check, config type check, schema completeness, duplicate output vars, DAG visualization) |
+| 2026-03-22 | A+ design & implementation | Added 7 extended validation checks — all 13/13 checks pass |
+| 2026-03-22 | Pre-B analysis | Identified 2 critical + 1 medium DSL-to-Pilot field mismatches (operation→action, config→params, step_id→id+name) |
+| 2026-03-22 | Pre-B implemented | Added `toPilotFormat()` Phase 5 pass in compiler. Pipeline re-run + simulator verified: 25 steps, 13/13 checks, 0 errors. |

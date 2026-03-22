@@ -1,6 +1,6 @@
 # V6 Workflow Data Schema — Intent Contract Pipeline Workplan
 
-> **Status**: ✅ All issues resolved — 15 issues fixed (I1, I2, I4, I5, I6, I8, I9, I10, I11, I12, I13, I14, I15), I3 deferred (runtime), I7 auto-resolved by I6, O6+O7 implemented, O8 addressed (EP Key Hints design doc), O9 implemented, O10 implemented, O11 documented
+> **Status**: ✅ All issues resolved — 15 issues fixed (I1, I2, I4, I5, I6, I8, I9, I10, I11, I12, I13, I14, I15), I3 deferred (runtime), I7 auto-resolved by I6, O6+O7 implemented, O8 addressed (EP Key Hints design doc), O9+O10+O11 implemented, O12 (Pre-B Pilot compatibility) implemented
 > **Date**: 2026-03-13
 > **Branch**: `feature/v6-Intent-Contract`
 > **Design doc**: [V6_WORKFLOW_DATA_SCHEMA_DESIGN.md](./V6_WORKFLOW_DATA_SCHEMA_DESIGN.md)

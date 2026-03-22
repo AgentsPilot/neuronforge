@@ -238,12 +238,18 @@ export class ExecutionGraphCompiler {
       this.log(ctx, 'Phase 4: Running post-compilation optimizations')
       const optimizedWorkflow = await this.optimizeWorkflow(workflow, ctx)
 
+      // Phase 5: Convert to Pilot-compatible format (Pre-B compatibility)
+      // Action steps: operation → action, config → params
+      // All steps: step_id → id, add name field
+      this.log(ctx, 'Phase 5: Converting to Pilot-compatible format')
+      const pilotWorkflow = this.toPilotFormat(optimizedWorkflow, ctx)
+
       const compilationTime = Date.now() - startTime
       this.log(ctx, `Compilation complete in ${compilationTime}ms`)
 
       return {
         success: true,
-        workflow: optimizedWorkflow,
+        workflow: pilotWorkflow,
         logs: ctx.logs,
         plugins_used: Array.from(ctx.pluginsUsed),
         compilation_time_ms: compilationTime,
@@ -2357,6 +2363,67 @@ export class ExecutionGraphCompiler {
     }
 
     return normalized
+  }
+
+  /**
+   * Phase 5: Convert compiled workflow to Pilot-compatible format.
+   *
+   * The compiler internally uses 'operation' and 'config' for all step types.
+   * The Pilot engine expects different field names depending on step type:
+   * - Action steps: 'action' (not 'operation'), 'params' (not 'config')
+   * - Transform steps: 'operation' and 'config' (no change needed)
+   * - All steps: 'id' (not 'step_id'), 'name' (required by WorkflowStepBase)
+   */
+  private toPilotFormat(workflow: WorkflowStep[], ctx: CompilerContext): WorkflowStep[] {
+    let convertedCount = 0
+
+    const convertStep = (step: any): any => {
+      const converted: any = { ...step }
+
+      // All steps: ensure 'id' is primary, add 'name'
+      if (converted.step_id && !converted.id) {
+        converted.id = converted.step_id
+      }
+      if (!converted.name) {
+        converted.name = converted.description || converted.id || 'unnamed'
+      }
+
+      // Action steps: operation → action, config → params
+      if (converted.type === 'action') {
+        if (converted.operation && !converted.action) {
+          converted.action = converted.operation
+          delete converted.operation
+        }
+        if (converted.config !== undefined && converted.params === undefined) {
+          converted.params = converted.config
+          delete converted.config
+        }
+        convertedCount++
+      }
+
+      // Recurse into nested steps
+      if (converted.scatter?.steps) {
+        converted.scatter = {
+          ...converted.scatter,
+          steps: converted.scatter.steps.map(convertStep)
+        }
+      }
+      if (converted.steps) {
+        converted.steps = converted.steps.map(convertStep)
+      }
+      if (converted.then_steps) {
+        converted.then_steps = converted.then_steps.map(convertStep)
+      }
+      if (converted.else_steps) {
+        converted.else_steps = converted.else_steps.map(convertStep)
+      }
+
+      return converted
+    }
+
+    const result = workflow.map(convertStep)
+    this.log(ctx, `  → Converted ${convertedCount} action steps to Pilot format (operation→action, config→params)`)
+    return result
   }
 
   /**
