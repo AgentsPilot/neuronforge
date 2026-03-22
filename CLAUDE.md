@@ -1,9 +1,15 @@
 # CLAUDE.md — Project Context for AgentPilot
 
+> **Last Updated**: 2026-03-15  
+> This file is the project's root context document and is exempt from the standard docs ToC requirement.
+
 ## Overview
 
 **AgentPilot** is a **no-code AI automation platform** that converts natural-language prompts into fully working agents (workflows).
 Users describe what they want (e.g. *"Summarize my last 10 Gmail emails and save to Notion"*) — AgentPilot automatically detects required plugins, builds input/output schemas, and creates runnable automations.
+
+> **Agents:** Read this file fully before starting any task.
+> Key sections: [Mandatory Rules](#mandatory-rules) · [Security Rules](#security-rules) · [Agent Team](#agent-team)
 
 ---
 
@@ -19,6 +25,23 @@ Users describe what they want (e.g. *"Summarize my last 10 Gmail emails and save
 | **Logging** | Pino (structured logging) |
 | **Validation** | Zod schemas |
 | **UI Components** | Radix UI primitives + custom design system |
+
+---
+
+## Agent Team
+
+| Agent | Initials | Triggered by |
+|---|---|---|
+| Team Leader | TL | User |
+| Business Analyst | BA | User |
+| Developer | Dev | User or TL |
+| System Architect | SA | User or TL |
+| Quality Assurance | QA | User or TL |
+| Release Manager | RM | User or TL |
+
+**Standard flow:**
+User → TL → BA → Dev (workplan) → SA (workplan review) → Dev (implement)
+→ SA (code review) → QA (test) → TL (retrospective + user approval) → RM (commit)
 
 ---
 
@@ -47,6 +70,9 @@ Users describe what they want (e.g. *"Summarize my last 10 Gmail emails and save
 | `/hooks/` | React custom hooks |
 | `/types/` | Shared TypeScript definitions |
 | `/docs/` | Architecture and implementation documentation |
+| `/docs/requirements/` | BA writes requirement MDs here |
+| `/docs/workplans/` | Dev writes workplan MDs here; SA and QA annotate |
+| `/docs/retrospectives/` | TL appends retrospective after each completed cycle |
 
 ---
 
@@ -85,6 +111,51 @@ Step types supported:
 
 ---
 
+## Platform Design Principles
+
+These are architectural rules that apply to anyone working on the V6 pipeline or plugin system.
+
+### No Hardcoding in System Prompts
+
+Never add plugin-specific rules or operation names to system prompts or IR generation logic.
+
+| ❌ Wrong | ✅ Right |
+|---|---|
+| "For Google Drive, use `find_or_create_folder`" | "Prefer `find_or_create_X` actions — they handle idempotency for any plugin" |
+| "Don't use AI for data restructuring" | Let the compiler detect and optimise redundant AI steps |
+| Hardcoded field names or API patterns | Reference the plugin schema as the source of truth |
+
+**Why:** AgentPilot serves non-technical users with any plugin combination. Hardcoded rules don't scale and break when plugins change. Plugin schemas are the source of truth — let the LLM reason from them.
+
+### Fix Issues at the Root Cause
+
+When a bug appears in pipeline output, trace it to the responsible phase and fix it there.
+
+| Phase | Responsible for | Location |
+|---|---|---|
+| IntentContract generation | LLM reasoning about user intent and plugin capabilities | `/lib/agentkit/v6/` |
+| CapabilityBinderV2 | Binding intent to available plugin operations | `/lib/agentkit/v6/` |
+| IntentToIRConverter | Converting intent contracts to logical IR | `/lib/agentkit/v6/` |
+| ExecutionGraphCompiler | Compiling IR to executable DSL | `/lib/pilot/` |
+
+**Rule:** Only implement a fix in a downstream phase if it is genuinely a generic compiler optimisation that scales to any plugin (e.g. removing redundant steps, normalising variable references). Never add plugin-specific logic to the compiler.
+
+---
+
+## Git Conventions
+
+| Convention | Rule |
+|---|---|
+| Feature branches | `feature/[feature-slug]` |
+| Fix branches | `fix/[issue-slug]` |
+| Commit style | Conventional Commits: `feat:`, `fix:`, `refactor:`, `test:`, `docs:`, `chore:` |
+| Never | Commit directly to `main` |
+| Never | Commit `.env`, secrets, or credentials |
+
+Commits are managed by the Release Manager agent — see RM agent definition.
+
+---
+
 ## Development Standards
 
 The following documents define **mandatory development standards** for this project. All contributors (human and AI) must follow these patterns:
@@ -93,7 +164,32 @@ The following documents define **mandatory development standards** for this proj
 |----------|----------|---------|
 | **Repository Pattern** | [REPOSITORY_STRATEGY.md](/docs/REPOSITORY_STRATEGY.md) | All database access MUST go through the repository layer (`lib/repositories/`). No direct Supabase queries in API routes, services, or components. Repositories are server-side only — never import them in `'use client'` components. |
 
-### Documentation Standards
+### Mandatory Rules (all contributors — human and AI)
+
+1. All DB access via `lib/repositories/` — no direct Supabase calls in routes/services/components
+2. All API route inputs validated with Zod before any business logic
+3. All API routes use `correlationId` and structured Pino logging — no `console.log`
+4. All Supabase queries **must** include `.eq('user_id', userId)` unless intentionally bypassed with `supabaseServer` (document why)
+5. No hardcoded model names — use provider factory + feature flags
+6. TypeScript strict mode — no implicit `any`; if `any` is unavoidable, add a comment explaining why
+7. No new patterns introduced without SA review
+8. When working on the V6 pipeline or plugin system — read the Platform Design Principles section before making any changes
+
+---
+
+## Security Rules (non-negotiable)
+
+| Rule | Why |
+|---|---|
+| Always `.eq('user_id', userId)` in queries | Prevents cross-user data leakage |
+| `supabaseServer` (service role) only when RLS bypass is intentional — document in code | Accidental service role use bypasses all row-level security |
+| Never expose internal error details to client in production | Use `process.env.NODE_ENV === 'development'` guard already in API pattern |
+| No secrets or API keys in code — environment variables only | RM must check before every commit |
+| Input sanitised via Zod before use | Never trust client-supplied data |
+
+---
+
+## Documentation Standards
 
 All project documentation lives under `/docs/`. When creating or updating docs, follow these conventions:
 
@@ -248,6 +344,8 @@ return NextResponse.json(
 ```
 
 ### Component Pattern
+
+Use Server Components by default. Only add `'use client'` when you need interactivity, browser APIs, or React hooks.
 
 ```typescript
 'use client';
@@ -428,6 +526,29 @@ await auditTrail.log({
 
 ---
 
+## AI Provider Factory
+
+All LLM calls go through the provider factory — never call provider SDKs directly in feature code.
+
+```typescript
+import { getProviderFactory } from '@/lib/ai/providerFactory';
+
+const factory = getProviderFactory();
+const provider = factory.getProvider('openai'); // or 'anthropic', 'groq', 'mistral', 'kimi'
+
+const response = await provider.complete({
+  model: factory.getDefaultModel('openai'),
+  messages: [...],
+});
+```
+
+**Rules:**
+- Provider selection is config/feature-flag driven — do not hardcode model names
+- To add a new provider: extend the factory, do not add one-off direct SDK calls
+- The factory is a singleton — never instantiate providers directly
+
+---
+
 ## User Context
 
 Personalize LLM calls with user data from auth or profile. See [USER_CONTEXT.md](/docs/USER_CONTEXT.md) for full details.
@@ -469,6 +590,32 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 
 ---
 
+## Testing
+
+| Type | Tool | When to use |
+|---|---|---|
+| Unit | Jest | Pure functions, hooks, utilities, Zod schemas |
+| Integration | Jest + Supabase test client | API routes, repositories, service logic |
+| E2E | Playwright | Critical user journeys (agent creation, plugin connection, execution) |
+
+**File location:** Co-located (`*.test.ts`) for unit tests, `__tests__/` for integration, `e2e/` for Playwright.
+
+**Coverage expectations:**
+- New API routes: integration test covering happy path + auth failure + invalid input
+- New repositories: unit test for each method
+- New UI flows: Playwright test for the critical path
+
+**Before any code is committed:** QA agent must confirm at minimum the happy path and one failure path are tested.
+
+### Commands
+
+```bash
+npm test           # Run Jest tests
+npm run test:e2e   # Run Playwright tests
+```
+
+---
+
 ## Common Gotchas & Anti-Patterns
 
 ### Performance
@@ -478,13 +625,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 | Auth overhead (200-1,880ms per call) | Cache auth tokens, see `PERFORMANCE_OPTIMIZATION_PLAN.md` |
 | Duplicate API calls | Use `lib/utils/request-deduplication.ts` |
 | React StrictMode double-mounting | Use request deduplication or memoization |
-
-### Security
-
-| Issue | Solution |
-|-------|----------|
-| Missing user filter | **Always** include `.eq('user_id', userId)` |
-| Service role misuse | Only use `supabaseServer` when RLS bypass is intentional |
 
 ### Database
 
@@ -505,9 +645,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 
 | Anti-Pattern | Instead Do |
 |--------------|------------|
-| Direct Supabase calls in components | Use repository pattern |
 | Blocking audit logging | Always use `.catch()` for non-blocking |
-| Hardcoded model names | Use provider factory and feature flags |
 | Missing correlation IDs | Include `x-correlation-id` header for tracing |
 
 ---
@@ -527,21 +665,18 @@ Plugins use a JSON-definition + executor-class architecture. See [PLUGIN_GENERAT
 
 Connections stored in `plugin_connections` table.
 
-> **Note:** The legacy v1 strategy-based system (`lib/plugins/pluginRegistry.ts`, `lib/plugins/strategies/`) is deprecated. All new plugins must use the v2 architecture.
+> See Deprecated section — v1 plugin system must not be extended.
 
 ---
 
-## Testing
+## Deprecated — Do Not Use or Extend
 
-- **Jest** for unit and integration tests
-- **Playwright** for E2E tests
-- Test files: `*.test.ts` or `*.spec.ts`
-- Location: Co-located with implementation or in `__tests__/` directories
+| System | Location | Replaced by |
+|---|---|---|
+| V1 plugin strategy system | `lib/plugins/pluginRegistry.ts`, `lib/plugins/strategies/` | V2 plugin architecture |
+| Any direct Supabase calls outside repositories | Anywhere | Repository pattern (`lib/repositories/`) |
 
-```bash
-npm test           # Run Jest tests
-npm run test:e2e   # Run Playwright tests
-```
+If you find code using deprecated patterns during development, flag it in the workplan — do not silently extend deprecated systems.
 
 ---
 
@@ -568,5 +703,5 @@ npm run lint       # ESLint
 | [V2_TEST_PAGE_SCOPE.md](/docs/V2_TEST_PAGE_SCOPE.md) | Test page functionality (`/test-plugins-v2`) | 2026-01-21 |
 | [REPOSITORY_STRATEGY.md](/docs/REPOSITORY_STRATEGY.md) | Repository pattern guidelines and architecture | 2026-01-15 |
 | [SYSTEM_LOGGING_GUIDELINES.md](/docs/SYSTEM_LOGGING_GUIDELINES.md) | Pino logging standards and best practices | 2025-11-28 |
-| [USER_CONTEXT.md](/docs/USER_CONTEXT.md) | User context module for LLM personalization | — |
-| [PLUGIN_GENERATION_WORKFLOW.md](/docs/PLUGIN_GENERATION_WORKFLOW.md) | Interactive plugin generation guide for Claude Code | — |
+| [USER_CONTEXT.md](/docs/USER_CONTEXT.md) | User context module for LLM personalization | not tracked |
+| [PLUGIN_GENERATION_WORKFLOW.md](/docs/PLUGIN_GENERATION_WORKFLOW.md) | Interactive plugin generation guide for Claude Code | not tracked |
