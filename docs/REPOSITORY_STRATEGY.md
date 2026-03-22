@@ -125,6 +125,7 @@ lib/repositories/
 ├── ExecutionRepository.ts         # Agent execution records and token usage
 ├── ExecutionLogRepository.ts      # Step-by-step execution logs (legacy path)
 ├── MemoryRepository.ts            # Agent run memories
+├── PluginConnectionRepository.ts  # Plugin connection persistence (OAuth tokens, status)
 ├── SharedAgentRepository.ts       # Shared/template agents for marketplace
 └── SystemConfigRepository.ts      # System-wide settings configuration
 ```
@@ -310,6 +311,35 @@ interface CreateAgentLogInput {
 
 ---
 
+### PluginConnectionRepository
+**Location:** `lib/repositories/PluginConnectionRepository.ts`
+
+**Purpose:** Manages plugin connection records in the `plugin_connections` table. Handles OAuth token storage, connection status, and profile data.
+
+**Key Responsibilities:**
+- Query active/all connections for a user
+- Upsert connections (insert or update on user_id + plugin_key conflict)
+- Update connection status (disconnect, expire)
+- Update profile data (merged by caller before writing)
+- Find connections by JSONB profile data match (for webhook lookups)
+
+**Key Methods:**
+| Method | Description |
+|--------|-------------|
+| `findActiveByUser(userId)` | Get all active connections for a user |
+| `findByUserAndPlugin(userId, pluginKey)` | Get connection by user and plugin (any status) |
+| `findActiveByUserAndPlugin(userId, pluginKey)` | Get active connection by user and plugin |
+| `existsByUserAndPlugin(userId, pluginKey)` | Check if connection exists |
+| `findProfileData(userId, pluginKey)` | Get only the profile_data field |
+| `findActiveByProfileData(pluginKey, match)` | Find connection by JSONB containment (no userId) |
+| `findAllByUser(userId)` | Get all connections ordered by connected_at |
+| `upsert(input)` | Upsert connection, forces status='active', adds timestamps |
+| `updateStatus(userId, pluginKey, status, extra?)` | Update status with optional extra fields |
+| `updateProfileData(userId, pluginKey, data)` | Write final merged profile data |
+| `markExpired()` | Bulk mark expired active connections |
+
+---
+
 ### ExecutionLogRepository
 **Location:** `lib/repositories/ExecutionLogRepository.ts`
 
@@ -362,6 +392,7 @@ All shared types are centralized in `lib/repositories/types.ts`:
 | `CreateExecutionInput` | Input for creating execution records |
 | `CreateAgentLogInput` | Input for creating agent logs |
 | `CreateExecutionLogInput` | Input for creating execution logs |
+| `UpsertPluginConnectionInput` | Input for upserting plugin connections |
 | `AgentRepositoryResult<T>` | Standard result wrapper with error handling |
 
 ## Usage Patterns
@@ -528,6 +559,7 @@ try {
 | `AgentStatsRepository` | getLastRunCost, incrementStats |
 | `AgentConfigurationRepository` | getInputValues, updateStatus |
 | `AgentLogsRepository` | create |
+| `PluginConnectionRepository` | upsert |
 | `ExecutionLogRepository` | create |
 
 ### Client-Side Logging
@@ -696,3 +728,13 @@ When creating a new repository:
    - Consistent `AgentRepositoryResult<T>` return type
    - Export both class and singleton instance
 5. Add logging for significant operations following the patterns above
+
+---
+
+## Change History
+
+| Date | Change | Details |
+|------|--------|---------|
+| 2026-02-13 | Added `PluginConnectionRepository` | Extracted all direct Supabase queries from `UserPluginConnections` into a dedicated repository with 11 methods. Deleted legacy `lib/plugins/savePluginConnection.ts`. Added `UpsertPluginConnectionInput` type. |
+| 2026-02-13 | Extracted `OAuthTokenService` | Moved OAuth HTTP plumbing (`exchangeCodeForTokens`, `refreshAccessToken`, `fetchUserProfile`, `calculateExpiresAt`) from `UserPluginConnections` into `lib/services/OAuthTokenService.ts`. Consolidated duplicated PKCE logic. |
+| 2026-02-13 | Cleaned up `UserPluginConnections` | Removed dead code (`hasPluginPermission`, `cleanupExpiredConnections`), removed `getPluginDisplayName` hack, replaced all `any` types with proper types (`NextRequest`, `Record<string, unknown>`), extracted `audit()` helper with static import, added bounded token validation cache (max 100 entries). |

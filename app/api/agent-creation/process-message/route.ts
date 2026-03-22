@@ -596,6 +596,7 @@ export async function POST(request: NextRequest) {
     let aiResponse: ProcessMessageResponse;
     try {
       requestLogger.debug({ responsePreview: aiResponseText.substring(0, 200) }, 'AI response preview');
+      requestLogger.trace({ fullResponse: aiResponseText }, 'AI response full');
 
       const parsedJson = JSON.parse(aiResponseText);
 
@@ -608,7 +609,8 @@ export async function POST(request: NextRequest) {
         if (!validation.success) {
           requestLogger.error({
             validationErrors: validation.errors,
-            phase
+            phase,
+            fullResponse: aiResponseText
           }, 'Phase 3 response validation failed');
           return NextResponse.json(
             {

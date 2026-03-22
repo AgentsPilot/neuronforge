@@ -241,6 +241,24 @@ export interface AgentMetrics {
   last_execution_at?: string | null;
 }
 
+// ============ Plugin Connection Types ============
+
+export interface UpsertPluginConnectionInput {
+  user_id: string;
+  plugin_key: string;
+  plugin_name: string;
+  access_token: string;
+  refresh_token: string | null;
+  expires_at: string | null;
+  scope: string | null;
+  username: string;
+  email: string | null;
+  profile_data: Record<string, unknown> | null;
+  settings: Record<string, unknown>;
+  status: string;
+  connected_at?: string;
+}
+
 // ============ Config Types ============
 
 export interface SystemConfig {

@@ -7,7 +7,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
 import { pluginRegistry } from '@/lib/plugins/pluginRegistry'
-import { savePluginConnection } from '@/lib/plugins/savePluginConnection'
+import { pluginConnectionRepository } from '@/lib/repositories'
 
 /** @deprecated Use v2 plugin system instead */
 export async function GET(req: NextRequest) {
@@ -47,7 +47,8 @@ export async function GET(req: NextRequest) {
     const connection = await strategy.handleOAuthCallback({ code, state })
 
     // 💾 Save to Supabase
-    await savePluginConnection(connection)
+    const { error: upsertError } = await pluginConnectionRepository.upsert(connection)
+    if (upsertError) throw upsertError
 
     return NextResponse.json({ success: true })
   } catch (err: any) {

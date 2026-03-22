@@ -1,4 +1,10 @@
 import { useState, useCallback } from 'react';
+import type {
+  ClarificationAnswer,
+  StructuredSelectAnswer,
+  StructuredMultiSelectAnswer,
+  ClarificationOption
+} from '@/components/agent-creation/types/agent-prompt-threads';
 
 // Simplified types for V2 agent builder
 export interface RequirementItem {
@@ -8,15 +14,48 @@ export interface RequirementItem {
   detected?: string;
 }
 
+// V14: Updated to support hybrid question types
 export interface ClarificationQuestion {
   id: string;
   question: string;
   dimension: string;
-  type: string;
-  options?: Array<{ value: string; label: string; description?: string }> | string[];
+  theme?: string; // V14: theme for grouping
+  type: 'select' | 'multi_select' | 'text' | 'email' | 'number'; // V14: strict typing
+  options?: ClarificationOption[];
   placeholder?: string;
   required?: boolean;
   allowCustom?: boolean;
+}
+
+// Re-export for convenience
+export type { ClarificationAnswer, StructuredSelectAnswer, StructuredMultiSelectAnswer };
+
+/**
+ * V14: Helper to check if an answer is valid (works with string or structured)
+ */
+function isAnswerValid(answer: ClarificationAnswer | undefined): boolean {
+  if (!answer) return false;
+
+  // Plain string (text questions)
+  if (typeof answer === 'string') {
+    return answer.trim().length > 0;
+  }
+
+  // Structured answer (select/multi_select)
+  if (answer.mode === 'selected') {
+    if (answer.answerType === 'select') {
+      return !!answer.selected;
+    }
+    if (answer.answerType === 'multi_select') {
+      return Array.isArray(answer.selected) && answer.selected.length > 0;
+    }
+  }
+
+  if (answer.mode === 'custom') {
+    return !!answer.custom?.trim();
+  }
+
+  return false;
 }
 
 export interface AgentBuilderState {
@@ -34,10 +73,13 @@ export interface AgentBuilderState {
   // Questions state
   questionsSequence: ClarificationQuestion[];
   currentQuestionIndex: number;
-  clarificationAnswers: Record<string, string>;
+  clarificationAnswers: Record<string, ClarificationAnswer>; // V14: supports structured answers
   questionsWithVisibleOptions: Set<string>;
 
-  // Custom input state
+  // V14: Multi-select tracking
+  selectedMultiOptions: string[]; // Tracks checkbox selections for current multi_select question
+
+  // Custom input state (V14: "Other" button toggle)
   showingCustomInput: boolean;
   customInputValue: string;
   customInputQuestionId: string | null;
@@ -82,6 +124,7 @@ export function useAgentBuilderState() {
     currentQuestionIndex: -1,
     clarificationAnswers: {},
     questionsWithVisibleOptions: new Set(),
+    selectedMultiOptions: [], // V14: multi-select tracking
     showingCustomInput: false,
     customInputValue: '',
     customInputQuestionId: null,
@@ -162,10 +205,10 @@ export function useAgentBuilderState() {
   // Move to next question
   const proceedToNextQuestion = useCallback(() => {
     setState(prev => {
-      // Find next unanswered question
+      // Find next unanswered question (V14: use helper for structured answers)
       const nextUnansweredIndex = prev.questionsSequence.findIndex((q, idx) => {
         const isAfterCurrent = idx > prev.currentQuestionIndex;
-        const isAnswered = !!prev.clarificationAnswers[q.id]?.trim();
+        const isAnswered = isAnswerValid(prev.clarificationAnswers[q.id]);
         return isAfterCurrent && !isAnswered;
       });
 
@@ -178,13 +221,14 @@ export function useAgentBuilderState() {
           ...prev,
           currentQuestionIndex: nextUnansweredIndex,
           isProcessingQuestion: false,
-          questionsWithVisibleOptions: newVisible
+          questionsWithVisibleOptions: newVisible,
+          selectedMultiOptions: [] // V14: reset multi-select for new question
         };
       }
 
-      // Check for any remaining unanswered questions
+      // Check for any remaining unanswered questions (V14: use helper)
       const unanswered = prev.questionsSequence.filter(
-        q => !prev.clarificationAnswers[q.id]?.trim()
+        q => !isAnswerValid(prev.clarificationAnswers[q.id])
       );
 
       if (unanswered.length > 0) {
@@ -196,7 +240,8 @@ export function useAgentBuilderState() {
           ...prev,
           currentQuestionIndex: firstIdx,
           isProcessingQuestion: false,
-          questionsWithVisibleOptions: newVisible
+          questionsWithVisibleOptions: newVisible,
+          selectedMultiOptions: [] // V14: reset multi-select
         };
       }
 
@@ -206,21 +251,75 @@ export function useAgentBuilderState() {
         ...prev,
         currentQuestionIndex: -1,
         isProcessingQuestion: false,
-        workflowPhase: 'enhancement'
+        workflowPhase: 'enhancement',
+        selectedMultiOptions: [] // V14: reset multi-select
       };
     });
   }, []);
 
-  // Answer a question
-  const answerQuestion = useCallback((questionId: string, answer: string) => {
+  // Answer a question (V14: supports both string and structured answers)
+  const answerQuestion = useCallback((questionId: string, answer: ClarificationAnswer) => {
     setState(prev => ({
       ...prev,
       clarificationAnswers: {
         ...prev.clarificationAnswers,
         [questionId]: answer
       },
-      isProcessingQuestion: true
+      isProcessingQuestion: true,
+      selectedMultiOptions: [], // Reset multi-select after answering
+      showingCustomInput: false // Reset custom input
     }));
+
+    // Auto-proceed after a delay
+    setTimeout(() => {
+      setState(prev => ({ ...prev, isProcessingQuestion: false }));
+      setTimeout(() => proceedToNextQuestion(), 200);
+    }, 300);
+  }, [proceedToNextQuestion]);
+
+  // V14: Answer with structured select answer (single option click)
+  const answerSelectOption = useCallback((questionId: string, value: string) => {
+    const answer: StructuredSelectAnswer = {
+      answerType: 'select',
+      mode: 'selected',
+      selected: value
+    };
+    answerQuestion(questionId, answer);
+  }, [answerQuestion]);
+
+  // V14: Toggle multi-select option (checkbox behavior)
+  const toggleMultiSelectOption = useCallback((value: string) => {
+    setState(prev => {
+      const current = prev.selectedMultiOptions;
+      const newSelected = current.includes(value)
+        ? current.filter(v => v !== value)
+        : [...current, value];
+      return { ...prev, selectedMultiOptions: newSelected };
+    });
+  }, []);
+
+  // V14: Submit multi-select answer
+  const submitMultiSelectAnswer = useCallback((questionId: string) => {
+    setState(prev => {
+      if (prev.selectedMultiOptions.length === 0) return prev;
+
+      const answer: StructuredMultiSelectAnswer = {
+        answerType: 'multi_select',
+        mode: 'selected',
+        selected: [...prev.selectedMultiOptions]
+      };
+
+      return {
+        ...prev,
+        clarificationAnswers: {
+          ...prev.clarificationAnswers,
+          [questionId]: answer
+        },
+        isProcessingQuestion: true,
+        selectedMultiOptions: [],
+        showingCustomInput: false
+      };
+    });
 
     // Auto-proceed after a delay
     setTimeout(() => {
@@ -244,22 +343,46 @@ export function useAgentBuilderState() {
     setState(prev => ({ ...prev, customInputValue: value }));
   }, []);
 
-  // Submit custom answer
+  // Submit custom answer (V14: creates structured answer for select/multi_select, plain string for text)
   const submitCustomAnswer = useCallback(() => {
     setState(prev => {
       const questionId = prev.customInputQuestionId;
       if (!questionId || !prev.customInputValue.trim()) return prev;
 
+      // Find the question to determine type
+      const question = prev.questionsSequence.find(q => q.id === questionId);
+      const customText = prev.customInputValue.trim();
+
+      // V14: Create appropriate answer format based on question type
+      let answer: ClarificationAnswer;
+      if (question?.type === 'select') {
+        answer = {
+          answerType: 'select',
+          mode: 'custom',
+          custom: customText
+        } as StructuredSelectAnswer;
+      } else if (question?.type === 'multi_select') {
+        answer = {
+          answerType: 'multi_select',
+          mode: 'custom',
+          custom: customText
+        } as StructuredMultiSelectAnswer;
+      } else {
+        // Plain text for text/email/number questions
+        answer = customText;
+      }
+
       return {
         ...prev,
         clarificationAnswers: {
           ...prev.clarificationAnswers,
-          [questionId]: prev.customInputValue.trim()
+          [questionId]: answer
         },
         showingCustomInput: false,
         customInputQuestionId: null,
         customInputValue: '',
-        isProcessingQuestion: true
+        isProcessingQuestion: true,
+        selectedMultiOptions: [] // Reset multi-select
       };
     });
 
@@ -285,7 +408,8 @@ export function useAgentBuilderState() {
         questionsWithVisibleOptions: newVisible,
         showingCustomInput: false,
         customInputQuestionId: null,
-        customInputValue: ''
+        customInputValue: '',
+        selectedMultiOptions: [] // V14: reset multi-select
       };
     });
   }, []);
@@ -371,6 +495,9 @@ export function useAgentBuilderState() {
     setQuestionsSequence,
     proceedToNextQuestion,
     answerQuestion,
+    answerSelectOption,       // V14: single-select option click
+    toggleMultiSelectOption,  // V14: multi-select checkbox toggle
+    submitMultiSelectAnswer,  // V14: submit multi-select selections
     openCustomInput,
     updateCustomInput,
     submitCustomAnswer,

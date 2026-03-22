@@ -47,7 +47,7 @@ export const EnhancedPromptSectionsSchema = z.object({
  */
 export const ResolvedUserInputSchema = z.object({
   key: z.string().min(1),    // Machine-friendly key (e.g., "accountant_email", "user_email")
-  value: z.string().min(1),  // Resolved value (e.g., "bob@company.com")
+  value: z.union([z.string(), z.number()]).transform(v => String(v)).pipe(z.string().min(1)),  // Resolved value - coerces numbers to strings
 });
 
 /**

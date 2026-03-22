@@ -1,11 +1,11 @@
-// lib/server/whatsapp-plugin-executor.ts
+// lib/server/whatsapp-business-plugin-executor.ts
 
 import { UserPluginConnections } from './user-plugin-connections';
 import { PluginManagerV2 } from './plugin-manager-v2';
 import { ExecutionResult } from '@/lib/types/plugin-types';
 import { BasePluginExecutor } from './base-plugin-executor';
 
-const pluginName = 'whatsapp';
+const pluginName = 'whatsapp-business';
 const fbUrl = 'https://graph.facebook.com/v23.0';
 
 export class WhatsAppPluginExecutor extends BasePluginExecutor {

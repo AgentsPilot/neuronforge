@@ -13,7 +13,7 @@ import { GoogleSheetsPluginExecutor } from './google-sheets-plugin-executor';
 import { GoogleDocsPluginExecutor } from './google-docs-plugin-executor';
 import { GoogleCalendarPluginExecutor } from './google-calendar-plugin-executor';
 import { SlackPluginExecutor } from './slack-plugin-executor';
-import { WhatsAppPluginExecutor } from './whatsapp-plugin-executor';
+import { WhatsAppPluginExecutor } from './whatsapp-business-plugin-executor';
 import { HubSpotPluginExecutor } from './hubspot-plugin-executor';
 import { ChatGPTResearchPluginExecutor } from './chatgpt-research-plugin-executor';
 import { LinkedInPluginExecutor } from './linkedin-plugin-executor';
@@ -37,7 +37,7 @@ export class PluginExecuterV2 {
     'google-docs': GoogleDocsPluginExecutor,
     'google-calendar': GoogleCalendarPluginExecutor,
     'slack': SlackPluginExecutor,
-    'whatsapp': WhatsAppPluginExecutor,
+    'whatsapp-business': WhatsAppPluginExecutor,
     'hubspot': HubSpotPluginExecutor,
     'chatgpt-research': ChatGPTResearchPluginExecutor,
     'linkedin': LinkedInPluginExecutor,

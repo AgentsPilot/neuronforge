@@ -1,22 +1,16 @@
 # CLAUDE.md — Project Context for AgentPilot
 
-<<<<<<< ours
 > **Last Updated**: 2026-03-15  
 > This file is the project's root context document and is exempt from the standard docs ToC requirement.
 
-=======
->>>>>>> theirs
 ## Overview
 
 **AgentPilot** is a **no-code AI automation platform** that converts natural-language prompts into fully working agents (workflows).
 Users describe what they want (e.g. *"Summarize my last 10 Gmail emails and save to Notion"*) — AgentPilot automatically detects required plugins, builds input/output schemas, and creates runnable automations.
 
-<<<<<<< ours
 > **Agents:** Read this file fully before starting any task.
 > Key sections: [Mandatory Rules](#mandatory-rules) · [Security Rules](#security-rules) · [Agent Team](#agent-team)
 
-=======
->>>>>>> theirs
 ---
 
 ## Tech Stack
@@ -34,7 +28,6 @@ Users describe what they want (e.g. *"Summarize my last 10 Gmail emails and save
 
 ---
 
-<<<<<<< ours
 ## Agent Team
 
 | Agent | Initials | Triggered by |
@@ -52,8 +45,6 @@ User → TL → BA → Dev (workplan) → SA (workplan review) → Dev (implemen
 
 ---
 
-=======
->>>>>>> theirs
 ## Repository Structure
 
 | Directory | Purpose |
@@ -79,12 +70,9 @@ User → TL → BA → Dev (workplan) → SA (workplan review) → Dev (implemen
 | `/hooks/` | React custom hooks |
 | `/types/` | Shared TypeScript definitions |
 | `/docs/` | Architecture and implementation documentation |
-<<<<<<< ours
 | `/docs/requirements/` | BA writes requirement MDs here |
 | `/docs/workplans/` | Dev writes workplan MDs here; SA and QA annotate |
 | `/docs/retrospectives/` | TL appends retrospective after each completed cycle |
-=======
->>>>>>> theirs
 
 ---
 
@@ -123,7 +111,6 @@ Step types supported:
 
 ---
 
-<<<<<<< ours
 ## Platform Design Principles
 
 These are architectural rules that apply to anyone working on the V6 pipeline or plugin system.
@@ -169,8 +156,6 @@ Commits are managed by the Release Manager agent — see RM agent definition.
 
 ---
 
-=======
->>>>>>> theirs
 ## Development Standards
 
 The following documents define **mandatory development standards** for this project. All contributors (human and AI) must follow these patterns:
@@ -179,7 +164,6 @@ The following documents define **mandatory development standards** for this proj
 |----------|----------|---------|
 | **Repository Pattern** | [REPOSITORY_STRATEGY.md](/docs/REPOSITORY_STRATEGY.md) | All database access MUST go through the repository layer (`lib/repositories/`). No direct Supabase queries in API routes, services, or components. Repositories are server-side only — never import them in `'use client'` components. |
 
-<<<<<<< ours
 ### Mandatory Rules (all contributors — human and AI)
 
 1. All DB access via `lib/repositories/` — no direct Supabase calls in routes/services/components
@@ -206,9 +190,6 @@ The following documents define **mandatory development standards** for this proj
 ---
 
 ## Documentation Standards
-=======
-### Documentation Standards
->>>>>>> theirs
 
 All project documentation lives under `/docs/`. When creating or updating docs, follow these conventions:
 
@@ -364,11 +345,8 @@ return NextResponse.json(
 
 ### Component Pattern
 
-<<<<<<< ours
 Use Server Components by default. Only add `'use client'` when you need interactivity, browser APIs, or React hooks.
 
-=======
->>>>>>> theirs
 ```typescript
 'use client';
 
@@ -548,7 +526,6 @@ await auditTrail.log({
 
 ---
 
-<<<<<<< ours
 ## AI Provider Factory
 
 All LLM calls go through the provider factory — never call provider SDKs directly in feature code.
@@ -572,8 +549,6 @@ const response = await provider.complete({
 
 ---
 
-=======
->>>>>>> theirs
 ## User Context
 
 Personalize LLM calls with user data from auth or profile. See [USER_CONTEXT.md](/docs/USER_CONTEXT.md) for full details.
@@ -615,7 +590,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 
 ---
 
-<<<<<<< ours
 ## Testing
 
 | Type | Tool | When to use |
@@ -642,8 +616,6 @@ npm run test:e2e   # Run Playwright tests
 
 ---
 
-=======
->>>>>>> theirs
 ## Common Gotchas & Anti-Patterns
 
 ### Performance
@@ -654,16 +626,6 @@ npm run test:e2e   # Run Playwright tests
 | Duplicate API calls | Use `lib/utils/request-deduplication.ts` |
 | React StrictMode double-mounting | Use request deduplication or memoization |
 
-<<<<<<< ours
-=======
-### Security
-
-| Issue | Solution |
-|-------|----------|
-| Missing user filter | **Always** include `.eq('user_id', userId)` |
-| Service role misuse | Only use `supabaseServer` when RLS bypass is intentional |
-
->>>>>>> theirs
 ### Database
 
 | Issue | Solution |
@@ -683,13 +645,7 @@ npm run test:e2e   # Run Playwright tests
 
 | Anti-Pattern | Instead Do |
 |--------------|------------|
-<<<<<<< ours
 | Blocking audit logging | Always use `.catch()` for non-blocking |
-=======
-| Direct Supabase calls in components | Use repository pattern |
-| Blocking audit logging | Always use `.catch()` for non-blocking |
-| Hardcoded model names | Use provider factory and feature flags |
->>>>>>> theirs
 | Missing correlation IDs | Include `x-correlation-id` header for tracing |
 
 ---
@@ -709,7 +665,6 @@ Plugins use a JSON-definition + executor-class architecture. See [PLUGIN_GENERAT
 
 Connections stored in `plugin_connections` table.
 
-<<<<<<< ours
 > See Deprecated section — v1 plugin system must not be extended.
 
 ---
@@ -722,23 +677,6 @@ Connections stored in `plugin_connections` table.
 | Any direct Supabase calls outside repositories | Anywhere | Repository pattern (`lib/repositories/`) |
 
 If you find code using deprecated patterns during development, flag it in the workplan — do not silently extend deprecated systems.
-=======
-> **Note:** The legacy v1 strategy-based system (`lib/plugins/pluginRegistry.ts`, `lib/plugins/strategies/`) is deprecated. All new plugins must use the v2 architecture.
-
----
-
-## Testing
-
-- **Jest** for unit and integration tests
-- **Playwright** for E2E tests
-- Test files: `*.test.ts` or `*.spec.ts`
-- Location: Co-located with implementation or in `__tests__/` directories
-
-```bash
-npm test           # Run Jest tests
-npm run test:e2e   # Run Playwright tests
-```
->>>>>>> theirs
 
 ---
 
@@ -765,10 +703,5 @@ npm run lint       # ESLint
 | [V2_TEST_PAGE_SCOPE.md](/docs/V2_TEST_PAGE_SCOPE.md) | Test page functionality (`/test-plugins-v2`) | 2026-01-21 |
 | [REPOSITORY_STRATEGY.md](/docs/REPOSITORY_STRATEGY.md) | Repository pattern guidelines and architecture | 2026-01-15 |
 | [SYSTEM_LOGGING_GUIDELINES.md](/docs/SYSTEM_LOGGING_GUIDELINES.md) | Pino logging standards and best practices | 2025-11-28 |
-<<<<<<< ours
 | [USER_CONTEXT.md](/docs/USER_CONTEXT.md) | User context module for LLM personalization | not tracked |
 | [PLUGIN_GENERATION_WORKFLOW.md](/docs/PLUGIN_GENERATION_WORKFLOW.md) | Interactive plugin generation guide for Claude Code | not tracked |
-=======
-| [USER_CONTEXT.md](/docs/USER_CONTEXT.md) | User context module for LLM personalization | — |
-| [PLUGIN_GENERATION_WORKFLOW.md](/docs/PLUGIN_GENERATION_WORKFLOW.md) | Interactive plugin generation guide for Claude Code | — |
->>>>>>> theirs

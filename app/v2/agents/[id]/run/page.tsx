@@ -586,8 +586,8 @@ export default function V2RunAgentPage() {
           return
         }
         const data = await response.json()
-        console.log('[Run Page] Schema metadata loaded:', data.metadata)
-        setSchemaMetadata(data.metadata)
+        console.log('[Run Page] Schema metadata loaded:', data.data?.metadata)
+        setSchemaMetadata(data.data?.metadata)
       } catch (error) {
         console.error('[Run Page] Error fetching schema metadata:', error)
       }

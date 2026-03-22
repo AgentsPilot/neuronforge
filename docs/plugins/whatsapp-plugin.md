@@ -2,7 +2,8 @@
 
 **Plugin Version**: 1.0.0
 **Category**: Communication
-**Last Updated**: 2025-11-30
+**Plugin Key**: `whatsapp-business`
+**Last Updated**: 2026-02-13
 
 ---
 
@@ -18,8 +19,8 @@ Send templated messages, manage customer conversations, and automate WhatsApp Bu
 | Information | URL | Summary |
 |-------------|-----|---------|
 | OAuth 2.0 Setup | https://developers.facebook.com/docs/facebook-login/guides/access-tokens | Facebook/Meta OAuth 2.0 for WhatsApp Business API |
-| Authorization Endpoint | https://www.facebook.com/v18.0/dialog/oauth | Meta authorization URL |
-| Token Endpoint | https://graph.facebook.com/v18.0/oauth/access_token | Token exchange and refresh endpoint |
+| Authorization Endpoint | https://www.facebook.com/v23.0/dialog/oauth | Meta authorization URL |
+| Token Endpoint | https://graph.facebook.com/v23.0/oauth/access_token | Token exchange and refresh endpoint |
 | Scopes Reference | https://developers.facebook.com/docs/permissions | whatsapp_business_messaging, whatsapp_business_management |
 
 ### API Documentation
@@ -189,7 +190,7 @@ WhatsApp requires webhooks for receiving incoming messages and delivery status u
 
 | Configuration | Value |
 |--------------|-------|
-| Endpoint Path | `/api/plugins/webhooks/whatsapp` |
+| Endpoint Path | `/api/plugins/webhooks/whatsapp-business` |
 | Events | messages, message_status |
 | Verify Token Required | Yes |
 | Profile Data Required | phone_number_id, waba_id |
@@ -216,8 +217,9 @@ This plugin requires additional configuration fields after OAuth:
 
 | File Path | Description |
 |-----------|-------------|
-| `lib/plugins/definitions/whatsapp-plugin-v2.json` | Plugin definition with OAuth config, actions, and schemas |
-| `lib/server/whatsapp-plugin-executor.ts` | Executor class implementing all WhatsApp actions |
+| `lib/plugins/definitions/whatsapp-business-plugin-v2.json` | Plugin definition with OAuth config, actions, and schemas |
+| `lib/server/whatsapp-business-plugin-executor.ts` | Executor class implementing all WhatsApp actions |
+| `app/api/plugins/webhooks/whatsapp-business/route.ts` | Webhook route for incoming messages and status updates |
 
 ---
 
@@ -227,15 +229,17 @@ This plugin requires additional configuration fields after OAuth:
 WHATSAPP_CLIENT_ID=your_whatsapp_client_id_here
 WHATSAPP_CLIENT_SECRET=your_whatsapp_client_secret_here
 WHATSAPP_CONFIG_ID=your_whatsapp_config_id_here
+WHATSAPP_VERIFY_TOKEN=your_random_verify_token_here
 ```
 
 To obtain credentials:
 1. Go to https://developers.facebook.com/apps
 2. Create a new app with WhatsApp product
 3. Configure WhatsApp in App Dashboard
-4. Set redirect URI: `${NEXT_PUBLIC_APP_URL}/oauth/callback/whatsapp`
+4. Set redirect URI: `${NEXT_PUBLIC_APP_URL}/oauth/callback/whatsapp-business`
 5. Copy App ID (Client ID) and App Secret (Client Secret)
 6. Get Config ID from WhatsApp product settings
+7. Set `WHATSAPP_VERIFY_TOKEN` to any random string — use the same value when configuring the webhook in Meta's dashboard
 
 ---
 
@@ -244,3 +248,4 @@ To obtain credentials:
 | Version | Date | Changes |
 |---------|------|---------|
 | 1.0.0 | 2025-11-30 | Initial plugin with 5 actions: send_template_message, send_text_message, send_interactive_message, list_message_templates, mark_message_read |
+| 1.0.1 | 2026-02-13 | Standardized plugin key to `whatsapp-business`, renamed files, fixed icon, aligned API to v23.0, added WHATSAPP_VERIFY_TOKEN |

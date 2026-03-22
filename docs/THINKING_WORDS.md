@@ -104,6 +104,7 @@ loader.getCategoryWordCount('general'); // 16
 | `communication` | Communication & collaboration | 6 |
 | `progress` | Progress indicators | 8 |
 | `friendly` | Friendly/casual tone | 8 |
+| `long_wait` | Humorous messages for long processing times | 5 |
 
 ## Role → Category Mapping
 
@@ -151,6 +152,29 @@ function ThinkingIndicator({ isProcessing, userRole = 'other' }: Props) {
 }
 ```
 
+### Timed Cycler (Long Operations)
+
+For operations that take 20-120s (e.g. V6 agent generation), use `createTimedThinkingWordCycler()` which automatically progresses through word categories based on elapsed time:
+
+- **0-15s**: General/friendly ("Thinking", "On it")
+- **15-30s**: Domain words ("Parsing data", "Mapping out")
+- **30-45s**: Progress words ("Almost there", "Fine-tuning")
+- **45s+**: Humorous long-wait ("Brewing extra coffee for the team...")
+
+```typescript
+import { createTimedThinkingWordCycler } from '@/lib/ui/thinking-words';
+
+const getNextWord = createTimedThinkingWordCycler();
+const interval = setInterval(() => {
+  updateStatus(getNextWord() + '...');
+}, 4000);
+
+// Cleanup when done
+clearInterval(interval);
+```
+
+**Note:** `long_wait` is excluded from role mappings — it only activates via the timed cycler, never in generic role-based cycling.
+
 ## API Reference
 
 ### Types
@@ -158,7 +182,8 @@ function ThinkingIndicator({ isProcessing, userRole = 'other' }: Props) {
 ```typescript
 type ThinkingCategory =
   | 'general' | 'business' | 'data_analysis' | 'planning'
-  | 'problem_solving' | 'communication' | 'progress' | 'friendly';
+  | 'problem_solving' | 'communication' | 'progress' | 'friendly'
+  | 'long_wait';
 
 type UserRole =
   | 'business_owner' | 'manager' | 'consultant' | 'operations'
@@ -173,6 +198,7 @@ type UserRole =
 | `getRandomThinkingWordForRole(role)` | Random word for a specific role |
 | `createThinkingWordCycler()` | Sequential cycler (all words) |
 | `createThinkingWordCyclerForRole(role)` | Sequential cycler for a role |
+| `createTimedThinkingWordCycler(role?)` | Time-aware cycler with phase progression |
 | `getShuffledThinkingWords()` | Shuffled array (all words) |
 | `getShuffledThinkingWordsForRole(role)` | Shuffled array for a role |
 | `getWordsForRole(role)` | Get word array for a role |

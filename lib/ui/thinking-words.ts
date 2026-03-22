@@ -110,6 +110,70 @@ export function createThinkingWordCyclerForRole(role: UserRole) {
 }
 
 // =============================================================================
+// Timed Cycler (Time-Aware Phase Progression)
+// =============================================================================
+
+/**
+ * Time-tier configuration for timed thinking word cycler.
+ * Each tier defines which categories to use and when to activate.
+ * Tiers are evaluated in order — first matching tier wins.
+ */
+const TIMED_TIERS: Array<{
+  afterMs: number
+  categories: ThinkingCategory[]
+}> = [
+  { afterMs: 45000, categories: ['long_wait'] },
+  { afterMs: 30000, categories: ['progress', 'communication'] },
+  { afterMs: 15000, categories: ['data_analysis', 'planning'] },
+  { afterMs: 0,     categories: ['general', 'friendly'] },
+]
+
+/**
+ * Create a time-aware thinking word cycler.
+ *
+ * Internally tracks elapsed time and picks words from progressively
+ * different categories:
+ * - 0-15s:  General/friendly words ("Thinking", "On it")
+ * - 15-30s: Domain words ("Parsing data", "Mapping out")
+ * - 30-45s: Progress words ("Almost there", "Fine-tuning")
+ * - 45s+:   Humorous long-wait ("Brewing extra coffee...")
+ *
+ * The caller just calls getNextWord() — all logic is internal.
+ *
+ * @param role Optional user role for role-aware word selection in early tiers
+ */
+export function createTimedThinkingWordCycler(role?: UserRole): () => string {
+  const loader = getThinkingWordsLoader()
+  const startTime = Date.now()
+
+  // Pre-build shuffled word lists per tier
+  const tierWords: string[][] = TIMED_TIERS.map(tier =>
+    shuffleArray([...loader.getWordsForCategories(tier.categories)])
+  )
+  const tierIndices: number[] = TIMED_TIERS.map(() => 0)
+
+  return (): string => {
+    const elapsed = Date.now() - startTime
+
+    // Find the active tier (first one where elapsed >= afterMs)
+    let tierIndex = TIMED_TIERS.length - 1 // default to last (general)
+    for (let i = 0; i < TIMED_TIERS.length; i++) {
+      if (elapsed >= TIMED_TIERS[i].afterMs) {
+        tierIndex = i
+        break
+      }
+    }
+
+    // Get next word from this tier's shuffled list
+    const words = tierWords[tierIndex]
+    const wordIdx = tierIndices[tierIndex] % words.length
+    tierIndices[tierIndex]++
+
+    return words[wordIdx]
+  }
+}
+
+// =============================================================================
 // Shuffled Lists
 // =============================================================================
 

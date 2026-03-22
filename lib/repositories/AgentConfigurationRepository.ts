@@ -137,15 +137,15 @@ export class AgentConfigurationRepository {
   }
 
   /**
-   * Save or update input values for an agent (used during calibration)
-   * This ensures that input values from calibration runs are persisted
-   * and can be reused in subsequent calibration runs.
+   * Save or update input values for an agent.
+   * Finds the most recent configuration matching the given status (if provided),
+   * updates it if found, or creates a new one.
    */
   async saveInputValues(
     agentId: string,
     userId: string,
     inputValues: Record<string, unknown>,
-    inputSchema?: unknown
+    options?: { inputSchema?: unknown; status?: string }
   ): Promise<AgentRepositoryResult<AgentConfiguration>> {
     const methodLogger = this.logger.child({ method: 'saveInputValues', agentId, userId });
     const startTime = Date.now();
@@ -154,42 +154,60 @@ export class AgentConfigurationRepository {
       methodLogger.debug({ inputCount: Object.keys(inputValues).length }, 'Saving input values');
 
       // Check if configuration already exists
-      const { data: existing } = await this.supabase
+      let query = this.supabase
         .from('agent_configurations')
         .select('id')
         .eq('agent_id', agentId)
-        .eq('user_id', userId)
+        .eq('user_id', userId);
+
+      if (options?.status) {
+        query = query.eq('status', options.status);
+      }
+
+      const { data: existing } = await query
+        .order('created_at', { ascending: false })
+        .limit(1)
         .maybeSingle();
 
       let result;
 
       if (existing) {
         // Update existing configuration
+        const updateData: Record<string, unknown> = {
+          input_values: inputValues,
+          updated_at: new Date().toISOString()
+        };
+        if (options?.inputSchema) {
+          updateData.input_schema = options.inputSchema;
+        }
+
         result = await this.supabase
           .from('agent_configurations')
-          .update({
-            input_values: inputValues,
-            input_schema: inputSchema,
-            updated_at: new Date().toISOString()
-          })
+          .update(updateData)
           .eq('id', existing.id)
+          .eq('user_id', userId)
           .select()
           .single();
       } else {
         // Insert new configuration
-        // Generate a unique ID for the configuration
-        const configId = `config_${Date.now()}_${Math.random().toString(36).substring(2, 15)}`;
+        const configId = `${agentId}-${userId}-${crypto.randomUUID()}`;
+
+        const insertData: Record<string, unknown> = {
+          id: configId,
+          agent_id: agentId,
+          user_id: userId,
+          input_values: inputValues,
+        };
+        if (options?.status) {
+          insertData.status = options.status;
+        }
+        if (options?.inputSchema) {
+          insertData.input_schema = options.inputSchema;
+        }
 
         result = await this.supabase
           .from('agent_configurations')
-          .insert({
-            id: configId,
-            agent_id: agentId,
-            user_id: userId,
-            input_values: inputValues,
-            input_schema: inputSchema,
-            created_at: new Date().toISOString()
-          })
+          .insert(insertData)
           .select()
           .single();
       }
@@ -200,6 +218,7 @@ export class AgentConfigurationRepository {
       methodLogger.info({
         configId: result.data.id,
         inputCount: Object.keys(inputValues).length,
+        isUpdate: !!existing,
         duration
       }, 'Input values saved successfully');
 

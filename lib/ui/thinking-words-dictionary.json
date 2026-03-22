@@ -130,6 +130,16 @@
         "Cooking up",
         "Digging in"
       ]
+    },
+    "long_wait": {
+      "description": "Humorous messages shown when processing takes longer than expected",
+      "words": [
+        "Still working on it — our AI analysts are pulling an all-nighter for you",
+        "Complex workflows take a bit longer — brewing extra coffee for the team",
+        "Almost there — the AI is triple-checking every step",
+        "Your agent is worth the wait — polishing the final details",
+        "Running a few more quality checks — perfection takes time"
+      ]
     }
   },
   "roleMapping": {

@@ -4,10 +4,10 @@
 
 This document tracks performance issues identified during navigation from `/v2/dashboard` to `/v2/sandbox/[agentId]` and their solutions.
 
-**Analysis Date:** 2026-01-16
+**Analysis Date:** 2026-01-16 (initial), 2026-01-17 (follow-up analysis)
 **Test Scenario:** Load v2/dashboard → Open agent → Navigate to sandbox page
 **Test URL:** `http://localhost:3000/v2/sandbox/3b4c622c-703f-43f8-9074-e9eb0977bd1c`
-**Total Time Observed:** ~3+ minutes (development mode)
+**Total Time Observed:** ~3+ minutes → ~45s after initial optimizations (development mode)
 
 ---
 
@@ -40,13 +40,19 @@ This document tracks performance issues identified during navigation from `/v2/d
 | 9 | 🔴 | Next.js dev compilation `/v2/dashboard` | 70.7s | **Dev only** | 1961 modules, dev mode JIT compilation | Split code/lazy load components, consider Turbopack | **Hard** | ⬜ TODO |
 | 10 | 🔴 | Next.js dev compilation `/v2/sandbox/[agentId]` | 19.3s | **Dev only** | 2136 modules, dev mode JIT compilation | Same as above + shared module extraction | **Hard** | ⬜ TODO |
 | 11 | 🔴 | EventEmitter memory leak warning | - | **Dev only** | 11 exit listeners added to process | Investigate listener cleanup in plugin system | **Hard** | ⬜ TODO |
+| 12 | 🟢 | Duplicate `/api/admin/reward-config` calls | 3487ms + 809ms | **Both** | Multiple components fetch independently | Add client-side request deduplication | **Easy** | ⬜ TODO |
+| 13 | 🟢 | Duplicate `/api/agents/{id}` calls | 4852ms + 2419ms | **Both** | StrictMode + multiple components | Add client-side request deduplication | **Easy** | ⬜ TODO |
+| 14 | 🟡 | Sequential plugin token preparation | ~600ms | **Both** | Tokens refreshed one by one | Parallelize with Promise.all() | **Medium** | ⬜ TODO |
+| 15 | 🟢 | Multiple `/api/plugins/available` calls | 4 calls total | **Both** | Multiple components call independently | Add client-side deduplication | **Easy** | ⬜ TODO |
+| 16 | 🟢 | Duplicate `/api/agents/{id}/intensity` calls | 4249ms + 693ms | **DEV** | StrictMode double-mount | Add client-side request deduplication | **Easy** | ⬜ TODO |
+| 17 | 🟡 | Plugin Manager reloads on each serverless function | Variable | **Both** | No module-level caching in serverless | Cache plugin definitions in global scope | **Medium** | ⬜ TODO |
 
 ### Impact Summary
 
 | Impact | Count | Items |
 |--------|-------|-------|
-| **Both (Dev + Prod)** | 7 | #1, #2, #3, #4, #5, #6, #7 |
-| **Dev only** | 4 | #8, #9, #10, #11 |
+| **Both (Dev + Prod)** | 12 | #1, #2, #3, #4, #5, #6, #7, #12, #13, #14, #15, #17 |
+| **Dev only** | 5 | #8, #9, #10, #11, #16 |
 
 ### Priority Legend
 
@@ -1368,6 +1374,396 @@ process.setMaxListeners(20); // Increase from default 10
 1. First, run Solution A to diagnose
 2. If plugin manager: implement Solution B
 3. Only use Solution C as last resort
+
+---
+
+### Issue #12: Duplicate `/api/admin/reward-config` calls
+
+**Problem:**
+```
+GET /api/admin/reward-config 200 in 3487ms
+GET /api/admin/reward-config 200 in 809ms  (duplicate)
+```
+
+**Root Cause Analysis:**
+
+| Call | Source | Location | Purpose |
+|------|--------|----------|---------|
+| First call | ShareAgentModalV2 or agent page | Agent sharing flow | Get reward config for sharing eligibility |
+| Second call | Same or different component | React StrictMode or multiple consumers | Redundant fetch |
+
+**Why duplicates occur:**
+1. No client-side request deduplication on this endpoint
+2. React StrictMode double-mount in development
+3. Possibly multiple components fetching the same data
+
+---
+
+#### Solution A: Add Client-Side Request Deduplication (Immediate Fix)
+
+Create a wrapper for reward-config fetches using `requestDeduplicator`.
+
+**File to create/modify:** `lib/client/admin-api.ts` or add to existing client API
+
+```typescript
+import { requestDeduplicator } from '@/lib/utils/request-deduplication'
+
+export const adminApi = {
+  async getRewardConfig(): Promise<ApiResponse<RewardConfig>> {
+    return requestDeduplicator.deduplicate(
+      'reward-config',
+      async () => {
+        const response = await fetch('/api/admin/reward-config')
+        const data = await response.json()
+        return { success: !data.error, data: data }
+      },
+      60000 // 1 minute cache - reward config rarely changes
+    )
+  }
+}
+```
+
+**Implementation checklist:**
+- [ ] Create or update client-side API wrapper
+- [ ] Update all consumers to use the wrapper
+- [ ] Test that duplicate calls are eliminated
+
+**Expected improvement:** Eliminates duplicate call (~800ms-3s saved)
+
+---
+
+### Issue #13: Duplicate `/api/agents/{id}` calls
+
+**Problem:**
+```
+GET /api/agents/3b4c622c-703f-43f8-9074-e9eb0977bd1c 200 in 4852ms
+GET /api/agents/3b4c622c-703f-43f8-9074-e9eb0977bd1c 200 in 2419ms  (duplicate)
+```
+
+**Root Cause Analysis:**
+
+| Call | Source | Likely Location | Purpose |
+|------|--------|-----------------|---------|
+| First call | Agent detail page | `app/v2/agents/[id]/page.tsx` | Load agent data |
+| Second call | Same page or child component | StrictMode double-mount | Redundant fetch |
+
+**Why duplicates occur:**
+1. `agentApi.getById()` doesn't use `requestDeduplicator`
+2. React StrictMode causes double-mount in development
+3. May also affect production if multiple components fetch the same agent
+
+---
+
+#### Solution A: Add Request Deduplication to getById (Immediate Fix)
+
+**File to modify:** `lib/client/agent-api.ts`
+
+```typescript
+async getById(agentId: string, userId: string): Promise<ApiResponse<{ agent: Agent; pluginRefresh: PluginRefreshResult | null }>> {
+  const cacheKey = `agent-${agentId}`
+
+  return requestDeduplicator.deduplicate(
+    cacheKey,
+    async () => {
+      const token = getStoredToken()
+      const response = await fetch(`/api/agents/${agentId}`, {
+        method: 'GET',
+        headers: getAuthHeaders(userId, token || undefined),
+      })
+      // ... existing logic
+    },
+    5000 // 5 second cache TTL
+  )
+}
+```
+
+**Implementation checklist:**
+- [ ] Wrap `getById` with `requestDeduplicator`
+- [ ] Test that duplicate calls are eliminated
+- [ ] Verify cache invalidation after agent updates
+
+**Expected improvement:** Eliminates duplicate call (~2-5s saved)
+
+---
+
+### Issue #14: Sequential plugin token preparation
+
+**Problem:**
+```
+Plugin tokens are prepared one by one:
+- google-sheets: ~300ms DB call
+- google-mail: ~300ms DB call
+Total: ~600ms sequential
+```
+
+**Root Cause Analysis:**
+
+The log shows sequential token preparation:
+```
+[11:31:05.048] Preparing plugin tokens... plugins: ["google-sheets", "google-mail"]
+[11:31:05.344] Plugin connection ready: google-sheets
+[11:31:05.654] Plugin connection ready: google-mail
+```
+
+This is ~600ms that could be parallelized to ~300ms.
+
+---
+
+#### Solution A: Parallelize Plugin Token Preparation (Immediate Fix)
+
+**File to modify:** `lib/services/PluginTokenService.ts` (or wherever `preparePluginTokens` is)
+
+```typescript
+async preparePluginTokens(userId: string, plugins: string[]): Promise<PrepareResult> {
+  // Before: Sequential
+  // for (const plugin of plugins) {
+  //   await this.prepareToken(userId, plugin)
+  // }
+
+  // After: Parallel
+  const results = await Promise.all(
+    plugins.map(plugin => this.prepareToken(userId, plugin))
+  )
+
+  return {
+    ready: results.filter(r => r.success).map(r => r.plugin),
+    failed: results.filter(r => !r.success).map(r => r.plugin)
+  }
+}
+```
+
+**Implementation checklist:**
+- [ ] Find plugin token preparation logic
+- [ ] Convert sequential loop to `Promise.all()`
+- [ ] Test that all plugins are still properly prepared
+- [ ] Verify error handling for individual plugin failures
+
+**Expected improvement:** ~50% reduction (~300ms saved)
+
+---
+
+### Issue #15: Multiple `/api/plugins/available` calls
+
+**Problem:**
+```
+GET /api/plugins/available 200 in 8798ms  (first, with compilation)
+GET /api/plugins/available 200 in 513ms
+GET /api/plugins/available 200 in 402ms
+GET /api/plugins/available 200 in 197ms
+```
+
+Four calls to the same endpoint in a single page load!
+
+**Root Cause Analysis:**
+
+Multiple components likely fetch available plugins independently:
+- Dashboard page
+- Plugin connection UI
+- Agent creation/edit forms
+- HelpBot or sidebar
+
+---
+
+#### Solution A: Create Shared Plugins Context (Recommended)
+
+Create a context provider that fetches available plugins once and shares them.
+
+**File to create:** `lib/contexts/PluginsContext.tsx`
+
+```typescript
+'use client'
+
+import { createContext, useContext, useEffect, useState, ReactNode } from 'react'
+import { requestDeduplicator } from '@/lib/utils/request-deduplication'
+
+interface PluginsContextType {
+  availablePlugins: Plugin[]
+  isLoading: boolean
+  error: string | null
+}
+
+const PluginsContext = createContext<PluginsContextType | null>(null)
+
+export function PluginsProvider({ children }: { children: ReactNode }) {
+  const [availablePlugins, setAvailablePlugins] = useState<Plugin[]>([])
+  const [isLoading, setIsLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    async function loadPlugins() {
+      try {
+        const result = await requestDeduplicator.deduplicate(
+          'plugins-available',
+          async () => {
+            const response = await fetch('/api/plugins/available')
+            return response.json()
+          },
+          300000 // 5 minute cache - plugin list rarely changes
+        )
+
+        if (result.success) {
+          setAvailablePlugins(result.plugins)
+        } else {
+          setError(result.error)
+        }
+      } finally {
+        setIsLoading(false)
+      }
+    }
+
+    loadPlugins()
+  }, [])
+
+  return (
+    <PluginsContext.Provider value={{ availablePlugins, isLoading, error }}>
+      {children}
+    </PluginsContext.Provider>
+  )
+}
+
+export function useAvailablePlugins() {
+  const context = useContext(PluginsContext)
+  if (!context) {
+    throw new Error('useAvailablePlugins must be used within PluginsProvider')
+  }
+  return context
+}
+```
+
+**Implementation checklist:**
+- [ ] Create `PluginsProvider` context
+- [ ] Wrap V2 layout with `PluginsProvider`
+- [ ] Update all components to use `useAvailablePlugins()` hook
+- [ ] Test that only one API call is made per session
+
+**Expected improvement:** Eliminates 3 redundant calls (~1s+ saved)
+
+---
+
+### Issue #16: Duplicate `/api/agents/{id}/intensity` calls
+
+**Problem:**
+```
+GET /api/agents/.../intensity 200 in 4249ms
+GET /api/agents/.../intensity 200 in 693ms  (duplicate)
+```
+
+**Root Cause Analysis:**
+
+| Call | Source | Purpose |
+|------|--------|---------|
+| First call | AgentIntensityCardV2 | Fetch intensity breakdown |
+| Second call | Same component | React StrictMode double-mount |
+
+**Note:** The server already has caching (second call is much faster: 693ms vs 4249ms), so this is mainly a dev-mode issue. However, adding client-side deduplication would still help.
+
+---
+
+#### Solution A: Add Request Deduplication (Immediate Fix)
+
+**File to modify:** `components/v2/agents/AgentIntensityCardV2.tsx`
+
+```typescript
+// In the fetchIntensity function, use requestDeduplicator
+async function fetchIntensity(forceRefresh: boolean = false) {
+  const cacheKey = `intensity-${agentId}`
+
+  // Clear cache if forcing refresh
+  if (forceRefresh) {
+    requestDeduplicator.invalidate(cacheKey)
+  }
+
+  return requestDeduplicator.deduplicate(
+    cacheKey,
+    async () => {
+      const response = await fetch(`/api/agents/${agentId}/intensity`, ...)
+      return response.json()
+    },
+    30000 // 30 second cache
+  )
+}
+```
+
+**Implementation checklist:**
+- [ ] Add `requestDeduplicator` to intensity fetch
+- [ ] Handle cache invalidation after agent runs
+- [ ] Test that duplicate calls are eliminated
+
+**Expected improvement:** Eliminates duplicate call (~4s saved in dev)
+
+---
+
+### Issue #17: Plugin Manager reloads on each serverless function
+
+**Problem:**
+```
+[11:30:39.480] INFO: Plugin-Manager-v2 module loaded ... totalPlugins: 11
+[11:31:04.714] INFO: Plugin-Manager-v2 module loaded ... totalPlugins: 11  (reload)
+[11:31:09.045] INFO: Plugin-Manager-v2 module loaded ... totalPlugins: 11  (reload)
+```
+
+Plugin definitions are loaded from filesystem multiple times during a single page load.
+
+**Root Cause Analysis:**
+
+In serverless environments (like Vercel), each API route runs in isolation. The plugin manager singleton pattern doesn't persist across different route invocations.
+
+**Why this happens:**
+1. Serverless functions have separate memory spaces
+2. Each function cold start re-initializes the plugin manager
+3. Plugin definitions are read from filesystem each time
+4. No global caching mechanism exists
+
+---
+
+#### Solution A: Use Global Scope for Plugin Cache (Immediate Fix)
+
+Use the `globalThis` object to persist plugin definitions across serverless function invocations (works in Node.js and Vercel).
+
+**File to modify:** `lib/server/plugin-manager-v2.ts`
+
+```typescript
+// At the top of the file
+declare global {
+  var __pluginDefinitions: Map<string, PluginDefinition> | undefined
+  var __pluginManagerInitialized: boolean | undefined
+}
+
+class PluginManagerV2 {
+  private static instance: PluginManagerV2 | null = null
+
+  static async getInstance(): Promise<PluginManagerV2> {
+    // Check if we have cached definitions in global scope
+    if (globalThis.__pluginDefinitions && globalThis.__pluginManagerInitialized) {
+      if (!this.instance) {
+        this.instance = new PluginManagerV2()
+        this.instance.plugins = globalThis.__pluginDefinitions
+        logger.debug('Plugin manager restored from global cache')
+      }
+      return this.instance
+    }
+
+    // Full initialization
+    this.instance = new PluginManagerV2()
+    await this.instance.initialize()
+
+    // Cache in global scope
+    globalThis.__pluginDefinitions = this.instance.plugins
+    globalThis.__pluginManagerInitialized = true
+
+    return this.instance
+  }
+}
+```
+
+**Implementation checklist:**
+- [ ] Add global type declarations
+- [ ] Check for cached definitions before loading
+- [ ] Cache definitions after loading
+- [ ] Test that subsequent requests use cache
+- [ ] Verify plugin updates still take effect (may need cache invalidation)
+
+**Expected improvement:** Plugin initialization reduced from ~40ms to <1ms for cached requests
 
 ---
 
