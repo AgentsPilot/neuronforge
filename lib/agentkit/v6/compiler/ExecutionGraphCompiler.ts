@@ -2376,6 +2376,7 @@ export class ExecutionGraphCompiler {
    */
   private toPilotFormat(workflow: WorkflowStep[], ctx: CompilerContext): WorkflowStep[] {
     let convertedCount = 0
+    let configRefsRewritten = 0
 
     const convertStep = (step: any): any => {
       const converted: any = { ...step }
@@ -2401,29 +2402,72 @@ export class ExecutionGraphCompiler {
         convertedCount++
       }
 
+      // B10: Rewrite {{config.X}} → {{input.X}} in all step values
+      // ExecutionContext doesn't support "config" as a variable root.
+      // Production agents use {{input.X}} — config values are passed as inputValues at runtime.
+      const rewriteResult = this.rewriteConfigRefs(converted)
+      configRefsRewritten += rewriteResult.count
+      const rewritten = rewriteResult.obj
+
       // Recurse into nested steps
-      if (converted.scatter?.steps) {
-        converted.scatter = {
-          ...converted.scatter,
-          steps: converted.scatter.steps.map(convertStep)
+      if (rewritten.scatter?.steps) {
+        rewritten.scatter = {
+          ...rewritten.scatter,
+          steps: rewritten.scatter.steps.map(convertStep)
         }
       }
-      if (converted.steps) {
-        converted.steps = converted.steps.map(convertStep)
+      if (rewritten.steps) {
+        rewritten.steps = rewritten.steps.map(convertStep)
       }
-      if (converted.then_steps) {
-        converted.then_steps = converted.then_steps.map(convertStep)
+      if (rewritten.then_steps) {
+        rewritten.then_steps = rewritten.then_steps.map(convertStep)
       }
-      if (converted.else_steps) {
-        converted.else_steps = converted.else_steps.map(convertStep)
+      if (rewritten.else_steps) {
+        rewritten.else_steps = rewritten.else_steps.map(convertStep)
       }
 
-      return converted
+      return rewritten
     }
 
     const result = workflow.map(convertStep)
     this.log(ctx, `  → Converted ${convertedCount} action steps to Pilot format (operation→action, config→params)`)
+    if (configRefsRewritten > 0) {
+      this.log(ctx, `  → Rewrote ${configRefsRewritten} config references: {{config.X}} → {{input.X}}`)
+    }
     return result
+  }
+
+  /**
+   * B10: Rewrite {{config.X}} → {{input.X}} in all string values.
+   * ExecutionContext only supports {{input.X}} for user-provided config values.
+   * Returns the rewritten object and a count of replacements made.
+   */
+  private rewriteConfigRefs(obj: any): { obj: any; count: number } {
+    let count = 0
+
+    const rewrite = (value: any): any => {
+      if (typeof value === 'string') {
+        if (value.includes('{{config.')) {
+          const replaced = value.replace(/\{\{config\./g, '{{input.')
+          count += (value.match(/\{\{config\./g) || []).length
+          return replaced
+        }
+        return value
+      }
+      if (Array.isArray(value)) {
+        return value.map(rewrite)
+      }
+      if (value && typeof value === 'object') {
+        const result: any = {}
+        for (const [key, val] of Object.entries(value)) {
+          result[key] = rewrite(val)
+        }
+        return result
+      }
+      return value
+    }
+
+    return { obj: rewrite(obj), count }
   }
 
   /**

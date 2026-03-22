@@ -131,8 +131,9 @@ export class VariableStore {
   private _lookupRef(ref: string): any {
     const parts = ref.split('.')
 
-    // config.X
-    if (parts[0] === 'config') {
+    // config.X or input.X (both resolve to workflowConfig)
+    // Compiler outputs {{input.X}} for Pilot compatibility, but {{config.X}} is also supported
+    if (parts[0] === 'config' || parts[0] === 'input' || parts[0] === 'inputs') {
       const key = parts.slice(1).join('.')
       return this.config[key]
     }
@@ -161,7 +162,8 @@ export class VariableStore {
   }
 
   /**
-   * Collect all {{config.X}} references from an object tree.
+   * Collect all {{config.X}} and {{input.X}} references from an object tree.
+   * Both patterns resolve to workflowConfig values.
    */
   static collectConfigRefs(obj: any): string[] {
     const refs: string[] = []
@@ -169,7 +171,8 @@ export class VariableStore {
 
     function walk(value: any) {
       if (typeof value === 'string') {
-        const matches = value.matchAll(/\{\{config\.(.+?)\}\}/g)
+        // Match both {{config.X}} and {{input.X}} / {{inputs.X}}
+        const matches = value.matchAll(/\{\{(?:config|input|inputs)\.(.+?)\}\}/g)
         for (const match of matches) {
           if (!seen.has(match[1])) {
             seen.add(match[1])

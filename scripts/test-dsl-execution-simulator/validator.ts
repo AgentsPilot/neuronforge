@@ -170,7 +170,8 @@ export class Validator {
         const inputRefs = collectInputVariables(step)
         for (const ref of inputRefs) {
           const baseName = ref.split('.')[0]
-          if (baseName !== 'config' && !scatterItemVars.has(baseName) && !producedVariables.has(baseName)) {
+          const builtinRoots = ['config', 'input', 'inputs']
+          if (!builtinRoots.includes(baseName) && !scatterItemVars.has(baseName) && !producedVariables.has(baseName)) {
             breaks.push(`${step.step_id}: references "${baseName}" not yet produced`)
             issues.push({
               severity: 'error',
@@ -317,7 +318,7 @@ export class Validator {
         for (const ref of allRefs) {
           const parts = ref.split('.')
           if (parts.length < 2) continue // bare variable, no field to check
-          if (parts[0] === 'config') continue // config refs checked separately
+          if (['config', 'input', 'inputs'].includes(parts[0])) continue // config/input refs checked separately
 
           const varName = parts[0]
           const fieldName = parts[1]
@@ -514,17 +515,22 @@ export class Validator {
 
     // Check field exists in schema (if schema available and field is nested)
     if (parts.length >= 2) {
+      const fieldName = parts[1]
+      // Skip JS runtime properties that are valid at runtime but not in schema
+      const runtimeProperties = ['length', 'size', 'count']
+      if (runtimeProperties.includes(fieldName)) return
+
       const schema = producedVariables.get(varName)
       if (schema) {
         const knownFields = extractFieldNames(schema)
-        if (knownFields.length > 0 && !knownFields.includes(parts[1])) {
-          const msg = `${stepId}: condition field "${field}" — "${parts[1]}" not in "${varName}" schema`
+        if (knownFields.length > 0 && !knownFields.includes(fieldName)) {
+          const msg = `${stepId}: condition field "${field}" — "${fieldName}" not in "${varName}" schema`
           errors.push(msg)
           issues.push({
             severity: 'error',
             check: 'conditional_field_not_in_schema',
             step_id: stepId,
-            message: `Condition field "${parts[1]}" not found in "${varName}" output_schema. Known: [${knownFields.join(', ')}]`,
+            message: `Condition field "${fieldName}" not found in "${varName}" output_schema. Known: [${knownFields.join(', ')}]`,
           })
         }
       }
