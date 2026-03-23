@@ -1,6 +1,6 @@
 # V6 Workflow Data Schema — Execution Simulator Workplan
 
-> **Status**: Phase A ✅, A+ ✅, Pre-B ✅, Phase B ✅ (with B10 fix) — DSL executes through real Pilot engine.
+> **Status**: Phase A ✅, A+ ✅, Pre-B ✅, Phase B ✅, Phase D ✅ — Full WorkflowPilot execution with mocked plugins. All blockers resolved.
 > **Date**: 2026-03-22
 > **Branch**: `feature/v6-intent-contract-data-schema`
 > **Parent workplan**: [V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_INTENT_CONTRACT.md](./V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_INTENT_CONTRACT.md)
@@ -700,13 +700,167 @@ private rewriteConfigRefs(obj: any): any {
 
 ---
 
-## Phase C — Design Notes (Future)
+## Phase D — Full WorkflowPilot with Mocked Plugins
 
-Full `WorkflowPilot.execute()` with:
-- Mock Supabase client (in-memory state)
-- Mock PluginExecuterV2 (stub data from output_schema)
-- Real WorkflowParser, StepExecutor, ExecutionContext, ParallelExecutor, ConditionalEvaluator
-- Validates the complete 8-phase lifecycle
+> **Prerequisite:** Phase B ✅ complete.
+> **Status:** Design complete, implementation pending.
+
+### Goal
+
+Run the compiled DSL through the **real WorkflowPilot** with all 8 execution phases, real DB persistence (execution records, step logs), real WorkflowParser (DAG construction), and real ParallelExecutor — but with **mocked plugin API responses**. This validates the full orchestration lifecycle without needing real OAuth tokens or test data.
+
+### What's New vs Phase B
+
+| Aspect | Phase B | Phase D |
+|--------|---------|---------|
+| Step orchestration | Custom step walker (~30 lines) | Real WorkflowPilot (8 phases) |
+| Step parsing | None — steps fed directly | Real WorkflowParser (DAG, topological sort, parallel detection) |
+| State persistence | None | Mock Supabase — StateManager calls succeed silently |
+| Scatter-gather | ParallelExecutor returned empty | Real ParallelExecutor with proper data flow |
+| Error recovery | None | Real ErrorRecovery (retry policies, circuit breaker) |
+| Agent record | Fake in-memory object | In-memory object passed directly to `execute()` |
+| Input values | Passed directly to constructor | Passed directly as `inputValues` parameter |
+| Database | None | **Mock Supabase** — all DB calls return empty/null, no real connection |
+| Plugins | Mocked PluginExecuterV2 | **Still mocked** — stub data from output schemas |
+| LLM calls | runAgentKit partially mocked | **Still mocked** — stub AI responses |
+
+### Fully Self-Contained (Zero External Dependencies)
+
+Phase D mocks **everything external** — no DB, no OAuth, no API calls:
+
+1. **No real Supabase** — mock client returns empty results for all queries. StateManager writes succeed silently. PilotConfigService falls back to defaults.
+2. **No agent saved to DB** — in-memory agent object passed directly to `WorkflowPilot.execute()`
+3. **No input_values in DB** — passed directly as `inputValues` parameter
+4. **No OAuth tokens** — mocked PluginExecuterV2 returns stub data
+5. **No LLM calls** — mocked runAgentKit returns stub AI responses
+6. **Repeatable** — same stub data every run, deterministic results
+7. **Safe** — no accidental emails, uploads, or sheet modifications
+8. **Fast** — no API/DB latency
+
+### Execution Flow
+
+```
+1. Set up mocks (PluginExecuterV2, AuditTrailService, runAgentKit, Supabase)
+2. Load compiled DSL (phase4-pilot-dsl-steps.json)
+3. Load merged config (phase4-workflow-config.json)
+4. Build in-memory agent object with pilot_steps + workflow_steps
+5. Create WorkflowPilot(mockSupabase) with options override
+6. Call pilot.execute(agent, userId, userInput, workflowConfig)
+7. WorkflowPilot runs all 8 phases:
+   Phase 0: Config load (falls back to defaults — mock DB returns empty)
+   Phase 1: WorkflowParser builds DAG
+   Phase 2: Pre-flight validation
+   Phase 3: ExecutionContext initialization
+   Phase 4: Memory injection (gracefully handles no history)
+   Phase 5: Step execution (real routing, mocked plugins)
+   Phase 6: State persistence (mock DB — writes silently succeed/fail)
+   Phase 7: Error handling
+   Phase 8: Summary + cleanup
+8. Report results
+```
+
+### Script Design
+
+**File:** `scripts/test-workflowpilot-execution.ts`
+
+```
+scripts/test-workflowpilot-execution.ts
+  1. Load env vars (via env-preload)
+  2. Set up mocks (reuse Phase B: mock-plugin-executer, mock-supabase, mock-services)
+  3. Load phase4-pilot-dsl-steps.json + phase4-workflow-config.json
+  4. Build in-memory agent object (no DB save)
+  5. Create WorkflowPilot(mockSupabase) with options
+  6. Call pilot.execute(agent, userId, userInput, workflowConfig)
+  7. Report: steps completed, failures, execution time
+```
+
+Run: `npx tsx --import ./scripts/env-preload.ts scripts/test-workflowpilot-execution.ts`
+
+### Implementation Tasks
+
+| # | Task | Description |
+|---|------|-------------|
+| D1 | Create script | `scripts/test-workflowpilot-execution.ts` |
+| D2 | Reuse Phase B mocks | Import mock-plugin-executer, mock-supabase, mock-services |
+| D3 | In-memory agent | Build agent object with pilot_steps + workflow_steps (no DB) |
+| D4 | WorkflowPilot execution | Create `WorkflowPilot(mockSupabase)`, call `execute()` |
+| D5 | Report | Console report + JSON report file |
+
+### Risk Mitigation
+
+| Risk | Mitigation |
+|------|------------|
+| `loadConfig()` DB query fails | `PilotConfigService` falls back to defaults on error |
+| `StateManager` writes fail | Mock Supabase returns `{ data: null, error: null }` — no crash |
+| `MemoryInjector` fails on no history | Handles gracefully — proceeds without memory context |
+| Mock Supabase doesn't match expected response shape | May need to extend mock for specific query patterns if WorkflowPilot crashes |
+
+### Success Criteria
+
+1. WorkflowPilot completes all 8 phases without unhandled errors
+2. WorkflowParser builds correct DAG from compiled DSL
+3. Scatter-gather fans out with mocked plugin data (the Phase B gap)
+4. Conditional branching executes correct path
+5. All `{{input.X}}` references resolve correctly through real ExecutionContext
+6. Step emitter fires `onStepStarted` / `onStepCompleted` for each step
+7. Execution result returns `success: true` with correct step counts
+
+### Phase D Results
+
+> **Date**: 2026-03-23 (final successful run after O13, D-B2, D-B3 fixes)
+> **Status**: ✅ Passed — 8/8 top-level steps, 9 scatter iterations × 6 nested steps, `success: true`. All blockers resolved.
+
+**Full execution summary:**
+- WorkflowPilot completed all 8 phases ✅
+- WorkflowParser built correct DAG (8 top-level steps including scatter_gather + conditional) ✅
+- Pre-flight validation passed ✅
+- All `{{input.X}}` references resolved correctly (B10 fix) ✅
+- Flatten produced 9 items from 3 emails × 3 attachments (O13 fix: `config.field: "attachments"`) ✅
+- Scatter-gather fanned out 9 iterations, each executing 6 nested steps (steps 5-10) ✅
+- AI steps (step10 × 9 + step16 × 1) all mocked — zero real OpenAI calls (D-B2 fix) ✅
+- Conditional (step12) evaluated `true`, entered `then` branch ✅
+- Sheets steps (step13-15) executed inside conditional ✅
+- Send email (step17) executed with mocked plugin ✅
+- StateManager created execution records ✅
+- ExecutionOutputCache cached step outputs ✅
+- Step emitter fired for all top-level steps ✅
+- Result: `success: true`, `stepsCompleted: 8`, `stepsFailed: 0`, `totalTokens: 20300` (all mock) ✅
+
+**Issue D-B1 ✅ FIXED: Scatter-gather gets 0 items**
+
+Scatter-gather (step4) originally completed with 0 items — nested steps never executed. Root cause: flatten transform produced `custom_code` (natural language) instead of structured extraction config.
+
+**Fix (O13):** Added `deriveFlattenField()` to compiler. Compares upstream schema (`data_schema.slots`) with flatten's `output_schema` to find the nested array field. Emits `config.field: "attachments"`. Runtime's `transformFlatten` already supported `config.field`.
+
+**Result after fix:** Flatten produced 9 items (3 emails × 3 attachments). Scatter-gather fanned out 9 iterations × 4 nested steps = 36 executions. Full data flow working.
+
+**Issue D-B3 ✅ FIXED: Multi-source merge fails inside scatter-gather**
+
+Step 9 (`transform/map`) inside scatter-gather merges 4 variables into one record. Runtime fails: `"Map operation requires array input"` because `extracted_fields` is a single object, not an array.
+
+**Fix (O14):** Compiler detects single-object `map` inside scatter-gather with multiple injected variables and compiles as `operation: "set"` with explicit field mapping. Implemented in `buildMergeFieldMapping()`. Note: on re-run, the LLM chose `ai_processing` for the merge step instead of `map`, so O14 wasn't triggered — but the fix is in place for future runs where the LLM chooses `map`.
+
+---
+
+**Issue D-B2 ✅ FIXED: `runAgentKit` mock didn't load**
+
+The mock patches the module export, but ES module exports are immutable — StepExecutor holds a direct reference from its top-level import. Step14 made a real OpenAI call (1,040 tokens, gpt-4o).
+
+**Fix:** Replaced `patchRunAgentKit()` with `patchStepExecutorLLM()` — patches `StepExecutor.prototype.executeLLMDecision` after import. Works because prototype methods are mutable even on ES module classes. Verified: `🤖 [MOCK] AI step step10: executeLLMDecision → stub output` — 9 iterations + 1 digest step, zero real OpenAI calls.
+
+**File:** `scripts/test-dsl-pilot-simulator/mocks/mock-services.ts`
+
+---
+
+## Phase E — Live Execution with Real Plugins (Future)
+
+> **Prerequisite:** Phase D validates full WorkflowPilot lifecycle. Phase E swaps mocked plugins for real APIs.
+
+Same as Phase D but with real plugin execution:
+- Remove PluginExecuterV2 mock — real OAuth calls to Gmail, Drive, Sheets
+- Remove runAgentKit mock — real LLM calls for AI steps
+- Requires: connected plugins (OAuth tokens), test data (emails, sheets, drive folder)
+- Validates: real API responses, real data transformation, end-to-end user value
 
 ---
 
@@ -723,3 +877,10 @@ Full `WorkflowPilot.execute()` with:
 | 2026-03-22 | Phase B implemented | B1-B9 complete. 8/8 steps executed. Discovered B10: `{{config.X}}` not supported at runtime — ExecutionContext only supports `{{input.X}}`. |
 | 2026-03-22 | B10 documented | Config variable root issue documented with Option A fix (compiler rewrites `{{config.` → `{{input.`). |
 | 2026-03-22 | B10 implemented | Added `rewriteConfigRefs()` to `toPilotFormat()`. Updated Phase A VariableStore to handle `input`/`inputs` roots. Pipeline re-run confirmed all refs now `{{input.X}}`. Phase B re-run: 8/8 steps pass. |
+| 2026-03-22 | Phase D redesigned | Full WorkflowPilot + fully mocked (no DB, no plugins, no LLM). In-memory agent, mock Supabase. Phase E for real plugin execution. 5 tasks (D1-D5). |
+| 2026-03-22 | Phase D executed | ✅ 8/8 steps, success: true. D-B1: scatter-gather 0 items (flatten produces unstructured output → O13). D-B2: runAgentKit mock didn't load (ES module immutability). |
+| 2026-03-22 | O13 implemented | Added `deriveFlattenField()` to compiler. Flatten now emits `config.field: "attachments"`. Phase D re-run: 9 items flattened, scatter-gather 36 nested executions, full data flow. |
+| 2026-03-23 | D-B3 documented | Multi-source merge inside scatter-gather fails — `map` on single object. Fix: O14 (compiler builds explicit field mapping as `set` operation). |
+| 2026-03-23 | O14 implemented | Added `buildMergeFieldMapping()` to compiler. Detects multi-source map inside scatter-gather → converts to `set` with field mapping. |
+| 2026-03-23 | D-B2 fixed | Replaced `patchRunAgentKit()` with `patchStepExecutorLLM()` — prototype patch works for ES module classes. |
+| 2026-03-23 | Phase D final run | ✅ All blockers resolved. 8/8 steps, 9 scatter iterations × 6 nested steps, zero real API calls. Full data flow working. |

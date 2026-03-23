@@ -20,7 +20,7 @@ console.log('\n⚙️  Setting up mocks...')
 
 // Import mock setup functions
 import { setupMockPluginExecuter, patchPluginExecuter } from './mocks/mock-plugin-executer'
-import { disableAuditTrail, patchRunAgentKit } from './mocks/mock-services'
+import { disableAuditTrail, patchStepExecutorLLM } from './mocks/mock-services'
 import { createMockSupabase } from './mocks/mock-supabase'
 import { registerOutputSchemas, generateStubData } from './stub-data-provider'
 import { loadInputFiles } from '../test-dsl-execution-simulator/file-loader'
@@ -36,7 +36,7 @@ async function main() {
 
   await disableAuditTrail()
   await patchPluginExecuter()
-  await patchRunAgentKit()
+  await patchStepExecutorLLM()
 
   // Step 2: Load input files (reuse Phase A loader)
   console.log('\n📁 Loading input files...')

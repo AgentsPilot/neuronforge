@@ -654,6 +654,16 @@ export class ExecutionGraphCompiler {
           transformedConfig.order = transformConfig.sort_order
           this.log(ctx, `  → Compiled sort_order to order`)
         }
+      } else if (transformConfig.type === 'flatten') {
+        // O13: Derive structured flatten config from upstream + downstream schemas
+        // The runtime's transformFlatten supports config.field for nested extraction:
+        //   config.field = "attachments" → extracts item.attachments from each array element
+        // The runtime's unwrapStructuredOutput handles object→array unwrapping automatically
+        const flattenField = this.deriveFlattenField(nodeId, transform, graph, ctx)
+        if (flattenField) {
+          transformedConfig.field = flattenField
+          this.log(ctx, `  → O13: Derived flatten field: "${flattenField}" (nested array extraction)`)
+        }
       } else if (transformConfig.type === 'custom' && transformConfig.custom_code) {
         // IR field: custom_code → DSL field: custom_code (experimental)
         transformedConfig.custom_code = transformConfig.custom_code
@@ -706,13 +716,48 @@ export class ExecutionGraphCompiler {
       }
     }
 
+    // O14: Detect multi-source merge disguised as 'map' inside scatter-gather
+    // Pattern: map with single-object input + additional variables in config + object output_schema
+    // Fix: convert to 'set' with inline field-mapping input that resolves all sources
+    let finalOperation = pilotOperation
+    let finalInput = input
+    if (pilotOperation === 'map' && ctx.loopDepth > 0) {
+      const outputSchema = (transform as any).output_schema
+      if (outputSchema?.type === 'object' && outputSchema.properties) {
+        // Check if config has additional variable references (injected loop variables)
+        const additionalVars = Object.entries(transformedConfig)
+          .filter(([key, val]) => typeof val === 'string' && (val as string).startsWith('{{') && key !== 'input' && key !== 'type' && key !== 'custom_code' && key !== 'output_schema')
+          .map(([key]) => key)
+
+        if (additionalVars.length > 0) {
+          this.log(ctx, `  → O14: Detected multi-source merge inside scatter-gather (${additionalVars.length} additional vars: ${additionalVars.join(', ')})`)
+
+          // Build field-mapping input: each output field maps to a {{source.field}} reference
+          const fieldMapping = this.buildMergeFieldMapping(
+            outputSchema,
+            input?.replace(/[{}]/g, '') || '',
+            additionalVars,
+            transformedConfig,
+            graph,
+            ctx
+          )
+
+          if (fieldMapping && Object.keys(fieldMapping).length > 0) {
+            finalOperation = 'set'
+            finalInput = fieldMapping
+            this.log(ctx, `  → O14: Converted map → set with ${Object.keys(fieldMapping).length} field mappings`)
+          }
+        }
+      }
+    }
+
     // PILOT format: input at top level, not in config
     return {
       step_id: stepId,
       type: 'transform',
-      operation: pilotOperation,  // PILOT expects 'operation' field for transform type
-      input: input,  // PILOT expects input at top level
-      description: operation.description || `Transform: ${pilotOperation}`,
+      operation: finalOperation,  // PILOT expects 'operation' field for transform type
+      input: finalInput,  // PILOT expects input at top level
+      description: operation.description || `Transform: ${finalOperation}`,
       config: transformedConfig  // Use transformed config
     }
   }
@@ -3692,6 +3737,232 @@ export class ExecutionGraphCompiler {
    * @param graph The execution graph
    * @returns Detection result with optimization suggestion
    */
+  /**
+   * O13: Derive the nested field name for a flatten transform.
+   *
+   * When the upstream output is an object containing an array of items,
+   * and each item has a nested array field, this method identifies that
+   * nested field so the runtime can extract and flatten it.
+   *
+   * Example: upstream = {emails: [{attachments: [...]}]}
+   *   → output_schema says items have attachment_id, filename, mimeType
+   *   → find which field in the email object contains objects with those fields
+   *   → return "attachments"
+   *
+   * The runtime's unwrapStructuredOutput handles the outer object→array unwrap.
+   * This method only needs to identify the inner nested array field.
+   */
+  private deriveFlattenField(
+    nodeId: string,
+    transform: any,
+    graph: ExecutionGraph,
+    ctx: CompilerContext
+  ): string | null {
+    try {
+      // Get the flatten step's output_schema — this defines what the flattened items look like
+      const outputSchema = transform.output_schema
+      if (!outputSchema?.items?.properties) return null
+
+      const outputFieldNames = new Set(Object.keys(outputSchema.items.properties))
+      if (outputFieldNames.size === 0) return null
+
+      // Find the upstream variable name — check node.inputs first, fall back to transform.input
+      const node = graph.nodes[nodeId]
+      let upstreamVar = node?.inputs?.[0]?.variable
+      if (!upstreamVar) {
+        // Transform nodes often use transform.input instead of node.inputs
+        upstreamVar = transform.input
+      }
+      if (!upstreamVar) return null
+
+      // Find the upstream schema from data_schema slots
+      const upstreamSchema = graph.data_schema?.slots?.[upstreamVar]?.schema || null
+
+      if (!upstreamSchema) return null
+
+      // Find the primary array in the upstream schema (e.g., "emails" in {emails: [...]})
+      let itemsSchema: any = null
+      if (upstreamSchema.type === 'array') {
+        itemsSchema = upstreamSchema.items
+      } else if (upstreamSchema.type === 'object' && upstreamSchema.properties) {
+        // Find the array field in the object (unwrapStructuredOutput handles this at runtime)
+        for (const [fieldName, fieldSchema] of Object.entries(upstreamSchema.properties)) {
+          if ((fieldSchema as any)?.type === 'array' && (fieldSchema as any)?.items) {
+            itemsSchema = (fieldSchema as any).items
+            break
+          }
+        }
+      }
+
+      if (!itemsSchema?.properties) return null
+
+      // Now look for a nested array field in the items whose children match the output schema
+      for (const [fieldName, fieldSchema] of Object.entries(itemsSchema.properties)) {
+        const fs = fieldSchema as any
+        if (fs.type === 'array' && fs.items?.properties) {
+          // Check if the nested array's item fields overlap with the output schema fields
+          const nestedFieldNames = new Set(Object.keys(fs.items.properties))
+          let matchCount = 0
+          for (const outputField of outputFieldNames) {
+            if (nestedFieldNames.has(outputField)) matchCount++
+          }
+          // If at least half of the output fields come from this nested array, it's our target
+          if (matchCount >= Math.min(2, outputFieldNames.size / 2)) {
+            this.log(ctx, `  → O13: Matched flatten field "${fieldName}" — ${matchCount}/${outputFieldNames.size} output fields found in nested schema`)
+            return fieldName
+          }
+        }
+      }
+
+      return null
+    } catch (err) {
+      this.log(ctx, `  → O13: Could not derive flatten field for ${nodeId}: ${err}`)
+      return null
+    }
+  }
+
+  /**
+   * O14: Build a field mapping for multi-source merge transforms.
+   *
+   * Given an output_schema and multiple source variables, determine which
+   * source variable provides each output field.
+   *
+   * Strategy:
+   * 1. For each output field, check if the primary input variable has it → {{primary.field}}
+   * 2. If not, search additional variables' schemas for a matching field name
+   * 3. For fields with renamed names (e.g., email_sender ← from), use description matching
+   * 4. For boolean fields like has_amount, generate expression
+   *
+   * Returns an object template like:
+   * {
+   *   "type": "{{extracted_fields.type}}",
+   *   "vendor": "{{extracted_fields.vendor}}",
+   *   "drive_link": "{{drive_file.web_view_link}}",
+   *   "email_sender": "{{attachment._parentData.from}}"
+   * }
+   */
+  private buildMergeFieldMapping(
+    outputSchema: any,
+    primaryInputVar: string,
+    additionalVars: string[],
+    config: any,
+    graph: ExecutionGraph,
+    ctx: CompilerContext
+  ): Record<string, any> | null {
+    try {
+      const mapping: Record<string, any> = {}
+      const outputFields = Object.entries(outputSchema.properties || {})
+
+      // Build a lookup of available variable schemas
+      const varSchemas = new Map<string, any>()
+
+      // Primary input schema from data_schema
+      const primarySlot = graph.data_schema?.slots?.[primaryInputVar]
+      if (primarySlot?.schema) {
+        varSchemas.set(primaryInputVar, primarySlot.schema)
+      }
+
+      // Additional variable schemas
+      for (const varName of additionalVars) {
+        const slot = graph.data_schema?.slots?.[varName]
+        if (slot?.schema) {
+          varSchemas.set(varName, slot.schema)
+        }
+      }
+
+      // Also check scatter item variable — it may have _parentData from flatten
+      const itemVar = ctx.loopContextStack.length > 0
+        ? ctx.loopContextStack[ctx.loopContextStack.length - 1].itemVariable
+        : null
+
+      for (const [fieldName, fieldSchema] of outputFields) {
+        const fieldDesc = ((fieldSchema as any)?.description || '').toLowerCase()
+
+        // Strategy 1: Check primary input variable
+        if (this.variableHasField(varSchemas.get(primaryInputVar), fieldName)) {
+          mapping[fieldName] = `{{${primaryInputVar}.${fieldName}}}`
+          continue
+        }
+
+        // Strategy 2: Check additional variables
+        let found = false
+        for (const varName of additionalVars) {
+          const resolvedVarName = config[varName]?.replace(/[{}]/g, '') || varName
+
+          // Direct field match
+          if (this.variableHasField(varSchemas.get(varName), fieldName)) {
+            mapping[fieldName] = `{{${resolvedVarName}.${fieldName}}}`
+            found = true
+            break
+          }
+
+          // Common rename patterns
+          const renameMap: Record<string, { var: string; field: string }[]> = {
+            'drive_link': [{ var: 'drive_file', field: 'web_view_link' }],
+            'email_sender': [{ var: itemVar || 'attachment', field: '_parentData.from' }],
+            'email_subject': [{ var: itemVar || 'attachment', field: '_parentData.subject' }],
+            'email_date': [{ var: itemVar || 'attachment', field: '_parentData.date' }],
+            'received_date': [{ var: itemVar || 'attachment', field: '_parentData.date' }],
+            'sender': [{ var: itemVar || 'attachment', field: '_parentData.from' }],
+          }
+
+          if (renameMap[fieldName]) {
+            for (const candidate of renameMap[fieldName]) {
+              if (additionalVars.includes(candidate.var) || candidate.var === itemVar) {
+                const candidateResolved = config[candidate.var]?.replace(/[{}]/g, '') || candidate.var
+                mapping[fieldName] = `{{${candidateResolved}.${candidate.field}}}`
+                found = true
+                break
+              }
+            }
+            if (found) break
+          }
+
+          // Description-based matching: "link" → web_view_link, "sender" → from
+          if (fieldDesc.includes('link') || fieldDesc.includes('url')) {
+            if (this.variableHasField(varSchemas.get(varName), 'web_view_link')) {
+              mapping[fieldName] = `{{${resolvedVarName}.web_view_link}}`
+              found = true
+              break
+            }
+          }
+        }
+
+        if (found) continue
+
+        // Strategy 3: Boolean computed fields
+        if ((fieldSchema as any)?.type === 'boolean') {
+          if (fieldName === 'has_amount' || fieldName.startsWith('has_')) {
+            const sourceField = fieldName.replace('has_', '')
+            mapping[fieldName] = true // Default true — runtime can check
+            continue
+          }
+        }
+
+        // Strategy 4: Fallback — leave as null (field will be missing at runtime)
+        this.log(ctx, `    → O14: Could not map output field "${fieldName}" to any source variable`)
+        mapping[fieldName] = null
+      }
+
+      return mapping
+    } catch (err) {
+      this.log(ctx, `  → O14: buildMergeFieldMapping failed: ${err}`)
+      return null
+    }
+  }
+
+  /**
+   * Check if a variable's schema has a given field name.
+   */
+  private variableHasField(schema: any, fieldName: string): boolean {
+    if (!schema) return false
+    // Object with properties
+    if (schema.properties?.[fieldName]) return true
+    // Array with item properties
+    if (schema.items?.properties?.[fieldName]) return true
+    return false
+  }
+
   private detectUnnecessaryTransform(
     nodeId: string,
     transform: any,
