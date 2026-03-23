@@ -56,7 +56,7 @@ export class GenerateHandler extends BaseHandler {
       );
 
       // Parse response
-      const output = llmResponse.text;
+      const rawOutput = llmResponse.text;
 
       // Calculate actual token usage
       const tokensUsed = {
@@ -67,19 +67,42 @@ export class GenerateHandler extends BaseHandler {
       // Use cost from provider
       const cost = llmResponse.cost;
 
+      // I3: Extract structured output if output_schema is defined
+      // When a step declares output_schema (e.g., {subject, body}), parse the LLM response
+      // as JSON and return the structured fields as top-level properties.
+      // This enables downstream steps to reference {{variable.subject}}, {{variable.body}} etc.
+      const outputSchema = this.getOutputSchema(context);
+      let output: any = rawOutput;
+
+      if (outputSchema && outputSchema.properties) {
+        const parsed = this.extractStructuredOutput(rawOutput, outputSchema);
+        if (parsed) {
+          console.log(`[GenerateHandler] ✅ Extracted structured output with ${Object.keys(parsed).length} fields: ${Object.keys(parsed).join(', ')}`);
+          output = parsed;
+        } else {
+          console.warn(`[GenerateHandler] ⚠️ Failed to extract structured output, returning raw text`);
+        }
+      }
+
       // Assess quality if possible
-      const quality = this.assessGenerationQuality(output, context);
+      const quality = this.assessGenerationQuality(rawOutput, context);
 
       // Create success result
+      // If structured output was extracted, return it directly (not wrapped in aliases)
+      // so downstream steps can reference fields like {{variable.subject}}, {{variable.body}}
+      const outputPayload = (outputSchema && outputSchema.properties && typeof output === 'object')
+        ? { ...output, quality, tokensGenerated: tokensUsed.output }
+        : {
+            result: output,           // PRIMARY field - matches StepExecutor and Stage 1 expectations
+            response: output,         // Alias for compatibility
+            output: output,           // Alias for compatibility
+            generated: output,        // Keep for backwards compatibility
+            quality,
+            tokensGenerated: tokensUsed.output,
+          };
+
       const result = this.createSuccessResult(
-        {
-          result: output,           // PRIMARY field - matches StepExecutor and Stage 1 expectations
-          response: output,         // Alias for compatibility
-          output: output,           // Alias for compatibility
-          generated: output,        // Keep for backwards compatibility
-          quality,
-          tokensGenerated: tokensUsed.output,
-        },
+        outputPayload,
         tokensUsed,
         cost,
         Date.now() - startTime,
@@ -108,7 +131,7 @@ export class GenerateHandler extends BaseHandler {
     // Extract generation type from input
     const genType = this.extractGenerationType(context.input);
 
-    const basePrompt = `You are a content generation specialist. Your task is to create high-quality ${genType} content.
+    let basePrompt = `You are a content generation specialist. Your task is to create high-quality ${genType} content.
 
 INSTRUCTIONS:
 - Create original, engaging content
@@ -116,6 +139,21 @@ INSTRUCTIONS:
 - Maintain consistency in tone and style
 - Ensure accuracy and factual correctness
 - Structure content logically and clearly`;
+
+    // I3: When output_schema is defined, instruct LLM to respond with JSON
+    const outputSchema = this.getOutputSchema(context);
+    if (outputSchema && outputSchema.properties) {
+      const fields = Object.entries(outputSchema.properties).map(([name, prop]: [string, any]) =>
+        `  - "${name}": ${prop.type || 'string'}${prop.description ? ` — ${prop.description}` : ''}`
+      ).join('\n');
+
+      basePrompt += `\n\nCRITICAL: You MUST respond with a valid JSON object containing these fields:
+${fields}
+
+Respond ONLY with the JSON object. Do not include any text before or after the JSON.
+Do not wrap the JSON in markdown code blocks.
+Ensure all string values are properly escaped (especially HTML content — escape quotes and newlines).`;
+    }
 
     // Add specific guidance based on generation type
     if (genType === 'report' || genType === 'document') {
@@ -179,6 +217,64 @@ INSTRUCTIONS:
 
     // Default: moderate temperature
     return 0.7;
+  }
+
+  /**
+   * Get output_schema from context if available (I3)
+   * The step's config.output_schema defines the expected JSON structure
+   */
+  private getOutputSchema(context: HandlerContext): any {
+    const step = context.input?.step;
+    return step?.config?.output_schema || step?.output_schema || null;
+  }
+
+  /**
+   * Extract structured JSON output from LLM response text (I3)
+   * Uses balanced-brace parsing to handle HTML/CSS content with { } inside JSON strings
+   */
+  private extractStructuredOutput(text: string, schema: any): any {
+    // Try to find and parse a JSON object from the LLM response
+    const startIdx = text.indexOf('{');
+    if (startIdx === -1) return null;
+
+    // Balanced-brace extraction (same approach as StepExecutor D-B5 fix)
+    let depth = 0;
+    let inString = false;
+    let escape = false;
+
+    for (let i = startIdx; i < text.length; i++) {
+      const ch = text[i];
+
+      if (escape) { escape = false; continue; }
+      if (ch === '\\' && inString) { escape = true; continue; }
+      if (ch === '"') { inString = !inString; continue; }
+      if (inString) continue;
+
+      if (ch === '{') depth++;
+      if (ch === '}') depth--;
+
+      if (depth === 0) {
+        const candidate = text.slice(startIdx, i + 1);
+        try {
+          const parsed = JSON.parse(candidate);
+          // Verify it has at least one expected field from the schema
+          const expectedFields = Object.keys(schema.properties || {});
+          const hasExpectedField = expectedFields.some(f => f in parsed);
+          if (hasExpectedField) {
+            return parsed;
+          }
+        } catch {
+          // Not valid JSON at this boundary — try next { occurrence
+          const nextStart = text.indexOf('{', startIdx + 1);
+          if (nextStart !== -1) {
+            return this.extractStructuredOutput(text.slice(nextStart), schema);
+          }
+          return null;
+        }
+      }
+    }
+
+    return null;
   }
 
   /**

@@ -401,7 +401,7 @@ export class WorkflowPilot {
 
         // Race between memory loading and configurable timeout
         // Default: 10s (allows for cold starts and database queries on Vercel)
-        const memoryTimeout = this.options.memoryLoadTimeoutMs || 10000;
+        const memoryTimeout = this.options?.memoryLoadTimeoutMs || 10000;
         const memoryContext = await Promise.race([
           memoryInjector.buildMemoryContext(agent.id, userId, { userInput, inputValues }),
           new Promise<null>((_, reject) =>
@@ -410,7 +410,7 @@ export class WorkflowPilot {
         ]);
 
         if (memoryContext) {
-          context.memoryContext = memoryContext;
+          context.memoryContext = memoryContext as any;
           if (memoryConfig.debug_mode) {
             console.log(`🧠 [WorkflowPilot] Loaded memory context: ${memoryContext.token_count} tokens`);
           }
@@ -516,8 +516,10 @@ export class WorkflowPilot {
         userMemoryService.extractMemoriesFromExecution(
           userId,
           agent.id,
+          executionId,
+          agent.agent_name || 'unnamed',
           JSON.stringify({ userInput, inputValues }),
-          JSON.stringify(context.finalOutput),
+          JSON.stringify((context as any).finalOutput || {}),
           agent.user_prompt || agent.system_prompt || ''
         ).then(() => {
           console.log(`✅ User memory extraction complete for execution ${executionId}`);
@@ -543,7 +545,7 @@ export class WorkflowPilot {
 
       if (context.orchestrator) {
         try {
-          orchestrationMetrics = await context.orchestrator.complete();
+          orchestrationMetrics = await (context.orchestrator as any).complete?.();
           if (orchestrationMetrics) {
             orchestrationTokens = orchestrationMetrics.totalTokensUsed || 0;
             console.log('🎯 [WorkflowPilot] Orchestration metrics:');
@@ -833,7 +835,7 @@ export class WorkflowPilot {
           // This enables auto-fix for data shape mismatches, filter bugs, etc.
           const failedStepId = error.stepId || context.currentStep || 'unknown';
           const pilotSteps = agent.pilot_steps || agent.workflow_steps || [];
-          const failedStepDef = pilotSteps.find(s => s.id === failedStepId || s.step_id === failedStepId);
+          const failedStepDef = pilotSteps.find(s => s.id === failedStepId || (s as any).step_id === failedStepId);
           const failedStepName = failedStepDef?.name || failedStepId;
           const failedStepType = failedStepDef?.type || 'unknown';
 
@@ -842,7 +844,7 @@ export class WorkflowPilot {
             failedStepId,
             failedStepName,
             failedStepType,
-            context
+            context as any
           );
           context.collectedIssues.push(executionIssue);
           console.log(`🔍 [WorkflowPilot] Collected execution error issue: ${executionIssue.category}, auto-repair: ${executionIssue.autoRepairAvailable}`);
@@ -1089,7 +1091,13 @@ export class WorkflowPilot {
     }
 
     // Handle conditional type
+    // IMPORTANT: Conditional steps are handled HERE in WorkflowPilot, NOT in StepExecutor.
+    // WorkflowPilot intercepts them before they reach StepExecutor.execute().
+    // This is where nested branch steps (then/else) must be executed.
+    // V6 compiler outputs: 'steps' for then-branch, 'else_steps' for else-branch.
+    // Legacy DSL uses: 'then_steps'/'else_steps' or 'then'/'else'.
     if (stepDef.type === 'conditional') {
+      const conditionalStep = stepDef as any;
       const result = this.conditionalEvaluator.evaluate(
         stepDef.condition!,
         context
@@ -1109,6 +1117,38 @@ export class WorkflowPilot {
       });
 
       console.log(`  ✓ Condition evaluated: ${result}`);
+
+      // Execute nested branch steps
+      // V6 compiler uses 'steps' for then-branch; legacy uses 'then_steps' or 'then'
+      const branchToExecute = result
+        ? (conditionalStep.steps || conditionalStep.then || conditionalStep.then_steps)
+        : (conditionalStep.else_steps || conditionalStep.else);
+      const branchName = result ? 'then' : 'else';
+
+      if (branchToExecute && Array.isArray(branchToExecute) && branchToExecute.length > 0) {
+        console.log(`  → Executing ${branchName} branch: ${branchToExecute.length} steps`);
+        for (const branchStep of branchToExecute) {
+          // Ensure nested steps have 'id' field (V6 compiler uses 'step_id', Pilot expects 'id')
+          if (!branchStep.id && branchStep.step_id) {
+            branchStep.id = branchStep.step_id;
+          }
+          if (!branchStep.name && branchStep.description) {
+            branchStep.name = branchStep.description;
+          }
+          // Wrap raw step definition in ExecutionStep format expected by executeSingleStep
+          const executionStep = {
+            stepId: branchStep.id || branchStep.step_id,
+            stepDefinition: branchStep,
+            dependencies: [],
+            level: 0,
+            canRunInParallel: false,
+          };
+          await this.executeSingleStep(executionStep as any, context);
+        }
+      } else {
+        console.log(`  → No steps in ${branchName} branch, skipping`);
+      }
+
       await this.stateManager.checkpoint(context);
       // Emit step completed event
       if (stepEmitter?.onStepCompleted) {
@@ -2305,8 +2345,8 @@ export class WorkflowPilot {
             description: insight.description,
             business_impact: insight.business_impact,
             recommendation: insight.recommendation,
-            pattern_data: {},  // Patterns already processed by BusinessInsightGenerator
-            metrics: {},
+            pattern_data: { occurrences: 0, affected_steps: [] } as any,  // Patterns already processed by BusinessInsightGenerator
+            metrics: { total_executions: 0, affected_executions: 0, pattern_frequency: 0 } as any,
             status: 'new',
           });
 
@@ -2433,8 +2473,8 @@ export class WorkflowPilot {
         const { ExecutionProtection } = await import('./shadow/ExecutionProtection');
 
         const shadowAgent = new ShadowAgent(supabaseAdmin, agent.id, context.userId);
-        const checkpointManager = new CheckpointManager(supabaseAdmin);
-        const executionProtection = new ExecutionProtection(supabaseAdmin);
+        const checkpointManager = new CheckpointManager(executionId);
+        const executionProtection = new ExecutionProtection(supabaseAdmin, agent.id);
 
         const resumeOrchestrator = new ResumeOrchestrator(
           shadowAgent,
@@ -2795,7 +2835,7 @@ export class WorkflowPilot {
           resumed: true,
           paused_for_parameter_fix: shouldPause,
         },
-        severity: 'error',
+        severity: 'critical',
       });
 
       throw error;

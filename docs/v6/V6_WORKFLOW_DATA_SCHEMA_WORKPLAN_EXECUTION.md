@@ -1,7 +1,7 @@
 # V6 Workflow Data Schema — Execution Simulator Workplan
 
-> **Status**: Phase A ✅, A+ ✅, Pre-B ✅, Phase B ✅, Phase D ✅ — Full WorkflowPilot execution with mocked plugins. All blockers resolved.
-> **Date**: 2026-03-22
+> **Status**: Phase A ✅, A+ ✅, Pre-B ✅, Phase B ✅, Phase D ✅, Phase E ✅ — Live execution with real plugins (Google Sheets + Gmail). 7/7 steps passing end-to-end.
+> **Date**: 2026-03-23
 > **Branch**: `feature/v6-intent-contract-data-schema`
 > **Parent workplan**: [V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_INTENT_CONTRACT.md](./V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_INTENT_CONTRACT.md)
 
@@ -852,15 +852,170 @@ The mock patches the module export, but ES module exports are immutable — Step
 
 ---
 
-## Phase E — Live Execution with Real Plugins (Future)
+## Phase E — Live Execution with Real Plugins
 
-> **Prerequisite:** Phase D validates full WorkflowPilot lifecycle. Phase E swaps mocked plugins for real APIs.
+> **Prerequisite:** Phase D ✅ validates full WorkflowPilot lifecycle.
+> **Status:** Design complete, implementation pending.
 
-Same as Phase D but with real plugin execution:
-- Remove PluginExecuterV2 mock — real OAuth calls to Gmail, Drive, Sheets
-- Remove runAgentKit mock — real LLM calls for AI steps
-- Requires: connected plugins (OAuth tokens), test data (emails, sheets, drive folder)
-- Validates: real API responses, real data transformation, end-to-end user value
+### Goal
+
+Execute the compiled DSL as a **real agent** with real plugin API calls (Gmail, Drive, Sheets), real LLM calls, and real Supabase persistence. No mocks. This is the final validation that the V6 pipeline produces a production-ready agent.
+
+### Script Design
+
+**File:** `scripts/test-live-agent-execution.ts`
+
+**Input arguments:**
+```
+npx tsx --import ./scripts/env-preload.ts scripts/test-live-agent-execution.ts \
+  --agent-id <UUID> \
+  --dsl <path-to-phase4-pilot-dsl-steps.json> \
+  --config <path-to-phase4-workflow-config.json>
+```
+
+Defaults:
+- `--dsl` → `output/vocabulary-pipeline/phase4-pilot-dsl-steps.json`
+- `--config` → `output/vocabulary-pipeline/phase4-workflow-config.json`
+- `--agent-id` → required, no default
+
+**Environment:**
+- `TEST_USER_ID` from `.env.local` — the user whose plugin connections are used
+
+### Execution Flow
+
+```
+1. Parse CLI arguments (agent-id, dsl path, config path)
+2. Load DSL + config from files
+3. Validate DSL structure (non-empty array, steps have required fields)
+4. Connect to real Supabase
+5. Validate agent exists in DB (agents table, matching agent-id + user-id)
+   → Fail if not found
+6. Extract plugin keys from DSL steps
+7. Validate plugin connections:
+   a. Call PluginManagerV2.getExecutablePlugins(userId)
+      (this refreshes expired tokens automatically)
+   b. For each plugin in DSL, verify it's in the executable set
+   c. Report: ✅ connected / ❌ missing for each plugin
+   → Fail if any required plugin is not executable
+8. Update agent in DB:
+   a. Set pilot_steps = DSL
+   b. Set workflow_steps = DSL (backward compat)
+   c. Set plugins_required = extracted plugin keys
+   d. Set updated_at = now
+9. Save input_values to agent_configurations
+10. Create real WorkflowPilot(supabase) — NO mocks
+11. Call pilot.execute(agent, userId, userInput, inputValues)
+    with stepEmitter for live console logging
+12. Report results:
+    a. Console: step-by-step log with inputs/outputs per step
+    b. JSON file: structured execution report with full step data
+13. Verify execution record in agent_executions table
+```
+
+### Pre-Flight Validation Detail
+
+**Step 3 — DSL validation:**
+- File exists and is valid JSON
+- Array with at least 1 step
+- Each step has `id` or `step_id`, `type`, `name` or `description`
+- Action steps have `plugin`, `action`, `params`
+
+**Step 5 — Agent validation:**
+```sql
+SELECT id, agent_name, status FROM agents
+WHERE id = :agent_id AND user_id = :user_id AND status != 'deleted'
+```
+Fail with clear error if not found.
+
+**Step 7 — Plugin connection validation:**
+Uses `PluginManagerV2.getExecutablePlugins(userId)` which:
+1. Gets all active connections (including expired)
+2. For each: checks if token needs refresh (5-minute buffer)
+3. Refreshes expired/near-expiry tokens via `UserPluginConnections.refreshToken()`
+4. Returns only plugins with valid, ready-to-use tokens
+
+Report format:
+```
+🔌 Plugin Connections:
+   ✅ google-mail — token valid (expires in 47 min)
+   ✅ google-drive — token refreshed
+   ✅ google-sheets — token valid (expires in 47 min)
+   ✅ document-extractor — system plugin (no token needed)
+   ❌ slack — NOT CONNECTED (required by step12)
+```
+
+### Output Report
+
+**Console output** — live step-by-step execution with inputs and outputs:
+```
+▶️  step1 [google-mail/search_emails]:
+   Input: { query: "subject:(Invoice OR Bill)...", max_results: 50 }
+   ✅ Output: { emails: 3 items, total_found: 3 }
+   Duration: 1.2s
+
+▶️  step2 [transform/flatten]:
+   Input: matching_emails (object, 5 keys)
+   ✅ Output: array[9] (9 attachments extracted)
+   Duration: 0.01s
+...
+```
+
+**JSON report** — `output/vocabulary-pipeline/live-execution-report.json`:
+```json
+{
+  "timestamp": "...",
+  "phase": "E",
+  "agent_id": "...",
+  "execution_id": "...",
+  "user_id": "...",
+  "summary": {
+    "success": true,
+    "steps_completed": 8,
+    "steps_failed": 0,
+    "execution_time_ms": 15000,
+    "total_tokens": 1200
+  },
+  "step_details": [
+    {
+      "step_id": "step1",
+      "type": "action",
+      "plugin": "google-mail",
+      "action": "search_emails",
+      "resolved_input": { "query": "...", "max_results": 50 },
+      "output_preview": { "emails": "3 items", "total_found": 3 },
+      "output_full": { ... },
+      "status": "ok",
+      "duration_ms": 1200,
+      "tokens_used": 0
+    }
+  ],
+  "plugin_connections": {
+    "google-mail": { "status": "valid", "refreshed": false },
+    "google-drive": { "status": "valid", "refreshed": true }
+  }
+}
+```
+
+### Implementation Tasks
+
+| # | Task | Description |
+|---|------|-------------|
+| E1 | CLI argument parsing | Parse `--agent-id`, `--dsl`, `--config` with defaults |
+| E2 | DSL validation | Validate structure, required fields per step type |
+| E3 | Agent validation | Verify agent exists in DB for given user |
+| E4 | Plugin validation + refresh | `getExecutablePlugins()` for all DSL-required plugins, report status |
+| E5 | Agent update | Save `pilot_steps` + `workflow_steps` + `plugins_required` to agent |
+| E6 | Save input_values | Write config to `agent_configurations` |
+| E7 | Execute | `WorkflowPilot.execute()` with real Supabase, stepEmitter for live logging |
+| E8 | Step detail capture | Capture resolved inputs + outputs per step for report |
+| E9 | Report generation | Console output (live) + JSON file (structured) |
+| E10 | DB verification | Check `agent_executions` for completion record |
+
+### Future Enhancement
+
+| # | Description |
+|---|-------------|
+| F1 | **API-triggered execution** — Instead of calling `WorkflowPilot.execute()` directly, trigger via `POST /api/run-agent { agent_id, execution_type: "test", input_variables }`. Simulates real user trigger through the full API stack (auth, rate limits, audit trail). |
 
 ---
 
@@ -884,3 +1039,12 @@ Same as Phase D but with real plugin execution:
 | 2026-03-23 | O14 implemented | Added `buildMergeFieldMapping()` to compiler. Detects multi-source map inside scatter-gather → converts to `set` with field mapping. |
 | 2026-03-23 | D-B2 fixed | Replaced `patchRunAgentKit()` with `patchStepExecutorLLM()` — prototype patch works for ES module classes. |
 | 2026-03-23 | Phase D final run | ✅ All blockers resolved. 8/8 steps, 9 scatter iterations × 6 nested steps, zero real API calls. Full data flow working. |
+| 2026-03-23 | Phase E design | Live execution plan: CLI script with agent-id + DSL + config args. Pre-flight: DSL validation, agent exists, plugin connections + token refresh. Real WorkflowPilot, real plugins. 10 tasks (E1-E10) + F1 future (API trigger). |
+| 2026-03-23 | O15 implemented | Compiler `updateVariableReferences()` didn't replace bare strings (no `{{ }}`). At Phase 3.5 time, `step.input` is bare (`raw_leads` not `{{raw_leads}}`). Fix: added exact-match bare string replacement. |
+| 2026-03-23 | Phase E first run | Leads workflow: step1 failed — `"Leads Tab"` range with space not quoted. Manual fix to `"Leads"`. |
+| 2026-03-23 | Phase E second run | ✅ Steps 1-5 pass with real data. Read 6 rows from Sheets, rows_to_objects produced 5 leads, filter found 3 with Stage=4, count=3, conditional entered `then` branch. **But step6/step7 (AI + send email) never executed.** |
+| 2026-03-23 | D-B4 discovered + fixed | **Conditional `then` branch not executing nested steps.** Three layered issues: (1) `WorkflowPilot.executeSingleStep()` handles conditionals directly — evaluates condition then returns without executing nested branch steps. Fix: added branch step iteration after condition evaluation. (2) Nested steps are raw `WorkflowStep` objects but `executeSingleStep()` expects `ExecutionStep` wrapper (`{stepId, stepDefinition, ...}`). Fix: wrap each branch step before calling. (3) Nested steps may have `step_id` but not `id`/`name`. Fix: normalize before execution. `StepExecutor.executeConditional()` also updated with matching field names + comment noting it's only used by test scripts (not production WorkflowPilot path). **Files:** `lib/pilot/WorkflowPilot.ts`, `lib/pilot/StepExecutor.ts`. |
+| 2026-03-23 | D-B4 verified + D-B5 root cause found | D-B4 fix confirmed — conditional branch steps now execute. D-B5 actual root cause: test script `test-live-agent-execution.ts` line 328 truncates JSON output then calls `JSON.parse()` on the truncated string. NOT a production StepExecutor issue. Fix: return truncated string as-is, don't re-parse. |
+| 2026-03-23 | I3 implemented | **Structured output extraction in StepExecutor.executeLLMDecision().** When step has `output_schema` with properties: (1) appends JSON response instruction to LLM prompt, (2) extracts structured JSON from response via `extractBalancedJSON()` balanced-brace parser, (3) returns parsed fields as step data (e.g., `{subject, body}`) instead of alias wrapper. Enables downstream steps to reference `{{variable.subject}}`, `{{variable.body}}`. Also added `extractBalancedJSON()` to `parseLLMExtractionResponse()` for general safety. Same fix applied in `GenerateHandler` for orchestration path. **Files:** `lib/pilot/StepExecutor.ts`, `lib/orchestration/handlers/GenerateHandler.ts`. |
+| 2026-03-23 | **Phase E fully passing** | ✅ **7/7 steps with real data.** Read 6 rows from Google Sheets → rows_to_objects (5 leads) → filter Stage=4 (3 leads) → count (3) → conditional then branch → LLM generates HTML table with `{subject, body}` structured output (I3) → Gmail sends email with HTML table to 3 recipients. 2512 tokens, 45s execution. Full end-to-end from natural language prompt to live agent execution. |
+| 2026-03-23 | D-B5 discovered | **GenerateHandler LLM response JSON parse failure on HTML content.** Step6 (ai_processing/generate) asks LLM to produce `{subject, body}` where `body` is HTML. `StepExecutor.extractStructuredOutput()` uses greedy regex `/\{[\s\S]*\}/` (line ~4394) to extract JSON from LLM text. When HTML body contains `{` or `}` chars (CSS styles, template syntax), the regex captures an invalid JSON string. Error: `Expected ',' or '}' after property value in JSON at position 2004`. **Suggested fix (two options):** **(A) Request structured output from LLM** — Use OpenAI's `response_format: { type: "json_object" }` or `tool_use` to force valid JSON responses. This is the I3 item (GenerateHandler structured output) already documented in the parent workplan. Most reliable fix. **(B) Smarter JSON extraction** — Replace greedy regex with a balanced-brace parser that counts `{`/`}` nesting depth, only matching the outermost valid JSON object. Falls back to regex-based field extraction on parse failure. Less reliable than A but works without LLM API changes. **Recommended: Option A** (I3) — it eliminates the problem at source. Option B is a safety net. |

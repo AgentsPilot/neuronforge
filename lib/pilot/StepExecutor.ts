@@ -1263,9 +1263,19 @@ export class StepExecutor {
     }
 
     // Convert to string for runAgentKit (vision is handled by orchestration)
-    const promptString = typeof fullPrompt === 'string'
+    let promptString = typeof fullPrompt === 'string'
       ? fullPrompt
       : fullPrompt.find((p: any) => p.type === 'text')?.text || JSON.stringify(fullPrompt);
+
+    // I3: Append JSON output instruction when output_schema is defined
+    // This tells the LLM to respond with structured JSON instead of free-form text
+    const outputSchema = (step as any).config?.output_schema || (step as any).output_schema;
+    if (outputSchema && outputSchema.properties) {
+      const fields = Object.entries(outputSchema.properties).map(([name, prop]: [string, any]) =>
+        `  - "${name}": ${prop.type || 'string'}${prop.description ? ` — ${prop.description}` : ''}`
+      ).join('\n');
+      promptString += `\n\nIMPORTANT: Respond with a valid JSON object containing these fields:\n${fields}\n\nRespond ONLY with the JSON object. No markdown code blocks, no text before or after. Ensure HTML content in string values is properly escaped.`;
+    }
 
     // Use AgentKit for intelligent decision (with optional model override)
     // If a model was selected by routing, temporarily override the agent's model preference
@@ -1358,6 +1368,30 @@ export class StepExecutor {
 
     const cleanedResponse = shouldClean ? this.cleanSummaryOutput(aiResponse) : aiResponse;
 
+    // I3: If step has output_schema with properties, extract structured JSON from LLM response
+    // This enables downstream steps to reference specific fields like {{variable.subject}}, {{variable.body}}
+    const stepOutputSchema = (step as any).config?.output_schema || (step as any).output_schema;
+    if (stepOutputSchema && stepOutputSchema.properties && typeof cleanedResponse === 'string') {
+      const structured = this.extractBalancedJSON(cleanedResponse, '{');
+      if (structured) {
+        try {
+          const parsed = JSON.parse(structured);
+          const expectedFields = Object.keys(stepOutputSchema.properties);
+          const hasExpectedField = expectedFields.some(f => f in parsed);
+          if (hasExpectedField) {
+            logger.info({ stepId: step.id, fields: Object.keys(parsed) }, 'I3: Extracted structured output from LLM response');
+            return {
+              data: parsed,
+              tokensUsed: result.tokensUsed,
+            };
+          }
+        } catch {
+          // Fall through to alias wrapper
+        }
+      }
+      logger.warn({ stepId: step.id }, 'I3: output_schema defined but could not extract structured JSON, returning alias wrapper');
+    }
+
     return {
       data: {
         // Generic aliases (always available)
@@ -1407,13 +1441,16 @@ export class StepExecutor {
     logger.info({ stepId: step.id, conditionResult }, 'Condition evaluated');
 
     // V4 Format: Execute nested steps based on condition
-    // Support both formats: then_steps/else_steps (DSL) and then/else (PILOT normalized)
-    const hasV4Format = conditionalStep.then_steps || conditionalStep.else_steps || conditionalStep.then || conditionalStep.else;
+    // NOTE: In production, WorkflowPilot.executeStep() handles conditional steps directly
+    // (evaluates condition + executes nested branch steps) and never delegates to StepExecutor.
+    // This code path is only reached if StepExecutor.execute() is called directly (e.g., Phase B/D test scripts).
+    // Support all formats: steps (V6 compiler then-branch), then_steps/else_steps (legacy DSL), then/else (normalized)
+    const hasV4Format = conditionalStep.steps || conditionalStep.then_steps || conditionalStep.else_steps || conditionalStep.then || conditionalStep.else;
 
     if (hasV4Format) {
       logger.debug({ stepId: step.id }, 'V4 conditional detected - executing nested steps');
 
-      const branchToExecute = conditionResult ? (conditionalStep.then || conditionalStep.then_steps) : (conditionalStep.else || conditionalStep.else_steps);
+      const branchToExecute = conditionResult ? (conditionalStep.steps || conditionalStep.then || conditionalStep.then_steps) : (conditionalStep.else_steps || conditionalStep.else);
       const branchName = conditionResult ? 'then' : 'else';
 
       if (branchToExecute && Array.isArray(branchToExecute) && branchToExecute.length > 0) {
@@ -4375,10 +4412,10 @@ Respond with a JSON object containing the extracted field values.`;
 
     try {
       if (outputType === 'array') {
-        // Try to extract JSON array from the response
-        const jsonMatch = output.match(/\[[\s\S]*\]/);
-        if (jsonMatch) {
-          const parsed = JSON.parse(jsonMatch[0]);
+        // Try to extract JSON array from the response using balanced-bracket extraction (D-B5 fix)
+        const extracted = this.extractBalancedJSON(output, '[');
+        if (extracted) {
+          const parsed = JSON.parse(extracted);
           if (Array.isArray(parsed)) {
             // Apply type coercion to each item
             return parsed.map(item => this.coerceFieldTypes(item, expectedFields));
@@ -4388,13 +4425,15 @@ Respond with a JSON object containing the extracted field values.`;
       }
 
       // Object type (default)
-      const jsonMatch = output.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        const parsed = JSON.parse(jsonMatch[0]);
+      // Use balanced-brace extraction instead of greedy regex to handle
+      // HTML/CSS content with { } inside JSON string values (D-B5 fix)
+      const extracted = this.extractBalancedJSON(output, '{');
+      if (extracted) {
+        const parsed = JSON.parse(extracted);
         return this.coerceFieldTypes(parsed, expectedFields);
       }
     } catch (error: any) {
-      logger.warn({ err: error, output, outputType }, 'Failed to parse LLM extraction response as JSON');
+      logger.warn({ err: error, output: output?.slice(0, 500), outputType }, 'Failed to parse LLM extraction response as JSON');
 
       // Fallback for object type: try to extract values from text response
       if (outputType === 'object' && expectedFields) {
@@ -4409,6 +4448,71 @@ Respond with a JSON object containing the extracted field values.`;
     }
 
     return outputType === 'array' ? [] : {};
+  }
+
+  /**
+   * Extract a balanced JSON object or array from text (D-B5 fix).
+   *
+   * The greedy regex /\{[\s\S]*\}/ fails when JSON string values contain { } chars
+   * (e.g., HTML with CSS: <td style="font-family: Arial; {color: red}">).
+   * This method uses a character-by-character scan that respects JSON string boundaries:
+   * - Tracks nesting depth of { } or [ ]
+   * - Ignores braces inside JSON strings (between unescaped quotes)
+   * - Returns the first valid balanced JSON substring
+   * - Falls back to greedy regex if balanced extraction fails
+   */
+  private extractBalancedJSON(text: string, openChar: '{' | '['): string | null {
+    const closeChar = openChar === '{' ? '}' : ']';
+    const startIdx = text.indexOf(openChar);
+    if (startIdx === -1) return null;
+
+    let depth = 0;
+    let inString = false;
+    let escape = false;
+
+    for (let i = startIdx; i < text.length; i++) {
+      const ch = text[i];
+
+      if (escape) {
+        escape = false;
+        continue;
+      }
+
+      if (ch === '\\' && inString) {
+        escape = true;
+        continue;
+      }
+
+      if (ch === '"') {
+        inString = !inString;
+        continue;
+      }
+
+      if (inString) continue;
+
+      if (ch === openChar) depth++;
+      if (ch === closeChar) depth--;
+
+      if (depth === 0) {
+        const candidate = text.slice(startIdx, i + 1);
+        try {
+          JSON.parse(candidate); // Validate it's actual JSON
+          return candidate;
+        } catch {
+          // Balanced but not valid JSON — try next occurrence
+          const nextStart = text.indexOf(openChar, startIdx + 1);
+          if (nextStart !== -1) {
+            return this.extractBalancedJSON(text.slice(nextStart), openChar);
+          }
+          return null;
+        }
+      }
+    }
+
+    // Unbalanced — fall back to greedy regex as last resort
+    const regex = openChar === '{' ? /\{[\s\S]*\}/ : /\[[\s\S]*\]/;
+    const match = text.match(regex);
+    return match ? match[0] : null;
   }
 
   /**

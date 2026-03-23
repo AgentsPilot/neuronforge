@@ -3273,13 +3273,24 @@ export class ExecutionGraphCompiler {
     newVarName: string,
     arrayFieldName: string
   ): void {
-    const oldPattern = `{{${oldVarName}.${arrayFieldName}}}`
-    const newPattern = `{{${newVarName}}}`
+    const oldSubFieldPattern = `{{${oldVarName}.${arrayFieldName}}}`
+    const oldBareTemplate = `{{${oldVarName}}}`
+    const newTemplate = `{{${newVarName}}}`
 
     // Helper to recursively replace in objects
     const replaceInValue = (value: any): any => {
       if (typeof value === 'string') {
-        return value.replace(oldPattern, newPattern)
+        // First replace sub-field pattern: {{raw_leads.values}} → {{raw_leads_objects}}
+        let result = value.replace(oldSubFieldPattern, newTemplate)
+        // Replace template bare pattern: {{raw_leads}} → {{raw_leads_objects}}
+        const bareTemplateRegex = new RegExp(`\\{\\{${oldVarName}\\}\\}`, 'g')
+        result = result.replace(bareTemplateRegex, newTemplate)
+        // Replace bare string (no braces): exact match "raw_leads" → "raw_leads_objects"
+        // Only replace if the entire string is exactly the old var name (avoid partial matches)
+        if (result === oldVarName) {
+          result = newVarName
+        }
+        return result
       } else if (Array.isArray(value)) {
         return value.map(replaceInValue)
       } else if (value && typeof value === 'object') {
@@ -3300,6 +3311,10 @@ export class ExecutionGraphCompiler {
     // Update config fields
     if (step.config) {
       step.config = replaceInValue(step.config)
+      // Also update config.input bare string (DataOperations reads this without {{ }})
+      if (step.config.input === oldVarName) {
+        step.config.input = newVarName
+      }
     }
 
     // Update condition fields (for conditional steps)

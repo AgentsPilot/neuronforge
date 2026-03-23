@@ -142,29 +142,54 @@ async function main() {
     }
   }
 
-  console.log('Generating IntentContract with vocabulary guidance...')
-  console.log(`   Available domains will guide LLM: ${vocabulary.domains.join(', ')}`)
+  // Check if a pre-built IntentContract is provided via --intent-contract flag
+  const intentContractArgIndex = process.argv.indexOf('--intent-contract')
+  const intentContractFile = intentContractArgIndex !== -1 ? process.argv[intentContractArgIndex + 1] : null
 
-  // Add resolved_user_inputs to vocabulary context
-  if (enhancedPrompt.specifics?.resolved_user_inputs && enhancedPrompt.specifics.resolved_user_inputs.length > 0) {
-    vocabulary.userContext = enhancedPrompt.specifics.resolved_user_inputs
-    console.log(`   User context: ${enhancedPrompt.specifics.resolved_user_inputs.length} configuration values`)
+  let intentContract: any
+  let rawText: string = ''
+  let intentGenTime: number = 0
+
+  if (intentContractFile) {
+    // Skip LLM — load pre-built IntentContract from file
+    const icPath = path.resolve(intentContractFile)
+    console.log(`📂 Loading pre-built IntentContract from: ${icPath}`)
+    console.log('   (Skipping LLM generation — deterministic from Phase 2 onward)')
+    intentContract = JSON.parse(fs.readFileSync(icPath, 'utf-8'))
+    rawText = '(loaded from file, LLM skipped)'
+
+    console.log(`\n✅ IntentContract loaded from file`)
+    console.log(`   Version: ${intentContract.version}`)
+    console.log(`   Goal: ${intentContract.goal}`)
+    console.log(`   Steps: ${intentContract.steps.length}`)
+  } else {
+    // Generate with LLM
+    console.log('Generating IntentContract with vocabulary guidance...')
+    console.log(`   Available domains will guide LLM: ${vocabulary.domains.join(', ')}`)
+
+    // Add resolved_user_inputs to vocabulary context
+    if (enhancedPrompt.specifics?.resolved_user_inputs && enhancedPrompt.specifics.resolved_user_inputs.length > 0) {
+      vocabulary.userContext = enhancedPrompt.specifics.resolved_user_inputs
+      console.log(`   User context: ${enhancedPrompt.specifics.resolved_user_inputs.length} configuration values`)
+    }
+
+    const intentGenStart = Date.now()
+
+    // Generate with vocabulary (will be injected into system prompt)
+    const result = await generateGenericIntentContractV1({
+      enhancedPrompt,
+      vocabulary, // Pass vocabulary for injection
+    })
+    intentContract = result.intent
+    rawText = result.rawText
+
+    intentGenTime = Date.now() - intentGenStart
+
+    console.log(`\n✅ IntentContract generated (${intentGenTime}ms)`)
+    console.log(`   Version: ${intentContract.version}`)
+    console.log(`   Goal: ${intentContract.goal}`)
+    console.log(`   Steps: ${intentContract.steps.length}`)
   }
-
-  const intentGenStart = Date.now()
-
-  // Generate with vocabulary (will be injected into system prompt)
-  const { intent: intentContract, rawText } = await generateGenericIntentContractV1({
-    enhancedPrompt,
-    vocabulary, // Pass vocabulary for injection
-  })
-
-  const intentGenTime = Date.now() - intentGenStart
-
-  console.log(`\n✅ IntentContract generated (${intentGenTime}ms)`)
-  console.log(`   Version: ${intentContract.version}`)
-  console.log(`   Goal: ${intentContract.goal}`)
-  console.log(`   Steps: ${intentContract.steps.length}`)
 
   // Save IntentContract
   const intentPath = path.join(outputDir, 'phase1-intent-contract.json')
@@ -340,6 +365,11 @@ async function main() {
 
   console.log(`\n✅ Compilation complete (${compilationTime}ms)`)
   console.log(`   PILOT Steps: ${pilotSteps.length}`)
+
+  // Save full compiler logs for debugging
+  const compilerLogsPath = path.join(outputDir, 'phase4-compiler-logs.txt')
+  fs.writeFileSync(compilerLogsPath, (compilationResult.logs || []).join('\n'))
+  console.log(`   Saved compiler logs: ${compilerLogsPath}`)
 
   // Save PILOT DSL
   const pilotPath = path.join(outputDir, 'phase4-pilot-dsl-steps.json')

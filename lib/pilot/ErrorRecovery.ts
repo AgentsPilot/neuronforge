@@ -129,9 +129,9 @@ export class ErrorRecovery {
             // Last fallback failed, throw original error
             throw new ExecutionError(
               `Primary and all ${fallbackSteps.length} fallback steps failed. Original error: ${primaryError.message}`,
-              'ALL_FALLBACKS_FAILED',
               undefined,
               {
+                errorCode: 'ALL_FALLBACKS_FAILED',
                 primaryError: primaryError.message,
                 fallbackErrors: [fallbackError.message],
               }
@@ -162,10 +162,11 @@ export class ErrorRecovery {
       const rollbackAction = step.rollbackAction;
 
       // Resolve rollback parameters
-      const resolvedParams = context.resolveAllVariables(rollbackAction.params);
+      const resolvedParams = (context as any).resolveAllVariables?.(rollbackAction.params) || rollbackAction.params;
 
       // Execute rollback via PluginExecuterV2
-      const result = await PluginExecuterV2.execute(
+      const executer = PluginExecuterV2.getInstance();
+      const result = await (executer as any).execute?.(
         context.userId,
         rollbackAction.plugin,
         rollbackAction.action,
@@ -346,9 +347,8 @@ export class ErrorRecovery {
 
     return new ExecutionError(
       `Multiple steps failed:\n${errorMessages}`,
-      'MULTIPLE_STEP_FAILURES',
       undefined,
-      { failedSteps: errors.map(e => e.stepId) }
+      { errorCode: 'MULTIPLE_STEP_FAILURES', failedSteps: errors.map(e => e.stepId) }
     );
   }
 
