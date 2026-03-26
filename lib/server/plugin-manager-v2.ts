@@ -608,8 +608,10 @@ export class PluginManagerV2 {
     // Validate parameters against JSON Schema
     const schemaErrors = this.validateParametersAgainstSchema(parameters, action.parameters);
     
-    // Validate against plugin rules
-    const ruleValidation = this.validateRules(action.rules, parameters);
+    // Validate against plugin rules (rules may be undefined for some actions)
+    const ruleValidation = action.rules
+      ? this.validateRules(action.rules, parameters)
+      : { blocked: false, confirmations: [], errors: [] };
     
     const result: ValidationResult = {
       valid: schemaErrors.length === 0 && !ruleValidation.blocked,

@@ -133,6 +133,12 @@ Examples: "data_items", "processed_results", "extracted_data", "metrics", "conta
 ✅ CORRECT: { kind: "ref", ref: "data_items", field: "field_name" }
 ❌ WRONG: { kind: "ref", ref: "$.data_items[0].field_name" }
 
+**Config Reference Rule (CRITICAL):**
+Every config entry you declare in "config" MUST be referenced in at least one step via { kind: "config", key: "..." }.
+NEVER hardcode a value that has a corresponding config entry — always use the config reference so the value is controllable at runtime.
+❌ WRONG: config declares "max_results" with default 50, step uses { kind: "literal", value: 50 }
+✅ CORRECT: config declares "max_results" with default 50, step uses { kind: "config", key: "max_results" }
+
 **Scoping Rules:**
 - Global scope: Any step can reference outputs from PRIOR steps by RefName
 - Loop scope: Inside loop body, can reference:

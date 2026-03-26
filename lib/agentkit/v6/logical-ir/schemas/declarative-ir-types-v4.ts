@@ -163,7 +163,7 @@ export interface SimpleCondition {
   variable: string
 
   /** Comparison operator */
-  operator: 'eq' | 'ne' | 'gt' | 'gte' | 'lt' | 'lte' | 'contains' | 'starts_with' | 'ends_with' | 'matches' | 'exists' | 'is_empty'
+  operator: 'eq' | 'ne' | 'gt' | 'gte' | 'lt' | 'lte' | 'contains' | 'starts_with' | 'ends_with' | 'matches' | 'exists' | 'is_empty' | 'in' | 'not_in'
 
   /** Value to compare against (can be literal or variable reference with {{var}}) */
   value?: any

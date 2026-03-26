@@ -43,6 +43,9 @@ export class GoogleSheetsPluginExecutor extends GoogleBasePluginExecutor {
       case 'get_spreadsheet_info':
         result = await this.getSpreadsheetInfo(connection, parameters);
         break;
+      case 'get_or_create_sheet_tab':
+        result = await this.getOrCreateSheetTab(connection, parameters);
+        break;
       default:
         return {
           success: false,
@@ -161,9 +164,60 @@ export class GoogleSheetsPluginExecutor extends GoogleBasePluginExecutor {
 
   // Append rows to the end of a sheet
   private async appendRows(connection: any, parameters: any): Promise<any> {
-    this.logger.debug('DEBUG: Appending rows to Google Sheets');
+    this.logger.info({ paramKeys: Object.keys(parameters), hasValues: !!parameters.values, hasFields: !!parameters.fields }, 'appendRows: received parameters');
 
-    const { spreadsheet_id, range, values, input_option, insert_data_option } = parameters;
+    const { spreadsheet_id, range, input_option, insert_data_option, fields } = parameters;
+    let { values } = parameters;
+
+    // Smart value resolution: support multiple input formats
+    // 1. values = [[...]] — standard 2D array, pass through
+    // 2. values = [{...}, {...}] — array of objects, convert to 2D array using object keys
+    // 3. fields = { "Column": "variable.field", ... } — field mapping, convert to 2D array
+    // 4. values = {...} — single object, wrap as single row using object values
+    if (!values && fields && typeof fields === 'object') {
+      // fields mapping: { "Column Header": "source.field" } or { "values": objectData }
+      // If fields.values is an object (resolved variable), extract its values as a row
+      if (fields.values && typeof fields.values === 'object' && !Array.isArray(fields.values)) {
+        const obj = fields.values;
+        values = [Object.values(obj).map((v: any) => v != null ? String(v) : '')];
+        this.logger.debug({ fieldCount: Object.keys(obj).length }, 'Converted object to single sheet row via fields.values');
+      } else if (fields.values && Array.isArray(fields.values)) {
+        values = fields.values;
+      } else {
+        // fields is a column-to-field mapping: { "Name": "item.name", "Email": "item.email" }
+        // Values should already be resolved by the runtime — extract values in order
+        values = [Object.values(fields).map((v: any) => v != null ? String(v) : '')];
+        this.logger.debug({ columns: Object.keys(fields) }, 'Converted fields mapping to single sheet row');
+      }
+    } else if (values && !Array.isArray(values) && typeof values === 'object') {
+      // Single object — convert to single row using object values
+      values = [Object.values(values).map((v: any) => v != null ? String(v) : '')];
+      this.logger.debug('Converted single object to sheet row');
+    } else if (values && Array.isArray(values) && values.length > 0 && !Array.isArray(values[0]) && typeof values[0] === 'object') {
+      // Array of objects — convert each to a row
+      const keys = Object.keys(values[0]);
+      values = values.map((obj: any) => keys.map(k => obj[k] != null ? String(obj[k]) : ''));
+      this.logger.debug({ rowCount: values.length, columns: keys }, 'Converted array of objects to 2D sheet array');
+    }
+
+    if (!values || !Array.isArray(values) || values.length === 0) {
+      this.logger.warn({ parameters: Object.keys(parameters) }, 'append_rows: no values to append');
+      return {
+        updated_range: range,
+        appended_rows: 0,
+        appended_columns: 0,
+        appended_cells: 0,
+        sheet_name: range,
+        values: [],
+        appended_at: new Date().toISOString(),
+        updatedRange: range,
+        appendedRows: 0,
+        appendedColumns: 0,
+        appendedCells: 0,
+        sheetName: range,
+        appendedAt: new Date().toISOString()
+      };
+    }
 
     // Build request URL
     const valueInputOption = input_option || 'USER_ENTERED';
@@ -297,6 +351,83 @@ export class GoogleSheetsPluginExecutor extends GoogleBasePluginExecutor {
     return {
       ...created,
       created: true
+    };
+  }
+
+  /**
+   * Get existing sheet tab or create it if it doesn't exist within a spreadsheet.
+   * Idempotent — safe to call multiple times with the same tab_name.
+   * Uses Sheets API: getSpreadsheetInfo to list tabs, batchUpdate to add if missing.
+   */
+  private async getOrCreateSheetTab(connection: any, parameters: any): Promise<any> {
+    const { spreadsheet_id, tab_name } = parameters;
+
+    if (!spreadsheet_id) throw new Error('spreadsheet_id is required');
+    if (!tab_name) throw new Error('tab_name is required');
+
+    this.logger.debug({ spreadsheet_id, tab_name }, 'Get or create sheet tab');
+
+    // Step 1: Get spreadsheet info to list existing tabs
+    const info = await this.getSpreadsheetInfo(connection, {
+      spreadsheet_id,
+      include_sheet_data: false,
+    });
+
+    // Step 2: Check if tab already exists (case-insensitive match)
+    const existingTab = (info.sheets || []).find(
+      (s: any) => s.title?.toLowerCase() === tab_name.toLowerCase() ||
+                   s.sheet_name?.toLowerCase() === tab_name.toLowerCase()
+    );
+
+    if (existingTab) {
+      this.logger.debug({ tab_name, sheet_id: existingTab.sheet_id }, 'Sheet tab already exists');
+      return {
+        spreadsheet_id,
+        sheet_id: existingTab.sheet_id || existingTab.sheetId,
+        sheet_name: existingTab.title || existingTab.sheet_name || tab_name,
+        tab_name: existingTab.title || existingTab.sheet_name || tab_name,
+        existed: true,
+      };
+    }
+
+    // Step 3: Tab doesn't exist — create it via batchUpdate
+    this.logger.debug({ tab_name }, 'Sheet tab not found, creating');
+
+    const batchUpdateUrl = `${this.sheetsApisUrl}/${spreadsheet_id}:batchUpdate`;
+    const response = await fetch(batchUpdateUrl, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${connection.access_token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        requests: [
+          {
+            addSheet: {
+              properties: {
+                title: tab_name,
+              },
+            },
+          },
+        ],
+      }),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.text();
+      this.logger.error({ errorData, status: response.status }, 'Failed to create sheet tab');
+      throw new Error(`Failed to create sheet tab "${tab_name}": ${response.status} - ${errorData}`);
+    }
+
+    const result = await response.json();
+    const newSheet = result.replies?.[0]?.addSheet?.properties;
+
+    return {
+      spreadsheet_id,
+      sheet_id: newSheet?.sheetId,
+      sheet_name: newSheet?.title || tab_name,
+      tab_name: newSheet?.title || tab_name,
+      existed: false,
     };
   }
 

@@ -1072,18 +1072,13 @@ export class IntentToIRConverter {
       `Store the classification result in the '${outputField}' field for each item.`
 
     // Create output schema that preserves all input fields plus adds classification field
+    // Uses the { fields: [...] } format expected by DeclarativeLogicalIRv4 AIOperationConfig
     const outputSchema = {
-      type: 'array',
-      items: {
-        type: 'object',
-        properties: {
-          [outputField]: {
-            type: 'string',
-            enum: labels,
-            description: `Classification result (one of: ${labels.join(', ')})`
-          }
-        }
-      }
+      fields: [{
+        name: outputField,
+        type: 'string' as const,
+        description: `Classification result (one of: ${labels.join(', ')})`
+      }]
     }
 
     const operation: OperationConfig = {
@@ -1209,7 +1204,29 @@ export class IntentToIRConverter {
         return `{{config.${valueRef.key}}}`
 
       case 'computed':
-        ctx.warnings.push('Computed ValueRef not yet fully supported')
+        // O21: Basic computed expression support — handles concat and falls back gracefully
+        if (valueRef.op === 'concat' && Array.isArray(valueRef.args)) {
+          const resolvedArgs = valueRef.args.map((arg: any) => {
+            const resolved = this.resolveValueRef(arg, ctx)
+            return resolved !== undefined ? String(resolved) : ''
+          })
+          // If all args resolved, concatenate them
+          const result = resolvedArgs.join('')
+          if (result) {
+            logger.debug(`[IntentToIRConverter] O21: Resolved computed concat: ${JSON.stringify(valueRef.args)} → ${result}`)
+            return result
+          }
+        }
+        // Fallback: try to resolve the first config arg as a simple reference
+        if (Array.isArray(valueRef.args)) {
+          const configArg = valueRef.args.find((a: any) => a.kind === 'config')
+          if (configArg) {
+            const fallback = this.resolveValueRef(configArg, ctx)
+            logger.debug(`[IntentToIRConverter] O21: Computed fallback to first config arg: ${fallback}`)
+            return fallback
+          }
+        }
+        ctx.warnings.push(`Computed ValueRef with op "${valueRef.op}" not fully resolved`)
         return undefined
 
       default:

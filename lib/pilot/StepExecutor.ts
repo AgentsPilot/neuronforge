@@ -884,6 +884,19 @@ export class StepExecutor {
 
       const transformed = { ...params };
 
+      // Flatten 'fields' mapping into top-level params if present
+      // The compiler may generate { fields: { "Column": "{{var.field}}" } } for append_rows,
+      // but the plugin executor expects { values: [[...]] } at the top level
+      if (transformed.fields && typeof transformed.fields === 'object') {
+        for (const [fieldKey, fieldValue] of Object.entries(transformed.fields)) {
+          if (!(fieldKey in transformed)) {
+            transformed[fieldKey] = fieldValue;
+          }
+        }
+        delete transformed.fields;
+        logger.debug({ flattenedKeys: Object.keys(transformed) }, 'Flattened fields mapping into params');
+      }
+
       // Iterate through each parameter in the schema
       for (const [paramName, paramDef] of Object.entries(paramSchema.properties)) {
         const def = paramDef as any;
@@ -1782,65 +1795,97 @@ export class StepExecutor {
       }
     }
 
+    let result: any;
+
     switch (operation) {
       case 'set':
-        // Simple assignment - just return the input data as-is
-        return data;
+        // O26: When input is an object field mapping (from compiler O26 sheet column mapping),
+        // ensure all declared keys are present (even if value is null) to preserve column order.
+        // The field mapping object keys define the output column order.
+        if (data && typeof data === 'object' && !Array.isArray(data)) {
+          // Ensure all keys are present, including those that resolved to undefined
+          const orderedResult: Record<string, any> = {};
+          for (const key of Object.keys(data)) {
+            orderedResult[key] = data[key] !== undefined ? data[key] : null;
+          }
+          result = orderedResult;
+        } else {
+          result = data;
+        }
+        break;
 
       case 'map':
-        return this.transformMap(data, config, context);
+        result = this.transformMap(data, config, context);
+        break;
 
       case 'filter':
-        return this.transformFilter(data, config, context);
+        result = this.transformFilter(data, config, context);
+        break;
 
       case 'reduce':
-        return this.transformReduce(data, config);
+        result = this.transformReduce(data, config);
+        break;
 
       case 'sort':
-        return this.transformSort(data, config);
+        result = this.transformSort(data, config);
+        break;
 
       case 'group':
-        return this.transformGroup(data, config);
+        result = this.transformGroup(data, config);
+        break;
 
       case 'aggregate':
-        return this.transformAggregate(data, config);
+        result = this.transformAggregate(data, config);
+        break;
 
       case 'deduplicate':
-        return this.transformDeduplicate(data, config);
+        result = this.transformDeduplicate(data, config);
+        break;
 
       case 'flatten':
-        return this.transformFlatten(data, config);
+        result = this.transformFlatten(data, config);
+        break;
 
       case 'join':
-        return this.transformJoin(data, config);
+        result = this.transformJoin(data, config);
+        break;
 
       case 'pivot':
-        return this.transformPivot(data, config);
+        result = this.transformPivot(data, config);
+        break;
 
       case 'split':
-        return this.transformSplit(data, config);
+        result = this.transformSplit(data, config);
+        break;
 
       case 'expand':
-        return this.transformExpand(data, config);
+        result = this.transformExpand(data, config);
+        break;
 
       case 'rows_to_objects':
-        return this.transformRowsToObjects(data, config);
+        result = this.transformRowsToObjects(data, config);
+        break;
 
       case 'map_headers':
-        return this.transformMapHeaders(data, config);
+        result = this.transformMapHeaders(data, config);
+        break;
 
       case 'partition':
-        return this.transformPartition(data, config);
+        result = this.transformPartition(data, config);
+        break;
 
       case 'group_by':
         // Alias for 'group' operation
-        return this.transformGroup(data, config);
+        result = this.transformGroup(data, config);
+        break;
 
       case 'render_table':
-        return this.transformRenderTable(data, config);
+        result = this.transformRenderTable(data, config);
+        break;
 
       case 'fetch_content':
-        return await this.transformFetchContent(data, config, context);
+        result = await this.transformFetchContent(data, config, context);
+        break;
 
       default:
         throw new ExecutionError(
@@ -1849,6 +1894,32 @@ export class StepExecutor {
           step.id
         );
     }
+
+    // O18: Empty results check after transform execution
+    // Detects when a transform produces empty results from non-empty input
+    const stepAny = step as any;
+    const onEmpty = stepAny._on_empty || config?._on_empty;
+    if (onEmpty && Array.isArray(result) && result.length === 0) {
+      const inputLength = Array.isArray(data) ? data.length : (data ? 1 : 0);
+      if (inputLength > 0) {
+        const message =
+          `Transform step ${step.id} (${operation}) produced 0 results from ${inputLength} input items. ` +
+          `This may indicate a misconfigured field path or filter condition.`;
+
+        if (onEmpty === 'throw') {
+          throw new ExecutionError(
+            message + ' Aborting because on_empty is set to "throw" (step feeds scatter-gather).',
+            'EMPTY_TRANSFORM_RESULT',
+            step.id
+          );
+        } else {
+          // on_empty === 'warn' (default)
+          logger.warn({ stepId: step.id, operation, inputLength, outputLength: 0 }, message);
+        }
+      }
+    }
+
+    return result;
   }
 
   /**
@@ -1856,15 +1927,63 @@ export class StepExecutor {
    * Supports converting array of objects to 2D array for Google Sheets
    */
   private transformMap(data: any[], config: any, context: ExecutionContext): any[] | any[][] {
-    // 🔍 DEBUG: Log what transformMap received
-    console.log('🔍 [transformMap] Received data:', {
-      type: typeof data,
+    logger.debug({
+      dataType: typeof data,
       isArray: Array.isArray(data),
-      value: Array.isArray(data) ? `array[${data.length}]` : JSON.stringify(data).slice(0, 300)
-    });
+      length: Array.isArray(data) ? data.length : undefined
+    }, 'transformMap received data');
 
     if (!Array.isArray(data)) {
       throw new ExecutionError('Map operation requires array input', 'INVALID_INPUT_TYPE');
+    }
+
+    // O24: Structured extraction modes — deterministic, no expression eval needed
+
+    // Mode 1: column_index — extract a positional element from each row (for 2D arrays)
+    // Example: config.column_index = 4 → items.map(row => row[4])
+    if (config && typeof config.column_index === 'number') {
+      const idx = config.column_index;
+      logger.info({ column_index: idx, itemCount: data.length }, '[transformMap] Using column_index extraction');
+      return data.map(item => {
+        if (Array.isArray(item) && idx < item.length) {
+          return item[idx];
+        }
+        // If item is not an array (e.g., after rows_to_objects), try Object.values
+        if (typeof item === 'object' && item !== null) {
+          const values = Object.values(item);
+          return idx < values.length ? values[idx] : undefined;
+        }
+        return undefined;
+      }).filter(v => v !== undefined);
+    }
+
+    // Mode 2: field_path — extract a named field (supports dot-notation for nested)
+    // Example: config.field_path = "nested.id" → items.map(item => item.nested.id)
+    if (config && typeof config.field_path === 'string') {
+      const path = config.field_path;
+      logger.info({ field_path: path, itemCount: data.length }, '[transformMap] Using field_path extraction');
+      return data.map(item => {
+        const parts = path.split('.');
+        let value: any = item;
+        for (const part of parts) {
+          if (value === null || value === undefined) return undefined;
+          value = value[part];
+        }
+        return value;
+      }).filter(v => v !== undefined);
+    }
+
+    // Mode 3: field — extract a top-level field from each object
+    // Example: config.field = "email" → items.map(item => item["email"])
+    if (config && typeof config.field === 'string' && !config.expression && !config.columns) {
+      const field = config.field;
+      logger.info({ field, itemCount: data.length }, '[transformMap] Using field extraction');
+      return data.map(item => {
+        if (typeof item === 'object' && item !== null) {
+          return item[field];
+        }
+        return undefined;
+      }).filter(v => v !== undefined);
     }
 
     // Check if config has an expression field (JavaScript expression to evaluate)
@@ -4752,25 +4871,26 @@ Respond with a JSON object containing the extracted field values.`;
     output: StepOutput,
     context: ExecutionContext
   ): Promise<void> {
-    console.log(`📊 [StepExecutor] collectExecutionMetadata called for step ${step.id}, type: ${step.type}, success: ${output.metadata.success}`);
+    logger.debug({ stepId: step.id, stepType: step.type, success: output.metadata.success }, 'collectExecutionMetadata called');
 
     // Only collect if we're in batch calibration mode
     if (!context.batchCalibrationMode) {
-      console.log(`📊 [StepExecutor] Skipping - not in batch calibration mode (flag: ${context.batchCalibrationMode})`);
+      logger.debug({ batchCalibrationMode: context.batchCalibrationMode }, 'Skipping metadata collection - not in batch calibration mode');
       return;
     }
 
     // Only collect from successful action steps
     if (step.type !== 'action' || !output.metadata.success) {
-      console.log(`📊 [StepExecutor] Skipping - step type: ${step.type}, success: ${output.metadata.success}`);
+      logger.debug({ stepType: step.type, success: output.metadata.success }, 'Skipping metadata collection - non-action or unsuccessful step');
       return;
     }
 
     // Get the execution summary collector from the pilot instance (if available)
+    // ExecutionContext does not declare executionSummaryCollector — it is dynamically attached by the Pilot engine at runtime, so `any` cast is required
     const collector = (context as any).executionSummaryCollector as ExecutionSummaryCollector | null;
-    console.log(`📊 [StepExecutor] Collector available: ${!!collector}`);
+    logger.debug({ collectorAvailable: !!collector }, 'Checked for execution summary collector');
     if (!collector) {
-      console.log(`📊 [StepExecutor] No collector found on context`);
+      logger.debug('No execution summary collector found on context');
       return;
     }
 
@@ -4804,15 +4924,15 @@ Respond with a JSON object containing the extracted field values.`;
 
       // Record the data access
       if (isWriteOperation) {
-        console.log(`📊 [StepExecutor] Recording data write: ${pluginName}.${actionName} (count: ${itemCount})`);
+        logger.debug({ pluginName, actionName, itemCount }, 'Recording data write');
         await collector.recordDataWrite(pluginName, actionName, itemCount);
       } else {
-        console.log(`📊 [StepExecutor] Recording data read: ${pluginName}.${actionName} (count: ${itemCount})`);
+        logger.debug({ pluginName, actionName, itemCount }, 'Recording data read');
         await collector.recordDataRead(pluginName, actionName, itemCount);
         collector.recordItemsProcessed(itemCount);
       }
     } catch (error) {
-      console.warn(`[StepExecutor] Could not collect metadata for ${pluginName}.${actionName}:`, error);
+      logger.warn({ err: error, pluginName, actionName }, 'Could not collect execution metadata');
     }
   }
 

@@ -38,10 +38,13 @@
         "raw_text"
       ],
       "required_params": [
-        "file_url",
         "fields"
       ],
       "optional_params": [
+        "file_url",
+        "file_content",
+        "mime_type",
+        "filename",
         "use_ai"
       ],
       "must_support": [
@@ -52,22 +55,52 @@
       "parameters": {
         "type": "object",
         "required": [
-          "file_url",
           "fields"
         ],
         "properties": {
+          "file_content": {
+            "type": "string",
+            "description": "Base64-encoded file content. Preferred over file_url for efficiency.",
+            "x-input-mapping": {
+              "accepts": [
+                "file_object"
+              ],
+              "from_file_object": "content",
+              "description": "Can extract base64 content directly from file object"
+            }
+          },
           "file_url": {
             "type": "string",
-            "description": "URL or path to the document file (PDF, JPG, PNG)",
+            "description": "URL or path to the document file (PDF, JPG, PNG). Used as fallback if file_content not provided.",
             "x-input-mapping": {
               "accepts": [
                 "file_object",
-                "url_string",
-                "base64_content"
+                "url_string"
               ],
               "from_file_object": "web_view_link",
-              "from_base64_content": "data",
-              "description": "Can accept file object (extracts web_view_link), direct URL string, or base64 content (extracts data field from attachment downloads)"
+              "description": "Can accept file object (extracts web_view_link) or direct URL string"
+            }
+          },
+          "mime_type": {
+            "type": "string",
+            "description": "MIME type of the file (e.g., 'application/pdf', 'image/png')",
+            "x-input-mapping": {
+              "accepts": [
+                "file_object"
+              ],
+              "from_file_object": "mime_type",
+              "description": "Extracts MIME type from file object"
+            }
+          },
+          "filename": {
+            "type": "string",
+            "description": "Name of the file",
+            "x-input-mapping": {
+              "accepts": [
+                "file_object"
+              ],
+              "from_file_object": "file_name",
+              "description": "Extracts filename from file object"
             }
           },
           "fields": {
@@ -116,6 +149,15 @@
             "type": "string",
             "default": "en",
             "description": "Document language code (e.g., 'en', 'es', 'fr')"
+          }
+        }
+      },
+      "rules": {
+        "limits": {
+          "max_file_size": {
+            "condition": "file_size > 25000000",
+            "action": "block",
+            "message": "Document file exceeds 25MB limit"
           }
         }
       },

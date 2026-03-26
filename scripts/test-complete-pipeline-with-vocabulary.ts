@@ -386,11 +386,10 @@ async function main() {
       }
     }
   }
-  // Override with user-provided config where keys match
+  // Override with ALL user-provided config (not just matching keys)
+  // The compiler's O7 merge also keeps all user keys — this must match
   for (const [key, value] of Object.entries(workflowConfig)) {
-    if (key in mergedConfig) {
-      mergedConfig[key] = value
-    }
+    mergedConfig[key] = value
   }
   const mergedConfigPath = path.join(outputDir, 'phase4-workflow-config.json')
   fs.writeFileSync(mergedConfigPath, JSON.stringify(mergedConfig, null, 2))

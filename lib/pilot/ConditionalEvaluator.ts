@@ -137,9 +137,21 @@ export class ConditionalEvaluator {
 
     // ✅ CRITICAL FIX: Resolve condition.value if it contains variable references
     // Example: condition.value = "{{existing_sheet_data.values[*][4]}}" needs to be resolved
+    // O26: Also resolve bare variable names (e.g., "existing_message_ids") for in/not_in operators
+    // These are step output variables referenced without {{}} in filter conditions
     let expectedValue = condition.value;
-    if (typeof expectedValue === 'string' && expectedValue.includes('{{')) {
-      expectedValue = context.resolveVariable(expectedValue);
+    if (typeof expectedValue === 'string') {
+      if (expectedValue.includes('{{')) {
+        expectedValue = context.resolveVariable(expectedValue);
+      } else if (condition.operator === 'in' || condition.operator === 'not_in') {
+        // O26: Resolve bare variable names for in/not_in operators
+        // Filter conditions may reference step output variables without {{}} wrapper
+        // e.g., value: "existing_message_ids" should resolve to the array from step 3
+        const resolved = context.resolveVariable(`{{${expectedValue}}}`);
+        if (resolved !== undefined && resolved !== `{{${expectedValue}}}`) {
+          expectedValue = resolved;
+        }
+      }
     }
 
     return this.compareValues(

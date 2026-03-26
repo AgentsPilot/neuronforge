@@ -1,44 +1,40 @@
 {
-    "plan_title": "High-Qualified (Stage = 4) Leads Email Summary Agent",
-    "plan_description": "Reads a specific Google Sheets tab, filters leads where Stage = 4, renders an HTML summary table with selected columns, and emails it to a deduplicated recipient list (or sends a 'none found' email when there are no matches).",
+    "plan_title": "Customer Complaint Email Logger (Gmail → Google Sheets)",
+    "plan_description": "Scans your Gmail Inbox for the last 7 days, finds emails that contain complaint keywords, and appends only those complaint emails into the 'UrgentEmails' tab of your Google Sheet while skipping duplicates based on Gmail message link/id.",
     "sections": {
         "data": [
-            "- Read lead rows from the Google Sheets spreadsheet with ID \"1RHLbBXzrKv24gNgp7a4Lr7RlMIrP9fjacfGWjhPAbOE\".",
-            "- Read lead rows from the tab named \"Leads Tab\".",
-            "- Treat the first row as the header row.",
-            "- Locate columns by these exact header names: Date, Lead Name, Company, Email, Phone, Stage, Notes, Sales Person.",
-            "- Use the full set of populated rows beneath the header row as the candidate lead records."
+            "- Scan Gmail Inbox messages from the last 7 days.",
+            "- Treat an email as a complaint if the email content contains any of these keywords (case-insensitive match): “complaint”, “refund”, “angry”, “not working”.",
+            "- Use the Google Sheet with spreadsheet id “1RHLbBXzrKv24gNgp7a4Lr7RlMIrP9fjacfGWjhPAbOE” as the destination.",
+            "- Use the worksheet/tab name “UrgentEmails” inside that spreadsheet as the destination tab.",
+            "- Read existing rows from the destination tab to identify already-logged complaint emails by Gmail message link/id."
         ],
         "actions": [
-            "- Filter the candidate lead records to only include rows where the \"Stage\" column value equals \"4\".",
-            "- Exclude any row where the \"Stage\" cell is blank or missing.",
-            "- Build a summary table where each remaining row becomes one table row.",
-            "- Output the summary table columns in this exact order: Date, Lead Name, Company, Email, Phone, Stage, Notes, Sales Person.",
-            "- Deduplicate the recipient list so each email address is included only once."
+            "- For each Gmail message in scope, check whether the message content contains any of: “complaint”, “refund”, “angry”, “not working”.",
+            "- If the message matches the complaint rule, extract these fields: sender email, subject, date, and the full email text.",
+            "- If the message matches the complaint rule, also capture the Gmail message link/id to use as a unique identifier.",
+            "- If the Gmail message link/id already exists in the destination tab, do not add a new row for that message.",
+            "- If the Gmail message link/id does not exist in the destination tab, append exactly one new row for that message.",
+            "- Treat each matching message independently (if a thread has multiple matching messages, log every matching message as its own row)."
         ],
         "output": [
-            "- Generate an HTML table embedded directly in the email body.",
-            "- The HTML table must include a header row with: Date, Lead Name, Company, Email, Phone, Stage, Notes, Sales Person.",
-            "- If zero rows match Stage = 4, generate an email body that clearly states that no high-qualified (Stage = 4) leads were found and do not include a data table."
+            "- Append one row per complaint email to the destination Google Sheet tab.",
+            "- Each appended row must include (in this order): sender email, subject, date, full email text, Gmail message link/id."
         ],
         "delivery": [
-            "- Send the email to: meiribarak@gmail.com, eomer3@gmail.com, offir.omer@gmail.com.",
-            "- Use a subject line that includes: \"High-qualified leads (Stage = 4)\".",
-            "- Send exactly one email that includes all matching leads in a single table."
+            "- Deliver results by writing/appending rows into the Google Sheet tab “UrgentEmails” (no email/slack notification)."
         ],
         "processing_steps": [
-            "- Load the leads data from the specified spreadsheet ID and tab name.",
-            "- Identify the required columns by header name.",
-            "- Filter rows where Stage = 4.",
-            "- Render the filtered rows into an HTML table (or a 'none found' message).",
-            "- Send the email to the deduplicated recipient list."
+            "- Fetch Gmail messages from Inbox for the last 7 days.",
+            "- Load existing rows from the “UrgentEmails” tab and build a set of existing Gmail message link/id values.",
+            "- Filter messages by keyword match against the email content (case-insensitive).",
+            "- For each matching message, extract required fields and append a new row only if its Gmail message link/id is not already present."
         ]
     },
     "specifics": {
         "services_involved": [
             "google-mail",
-            "google-sheets",
-            "chatgpt-research"
+            "google-sheets"
         ],
         "user_inputs_required": [
         ],
@@ -48,36 +44,40 @@
                 "value": "meiribarak@gmail.com"
             },
             {
+                "key": "google_sheets__table_create__spreadsheet_id",
+                "value": "1RHLbBXzrKv24gNgp7a4Lr7RlMIrP9fjacfGWjhPAbOE"
+            },
+            {
+                "key": "google_sheets__table_create__sheet_tab_name",
+                "value": "UrgentEmails"
+            },
+            {
                 "key": "google_sheets__table_read__spreadsheet_id",
                 "value": "1RHLbBXzrKv24gNgp7a4Lr7RlMIrP9fjacfGWjhPAbOE"
             },
             {
                 "key": "google_sheets__table_read__sheet_tab_name",
-                "value": "Leads Tab"
+                "value": "UrgentEmails"
             },
             {
-                "key": "google_sheets__table_read__header_row",
-                "value": "Date | Lead Name | Company | Email | Phone | Stage | Notes | Sales Person"
+                "key": "google_mail__email_search__query",
+                "value": "in:inbox newer_than:7d (complaint OR refund OR angry OR \"not working\")"
             },
             {
-                "key": "qualification_rule",
-                "value": "Stage = 4"
+                "key": "complaint_keywords",
+                "value": "complaint, refund, angry, not working"
             },
             {
-                "key": "output_columns",
-                "value": "Date, Lead Name, Company, Email, Phone, Stage, Notes, Sales Person"
+                "key": "sheet_dedup_rule",
+                "value": "skip if Gmail message link/id already exists in the sheet"
             },
             {
-                "key": "email_format",
-                "value": "HTML table in email body"
+                "key": "thread_handling",
+                "value": "log every message that matches the complaint rule"
             },
             {
-                "key": "google_mail__email_send__recipients",
-                "value": "meiribarak@gmail.com, eomer3@gmail.com, offir.omer@gmail.com"
-            },
-            {
-                "key": "no_results_behavior",
-                "value": "send 'none found' email"
+                "key": "google_sheets__table_create__columns",
+                "value": "sender email, subject, date, full email text, Gmail message link/id"
             }
         ]
     }

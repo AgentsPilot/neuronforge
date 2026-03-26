@@ -228,11 +228,21 @@ export class ExecutionGraphCompiler {
       workflow = this.reconcileFieldReferences(workflow, ctx)
 
       // Phase 3.8: Config reference consistency (O11)
-      // Detect config keys that are declared but never referenced, auto-replace hardcoded values
+      // Detect config keys that are declared but never referenced, warn about hardcoded values
       if (ir.config_defaults && ir.config_defaults.length > 0) {
         this.log(ctx, 'Phase 3.8: Checking config reference consistency')
         workflow = this.enforceConfigReferences(workflow, ir.config_defaults, ctx)
       }
+
+      // Phase 3.9: Nullable field detection (O16)
+      // Warn when extraction step nullable outputs feed into required plugin parameters
+      this.log(ctx, 'Phase 3.9: Checking nullable-to-required parameter mappings')
+      this.detectNullableToRequiredMappings(workflow, ctx)
+
+      // Phase 3.10: Empty results assertions (O18)
+      // Add on_empty metadata to transform steps that feed scatter-gather
+      this.log(ctx, 'Phase 3.10: Adding empty result assertions')
+      this.addEmptyResultAssertions(workflow, ctx)
 
       // Phase 4: Post-compilation optimization
       this.log(ctx, 'Phase 4: Running post-compilation optimizations')
@@ -632,6 +642,21 @@ export class ExecutionGraphCompiler {
           transformedConfig.expression = transformConfig.map_expression
           this.log(ctx, `  → Compiled map_expression to expression`)
         }
+
+        // O24: When map has custom_code but no expression, try to generate structured config
+        // by analyzing upstream output_schema and this step's output_schema
+        if (transformConfig.custom_code && !transformConfig.map_expression && !transformedConfig.expression) {
+          const structuredConfig = this.deriveMapStructuredConfig(nodeId, transform, graph, ctx)
+          if (structuredConfig) {
+            Object.assign(transformedConfig, structuredConfig)
+            // Remove custom_code since we have structured config now
+            delete transformedConfig.custom_code
+          } else {
+            // Couldn't derive structured config — keep custom_code and warn
+            transformedConfig.custom_code = transformConfig.custom_code
+            this.warn(ctx, `[O24] Map step ${nodeId} has unresolvable custom_code — may produce incorrect output at runtime: "${transformConfig.custom_code}"`)
+          }
+        }
       } else if (transformConfig.type === 'reduce') {
         // IR field: reduce_operation → DSL field: reducer
         if (transformConfig.reduce_operation) {
@@ -719,17 +744,39 @@ export class ExecutionGraphCompiler {
     // O14: Detect multi-source merge disguised as 'map' inside scatter-gather
     // Pattern: map with single-object input + additional variables in config + object output_schema
     // Fix: convert to 'set' with inline field-mapping input that resolves all sources
+    // Also triggers outside scatter-gather when input is a single object (not array)
+    // with additional variable references and a merged output_schema shape.
     let finalOperation = pilotOperation
     let finalInput = input
-    if (pilotOperation === 'map' && ctx.loopDepth > 0) {
-      const outputSchema = (transform as any).output_schema
-      if (outputSchema?.type === 'object' && outputSchema.properties) {
-        // Check if config has additional variable references (injected loop variables)
-        const additionalVars = Object.entries(transformedConfig)
-          .filter(([key, val]) => typeof val === 'string' && (val as string).startsWith('{{') && key !== 'input' && key !== 'type' && key !== 'custom_code' && key !== 'output_schema')
-          .map(([key]) => key)
+    const isInsideLoop = ctx.loopDepth > 0
+    const outputSchema = (transform as any).output_schema
 
-        if (additionalVars.length > 0) {
+    // Detect single-object input (not array) — signals merge, not map
+    let inputIsSingleObject = false
+    if (inputVarPath) {
+      const baseVar = inputVarPath.split('.')[0]
+      const varDecl = graph.variables?.find(v => v.name === baseVar)
+      if (varDecl && varDecl.type === 'object') {
+        inputIsSingleObject = true
+      }
+      // Also check data_schema slots
+      const slot = graph.data_schema?.slots?.[baseVar]
+      if (slot?.schema?.type === 'object') {
+        inputIsSingleObject = true
+      }
+    }
+
+    // O14: A 'map' operation on a single object is never valid — map requires array input.
+    // Detect and convert to 'set' regardless of output schema type.
+    if (pilotOperation === 'map' && (isInsideLoop || inputIsSingleObject) &&
+        outputSchema && (outputSchema.type === 'object' || outputSchema.type === 'array') &&
+        (outputSchema.properties || outputSchema.items)) {
+      // Check if config has additional variable references (injected loop variables)
+      const additionalVars = Object.entries(transformedConfig)
+        .filter(([key, val]) => typeof val === 'string' && (val as string).startsWith('{{') && key !== 'input' && key !== 'type' && key !== 'custom_code' && key !== 'output_schema')
+        .map(([key]) => key)
+
+      if (additionalVars.length > 0) {
           this.log(ctx, `  → O14: Detected multi-source merge inside scatter-gather (${additionalVars.length} additional vars: ${additionalVars.join(', ')})`)
 
           // Build field-mapping input: each output field maps to a {{source.field}} reference
@@ -746,13 +793,36 @@ export class ExecutionGraphCompiler {
             finalOperation = 'set'
             finalInput = fieldMapping
             this.log(ctx, `  → O14: Converted map → set with ${Object.keys(fieldMapping).length} field mappings`)
+          } else {
+            // Fallback: convert map → set with pass-through input
+            // This handles cases where buildMergeFieldMapping can't resolve fields
+            // (e.g., array output schemas for 2D sheet rows). 'set' passes data through
+            // instead of failing with "Map operation requires array input".
+            finalOperation = 'set'
+            this.log(ctx, `  → O14: Converted map → set (pass-through, field mapping not applicable for ${outputSchema.type} output)`)
           }
         }
+      }
+
+    // O26: When a set step is pass-through (single source, no field mapping) and feeds an
+    // append_rows action, build an explicit field mapping from sheet_columns config.
+    // This ensures: (1) only declared columns are written, (2) field names are mapped
+    // correctly (e.g., from→sender email), (3) write order matches declared column order,
+    // (4) downstream column_index for dedup extraction aligns with actual write order.
+    // Detect pass-through: finalInput is still the original input (not a field mapping object)
+    const isPassThrough = finalOperation === 'set' && typeof finalInput === 'string'
+    if (isPassThrough && input) {
+      const sheetColumnsMapping = this.buildSheetColumnsFieldMapping(
+        nodeId, input, graph, ctx
+      )
+      if (sheetColumnsMapping) {
+        finalInput = sheetColumnsMapping
+        this.log(ctx, `  → O26: Built sheet column field mapping with ${Object.keys(sheetColumnsMapping).length} columns`)
       }
     }
 
     // PILOT format: input at top level, not in config
-    return {
+    const result = {
       step_id: stepId,
       type: 'transform',
       operation: finalOperation,  // PILOT expects 'operation' field for transform type
@@ -760,6 +830,7 @@ export class ExecutionGraphCompiler {
       description: operation.description || `Transform: ${finalOperation}`,
       config: transformedConfig  // Use transformed config
     }
+    return result
   }
 
   /**
@@ -1207,7 +1278,7 @@ export class ExecutionGraphCompiler {
         }
       } else {
         // Unknown - default to AND
-        console.warn(`[ExecutionGraphCompiler] Unknown combineWith: ${combineWith}, defaulting to AND`)
+        this.logger.warn(`Unknown combineWith: ${combineWith}, defaulting to AND`)
         return {
           conditionType: 'complex_and',
           conditions: result.conditions.map((c: any) => this.transformConditionObject(c))
@@ -1291,7 +1362,7 @@ export class ExecutionGraphCompiler {
 
     // Unknown format - log warning and return as-is
     if (Object.keys(result).length > 0) {
-      console.warn(`[ExecutionGraphCompiler] Unknown condition format: ${JSON.stringify(result)}`)
+      this.logger.warn(`Unknown condition format: ${JSON.stringify(result)}`)
     }
 
     return result
@@ -2352,6 +2423,32 @@ export class ExecutionGraphCompiler {
         const detection = this.detectOutputIs2DArray(step.plugin, step.operation)
 
         if (detection.is2DArray) {
+          // O23: Check if all downstream consumers only use column_index extraction.
+          // If so, skip rows_to_objects — the raw 2D array is sufficient.
+          const downstreamConsumers = this.findDownstreamConsumers(workflow, i + 1, step.output_variable)
+          const allUseColumnIndex = downstreamConsumers.length > 0 && downstreamConsumers.every(s =>
+            s.config?.column_index !== undefined || s.config?.column_index === 0
+          )
+
+          if (allUseColumnIndex) {
+            this.log(ctx, `  → O23: Skipping rows_to_objects for ${step.output_variable} — all ${downstreamConsumers.length} downstream consumer(s) use column_index extraction`)
+            // Don't insert rows_to_objects — but rewrite downstream inputs to point at the .values sub-field
+            // so map receives the raw 2D array, not the wrapper object
+            const valuesPath = `${step.output_variable}.${detection.arrayFieldName}`
+            for (const consumer of downstreamConsumers) {
+              // Handle both bare refs and wrapped {{}} refs (Phase 4.5 adds {{ }} later)
+              const bareVar = step.output_variable
+              if (consumer.input === `{{${bareVar}}}` || consumer.input === bareVar) {
+                consumer.input = `{{${valuesPath}}}`
+              }
+              if (consumer.config?.input === bareVar) {
+                consumer.config.input = valuesPath
+              }
+            }
+            this.log(ctx, `  → O23: Rewrote ${downstreamConsumers.length} consumer input(s) to {{${valuesPath}}}`)
+            continue
+          }
+
           // Case 1: 2D array → Insert rows_to_objects transform
           const convertStepId = `step_${++ctx.stepCounter}`
           const normalizedVarName = `${step.output_variable}_objects`
@@ -2411,6 +2508,24 @@ export class ExecutionGraphCompiler {
   }
 
   /**
+   * O23 helper: Find all downstream workflow steps that consume a given variable.
+   * Searches the full JSON serialization of each step for variable name references.
+   */
+  private findDownstreamConsumers(workflow: WorkflowStep[], startIndex: number, varName: string): WorkflowStep[] {
+    const consumers: WorkflowStep[] = []
+
+    for (let j = startIndex; j < workflow.length; j++) {
+      const step = workflow[j]
+      const stepStr = JSON.stringify(step)
+      if (stepStr.includes(varName)) {
+        consumers.push(step)
+      }
+    }
+
+    return consumers
+  }
+
+  /**
    * Phase 5: Convert compiled workflow to Pilot-compatible format.
    *
    * The compiler internally uses 'operation' and 'config' for all step types.
@@ -2445,6 +2560,26 @@ export class ExecutionGraphCompiler {
           delete converted.config
         }
         convertedCount++
+
+        // O26 Fix C: Anchor append_rows range to column range (e.g., "UrgentEmails" → "UrgentEmails!A:E")
+        // Without column anchor, Sheets API auto-detects data region and may offset subsequent appends
+        if (converted.action === 'append_rows' && converted.params?.range) {
+          const range = String(converted.params.range)
+          if (!range.includes('!')) {
+            // Bare tab name — anchor to column range based on sheet_columns count
+            const sheetColumns = ctx.workflowConfig?.['google_sheets__table_create__columns']
+              || ctx.workflowConfig?.['sheet_columns']
+              || ctx.workflowConfig?.['output_columns']
+            if (sheetColumns && typeof sheetColumns === 'string') {
+              const colCount = sheetColumns.split(',').filter((c: string) => c.trim()).length
+              if (colCount > 0 && colCount <= 26) {
+                const lastCol = String.fromCharCode(64 + colCount) // 1→A, 5→E, 26→Z
+                converted.params.range = `${range}!A:${lastCol}`
+                this.log(ctx, `  → O26 Fix C: Anchored append_rows range: "${range}" → "${converted.params.range}" (${colCount} columns)`)
+              }
+            }
+          }
+        }
       }
 
       // B10: Rewrite {{config.X}} → {{input.X}} in all step values
@@ -2606,7 +2741,7 @@ export class ExecutionGraphCompiler {
 
     // Step 2: Collect all corrections needed
     const corrections = new Map<string, string>() // "variable.wrongField" → "variable.correctField"
-    this.findFieldMismatches(workflow, schemaMap, corrections, ctx)
+    this.findFieldMismatches(workflow, schemaMap, corrections, ctx, fullSchemaMap)
 
     if (corrections.size === 0) {
       this.log(ctx, '  → No field mismatches found')
@@ -2784,7 +2919,8 @@ export class ExecutionGraphCompiler {
     steps: WorkflowStep[],
     schemaMap: Map<string, Record<string, any>>,
     corrections: Map<string, string>,
-    ctx: CompilerContext
+    ctx: CompilerContext,
+    fullSchemaMap?: Map<string, any>
   ) {
     for (const step of steps) {
       // Determine input variable for transform/filter steps (for bare ref checking)
@@ -2794,29 +2930,36 @@ export class ExecutionGraphCompiler {
 
       // Check config values for {{variable.field}} references
       if (step.config) {
-        this.findMismatchesInObject(step.config, schemaMap, corrections, ctx, `step ${step.step_id}`, inputVariable)
+        this.findMismatchesInObject(step.config, schemaMap, corrections, ctx, `step ${step.step_id}`, inputVariable, fullSchemaMap)
       }
 
       // Check condition fields
       if (step.condition) {
-        this.findMismatchesInObject(step.condition, schemaMap, corrections, ctx, `step ${step.step_id} condition`, inputVariable)
+        this.findMismatchesInObject(step.condition, schemaMap, corrections, ctx, `step ${step.step_id} condition`, inputVariable, fullSchemaMap)
+      }
+
+      // O25b: Validate cross-variable value references in in/not_in filter conditions
+      // When a filter condition has operator "in" and value is a variable name,
+      // verify the variable's output_schema is a compatible array type (not array<object>)
+      if (step.config?.condition) {
+        this.validateFilterConditionValues(step.config.condition, schemaMap, ctx, step.step_id, fullSchemaMap)
       }
 
       // Check input references
       if (typeof step.input === 'string') {
-        this.checkSingleRef(step.input, schemaMap, corrections, ctx, `step ${step.step_id} input`)
+        this.checkSingleRef(step.input, schemaMap, corrections, ctx, `step ${step.step_id} input`, inputVariable, fullSchemaMap)
       }
 
       // Recurse into nested steps
       if (step.type === 'scatter_gather' && step.scatter?.steps) {
-        this.findFieldMismatches(step.scatter.steps, schemaMap, corrections, ctx)
+        this.findFieldMismatches(step.scatter.steps, schemaMap, corrections, ctx, fullSchemaMap)
       }
       if (step.steps && Array.isArray(step.steps)) {
-        this.findFieldMismatches(step.steps, schemaMap, corrections, ctx)
+        this.findFieldMismatches(step.steps, schemaMap, corrections, ctx, fullSchemaMap)
       }
       const conditionalStep = step as any
       if (conditionalStep.else_steps && Array.isArray(conditionalStep.else_steps)) {
-        this.findFieldMismatches(conditionalStep.else_steps, schemaMap, corrections, ctx)
+        this.findFieldMismatches(conditionalStep.else_steps, schemaMap, corrections, ctx, fullSchemaMap)
       }
     }
   }
@@ -2831,17 +2974,73 @@ export class ExecutionGraphCompiler {
     corrections: Map<string, string>,
     ctx: CompilerContext,
     location: string,
-    inputVariable?: string
+    inputVariable?: string,
+    fullSchemaMap?: Map<string, any>
   ) {
     if (typeof obj === 'string') {
-      this.checkSingleRef(obj, schemaMap, corrections, ctx, location, inputVariable)
+      this.checkSingleRef(obj, schemaMap, corrections, ctx, location, inputVariable, fullSchemaMap)
     } else if (Array.isArray(obj)) {
       for (const item of obj) {
-        this.findMismatchesInObject(item, schemaMap, corrections, ctx, location, inputVariable)
+        this.findMismatchesInObject(item, schemaMap, corrections, ctx, location, inputVariable, fullSchemaMap)
       }
     } else if (obj && typeof obj === 'object') {
       for (const value of Object.values(obj)) {
-        this.findMismatchesInObject(value, schemaMap, corrections, ctx, location, inputVariable)
+        this.findMismatchesInObject(value, schemaMap, corrections, ctx, location, inputVariable, fullSchemaMap)
+      }
+    }
+  }
+
+  /**
+   * O25b: Validate that value references in in/not_in filter conditions point to compatible types.
+   * Recursively walks nested conditions (complex_not, complex_and, complex_or).
+   */
+  private validateFilterConditionValues(
+    condition: any,
+    schemaMap: Map<string, Record<string, any>>,
+    ctx: CompilerContext,
+    stepId: string,
+    fullSchemaMap?: Map<string, any>
+  ) {
+    if (!condition || typeof condition !== 'object') return
+
+    // Handle nested conditions
+    if (condition.conditionType === 'complex_not' && condition.condition) {
+      this.validateFilterConditionValues(condition.condition, schemaMap, ctx, stepId, fullSchemaMap)
+    }
+    if (condition.conditions && Array.isArray(condition.conditions)) {
+      for (const sub of condition.conditions) {
+        this.validateFilterConditionValues(sub, schemaMap, ctx, stepId, fullSchemaMap)
+      }
+    }
+
+    // Check simple conditions with 'in' operator where value is a variable name
+    if (condition.conditionType === 'simple' && condition.value && typeof condition.value === 'string') {
+      const operator = condition.operator?.toLowerCase()
+      if (operator === 'in' || operator === 'not_in' || operator === 'includes') {
+        const valueName = condition.value.replace(/[{}]/g, '')
+
+        // Check if this is a known variable (not a literal)
+        if (schemaMap.has(valueName) || fullSchemaMap?.has(valueName)) {
+          const fullSchema = fullSchemaMap?.get(valueName)
+
+          if (fullSchema) {
+            // Validate the variable is an array of primitives, not objects
+            if (fullSchema.type === 'array' && fullSchema.items?.type === 'object') {
+              this.warn(ctx,
+                `[O25b] step ${stepId}: filter condition "${condition.operator}" references "${valueName}" ` +
+                `which is array<object>, not array<string>. The in/not_in check will fail at runtime. ` +
+                `Expected: array<string> or array<number>.`
+              )
+            } else if (fullSchema.type !== 'array') {
+              this.warn(ctx,
+                `[O25b] step ${stepId}: filter condition "${condition.operator}" references "${valueName}" ` +
+                `which has type "${fullSchema.type}", not an array. The in/not_in check will fail at runtime.`
+              )
+            } else {
+              this.log(ctx, `  → [O25b] step ${stepId}: "${valueName}" is array<${fullSchema.items?.type || 'unknown'}> — compatible with ${condition.operator}`)
+            }
+          }
+        }
       }
     }
   }
@@ -2857,7 +3056,8 @@ export class ExecutionGraphCompiler {
     corrections: Map<string, string>,
     ctx: CompilerContext,
     location: string,
-    inputVariable?: string
+    inputVariable?: string,
+    fullSchemaMap?: Map<string, any>
   ) {
     // Match {{variable.field}} patterns (not {{config.X}} which are user configs)
     const refPattern = /\{\{(\w+)\.(\w+)\}\}/g
@@ -2877,7 +3077,7 @@ export class ExecutionGraphCompiler {
       // Check if field exists exactly
       if (field in props) continue // Exact match, no correction needed
 
-      // Field doesn't exist — try to resolve
+      // Field doesn't exist — try to resolve via casing/semantic match first
       const correctedField = this.resolveFieldMismatch(field, props, ctx, location, variable)
 
       if (correctedField) {
@@ -2886,7 +3086,34 @@ export class ExecutionGraphCompiler {
         corrections.set(oldRef, newRef)
         this.log(ctx, `  → [O10] ${location}: {{${oldRef}}} → {{${newRef}}} (field reconciled)`)
       } else {
-        this.warn(ctx, `[O10] ${location}: {{${variable}.${field}}} — field "${field}" not found in ${variable} output schema. Available: [${Object.keys(props).join(', ')}]`)
+        // O20: Recursive nested field search — field may exist at a deeper nesting level
+        // e.g., "amount" not at top level but at "extracted_fields.amount"
+        const fullSchema = fullSchemaMap?.get(variable)
+        if (fullSchema) {
+          const nestedPaths = this.findFieldInNestedSchema(field, fullSchema)
+
+          if (nestedPaths.length === 1) {
+            // Found at exactly one nested path — auto-correct
+            const nestedPath = nestedPaths[0]
+            const oldRef = `${variable}.${field}`
+            const newRef = `${variable}.${nestedPath}`
+            corrections.set(oldRef, newRef)
+            this.log(ctx, `  → [O20] ${location}: {{${oldRef}}} → {{${newRef}}} (nested field path resolved)`)
+          } else if (nestedPaths.length > 1) {
+            // Found at multiple nested paths — warn about ambiguity
+            this.warn(
+              ctx,
+              `[O20] ${location}: {{${variable}.${field}}} — field "${field}" found at ` +
+              `multiple nested paths: [${nestedPaths.join(', ')}]. Cannot auto-correct — ` +
+              `please specify the full path explicitly.`
+            )
+          } else {
+            // Not found anywhere — fall back to original O10 warning
+            this.warn(ctx, `[O10] ${location}: {{${variable}.${field}}} — field "${field}" not found in ${variable} output schema. Available: [${Object.keys(props).join(', ')}]`)
+          }
+        } else {
+          this.warn(ctx, `[O10] ${location}: {{${variable}.${field}}} — field "${field}" not found in ${variable} output schema. Available: [${Object.keys(props).join(', ')}]`)
+        }
       }
     }
 
@@ -2899,7 +3126,24 @@ export class ExecutionGraphCompiler {
       while ((bareMatch = bareRefPattern.exec(value)) !== null) {
         const field = bareMatch[1]
 
-        const props = schemaMap.get(inputVariable)
+        let props = schemaMap.get(inputVariable)
+
+        // O25a: If direct lookup fails, handle dotted input variables (e.g., "complaint_emails.emails")
+        // Navigate into the base variable's full schema to find the nested array items' properties
+        if (!props && inputVariable.includes('.') && fullSchemaMap) {
+          const dotIdx = inputVariable.indexOf('.')
+          const baseVar = inputVariable.substring(0, dotIdx)
+          const subField = inputVariable.substring(dotIdx + 1)
+          const baseFullSchema = fullSchemaMap.get(baseVar)
+          if (baseFullSchema?.properties?.[subField]?.items?.properties) {
+            props = {}
+            for (const [k, v] of Object.entries(baseFullSchema.properties[subField].items.properties)) {
+              props[k] = v as any
+            }
+            this.log(ctx, `  → [O25a] Resolved item schema for "${inputVariable}" via ${baseVar}.${subField}.items — fields: [${Object.keys(props).join(', ')}]`)
+          }
+        }
+
         if (!props) continue
 
         if (field in props) continue // Exact match
@@ -2917,6 +3161,45 @@ export class ExecutionGraphCompiler {
         }
       }
     }
+  }
+
+  /**
+   * O20: Recursively search a schema tree for a field name at any nesting level.
+   * Returns all paths where the field is found (e.g., ["extracted_fields.amount", "metadata.amount"]).
+   * Skips the top level (already checked by the caller).
+   */
+  private findFieldInNestedSchema(
+    fieldName: string,
+    schema: any,
+    currentPath: string = '',
+    depth: number = 0
+  ): string[] {
+    const foundPaths: string[] = []
+    // Limit recursion depth to prevent infinite loops
+    if (depth > 5 || !schema || typeof schema !== 'object') return foundPaths
+
+    const properties = schema.properties || schema.items?.properties || null
+    if (!properties) return foundPaths
+
+    for (const [propName, propSchema] of Object.entries(properties)) {
+      const propPath = currentPath ? `${currentPath}.${propName}` : propName
+      const propSchemaObj = propSchema as any
+
+      // Skip top level (depth 0) — already checked by caller
+      if (depth > 0 && propName === fieldName) {
+        foundPaths.push(propPath)
+      }
+
+      // Recurse into nested objects and arrays
+      if (propSchemaObj?.type === 'object' && propSchemaObj.properties) {
+        foundPaths.push(...this.findFieldInNestedSchema(fieldName, propSchemaObj, propPath, depth + 1))
+      }
+      if (propSchemaObj?.type === 'array' && propSchemaObj.items) {
+        foundPaths.push(...this.findFieldInNestedSchema(fieldName, propSchemaObj.items, propPath, depth + 1))
+      }
+    }
+
+    return foundPaths
   }
 
   /**
@@ -2959,7 +3242,10 @@ export class ExecutionGraphCompiler {
       let score = 0
 
       // Check if the wrong field name appears in the description
-      if (desc.includes(wrongLower)) {
+      // O25a: Normalize underscores to spaces for matching (e.g., "message_id" matches "message ID")
+      const descNormalized = desc.replace(/[_\-]/g, ' ')
+      const wrongNormalized = wrongLower.replace(/[_\-]/g, ' ')
+      if (descNormalized.includes(wrongNormalized) || desc.includes(wrongLower)) {
         score += 3
       }
 
@@ -2976,7 +3262,9 @@ export class ExecutionGraphCompiler {
         'body': ['content', 'data', 'html_body', 'text'],
         'name': ['title', 'label', 'filename', 'file_name'],
         'url': ['link', 'href', 'web_view_link', 'web_content_link'],
-        'id': ['identifier', 'key'],
+        'id': ['identifier', 'key', 'message_id', 'thread_id', 'email_id'],
+        'message_id': ['id'],
+        'thread_id': ['id'],
       }
       const synonymsForWrong = synonyms[wrongLower] || []
       if (synonymsForWrong.includes(schemaLower)) {
@@ -3151,13 +3439,197 @@ export class ExecutionGraphCompiler {
   }
 
   // ============================================================================
+  // Phase 3.9: Nullable-to-Required Parameter Detection (O16)
+  // ============================================================================
+
+  /**
+   * O16: Detect when an extraction step's nullable output fields are mapped to
+   * required plugin parameters. Emits a compilation WARNING only -- no auto-fix.
+   *
+   * Algorithm:
+   * 1. Find all steps with output_schema that have non-required fields (potentially null)
+   * 2. For each downstream action step, check if its plugin parameters are required
+   * 3. If a nullable output field feeds a required parameter, warn
+   */
+  private detectNullableToRequiredMappings(workflow: WorkflowStep[], ctx: CompilerContext): void {
+    // Step 1: Build a map of output_variable → { requiredFields, allFields }
+    const outputFieldInfo = new Map<string, { required: Set<string>; all: Set<string> }>()
+
+    const collectOutputInfo = (steps: WorkflowStep[]) => {
+      for (const step of steps) {
+        if (step.output_variable && step.output_schema) {
+          const schema = step.output_schema
+          const requiredFields = new Set<string>(schema.required || [])
+          const allFields = new Set<string>(
+            Object.keys(schema.properties || schema.items?.properties || {})
+          )
+          // Nullable fields = all fields minus required fields
+          outputFieldInfo.set(step.output_variable, { required: requiredFields, all: allFields })
+        }
+
+        // Recurse into nested steps
+        if (step.type === 'scatter_gather' && step.scatter?.steps) {
+          collectOutputInfo(step.scatter.steps)
+        }
+        if (step.steps && Array.isArray(step.steps)) {
+          collectOutputInfo(step.steps)
+        }
+        const conditionalStep = step as any
+        if (conditionalStep.else_steps && Array.isArray(conditionalStep.else_steps)) {
+          collectOutputInfo(conditionalStep.else_steps)
+        }
+      }
+    }
+    collectOutputInfo(workflow)
+
+    if (outputFieldInfo.size === 0) return
+
+    // Step 2: Check action steps for required parameters that reference nullable fields
+    let warningCount = 0
+
+    const checkStep = (steps: WorkflowStep[]) => {
+      for (const step of steps) {
+        if (step.type === 'action' && step.plugin && step.operation) {
+          const pluginSchema = this.getActionInputSchema(step.plugin, step.operation)
+          if (!pluginSchema) continue
+
+          const requiredParams = new Set<string>(pluginSchema.required || [])
+          const params = (step as any).params || step.config || {}
+
+          for (const [paramName, paramValue] of Object.entries(params)) {
+            if (!requiredParams.has(paramName)) continue
+            if (typeof paramValue !== 'string') continue
+
+            // Check if this references a nullable field: {{variable.field}}
+            const refMatch = (paramValue as string).match(/^\{\{(\w+)\.(\w+)\}\}$/)
+            if (!refMatch) continue
+
+            const [, variable, field] = refMatch
+            const info = outputFieldInfo.get(variable)
+            if (!info) continue
+
+            // Field is nullable if it exists in all fields but NOT in required fields
+            if (info.all.has(field) && !info.required.has(field)) {
+              this.warn(
+                ctx,
+                `[O16] Nullable field "${variable}.${field}" mapped to required parameter ` +
+                `"${paramName}" in ${step.plugin}.${step.operation} (step ${step.step_id}). ` +
+                `If "${field}" is null at runtime, the plugin call will fail.`
+              )
+              warningCount++
+            }
+          }
+        }
+
+        // Recurse
+        if (step.type === 'scatter_gather' && step.scatter?.steps) {
+          checkStep(step.scatter.steps)
+        }
+        if (step.steps && Array.isArray(step.steps)) {
+          checkStep(step.steps)
+        }
+        const conditionalStep = step as any
+        if (conditionalStep.else_steps && Array.isArray(conditionalStep.else_steps)) {
+          checkStep(conditionalStep.else_steps)
+        }
+      }
+    }
+    checkStep(workflow)
+
+    if (warningCount === 0) {
+      this.log(ctx, '  → No nullable-to-required parameter issues detected')
+    } else {
+      this.log(ctx, `  → O16: ${warningCount} nullable-to-required parameter warning(s) emitted`)
+    }
+  }
+
+  /**
+   * O16: Get plugin action input schema (parameters) for nullable field detection.
+   */
+  private getActionInputSchema(pluginKey: string, actionName: string): any | undefined {
+    if (!this.pluginManager) return undefined
+
+    try {
+      const plugins = this.pluginManager.getAvailablePlugins()
+      const pluginDef = plugins[pluginKey]
+
+      if (!pluginDef?.actions?.[actionName]) return undefined
+
+      return pluginDef.actions[actionName].parameters
+    } catch {
+      return undefined
+    }
+  }
+
+  // ============================================================================
+  // Phase 3.10: Empty Results Assertions (O18)
+  // ============================================================================
+
+  /**
+   * O18 (Compiler-level): Add on_empty metadata to transform/flatten steps
+   * that feed into scatter-gather. This enables the runtime to detect and
+   * handle empty results appropriately.
+   *
+   * Default: on_empty: "warn" for most steps.
+   * Before scatter-gather: on_empty: "throw" (empty scatter input is always a problem).
+   */
+  private addEmptyResultAssertions(workflow: WorkflowStep[], ctx: CompilerContext): void {
+    let assertionsAdded = 0
+
+    const processSteps = (steps: WorkflowStep[]) => {
+      for (let i = 0; i < steps.length; i++) {
+        const step = steps[i]
+        const nextStep = i + 1 < steps.length ? steps[i + 1] : null
+
+        // Add on_empty to transform/flatten steps
+        if (step.type === 'transform' && ['flatten', 'filter', 'map', 'select'].includes(step.operation || '')) {
+          const stepAny = step as any
+
+          // Check if next step is scatter-gather — use "throw" to prevent empty iteration
+          if (nextStep?.type === 'scatter_gather') {
+            stepAny._on_empty = 'throw'
+            this.log(ctx, `  → O18: Added on_empty: "throw" to ${step.step_id} (feeds scatter-gather ${nextStep.step_id})`)
+            assertionsAdded++
+          } else if (!stepAny._on_empty) {
+            // Default: "warn" for all other transform steps producing arrays
+            stepAny._on_empty = 'warn'
+            assertionsAdded++
+          }
+        }
+
+        // Recurse into scatter-gather body steps
+        if (step.type === 'scatter_gather' && step.scatter?.steps) {
+          processSteps(step.scatter.steps)
+        }
+        if (step.steps && Array.isArray(step.steps)) {
+          processSteps(step.steps)
+        }
+        const conditionalStep = step as any
+        if (conditionalStep.else_steps && Array.isArray(conditionalStep.else_steps)) {
+          processSteps(conditionalStep.else_steps)
+        }
+      }
+    }
+
+    processSteps(workflow)
+
+    if (assertionsAdded > 0) {
+      this.log(ctx, `  → O18: Added ${assertionsAdded} empty result assertion(s)`)
+    }
+  }
+
+  // ============================================================================
   // Phase 3.8: Config Reference Consistency (O11)
   // ============================================================================
 
   /**
-   * Detect config keys that are declared in IntentContract but never referenced
-   * in the compiled DSL. For unreferenced keys with defaults, scan all steps for
-   * hardcoded values matching the default and auto-replace with {{config.key}}.
+   * O11 (Layer B): WARNING-ONLY validation pass that detects unreferenced config keys.
+   * Scans the compiled DSL for {{config.X}} references and warns about config keys
+   * declared in IntentContract but never referenced. Also detects hardcoded values
+   * that match config defaults and warns (but does NOT auto-replace).
+   *
+   * Auto-replacement was removed per SA directive -- config value replacement
+   * must be fixed at the source (Phase 1 prompt, Layer A) not patched in the compiler.
    */
   private enforceConfigReferences(
     workflow: WorkflowStep[],
@@ -3175,7 +3647,7 @@ export class ExecutionGraphCompiler {
 
     this.log(ctx, `  → Referenced config keys: [${Array.from(referencedConfigKeys).join(', ')}]`)
 
-    // Step 2: Find unreferenced config keys
+    // Step 2: Find unreferenced config keys and emit warnings
     const unreferenced: Array<{ key: string; default_value: any }> = []
     for (const entry of configDefaults) {
       if (!referencedConfigKeys.has(entry.key)) {
@@ -3191,55 +3663,39 @@ export class ExecutionGraphCompiler {
 
     this.log(ctx, `  → ${unreferenced.length} unreferenced config key(s): [${unreferenced.map(u => u.key).join(', ')}]`)
 
-    // Step 3: For unreferenced keys with defaults, scan for hardcoded values and replace
-    let result = JSON.stringify(workflow)
-    let replacements = 0
-
+    // Step 3: WARNING-ONLY -- detect hardcoded values that match config defaults
+    // Does NOT auto-replace. Warns so the issue can be fixed at the source (Phase 1 prompt).
     for (const { key, default_value } of unreferenced) {
       if (default_value === undefined || default_value === null) continue
 
-      // Build a pattern to find the hardcoded value in step configs
-      // Match JSON patterns like: "param_name": 50  or  "param_name": "value"
-      // We need to find the right parameter name — derive it from the config key
-      // e.g., gmail_search_max_results → max_results (strip plugin prefix)
       const paramCandidates = this.deriveParamCandidates(key)
 
       for (const paramName of paramCandidates) {
         let pattern: RegExp
-        let replacement: string
 
         if (typeof default_value === 'number') {
-          // Match: "paramName": 50 (number, no quotes around value)
           pattern = new RegExp(`"${this.escapeRegex(paramName)}"\\s*:\\s*${default_value}(?=[,}\\s])`, 'g')
-          replacement = `"${paramName}": "{{config.${key}}}"`
         } else if (typeof default_value === 'string') {
-          // Match: "paramName": "value" (string, quoted value)
           pattern = new RegExp(`"${this.escapeRegex(paramName)}"\\s*:\\s*"${this.escapeRegex(default_value)}"`, 'g')
-          replacement = `"${paramName}": "{{config.${key}}}"`
         } else if (typeof default_value === 'boolean') {
-          // Match: "paramName": true/false
           pattern = new RegExp(`"${this.escapeRegex(paramName)}"\\s*:\\s*${default_value}(?=[,}\\s])`, 'g')
-          replacement = `"${paramName}": "{{config.${key}}}"`
         } else {
-          continue // Skip complex types (objects, arrays)
+          continue
         }
 
-        const before = result
-        result = result.replace(pattern, replacement)
-        if (result !== before) {
-          replacements++
-          this.log(ctx, `  → [O11] Auto-replaced hardcoded "${paramName}": ${JSON.stringify(default_value)} → "{{config.${key}}}"`)
+        if (pattern.test(serializedWorkflow)) {
+          this.warn(
+            ctx,
+            `[O11] Hardcoded value detected: "${paramName}": ${JSON.stringify(default_value)} ` +
+            `matches config key "${key}" default. Should use { kind: "config", key: "${key}" } ` +
+            `in IntentContract to make this value runtime-configurable.`
+          )
         }
       }
     }
 
-    if (replacements === 0) {
-      this.log(ctx, '  → No hardcoded values matched unreferenced config defaults')
-      return workflow
-    }
-
-    this.log(ctx, `  → Applied ${replacements} config reference replacement(s)`)
-    return JSON.parse(result)
+    // Return workflow unchanged -- no auto-replacement
+    return workflow
   }
 
   /**
@@ -3360,7 +3816,12 @@ export class ExecutionGraphCompiler {
         // Match {{varName}} but NOT {{varName.something}}
         // This regex ensures we only unwrap direct references, not already-accessed paths
         const directRefPattern = new RegExp(`\\{\\{${varName}\\}\\}(?!\\.\\w)`, 'g')
-        return value.replace(directRefPattern, `{{${varName}.${arrayFieldName}}}`)
+        let result = value.replace(directRefPattern, `{{${varName}.${arrayFieldName}}}`)
+        // Also handle bare strings without {{ }} (at Phase 3.5, inputs may not have braces yet — same fix as O15)
+        if (result === varName) {
+          result = `${varName}.${arrayFieldName}`
+        }
+        return result
       } else if (Array.isArray(value)) {
         return value.map(unwrapInValue)
       } else if (value && typeof value === 'object') {
@@ -3837,6 +4298,207 @@ export class ExecutionGraphCompiler {
   }
 
   /**
+   * O24: Derive structured map config from custom_code by analyzing upstream and output schemas.
+   *
+   * Handles two patterns:
+   * 1. Input is 2D array (array<array<string>>) → emit column_index
+   * 2. Input is array of objects → emit field or field_path
+   *
+   * Returns structured config object or null if cannot derive.
+   */
+  private deriveMapStructuredConfig(
+    nodeId: string,
+    transform: any,
+    graph: ExecutionGraph,
+    ctx: CompilerContext
+  ): Record<string, any> | null {
+    try {
+      const outputSchema = transform.output_schema
+      const customCode: string = transform.custom_code || ''
+
+      // Find the upstream variable and its schema
+      const node = graph.nodes[nodeId]
+      let upstreamVar = node?.inputs?.[0]?.variable
+      if (!upstreamVar) {
+        upstreamVar = transform.input
+      }
+      if (!upstreamVar) return null
+
+      // Find the upstream schema — handle sub-field access (e.g., "existing_rows.values")
+      let upstreamSchema: any = null
+      const dotIdx = upstreamVar.indexOf('.')
+      if (dotIdx > -1) {
+        const baseVar = upstreamVar.substring(0, dotIdx)
+        const subField = upstreamVar.substring(dotIdx + 1)
+        const baseSchema = graph.data_schema?.slots?.[baseVar]?.schema
+        if (baseSchema?.properties?.[subField]) {
+          upstreamSchema = baseSchema.properties[subField]
+          this.log(ctx, `  → O24: Resolved sub-field schema for "${upstreamVar}" via "${baseVar}.${subField}"`)
+        }
+      }
+      if (!upstreamSchema) {
+        upstreamSchema = graph.data_schema?.slots?.[upstreamVar]?.schema || null
+      }
+
+      this.log(ctx, `  → O24: upstream="${upstreamVar}", schemaType=${upstreamSchema?.type || 'null'}, itemsType=${upstreamSchema?.items?.type || 'null'}`)
+
+      // Determine if output is a flat array (single-value extraction like array<string>)
+      const isFlatArrayOutput = outputSchema?.type === 'array' &&
+        outputSchema?.items?.type !== 'object' &&
+        outputSchema?.items?.type !== 'array'
+
+      // Pattern 1: Input is 2D array → use column_index
+      // Detected when upstream schema is array<array<string>> (e.g., read_range values)
+      const isUpstream2DArray = upstreamSchema?.type === 'array' &&
+        upstreamSchema?.items?.type === 'array'
+
+      if (isUpstream2DArray && isFlatArrayOutput) {
+        const columnIndex = this.parseColumnIndexFromCustomCode(customCode, ctx)
+        if (columnIndex !== null) {
+          this.log(ctx, `  → O24: Derived column_index=${columnIndex} from custom_code: "${customCode}"`)
+          return { column_index: columnIndex }
+        }
+      }
+
+      // Pattern 1b: Input is an object with 2D array field (e.g., read_range → {values: [[...]]})
+      // The runtime will unwrap to the array field, so column_index still applies
+      if (!isUpstream2DArray && upstreamSchema?.type === 'object' && upstreamSchema?.properties && isFlatArrayOutput) {
+        for (const [fieldName, fieldSchema] of Object.entries(upstreamSchema.properties)) {
+          const fs = fieldSchema as any
+          if (fs?.type === 'array' && fs?.items?.type === 'array') {
+            const columnIndex = this.parseColumnIndexFromCustomCode(customCode, ctx)
+            if (columnIndex !== null) {
+              this.log(ctx, `  → O24: Input is object with 2D array field "${fieldName}" — derived column_index=${columnIndex}`)
+              return { column_index: columnIndex }
+            }
+          }
+        }
+      }
+
+      // Pattern 2: Input is array of objects → use field or field_path
+      const isUpstreamObjectArray = upstreamSchema?.type === 'array' &&
+        upstreamSchema?.items?.type === 'object'
+
+      if (isUpstreamObjectArray && isFlatArrayOutput) {
+        const upstreamProperties = upstreamSchema?.items?.properties || {}
+        const fieldNames = Object.keys(upstreamProperties)
+
+        // Try to find a matching field from custom_code text
+        const fieldName = this.parseFieldNameFromCustomCode(customCode, fieldNames, ctx)
+        if (fieldName) {
+          if (fieldName.includes('.')) {
+            this.log(ctx, `  → O24: Derived field_path="${fieldName}" from custom_code`)
+            return { field_path: fieldName }
+          } else {
+            this.log(ctx, `  → O24: Derived field="${fieldName}" from custom_code`)
+            return { field: fieldName }
+          }
+        }
+
+        // If output_schema has a description, try to match it against upstream field descriptions
+        if (outputSchema?.items?.description) {
+          for (const [fname, fschema] of Object.entries(upstreamProperties)) {
+            const desc = (fschema as any)?.description || ''
+            if (desc.toLowerCase().includes(outputSchema.items.description.toLowerCase()) ||
+                outputSchema.items.description.toLowerCase().includes(desc.toLowerCase())) {
+              this.log(ctx, `  → O24: Matched field="${fname}" via description: "${desc}"`)
+              return { field: fname }
+            }
+          }
+        }
+      }
+
+      // Last resort: try column_index from custom_code even without schema
+      if (isFlatArrayOutput) {
+        const columnIndex = this.parseColumnIndexFromCustomCode(customCode, ctx)
+        if (columnIndex !== null) {
+          this.log(ctx, `  → O24: No matching schema pattern — derived column_index=${columnIndex} from custom_code as fallback`)
+          return { column_index: columnIndex }
+        }
+      }
+
+      return null
+    } catch (err) {
+      this.log(ctx, `  → O24: Could not derive structured map config for ${nodeId}: ${err}`)
+      return null
+    }
+  }
+
+  /**
+   * O24 helper: Parse a column index from custom_code natural language text.
+   * Recognizes patterns like "column E", "5th column", "index 4", "column 5".
+   */
+  private parseColumnIndexFromCustomCode(customCode: string, ctx: CompilerContext): number | null {
+    const lower = customCode.toLowerCase()
+
+    // Pattern: "column E" or "column e" → convert letter to 0-based index (A=0, B=1, ...)
+    const letterMatch = lower.match(/column\s+([a-z])\b/)
+    if (letterMatch) {
+      const index = letterMatch[1].charCodeAt(0) - 'a'.charCodeAt(0)
+      this.log(ctx, `    O24: Parsed column letter "${letterMatch[1].toUpperCase()}" → index ${index}`)
+      return index
+    }
+
+    // Pattern: "index 4" or "index: 4"
+    const indexMatch = lower.match(/index[:\s]+(\d+)/)
+    if (indexMatch) {
+      return parseInt(indexMatch[1], 10)
+    }
+
+    // Pattern: "5th column" or "1st column" → convert to 0-based
+    const nthMatch = lower.match(/(\d+)(?:st|nd|rd|th)\s+column/)
+    if (nthMatch) {
+      return parseInt(nthMatch[1], 10) - 1  // 1-based to 0-based
+    }
+
+    // Pattern: "column 5" → convert to 0-based
+    const colNumMatch = lower.match(/column\s+(\d+)/)
+    if (colNumMatch) {
+      return parseInt(colNumMatch[1], 10) - 1  // 1-based to 0-based
+    }
+
+    return null
+  }
+
+  /**
+   * O24 helper: Parse a field name from custom_code by matching against known upstream fields.
+   * Recognizes patterns like "extract email", "get the id field", "message_id".
+   */
+  private parseFieldNameFromCustomCode(
+    customCode: string,
+    upstreamFieldNames: string[],
+    ctx: CompilerContext
+  ): string | null {
+    const lower = customCode.toLowerCase()
+
+    // Direct match: check if any upstream field name appears in the custom_code
+    // Sort by length descending to match longer names first (e.g., "message_id" before "id")
+    const sortedFields = [...upstreamFieldNames].sort((a, b) => b.length - a.length)
+    for (const field of sortedFields) {
+      if (lower.includes(field.toLowerCase())) {
+        this.log(ctx, `    O24: Found field "${field}" mentioned in custom_code`)
+        return field
+      }
+    }
+
+    // Fuzzy match: normalize both to lowercase-no-separators
+    const normalize = (s: string) => s.toLowerCase().replace(/[_\-\s]/g, '')
+    for (const field of sortedFields) {
+      const normalizedField = normalize(field)
+      // Check if any word in custom_code matches the normalized field name
+      const words = lower.split(/\s+/)
+      for (const word of words) {
+        if (normalize(word) === normalizedField) {
+          this.log(ctx, `    O24: Fuzzy-matched field "${field}" from word "${word}"`)
+          return field
+        }
+      }
+    }
+
+    return null
+  }
+
+  /**
    * O14: Build a field mapping for multi-source merge transforms.
    *
    * Given an output_schema and multiple source variables, determine which
@@ -3856,6 +4518,262 @@ export class ExecutionGraphCompiler {
    *   "email_sender": "{{attachment._parentData.from}}"
    * }
    */
+  /**
+   * O19: Binary/large field blocklist.
+   * These field names are excluded from scatter-gather merge operations
+   * unless explicitly referenced by downstream steps (AI prompts, plugin params,
+   * filter conditions). Prevents token overflow in AI steps.
+   */
+  private static readonly BINARY_FIELD_BLOCKLIST = new Set([
+    'data', 'content', 'file_content', 'base64', 'extracted_text',
+    'raw_content', 'binary', 'blob', 'encoded_content', 'body_data',
+    'attachment_data', 'file_data', 'raw_data', 'payload_data'
+  ])
+
+  /**
+   * O19: Check if a field name is in the binary blocklist.
+   */
+  private isBinaryBlockedField(fieldName: string): boolean {
+    return ExecutionGraphCompiler.BINARY_FIELD_BLOCKLIST.has(fieldName.toLowerCase())
+  }
+
+  /**
+   * O19: Collect field names explicitly referenced by downstream steps.
+   * Scans AI prompts, plugin params, filter conditions, and transform configs
+   * for {{variable.field}} references to determine which fields are actually needed.
+   */
+  private collectDownstreamReferencedFields(
+    nodeId: string,
+    graph: ExecutionGraph,
+    ctx: CompilerContext
+  ): Set<string> {
+    const referencedFields = new Set<string>()
+
+    // Find the output variable of this node
+    const node = graph.nodes[nodeId]
+    const outputVar = node?.outputs?.[0]?.variable
+    if (!outputVar) return referencedFields
+
+    // Scan all nodes for references to this variable's fields
+    for (const [id, n] of Object.entries(graph.nodes)) {
+      if (id === nodeId) continue
+
+      const nodeStr = JSON.stringify(n)
+      // Match {{outputVar.fieldName}} patterns
+      const pattern = new RegExp(`\\{\\{${outputVar}\\.([\\w.]+)\\}\\}`, 'g')
+      let match: RegExpExecArray | null
+      while ((match = pattern.exec(nodeStr)) !== null) {
+        referencedFields.add(match[1].split('.')[0]) // top-level field name
+      }
+
+      // Also check for bare field references in prompts/instructions
+      if (n.operation?.ai?.instruction) {
+        const promptPattern = new RegExp(`\\b${outputVar}\\.([\\w]+)\\b`, 'g')
+        let promptMatch: RegExpExecArray | null
+        while ((promptMatch = promptPattern.exec(n.operation.ai.instruction)) !== null) {
+          referencedFields.add(promptMatch[1])
+        }
+      }
+    }
+
+    return referencedFields
+  }
+
+  /**
+   * O26: Build field mapping from sheet_columns config when a set step feeds an append_rows action.
+   * Returns a fields mapping object like:
+   *   { "sender email": "{{complaint_email.from}}", "subject": "{{complaint_email.subject}}", ... }
+   * or null if the pattern doesn't match.
+   */
+  private buildSheetColumnsFieldMapping(
+    nodeId: string,
+    input: string,
+    graph: ExecutionGraph,
+    ctx: CompilerContext
+  ): Record<string, string> | null {
+    // Find the sheet_columns config — try EP key hint format first, then generic
+    const sheetColumns = ctx.workflowConfig?.['google_sheets__table_create__columns']
+      || ctx.workflowConfig?.['sheet_columns']
+      || ctx.workflowConfig?.['output_columns']
+    this.log(ctx, `  → O26: Looking for sheet_columns in config — found: ${sheetColumns ? `"${sheetColumns}"` : 'NOT FOUND'} (config keys: ${Object.keys(ctx.workflowConfig || {}).filter(k => k.includes('column')).join(', ') || 'none with "column"'})`)
+    if (!sheetColumns || typeof sheetColumns !== 'string') return null
+
+    try {
+    // If sheet_columns config exists with the EP key hint prefix, we know there's a sheet write operation.
+    // No need to search graph nodes — the existence of this config key is sufficient signal.
+
+    // Parse column names from config
+    const columns = sheetColumns.split(',').map((c: string) => c.trim()).filter((c: string) => c.length > 0)
+    if (columns.length === 0) return null
+
+    // Get the source variable name (strip {{ }})
+    const sourceVar = input.replace(/[{}]/g, '').trim()
+
+    // Get upstream output schema for the source variable
+    // The source var may be a scatter-gather item variable (e.g., "complaint_email")
+    // which isn't a data_schema slot — its schema comes from the parent array's items
+    let sourceSchema: any = null
+    const dataSchema = ctx.ir?.execution_graph?.data_schema
+
+    // Try data_schema slots first (direct variable)
+    // data_schema.slots is an object keyed by variable name, not an array
+    if (dataSchema?.slots && typeof dataSchema.slots === 'object') {
+      const slots = dataSchema.slots as Record<string, any>
+      // Direct match
+      if (slots[sourceVar]?.schema?.properties) {
+        // Check if this is a wrapper object with an array field (e.g., {emails: [...], total_found: ...})
+        // If so, the scatter item is actually one element of that array, not the wrapper
+        const directSchema = slots[sourceVar].schema
+        const arrayFields = Object.entries(directSchema.properties || {})
+          .filter(([_, v]) => (v as any)?.type === 'array' && (v as any)?.items?.properties)
+        if (arrayFields.length === 1) {
+          // Single array field — the scatter item is likely one element of this array
+          const [arrayFieldName, arrayFieldSchema] = arrayFields[0]
+          sourceSchema = (arrayFieldSchema as any).items
+          this.log(ctx, `  → O26: Unwrapped "${sourceVar}" to ${sourceVar}.${arrayFieldName} items schema (${Object.keys(sourceSchema.properties || {}).join(', ')})`)
+        } else {
+          sourceSchema = directSchema
+        }
+      }
+      // Check if this is a scatter item variable — look for parent array slots
+      if (!sourceSchema) {
+        for (const [slotName, slotData] of Object.entries(slots)) {
+          const slotSchema = (slotData as any)?.schema
+          if (slotSchema?.type === 'array' && slotSchema?.items?.properties) {
+            // Match by singular/plural convention: complaint_email ↔ new_complaint_emails
+            if (slotName === sourceVar + 's' || slotName === 'new_' + sourceVar + 's' ||
+                slotName.endsWith('_' + sourceVar + 's')) {
+              sourceSchema = slotSchema.items
+              this.log(ctx, `  → O26: Found item schema for "${sourceVar}" from array slot "${slotName}"`)
+              break
+            }
+          }
+        }
+      }
+    }
+
+    // Note: ctx.compiledSteps doesn't exist on CompilerContext — steps are compiled incrementally
+    // The data_schema slot lookup above should be sufficient for finding item schemas
+
+    this.log(ctx, `  → O26: Source schema for "${sourceVar}": ${sourceSchema ? `found (${Object.keys(sourceSchema.properties || {}).join(', ')})` : 'NOT FOUND'}`)
+    if (!sourceSchema?.properties) {
+      this.log(ctx, `  → O26: No output schema found for "${sourceVar}", cannot build column mapping`)
+      return null
+    }
+
+    const schemaProps = sourceSchema.properties
+    const fieldMapping: Record<string, string> = {}
+
+    for (const column of columns) {
+      const columnLower = column.toLowerCase()
+
+      // Try exact match first
+      let matchedField: string | null = null
+      for (const [fieldName] of Object.entries(schemaProps)) {
+        if (fieldName.toLowerCase() === columnLower) {
+          matchedField = fieldName
+          break
+        }
+      }
+
+      // Try semantic match via resolveFieldMismatch
+      if (!matchedField) {
+        matchedField = this.resolveFieldMismatch(column, schemaProps, ctx, `O26 column "${column}"`, sourceVar)
+      }
+
+      // Try substring/keyword matching on descriptions
+      if (!matchedField) {
+        const columnWords = columnLower.replace(/[/_\-]/g, ' ').split(/\s+/)
+        let bestScore = 0
+        let bestField: string | null = null
+
+        for (const [fieldName, fieldInfo] of Object.entries(schemaProps)) {
+          const desc = ((fieldInfo as any).description || '').toLowerCase()
+          const fieldLower = fieldName.toLowerCase()
+          let score = 0
+
+          // Check if column words appear in field name or description
+          for (const word of columnWords) {
+            if (word.length < 3) continue // skip short words like "or", "id"
+            if (fieldLower.includes(word)) score += 2
+            if (desc.includes(word)) score += 1
+          }
+
+          // Special handling for common patterns
+          if (columnLower.includes('sender') && (fieldLower === 'from' || desc.includes('sender'))) score += 5
+          // O26 Fix B: Prefer 'snippet' over 'body' for email text/content columns
+          // body is usually empty in search results, snippet always has content
+          // Only boost when column explicitly mentions "text" or "content" (not just "email")
+          if (columnLower.includes('text') || columnLower.includes('content') || columnLower.includes('body')) {
+            if (fieldLower === 'snippet') score += 6  // Higher than body
+            if (fieldLower === 'body') score += 3     // Lower — usually empty in search
+          }
+          if (columnLower.includes('message') && columnLower.includes('id') && fieldLower === 'id') score += 5
+          if (columnLower.includes('link') && columnLower.includes('id') && fieldLower === 'id') score += 5
+
+          if (score > bestScore) {
+            bestScore = score
+            bestField = fieldName
+          }
+        }
+
+        if (bestField && bestScore >= 3) {
+          matchedField = bestField
+        }
+      }
+
+      if (matchedField) {
+        fieldMapping[column] = `{{${sourceVar}.${matchedField}}}`
+        this.log(ctx, `  → O26: Column "${column}" → ${sourceVar}.${matchedField}`)
+      } else {
+        this.warn(ctx, `[O26] Column "${column}" could not be matched to any field in ${sourceVar} schema. Available: [${Object.keys(schemaProps).join(', ')}]`)
+        // Use the column name as-is as a best-effort field reference
+        fieldMapping[column] = `{{${sourceVar}.${column}}}`
+      }
+    }
+
+    return Object.keys(fieldMapping).length > 0 ? fieldMapping : null
+    } catch (err) {
+      this.log(ctx, `  → O26: ERROR in buildSheetColumnsFieldMapping: ${err}`)
+      return null
+    }
+  }
+
+  /**
+   * O26 helper: Find the output_schema for a given variable name by searching the graph nodes.
+   */
+  private findOutputSchemaForVariable(varName: string, graph: ExecutionGraph): any {
+    // Handle dotted variable names (e.g., "complaint_emails.emails")
+    const baseVar = varName.includes('.') ? varName.substring(0, varName.indexOf('.')) : varName
+    const subField = varName.includes('.') ? varName.substring(varName.indexOf('.') + 1) : null
+
+    for (const node of graph.nodes) {
+      const outputVar = node.operation?.outputs?.[0]?.ref_name || node.operation?.outputs?.[0]?.name
+      if (outputVar === baseVar) {
+        const schema = node.operation?.outputs?.[0]?.schema
+        if (schema && subField) {
+          // Navigate into the sub-field
+          return schema.properties?.[subField]?.items || schema.properties?.[subField]
+        }
+        return schema
+      }
+    }
+
+    // Also check data_schema slots
+    if (graph.data_schema?.slots) {
+      for (const slot of graph.data_schema.slots) {
+        if (slot.name === baseVar && slot.schema) {
+          if (subField) {
+            return slot.schema.properties?.[subField]?.items || slot.schema.properties?.[subField]
+          }
+          return slot.schema
+        }
+      }
+    }
+
+    return null
+  }
+
   private buildMergeFieldMapping(
     outputSchema: any,
     primaryInputVar: string,
@@ -3867,6 +4785,15 @@ export class ExecutionGraphCompiler {
     try {
       const mapping: Record<string, any> = {}
       const outputFields = Object.entries(outputSchema.properties || {})
+
+      // O19: Collect fields explicitly referenced by downstream steps
+      // to allow blocklisted fields through when they are actually needed
+      const downstreamRefs = this.collectDownstreamReferencedFields(
+        // Find the current node ID from context (loop body node)
+        this.findCurrentMergeNodeId(graph, ctx),
+        graph,
+        ctx
+      )
 
       // Build a lookup of available variable schemas
       const varSchemas = new Map<string, any>()
@@ -3892,6 +4819,12 @@ export class ExecutionGraphCompiler {
 
       for (const [fieldName, fieldSchema] of outputFields) {
         const fieldDesc = ((fieldSchema as any)?.description || '').toLowerCase()
+
+        // O19: Skip binary/large fields unless explicitly referenced downstream
+        if (this.isBinaryBlockedField(fieldName) && !downstreamRefs.has(fieldName)) {
+          this.log(ctx, `    → O19: Excluded binary field "${fieldName}" from merge (not referenced downstream)`)
+          continue
+        }
 
         // Strategy 1: Check primary input variable
         if (this.variableHasField(varSchemas.get(primaryInputVar), fieldName)) {
@@ -3964,6 +4897,28 @@ export class ExecutionGraphCompiler {
       this.log(ctx, `  → O14: buildMergeFieldMapping failed: ${err}`)
       return null
     }
+  }
+
+  /**
+   * O19: Find the current merge node ID from compiler context.
+   * Used to look up downstream references for binary field blocklist.
+   */
+  private findCurrentMergeNodeId(graph: ExecutionGraph, ctx: CompilerContext): string {
+    // The merge step is typically inside a loop body. Find the last
+    // operation node being compiled by checking step counter.
+    // Fallback: return empty string (no downstream filtering applied)
+    for (const [nodeId, node] of Object.entries(graph.nodes)) {
+      if (node.type === 'operation' && node.operation?.operation_type === 'transform') {
+        const transform = node.operation.transform
+        if (transform?.type === 'map' || transform?.type === 'merge' || transform?.type === 'set') {
+          // Check if this node is inside a loop (has loop context)
+          if (ctx.loopContextStack.length > 0) {
+            return nodeId
+          }
+        }
+      }
+    }
+    return ''
   }
 
   /**
@@ -4126,6 +5081,14 @@ export class ExecutionGraphCompiler {
       fixed = this.fixAIStepInputs(fixed, workflow, ctx)
     }
 
+    // Fix 6: Wrap bare variable references in action step params with {{ }}
+    // Handles cases where IR/compiler produces bare references like "row_data"
+    // instead of "{{row_data}}" inside nested param objects (e.g., fields.values)
+    if (fixed.type === 'action' && (fixed.params || fixed.config)) {
+      const params = fixed.params || fixed.config
+      fixed = { ...fixed, params: this.wrapBareVariableRefs(params, workflow, ctx), config: undefined }
+    }
+
     // Recursively fix nested steps
     if (fixed.scatter?.steps) {
       fixed = { ...fixed, scatter: { ...fixed.scatter, steps: fixed.scatter.steps.map((s: WorkflowStep) => this.fixStep(s, workflow, ctx)) } }
@@ -4145,6 +5108,46 @@ export class ExecutionGraphCompiler {
     }
 
     return fixed
+  }
+
+  /**
+   * Wrap bare variable references in action step params with {{ }} template syntax.
+   * Recursively processes nested objects. Only wraps strings that exactly match
+   * a known output_variable from the workflow (avoids wrapping literal values).
+   */
+  private wrapBareVariableRefs(params: any, workflow: WorkflowStep[], ctx: CompilerContext): any {
+    // Collect all known output variable names
+    const knownVars = new Set<string>()
+    const collectVars = (steps: WorkflowStep[]) => {
+      for (const step of steps) {
+        if (step.output_variable) knownVars.add(step.output_variable)
+        if (step.scatter?.steps) collectVars(step.scatter.steps)
+        if ((step as any).steps) collectVars((step as any).steps)
+        if ((step as any).else_steps) collectVars((step as any).else_steps)
+      }
+    }
+    collectVars(workflow)
+    // Also add scatter item variables
+    for (const step of workflow) {
+      if (step.scatter?.itemVariable) knownVars.add(step.scatter.itemVariable)
+    }
+
+    const wrap = (value: any): any => {
+      if (typeof value === 'string' && !value.includes('{{') && knownVars.has(value)) {
+        return `{{${value}}}`
+      }
+      if (Array.isArray(value)) return value.map(wrap)
+      if (value && typeof value === 'object') {
+        const result: any = {}
+        for (const [k, v] of Object.entries(value)) {
+          result[k] = wrap(v)
+        }
+        return result
+      }
+      return value
+    }
+
+    return wrap(params)
   }
 
   /**
@@ -4831,8 +5834,8 @@ export class ExecutionGraphCompiler {
    * Normalize transform step references
    */
   private normalizeTransformStepRefs(step: any, variables: Set<string>, ctx: CompilerContext): any {
-    // Normalize input
-    if (step.input && !step.input.includes('{{')) {
+    // Normalize input — only for string inputs (not object field mappings from O26)
+    if (step.input && typeof step.input === 'string' && !step.input.includes('{{')) {
       step.input = `{{${step.input}}}`
     }
 
