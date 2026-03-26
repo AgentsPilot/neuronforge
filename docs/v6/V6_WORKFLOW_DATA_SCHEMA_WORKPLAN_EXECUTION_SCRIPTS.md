@@ -1,381 +1,449 @@
-# V6 Workflow Data Schema — Testing Scripts Reference
+# V6 Pipeline — QA Testing Manual
 
-> **Last Updated**: 2026-03-23
+> **Last Updated**: 2026-03-26
 > **Branch**: `feature/v6-intent-contract-data-schema`
 > **Parent workplans**: [Execution Workplan](./V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION.md) · [Intent Contract Workplan](./V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_INTENT_CONTRACT.md)
 
 ## Overview
 
-Five testing scripts validate the V6 pipeline at progressive levels of integration — from static DSL analysis to live agent execution with real plugins. Each phase builds on the previous, adding more real components while maintaining the ability to test in isolation.
+This document is a step-by-step QA manual for testing the V6 Intent Contract → DSL compilation → agent execution pipeline. It guides a QA tester (human or AI agent) through the full validation cycle for a single workflow scenario.
 
-| Script | Phase | What's Real | What's Mocked | External Deps |
-|--------|-------|-------------|---------------|---------------|
-| `test-complete-pipeline-with-vocabulary.ts` | 0–4 | Full V6 pipeline (vocabulary → DSL) | Nothing | LLM provider (OpenAI) |
-| `test-dsl-execution-simulator/index.ts` | A/A+ | Static validation + stub execution | All data | None |
-| `test-dsl-pilot-simulator/index.ts` | B | StepExecutor, ExecutionContext, ParallelExecutor | Plugins, Supabase | None |
-| `test-workflowpilot-execution.ts` | D | Full WorkflowPilot (all 8 phases) | Plugins, Supabase, LLM | None |
-| `test-live-agent-execution.ts` | E | Everything — real plugins, real DB, real LLM | Nothing | Supabase, OAuth, LLM, plugin APIs |
+**What this tests:** The V6 compiler pipeline — from an enhanced prompt (natural language workflow description) through DSL compilation, static validation, mock execution, and optionally live execution with real APIs.
 
-### Recommended Testing Order
-
-```
-Phase 0-4 (compile DSL) → Phase A (validate structure) → Phase D (mock execution) → Phase E (live execution)
-```
-
-Phase B is available for lower-level StepExecutor debugging but is typically skipped in favor of Phase D.
+**When to use:**
+- After implementing a new compiler fix (O-series item)
+- When testing a new workflow scenario end-to-end
+- Before merging a feature branch into main
+- To validate a regression after refactoring shared compiler infrastructure
 
 ---
 
-## Script 1: Pipeline Compiler (`test-complete-pipeline-with-vocabulary.ts`)
+## Prerequisites
 
-Runs the full V6 pipeline: vocabulary extraction → IntentContract generation (LLM) → capability binding → IR conversion → DSL compilation.
+Before starting, ensure:
 
-### Usage
-
-```bash
-# Full pipeline with default prompt (invoice extraction)
-npx tsx --import ./scripts/env-preload.ts scripts/test-complete-pipeline-with-vocabulary.ts
-
-# Full pipeline with custom enhanced prompt
-npx tsx --import ./scripts/env-preload.ts scripts/test-complete-pipeline-with-vocabulary.ts \
-  scripts/test-intent-contract-generation-enhanced-prompt.json
-
-# Deterministic run — skip LLM, reuse existing IntentContract
-npx tsx --import ./scripts/env-preload.ts scripts/test-complete-pipeline-with-vocabulary.ts \
-  scripts/test-intent-contract-generation-enhanced-prompt.json \
-  --intent-contract output/vocabulary-pipeline/phase1-intent-contract.json
-
-# Custom output directory
-npx tsx --import ./scripts/env-preload.ts scripts/test-complete-pipeline-with-vocabulary.ts \
-  scripts/test-intent-contract-generation-enhanced-prompt.json \
-  --output-dir output/my-test-run
-```
-
-### Arguments
-
-| Argument | Required | Default | Description |
-|----------|----------|---------|-------------|
-| Positional arg 1 | No | Built-in invoice prompt | Path to custom enhanced prompt JSON |
-| `--intent-contract <path>` | No | — | Load pre-built IntentContract, skip LLM call (deterministic from Phase 2 onward) |
-| `--output-dir <path>` | No | `output/vocabulary-pipeline/` | Output directory for all artifacts |
-
-### Input Files
-
-- **Enhanced prompt JSON** — defines `plan_title`, `sections`, `specifics.services_involved`, `specifics.resolved_user_inputs`
-- **IntentContract JSON** (optional) — previously generated IntentContract to reuse
-
-### Output Files
-
-| File | Phase | Description |
-|------|-------|-------------|
-| `phase0-plugin-vocabulary.json` | 0 | Extracted plugin vocabulary (domains, capabilities, actions, params) |
-| `phase0-vocabulary-for-prompt.txt` | 0 | Formatted vocabulary text injected into LLM prompt |
-| `phase0-workflow-config.json` | 0 | User-provided configuration values |
-| `phase1-intent-contract.json` | 1 | LLM-generated IntentContract |
-| `phase1-intent-raw-llm-output.txt` | 1 | Raw LLM response text |
-| `phase2-bound-intent-contract.json` | 2 | BoundIntentContract with plugin bindings |
-| `phase2-data-schema.json` | 2 | Data schema (slots, types, producers, consumers) |
-| `phase3-execution-graph-ir-v4.json` | 3 | Execution graph IR (intermediate representation) |
-| `phase4-pilot-dsl-steps.json` | 4 | **Final compiled DSL** — input for all downstream scripts |
-| `phase4-workflow-config.json` | 4 | Merged config (IntentContract defaults + user overrides) |
-| `phase4-compiler-logs.txt` | 4 | Detailed compiler debug logs (all phases) |
-
-### When to Use
-
-- **First run** — generate a new DSL from a prompt
-- **After compiler changes** — re-compile with `--intent-contract` to test deterministically (same intent, different compilation)
-- **Debugging** — review `phase4-compiler-logs.txt` for field reconciliation, config merging, normalization details
+- [ ] Node.js installed (v18+)
+- [ ] `.env.local` configured with Supabase URL/key, OpenAI API key, `TEST_USER_ID`
+- [ ] Dependencies installed (`npm install`)
+- [ ] On the correct branch (`feature/v6-intent-contract-data-schema` or the branch under test)
 
 ---
 
-## Script 2: DSL Execution Simulator (`test-dsl-execution-simulator/index.ts`)
+## Testing Flow
 
-Static validation + stub-data simulation. Runs 13 checks on the compiled DSL without any external dependencies.
-
-### Usage
-
-```bash
-npx tsx scripts/test-dsl-execution-simulator/index.ts
 ```
-
-### Arguments
-
-None. Reads from default `output/vocabulary-pipeline/` directory.
-
-### Input Files
-
-| File | Required | Description |
-|------|----------|-------------|
-| `phase4-pilot-dsl-steps.json` | Yes | Compiled DSL |
-| `phase4-workflow-config.json` | Yes | Merged config |
-| `phase2-data-schema.json` | No | Data schema (for enhanced validation) |
-
-### Output Files
-
-| File | Description |
-|------|-------------|
-| `execution-simulation-report.json` | Full report with step log, validation results, DAG visualization |
-
-### Validation Checks (13)
-
-**Phase A (6 checks):**
-1. Variable resolution — all `{{input.X}}` and `{{step.field}}` refs resolve
-2. Data flow chain — each step's input was produced by an earlier step
-3. Config coverage — every config key in DSL has a value
-4. Field consistency — `{{variable.field}}` matches upstream output schema
-5. Schema completeness — all steps have output schemas
-6. Duplicate output variables — no two steps produce the same variable
-
-**Phase A+ (7 checks):**
-7. Cross-step field reference tracing — field names match across the chain
-8. Scatter-gather item field validation — iteration item refs verified
-9. Conditional condition field validation — condition fields exist, types match
-10. Config value type checking — values match expected types
-11. Output schema completeness — required fields present
-12. Duplicate detection — no redundant output variables
-13. DAG visualization — execution order graph
-
-### When to Use
-
-- **After every pipeline compilation** — quick sanity check (< 1 second)
-- **Before Phase D or E** — catch structural issues before running the engine
+Step 1: Obtain Enhanced Prompt
+     ↓
+Step 2: Validate EP Key Hints
+     ↓
+Step 3: Check / Generate IntentContract (Phase 1)
+     ↓
+Step 4: Compile DSL (Phase 0–4)
+     ↓
+Step 5: Validate DSL Structure (Phase A)
+     ↓ (abort if failed)
+Step 6: Mock Execution (Phase D)
+     ↓ (abort if failed)
+Step 7: Live Execution (Phase E) — optional, requires agent ID
+     ↓
+Step 8: QA Verdict
+     ↓ (if passed)
+Step 9: Add to Regression Suite — optional
+```
 
 ---
 
-## Script 3: Pilot Simulator (`test-dsl-pilot-simulator/index.ts`)
+## Step 1: Obtain Enhanced Prompt
 
-Runs DSL through real Pilot engine components (StepExecutor, ExecutionContext, ParallelExecutor) with mocked plugins. Validates the DSL is actually executable in the real engine.
+Ask the user:
 
-### Usage
+> **"Do you have a custom enhanced prompt JSON, or should we use the default?"**
 
-```bash
-npx tsx --import ./scripts/env-preload.ts scripts/test-dsl-pilot-simulator/index.ts
-```
+| Option | Action |
+|---|---|
+| **Use default** | Use `scripts/test-intent-contract-generation-enhanced-prompt.json` |
+| **Custom prompt** | Receive the file path from the user. Verify the file exists and is valid JSON. |
 
-### Arguments
-
-None. Reads from default `output/vocabulary-pipeline/` directory.
-
-### Input Files
-
-| File | Required | Description |
-|------|----------|-------------|
-| `phase4-pilot-dsl-steps.json` | Yes | Compiled DSL |
-| `phase4-workflow-config.json` | Yes | Merged config |
-
-### Output Files
-
-| File | Description |
-|------|-------------|
-| `pilot-simulation-report.json` | Execution summary with step log and errors |
-
-### Mock Setup
-
-- **PluginExecuterV2** — returns stub data generated from step's `output_schema`
-- **Supabase** — not used (StepExecutor created without StateManager)
-- **LLM** — not called (AI steps skipped or mocked)
-
-### When to Use
-
-- **Debugging StepExecutor routing** — verify step types are dispatched correctly
-- **Testing scatter-gather mechanics** — verify fan-out/collect with stub data
-- **Lower-level debugging** — when Phase D fails and you need to isolate StepExecutor behavior
-
----
-
-## Script 4: WorkflowPilot Execution (`test-workflowpilot-execution.ts`)
-
-Runs DSL through the **real WorkflowPilot** with all 8 execution phases, real WorkflowParser, real ConditionalEvaluator — but with mocked plugins, mocked Supabase, and mocked LLM. Zero external dependencies.
-
-### Usage
-
-```bash
-npx tsx --import ./scripts/env-preload.ts scripts/test-workflowpilot-execution.ts
-```
-
-### Arguments
-
-None. Reads from default `output/vocabulary-pipeline/` directory.
-
-### Input Files
-
-| File | Required | Description |
-|------|----------|-------------|
-| `phase4-pilot-dsl-steps.json` | Yes | Compiled DSL |
-| `phase4-workflow-config.json` | Yes | Merged config |
-
-### Output Files
-
-| File | Description |
-|------|-------------|
-| `workflowpilot-execution-report.json` | Execution summary with step details |
-| `workflowpilot-execution-log.txt` | Full console output (all engine logs) |
-
-### Mock Setup
-
-- **PluginExecuterV2** — singleton patched to return stub data from output schemas
-- **StepExecutor.executeLLMDecision** — prototype patched to return stub data (no real OpenAI calls)
-- **Supabase** — proxy-based mock that handles any query chain pattern; returns `pilot_enabled: true`
-- **AuditTrailService** — disabled (no DB writes)
-- **Agent** — in-memory object with pilot_steps, plugins, inputValues
-
-### When to Use
-
-- **After compiler changes** — verify the full engine accepts the DSL
-- **Before going live** — confirm execution flow (conditionals, scatter-gather, transforms) works end-to-end
-- **Debugging engine issues** — review `workflowpilot-execution-log.txt` for detailed engine logs
-
----
-
-## Script 5: Live Agent Execution (`test-live-agent-execution.ts`)
-
-Full end-to-end execution with **real plugins, real database, real LLM**. Saves DSL to an actual agent, refreshes OAuth tokens, executes via WorkflowPilot, and captures step-by-step I/O.
-
-### Usage
-
-```bash
-# Basic — uses default DSL and config from output/vocabulary-pipeline/
-npx tsx --import ./scripts/env-preload.ts scripts/test-live-agent-execution.ts \
-  --agent-id 4d30ef95-7246-4c7d-8ef3-c199fc611e0c
-
-# Custom DSL and config paths
-npx tsx --import ./scripts/env-preload.ts scripts/test-live-agent-execution.ts \
-  --agent-id 4d30ef95-7246-4c7d-8ef3-c199fc611e0c \
-  --dsl output/my-test/phase4-pilot-dsl-steps.json \
-  --config output/my-test/phase4-workflow-config.json
-```
-
-### Arguments
-
-| Argument | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `--agent-id <UUID>` | **Yes** | — | Agent ID (must exist in Supabase) |
-| `--dsl <path>` | No | `output/vocabulary-pipeline/phase4-pilot-dsl-steps.json` | Compiled DSL file |
-| `--config <path>` | No | `output/vocabulary-pipeline/phase4-workflow-config.json` | Workflow config file |
-
-### Prerequisites
-
-- `.env.local` with `TEST_USER_ID`, Supabase URL/key, OpenAI API key
-- Agent must exist in the `agents` table with matching `user_id`
-- Plugin OAuth connections must be active for all plugins in the DSL
-- Real test data must exist (e.g., a Google Sheet with data, emails in inbox)
-
-### Pre-Flight Checks
-
-The script performs 7 pre-flight checks before execution:
-
-1. **Parse CLI arguments** — validate `--agent-id` is provided
-2. **Load and validate DSL** — must be non-empty array with `id`, `type`, `name` fields
-3. **Load and validate config** — must be non-empty object
-4. **Verify agent exists** — queries Supabase by `agent_id` + `user_id`
-5. **Validate plugin connections** — checks all plugins referenced in DSL are connected
-6. **Refresh OAuth tokens** — refreshes tokens expiring within 60 minutes
-7. **Update agent** — saves compiled `pilot_steps` to the agent record
-
-### Output Files
-
-| File | Description |
-|------|-------------|
-| `live-execution-report.json` | Full report: summary, step details, step I/O, plugin status, config keys |
-| `live-execution-log.txt` | Full console output including all engine and plugin logs |
-
-### Step I/O Capture
-
-The script patches `StepExecutor.prototype.execute` to capture per-step:
-
-| Field | Description |
-|-------|-------------|
-| `step_id` | Step identifier |
-| `type` | Step type (action, transform, ai_processing, conditional) |
-| `plugin` / `action` | Plugin and action name (for action steps) |
-| `description` | Step description |
-| `resolved_input` | Input data after variable resolution |
-| `output` | Step output data (truncated to 2000 chars) |
-| `status` | `ok` or `error` |
-| `duration_ms` | Execution time in milliseconds |
-| `error` | Error message (if failed) |
-
-### When to Use
-
-- **Final validation** — confirm real data flows correctly through all steps
-- **After compiler fixes** — verify the fix works with real APIs, not just mocks
-- **Demo/testing** — run a real agent and check results (email sent, sheet updated, etc.)
-
----
-
-## Typical Workflow
-
-### 1. Create or Update Enhanced Prompt
-
-Edit `scripts/test-intent-contract-generation-enhanced-prompt.json` with your workflow definition:
+The enhanced prompt JSON must have this structure:
 
 ```json
 {
-  "plan_title": "My Workflow",
+  "plan_title": "...",
+  "plan_description": "...",
   "sections": {
-    "data": ["- Read data from..."],
-    "actions": ["- Filter where..."],
-    "output": ["- Generate HTML..."],
-    "delivery": ["- Send email to..."]
+    "data": ["..."],
+    "actions": ["..."],
+    "output": ["..."],
+    "delivery": ["..."]
   },
   "specifics": {
-    "services_involved": ["google-sheets", "google-mail"],
+    "services_involved": ["google-mail", "google-sheets"],
     "resolved_user_inputs": [
-      { "key": "google_sheets__table_read__spreadsheet_id", "value": "1abc..." },
-      { "key": "google_mail__email_send__recipients", "value": "user@example.com" }
+      { "key": "...", "value": "..." }
     ]
   }
 }
 ```
 
-### 2. Compile DSL (Phase 0–4)
+**Validation checklist:**
+- [ ] File exists and is valid JSON
+- [ ] `specifics.services_involved` is a non-empty array
+- [ ] `specifics.resolved_user_inputs` is a non-empty array
+- [ ] `sections` has at least `data` and `actions`
 
-```bash
-npx tsx --import ./scripts/env-preload.ts scripts/test-complete-pipeline-with-vocabulary.ts \
-  scripts/test-intent-contract-generation-enhanced-prompt.json
+---
+
+## Step 2: Validate EP Key Hints
+
+The `resolved_user_inputs` keys must follow the EP Key Hints convention for the compiler's O8/O26 features to work correctly.
+
+**Convention:** Plugin-specific keys use the format `plugin__capability__param_name`
+
+**Examples of correct keys:**
+- `google_sheets__table_read__spreadsheet_id`
+- `google_sheets__table_create__columns`
+- `google_mail__email_search__query`
+- `google_mail__email_send__recipients`
+
+**Generic keys (no prefix needed):**
+- `user_email`, `complaint_keywords`, `qualification_rule`, `no_results_behavior`
+
+**Validation logic:**
+
+For each key in `resolved_user_inputs`:
+1. If the key contains `__` → it has a prefix → ✅ OK
+2. If the key does NOT contain `__`, check if it matches a known plugin parameter name:
+   - `spreadsheet_id` → should be `google_sheets__table_read__spreadsheet_id` (or `table_create`)
+   - `sheet_tab_name` → should be `google_sheets__table_read__sheet_tab_name`
+   - `query` → should be `google_mail__email_search__query`
+   - `recipients` → should be `google_mail__email_send__recipients`
+   - `range` → should be `google_sheets__table_read__range`
+3. If it's a generic key (not a plugin parameter) → ✅ OK, leave as-is
+
+**If keys are missing prefixes:**
+
+```
+⚠️  EP Key Hints: 2 keys missing prefix — fixing before test:
+   spreadsheet_id → google_sheets__table_read__spreadsheet_id
+   sheet_tab_name → google_sheets__table_read__sheet_tab_name
 ```
 
-### 3. Validate DSL (Phase A)
+Fix the keys **in the file** (update the enhanced prompt JSON) so future runs don't need re-fixing. Inform the user of the changes made.
+
+---
+
+## Step 3: Check / Generate IntentContract
+
+Ask the user:
+
+> **"Is there an existing IntentContract (phase1-intent-contract.json) to reuse, or should we generate a new one?"**
+
+| Option | Action |
+|---|---|
+| **Reuse existing** | User provides the path (e.g., `output/vocabulary-pipeline/phase1-intent-contract.json`). Verify file exists. |
+| **Generate new** | Will be generated in Step 4 via LLM call (costs tokens, takes ~10-15s). |
+
+**When to reuse:** Testing compiler changes — same intent, different compilation. This makes the test deterministic from Phase 2 onward.
+
+**When to generate new:** Testing a new scenario for the first time, or after changing the enhanced prompt.
+
+---
+
+## Step 4: Compile DSL (Phase 0–4)
+
+Run the pipeline compiler:
+
+```bash
+# With existing IntentContract (deterministic — no LLM call):
+npx tsx --import ./scripts/env-preload.ts scripts/test-complete-pipeline-with-vocabulary.ts \
+  <enhanced-prompt-path> \
+  --intent-contract <intent-contract-path>
+
+# Without IntentContract (full LLM run):
+npx tsx --import ./scripts/env-preload.ts scripts/test-complete-pipeline-with-vocabulary.ts \
+  <enhanced-prompt-path>
+```
+
+**Expected output:** Pipeline completes without errors. Check:
+- [ ] `output/vocabulary-pipeline/phase4-pilot-dsl-steps.json` exists and is non-empty
+- [ ] `output/vocabulary-pipeline/phase4-workflow-config.json` exists and has config keys
+- [ ] Console shows step count (e.g., "Compiled 10 DSL steps")
+- [ ] No `ERROR` lines in console output
+
+**Review `phase4-compiler-logs.txt`** for warnings:
+- `[O11]` — unreferenced config keys (warning only, not blocking)
+- `[O16]` — nullable→required parameter mappings
+- `[O24]` — unresolvable custom_code (potential runtime issue)
+- `[O26]` — column mapping results
+
+**If compilation fails:** Check the error message. Common issues:
+- `supabaseUrl is required` → missing `--import ./scripts/env-preload.ts`
+- Plugin not found → check `services_involved` matches available plugin definitions
+- LLM timeout → retry, or use `--intent-contract` with a known-good IntentContract
+
+---
+
+## Step 5: Validate DSL Structure (Phase A)
+
+Run the static validator:
 
 ```bash
 npx tsx scripts/test-dsl-execution-simulator/index.ts
 ```
 
-Check: `13/13 checks passed, 0 errors`
+**Expected output:**
 
-### 4. Test with Mocked Engine (Phase D)
+```
+✅ SIMULATION PASSED
+   Passed: 13/13
+   Failed: 0/13
+```
+
+**Pass criteria:**
+- [ ] 13/13 checks passed
+- [ ] 0 errors
+- [ ] Warnings are acceptable (e.g., "Config key X not referenced" is informational)
+
+**If Phase A fails: ❌ ABORT the test.** Do not proceed to Phase D.
+
+Report the failure:
+- Which checks failed
+- The specific error messages
+- The scenario and enhanced prompt used
+
+**Common Phase A failures:**
+| Failure | Likely Cause |
+|---|---|
+| Data flow break: "X not yet produced" | Compiler didn't connect step outputs correctly |
+| Field mismatch: "X not in schema" | O10 reconciliation didn't catch a field name mismatch |
+| Unresolved ref: `{{config.X}}` | Config key not in merged config (O7/O11 issue) |
+| Conditional field error | Condition references a field that doesn't exist on the variable |
+
+---
+
+## Step 6: Mock Execution (Phase D)
+
+Run the WorkflowPilot with mocked plugins:
 
 ```bash
 npx tsx --import ./scripts/env-preload.ts scripts/test-workflowpilot-execution.ts
 ```
 
-Check: `Success: ✅`, all steps completed
+**Expected output:**
 
-### 5. Run Live (Phase E)
+```
+✅ PHASE D PASSED
+   Success: ✅
+   Steps completed: N
+   Steps failed: 0
+```
+
+**Pass criteria:**
+- [ ] `Success: ✅`
+- [ ] Steps failed: 0
+- [ ] Steps completed matches expected count from the scenario
+
+**If Phase D fails: ❌ ABORT the test.** Do not proceed to Phase E.
+
+Report the failure:
+- Which step failed and the error message
+- Review `output/vocabulary-pipeline/workflowpilot-execution-log.txt` for detailed engine logs
+- Check `output/vocabulary-pipeline/workflowpilot-execution-report.json` for structured error data
+
+**Common Phase D failures:**
+| Failure | Likely Cause |
+|---|---|
+| `Map operation requires array input` | Transform input resolves to an object, not array (O23/O24 issue) |
+| `Plugin executor not found` | Plugin not registered in mock (missing from scenario's services) |
+| `Cannot read properties of undefined` | Variable reference resolves to undefined (data flow issue) |
+| `Workflow pilot is disabled` | Mock Supabase not returning `pilot_enabled: true` |
+
+---
+
+## Step 7: Live Execution (Phase E) — Optional
+
+Ask the user:
+
+> **"Phase D passed. Do you want to run a live execution with real APIs? If yes, please provide an agent ID."**
+
+| Option | Action |
+|---|---|
+| **Skip** | Proceed to Step 8 with Phase D as the final validation |
+| **Run live** | User provides agent UUID. Proceed with Phase E. |
+
+**Prerequisites for Phase E:**
+- [ ] Agent exists in the `agents` table in Supabase
+- [ ] Agent's `user_id` matches `TEST_USER_ID` in `.env.local`
+- [ ] Plugin OAuth connections are active for all plugins in the DSL
+- [ ] Real test data exists (emails in inbox, Google Sheet with data, etc.)
+
+Run the live execution:
 
 ```bash
 npx tsx --import ./scripts/env-preload.ts scripts/test-live-agent-execution.ts \
-  --agent-id <your-agent-id>
+  --agent-id <agent-uuid>
 ```
 
-Check: `PHASE E PASSED`, verify real results (email received, sheet updated)
+**Expected output:**
 
-### 6. Iterate on Compiler Fix
+```
+✅ PHASE E PASSED
+   Success: ✅
+   Steps completed: N
+   Steps failed: 0
+```
 
-After making a compiler change, re-compile deterministically (skip LLM):
+**Pass criteria:**
+- [ ] `Success: ✅`
+- [ ] Steps failed: 0
+- [ ] Verify real-world results: email received, sheet updated, files created, etc.
+
+**If Phase E fails:** Report the failure with:
+- `output/vocabulary-pipeline/live-execution-report.json` — structured step I/O data
+- `output/vocabulary-pipeline/live-execution-log.txt` — full engine and plugin logs
+- Which step failed and why (check step_io section for resolved inputs and outputs)
+
+---
+
+## Step 8: QA Verdict
+
+Generate the QA report based on the results:
+
+```
+══════════════════════════════════════════════════════════════════
+                    QA TEST REPORT
+══════════════════════════════════════════════════════════════════
+
+  Scenario: Customer Complaint Email Logger
+  Enhanced Prompt: scripts/test-intent-contract-generation-enhanced-prompt.json
+  IntentContract: output/vocabulary-pipeline/phase1-intent-contract.json (reused)
+  Date: 2026-03-26
+
+  Phase         Status    Details
+  ────────────────────────────────────────────────────────
+  EP Key Hints   ✅       All keys have prefix
+  Compile        ✅       10 steps compiled
+  Phase A        ✅       13/13 checks passed
+  Phase D        ✅       10/10 steps, 0 failures
+  Phase E        ✅       10/10 steps, real APIs verified
+
+──────────────────────────────────────────────────────────
+  ✅ QA PASSED — all phases successful
+══════════════════════════════════════════════════════════════════
+```
+
+**On failure:**
+
+```
+──────────────────────────────────────────────────────────
+  ❌ QA FAILED — Phase A had 2 errors
+
+  Failed checks:
+    - Data flow break: step5 references "foo" not yet produced
+    - Field mismatch: step7 item.message_id not in schema
+══════════════════════════════════════════════════════════════════
+```
+
+**QA pass = ALL executed phases passed.** If Phase E was skipped (user chose not to run live), the verdict is based on Compile + Phase A + Phase D.
+
+**Output files for the QA report:**
+- Console output (copy/paste or screenshot)
+- `output/vocabulary-pipeline/execution-simulation-report.json` (Phase A)
+- `output/vocabulary-pipeline/workflowpilot-execution-report.json` (Phase D)
+- `output/vocabulary-pipeline/live-execution-report.json` (Phase E, if ran)
+
+---
+
+## Step 9: Add to Regression Suite (Optional)
+
+If the test passed, ask the user:
+
+> **"QA passed. Should we add this scenario to the regression test suite?"**
+
+If yes, follow these steps:
+
+### 9.1 Create Scenario Folder
 
 ```bash
-# Re-compile with same IntentContract
-npx tsx --import ./scripts/env-preload.ts scripts/test-complete-pipeline-with-vocabulary.ts \
-  scripts/test-intent-contract-generation-enhanced-prompt.json \
-  --intent-contract output/vocabulary-pipeline/phase1-intent-contract.json
-
-# Validate
-npx tsx scripts/test-dsl-execution-simulator/index.ts
-
-# Test with engine
-npx tsx --import ./scripts/env-preload.ts scripts/test-workflowpilot-execution.ts
+mkdir -p tests/v6-regression/scenarios/<scenario-name>
 ```
+
+Use kebab-case for the folder name (e.g., `complaint-email-logger`, `leads-email-summary`).
+
+### 9.2 Copy Input Files
+
+```bash
+# Copy the enhanced prompt
+cp <enhanced-prompt-path> tests/v6-regression/scenarios/<scenario-name>/enhanced-prompt.json
+
+# Copy the IntentContract (from the test run output)
+cp output/vocabulary-pipeline/phase1-intent-contract.json tests/v6-regression/scenarios/<scenario-name>/intent-contract.json
+```
+
+### 9.3 Create Scenario Metadata
+
+Create `tests/v6-regression/scenarios/<scenario-name>/scenario.json`:
+
+```json
+{
+  "name": "<Scenario Display Name>",
+  "description": "<Brief description of what the workflow does>",
+  "created": "<YYYY-MM-DD>",
+  "plugins": ["<list of plugins from services_involved>"],
+  "expected": {
+    "min_steps": <number of steps from Phase D>,
+    "step_types": ["action", "transform", "scatter_gather"],
+    "phase_a_checks": 13,
+    "phase_d_success": true
+  }
+}
+```
+
+Fill in:
+- `min_steps` — from the Phase D report (`steps_completed`)
+- `step_types` — from the DSL (unique step types present)
+- `plugins` — from the enhanced prompt's `services_involved`
+
+### 9.4 Verify Regression
+
+Run the regression suite to confirm the new scenario passes alongside existing ones:
+
+```bash
+npx tsx --import ./scripts/env-preload.ts tests/v6-regression/run-regression.ts
+```
+
+Check: all scenarios pass, including the newly added one.
+
+### 9.5 Commit
+
+```bash
+git add tests/v6-regression/scenarios/<scenario-name>/
+git commit -m "test(v6-regression): add <scenario-name> scenario"
+```
+
+---
+
+## Available Testing Scripts — Quick Reference
+
+| Script | Phase | Command | What's Real | What's Mocked |
+|--------|-------|---------|-------------|---------------|
+| Pipeline Compiler | 0–4 | `npx tsx --import ./scripts/env-preload.ts scripts/test-complete-pipeline-with-vocabulary.ts <prompt> [--intent-contract <path>]` | Full V6 pipeline | Nothing |
+| DSL Simulator | A | `npx tsx scripts/test-dsl-execution-simulator/index.ts` | Static validation | All data |
+| WorkflowPilot Mock | D | `npx tsx --import ./scripts/env-preload.ts scripts/test-workflowpilot-execution.ts` | Full WorkflowPilot engine | Plugins, DB, LLM |
+| Live Execution | E | `npx tsx --import ./scripts/env-preload.ts scripts/test-live-agent-execution.ts --agent-id <UUID>` | Everything | Nothing |
+| Regression Suite | All | `npx tsx --import ./scripts/env-preload.ts tests/v6-regression/run-regression.ts` | Compile + A + D for all scenarios | Plugins, DB, LLM |
+
+### CLI Arguments Reference
+
+| Script | Argument | Default | Description |
+|---|---|---|---|
+| Pipeline | Positional arg 1 | Built-in prompt | Path to enhanced prompt JSON |
+| Pipeline | `--intent-contract <path>` | — | Skip LLM, reuse IntentContract |
+| Pipeline | `--output-dir <path>` | `output/vocabulary-pipeline/` | Output directory |
+| Simulator | `--input-dir <path>` | `output/vocabulary-pipeline/` | Input directory for DSL/config |
+| WorkflowPilot | `--input-dir <path>` | `output/vocabulary-pipeline/` | Input directory |
+| WorkflowPilot | `--output-dir <path>` | Same as `--input-dir` | Output directory for report/log |
+| Live Execution | `--agent-id <UUID>` | **required** | Agent ID in Supabase |
 
 ---
 
@@ -384,11 +452,13 @@ npx tsx --import ./scripts/env-preload.ts scripts/test-workflowpilot-execution.t
 | Issue | Solution |
 |-------|----------|
 | `supabaseUrl is required` | Add `--import ./scripts/env-preload.ts` to the command |
-| `pilot_enabled` error in Phase D | Mock Supabase handles this — ensure you're running the latest script |
-| Phase A warnings about `Unknown transform operation` | Expected for `rows_to_objects` — runtime handles it, simulator doesn't know the operation |
-| Phase E `token valid (expires in X min)` shows 0 | Token refresh failed — check OAuth credentials in plugin_connections |
-| Phase E hangs after completion | OpenAI client keeps connection alive — Ctrl+C to exit |
-| `--intent-contract` still calls LLM | Ensure the flag comes **after** the positional prompt file argument |
+| `pilot_enabled` error in Phase D | Mock Supabase handles this — ensure latest script version |
+| Phase A warnings about `Unknown transform operation` | Expected for `rows_to_objects` — simulator doesn't know it |
+| Phase E token refresh shows 0 minutes | OAuth token expired — re-authenticate the plugin |
+| Phase E hangs after completion | OpenAI client keeps connection — Ctrl+C to exit |
+| `--intent-contract` still calls LLM | Flag must come **after** the positional prompt file argument |
+| Phase D `Map operation requires array input` | Check if O23/O24 fixes are applied — run with latest compiler |
+| `Plugin executor not found` in Phase E | Plugin doesn't have an executor (e.g., `document-extractor`) — see D-B5 in execution workplan |
 
 ---
 
@@ -396,4 +466,5 @@ npx tsx --import ./scripts/env-preload.ts scripts/test-workflowpilot-execution.t
 
 | Date | Change | Details |
 |------|--------|---------|
-| 2026-03-23 | Initial version | Documented all 5 testing scripts with usage, arguments, I/O files, and examples |
+| 2026-03-23 | Initial version | Documented all 5 testing scripts with usage, arguments, I/O files |
+| 2026-03-26 | Rewritten as QA manual | Step-by-step testing flow, EP key hints validation, QA verdict format, regression suite integration |
