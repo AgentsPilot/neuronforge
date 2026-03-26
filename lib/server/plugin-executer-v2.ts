@@ -18,6 +18,7 @@ import { HubSpotPluginExecutor } from './hubspot-plugin-executor';
 import { ChatGPTResearchPluginExecutor } from './chatgpt-research-plugin-executor';
 import { LinkedInPluginExecutor } from './linkedin-plugin-executor';
 import { AirtablePluginExecutor } from './airtable-plugin-executor';
+import { DocumentExtractorPluginExecutor } from './document-extractor-plugin-executor';
 
 const logger = createLogger({ module: 'PluginExecuter', service: 'plugin-system' });
 let pluginExecuterInstance: PluginExecuterV2 | null = null;
@@ -42,6 +43,7 @@ export class PluginExecuterV2 {
     'chatgpt-research': ChatGPTResearchPluginExecutor,
     'linkedin': LinkedInPluginExecutor,
     'airtable': AirtablePluginExecutor,
+    'document-extractor': DocumentExtractorPluginExecutor,
     // Add new plugin executors here
   };
 

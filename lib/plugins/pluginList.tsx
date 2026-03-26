@@ -196,6 +196,15 @@ export const pluginList: PluginDefinition[] = [
     isPopular: true,
   },
   {
+    pluginKey: 'document-extractor',
+    name: 'Document Extractor',
+    description: 'Extract structured data from documents, invoices, receipts, and images using OCR',
+    detailedDescription: 'Deterministic document data extraction using OCR and parsing. Extract structured fields from PDFs, images, invoices, receipts, and forms without AI for fast, reliable, and cost-effective processing. Supports automatic MIME type detection and multiple input formats.',
+    icon: <FileText className="w-5 h-5 text-blue-600" />,
+    category: 'productivity',
+    isPopular: true,
+  },
+  {
     pluginKey: 'clickup-docs',
     name: 'ClickUp',
     description: 'Create tasks, update status, fetch lists and priorities, automate project and task workflows',
