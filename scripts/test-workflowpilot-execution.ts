@@ -25,7 +25,17 @@ import { createMockSupabase } from './test-dsl-pilot-simulator/mocks/mock-supaba
 import { registerOutputSchemas, generateStubData } from './test-dsl-pilot-simulator/stub-data-provider'
 
 async function main() {
-  const outputDir = path.join(process.cwd(), 'output', 'vocabulary-pipeline')
+  // --input-dir: where to read DSL and config files from
+  // --output-dir: where to write report and log files (defaults to inputDir if omitted)
+  const inputDirArgIdx = process.argv.indexOf('--input-dir')
+  const outputDirArgIdx = process.argv.indexOf('--output-dir')
+  const defaultDir = path.join(process.cwd(), 'output', 'vocabulary-pipeline')
+  const inputDir = inputDirArgIdx !== -1 && process.argv[inputDirArgIdx + 1]
+    ? path.resolve(process.argv[inputDirArgIdx + 1])
+    : defaultDir
+  const writeDir = outputDirArgIdx !== -1 && process.argv[outputDirArgIdx + 1]
+    ? path.resolve(process.argv[outputDirArgIdx + 1])
+    : inputDir  // Falls back to inputDir, which falls back to defaultDir
 
   // Capture all console output to file
   const logLines: string[] = []
@@ -60,8 +70,8 @@ async function main() {
 
   // Step 2: Load compiled DSL + config
   console.log('\n📁 Loading compiled DSL and config...')
-  const dslPath = path.join(outputDir, 'phase4-pilot-dsl-steps.json')
-  const configPath = path.join(outputDir, 'phase4-workflow-config.json')
+  const dslPath = path.join(inputDir, 'phase4-pilot-dsl-steps.json')
+  const configPath = path.join(inputDir, 'phase4-workflow-config.json')
 
   if (!fs.existsSync(dslPath) || !fs.existsSync(configPath)) {
     console.error('❌ Missing output files. Run the pipeline first:')
@@ -202,7 +212,7 @@ async function main() {
   }
 
   // Step 9: Save report
-  const reportPath = path.join(outputDir, 'workflowpilot-execution-report.json')
+  const reportPath = path.join(writeDir, 'workflowpilot-execution-report.json')
   fs.writeFileSync(reportPath, JSON.stringify({
     timestamp: new Date().toISOString(),
     phase: 'D',
@@ -227,7 +237,7 @@ async function main() {
   console.log('='.repeat(70))
 
   // Save full console output to log file for review
-  const logPath = path.join(outputDir, 'workflowpilot-execution-log.txt')
+  const logPath = path.join(writeDir, 'workflowpilot-execution-log.txt')
   fs.writeFileSync(logPath, logLines.join('\n'))
   originalLog(`\nFull log saved: ${logPath}`)
 

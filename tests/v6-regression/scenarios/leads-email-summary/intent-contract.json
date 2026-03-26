@@ -1,0 +1,4 @@
+{
+  "_placeholder": true,
+  "_note": "This intent contract needs to be generated via a one-time LLM pipeline run. Run: npx tsx --import ./scripts/env-preload.ts scripts/test-complete-pipeline-with-vocabulary.ts tests/v6-regression/scenarios/leads-email-summary/enhanced-prompt.json --output-dir tests/v6-regression/output/leads-generation-run/ — then copy the resulting phase1-intent-contract.json here, replacing this placeholder."
+}

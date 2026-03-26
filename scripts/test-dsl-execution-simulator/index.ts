@@ -5,6 +5,7 @@
  * with stub data, and validates the data flow chain.
  *
  * Usage: npx tsx scripts/test-dsl-execution-simulator/index.ts
+ *        npx tsx scripts/test-dsl-execution-simulator/index.ts --input-dir /path/to/dir
  */
 
 import path from 'path'
@@ -15,7 +16,12 @@ import { Validator } from './validator'
 import { writeReport } from './report-generator'
 
 async function main() {
-  const outputDir = path.join(process.cwd(), 'output', 'vocabulary-pipeline')
+  // --input-dir controls both where input files are read from and where the report is written.
+  // Phase A always co-locates the report with its input files, so a single dir arg suffices.
+  const inputDirArgIndex = process.argv.indexOf('--input-dir')
+  const outputDir = inputDirArgIndex !== -1 && process.argv[inputDirArgIndex + 1]
+    ? path.resolve(process.argv[inputDirArgIndex + 1])
+    : path.join(process.cwd(), 'output', 'vocabulary-pipeline')
 
   console.log('╔══════════════════════════════════════════════════════════════════╗')
   console.log('║           DSL Execution Simulator — Phase A                     ║')

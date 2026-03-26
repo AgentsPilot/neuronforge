@@ -1,0 +1,84 @@
+{
+    "plan_title": "High-Qualified (Stage = 4) Leads Email Summary Agent",
+    "plan_description": "Reads a specific Google Sheets tab, filters leads where Stage = 4, renders an HTML summary table with selected columns, and emails it to a deduplicated recipient list (or sends a 'none found' email when there are no matches).",
+    "sections": {
+        "data": [
+            "- Read lead rows from the Google Sheets spreadsheet with ID \"1RHLbBXzrKv24gNgp7a4Lr7RlMIrP9fjacfGWjhPAbOE\".",
+            "- Read lead rows from the tab named \"Leads Tab\".",
+            "- Treat the first row as the header row.",
+            "- Locate columns by these exact header names: Date, Lead Name, Company, Email, Phone, Stage, Notes, Sales Person.",
+            "- Use the full set of populated rows beneath the header row as the candidate lead records."
+        ],
+        "actions": [
+            "- Filter the candidate lead records to only include rows where the \"Stage\" column value equals \"4\".",
+            "- Exclude any row where the \"Stage\" cell is blank or missing.",
+            "- Build a summary table where each remaining row becomes one table row.",
+            "- Output the summary table columns in this exact order: Date, Lead Name, Company, Email, Phone, Stage, Notes, Sales Person.",
+            "- Deduplicate the recipient list so each email address is included only once."
+        ],
+        "output": [
+            "- Generate an HTML table embedded directly in the email body.",
+            "- The HTML table must include a header row with: Date, Lead Name, Company, Email, Phone, Stage, Notes, Sales Person.",
+            "- If zero rows match Stage = 4, generate an email body that clearly states that no high-qualified (Stage = 4) leads were found and do not include a data table."
+        ],
+        "delivery": [
+            "- Send the email to: meiribarak@gmail.com, eomer3@gmail.com, offir.omer@gmail.com.",
+            "- Use a subject line that includes: \"High-qualified leads (Stage = 4)\".",
+            "- Send exactly one email that includes all matching leads in a single table."
+        ],
+        "processing_steps": [
+            "- Load the leads data from the specified spreadsheet ID and tab name.",
+            "- Identify the required columns by header name.",
+            "- Filter rows where Stage = 4.",
+            "- Render the filtered rows into an HTML table (or a 'none found' message).",
+            "- Send the email to the deduplicated recipient list."
+        ]
+    },
+    "specifics": {
+        "services_involved": [
+            "google-mail",
+            "google-sheets",
+            "chatgpt-research"
+        ],
+        "user_inputs_required": [
+        ],
+        "resolved_user_inputs": [
+            {
+                "key": "user_email",
+                "value": "meiribarak@gmail.com"
+            },
+            {
+                "key": "google_sheets__table_read__spreadsheet_id",
+                "value": "1RHLbBXzrKv24gNgp7a4Lr7RlMIrP9fjacfGWjhPAbOE"
+            },
+            {
+                "key": "google_sheets__table_read__sheet_tab_name",
+                "value": "Leads Tab"
+            },
+            {
+                "key": "google_sheets__table_read__header_row",
+                "value": "Date | Lead Name | Company | Email | Phone | Stage | Notes | Sales Person"
+            },
+            {
+                "key": "qualification_rule",
+                "value": "Stage = 4"
+            },
+            {
+                "key": "output_columns",
+                "value": "Date, Lead Name, Company, Email, Phone, Stage, Notes, Sales Person"
+            },
+            {
+                "key": "email_format",
+                "value": "HTML table in email body"
+            },
+            {
+                "key": "google_mail__email_send__recipients",
+                "value": "meiribarak@gmail.com, eomer3@gmail.com, offir.omer@gmail.com"
+            },
+            {
+                "key": "no_results_behavior",
+                "value": "send 'none found' email"
+            }
+        ]
+    }
+}
