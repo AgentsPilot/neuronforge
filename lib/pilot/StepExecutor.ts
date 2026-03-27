@@ -887,14 +887,27 @@ export class StepExecutor {
       // Flatten 'fields' mapping into top-level params if present
       // The compiler may generate { fields: { "Column": "{{var.field}}" } } for append_rows,
       // but the plugin executor expects { values: [[...]] } at the top level
-      if (transformed.fields && typeof transformed.fields === 'object') {
-        for (const [fieldKey, fieldValue] of Object.entries(transformed.fields)) {
-          if (!(fieldKey in transformed)) {
-            transformed[fieldKey] = fieldValue;
+      // O27: Only flatten if fields is a plain object mapping — NOT an array
+      // document-extractor uses fields as an array of field definitions, which must be preserved
+      if (transformed.fields && typeof transformed.fields === 'object' && !Array.isArray(transformed.fields)) {
+        // Check if fields looks like x-variable-mapping metadata (bare refs like "attachment.mime_type")
+        // vs actual column mappings (values with {{}} or literal data)
+        const fieldValues = Object.values(transformed.fields)
+        const allBareRefs = fieldValues.every(v => typeof v === 'string' && v.includes('.') && !v.includes('{{'))
+        if (allBareRefs) {
+          // O27b: This is x-variable-mapping metadata from the compiler — don't flatten
+          // The top-level params already have the correctly resolved {{}} references
+          logger.debug({ fieldKeys: Object.keys(transformed.fields) }, 'Skipping fields flattening — detected x-variable-mapping metadata (bare refs without {{}})');
+          delete transformed.fields;
+        } else {
+          for (const [fieldKey, fieldValue] of Object.entries(transformed.fields)) {
+            if (!(fieldKey in transformed)) {
+              transformed[fieldKey] = fieldValue;
+            }
           }
+          delete transformed.fields;
+          logger.debug({ flattenedKeys: Object.keys(transformed) }, 'Flattened fields mapping into params');
         }
-        delete transformed.fields;
-        logger.debug({ flattenedKeys: Object.keys(transformed) }, 'Flattened fields mapping into params');
       }
 
       // Iterate through each parameter in the schema
