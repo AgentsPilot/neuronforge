@@ -14,7 +14,9 @@
       "Bash(node -e \"var fs = require\\(''fs''\\); var content = fs.readFileSync\\(''.env.local'', ''utf-8''\\); var lines = content.split\\(''\\\\n''\\).filter\\(l => l.includes\\(''ANTHROPIC_API_KEY''\\)\\); lines.forEach\\(l => { var val = l.split\\(''=''\\)[1] || ''''; console.log\\(''starts:'', val.substring\\(0,15\\), ''ends:'', val.substring\\(val.length-5\\), ''len:'', val.length\\); }\\);\")",
       "Read(//c/Users/Barak/My Projects/AgentsPilot/neuronforge/**)",
       "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); [print\\(f''''{k}: type={v.get\\(schema,{}\\).get\\(type,?\\)}, props={list\\(v.get\\(schema,{}\\).get\\(properties,{}\\).keys\\(\\)\\)[:5]}''''\\) for k,v in d.get\\(''''slots'''',{}\\).items\\(\\)]\")",
-      "Bash(npx jest:*)"
+      "Bash(npx jest:*)",
+      "Bash(node -e \":*)",
+      "Bash(npm run:*)"
     ]
   }
 }

@@ -1,13 +1,22 @@
 /**
- * Integration test for DocumentExtractorPluginExecutor
+ * Integration tests for DocumentExtractorPluginExecutor
  *
- * Runs the real DeterministicExtractor against Invoice677931.pdf.
+ * Runs the real DeterministicExtractor against PDF fixtures.
  * Does NOT mock DeterministicExtractor — real parsing runs.
  * Still mocks fetch as a safety net (no network calls allowed).
  *
- * SA review item #5: Skip guard if PDF fixture is missing or if the
- * PDF requires AWS Textract (scanned image). The fixture uses pdf-parse
- * (pure JS, no native deps) for text-based PDFs.
+ * These tests serve as an ACCURACY BENCHMARK for the deterministic extractor.
+ * Each assertion is categorized:
+ *   - "Correctly extracted" — the extractor gets the right value
+ *   - "Known limitation"   — the extractor returns wrong/fallback data
+ *
+ * When SchemaFieldExtractor is improved, "known limitation" assertions will
+ * start failing — that's the signal to tighten them to real expected values.
+ *
+ * Fixtures:
+ *  - Invoice677931.pdf          — Scooter Software license invoice ($31.50)
+ *  - Receipt-2667-7775-2451.pdf — Anthropic API credit purchase ($50.00)
+ *  - Receipt-HMGRLQ-00003.pdf   — ngrok monthly license ($10.00)
  */
 
 import * as fs from 'fs';
@@ -18,14 +27,40 @@ import { mockFetchSuccess, restoreFetch } from '../common/mock-fetch';
 
 const PLUGIN_KEY = 'document-extractor';
 const USER_ID = 'test-user-id';
-const FIXTURE_PATH = path.join(process.cwd(), 'tests', 'plugins', 'fixtures', 'Invoice677931.pdf');
+const FIXTURES_DIR = path.join(process.cwd(), 'tests', 'plugins', 'fixtures');
 
-// Skip the entire suite if the fixture PDF does not exist
-const fixtureExists = fs.existsSync(FIXTURE_PATH);
+// Common extraction fields used across all receipt/invoice tests
+const EXTRACTION_FIELDS = [
+  { name: 'invoice_number', type: 'string', description: 'The invoice or receipt number' },
+  { name: 'date', type: 'date', description: 'The invoice/receipt date' },
+  { name: 'vendor', type: 'string', description: 'The vendor or company name' },
+  { name: 'amount', type: 'currency', description: 'The total amount paid' },
+  { name: 'currency', type: 'string', description: 'The currency code (e.g. USD)' },
+];
 
-const describeOrSkip = fixtureExists ? describe : describe.skip;
+/** Helper: read a PDF fixture as base64, or return null if missing */
+function readFixture(filename: string): string | null {
+  const fullPath = path.join(FIXTURES_DIR, filename);
+  if (!fs.existsSync(fullPath)) return null;
+  return fs.readFileSync(fullPath).toString('base64');
+}
 
-describeOrSkip('DocumentExtractorPluginExecutor (integration)', () => {
+/** Helper: run extraction against a fixture */
+async function extractFromFixture(
+  executor: any,
+  base64Content: string,
+  filename: string,
+) {
+  mockFetchSuccess({}); // safety net — catch accidental network calls
+  return executor.executeAction(USER_ID, 'extract_structured_data', {
+    file_content: base64Content,
+    mime_type: 'application/pdf',
+    filename,
+    fields: EXTRACTION_FIELDS,
+  });
+}
+
+describe('DocumentExtractorPluginExecutor (integration)', () => {
   let executor: any;
 
   beforeAll(async () => {
@@ -37,56 +72,108 @@ describeOrSkip('DocumentExtractorPluginExecutor (integration)', () => {
     restoreFetch();
   });
 
-  it('should extract structured fields from real Invoice677931.pdf', async () => {
-    // Safety net: catch any accidental network calls
-    mockFetchSuccess({});
+  // ==========================================================================
+  // Invoice677931.pdf — Scooter Software ($31.50 USD, 17-Mar-2026)
+  // ==========================================================================
 
-    // Read the PDF fixture as base64
-    const pdfBuffer = fs.readFileSync(FIXTURE_PATH);
-    const pdfBase64 = pdfBuffer.toString('base64');
+  const invoice677931 = readFixture('Invoice677931.pdf');
+  const describeInvoice = invoice677931 ? describe : describe.skip;
 
-    const result = await executor.executeAction(USER_ID, 'extract_structured_data', {
-      file_content: pdfBase64,
-      mime_type: 'application/pdf',
-      filename: 'Invoice677931.pdf',
-      fields: [
-        { name: 'invoice_number', type: 'string', description: 'The invoice number' },
-        { name: 'date', type: 'date', description: 'The invoice date' },
-        { name: 'vendor', type: 'string', description: 'The vendor or company name' },
-        { name: 'amount', type: 'string', description: 'The total dollar amount' },
-        { name: 'currency', type: 'string', description: 'The currency code (e.g. USD)' },
-      ],
-    });
+  describeInvoice('Invoice677931.pdf (Scooter Software — $31.50)', () => {
+    it('should extract structured fields', async () => {
+      const result = await extractFromFixture(executor, invoice677931!, 'Invoice677931.pdf');
+      expectSuccessResult(result);
+      console.log('[Invoice677931] Extracted:', JSON.stringify(result.data, null, 2));
 
-    expectSuccessResult(result);
+      // --- Correctly extracted ---
+      expect(result.data.invoice_number).toContain('677931');
 
-    // Verify extracted fields match the known invoice data
-    // Log actual extracted data for debugging future changes
-    console.log('Extracted data:', JSON.stringify(result.data, null, 2));
+      // --- Known limitations (update when extractor improves) ---
+      // date: extracts "d 17-Mar-2026" — has leading artifact from "Dated" label
+      expect(result.data.date).toBe('d 17-Mar-2026');
+      // vendor: no "Vendor:" label in PDF — fallback applied
+      expect(result.data.vendor).toBe('Unknown Vendor');
+      // amount: picks up part number "1BC5S1" instead of "$31.50"
+      expect(result.data.amount).toBe('1BC5S1');
+      // currency: picks up "Ship Via" from table header instead of "USD"
+      expect(result.data.currency).toBe('Ship Via');
 
-    // The deterministic extractor uses regex pattern matching against raw PDF text.
-    // This invoice's layout means not all fields map cleanly. We validate:
-    // 1. The extraction succeeded (result.success === true)
-    // 2. Fields that CAN be reliably extracted are correct
-    // 3. Fields that the extractor struggles with are at least defined (fallback applied)
+      // Metadata
+      expect(result.data._extraction_metadata.confidence).toBeCloseTo(0.56, 1);
+      expect(result.data._extraction_metadata.method).toBe('text');
+      expect(result.data._extraction_metadata.missing_fields).toContain('vendor');
+    }, 30000);
+  });
 
-    // invoice_number: reliably extracted from "INVOICE #677931"
-    expect(result.data.invoice_number).toContain('677931');
+  // ==========================================================================
+  // Receipt-2667-7775-2451.pdf — Anthropic ($50.00 USD, March 16, 2026)
+  // ==========================================================================
 
-    // date: extracted from "17-Mar-2026" or "Dated 17-Mar-2026"
-    expect(result.data.date).toBeDefined();
+  const receiptAnthopic = readFixture('Receipt-2667-7775-2451.pdf');
+  const describeAnthopic = receiptAnthopic ? describe : describe.skip;
 
-    // vendor: deterministic extractor can't infer this (no "Vendor:" label in PDF)
-    // — executor applies fallback "Unknown Vendor" for missing required fields
-    expect(result.data.vendor).toBeDefined();
+  describeAnthopic('Receipt-2667-7775-2451.pdf (Anthropic — $50.00)', () => {
+    it('should extract structured fields', async () => {
+      const result = await extractFromFixture(executor, receiptAnthopic!, 'Receipt-2667-7775-2451.pdf');
+      expectSuccessResult(result);
+      console.log('[Anthropic Receipt] Extracted:', JSON.stringify(result.data, null, 2));
 
-    // amount & currency: may or may not extract correctly depending on PDF text layout
-    expect(result.data.amount).toBeDefined();
-    expect(result.data.currency).toBeDefined();
+      // --- Correctly extracted ---
+      // invoice_number: "ATJYUG83-0001" (has null byte from PDF encoding)
+      expect(result.data.invoice_number).toContain('ATJYUG83');
 
-    // Metadata is always present
-    expect(result.data._extraction_metadata).toBeDefined();
-    expect(result.data._extraction_metadata.confidence).toBeGreaterThan(0);
-    expect(result.data._extraction_metadata.method).toBe('text');
-  }, 30000); // Extended timeout for real PDF processing
+      // --- Known limitations (update when extractor improves) ---
+      // date: extracts "paidMarch 16, 2026" — "Date paid" label runs into value
+      expect(result.data.date).toBe('paidMarch 16, 2026');
+      // vendor: no "Vendor:" label — "Anthropic, PBC" is in address block, not matched
+      expect(result.data.vendor).toBe('Unknown Vendor');
+      // amount: grabs entire table row instead of just "$50.00"
+      expect(result.data.amount).toBe('One-time credit purchase1$50.00$50.00');
+      // currency: no clear "Currency: USD" label — fallback applied
+      expect(result.data.currency).toBe('Unknown Currency');
+
+      // Metadata
+      expect(result.data._extraction_metadata.confidence).toBeCloseTo(0.42, 1);
+      expect(result.data._extraction_metadata.method).toBe('text');
+      expect(result.data._extraction_metadata.missing_fields).toEqual(
+        expect.arrayContaining(['vendor', 'currency'])
+      );
+    }, 30000);
+  });
+
+  // ==========================================================================
+  // Receipt-HMGRLQ-00003.pdf — ngrok ($10.00 USD, Nov 23, 2025)
+  // ==========================================================================
+
+  const receiptNgrok = readFixture('Receipt-HMGRLQ-00003.pdf');
+  const describeNgrok = receiptNgrok ? describe : describe.skip;
+
+  describeNgrok('Receipt-HMGRLQ-00003.pdf (ngrok — $10.00)', () => {
+    it('should extract structured fields', async () => {
+      const result = await extractFromFixture(executor, receiptNgrok!, 'Receipt-HMGRLQ-00003.pdf');
+      expectSuccessResult(result);
+      console.log('[ngrok Receipt] Extracted:', JSON.stringify(result.data, null, 2));
+
+      // --- Correctly extracted ---
+      // invoice_number: cleanly extracted from "Invoice numberHMGRLQ-00003"
+      expect(result.data.invoice_number).toBe('HMGRLQ-00003');
+      // date: cleanly extracted from "Receipt dateNov 23, 2025"
+      expect(result.data.date).toBe('Nov 23, 2025');
+
+      // --- Known limitations (update when extractor improves) ---
+      // vendor: "ngrok Inc." is in address block, not matched by pattern
+      expect(result.data.vendor).toBe('Unknown Vendor');
+      // amount: extracts "paid$10.00" — "Amount paid" label prefix leaks in
+      expect(result.data.amount).toBe('paid$10.00');
+      // currency: no "Currency:" label — fallback applied
+      expect(result.data.currency).toBe('Unknown Currency');
+
+      // Metadata
+      expect(result.data._extraction_metadata.confidence).toBeCloseTo(0.42, 1);
+      expect(result.data._extraction_metadata.method).toBe('text');
+      expect(result.data._extraction_metadata.missing_fields).toEqual(
+        expect.arrayContaining(['vendor', 'currency'])
+      );
+    }, 30000);
+  });
 });
