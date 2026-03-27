@@ -1,0 +1,12 @@
+{
+  "name": "Expense & Invoice Email Scanner",
+  "description": "Scans Gmail for PDF attachments matching invoice/expense queries, extracts structured data via document extractor, stores per-vendor in Google Drive, conditionally appends to Google Sheets if amount > 50, sends HTML digest email",
+  "created": "2026-03-27",
+  "plugins": ["google-mail", "google-drive", "google-sheets", "chatgpt-research"],
+  "expected": {
+    "min_steps": 11,
+    "step_types": ["action", "transform", "scatter_gather", "ai_processing", "conditional"],
+    "phase_a_checks": 13,
+    "phase_d_success": true
+  }
+}
