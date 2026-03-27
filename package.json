@@ -17,7 +17,11 @@
     "lint": "next lint",
     "backfill:intensity": "tsx scripts/backfill-agent-intensity.ts",
     "backfill:intensity:history": "tsx scripts/backfill-intensity-from-history.ts",
-    "sync:intensity:analytics": "tsx scripts/sync-intensity-from-analytics.ts"
+    "sync:intensity:analytics": "tsx scripts/sync-intensity-from-analytics.ts",
+    "test:plugins": "jest --config jest.config.js tests/plugins/ --verbose",
+    "test:plugins:unit": "jest --config jest.config.js tests/plugins/unit-tests/ --verbose",
+    "test:plugins:integration": "jest --config jest.config.js tests/plugins/integration-tests/ --verbose",
+    "test:plugins:ci": "jest --config jest.config.js tests/plugins/ --ci --forceExit --verbose"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.68.0",

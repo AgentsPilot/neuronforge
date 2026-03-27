@@ -27,7 +27,8 @@ const config = {
     '/node_modules/',
     '/.next/',
   ],
-  // Setup files
+  // Setup files — set Supabase env stubs before module loading (harmless if already set)
+  setupFiles: ['<rootDir>/tests/plugins/jest-setup.ts'],
   setupFilesAfterEnv: [],
   // Transform files
   transform: {
