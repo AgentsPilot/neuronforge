@@ -17,6 +17,7 @@
  *  - Invoice677931.pdf          — Scooter Software license invoice ($31.50)
  *  - Receipt-2667-7775-2451.pdf — Anthropic API credit purchase ($50.00)
  *  - Receipt-HMGRLQ-00003.pdf   — ngrok monthly license ($10.00)
+ *  - Invoice-ZYVUTAKJ-0003.pdf  — Anthropic Max plan invoice ($80.72)
  */
 
 import * as fs from 'fs';
@@ -174,6 +175,40 @@ describe('DocumentExtractorPluginExecutor (integration)', () => {
       expect(result.data._extraction_metadata.missing_fields).toEqual(
         expect.arrayContaining(['vendor', 'currency'])
       );
+    }, 30000);
+  });
+
+  // ==========================================================================
+  // Invoice-ZYVUTAKJ-0003.pdf — Anthropic Max plan ($80.72 USD, Aug 31, 2025)
+  // ==========================================================================
+
+  const invoiceAnthropicMax = readFixture('Invoice-ZYVUTAKJ-0003 (1) (1).pdf');
+  const describeAnthropicMax = invoiceAnthropicMax ? describe : describe.skip;
+
+  describeAnthropicMax('Invoice-ZYVUTAKJ-0003.pdf (Anthropic Max — $80.72)', () => {
+    it('should extract structured fields', async () => {
+      const result = await extractFromFixture(executor, invoiceAnthropicMax!, 'Invoice-ZYVUTAKJ-0003.pdf');
+      expectSuccessResult(result);
+      console.log('[Anthropic Max Invoice] Extracted:', JSON.stringify(result.data, null, 2));
+
+      // --- Correctly extracted ---
+      // invoice_number: extracted from "Invoice numberZYVUTAKJ-0003" (has null byte from PDF)
+      expect(result.data.invoice_number).toContain('ZYVUTAKJ');
+
+      // --- Known limitations (update when extractor improves) ---
+      // date: "Date of issue" label leaks into value
+      expect(result.data.date).toBe('of issueAugust 31, 2025');
+      // vendor: "Anthropic, PBC" in address block, not matched
+      expect(result.data.vendor).toBe('Unknown Vendor');
+      // amount: grabs "Max plan - 5x" description instead of "$80.72"
+      expect(result.data.amount).toBe('Max plan - 5x');
+      // currency: grabs "due August 31, 2025" from "Date due" line
+      expect(result.data.currency).toBe('due August 31, 2025');
+
+      // Metadata
+      expect(result.data._extraction_metadata.confidence).toBeCloseTo(0.56, 1);
+      expect(result.data._extraction_metadata.method).toBe('text');
+      expect(result.data._extraction_metadata.missing_fields).toContain('vendor');
     }, 30000);
   });
 });
