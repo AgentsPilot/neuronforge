@@ -1016,6 +1016,7 @@ Report format:
 | # | Description |
 |---|-------------|
 | F1 | **API-triggered execution** — Instead of calling `WorkflowPilot.execute()` directly, trigger via `POST /api/run-agent { agent_id, execution_type: "test", input_variables }`. Simulates real user trigger through the full API stack (auth, rate limits, audit trail). |
+| F2 | ✅ **Phase A simulator — resolve scatter item schemas.** The A+2 check (`scatter-gather item field validation`) is defined but the implementation doesn't resolve the item schema for nested scatter variables. When the simulator encounters `{{attachment.message_id}}` inside a scatter-gather body, it can't find `attachment` in the variable store (it's a loop iteration variable, not a top-level step output). It emits a warning but can't validate field names. **Result:** false-positive unresolved ref errors in the QA report (e.g., `{{attachment.message_id}}`, `{{attachment.attachment_id}}`, `{{attachment.filename}}`), even when the fields are correct (confirmed by Phase D passing). **Fix:** When the simulator processes a `scatter_gather` step, register the scatter input's `output_schema.items.properties` under the `itemVariable` name in the variable store. This is the same approach used by O25a in the compiler (`resolveFieldMismatch` for dotted input variables). After the fix, `{{attachment.message_id}}` resolves against the Gmail attachment item schema and validates correctly. **Priority:** Medium — Phase D catches real issues, but false positives reduce QA confidence in Phase A results. |
 
 ---
 

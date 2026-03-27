@@ -168,7 +168,23 @@ export class DSLSimulator {
       }
       case 'flatten': {
         if (Array.isArray(inputData)) {
-          output = inputData
+          // F2 fix: If the flatten has an output_schema with different item properties
+          // than the input items, generate stub data from the output_schema.
+          // This handles the email→attachment flatten case where input items are emails
+          // but output items should be attachments (different schema).
+          if (step.output_schema?.items?.properties) {
+            const outputKeys = new Set(Object.keys(step.output_schema.items.properties))
+            const inputKeys = inputData[0] ? new Set(Object.keys(inputData[0])) : new Set()
+            const overlap = [...outputKeys].filter(k => inputKeys.has(k))
+            if (overlap.length < outputKeys.size * 0.5) {
+              // Less than 50% overlap — generate new items from output schema
+              output = generateFromSchema(step.output_schema, { arrayItemCount: inputData.length || 3 })
+            } else {
+              output = inputData
+            }
+          } else {
+            output = inputData
+          }
         } else if (inputData && typeof inputData === 'object') {
           // Simulate flatten: extract nested arrays
           // For email→attachments, generate stub attachment items

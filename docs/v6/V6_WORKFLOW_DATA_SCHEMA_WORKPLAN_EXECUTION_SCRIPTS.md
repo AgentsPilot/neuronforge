@@ -352,6 +352,53 @@ Generate the QA report based on the results:
 - `output/vocabulary-pipeline/workflowpilot-execution-report.json` (Phase D)
 - `output/vocabulary-pipeline/live-execution-report.json` (Phase E, if ran)
 
+**QA Test Results MD (required):**
+
+After completing the test, generate a structured markdown report at:
+
+```
+docs/workplans/v6-pipeline-test-results-YYYY-MM-DD-HH-MM-SS.md
+```
+
+The timestamp suffix ensures each test run is uniquely identifiable and historical results are preserved.
+
+**Required sections in the report MD:**
+
+```markdown
+# V6 Pipeline Test Results — YYYY-MM-DD-HH-MM-SS
+
+> **Date**: YYYY-MM-DD
+> **Branch**: `feature/...`
+> **Scenario**: <scenario name>
+> **Enhanced Prompt**: <path to enhanced prompt used>
+
+## Test Summary
+
+| Phase | Description | Status | Details |
+|-------|-------------|--------|---------|
+| EP Key Hints | Validate resolved_user_inputs key format | PASS/FAIL | <details> |
+| Phase 0-4 | Compile enhanced prompt to DSL | PASS/FAIL | <step count, compile time> |
+| Phase A | Static DSL validation (13 checks) | PASS/FAIL (X/13) | <errors, warnings> |
+| Phase D | Mock WorkflowPilot execution | PASS/FAIL | <steps completed/total> |
+| Phase E | Live execution (if ran) | PASS/FAIL/SKIPPED | <steps completed, real results> |
+
+**Overall Verdict: PASS / FAIL**
+
+## Comparison with Previous Run (if applicable)
+
+<table comparing key metrics with the previous test run>
+
+## Issues Found (if any)
+
+<list of issues discovered during this run>
+
+## DAG
+
+<paste the DAG from Phase A report>
+```
+
+**Naming convention:** Use the timestamp from when the test started, not when the report was written. Example: `v6-pipeline-test-results-2026-03-27-10-00-58.md`
+
 ---
 
 ## Step 9: Add to Regression Suite (Optional)
