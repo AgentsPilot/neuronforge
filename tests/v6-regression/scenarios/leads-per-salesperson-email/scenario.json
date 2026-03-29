@@ -1,0 +1,12 @@
+{
+  "name": "High-Qualified Leads Per-Salesperson Email Agent",
+  "description": "Read Google Sheets leads, filter Stage=4, send summary email to user, group by Sales Person, generate per-salesperson HTML tables, send individual emails. Tests conditional branching, group transform, scatter-gather with ai_processing/generate inside.",
+  "created": "2026-03-29",
+  "plugins": ["google-mail", "google-sheets"],
+  "expected": {
+    "min_steps": 4,
+    "step_types": ["action", "transform", "conditional", "ai_processing", "scatter_gather"],
+    "phase_a_checks": 13,
+    "phase_d_success": true
+  }
+}

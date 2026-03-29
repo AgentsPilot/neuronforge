@@ -148,6 +148,15 @@ export interface ParallelGroupStep extends WorkflowStepBase {
 }
 
 /**
+ * Parallel step (V6 format): Run nested steps concurrently
+ */
+export interface ParallelStep extends WorkflowStepBase {
+  type: 'parallel';
+  steps: WorkflowStep[];
+  maxConcurrency?: number;
+}
+
+/**
  * Switch/Case step: Route based on discrete values
  * Phase 2: Enhanced Conditionals
  */
@@ -323,6 +332,7 @@ export type WorkflowStep =
   | TransformStep
   | DelayStep
   | ParallelGroupStep
+  | ParallelStep
   | SwitchStep
   | ScatterGatherStep
   | EnrichmentStep
@@ -492,6 +502,14 @@ export interface IParallelExecutor {
     step: LoopStep,
     context: IExecutionContext
   ): Promise<any[]>;
+
+  /**
+   * Execute parallel step (V6 format: nested steps run concurrently)
+   */
+  executeParallel(
+    steps: WorkflowStep[],
+    context: IExecutionContext
+  ): Promise<Map<string, StepOutput> | any>;
 }
 
 /**
@@ -668,6 +686,11 @@ export interface StepOutputMetadata {
   auto_repaired?: boolean;
   repair_action?: string;
   repair_description?: string;
+
+  // Dependency skip metadata
+  skipped?: boolean;
+  reason?: string;
+  message?: string;
 
   // Additional metadata fields
   plugin?: string;

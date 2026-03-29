@@ -47,7 +47,7 @@ export class ExecutionContext implements IExecutionContext {
   public skippedSteps: string[] = [];
 
   // Step outputs (in-memory during execution)
-  private stepOutputs: Map<string, StepOutput>;
+  public stepOutputs: Map<string, StepOutput>;
 
   // Runtime variables
   public variables: Record<string, any>;

@@ -1,0 +1,487 @@
+{
+  "version": "intent.v1",
+  "goal": "Read leads from Google Sheets, filter high-qualified leads (stage=4), send summary email to user, and send per-salesperson emails with their assigned qualified leads",
+  "unit_of_work": {
+    "entity": "lead",
+    "parent_entity": "spreadsheet"
+  },
+  "config": [
+    {
+      "key": "spreadsheet_id",
+      "type": "string",
+      "description": "Google Sheets spreadsheet ID containing leads data",
+      "default": "1RHLbBXzrKv24gNgp7a4Lr7RlMIrP9fjacfGWjhPAbOE"
+    },
+    {
+      "key": "sheet_tab_name",
+      "type": "string",
+      "description": "Name of the sheet tab containing leads",
+      "default": "Leads"
+    },
+    {
+      "key": "stage_filter_value",
+      "type": "number",
+      "description": "Stage value to filter for high-qualified leads",
+      "default": 4
+    },
+    {
+      "key": "user_email",
+      "type": "string",
+      "description": "Email address to send summary report",
+      "default": "meiribarak@gmail.com"
+    },
+    {
+      "key": "email_subject",
+      "type": "string",
+      "description": "Subject line for all emails",
+      "default": "Your tasks today - Please handle the following leads - High-qualified leads summary"
+    },
+    {
+      "key": "summary_columns",
+      "type": "json",
+      "description": "Columns to include in summary tables",
+      "default": [
+        "Date",
+        "Lead Name",
+        "Company",
+        "Email",
+        "Phone",
+        "Stage",
+        "Notes",
+        "Sales Person"
+      ]
+    }
+  ],
+  "required_outcomes": [
+    "User receives email with all qualified leads summary",
+    "Each salesperson receives email with their assigned qualified leads"
+  ],
+  "steps": [
+    {
+      "id": "read_leads_data",
+      "kind": "data_source",
+      "summary": "Read all leads from Google Sheets spreadsheet",
+      "uses": [
+        {
+          "capability": "get",
+          "domain": "table",
+          "preferences": {
+            "provider_family": "google"
+          }
+        }
+      ],
+      "output": "raw_leads",
+      "source": {
+        "domain": "table",
+        "intent": "read"
+      },
+      "payload": {
+        "spreadsheet_id": {
+          "kind": "config",
+          "key": "spreadsheet_id"
+        },
+        "range": {
+          "kind": "computed",
+          "op": "concat",
+          "args": [
+            {
+              "kind": "config",
+              "key": "sheet_tab_name"
+            },
+            {
+              "kind": "literal",
+              "value": "!A:H"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "filter_qualified_leads",
+      "kind": "transform",
+      "summary": "Filter leads where Stage equals 4 (high-qualified)",
+      "inputs": [
+        "raw_leads"
+      ],
+      "output": "qualified_leads",
+      "transform": {
+        "op": "filter",
+        "input": "raw_leads",
+        "description": "Keep only leads with Stage = 4",
+        "where": {
+          "op": "test",
+          "left": {
+            "kind": "ref",
+            "ref": "raw_leads",
+            "field": "Stage"
+          },
+          "comparator": "eq",
+          "right": {
+            "kind": "config",
+            "key": "stage_filter_value"
+          }
+        },
+        "output_schema": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "Date": {
+                "type": "string"
+              },
+              "Lead Name": {
+                "type": "string"
+              },
+              "Company": {
+                "type": "string"
+              },
+              "Email": {
+                "type": "string"
+              },
+              "Phone": {
+                "type": "string"
+              },
+              "Stage": {
+                "type": "number"
+              },
+              "Notes": {
+                "type": "string"
+              },
+              "Sales Person": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "Date",
+              "Lead Name",
+              "Company",
+              "Email",
+              "Phone",
+              "Stage",
+              "Notes",
+              "Sales Person"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "check_qualified_leads_exist",
+      "kind": "decide",
+      "summary": "Check if any qualified leads exist",
+      "inputs": [
+        "qualified_leads"
+      ],
+      "decide": {
+        "condition": {
+          "op": "test",
+          "left": {
+            "kind": "ref",
+            "ref": "qualified_leads",
+            "field": "length"
+          },
+          "comparator": "gt",
+          "right": {
+            "kind": "literal",
+            "value": 0
+          }
+        },
+        "then": [
+          {
+            "id": "generate_user_summary_html",
+            "kind": "generate",
+            "summary": "Generate HTML table with all qualified leads for user email",
+            "inputs": [
+              "qualified_leads"
+            ],
+            "output": "user_summary_content",
+            "uses": [
+              {
+                "capability": "generate",
+                "domain": "internal"
+              }
+            ],
+            "generate": {
+              "input": "qualified_leads",
+              "format": "html",
+              "instruction": "Create an HTML table with columns: Date, Lead Name, Company, Email, Phone, Stage, Notes, Sales Person. Include all qualified leads from the input data. Use professional styling with borders and header row.",
+              "outputs": [
+                {
+                  "name": "html_body",
+                  "type": "string",
+                  "description": "HTML table containing all qualified leads"
+                }
+              ]
+            }
+          },
+          {
+            "id": "send_user_summary_email",
+            "kind": "notify",
+            "summary": "Send summary email to user with all qualified leads",
+            "inputs": [
+              "user_summary_content"
+            ],
+            "uses": [
+              {
+                "capability": "send_message",
+                "domain": "email",
+                "preferences": {
+                  "provider_family": "google"
+                }
+              }
+            ],
+            "notify": {
+              "channel": "email",
+              "recipients": {
+                "to": [
+                  {
+                    "kind": "config",
+                    "key": "user_email"
+                  }
+                ]
+              },
+              "content": {
+                "subject": {
+                  "kind": "config",
+                  "key": "email_subject"
+                },
+                "body": {
+                  "kind": "ref",
+                  "ref": "user_summary_content",
+                  "field": "html_body"
+                },
+                "format": "html"
+              }
+            }
+          },
+          {
+            "id": "group_leads_by_salesperson",
+            "kind": "transform",
+            "summary": "Group qualified leads by Sales Person",
+            "inputs": [
+              "qualified_leads"
+            ],
+            "output": "salesperson_groups",
+            "transform": {
+              "op": "group",
+              "input": "qualified_leads",
+              "description": "Group leads by Sales Person field to create per-salesperson collections",
+              "rules": {
+                "group_by": "Sales Person"
+              },
+              "output_schema": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "salesperson": {
+                      "type": "string"
+                    },
+                    "leads": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "Date": {
+                            "type": "string"
+                          },
+                          "Lead Name": {
+                            "type": "string"
+                          },
+                          "Company": {
+                            "type": "string"
+                          },
+                          "Email": {
+                            "type": "string"
+                          },
+                          "Phone": {
+                            "type": "string"
+                          },
+                          "Stage": {
+                            "type": "number"
+                          },
+                          "Notes": {
+                            "type": "string"
+                          },
+                          "Sales Person": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  },
+                  "required": [
+                    "salesperson",
+                    "leads"
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "id": "process_each_salesperson",
+            "kind": "loop",
+            "summary": "Process each salesperson group and send their qualified leads",
+            "inputs": [
+              "salesperson_groups"
+            ],
+            "output": "sent_salesperson_emails",
+            "loop": {
+              "over": "salesperson_groups",
+              "item_ref": "salesperson_group",
+              "unit_of_work": {
+                "entity": "salesperson_group"
+              },
+              "collect": {
+                "enabled": true,
+                "collect_as": "sent_salesperson_emails",
+                "from_step_output": "salesperson_email_result"
+              },
+              "do": [
+                {
+                  "id": "generate_salesperson_html",
+                  "kind": "generate",
+                  "summary": "Generate HTML table with salesperson's qualified leads",
+                  "inputs": [
+                    "salesperson_group"
+                  ],
+                  "output": "salesperson_content",
+                  "uses": [
+                    {
+                      "capability": "generate",
+                      "domain": "internal"
+                    }
+                  ],
+                  "generate": {
+                    "input": "salesperson_group",
+                    "format": "html",
+                    "instruction": "Create an HTML table with columns: Date, Lead Name, Company, Email, Phone, Stage, Notes, Sales Person. Include only the leads from the 'leads' array in the input salesperson_group. Use professional styling with borders and header row.",
+                    "outputs": [
+                      {
+                        "name": "html_body",
+                        "type": "string",
+                        "description": "HTML table containing salesperson's qualified leads"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "id": "send_salesperson_email",
+                  "kind": "notify",
+                  "summary": "Send email to salesperson with their qualified leads",
+                  "inputs": [
+                    "salesperson_content",
+                    "salesperson_group"
+                  ],
+                  "output": "salesperson_email_result",
+                  "uses": [
+                    {
+                      "capability": "send_message",
+                      "domain": "email",
+                      "preferences": {
+                        "provider_family": "google"
+                      }
+                    }
+                  ],
+                  "notify": {
+                    "channel": "email",
+                    "recipients": {
+                      "to": [
+                        {
+                          "kind": "ref",
+                          "ref": "salesperson_group",
+                          "field": "salesperson"
+                        }
+                      ]
+                    },
+                    "content": {
+                      "subject": {
+                        "kind": "config",
+                        "key": "email_subject"
+                      },
+                      "body": {
+                        "kind": "ref",
+                        "ref": "salesperson_content",
+                        "field": "html_body"
+                      },
+                      "format": "html"
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        ],
+        "else": [
+          {
+            "id": "generate_no_leads_message",
+            "kind": "generate",
+            "summary": "Generate message for no qualified leads found",
+            "output": "no_leads_content",
+            "uses": [
+              {
+                "capability": "generate",
+                "domain": "internal"
+              }
+            ],
+            "generate": {
+              "format": "html",
+              "instruction": "Create a short, professional HTML message stating that no high-qualified leads (Stage = 4) were found in the spreadsheet at this time.",
+              "outputs": [
+                {
+                  "name": "html_body",
+                  "type": "string",
+                  "description": "HTML message for no qualified leads"
+                }
+              ]
+            }
+          },
+          {
+            "id": "send_no_leads_email",
+            "kind": "notify",
+            "summary": "Send email to user indicating no qualified leads found",
+            "inputs": [
+              "no_leads_content"
+            ],
+            "uses": [
+              {
+                "capability": "send_message",
+                "domain": "email",
+                "preferences": {
+                  "provider_family": "google"
+                }
+              }
+            ],
+            "notify": {
+              "channel": "email",
+              "recipients": {
+                "to": [
+                  {
+                    "kind": "config",
+                    "key": "user_email"
+                  }
+                ]
+              },
+              "content": {
+                "subject": {
+                  "kind": "config",
+                  "key": "email_subject"
+                },
+                "body": {
+                  "kind": "ref",
+                  "ref": "no_leads_content",
+                  "field": "html_body"
+                },
+                "format": "html"
+              }
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "confidence": 0.85,
+  "meta": {
+    "notes": "Workflow assumes Sales Person column contains valid email addresses. If Sales Person contains names instead of emails, a mapping configuration or lookup step will be required."
+  }
+}

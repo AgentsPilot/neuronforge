@@ -17,7 +17,12 @@
       "Bash(npx jest:*)",
       "Bash(node -e \":*)",
       "Bash(npm run:*)",
-      "Bash(python3 -c \"import json; json.load\\(open\\(''lib/plugins/definitions/google-mail-plugin-v2.json'', encoding=''utf-8''\\)\\); print\\(''Valid JSON''\\)\")"
+      "Bash(python3 -c \"import json; json.load\\(open\\(''lib/plugins/definitions/google-mail-plugin-v2.json'', encoding=''utf-8''\\)\\); print\\(''Valid JSON''\\)\")",
+      "Bash(for d:*)",
+      "Bash(do echo:*)",
+      "Read(//c/Users/Barak/My Projects/AgentsPilot/neuronforge/$d/**)",
+      "Bash(node -e \"const r=JSON.parse\\(require\\(''''fs''''\\).readFileSync\\(0,''''utf8''''\\)\\); console.log\\(''''  Name:'''', r.name\\); console.log\\(''''  Plugins:'''', r.plugins.join\\('''', ''''\\)\\); console.log\\(''''  Description:'''', r.description?.substring\\(0,100\\)\\)\")",
+      "Bash(done)"
     ]
   }
 }

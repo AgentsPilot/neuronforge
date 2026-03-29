@@ -25,6 +25,7 @@ import type {
   ValidationStep,
   ComparisonStep,
   DeterministicExtractionStep,
+  ParallelStep,
   IStateManager,
   IParallelExecutor,
 } from './types';
@@ -136,9 +137,7 @@ export class StepExecutor {
             executedAt: new Date().toISOString(),
             executionTime: 0,
             skipped: true,
-            // @ts-ignore - adding custom metadata for batch calibration
             reason: 'dependency_failed',
-            // @ts-ignore
             message: 'Skipped because a required upstream step failed'
           }
         };
@@ -161,7 +160,14 @@ export class StepExecutor {
     // Check if step should use orchestration (only AI tasks, not deterministic plugin actions)
     const shouldUseOrchestration = this.shouldUseOrchestration(step);
 
-    if (shouldUseOrchestration && context.orchestrator && context.orchestrator.isActive()) {
+    // D-B13: Skip orchestration for ai_processing/generate steps.
+    // The orchestrator's intent classifier misroutes "generate" steps as "extract",
+    // causing ExtractHandler to handle HTML generation with a generic extraction prompt.
+    // executeLLMDecision handles these correctly with I3 structured extraction + step prompt.
+    const stepAiType = (step as any).config?.ai_type || (step as any).config?.type;
+    const skipOrchestrationForGenerate = step.type === 'ai_processing' && stepAiType === 'generate';
+
+    if (shouldUseOrchestration && !skipOrchestrationForGenerate && context.orchestrator && context.orchestrator.isActive()) {
       logger.info({ stepId: step.id, stepType: step.type }, 'Using orchestration for AI task');
 
       try {
@@ -215,7 +221,11 @@ export class StepExecutor {
               success: true,
               executedAt: new Date().toISOString(),
               executionTime: orchestrationResult.executionTime,
-              tokensUsed: orchestrationResult.tokensUsed,
+              tokensUsed: {
+                input: orchestrationResult.tokensUsed.input ?? 0,
+                output: orchestrationResult.tokensUsed.output ?? 0,
+                total: orchestrationResult.tokensUsed.total,
+              },
               // Orchestration-specific metadata
               compressionApplied: orchestrationResult.compressionApplied,
               tokensSaved: orchestrationResult.tokensSaved,
@@ -330,7 +340,7 @@ export class StepExecutor {
           // This prevents LLM from receiving binary file data even if workflow uses wrong step type
           if (this.shouldUseDeterministicExtraction(step, resolvedParams, context)) {
             logger.info({ stepId: step.id }, 'Auto-detected file input in ai_processing step - using deterministic extraction');
-            result = await this.executeDeterministicExtraction(step, resolvedParams, context);
+            result = await this.executeDeterministicExtraction(step as unknown as DeterministicExtractionStep, resolvedParams, context);
           } else {
             const llmResult = await this.executeLLMDecision(step as AIProcessingStep, resolvedParams, context);
             result = llmResult.data;
@@ -382,8 +392,8 @@ export class StepExecutor {
               step.id
             );
           }
-          logger.info({ stepId: step.id, nestedSteps: (step as any).steps?.length }, 'Executing parallel step');
-          result = await this.parallelExecutor.executeParallel((step as any).steps || [], context);
+          logger.info({ stepId: step.id, nestedSteps: step.steps?.length }, 'Executing parallel step');
+          result = await this.parallelExecutor.executeParallel(step.steps || [], context);
           // Convert Map to object for consistent output format
           if (result instanceof Map) {
             const resultObj: Record<string, any> = {};
@@ -452,7 +462,7 @@ export class StepExecutor {
         // For object results, get top-level keys
         fieldNames = Object.keys(result).slice(0, 10);
         console.log(`✅ [StepExecutor] Extracted ${fieldNames.length} fields from object result (step ${step.id}):`, fieldNames);
-      } else if (itemCount > 0) {
+      } else if (itemCount != null && itemCount > 0) {
         // Log when we have items but no field extraction
         console.warn(`⚠️  [StepExecutor] Step ${step.id} (${step.name}) has ${itemCount} items but no field names extracted.`);
         console.warn(`    Result type: ${typeof result}, isArray: ${Array.isArray(result)}, hasData: ${result && 'data' in result}`);
@@ -496,7 +506,7 @@ export class StepExecutor {
           step.id,
           result, // Full data (temporary in execution_trace.cached_outputs)
           {
-            plugin: step.plugin,
+            plugin: (step as any).plugin,
             action: (step as any).action,
             success: true,
             execution_time: executionTime,
@@ -1327,8 +1337,23 @@ export class StepExecutor {
     const agentForExecution: any = {
       ...context.agent,
       // Filter out plugins for ai_processing to prevent LLM from calling tools
-      plugins_required: isAIProcessing ? [] : context.agent.plugins_required
+      plugins_required: isAIProcessing ? [] : context.agent.plugins_required,
     };
+
+    // D-B13: For ai_processing steps, override the system prompt and skip memory injection.
+    // Without this, runAgentKit injects the full agent system_prompt + memory context into
+    // the LLM call. Inside scatter-gather, the memory context overwhelms the short per-item
+    // prompt, causing the LLM to echo back the memory dump instead of generating content.
+    // The step prompt + enriched params already contain everything the LLM needs.
+    if (isAIProcessing) {
+      agentForExecution.system_prompt = promptString;
+      agentForExecution.enhanced_prompt = undefined;
+      agentForExecution.user_prompt = promptString;
+      agentForExecution._skipMemory = true;
+      // Also clear output_schema to prevent runAgentKit from adding output format instructions
+      // that conflict with I3 structured extraction
+      agentForExecution.output_schema = undefined;
+    }
 
     // IMPORTANT: Do NOT inject step.config.output_schema into agent.output_schema
     // - agent.output_schema = delivery instructions (array of {type: "EmailDraft", config: {...}})
@@ -1405,27 +1430,50 @@ export class StepExecutor {
                        step.prompt?.toLowerCase().includes('summarize') ||
                        step.description?.toLowerCase().includes('summarize');
 
-    const cleanedResponse = shouldClean ? this.cleanSummaryOutput(aiResponse) : aiResponse;
+    const cleanedResponse: string | Record<string, any> = shouldClean && typeof aiResponse === 'string'
+      ? this.cleanSummaryOutput(aiResponse)
+      : aiResponse;
 
     // I3: If step has output_schema with properties, extract structured JSON from LLM response
     // This enables downstream steps to reference specific fields like {{variable.subject}}, {{variable.body}}
     const stepOutputSchema = (step as any).config?.output_schema || (step as any).output_schema;
-    if (stepOutputSchema && stepOutputSchema.properties && typeof cleanedResponse === 'string') {
-      const structured = this.extractBalancedJSON(cleanedResponse, '{');
-      if (structured) {
-        try {
-          const parsed = JSON.parse(structured);
-          const expectedFields = Object.keys(stepOutputSchema.properties);
-          const hasExpectedField = expectedFields.some(f => f in parsed);
-          if (hasExpectedField) {
-            logger.info({ stepId: step.id, fields: Object.keys(parsed) }, 'I3: Extracted structured output from LLM response');
-            return {
-              data: parsed,
-              tokensUsed: result.tokensUsed,
-            };
+    if (stepOutputSchema && stepOutputSchema.properties) {
+      const expectedFields = Object.keys(stepOutputSchema.properties);
+
+      // D-B13: Handle case where response is already a parsed object (not a string)
+      // runAgentKit may return a JSON object (e.g., memory context dump) instead of a string.
+      // Check if it has expected fields or is garbage (memory_context, agent_memory_context).
+      if (typeof cleanedResponse === 'object' && cleanedResponse !== null) {
+        const hasExpectedField = expectedFields.some(f => f in cleanedResponse);
+        if (hasExpectedField) {
+          logger.info({ stepId: step.id, fields: Object.keys(cleanedResponse) }, 'I3: Response is already a structured object with expected fields');
+          return { data: cleanedResponse, tokensUsed: result.tokensUsed };
+        }
+        // Check if it's a known garbage response (memory dump)
+        if ('memory_context' in cleanedResponse || 'agent_memory_context' in cleanedResponse || 'user_profile' in cleanedResponse) {
+          logger.warn({ stepId: step.id, keys: Object.keys(cleanedResponse).slice(0, 5) },
+            'D-B13: LLM returned memory context dump instead of content — returning empty structured output');
+          // Return empty object with expected fields set to null so downstream doesn't crash
+          const emptyOutput: Record<string, any> = {};
+          for (const field of expectedFields) emptyOutput[field] = null;
+          return { data: emptyOutput, tokensUsed: result.tokensUsed };
+        }
+      }
+
+      // Standard I3: extract structured JSON from string response
+      if (typeof cleanedResponse === 'string') {
+        const structured = this.extractBalancedJSON(cleanedResponse, '{');
+        if (structured) {
+          try {
+            const parsed = JSON.parse(structured);
+            const hasExpectedField = expectedFields.some(f => f in parsed);
+            if (hasExpectedField) {
+              logger.info({ stepId: step.id, fields: Object.keys(parsed) }, 'I3: Extracted structured output from LLM response');
+              return { data: parsed, tokensUsed: result.tokensUsed };
+            }
+          } catch {
+            // Fall through to alias wrapper
           }
-        } catch {
-          // Fall through to alias wrapper
         }
       }
       logger.warn({ stepId: step.id }, 'I3: output_schema defined but could not extract structured JSON, returning alias wrapper');
@@ -2750,8 +2798,9 @@ Respond ONLY with the JSON array. No markdown, no explanation, no code blocks.`;
       );
     }
 
-    const { field, groupBy, column } = config;
-    const groupKey = column || field || groupBy; // Support 'column', 'field', and 'groupBy'
+    const { field, groupBy, column, rules } = config;
+    // Support all naming conventions: config.column, config.field, config.groupBy, config.group_by, config.rules.group_by
+    const groupKey = column || field || groupBy || config.group_by || rules?.group_by;
 
     // Detect if 2D array pattern
     const is2DArray = Array.isArray(unwrappedData[0]);
@@ -2783,6 +2832,25 @@ Respond ONLY with the JSON array. No markdown, no explanation, no code blocks.`;
       count: (items as any[]).length
     }));
 
+    // D-B12: If output_schema defines a typed array (e.g., [{salesperson, leads}]),
+    // return an array matching that schema so downstream scatter-gather can iterate.
+    // Map generic {key, items} to the schema's field names.
+    const outputSchema = config.output_schema;
+    if (outputSchema?.type === 'array' && outputSchema.items?.properties) {
+      const props = outputSchema.items.properties;
+      const propEntries = Object.entries(props) as Array<[string, any]>;
+      // Find the string field (group key name) and array field (group items name)
+      const keyField = propEntries.find(([_, v]) => v.type === 'string')?.[0] || 'key';
+      const itemsField = propEntries.find(([_, v]) => v.type === 'array')?.[0] || 'items';
+
+      logger.debug({ keyField, itemsField, groupCount: groups.length }, 'transformGroup: returning schema-mapped array');
+      return groups.map(g => ({
+        [keyField]: g.key,
+        [itemsField]: g.items,
+      }));
+    }
+
+    // Legacy return format: object with grouped, groups, keys, count
     const result: any = {
       grouped,        // Original grouped object: { "Offir Omer": [...], "David Mor": [...] }
       groups,         // Array of groups for iteration: [{key: "Offir Omer", items: [...], count: 3}, ...]

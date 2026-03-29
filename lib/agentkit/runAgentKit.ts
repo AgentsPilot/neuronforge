@@ -286,7 +286,13 @@ export async function runAgentKit(
   let memoryContext: any = null;
   const memoryInjector = new MemoryInjector(supabase);
 
-  if (memoryConfig.enabled) {
+  // D-B13: Skip memory injection when caller explicitly requests it.
+  // ai_processing steps inside scatter-gather set this flag because memory context
+  // overwhelms the short per-item prompt, causing the LLM to echo back memory instead
+  // of generating content.
+  const skipMemory = (agent as any)._skipMemory === true;
+
+  if (memoryConfig.enabled && !skipMemory) {
     try {
       console.log('🧠 [Memory] Loading agent memory context...');
 
