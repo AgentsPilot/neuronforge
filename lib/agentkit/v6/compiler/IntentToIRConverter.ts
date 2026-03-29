@@ -864,40 +864,60 @@ export class IntentToIRConverter {
   /**
    * Convert notify step to operation node
    * Maps directly to schema structure - NotifyStep already has proper nested structure
+   *
+   * D-B9: When action is NOT send_email/send_message (e.g., modify_email),
+   * use notify.options as params instead of notify.content. The IntentContract
+   * LLM puts the correct action-specific params in notify.options for non-send actions.
    */
   private convertNotify(step: NotifyStep & BoundStep, ctx: ConversionContext): string {
     const nodeId = this.generateNodeId(ctx)
 
+    const action = step.action || 'send_message'
+    const isSendAction = action === 'send_email' || action === 'send_message'
+
     // Build params matching schema structure directly
     const params: Record<string, any> = {}
 
-    // Map recipients object
-    if (step.notify.recipients?.to) {
-      params.recipients = {
-        to: step.notify.recipients.to.map((r: any) => this.resolveValueRef(r, ctx))
+    if (isSendAction) {
+      // Standard send flow: use notify.content and notify.recipients
+      if (step.notify.recipients?.to) {
+        params.recipients = {
+          to: step.notify.recipients.to.map((r: any) => this.resolveValueRef(r, ctx))
+        }
       }
-    }
 
-    // Map content object
-    const contentObj: Record<string, any> = {}
-    if (step.notify.content.subject) {
-      contentObj.subject = this.resolveValueRef(step.notify.content.subject, ctx)
-    }
-    if (step.notify.content.body) {
-      // Map to 'body' or 'html_body' based on format
-      if (step.notify.content.format === 'html') {
-        contentObj.html_body = this.resolveValueRef(step.notify.content.body, ctx)
-      } else {
-        contentObj.body = this.resolveValueRef(step.notify.content.body, ctx)
+      const contentObj: Record<string, any> = {}
+      if (step.notify.content?.subject) {
+        contentObj.subject = this.resolveValueRef(step.notify.content.subject, ctx)
+      }
+      if (step.notify.content?.body) {
+        if (step.notify.content.format === 'html') {
+          contentObj.html_body = this.resolveValueRef(step.notify.content.body, ctx)
+        } else {
+          contentObj.body = this.resolveValueRef(step.notify.content.body, ctx)
+        }
+      }
+      params.content = contentObj
+    } else {
+      // D-B9: Non-send actions (modify_email, etc.) — use notify.options as params
+      // The IntentContract LLM puts action-specific params (message_id, mark_important, add_labels)
+      // in notify.options, not in notify.content.
+      if (step.notify.options) {
+        for (const [key, value] of Object.entries(step.notify.options)) {
+          if (Array.isArray(value)) {
+            params[key] = value.map((v: any) => this.resolveValueRef(v, ctx))
+          } else {
+            params[key] = this.resolveValueRef(value as any, ctx)
+          }
+        }
       }
     }
-    params.content = contentObj
 
     const operation: OperationConfig = {
       operation_type: 'deliver',
       deliver: {
         plugin_key: step.plugin_key || 'unknown',
-        action: step.action || 'send_message',
+        action,
         config: params,
       },
       description: step.summary || 'Send notification'

@@ -284,7 +284,9 @@ export class GmailPluginExecutor extends GoogleBasePluginExecutor {
 
   // Modify email labels — mark as important, apply/remove labels, mark read/unread
   private async modifyEmail(connection: any, parameters: any): Promise<any> {
-    const { message_id, add_labels, remove_labels, mark_important, mark_read } = parameters;
+    const { add_labels, remove_labels, mark_important, mark_read } = parameters;
+    // Accept both 'message_id' and 'id' — search_emails returns 'id' but modify_email schema uses 'message_id'
+    const message_id = parameters.message_id || parameters.id;
 
     if (!message_id) {
       throw new Error('message_id is a required parameter');
@@ -386,6 +388,8 @@ export class GmailPluginExecutor extends GoogleBasePluginExecutor {
     const labelsData = await labelsResponse.json();
     const existingLabels: Array<{ id: string; name: string }> = labelsData.labels || [];
 
+    this.logger.debug({ customNames, existingLabelCount: existingLabels.length, existingNames: existingLabels.map((l: any) => l.name).slice(0, 20) }, 'Resolving custom label names');
+
     // Resolve each custom label name
     for (const customName of customNames) {
       const existing = existingLabels.find(
@@ -426,6 +430,29 @@ export class GmailPluginExecutor extends GoogleBasePluginExecutor {
     });
 
     if (!response.ok) {
+      // D-B10b: Handle 409 "Label name exists or conflicts" — label exists but wasn't
+      // found in the initial GET /labels response (can happen with nested labels or
+      // timing issues). Re-fetch labels and find it.
+      if (response.status === 409) {
+        this.logger.info({ labelName }, 'Label already exists (409 conflict) — re-fetching to resolve ID');
+        const refetchResponse = await fetch(`${this.gmailApisUrl}/users/me/labels`, {
+          headers: {
+            'Authorization': `Bearer ${connection.access_token}`,
+            'Accept': 'application/json',
+          },
+        });
+        if (refetchResponse.ok) {
+          const refetchData = await refetchResponse.json();
+          const found = (refetchData.labels || []).find(
+            (l: any) => l.name.toLowerCase() === labelName.toLowerCase()
+          );
+          if (found) {
+            this.logger.debug({ labelName, labelId: found.id }, 'Resolved existing label after 409');
+            return { id: found.id, name: found.name };
+          }
+        }
+      }
+
       const errorData = await response.text();
       this.logger.error({ status: response.status, errorData, labelName }, 'Failed to create label');
       throw new Error(`Failed to create label "${labelName}": ${response.status} - ${errorData}`);
@@ -455,7 +482,15 @@ export class GmailPluginExecutor extends GoogleBasePluginExecutor {
       message += `Bcc: ${recipients.bcc.join(', ')}\r\n`;
     }
     if (content?.subject) {
-      message += `Subject: ${content.subject}\r\n`;
+      // RFC 2047: MIME-encode subject if it contains non-ASCII characters
+      // Without this, characters like em-dash (—) become garbled (Ã¢Â€Â")
+      const hasNonAscii = /[^\x00-\x7F]/.test(content.subject);
+      if (hasNonAscii) {
+        const encoded = Buffer.from(content.subject, 'utf-8').toString('base64');
+        message += `Subject: =?UTF-8?B?${encoded}?=\r\n`;
+      } else {
+        message += `Subject: ${content.subject}\r\n`;
+      }
     }
 
     // MIME headers for content type

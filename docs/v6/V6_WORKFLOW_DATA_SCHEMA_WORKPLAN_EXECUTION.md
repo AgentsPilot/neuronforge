@@ -852,6 +852,128 @@ The mock patches the module export, but ES module exports are immutable — Step
 
 ---
 
+**Issue D-B6 ✅ FIXED: Mock LLM returns object instead of array for classify steps**
+
+**Scenario:** Gmail Urgency Flagging Agent — step2 is `ai_processing` with `ai_type: "classify"`. Input is `inbox_emails.emails` (an array of emails). Step3 is a `transform/filter` that expects `classified_emails` to be an array.
+
+**Root cause:** The mock LLM in `patchStepExecutorLLM()` calls `generateFromSchema(outputSchema)` for all AI steps. The classify step's `output_schema` uses IntentContract format (`{ fields: [...] }`) not JSON Schema (`{ type: "array", items: {...} }`). The stub generator doesn't understand this format, defaults to `type: "object"`, finds no `properties`, and returns `{}` (empty object). Step3's filter then fails with: `"Filter operation requires array input, but received object"`.
+
+**Fix (O28):** Added classify-aware logic to the mock LLM in `mock-services.ts`. When `ai_type === 'classify'`:
+1. Resolves the input array from `params.input` or `context.variables` (handling dotted refs like `inbox_emails.emails`)
+2. Returns the input array with the classification field appended to each item, alternating between the configured labels
+3. Falls through to the generic stub generator for non-classify AI steps
+
+**File:** `scripts/test-dsl-pilot-simulator/mocks/mock-services.ts`
+
+**Result:** Phase D passes — 6/6 steps, 0 failures. Classify mock produces 3 items with `urgency_classification` field, filter correctly selects urgent items, scatter-gather iterates over them.
+
+---
+
+**Issue D-B7 ✅ FIXED: Structured config reference objects not resolved to template strings**
+
+**Scenario:** Gmail Urgency Flagging Agent — step1 `search_emails` has `max_results: { kind: "config", key: "max_emails_to_scan" }` in the compiled DSL. Phase E fails: `"Parameter max_results should be number, got object"`.
+
+**Root cause:** The IR converter sometimes emits structured config reference objects instead of `"{{config.X}}"` template strings. The compiler's Phase 5 `rewriteConfigRefs()` only rewrites string templates, not structured objects.
+
+**Fix (O29):** Added detection of `{ kind: "config", key: "X" }` objects inside `rewriteConfigRefs()`. When found, replaces the entire object with `"{{input.X}}"` template string. Recursive — handles nested objects.
+
+**File:** `lib/agentkit/v6/compiler/ExecutionGraphCompiler.ts`
+
+---
+
+**Issue D-B8 ✅ FIXED: ai_processing/classify step fails in live execution (two sub-issues)**
+
+**Scenario:** Gmail Urgency Flagging Agent — step2 (`ai_processing/classify`) should classify 50 inbox emails as urgent/not_urgent. Phase D passes (mock handles classify specially via O28), but Phase E fails at step3: `"Filter operation requires array input, but received object"`.
+
+**Sub-issue 1: Bare `input` string not wrapped in `{{ }}`**
+
+Step2's DSL has `input: "inbox_emails.emails"` — a bare string without `{{ }}` wrapping. At runtime:
+1. `StepExecutor` line 175 copies `step.input` into `stepParams.input` as-is
+2. `resolveAllVariables()` checks for `{{ }}` pattern (line 296), finds none, passes the literal string through
+3. The LLM receives `"inbox_emails.emails"` as text, not the actual email array
+4. LLM responds: *"I don't yet have the actual inbox_emails.emails payload to process"*
+
+**Why the compiler doesn't catch it:** Phase 4.5 Fix 6 (`wrapBareVariableRefs`) only runs for `type: 'action'` steps. `ai_processing` steps are skipped. The `fixAIStepInputs` (Fix 5) checks for missing prompt variables but does not wrap bare `input` strings.
+
+**Fix (O30):** In the compiler's Phase 5 `toPilotFormat()`, wrap bare `step.input` and `step.config.input` strings in `{{ }}` for `ai_processing` and `llm_decision` step types. Converts `"inbox_emails.emails"` → `"{{inbox_emails.emails}}"`.
+
+**File:** `lib/agentkit/v6/compiler/ExecutionGraphCompiler.ts`
+
+**Sub-issue 2 ✅ FIXED: LLM returns text wrapper instead of structured classified array**
+
+The production LLM path returns the response wrapped in `{ result, response, output, generated, quality, tokensGenerated }` — a text alias object from `executeLLMDecision()`. The downstream filter step receives this object instead of a classified email array.
+
+**Fix:** Added `executeClassifyStep()` method to `StepExecutor`. When `ai_type === 'classify'`:
+1. Resolves the input array from params or context variables
+2. Truncates items to key text fields (subject, snippet, from, etc.) to stay within token limits
+3. Builds a classify-specific prompt that includes the data and requests JSON array output with `_index` tracking
+4. Parses the LLM response as JSON array
+5. Merges classifications back into original input items (preserving all original fields)
+6. Returns the classified array directly (no alias wrapper)
+
+Called from `executeLLMDecision()` before the generic LLM path. Falls through to generic path if input can't be resolved as an array.
+
+**File:** `lib/pilot/StepExecutor.ts`
+
+---
+
+**Issue D-B9 ✅ FIXED: Compiler binds modify_email params to wrong schema (send_email template)**
+
+**Scenario:** Gmail Urgency Flagging Agent — step6 (`google-mail/modify_email`) inside scatter-gather should mark each urgent email as important and apply the "AgentsPilot" tracking label. Phase E: step6 fails 15 times with `"message_id is a required parameter"`.
+
+**What the DSL contains:**
+```json
+{
+  "params": {
+    "content": {
+      "subject": "urgent_email.message_id",
+      "body": "mark_important_and_label"
+    }
+  }
+}
+```
+
+**What it should contain:**
+```json
+{
+  "params": {
+    "message_id": "{{urgent_email.id}}",
+    "mark_important": true,
+    "add_labels": ["{{input.tracking_label_name}}"]
+  }
+}
+```
+
+**Root cause:** The compiler's CapabilityBinder or IR-to-DSL converter (`ExecutionGraphCompiler.buildParamsFromSchema()`) selected the `send_email` parameter schema (`content.subject`, `content.body`) instead of the `modify_email` schema (`message_id`, `mark_important`, `add_labels`). Both actions belong to the `google-mail` plugin, and the binder appears to have picked the wrong one — likely because `modify_email` is new and the IntentContract or IR may not have generated the correct capability binding for it.
+
+**Cascade effect (3 downstream failures from this one bug):**
+1. **Emails not marked important** — `modify_email` never executes successfully (wrong params)
+2. **Tracking labels not applied** — same cause
+3. **Empty summary email** — scatter-gather collects 15 error objects instead of modified email data → step7 (map) extracts nothing from errors → step8 (LLM) generates an empty HTML table → step9 sends the empty summary
+
+**Investigation needed:**
+- Check the IntentContract (`phase1-intent-contract.json`) — does it correctly bind the "mark important + apply label" action to `google-mail/modify_email`?
+- Check the IR (`phase3-ir.json` or equivalent) — does the IR converter produce the correct operation and parameter mapping?
+- Check `ExecutionGraphCompiler.buildParamsFromSchema()` — does it look up the correct action schema when building params for nested scatter-gather steps?
+
+**Root cause found:** `IntentToIRConverter.convertNotify()` always maps `notify.content` (subject/body — the `send_email` schema) to params. It ignores `notify.options` which contains the correct action-specific params. The IntentContract LLM correctly placed `message_id`, `mark_important`, `add_labels` in `notify.options`, but the converter never reads that field.
+
+**Fix:** Added `isSendAction` check in `convertNotify()`. For `send_email`/`send_message`, behavior unchanged (uses `notify.content` + `notify.recipients`). For all other actions (e.g., `modify_email`), iterates `notify.options` and resolves each value ref as params.
+
+**File:** `lib/agentkit/v6/compiler/IntentToIRConverter.ts`
+
+**Result after fix:**
+```json
+step6 params: {
+  "message_id": "{{urgent_email.message_id}}",
+  "mark_important": true,
+  "add_labels": ["{{input.tracking_label_name}}"]
+}
+```
+Phase A: 13/13, Phase D: PASSED.
+
+---
+
 ## Phase E — Live Execution with Real Plugins
 
 > **Prerequisite:** Phase D ✅ validates full WorkflowPilot lifecycle.
@@ -1016,6 +1138,7 @@ Report format:
 | # | Description |
 |---|-------------|
 | F1 | **API-triggered execution** — Instead of calling `WorkflowPilot.execute()` directly, trigger via `POST /api/run-agent { agent_id, execution_type: "test", input_variables }`. Simulates real user trigger through the full API stack (auth, rate limits, audit trail). |
+| F3 | **IntentContract: reject `unknown` plugin bindings instead of silently passing them through.** When the LLM cannot map a user-requested action to an available plugin capability, it currently emits `plugin: "unknown", action: "unknown"`. This compiles into the DSL and passes Phase A/D (mocked), but crashes Phase E pre-flight with `"NOT CONNECTED or token refresh failed"` for the non-existent `unknown` plugin. **Problem:** The failure surfaces too late — after compilation, static validation, and mock execution all pass. The user gets a false green signal. **Required mechanism:** (1) The IntentContract generation LLM must be instructed to **never** emit `unknown` as a plugin name. If a requested action cannot be fulfilled by any available plugin, the LLM should instead return a structured `unfulfillable_actions` list alongside the intent contract, describing what's missing and why. (2) The pipeline should detect `unfulfillable_actions` after Phase 1 and surface them to the user as a clear gap report (e.g., "This workflow requires 'mark email as important' but no Gmail action supports this. Add the capability or adjust the workflow."). (3) Phase A should also flag any step with `plugin: "unknown"` as an error (not just a warning). **Benefit:** Catch plugin gaps at intent time, not at live execution time. Users get actionable feedback before any compilation happens. **Requirement doc:** `docs/requirements/gmail-modify-email-action-2026-03-29.md` documents the first instance of this gap (Gmail `modify_email`). |
 | F2 | ✅ **Phase A simulator — resolve scatter item schemas.** The A+2 check (`scatter-gather item field validation`) is defined but the implementation doesn't resolve the item schema for nested scatter variables. When the simulator encounters `{{attachment.message_id}}` inside a scatter-gather body, it can't find `attachment` in the variable store (it's a loop iteration variable, not a top-level step output). It emits a warning but can't validate field names. **Result:** false-positive unresolved ref errors in the QA report (e.g., `{{attachment.message_id}}`, `{{attachment.attachment_id}}`, `{{attachment.filename}}`), even when the fields are correct (confirmed by Phase D passing). **Fix:** When the simulator processes a `scatter_gather` step, register the scatter input's `output_schema.items.properties` under the `itemVariable` name in the variable store. This is the same approach used by O25a in the compiler (`resolveFieldMismatch` for dotted input variables). After the fix, `{{attachment.message_id}}` resolves against the Gmail attachment item schema and validates correctly. **Priority:** Medium — Phase D catches real issues, but false positives reduce QA confidence in Phase A results. |
 
 ---
@@ -1049,4 +1172,13 @@ Report format:
 | 2026-03-23 | I3 implemented | **Structured output extraction in StepExecutor.executeLLMDecision().** When step has `output_schema` with properties: (1) appends JSON response instruction to LLM prompt, (2) extracts structured JSON from response via `extractBalancedJSON()` balanced-brace parser, (3) returns parsed fields as step data (e.g., `{subject, body}`) instead of alias wrapper. Enables downstream steps to reference `{{variable.subject}}`, `{{variable.body}}`. Also added `extractBalancedJSON()` to `parseLLMExtractionResponse()` for general safety. Same fix applied in `GenerateHandler` for orchestration path. **Files:** `lib/pilot/StepExecutor.ts`, `lib/orchestration/handlers/GenerateHandler.ts`. |
 | 2026-03-23 | **Phase E fully passing** | ✅ **7/7 steps with real data.** Read 6 rows from Google Sheets → rows_to_objects (5 leads) → filter Stage=4 (3 leads) → count (3) → conditional then branch → LLM generates HTML table with `{subject, body}` structured output (I3) → Gmail sends email with HTML table to 3 recipients. 2512 tokens, 45s execution. Full end-to-end from natural language prompt to live agent execution. |
 | 2026-03-24 | **Second workflow validated (Customer Complaint Logger)** | ✅ **9/9 steps with real data.** `get_or_create_sheet_tab` (UrgentEmails) → `read_range` (existing rows for dedup) → `rows_to_objects` → `search_emails` (Gmail complaint keywords) → `filter` (unwrap emails) → `filter` (dedup) → scatter-gather (2 complaints) → `set` (prepare row data) → `append_rows` (write to sheet). Three fixes needed: O15 extension (unwrap bare strings), O21 (computed/concat in IR converter), O14 extension (map→set fallback for array outputs). Also: `get_or_create_sheet_tab` executor implemented, `PluginManagerV2.validateRules` null guard added. |
+| 2026-03-29 | D-B7 discovered + fixed | **Structured config reference objects not resolved to template strings.** Phase E step1 failed: `"Parameter max_results should be number, got object"`. The DSL contained `max_results: { kind: "config", key: "max_emails_to_scan" }` — a structured config reference object from the IR converter. The compiler's Phase 5 `toPilotFormat()` only rewrites string templates (`{{config.X}}` → `{{input.X}}`), not structured objects. Fix (O29): added `resolveStructuredConfigRefs()` to Phase 5 — recursively walks step params, detects `{ kind: "config", key: "X" }` objects, and replaces them with `"{{input.X}}"` template strings. **File:** `lib/agentkit/v6/compiler/ExecutionGraphCompiler.ts`. |
+| 2026-03-29 | D-B8 discovered + fixed | **ai_processing/classify fails in Phase E (2 sub-issues).** Sub-issue 1 fix (O30): compiler Phase 5 wraps bare `input` strings in `{{ }}` for ai_processing/llm_decision steps. Sub-issue 2 fix: added `executeClassifyStep()` to StepExecutor — builds data-inclusive prompt, requests JSON array, parses and merges classifications back into original items. Phase A: 13/13, Phase D: PASSED. |
+| 2026-03-29 | Phase E third run (Gmail Urgency) | **Partial success: 8/8 top-level steps pass, but step6 (modify_email inside scatter-gather) failed 15 times.** Steps 1-4 work correctly: 50 emails searched, LLM classified all 50 (D-B8 fix working), 15 filtered as urgent. Step5 scatter-gather iterated 15 times but step6 failed each time. Steps 7-9 still completed: summary generated and email sent, but summary table was empty. See D-B9. |
+| 2026-03-29 | D-B10 discovered + fixed | **Field name mismatch: `message_id` vs `id` in scatter-gather.** IntentContract refs `urgent_email.message_id` but `search_emails` output schema has `id`. Resolved to `undefined` → `modify_email` failed with "message_id is a required parameter". Fix: (1) compiler Phase 5 rewrites `.message_id}}` → `.id}}` in params; (2) executor accepts both `message_id` and `id`. |
+| 2026-03-29 | D-B11 discovered + fixed | **Two Phase E cosmetic issues.** (1) Email subject garbled: em-dash `—` encoded as `Ã¢Â€Â"` — `buildEmailMessage()` didn't MIME-encode non-ASCII subject chars. Fix: detect non-ASCII, encode as `=?UTF-8?B?...?=`. (2) Summary table empty: step7 `transform/map` with `custom_code` (natural language) doesn't execute at runtime. Fix: added Mode 4 to `transformMap()` — when `custom_code` + `output_schema` present, auto-maps fields by name matching with known aliases (e.g., `from`→`sender`, `date`→`received_date`). |
+| 2026-03-29 | D-B10b discovered + fixed | **Label 409 conflict: "Label name exists or conflicts".** `createLabel()` threw on 409 when label "AgentsPilot" already existed but wasn't found in initial GET /labels (possible nested label naming or timing). Fix: handle 409 by re-fetching labels and resolving the existing label ID. Also added debug logging for label resolution diagnostics. |
+| 2026-03-29 | D-B9 discovered + fixed | **Compiler binds modify_email params to send_email schema.** `IntentToIRConverter.convertNotify()` always used `notify.content` (send_email schema), ignoring `notify.options` (action-specific params). Fix: added `isSendAction` check — non-send actions use `notify.options` as params. Step6 now correctly gets `message_id`, `mark_important`, `add_labels`. |
+| 2026-03-29 | Phase E blocked — unknown plugin gap | **Gmail Urgency Flagging Agent:** Phase A (13/13) and Phase D (6/6) passed, but Phase E pre-flight failed — steps 5 & 6 compiled as `plugin: "unknown"` (mark important + apply label). Gmail plugin lacks `modify_email` action. Requirement created: `docs/requirements/gmail-modify-email-action-2026-03-29.md`. Added F3 future item: IntentContract LLM must reject unknown plugins and surface unfulfillable actions. |
+| 2026-03-27 | D-B6 discovered + fixed | **Mock LLM returns object instead of array for classify steps.** Gmail Urgency Flagging scenario: step2 (`ai_processing/classify`) output was `{}` instead of array — step3 filter crashed. Fix (O28): classify-aware mock resolves input array, appends classification field to each item. Phase D: 6/6 steps pass. |
 | 2026-03-23 | D-B5 discovered | **GenerateHandler LLM response JSON parse failure on HTML content.** Step6 (ai_processing/generate) asks LLM to produce `{subject, body}` where `body` is HTML. `StepExecutor.extractStructuredOutput()` uses greedy regex `/\{[\s\S]*\}/` (line ~4394) to extract JSON from LLM text. When HTML body contains `{` or `}` chars (CSS styles, template syntax), the regex captures an invalid JSON string. Error: `Expected ',' or '}' after property value in JSON at position 2004`. **Suggested fix (two options):** **(A) Request structured output from LLM** — Use OpenAI's `response_format: { type: "json_object" }` or `tool_use` to force valid JSON responses. This is the I3 item (GenerateHandler structured output) already documented in the parent workplan. Most reliable fix. **(B) Smarter JSON extraction** — Replace greedy regex with a balanced-brace parser that counts `{`/`}` nesting depth, only matching the outermost valid JSON object. Falls back to regex-based field extraction on parse failure. Less reliable than A but works without LLM API changes. **Recommended: Option A** (I3) — it eliminates the problem at source. Option B is a safety net. |

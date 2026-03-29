@@ -1,0 +1,325 @@
+{
+  "version": "intent.v1",
+  "goal": "Scan Gmail Inbox for urgent emails based on keywords, mark them as important, apply tracking label, and send summary email",
+  "unit_of_work": {
+    "entity": "email",
+    "parent_entity": "inbox"
+  },
+  "config": [
+    {
+      "key": "gmail_search_query",
+      "type": "string",
+      "description": "Gmail search query to find inbox emails without tracking label",
+      "default": "in:inbox -label:AgentsPilot"
+    },
+    {
+      "key": "urgency_keywords",
+      "type": "json",
+      "description": "Keywords to identify urgent emails (case-insensitive)",
+      "default": [
+        "today",
+        "urgent",
+        "immediately",
+        "now",
+        "sensitive"
+      ]
+    },
+    {
+      "key": "tracking_label_name",
+      "type": "string",
+      "description": "Gmail label to apply to processed emails",
+      "default": "AgentsPilot"
+    },
+    {
+      "key": "summary_recipient",
+      "type": "string",
+      "description": "Email address to send summary to",
+      "default": "meiribarak@gmail.com"
+    },
+    {
+      "key": "max_emails_to_scan",
+      "type": "number",
+      "description": "Maximum number of emails to retrieve and scan",
+      "default": 50
+    }
+  ],
+  "steps": [
+    {
+      "id": "search_inbox_emails",
+      "kind": "data_source",
+      "summary": "Search Gmail Inbox for emails without tracking label",
+      "uses": [
+        {
+          "capability": "search",
+          "domain": "email",
+          "preferences": {
+            "provider_family": "google"
+          }
+        }
+      ],
+      "output": "inbox_emails",
+      "source": {
+        "domain": "email",
+        "intent": "search"
+      },
+      "query": {
+        "kind": "config",
+        "key": "gmail_search_query"
+      },
+      "retrieval": {
+        "max_results": {
+          "kind": "config",
+          "key": "max_emails_to_scan"
+        },
+        "include_content": "full",
+        "include_attachments": false,
+        "include_metadata": true
+      }
+    },
+    {
+      "id": "classify_email_urgency",
+      "kind": "classify",
+      "summary": "Classify emails as urgent or not urgent based on keyword presence in subject/body",
+      "inputs": [
+        "inbox_emails"
+      ],
+      "output": "classified_emails",
+      "classify": {
+        "input": "inbox_emails",
+        "labels": [
+          "urgent",
+          "not_urgent"
+        ],
+        "multi_label": false,
+        "output_field": "urgency_classification"
+      }
+    },
+    {
+      "id": "split_by_urgency",
+      "kind": "aggregate",
+      "summary": "Split emails into urgent and non-urgent subsets",
+      "inputs": [
+        "classified_emails"
+      ],
+      "output": "urgency_subsets",
+      "aggregate": {
+        "input": "classified_emails",
+        "outputs": [
+          {
+            "name": "urgent_emails",
+            "type": "subset",
+            "where": {
+              "op": "test",
+              "left": {
+                "kind": "ref",
+                "ref": "classified_emails",
+                "field": "urgency_classification"
+              },
+              "comparator": "eq",
+              "right": {
+                "kind": "literal",
+                "value": "urgent"
+              }
+            }
+          },
+          {
+            "name": "urgent_count",
+            "type": "count",
+            "of": "urgent_emails"
+          }
+        ]
+      }
+    },
+    {
+      "id": "process_urgent_emails",
+      "kind": "loop",
+      "summary": "Mark each urgent email as important and apply tracking label",
+      "inputs": [
+        "urgent_emails"
+      ],
+      "output": "processed_urgent_emails",
+      "loop": {
+        "over": "urgent_emails",
+        "item_ref": "urgent_email",
+        "unit_of_work": {
+          "entity": "email"
+        },
+        "collect": {
+          "enabled": true,
+          "collect_as": "processed_urgent_emails",
+          "from_step_output": "marked_email"
+        },
+        "do": [
+          {
+            "id": "mark_email_important",
+            "kind": "notify",
+            "summary": "Mark email as important and apply tracking label",
+            "inputs": [
+              "urgent_email"
+            ],
+            "output": "marked_email",
+            "uses": [
+              {
+                "capability": "modify",
+                "domain": "email",
+                "preferences": {
+                  "provider_family": "google"
+                }
+              }
+            ],
+            "notify": {
+              "channel": "email_modification",
+              "content": {
+                "subject": {
+                  "kind": "ref",
+                  "ref": "urgent_email",
+                  "field": "message_id"
+                },
+                "body": {
+                  "kind": "literal",
+                  "value": "mark_important_and_label"
+                }
+              },
+              "options": {
+                "message_id": {
+                  "kind": "ref",
+                  "ref": "urgent_email",
+                  "field": "message_id"
+                },
+                "mark_important": {
+                  "kind": "literal",
+                  "value": true
+                },
+                "add_labels": [
+                  {
+                    "kind": "config",
+                    "key": "tracking_label_name"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "prepare_summary_data",
+      "kind": "transform",
+      "summary": "Extract summary fields from processed urgent emails",
+      "inputs": [
+        "processed_urgent_emails"
+      ],
+      "output": "summary_data",
+      "transform": {
+        "op": "map",
+        "input": "processed_urgent_emails",
+        "description": "Extract sender, subject, date, and matched keywords for summary",
+        "output_schema": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "sender": {
+                "type": "string"
+              },
+              "subject": {
+                "type": "string"
+              },
+              "received_date": {
+                "type": "string"
+              },
+              "matched_keywords": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "sender",
+              "subject",
+              "received_date"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "generate_summary_email",
+      "kind": "generate",
+      "summary": "Generate summary email content with list of urgent emails marked",
+      "inputs": [
+        "summary_data",
+        "urgent_count"
+      ],
+      "output": "summary_content",
+      "uses": [
+        {
+          "capability": "generate",
+          "domain": "internal"
+        }
+      ],
+      "generate": {
+        "format": "html",
+        "instruction": "Create an email summary listing all urgent emails that were marked as important. If urgent_count is 0, state that no urgent emails were found. Otherwise, create a formatted list showing sender, subject, received date, and matched keywords for each email. Use a professional, clear format.",
+        "outputs": [
+          {
+            "name": "subject",
+            "type": "string",
+            "description": "Email subject line"
+          },
+          {
+            "name": "body",
+            "type": "string",
+            "description": "HTML-formatted email body with summary"
+          }
+        ]
+      }
+    },
+    {
+      "id": "send_summary_email",
+      "kind": "notify",
+      "summary": "Send summary email to user",
+      "inputs": [
+        "summary_content"
+      ],
+      "uses": [
+        {
+          "capability": "send_message",
+          "domain": "email",
+          "preferences": {
+            "provider_family": "google"
+          }
+        }
+      ],
+      "notify": {
+        "channel": "email",
+        "recipients": {
+          "to": [
+            {
+              "kind": "config",
+              "key": "summary_recipient"
+            }
+          ]
+        },
+        "content": {
+          "subject": {
+            "kind": "ref",
+            "ref": "summary_content",
+            "field": "subject"
+          },
+          "body": {
+            "kind": "ref",
+            "ref": "summary_content",
+            "field": "body"
+          },
+          "format": "html"
+        },
+        "options": {
+          "send_immediately": {
+            "kind": "literal",
+            "value": true
+          }
+        }
+      }
+    }
+  ],
+  "confidence": 0.95
+}

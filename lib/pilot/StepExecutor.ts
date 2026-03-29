@@ -1272,6 +1272,19 @@ export class StepExecutor {
 
     logger.debug({ stepId: step.id, enrichedParams }, 'LLM decision enriched params');
 
+    // D-B8 fix: Classify-aware handling for ai_processing/classify steps
+    // Classify steps need the input array included in the prompt and must return
+    // a JSON array with the classification field appended to each item.
+    const aiType = (step as any).config?.ai_type || (step as any).config?.type;
+    if (aiType === 'classify') {
+      const classifyResult = await this.executeClassifyStep(step, enrichedParams, context, selectedModel);
+      if (classifyResult) {
+        return classifyResult;
+      }
+      // Fall through to generic LLM path if classify handling couldn't resolve input
+      logger.warn({ stepId: step.id }, 'Classify handler could not resolve input array, falling through to generic LLM path');
+    }
+
     const contextSummary = this.buildContextSummary(context);
 
     // Build prompt with vision support if images are present
@@ -1436,6 +1449,167 @@ export class StepExecutor {
         toolCalls: result.toolCalls,
       },
       tokensUsed: result.tokensUsed, // Return full breakdown {total, prompt, completion}
+    };
+  }
+
+  /**
+   * D-B8: Execute ai_processing/classify step with structured array I/O.
+   *
+   * Classify steps receive an array of items and must return the same array
+   * with a classification field appended to each item. This method:
+   * 1. Resolves the input array from params or context variables
+   * 2. Builds a prompt that includes the data and requests JSON array output
+   * 3. Parses the LLM response as a JSON array
+   * 4. Falls back to returning null if input can't be resolved (caller uses generic path)
+   */
+  private async executeClassifyStep(
+    step: any,
+    params: any,
+    context: ExecutionContext,
+    selectedModel?: string
+  ): Promise<{ data: any; tokensUsed: any } | null> {
+    // Resolve the input array
+    let inputArray: any[] | null = null;
+
+    // Try params.input first (already resolved by resolveAllVariables)
+    if (Array.isArray(params.input)) {
+      inputArray = params.input;
+    } else if (typeof params.input === 'string' && params.input.startsWith('{{')) {
+      // Still a template — try resolving it
+      try {
+        const resolved = context.resolveVariable(params.input);
+        if (Array.isArray(resolved)) inputArray = resolved;
+      } catch { /* fall through */ }
+    }
+
+    // Try resolving from step.input or step.config.input
+    if (!inputArray) {
+      const inputRef = step.config?.input || step.input;
+      if (inputRef) {
+        try {
+          const ref = typeof inputRef === 'string' && !inputRef.includes('{{')
+            ? `{{${inputRef}}}` : inputRef;
+          const resolved = context.resolveVariable(ref);
+          if (Array.isArray(resolved)) inputArray = resolved;
+        } catch { /* fall through */ }
+      }
+    }
+
+    if (!inputArray || inputArray.length === 0) {
+      logger.warn({ stepId: step.id }, 'Classify step: could not resolve input array');
+      return null;
+    }
+
+    const labels = step.config?.labels || ['positive', 'negative'];
+    const classField = step.config?.output_schema?.fields?.[0]?.name || 'classification';
+    const instruction = step.prompt || step.config?.instruction || step.description || '';
+
+    logger.info({
+      stepId: step.id,
+      inputCount: inputArray.length,
+      labels,
+      classField,
+    }, 'Executing classify step with resolved input array');
+
+    // Build classify-specific prompt with data included
+    // Truncate items to key fields to stay within token limits
+    const truncatedItems = inputArray.map((item: any, idx: number) => {
+      const summary: any = { _index: idx };
+      // Include common text fields for classification
+      for (const key of ['subject', 'snippet', 'from', 'to', 'date', 'name', 'title', 'text', 'body', 'content', 'description']) {
+        if (item[key] !== undefined) summary[key] = typeof item[key] === 'string' ? item[key].substring(0, 500) : item[key];
+      }
+      // Include id for tracking
+      if (item.id) summary.id = item.id;
+      if (item.message_id) summary.message_id = item.message_id;
+      return summary;
+    });
+
+    const classifyPrompt = `You are a classification engine. ${instruction}
+
+LABELS: ${labels.join(', ')}
+
+DATA (${truncatedItems.length} items):
+${JSON.stringify(truncatedItems, null, 1)}
+
+TASK: For each item, determine which label applies. Return a JSON array with ${truncatedItems.length} elements. Each element must be an object with:
+- "_index": the item's index from the input
+- "${classField}": one of ${labels.map((l: string) => `"${l}"`).join(', ')}
+
+Respond ONLY with the JSON array. No markdown, no explanation, no code blocks.`;
+
+    const isAIProcessing = step.type === 'ai_processing';
+    const agentForExecution: any = {
+      ...context.agent,
+      plugins_required: isAIProcessing ? [] : context.agent.plugins_required,
+    };
+    if (selectedModel) {
+      agentForExecution.model_preference = selectedModel;
+    }
+
+    const result = await runAgentKit(
+      context.userId,
+      agentForExecution,
+      classifyPrompt,
+      {},
+      context.sessionId
+    );
+
+    if (!result.success) {
+      throw new ExecutionError(
+        result.error || 'Classify LLM call failed',
+        'LLM_DECISION_FAILED',
+        step.id
+      );
+    }
+
+    // Parse the LLM response as JSON array
+    const responseText = result.response || '';
+    let classifications: any[] | null = null;
+
+    try {
+      // Try direct JSON parse first
+      const parsed = JSON.parse(responseText);
+      if (Array.isArray(parsed)) classifications = parsed;
+    } catch {
+      // Try extracting JSON array from response text
+      const arrayMatch = responseText.match(/\[[\s\S]*\]/);
+      if (arrayMatch) {
+        try {
+          const parsed = JSON.parse(arrayMatch[0]);
+          if (Array.isArray(parsed)) classifications = parsed;
+        } catch { /* fall through */ }
+      }
+    }
+
+    if (!classifications) {
+      logger.error({ stepId: step.id, responsePreview: responseText.substring(0, 200) },
+        'Classify step: LLM did not return a valid JSON array');
+      throw new ExecutionError(
+        'Classify step: LLM response was not a valid JSON array',
+        'CLASSIFY_PARSE_FAILED',
+        step.id
+      );
+    }
+
+    // Merge classifications back into original input items
+    const classifiedArray = inputArray.map((item: any, idx: number) => {
+      const classResult = classifications!.find((c: any) => c._index === idx) || classifications![idx];
+      return {
+        ...item,
+        [classField]: classResult?.[classField] || labels[0],
+      };
+    });
+
+    logger.info({
+      stepId: step.id,
+      classifiedCount: classifiedArray.length,
+      labelDistribution: labels.map((l: string) => `${l}: ${classifiedArray.filter((c: any) => c[classField] === l).length}`),
+    }, 'Classify step completed');
+
+    return {
+      data: classifiedArray,
+      tokensUsed: result.tokensUsed,
     };
   }
 
@@ -1997,6 +2171,45 @@ export class StepExecutor {
         }
         return undefined;
       }).filter(v => v !== undefined);
+    }
+
+    // Mode 4: output_schema with custom_code — auto-map fields by name matching
+    // When custom_code is natural language (not executable) but output_schema defines
+    // target fields, map input fields to output fields by matching names.
+    // Example: output_schema has {sender, subject, received_date} and input has {from, subject, date}
+    // → maps from→sender, subject→subject, date→received_date
+    if (config && config.custom_code && config.output_schema?.items?.properties) {
+      const targetFields = Object.keys(config.output_schema.items.properties);
+      // Known field aliases: target → source candidates
+      const fieldAliases: Record<string, string[]> = {
+        sender: ['from', 'sender', 'sender_email', 'email_from'],
+        received_date: ['date', 'received_date', 'received_at', 'timestamp', 'sent_date'],
+        matched_keywords: ['matched_keywords', 'keywords', 'urgency_classification'],
+      };
+
+      const sampleItem = data[0];
+      if (sampleItem && typeof sampleItem === 'object') {
+        const inputFields = Object.keys(sampleItem);
+        logger.info({ targetFields, inputFields, itemCount: data.length }, '[transformMap] Mode 4: auto-mapping custom_code with output_schema');
+
+        return data.map(item => {
+          const mapped: Record<string, any> = {};
+          for (const target of targetFields) {
+            // Direct match first
+            if (item[target] !== undefined) {
+              mapped[target] = item[target];
+            } else {
+              // Try aliases
+              const aliases = fieldAliases[target] || [];
+              const match = aliases.find(a => item[a] !== undefined);
+              if (match) {
+                mapped[target] = item[match];
+              }
+            }
+          }
+          return mapped;
+        });
+      }
     }
 
     // Check if config has an expression field (JavaScript expression to evaluate)

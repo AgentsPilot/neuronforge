@@ -1,0 +1,12 @@
+{
+  "name": "Gmail Urgency Flagging Agent",
+  "description": "Search Gmail inbox, classify emails as urgent/not by keyword matching (LLM), filter urgent, mark important + apply tracking label via modify_email, generate HTML summary, send summary email",
+  "created": "2026-03-29",
+  "plugins": ["google-mail"],
+  "expected": {
+    "min_steps": 6,
+    "step_types": ["action", "ai_processing", "transform", "scatter_gather"],
+    "phase_a_checks": 13,
+    "phase_d_success": true
+  }
+}

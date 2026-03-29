@@ -475,20 +475,79 @@ async function main() {
       stepExecutionDetails = stepExecs
       console.log(`  ✅ Found ${stepExecs.length} step execution records`)
 
-      // Print step details
+      // Build a display-friendly step list using both DB records and step_io data.
+      // DB records miss scatter-gather containers and show nested steps as "running".
+      // step_io has the actual execution results for all steps including nested ones.
       console.log('\n📊 Step Execution Details:')
-      for (const step of stepExecs) {
-        const icon = step.status === 'completed' ? '✅' : step.status === 'failed' ? '❌' : '⏭️'
-        const plugin = step.plugin ? ` [${step.plugin}/${step.action}]` : ''
-        const items = step.item_count ? ` (${step.item_count} items)` : ''
-        const tokens = step.tokens_used ? ` | ${step.tokens_used} tokens` : ''
-        const time = step.execution_time_ms ? ` | ${step.execution_time_ms}ms` : ''
-        const fields = step.execution_metadata?.field_names ? ` | fields: [${step.execution_metadata.field_names.join(', ')}]` : ''
 
-        console.log(`   ${icon} ${step.step_id} (${step.step_type})${plugin}${items}${tokens}${time}${fields}`)
-        if (step.error_message) {
-          console.log(`      Error: ${step.error_message}`)
+      // Build step_io lookup: step_id → array of results (nested steps have multiple)
+      const ioByStep = new Map<string, typeof stepIOCapture>()
+      for (const io of stepIOCapture) {
+        if (!ioByStep.has(io.step_id)) ioByStep.set(io.step_id, [])
+        ioByStep.get(io.step_id)!.push(io)
+      }
+
+      // Walk the DSL steps in order (preserves logical flow including scatter-gather)
+      const displayStep = (step: any, indent = '   ') => {
+        const stepId = step.step_id || step.id
+        const dbRecord = stepExecs.find((s: any) => s.step_id === stepId)
+        const ioRecords = ioByStep.get(stepId) || []
+
+        // Determine status: prefer step_io (actual execution), fall back to DB, then completed_steps list
+        let status: 'completed' | 'failed' | 'skipped' = 'skipped'
+        if (ioRecords.length > 0) {
+          const allOk = ioRecords.every(r => r.status === 'ok')
+          status = allOk ? 'completed' : 'failed'
+        } else if (dbRecord?.status === 'completed') {
+          status = 'completed'
+        } else if (dbRecord?.status === 'failed') {
+          status = 'failed'
+        } else if (result.completedStepIds?.includes(stepId)) {
+          status = 'completed'
         }
+
+        const icon = status === 'completed' ? '✅' : status === 'failed' ? '❌' : '⏭️'
+        const plugin = (step.plugin || dbRecord?.plugin) ? ` [${step.plugin || dbRecord?.plugin}/${step.action || dbRecord?.action}]` : ''
+        const itemCount = dbRecord?.item_count || (ioRecords.length > 0 ? ioRecords[0].output?.length : null)
+        const items = itemCount ? ` (${itemCount} items)` : ''
+        const tokens = dbRecord?.tokens_used ? ` | ${dbRecord.tokens_used} tokens` : ''
+        const time = dbRecord?.execution_metadata?.executionTime
+          ? ` | ${Math.round(dbRecord.execution_metadata.executionTime / 1000)}s`
+          : ''
+        const fields = dbRecord?.execution_metadata?.field_names
+          ? ` | fields: [${dbRecord.execution_metadata.field_names.join(', ')}]`
+          : ''
+
+        // For scatter-gather, show iteration count
+        const scatterInfo = step.type === 'scatter_gather' && ioRecords.length === 0
+          ? (() => {
+              const nestedId = step.scatter?.steps?.[0]?.step_id
+              const nestedIo = nestedId ? ioByStep.get(nestedId) : undefined
+              return nestedIo ? ` (${nestedIo.length} iterations)` : ''
+            })()
+          : ''
+
+        console.log(`${indent}${icon} ${stepId} (${step.type})${plugin}${items}${scatterInfo}${tokens}${time}${fields}`)
+
+        if (dbRecord?.error_message) {
+          console.log(`${indent}   Error: ${dbRecord.error_message}`)
+        }
+        // Show nested step errors from step_io
+        if (ioRecords.some(r => r.status === 'error')) {
+          const firstError = ioRecords.find(r => r.status === 'error')
+          console.log(`${indent}   Error: ${firstError?.error}`)
+        }
+
+        // Recurse into scatter-gather nested steps
+        if (step.scatter?.steps) {
+          for (const nested of step.scatter.steps) {
+            displayStep(nested, indent + '  ')
+          }
+        }
+      }
+
+      for (const step of dslSteps) {
+        displayStep(step)
       }
     } else {
       console.log(`  ⚠️  No step execution records found: ${stepExecError?.message || 'empty result'}`)
@@ -516,7 +575,18 @@ async function main() {
     completed_steps: result.completedStepIds || [],
     failed_steps: result.failedStepIds || [],
     error: result.error || null,
-    step_details: stepExecutionDetails,
+    step_details: stepExecutionDetails.map((step: any) => {
+      // Enrich DB status with step_io actual results for nested scatter steps
+      // DB records may show "running" for nested steps that actually completed
+      if (step.status === 'running') {
+        const ioRecords = stepIOCapture.filter(io => io.step_id === step.step_id)
+        if (ioRecords.length > 0) {
+          const allOk = ioRecords.every(r => r.status === 'ok')
+          step.status = allOk ? 'completed' : 'failed'
+        }
+      }
+      return step
+    }),
     step_io: stepIOCapture,
     plugin_connections: Object.fromEntries(
       Array.from(requiredPlugins).map(p => [p, {

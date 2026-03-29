@@ -210,6 +210,7 @@ describe('<PluginName>PluginExecutor', () => {
 | 2 | `search_emails` | Search emails |
 | 3 | `create_draft` | Create a draft email |
 | 4 | `get_email_attachment` | Download an email attachment |
+| 5 | `modify_email` | Modify email labels — mark important, apply/remove labels, mark read/unread |
 
 ### 7. Google Sheets (`google-sheets.test.ts`)
 
@@ -333,3 +334,4 @@ When a new plugin is created or new actions are added:
 | 2026-03-27 | Initial workplan | Defined scope, structure, mocking strategy, and full action coverage for 11 plugins (68 actions) |
 | 2026-03-27 | Document-extractor investigation | Confirmed DeterministicExtractor uses pdf-parse + AWS Textract (no LLM). Mock at `extract()` level. Invoice677931.pdf fixture provided. |
 | 2026-03-27 | Folder structure update | Split into `unit-tests/` and `integration-tests/` subfolders. Document-extractor has both a unit test (mocked) and integration test (real extraction against PDF). |
+| 2026-03-29 | Gmail `modify_email` added | New action added per requirement `docs/requirements/gmail-modify-email-action-2026-03-29.md`. 4 unit tests (mark important + custom label, mark read, 404 error, label auto-creation). Total actions: 69. |

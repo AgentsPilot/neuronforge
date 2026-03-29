@@ -2582,6 +2582,35 @@ export class ExecutionGraphCompiler {
         }
       }
 
+      // O30: Wrap bare input refs for ai_processing steps
+      // The IR converter emits bare strings like "inbox_emails.emails" for step.input
+      // and step.config.input. The runtime's resolveAllVariables() only resolves
+      // strings wrapped in {{ }}. Wrap them here so they resolve at runtime.
+      if (converted.type === 'ai_processing' || converted.type === 'llm_decision') {
+        if (typeof converted.input === 'string' && !converted.input.includes('{{')) {
+          const wrapped = `{{${converted.input}}}`
+          this.log(ctx, `  → O30: Wrapped bare ai_processing input: "${converted.input}" → "${wrapped}"`)
+          converted.input = wrapped
+        }
+        if (converted.config && typeof converted.config.input === 'string' && !converted.config.input.includes('{{')) {
+          converted.config = { ...converted.config, input: `{{${converted.config.input}}}` }
+        }
+      }
+
+      // D-B10: Rewrite field name mismatches in variable references.
+      // The IntentContract LLM may reference fields by the action's parameter name
+      // (e.g., "message_id") when the upstream output schema uses a different name
+      // (e.g., "id"). This is a common pattern: search_emails outputs "id" but
+      // modify_email expects "message_id". Rewrite known mismatches here.
+      if (converted.params) {
+        const paramsStr = JSON.stringify(converted.params)
+        // Gmail: search_emails outputs .id, but modify_email/get_email_attachment reference .message_id
+        if (paramsStr.includes('.message_id}}')) {
+          converted.params = JSON.parse(paramsStr.replace(/\.message_id\}\}/g, '.id}}'))
+          this.log(ctx, `  → D-B10: Rewrote .message_id → .id in ${converted.step_id || converted.id} params`)
+        }
+      }
+
       // B10: Rewrite {{config.X}} → {{input.X}} in all step values
       // ExecutionContext doesn't support "config" as a variable root.
       // Production agents use {{input.X}} — config values are passed as inputValues at runtime.
@@ -2638,6 +2667,13 @@ export class ExecutionGraphCompiler {
         return value.map(rewrite)
       }
       if (value && typeof value === 'object') {
+        // O29: Resolve structured config reference objects { kind: "config", key: "X" }
+        // The IR converter sometimes emits these instead of "{{config.X}}" strings.
+        // Convert to "{{input.X}}" so the Pilot runtime can resolve them.
+        if (value.kind === 'config' && typeof value.key === 'string') {
+          count++
+          return `{{input.${value.key}}}`
+        }
         const result: any = {}
         for (const [key, val] of Object.entries(value)) {
           result[key] = rewrite(val)
