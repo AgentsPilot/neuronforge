@@ -85,10 +85,13 @@ export class Validator {
     // A+6: Duplicate output variable detection
     this.checkDuplicateOutputVars(dslSteps, issues)
 
+    // A+8 (F5): Plugin param schema validation
+    this.checkPluginParamSchemas(dslSteps, issues)
+
     // A+7: Build DAG
     const dag = this.buildDAG(dslSteps)
 
-    const totalChecks = 13
+    const totalChecks = 14
     const errorChecks = new Set(issues.filter(i => i.severity === 'error').map(i => i.check))
     const checksFailed = errorChecks.size
     const checksPassed = totalChecks - checksFailed
@@ -654,6 +657,134 @@ export class Validator {
     }
 
     checkScope(dslSteps, 'top-level')
+  }
+
+  /**
+   * A+8 (F5): Plugin param schema validation.
+   * For every action step, load the plugin definition JSON and validate that
+   * all required parameters are present in the step's params. This catches
+   * wrong param schemas (D-B9) and missing required params (D-B10) at static
+   * validation time instead of Phase E.
+   */
+  private checkPluginParamSchemas(dslSteps: any[], issues: ValidationIssue[]): void {
+    // Lazy-load plugin definitions from disk
+    const pluginDefs = this.loadPluginDefinitions()
+    if (!pluginDefs) return // Non-fatal if plugin dir not found
+
+    const walkSteps = (steps: any[]) => {
+      for (const step of steps) {
+        if (step.type === 'action' && step.plugin && step.action) {
+          const pluginKey = step.plugin
+          const actionName = step.action || step.operation
+          const params = step.params || step.config || {}
+
+          const pluginDef = pluginDefs.get(pluginKey)
+          if (!pluginDef) {
+            issues.push({
+              severity: 'warning',
+              check: 'plugin_param_schema',
+              step_id: step.step_id || step.id,
+              message: `Plugin "${pluginKey}" not found in definitions — cannot validate params`,
+            })
+            continue
+          }
+
+          const actionDef = pluginDef.actions?.[actionName]
+          if (!actionDef) {
+            issues.push({
+              severity: 'warning',
+              check: 'plugin_param_schema',
+              step_id: step.step_id || step.id,
+              message: `Action "${actionName}" not found in plugin "${pluginKey}" — cannot validate params`,
+            })
+            continue
+          }
+
+          // Check required parameters
+          const requiredParams: string[] = actionDef.parameters?.required || []
+          const paramKeys = this.collectParamKeys(params)
+
+          for (const required of requiredParams) {
+            if (!paramKeys.has(required)) {
+              issues.push({
+                severity: 'error',
+                check: 'plugin_param_schema',
+                step_id: step.step_id || step.id,
+                message: `Required parameter "${required}" missing for ${pluginKey}/${actionName}. Present params: [${[...paramKeys].join(', ')}]`,
+              })
+            }
+          }
+
+          // Check for unknown top-level params (not in the plugin schema)
+          const knownParams = new Set(Object.keys(actionDef.parameters?.properties || {}))
+          for (const key of paramKeys) {
+            if (knownParams.size > 0 && !knownParams.has(key)) {
+              issues.push({
+                severity: 'warning',
+                check: 'plugin_param_schema',
+                step_id: step.step_id || step.id,
+                message: `Unknown parameter "${key}" for ${pluginKey}/${actionName}. Known params: [${[...knownParams].join(', ')}]`,
+              })
+            }
+          }
+        }
+
+        // Recurse
+        if (step.scatter?.steps) walkSteps(step.scatter.steps)
+        if (step.steps) walkSteps(step.steps)
+        if (step.then_steps) walkSteps(step.then_steps)
+        if (step.else_steps) walkSteps(step.else_steps)
+      }
+    }
+
+    walkSteps(dslSteps)
+  }
+
+  /**
+   * Collect all top-level param keys from a params object.
+   * Handles both flat params ({message_id: "..."}) and nested ({recipients: {to: [...]}}).
+   * Skips unresolved template values but includes the key name.
+   */
+  private collectParamKeys(params: any): Set<string> {
+    const keys = new Set<string>()
+    if (!params || typeof params !== 'object') return keys
+    for (const key of Object.keys(params)) {
+      keys.add(key)
+    }
+    return keys
+  }
+
+  /**
+   * Load all plugin definition JSON files from lib/plugins/definitions/.
+   * Returns a map of pluginKey → definition, or null if directory not found.
+   */
+  private loadPluginDefinitions(): Map<string, any> | null {
+    try {
+      const fs = require('fs')
+      const path = require('path')
+      const defsDir = path.join(process.cwd(), 'lib', 'plugins', 'definitions')
+
+      if (!fs.existsSync(defsDir)) return null
+
+      const files = fs.readdirSync(defsDir).filter((f: string) => f.endsWith('-plugin-v2.json'))
+      const defs = new Map<string, any>()
+
+      for (const file of files) {
+        try {
+          const content = JSON.parse(fs.readFileSync(path.join(defsDir, file), 'utf-8'))
+          const pluginKey = content.plugin?.name
+          if (pluginKey) {
+            defs.set(pluginKey, content)
+          }
+        } catch {
+          // Skip malformed files
+        }
+      }
+
+      return defs
+    } catch {
+      return null
+    }
   }
 
   /**

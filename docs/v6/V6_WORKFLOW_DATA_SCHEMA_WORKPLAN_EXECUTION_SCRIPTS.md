@@ -195,12 +195,12 @@ npx tsx scripts/test-dsl-execution-simulator/index.ts
 
 ```
 ✅ SIMULATION PASSED
-   Passed: 13/13
-   Failed: 0/13
+   Passed: 14/14
+   Failed: 0/14
 ```
 
 **Pass criteria:**
-- [ ] 13/13 checks passed
+- [ ] 14/14 checks passed
 - [ ] 0 errors
 - [ ] Warnings are acceptable (e.g., "Config key X not referenced" is informational)
 
@@ -323,7 +323,7 @@ Generate the QA report based on the results:
   ────────────────────────────────────────────────────────
   EP Key Hints   ✅       All keys have prefix
   Compile        ✅       10 steps compiled
-  Phase A        ✅       13/13 checks passed
+  Phase A        ✅       14/14 checks passed
   Phase D        ✅       10/10 steps, 0 failures
   Phase E        ✅       10/10 steps, real APIs verified
 
@@ -378,7 +378,7 @@ The timestamp suffix ensures each test run is uniquely identifiable and historic
 |-------|-------------|--------|---------|
 | EP Key Hints | Validate resolved_user_inputs key format | PASS/FAIL | <details> |
 | Phase 0-4 | Compile enhanced prompt to DSL | PASS/FAIL | <step count, compile time> |
-| Phase A | Static DSL validation (13 checks) | PASS/FAIL (X/13) | <errors, warnings> |
+| Phase A | Static DSL validation (14 checks) | PASS/FAIL (X/14) | <errors, warnings> |
 | Phase D | Mock WorkflowPilot execution | PASS/FAIL | <steps completed/total> |
 | Phase E | Live execution (if ran) | PASS/FAIL/SKIPPED | <steps completed, real results> |
 
@@ -440,7 +440,7 @@ Create `tests/v6-regression/scenarios/<scenario-name>/scenario.json`:
   "expected": {
     "min_steps": <number of steps from Phase D>,
     "step_types": ["action", "transform", "scatter_gather"],
-    "phase_a_checks": 13,
+    "phase_a_checks": 14,
     "phase_d_success": true
   }
 }

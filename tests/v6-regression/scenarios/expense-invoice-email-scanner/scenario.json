@@ -6,7 +6,8 @@
   "expected": {
     "min_steps": 11,
     "step_types": ["action", "transform", "scatter_gather", "ai_processing", "conditional"],
-    "phase_a_checks": 13,
-    "phase_d_success": true
+    "phase_a_checks": 14,
+    "phase_d_success": true,
+    "phase_e_success": true
   }
 }
