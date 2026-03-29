@@ -43,7 +43,38 @@ export async function patchStepExecutorLLM(): Promise<void> {
       context: any
     ) {
       const outputSchema = step.config?.output_schema || step.output_schema
+      const aiType = step.config?.ai_type || step.config?.type
       let stubData: any = { result: 'mock_ai_output' }
+
+      // O28: Classify steps receive an array input and must return an array
+      // with the classification field appended to each item. Without this,
+      // the stub generator returns an empty object and downstream filter/
+      // scatter_gather steps fail with "requires array input".
+      if (aiType === 'classify') {
+        const inputRef = step.config?.input || step.input
+        // Resolve input: try params.input (already resolved), then context.variables
+        let resolvedInput = params?.input
+        if (!Array.isArray(resolvedInput) && inputRef && context?.variables) {
+          // Handle dotted refs like "inbox_emails.emails"
+          const parts = inputRef.replace(/^\{\{|\}\}$/g, '').split('.')
+          let val = context.variables[parts[0]]
+          for (let i = 1; i < parts.length && val != null; i++) {
+            val = val[parts[i]]
+          }
+          resolvedInput = val
+        }
+
+        if (Array.isArray(resolvedInput)) {
+          const labels = step.config?.labels || ['positive', 'negative']
+          const classField = outputSchema?.fields?.[0]?.name || 'classification'
+          stubData = resolvedInput.map((item: any, idx: number) => ({
+            ...item,
+            [classField]: labels[idx % labels.length],
+          }))
+          console.log(`     🤖 [MOCK] AI classify step ${step.id || step.step_id}: ${resolvedInput.length} items classified → field "${classField}" (labels: ${labels.join(', ')})`)
+          return { data: stubData, tokensUsed: 150 }
+        }
+      }
 
       if (outputSchema) {
         stubData = generateFromSchema(outputSchema)
