@@ -6,17 +6,24 @@ import { GoogleBasePluginExecutor } from './google-base-plugin-executor';
 
 const pluginName = 'google-mail'; // Current plugin key
 
+// Known Gmail system label IDs — these can be used directly without resolution
+const SYSTEM_LABELS = new Set([
+  'IMPORTANT', 'STARRED', 'UNREAD', 'INBOX', 'SPAM', 'TRASH',
+  'SENT', 'DRAFT', 'CATEGORY_PERSONAL', 'CATEGORY_SOCIAL',
+  'CATEGORY_PROMOTIONS', 'CATEGORY_UPDATES', 'CATEGORY_FORUMS',
+]);
+
 // Executor for Gmail plugin actions
 
 export class GmailPluginExecutor extends GoogleBasePluginExecutor {
   protected gmailApisUrl: string;
-  
+
   constructor(userConnections: UserPluginConnections, pluginManager: PluginManagerV2) {
     super(pluginName, userConnections, pluginManager);
 
     this.gmailApisUrl = 'https://gmail.googleapis.com/gmail/v1';
   }
-  
+
   // Execute Gmail action with validation and error handling
   protected async executeSpecificAction(
     connection: any,
@@ -32,6 +39,8 @@ export class GmailPluginExecutor extends GoogleBasePluginExecutor {
         return await this.createDraft(connection, parameters);
       case 'get_email_attachment':
         return await this.getEmailAttachment(connection, parameters);
+      case 'modify_email':
+        return await this.modifyEmail(connection, parameters);
       default:
         throw new Error(`Action ${actionName} not supported`);
     }
@@ -61,10 +70,10 @@ export class GmailPluginExecutor extends GoogleBasePluginExecutor {
     }
 
     const result = await response.json();
-    
+
     // Return formatted result
     const recipientCount = this.countRecipients(parameters.recipients);
-    
+
     return {
       message_id: result.id,
       thread_id: result.threadId,
@@ -101,7 +110,7 @@ export class GmailPluginExecutor extends GoogleBasePluginExecutor {
     }
 
     const listData = await listResponse.json();
-    
+
     if (!listData.messages || listData.messages.length === 0) {
       return {
         emails: [],
@@ -172,10 +181,10 @@ export class GmailPluginExecutor extends GoogleBasePluginExecutor {
     }
 
     const result = await response.json();
-    
+
     // Return formatted result
     const recipientCount = this.countRecipients(parameters.recipients || {});
-    
+
     return {
       draft_id: result.id,
       message_id: result.message?.id,
@@ -273,14 +282,168 @@ export class GmailPluginExecutor extends GoogleBasePluginExecutor {
     }
   }
 
+  // Modify email labels — mark as important, apply/remove labels, mark read/unread
+  private async modifyEmail(connection: any, parameters: any): Promise<any> {
+    const { message_id, add_labels, remove_labels, mark_important, mark_read } = parameters;
+
+    if (!message_id) {
+      throw new Error('message_id is a required parameter');
+    }
+
+    this.logger.debug({ message_id, add_labels, remove_labels, mark_important, mark_read }, 'Modifying email labels');
+
+    // Build addLabelIds from explicit labels + shorthands
+    const addLabelNames: string[] = [...(add_labels || [])];
+    const removeLabelNames: string[] = [...(remove_labels || [])];
+
+    // Apply mark_important shorthand
+    if (mark_important === true) {
+      addLabelNames.push('IMPORTANT');
+    } else if (mark_important === false) {
+      removeLabelNames.push('IMPORTANT');
+    }
+
+    // Apply mark_read shorthand (read = remove UNREAD, unread = add UNREAD)
+    if (mark_read === true) {
+      removeLabelNames.push('UNREAD');
+    } else if (mark_read === false) {
+      addLabelNames.push('UNREAD');
+    }
+
+    // Resolve label names to IDs (system labels pass through, custom labels get resolved/created)
+    const addLabelIds = await this.resolveLabelNames(connection, addLabelNames);
+    const removeLabelIds = await this.resolveLabelNames(connection, removeLabelNames);
+
+    // Call Gmail modify endpoint
+    const response = await fetch(
+      `${this.gmailApisUrl}/users/me/messages/${message_id}/modify`,
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${connection.access_token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          addLabelIds,
+          removeLabelIds,
+        }),
+      }
+    );
+
+    if (!response.ok) {
+      const errorData = await response.text();
+      this.logger.error({ status: response.status, errorData }, 'Gmail modify failed');
+      throw new Error(`Gmail modify failed: ${response.status} - ${errorData}`);
+    }
+
+    // Gmail returns the modified message; we return a simplified result
+    await response.json();
+
+    return {
+      message_id,
+      labels_added: addLabelIds,
+      labels_removed: removeLabelIds,
+    };
+  }
+
+  /**
+   * Resolve an array of label names to Gmail label IDs.
+   * System labels (IMPORTANT, STARRED, etc.) are returned as-is.
+   * Custom labels are resolved via GET /users/me/labels; if not found, created via POST /users/me/labels.
+   * Makes at most one GET call per modifyEmail invocation (cached within the resolution batch).
+   */
+  private async resolveLabelNames(connection: any, labelNames: string[]): Promise<string[]> {
+    if (labelNames.length === 0) return [];
+
+    // Separate system labels from custom labels
+    const resolvedIds: string[] = [];
+    const customNames: string[] = [];
+
+    for (const name of labelNames) {
+      if (SYSTEM_LABELS.has(name.toUpperCase())) {
+        resolvedIds.push(name.toUpperCase());
+      } else {
+        customNames.push(name);
+      }
+    }
+
+    if (customNames.length === 0) return resolvedIds;
+
+    // Fetch all labels once for resolving custom label names
+    const labelsResponse = await fetch(`${this.gmailApisUrl}/users/me/labels`, {
+      headers: {
+        'Authorization': `Bearer ${connection.access_token}`,
+        'Accept': 'application/json',
+      },
+    });
+
+    if (!labelsResponse.ok) {
+      const errorData = await labelsResponse.text();
+      this.logger.error({ status: labelsResponse.status, errorData }, 'Failed to fetch labels for resolution');
+      throw new Error(`Failed to fetch labels: ${labelsResponse.status} - ${errorData}`);
+    }
+
+    const labelsData = await labelsResponse.json();
+    const existingLabels: Array<{ id: string; name: string }> = labelsData.labels || [];
+
+    // Resolve each custom label name
+    for (const customName of customNames) {
+      const existing = existingLabels.find(
+        (l) => l.name.toLowerCase() === customName.toLowerCase()
+      );
+
+      if (existing) {
+        this.logger.debug({ labelName: customName, labelId: existing.id }, 'Resolved custom label');
+        resolvedIds.push(existing.id);
+      } else {
+        // Create the label
+        const newLabel = await this.createLabel(connection, customName);
+        resolvedIds.push(newLabel.id);
+      }
+    }
+
+    return resolvedIds;
+  }
+
+  /**
+   * Create a new Gmail label.
+   * Returns the created label object with { id, name }.
+   */
+  private async createLabel(connection: any, labelName: string): Promise<{ id: string; name: string }> {
+    this.logger.warn({ labelName }, 'Creating new Gmail label (not found in existing labels)');
+
+    const response = await fetch(`${this.gmailApisUrl}/users/me/labels`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${connection.access_token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        name: labelName,
+        labelListVisibility: 'labelShow',
+        messageListVisibility: 'show',
+      }),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.text();
+      this.logger.error({ status: response.status, errorData, labelName }, 'Failed to create label');
+      throw new Error(`Failed to create label "${labelName}": ${response.status} - ${errorData}`);
+    }
+
+    const label = await response.json();
+    this.logger.debug({ labelName, labelId: label.id }, 'Created new Gmail label');
+    return { id: label.id, name: label.name };
+  }
+
   // Private helper methods
 
   // Build RFC 2822 email message
   private buildEmailMessage(parameters: any): string {
     const { recipients, content } = parameters;
-    
+
     let message = '';
-    
+
     // Headers
     if (recipients?.to?.length) {
       message += `To: ${recipients.to.join(', ')}\r\n`;
@@ -294,7 +457,7 @@ export class GmailPluginExecutor extends GoogleBasePluginExecutor {
     if (content?.subject) {
       message += `Subject: ${content.subject}\r\n`;
     }
-    
+
     // MIME headers for content type
     message += `MIME-Version: 1.0\r\n`;
     if (content?.html_body) {
@@ -302,16 +465,16 @@ export class GmailPluginExecutor extends GoogleBasePluginExecutor {
     } else {
       message += `Content-Type: text/plain; charset=utf-8\r\n`;
     }
-    
+
     message += '\r\n'; // Empty line between headers and body
-    
+
     // Body
     if (content?.html_body) {
       message += content.html_body;
     } else if (content?.body) {
       message += content.body;
     }
-    
+
     // Base64url encode the message (Gmail's format)
     return Buffer.from(message)
       .toString('base64')
@@ -323,18 +486,18 @@ export class GmailPluginExecutor extends GoogleBasePluginExecutor {
   // Build Gmail search query
   private buildSearchQuery(parameters: any): string {
     let query = parameters.query || '';
-    
+
     // Add folder filter
     if (parameters.folder && parameters.folder !== 'all') {
       if (query) query += ' ';
       query += `in:${parameters.folder}`;
     }
-    
+
     // Default to inbox if no query provided
     if (!query) {
       query = 'in:inbox';
     }
-    
+
     return query;
   }
 
@@ -422,26 +585,26 @@ export class GmailPluginExecutor extends GoogleBasePluginExecutor {
         }
       }
     }
-    
+
     // Simple email body
     if (payload.body?.data) {
       return this.decodeBase64Url(payload.body.data);
     }
-    
+
     return '';
   }
 
   // Process email attachments
   private async processEmailAttachments(payload: any, messageId: string, accessToken: string): Promise<any[]> {
     const attachments: any[] = [];
-    
+
     const processPayload = async (part: any) => {
       if (part.parts) {
         for (const subPart of part.parts) {
           await processPayload(subPart);
         }
       }
-      
+
       if (part.filename && part.body?.attachmentId) {
         try {
           // Return attachment metadata with IDs needed for get_email_attachment action
@@ -462,7 +625,7 @@ export class GmailPluginExecutor extends GoogleBasePluginExecutor {
         }
       }
     };
-    
+
     await processPayload(payload);
     return attachments;
   }
@@ -479,7 +642,7 @@ export class GmailPluginExecutor extends GoogleBasePluginExecutor {
       this.logger.warn({ err: error }, 'Failed to decode base64url');
       return '';
     }
-  }  
+  }
 
   // Override to handle Gmail-specific errors
   protected mapGoogleServiceSpecificError(error: any, commonErrors: Record<string, string>): string | null {
@@ -498,7 +661,7 @@ export class GmailPluginExecutor extends GoogleBasePluginExecutor {
 
     // Return null to fall back to common Google error handling
     return null;
-  }  
+  }
 
   protected async performConnectionTest(connection: any): Promise<any> {
     const response = await fetch(`${this.gmailApisUrl}/users/me/profile`, {

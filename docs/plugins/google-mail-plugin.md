@@ -1,14 +1,14 @@
 # Google Mail (Gmail) Plugin Documentation
 
-**Plugin Version**: 1.0.0
+**Plugin Version**: 1.1.0
 **Category**: Communication
-**Last Updated**: 2025-11-30
+**Last Updated**: 2026-03-29
 
 ---
 
 ## Overview
 
-Send, read, and manage Gmail emails. Use for all Gmail email-related tasks including sending messages, searching conversations, and managing drafts.
+Send, read, and manage Gmail emails. Use for all Gmail email-related tasks including sending messages, searching conversations, managing drafts, downloading attachments, and modifying email labels.
 
 ---
 
@@ -27,6 +27,8 @@ Send, read, and manage Gmail emails. Use for all Gmail email-related tasks inclu
 |-------------|-----|---------|
 | Gmail API Overview | https://developers.google.com/gmail/api/reference/rest | REST API for Gmail operations |
 | Messages Resource | https://developers.google.com/gmail/api/reference/rest/v1/users.messages | Send, read, and manage messages |
+| Messages.modify | https://developers.google.com/gmail/api/reference/rest/v1/users.messages/modify | Modify message labels |
+| Labels Resource | https://developers.google.com/gmail/api/reference/rest/v1/users.labels | List and create labels |
 | Drafts Resource | https://developers.google.com/gmail/api/reference/rest/v1/users.drafts | Create and manage drafts |
 | Search Operators | https://support.google.com/mail/answer/7190 | Gmail search query syntax |
 
@@ -39,6 +41,7 @@ Send, read, and manage Gmail emails. Use for all Gmail email-related tasks inclu
 - **Max Recipients**: 50 recipients per email
 - **Max Search Results**: 100 emails per search
 - **Subject Length**: Maximum 200 characters
+- **Label Resolution**: System labels (IMPORTANT, STARRED, UNREAD, etc.) are used directly as IDs; custom labels are resolved by name via the Labels API, and created if not found
 
 ---
 
@@ -90,6 +93,7 @@ Send, read, and manage Gmail emails. Use for all Gmail email-related tasks inclu
 | query | string | No | Search query (supports Gmail operators like 'from:', 'subject:', 'in:'). Default: search inbox |
 | max_results | number | No | Maximum emails to return (1-100, default: 10) |
 | include_attachments | boolean | No | Include attachment metadata (default: false) |
+| content_level | string | No | How much content to fetch: metadata, snippet, full (default: snippet) |
 | folder | string | No | Folder to search: inbox, sent, drafts, spam, trash, all (default: inbox) |
 
 **Response Structure**:
@@ -104,7 +108,7 @@ Send, read, and manage Gmail emails. Use for all Gmail email-related tasks inclu
 | emails[].date | string | Email date |
 | emails[].snippet | string | Email preview snippet |
 | emails[].labels | array | Gmail labels |
-| emails[].body | string | Email body text |
+| emails[].body | string | Email body text (only when content_level is 'full') |
 | emails[].attachments | array | Attachment metadata (if requested) |
 | total_found | integer | Number of emails returned |
 | total_available | integer | Estimated total matching emails |
@@ -143,6 +147,64 @@ Send, read, and manage Gmail emails. Use for all Gmail email-related tasks inclu
 
 ---
 
+### 4. get_email_attachment
+**Description**: Download email attachment content for processing
+
+| Property | Value |
+|----------|-------|
+| HTTP Method | GET |
+| Endpoint | `/gmail/v1/users/me/messages/{message_id}/attachments/{attachment_id}` |
+
+**Parameters**:
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| message_id | string | Yes | Gmail message ID containing the attachment |
+| attachment_id | string | Yes | Gmail attachment ID from search_emails result |
+| filename | string | No | Original filename for reference (recommended for MIME detection) |
+
+**Response Structure**:
+| Field | Type | Description |
+|-------|------|-------------|
+| filename | string | Attachment filename |
+| mimeType | string | MIME type (application/pdf, image/png, etc.) |
+| size | integer | File size in bytes |
+| data | string | Base64-encoded file content |
+| extracted_text | string | Extracted text from PDF/document (if applicable) |
+| is_image | boolean | True if attachment is an image or PDF |
+
+---
+
+### 5. modify_email
+**Description**: Modify email labels -- mark as important, apply/remove labels, mark read/unread
+
+| Property | Value |
+|----------|-------|
+| HTTP Method | POST |
+| Endpoint | `/gmail/v1/users/me/messages/{message_id}/modify` |
+
+**Parameters**:
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| message_id | string | Yes | Gmail message ID to modify |
+| add_labels | array | No | Label names or system labels to add (e.g. 'IMPORTANT', 'STARRED', or custom name like 'AgentsPilot') |
+| remove_labels | array | No | Label names or system labels to remove (e.g. 'UNREAD', 'INBOX') |
+| mark_important | boolean | No | Shorthand: true adds 'IMPORTANT', false removes it |
+| mark_read | boolean | No | Shorthand: true removes 'UNREAD', false adds it |
+
+**Label Resolution**:
+- **System labels** (`IMPORTANT`, `STARRED`, `UNREAD`, `INBOX`, `SPAM`, `TRASH`, `SENT`, `DRAFT`, `CATEGORY_*`) are used directly as label IDs.
+- **Custom labels** (e.g. `"AgentsPilot"`) are resolved by name via `GET /users/me/labels`. If not found, a new label is automatically created via `POST /users/me/labels`.
+- The `mark_important` and `mark_read` shorthands are additive -- they merge with any explicit `add_labels`/`remove_labels` arrays.
+
+**Response Structure**:
+| Field | Type | Description |
+|-------|------|-------------|
+| message_id | string | The modified message ID |
+| labels_added | array | Label IDs that were added |
+| labels_removed | array | Label IDs that were removed |
+
+---
+
 ## Generated Files
 
 | File Path | Description |
@@ -172,4 +234,5 @@ To obtain credentials:
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.1.0 | 2026-03-29 | Added `modify_email` action (Gmail Urgency Flagging Agent - Phase E blocker). Added `get_email_attachment` to docs (was missing). Added label resolution documentation. |
 | 1.0.0 | 2025-11-30 | Initial plugin with 3 actions: send_email, search_emails, create_draft |

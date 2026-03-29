@@ -1,5 +1,5 @@
 /**
- * Unit tests for GmailPluginExecutor — 4 actions
+ * Unit tests for GmailPluginExecutor — 5 actions
  *
  * Tests call executeAction() on the executor (full flow through base class)
  * to validate parameter validation, connection retrieval, action dispatch,
@@ -198,6 +198,119 @@ describe('GmailPluginExecutor', () => {
       });
 
       expectErrorResult(result);
+    });
+  });
+
+  // ---- modify_email ----
+  describe('modify_email', () => {
+    it('should mark email as important and resolve custom label', async () => {
+      // When add_labels contains a custom name ("AgentsPilot"), the executor
+      // fetches GET /users/me/labels to resolve it, then calls POST .../modify
+      mockFetchSequence([
+        // GET /users/me/labels — resolve "AgentsPilot" to its ID
+        {
+          body: {
+            labels: [
+              { id: 'Label_456', name: 'AgentsPilot', type: 'user' },
+              { id: 'INBOX', name: 'INBOX', type: 'system' },
+            ],
+          },
+        },
+        // POST /users/me/messages/msg-123/modify — success
+        {
+          body: {
+            id: 'msg-123',
+            labelIds: ['IMPORTANT', 'Label_456', 'INBOX'],
+          },
+        },
+      ]);
+
+      const result = await executor.executeAction(USER_ID, 'modify_email', {
+        message_id: 'msg-123',
+        mark_important: true,
+        add_labels: ['AgentsPilot'],
+      });
+
+      expectSuccessResult(result);
+      expect(result.data.message_id).toBe('msg-123');
+      expect(result.data.labels_added).toContain('IMPORTANT');
+      expect(result.data.labels_added).toContain('Label_456');
+      expect(result.data.labels_removed).toEqual([]);
+      expectAllFetchCallsAuthorized();
+    });
+
+    it('should mark email as read using system labels only (no label list fetch)', async () => {
+      // mark_read: true only uses UNREAD (system label) — no GET /labels call needed
+      mockFetchSuccess({
+        id: 'msg-200',
+        labelIds: ['INBOX'],
+      });
+
+      const result = await executor.executeAction(USER_ID, 'modify_email', {
+        message_id: 'msg-200',
+        mark_read: true,
+      });
+
+      expectSuccessResult(result);
+      expect(result.data.message_id).toBe('msg-200');
+      expect(result.data.labels_removed).toContain('UNREAD');
+      expect(result.data.labels_added).toEqual([]);
+      // Only the modify call — no labels list call
+      expect(getAllFetchCalls()).toHaveLength(1);
+      expectFetchCalledWith('messages/msg-200/modify', 'POST');
+    });
+
+    it('should handle 404 message not found error', async () => {
+      // System-only labels so no label list fetch; modify endpoint returns 404
+      mockFetchError(404, JSON.stringify({
+        error: { code: 404, message: 'Requested entity was not found.', status: 'NOT_FOUND' },
+      }));
+
+      const result = await executor.executeAction(USER_ID, 'modify_email', {
+        message_id: 'msg-nonexistent',
+        mark_important: true,
+      });
+
+      expectErrorResult(result);
+    });
+
+    it('should create a new label when custom label is not found', async () => {
+      mockFetchSequence([
+        // GET /users/me/labels — label "NewLabel" does not exist
+        {
+          body: {
+            labels: [
+              { id: 'INBOX', name: 'INBOX', type: 'system' },
+            ],
+          },
+        },
+        // POST /users/me/labels — create "NewLabel"
+        {
+          body: {
+            id: 'Label_new_789',
+            name: 'NewLabel',
+            type: 'user',
+          },
+        },
+        // POST /users/me/messages/msg-300/modify — success
+        {
+          body: {
+            id: 'msg-300',
+            labelIds: ['Label_new_789', 'INBOX'],
+          },
+        },
+      ]);
+
+      const result = await executor.executeAction(USER_ID, 'modify_email', {
+        message_id: 'msg-300',
+        add_labels: ['NewLabel'],
+      });
+
+      expectSuccessResult(result);
+      expect(result.data.message_id).toBe('msg-300');
+      expect(result.data.labels_added).toContain('Label_new_789');
+      // Verify all 3 calls were made: GET labels, POST labels, POST modify
+      expect(getAllFetchCalls()).toHaveLength(3);
     });
   });
 });

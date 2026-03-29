@@ -815,6 +815,118 @@
           "download_failed": "Failed to download attachment. Try again or contact support if issue persists."
         }
       }
+    },
+    "modify_email": {
+      "description": "Modify email labels — mark as important, apply/remove labels, mark read/unread",
+      "usage_context": "When you need to mark an email as important, apply a label, remove a label, or mark as read/unread",
+      "idempotent": true,
+      "domain": "email",
+      "capability": "modify",
+      "input_entity": "email",
+      "output_entity": "email",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "output_fields": [
+        "message_id",
+        "labels_added",
+        "labels_removed"
+      ],
+      "required_params": [
+        "message_id"
+      ],
+      "optional_params": [
+        "add_labels",
+        "remove_labels",
+        "mark_important",
+        "mark_read"
+      ],
+      "must_support": [
+        "system_labels",
+        "custom_labels",
+        "label_resolution"
+      ],
+      "parameters": {
+        "type": "object",
+        "required": [
+          "message_id"
+        ],
+        "properties": {
+          "message_id": {
+            "type": "string",
+            "description": "Gmail message ID to modify"
+          },
+          "add_labels": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Label names or system labels to add (e.g. 'IMPORTANT', 'STARRED', or custom label name like 'AgentsPilot')"
+          },
+          "remove_labels": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Label names or system labels to remove (e.g. 'UNREAD', 'INBOX')"
+          },
+          "mark_important": {
+            "type": "boolean",
+            "description": "Shorthand: if true, adds 'IMPORTANT' label; if false, removes it"
+          },
+          "mark_read": {
+            "type": "boolean",
+            "description": "Shorthand: if true, removes 'UNREAD' label; if false, adds it"
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "description": "Result of the email modification",
+        "properties": {
+          "message_id": {
+            "type": "string",
+            "description": "The modified message ID",
+            "x-guaranteed": true
+          },
+          "labels_added": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Labels that were added"
+          },
+          "labels_removed": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Labels that were removed"
+          }
+        },
+        "required": [
+          "message_id",
+          "labels_added",
+          "labels_removed"
+        ]
+      },
+      "output_guidance": {
+        "success_description": "Email labels modified successfully",
+        "sample_output": {
+          "message_id": "msg-123",
+          "labels_added": [
+            "IMPORTANT",
+            "Label_456"
+          ],
+          "labels_removed": []
+        },
+        "common_errors": {
+          "auth_failed": "Gmail connection has expired. Please reconnect in Settings → Connected Apps.",
+          "message_not_found": "The specified message ID does not exist or has been deleted.",
+          "label_not_found": "The specified label does not exist and could not be created.",
+          "insufficient_permissions": "Gmail modify permissions are insufficient. Please reconnect with full email access.",
+          "api_rate_limit": "Too many requests in a short time. Please wait a moment and try again."
+        }
+      }
     }
   }
 }
