@@ -1056,6 +1056,22 @@ export class IntentToIRConverter {
       logger.debug(`[IntentToIRConverter] Transferring transform rules:`, transformConfig.rules)
     }
 
+    // WP-4: Transfer structured field mapping if present (replaces custom_code for map transforms)
+    // The IntentContract LLM emits mapping: [{to: "sender", from: "from"}, ...]
+    // Convert to field_mapping: {sender: "from", ...} for the runtime
+    if (step.transform.op === 'map' && (step.transform as any).mapping && Array.isArray((step.transform as any).mapping)) {
+      const mapping = (step.transform as any).mapping as Array<{ to: string; from: string }>
+      transformConfig.field_mapping = mapping.reduce((acc: Record<string, string>, m) => {
+        acc[m.to] = m.from
+        return acc
+      }, {} as Record<string, string>)
+      // Clear custom_code when we have a structured mapping — it's redundant
+      if (transformConfig.field_mapping && Object.keys(transformConfig.field_mapping).length > 0) {
+        delete transformConfig.custom_code
+      }
+      logger.debug(`[IntentToIRConverter] WP-4: Converted mapping to field_mapping:`, transformConfig.field_mapping)
+    }
+
     const operation: OperationConfig = {
       operation_type: 'transform',
       transform: transformConfig,

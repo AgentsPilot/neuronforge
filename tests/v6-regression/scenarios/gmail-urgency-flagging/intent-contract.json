@@ -9,13 +9,19 @@
     {
       "key": "gmail_search_query",
       "type": "string",
-      "description": "Gmail search query to find inbox emails without tracking label",
+      "description": "Gmail search query to find Inbox emails excluding tracking label",
       "default": "in:inbox -label:AgentsPilot"
+    },
+    {
+      "key": "max_emails",
+      "type": "number",
+      "description": "Maximum number of emails to retrieve per search",
+      "default": 100
     },
     {
       "key": "urgency_keywords",
       "type": "json",
-      "description": "Keywords to identify urgent emails (case-insensitive)",
+      "description": "List of keywords that indicate urgency",
       "default": [
         "today",
         "urgent",
@@ -25,29 +31,23 @@
       ]
     },
     {
-      "key": "tracking_label_name",
+      "key": "tracking_label",
       "type": "string",
       "description": "Gmail label to apply to processed emails",
       "default": "AgentsPilot"
     },
     {
-      "key": "summary_recipient",
+      "key": "recipient_email",
       "type": "string",
       "description": "Email address to send summary to",
       "default": "meiribarak@gmail.com"
-    },
-    {
-      "key": "max_emails_to_scan",
-      "type": "number",
-      "description": "Maximum number of emails to retrieve and scan",
-      "default": 50
     }
   ],
   "steps": [
     {
       "id": "search_inbox_emails",
       "kind": "data_source",
-      "summary": "Search Gmail Inbox for emails without tracking label",
+      "summary": "Search Gmail Inbox for emails excluding already-processed ones",
       "uses": [
         {
           "capability": "search",
@@ -62,24 +62,25 @@
         "domain": "email",
         "intent": "search"
       },
-      "query": {
-        "kind": "config",
-        "key": "gmail_search_query"
-      },
-      "retrieval": {
+      "payload": {
+        "query": {
+          "kind": "config",
+          "key": "gmail_search_query"
+        },
         "max_results": {
           "kind": "config",
-          "key": "max_emails_to_scan"
+          "key": "max_emails"
         },
-        "include_content": "full",
-        "include_attachments": false,
-        "include_metadata": true
+        "content_level": {
+          "kind": "literal",
+          "value": "full"
+        }
       }
     },
     {
-      "id": "classify_email_urgency",
+      "id": "classify_urgency",
       "kind": "classify",
-      "summary": "Classify emails as urgent or not urgent based on keyword presence in subject/body",
+      "summary": "Classify emails as urgent or not urgent based on keyword presence in subject or body",
       "inputs": [
         "inbox_emails"
       ],
@@ -151,13 +152,9 @@
         },
         "do": [
           {
-            "id": "mark_email_important",
-            "kind": "notify",
+            "id": "mark_important_and_label",
+            "kind": "data_source",
             "summary": "Mark email as important and apply tracking label",
-            "inputs": [
-              "urgent_email"
-            ],
-            "output": "marked_email",
             "uses": [
               {
                 "capability": "modify",
@@ -167,33 +164,31 @@
                 }
               }
             ],
-            "notify": {
-              "channel": "email_modification",
-              "content": {
-                "subject": {
-                  "kind": "ref",
-                  "ref": "urgent_email",
-                  "field": "message_id"
-                },
-                "body": {
-                  "kind": "literal",
-                  "value": "mark_important_and_label"
-                }
+            "inputs": [
+              "urgent_email"
+            ],
+            "output": "marked_email",
+            "source": {
+              "domain": "email",
+              "intent": "modify"
+            },
+            "payload": {
+              "message_id": {
+                "kind": "ref",
+                "ref": "urgent_email",
+                "field": "id"
               },
-              "options": {
-                "message_id": {
-                  "kind": "ref",
-                  "ref": "urgent_email",
-                  "field": "message_id"
-                },
-                "mark_important": {
-                  "kind": "literal",
-                  "value": true
-                },
-                "add_labels": [
+              "mark_important": {
+                "kind": "literal",
+                "value": true
+              },
+              "add_labels": {
+                "kind": "computed",
+                "op": "array",
+                "args": [
                   {
                     "kind": "config",
-                    "key": "tracking_label_name"
+                    "key": "tracking_label"
                   }
                 ]
               }
@@ -205,7 +200,7 @@
     {
       "id": "prepare_summary_data",
       "kind": "transform",
-      "summary": "Extract summary fields from processed urgent emails",
+      "summary": "Extract relevant fields from processed emails for summary",
       "inputs": [
         "processed_urgent_emails"
       ],
@@ -213,7 +208,24 @@
       "transform": {
         "op": "map",
         "input": "processed_urgent_emails",
-        "description": "Extract sender, subject, date, and matched keywords for summary",
+        "mapping": [
+          {
+            "to": "sender",
+            "from": "from"
+          },
+          {
+            "to": "subject",
+            "from": "subject"
+          },
+          {
+            "to": "received_date",
+            "from": "date"
+          },
+          {
+            "to": "matched_keywords",
+            "from": "urgency_classification"
+          }
+        ],
         "output_schema": {
           "type": "array",
           "items": {
@@ -258,7 +270,7 @@
       ],
       "generate": {
         "format": "html",
-        "instruction": "Create an email summary listing all urgent emails that were marked as important. If urgent_count is 0, state that no urgent emails were found. Otherwise, create a formatted list showing sender, subject, received date, and matched keywords for each email. Use a professional, clear format.",
+        "instruction": "Create an email summary of urgent emails that were marked as important. If urgent_count is 0, state 'No urgent emails were found in this scan.' Otherwise, create a formatted list showing: sender, subject, received date/time, and matched urgency keywords for each email in summary_data. Use clear formatting with headers and bullet points.",
         "outputs": [
           {
             "name": "subject",
@@ -295,7 +307,7 @@
           "to": [
             {
               "kind": "config",
-              "key": "summary_recipient"
+              "key": "recipient_email"
             }
           ]
         },
@@ -311,12 +323,6 @@
             "field": "body"
           },
           "format": "html"
-        },
-        "options": {
-          "send_immediately": {
-            "kind": "literal",
-            "value": true
-          }
         }
       }
     }

@@ -292,7 +292,8 @@ Use standard comparison operators: "eq", "ne", "gt", "gte", "lt", "lte", "contai
     "op": string,  // "filter", "map", "reduce", "group", "sort", "flatten", "merge", "select", or "custom"
     "input": "data_items",  // RefName
     "description"?: "human-readable transform description",
-    "rules"?: JsonObject  // optional structured rules (compiler interprets)
+    "rules"?: JsonObject,  // optional structured rules (compiler interprets)
+    "mapping"?: Array<{ to: string, from: string }>  // REQUIRED for map ops: explicit field mapping [{to: "target_field", from: "source_field"}, ...]
   }
 }
 
@@ -318,9 +319,22 @@ All transform steps MUST be executable by the deterministic compiler. Do NOT gen
 
 **MAP operation** - Choose based on complexity:
 
-Simple transformations (NO conditional logic, NO lookups):
-- Can use transform op="map" with output_schema
-- Example: Adding/combining existing fields, type conversions
+Simple transformations — field rename/select (NO conditional logic, NO lookups):
+- ✅ REQUIRED: Include "mapping" array with explicit field mappings
+- Each mapping entry: { "to": "target_field_name", "from": "source_field_name" }
+- Use the EXACT field names from the upstream step's output
+- Example:
+  transform: {
+    op: "map",
+    input: "emails",
+    mapping: [
+      { to: "sender", from: "from" },
+      { to: "subject", from: "subject" },
+      { to: "received_date", from: "date" },
+      { to: "matched_keywords", from: "urgency_classification" }
+    ]
+  }
+- ❌ FORBIDDEN: transform op="map" with only description/custom_code and no mapping
 
 Complex transformations (HAS conditional logic, lookups, or config-based decisions):
 - ❌ FORBIDDEN: transform op="map" with description only

@@ -824,7 +824,7 @@ export class ExecutionGraphCompiler {
     // PILOT format: input at top level, not in config
     const result = {
       step_id: stepId,
-      type: 'transform',
+      type: 'transform' as const,
       operation: finalOperation,  // PILOT expects 'operation' field for transform type
       input: finalInput,  // PILOT expects input at top level
       description: operation.description || `Transform: ${finalOperation}`,
@@ -2537,6 +2537,44 @@ export class ExecutionGraphCompiler {
   private toPilotFormat(workflow: WorkflowStep[], ctx: CompilerContext): WorkflowStep[] {
     let convertedCount = 0
     let configRefsRewritten = 0
+    let fieldRefsReconciled = 0
+
+    // WP-2: Build schema registry for field name reconciliation.
+    // Maps variable names → known field names from output_schema.
+    // Includes scatter item variables (e.g., "urgent_email" → fields from email item schema).
+    const schemaRegistry = new Map<string, Set<string>>()
+
+    const registerSchemas = (steps: any[]) => {
+      for (const step of steps) {
+        if (step.output_variable && step.output_schema) {
+          const fields = new Set<string>()
+          const props = step.output_schema.properties || step.output_schema.items?.properties || {}
+          for (const key of Object.keys(props)) {
+            fields.add(key)
+          }
+          if (fields.size > 0) {
+            schemaRegistry.set(step.output_variable, fields)
+          }
+        }
+        // Register scatter item variable with item schema fields.
+        // The scatter input may be a filtered/transformed variable whose output_schema
+        // is just {type: "array"} without items. Trace upstream through the input chain
+        // to find a schema with items.properties (e.g., the original plugin output).
+        if (step.scatter?.itemVariable && step.scatter?.input) {
+          const inputRef = step.scatter.input.replace(/\{\{|\}\}/g, '').trim()
+          const itemFields = this.resolveItemSchemaFields(workflow, inputRef)
+          if (itemFields.size > 0) {
+            schemaRegistry.set(step.scatter.itemVariable, itemFields)
+          }
+        }
+        // Recurse
+        if (step.scatter?.steps) registerSchemas(step.scatter.steps)
+        if (step.steps) registerSchemas(step.steps)
+        if (step.then_steps) registerSchemas(step.then_steps)
+        if (step.else_steps) registerSchemas(step.else_steps)
+      }
+    }
+    registerSchemas(workflow)
 
     const convertStep = (step: any): any => {
       const converted: any = { ...step }
@@ -2597,18 +2635,68 @@ export class ExecutionGraphCompiler {
         }
       }
 
-      // D-B10: Rewrite field name mismatches in variable references.
-      // The IntentContract LLM may reference fields by the action's parameter name
-      // (e.g., "message_id") when the upstream output schema uses a different name
-      // (e.g., "id"). This is a common pattern: search_emails outputs "id" but
-      // modify_email expects "message_id". Rewrite known mismatches here.
-      if (converted.params) {
-        const paramsStr = JSON.stringify(converted.params)
-        // Gmail: search_emails outputs .id, but modify_email/get_email_attachment reference .message_id
-        if (paramsStr.includes('.message_id}}')) {
-          converted.params = JSON.parse(paramsStr.replace(/\.message_id\}\}/g, '.id}}'))
-          this.log(ctx, `  → D-B10: Rewrote .message_id → .id in ${converted.step_id || converted.id} params`)
+      // WP-2: Generic field name reconciliation (replaces D-B10 hack).
+      // For every {{variable.field}} reference, check if `field` exists in the
+      // producing step's output_schema. If not, try common resolution strategies:
+      //   1. Strip prefix: message_id → id, file_id → id, contact_id → id
+      //   2. Case/space normalization: "Lead Name" → "lead_name", "lead name"
+      // This is schema-aware and works across all plugins.
+      const reconcileFieldRefs = (obj: any): any => {
+        if (typeof obj === 'string') {
+          return obj.replace(/\{\{(\w+)\.(\w+)\}\}/g, (match: string, varName: string, field: string) => {
+            const knownFields = schemaRegistry.get(varName)
+            if (!knownFields || knownFields.has(field)) return match // field exists or no schema
+
+            // Strategy 1: Strip common prefixes (message_id → id, file_id → id, etc.)
+            if (field.endsWith('_id')) {
+              const stripped = 'id'
+              if (knownFields.has(stripped)) {
+                fieldRefsReconciled++
+                this.log(ctx, `  → WP-2: Reconciled {{${varName}.${field}}} → {{${varName}.${stripped}}} (strip prefix)`)
+                return `{{${varName}.${stripped}}}`
+              }
+            }
+
+            // Strategy 2: Case-insensitive match
+            for (const known of knownFields) {
+              if (known.toLowerCase() === field.toLowerCase()) {
+                fieldRefsReconciled++
+                this.log(ctx, `  → WP-2: Reconciled {{${varName}.${field}}} → {{${varName}.${known}}} (case match)`)
+                return `{{${varName}.${known}}}`
+              }
+            }
+
+            // Strategy 3: Underscore/space normalization (lead_name → "Lead Name" or "lead name")
+            const normalized = field.replace(/_/g, ' ')
+            for (const known of knownFields) {
+              if (known.toLowerCase() === normalized.toLowerCase()) {
+                fieldRefsReconciled++
+                this.log(ctx, `  → WP-2: Reconciled {{${varName}.${field}}} → {{${varName}.${known}}} (space/underscore match)`)
+                return `{{${varName}.${known}}}`
+              }
+            }
+
+            return match // no match found — leave as-is (Phase A F5 will flag it)
+          })
         }
+        if (Array.isArray(obj)) {
+          return obj.map(reconcileFieldRefs)
+        }
+        if (obj && typeof obj === 'object') {
+          const result: any = {}
+          for (const [key, val] of Object.entries(obj)) {
+            result[key] = reconcileFieldRefs(val)
+          }
+          return result
+        }
+        return obj
+      }
+
+      if (converted.params) {
+        converted.params = reconcileFieldRefs(converted.params)
+      }
+      if (converted.input && typeof converted.input === 'string') {
+        converted.input = reconcileFieldRefs(converted.input)
       }
 
       // B10: Rewrite {{config.X}} → {{input.X}} in all step values
@@ -2643,6 +2731,9 @@ export class ExecutionGraphCompiler {
     if (configRefsRewritten > 0) {
       this.log(ctx, `  → Rewrote ${configRefsRewritten} config references: {{config.X}} → {{input.X}}`)
     }
+    if (fieldRefsReconciled > 0) {
+      this.log(ctx, `  → WP-2: Reconciled ${fieldRefsReconciled} field name mismatches`)
+    }
     return result
   }
 
@@ -2651,6 +2742,114 @@ export class ExecutionGraphCompiler {
    * ExecutionContext only supports {{input.X}} for user-provided config values.
    * Returns the rewritten object and a count of replacements made.
    */
+  /**
+   * WP-2 helper: Resolve item schema fields for a scatter input variable.
+   * Traces upstream through filter/transform chains to find the original
+   * schema with items.properties. E.g.:
+   *   urgent_emails (filter, schema: {type:"array"})
+   *     → classified_emails (ai, schema: none)
+   *       → inbox_emails.emails (action, schema: {type:"array", items:{properties:{id, subject, ...}}})
+   */
+  private resolveItemSchemaFields(workflow: any[], ref: string): Set<string> {
+    const visited = new Set<string>()
+    const resolve = (varRef: string): Set<string> => {
+      if (visited.has(varRef)) return new Set()
+      visited.add(varRef)
+
+      const baseName = varRef.split('.')[0]
+
+      const findStep = (steps: any[]): any => {
+        for (const step of steps) {
+          if (step.output_variable === baseName) return step
+          if (step.scatter?.steps) { const f = findStep(step.scatter.steps); if (f) return f }
+          if (step.steps) { const f = findStep(step.steps); if (f) return f }
+          if (step.then_steps) { const f = findStep(step.then_steps); if (f) return f }
+          if (step.else_steps) { const f = findStep(step.else_steps); if (f) return f }
+        }
+        return null
+      }
+
+      const step = findStep(workflow)
+      if (!step) return new Set()
+
+      // Check if this step's output_schema has item properties
+      const schema = step.output_schema
+      if (schema) {
+        const itemProps = schema.items?.properties || {}
+        const fields = Object.keys(itemProps)
+        if (fields.length > 0) return new Set(fields)
+
+        // Also check top-level properties for non-array schemas
+        const topProps = schema.properties || {}
+        // Look for an array field that might have item properties
+        for (const val of Object.values(topProps) as any[]) {
+          if (val.type === 'array' && val.items?.properties) {
+            return new Set(Object.keys(val.items.properties))
+          }
+        }
+      }
+
+      // Trace upstream: check step.input or step.config.input
+      const inputRef = step.input?.replace(/\{\{|\}\}/g, '').trim()
+        || step.config?.input?.replace?.(/\{\{|\}\}/g, '')?.trim()
+      if (inputRef) {
+        return resolve(inputRef)
+      }
+
+      return new Set()
+    }
+
+    return resolve(ref)
+  }
+
+  /**
+   * WP-2 helper: Find the output_schema for a variable reference.
+   * Handles dotted refs like "inbox_emails.emails" — looks up "inbox_emails"
+   * then navigates to the "emails" property schema.
+   */
+  private findOutputSchema(workflow: any[], ref: string): any {
+    const parts = ref.split('.')
+    const varName = parts[0]
+
+    const findInSteps = (steps: any[]): any => {
+      for (const step of steps) {
+        if (step.output_variable === varName && step.output_schema) {
+          let schema = step.output_schema
+          // Navigate dotted path: inbox_emails.emails → inbox_emails schema → properties.emails
+          for (let i = 1; i < parts.length; i++) {
+            const props = schema.properties || schema.items?.properties
+            if (props && props[parts[i]]) {
+              schema = props[parts[i]]
+            } else {
+              return null
+            }
+          }
+          return schema
+        }
+        // Recurse into nested steps
+        if (step.scatter?.steps) {
+          const found = findInSteps(step.scatter.steps)
+          if (found) return found
+        }
+        if (step.steps) {
+          const found = findInSteps(step.steps)
+          if (found) return found
+        }
+        if (step.then_steps) {
+          const found = findInSteps(step.then_steps)
+          if (found) return found
+        }
+        if (step.else_steps) {
+          const found = findInSteps(step.else_steps)
+          if (found) return found
+        }
+      }
+      return null
+    }
+
+    return findInSteps(workflow)
+  }
+
   private rewriteConfigRefs(obj: any): { obj: any; count: number } {
     let count = 0
 
@@ -3804,8 +4003,8 @@ export class ExecutionGraphCompiler {
     if (step.config) {
       step.config = replaceInValue(step.config)
       // Also update config.input bare string (DataOperations reads this without {{ }})
-      if (step.config.input === oldVarName) {
-        step.config.input = newVarName
+      if (step.config?.input === oldVarName) {
+        step.config!.input = newVarName
       }
     }
 
@@ -4783,22 +4982,23 @@ export class ExecutionGraphCompiler {
     const baseVar = varName.includes('.') ? varName.substring(0, varName.indexOf('.')) : varName
     const subField = varName.includes('.') ? varName.substring(varName.indexOf('.') + 1) : null
 
-    for (const node of graph.nodes) {
-      const outputVar = node.operation?.outputs?.[0]?.ref_name || node.operation?.outputs?.[0]?.name
+    for (const node of Object.values(graph.nodes)) {
+      const outputVar = node.outputs?.[0]?.variable
       if (outputVar === baseVar) {
-        const schema = node.operation?.outputs?.[0]?.schema
-        if (schema && subField) {
+        // Look up schema from data_schema slots
+        const slot = graph.data_schema?.slots?.[baseVar]
+        if (slot?.schema && subField) {
           // Navigate into the sub-field
-          return schema.properties?.[subField]?.items || schema.properties?.[subField]
+          return slot.schema.properties?.[subField]?.items || slot.schema.properties?.[subField]
         }
-        return schema
+        return slot?.schema
       }
     }
 
     // Also check data_schema slots
     if (graph.data_schema?.slots) {
-      for (const slot of graph.data_schema.slots) {
-        if (slot.name === baseVar && slot.schema) {
+      for (const [slotName, slot] of Object.entries(graph.data_schema.slots)) {
+        if (slotName === baseVar && slot.schema) {
           if (subField) {
             return slot.schema.properties?.[subField]?.items || slot.schema.properties?.[subField]
           }
@@ -4946,7 +5146,7 @@ export class ExecutionGraphCompiler {
     for (const [nodeId, node] of Object.entries(graph.nodes)) {
       if (node.type === 'operation' && node.operation?.operation_type === 'transform') {
         const transform = node.operation.transform
-        if (transform?.type === 'map' || transform?.type === 'merge' || transform?.type === 'set') {
+        if (transform?.type === 'map' || transform?.type === 'merge' || (transform?.type as string) === 'set') {
           // Check if this node is inside a loop (has loop context)
           if (ctx.loopContextStack.length > 0) {
             return nodeId
