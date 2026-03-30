@@ -865,49 +865,104 @@ export class IntentToIRConverter {
    * Convert notify step to operation node
    * Maps directly to schema structure - NotifyStep already has proper nested structure
    *
-   * D-B9: When action is NOT send_email/send_message (e.g., modify_email),
-   * use notify.options as params instead of notify.content. The IntentContract
-   * LLM puts the correct action-specific params in notify.options for non-send actions.
+   * WP-1: Schema-driven param binding. Instead of hardcoding which actions are
+   * "send-like", load the action's parameter schema and match IntentContract
+   * fields (recipients, content, options) to the schema's expected params.
+   * Falls back to isSendAction heuristic if plugin schema not available.
    */
   private convertNotify(step: NotifyStep & BoundStep, ctx: ConversionContext): string {
     const nodeId = this.generateNodeId(ctx)
 
     const action = step.action || 'send_message'
-    const isSendAction = action === 'send_email' || action === 'send_message'
+    const pluginKey = step.plugin_key || 'unknown'
 
     // Build params matching schema structure directly
     const params: Record<string, any> = {}
 
-    if (isSendAction) {
-      // Standard send flow: use notify.content and notify.recipients
-      if (step.notify.recipients?.to) {
+    // WP-1: Try schema-driven param binding first
+    const actionSchema = this.getPluginActionSchema(pluginKey, action)
+    const schemaProps = actionSchema?.parameters?.properties
+      ? new Set(Object.keys(actionSchema.parameters.properties))
+      : null
+
+    if (schemaProps) {
+      // Schema available — match IntentContract sources to schema params
+      logger.debug(`[WP-1] Schema-driven notify binding for ${pluginKey}/${action}: params [${[...schemaProps].join(', ')}]`)
+
+      // Source 1: notify.recipients → only if schema literally has 'recipients' param
+      // For plugins that use different recipient params (channel_id, recipient_phone),
+      // the LLM should put them in notify.options with the correct param name.
+      if (schemaProps.has('recipients') && step.notify.recipients?.to) {
         params.recipients = {
           to: step.notify.recipients.to.map((r: any) => this.resolveValueRef(r, ctx))
         }
       }
 
-      const contentObj: Record<string, any> = {}
-      if (step.notify.content?.subject) {
-        contentObj.subject = this.resolveValueRef(step.notify.content.subject, ctx)
-      }
-      if (step.notify.content?.body) {
-        if (step.notify.content.format === 'html') {
-          contentObj.html_body = this.resolveValueRef(step.notify.content.body, ctx)
-        } else {
-          contentObj.body = this.resolveValueRef(step.notify.content.body, ctx)
+      // Source 2: notify.content → only if schema literally has 'content' param
+      // For plugins that use different content params (message_text, body_text),
+      // the LLM should put them in notify.options with the correct param name.
+      if (schemaProps.has('content') && step.notify.content) {
+        const contentObj: Record<string, any> = {}
+        if (step.notify.content.subject) {
+          contentObj.subject = this.resolveValueRef(step.notify.content.subject, ctx)
         }
+        if (step.notify.content.body) {
+          if (step.notify.content.format === 'html') {
+            contentObj.html_body = this.resolveValueRef(step.notify.content.body, ctx)
+          } else {
+            contentObj.body = this.resolveValueRef(step.notify.content.body, ctx)
+          }
+        }
+        params.content = contentObj
       }
-      params.content = contentObj
-    } else {
-      // D-B9: Non-send actions (modify_email, etc.) — use notify.options as params
-      // The IntentContract LLM puts action-specific params (message_id, mark_important, add_labels)
-      // in notify.options, not in notify.content.
+
+      // Source 3: notify.options → match each key against schema params.
+      // This is the primary source for non-Gmail plugins. The LLM puts
+      // plugin-specific params here (channel_id, message_text, recipient_phone, etc.)
+      // and we match them directly against the schema. No guessing, no alias lists.
       if (step.notify.options) {
         for (const [key, value] of Object.entries(step.notify.options)) {
-          if (Array.isArray(value)) {
-            params[key] = value.map((v: any) => this.resolveValueRef(v, ctx))
+          if (schemaProps.has(key) && !params[key]) {
+            if (Array.isArray(value)) {
+              params[key] = value.map((v: any) => this.resolveValueRef(v, ctx))
+            } else {
+              params[key] = this.resolveValueRef(value as any, ctx)
+            }
+          }
+        }
+      }
+    } else {
+      // Fallback: no schema available — use isSendAction heuristic (D-B9 original fix)
+      const isSendAction = action === 'send_email' || action === 'send_message'
+        || action === 'send_template_message' || action === 'send_text_message'
+        || action === 'send_interactive_message' || action === 'post_message'
+
+      if (isSendAction) {
+        if (step.notify.recipients?.to) {
+          params.recipients = {
+            to: step.notify.recipients.to.map((r: any) => this.resolveValueRef(r, ctx))
+          }
+        }
+        const contentObj: Record<string, any> = {}
+        if (step.notify.content?.subject) {
+          contentObj.subject = this.resolveValueRef(step.notify.content.subject, ctx)
+        }
+        if (step.notify.content?.body) {
+          if (step.notify.content.format === 'html') {
+            contentObj.html_body = this.resolveValueRef(step.notify.content.body, ctx)
           } else {
-            params[key] = this.resolveValueRef(value as any, ctx)
+            contentObj.body = this.resolveValueRef(step.notify.content.body, ctx)
+          }
+        }
+        params.content = contentObj
+      } else {
+        if (step.notify.options) {
+          for (const [key, value] of Object.entries(step.notify.options)) {
+            if (Array.isArray(value)) {
+              params[key] = value.map((v: any) => this.resolveValueRef(v, ctx))
+            } else {
+              params[key] = this.resolveValueRef(value as any, ctx)
+            }
           }
         }
       }
@@ -1408,17 +1463,7 @@ export class IntentToIRConverter {
    */
   private getPluginActionSchema(pluginKey: string, actionName: string): ActionDefinition | null {
     if (!this.pluginManager) return null
-
-    try {
-      const allPlugins = this.pluginManager.getAvailablePlugins()
-      const plugin = allPlugins[pluginKey]
-      if (!plugin) return null
-
-      const action = plugin.actions[actionName]
-      return action || null
-    } catch (error) {
-      return null
-    }
+    return this.pluginManager.getActionDefinition(pluginKey, actionName) || null
   }
 
   /**

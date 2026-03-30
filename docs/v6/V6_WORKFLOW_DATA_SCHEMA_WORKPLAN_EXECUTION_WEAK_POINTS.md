@@ -16,7 +16,7 @@ The weak points are ordered by likelihood of causing failures as new scenarios a
 
 | ID | Issue | Priority | Status |
 |----|-------|----------|--------|
-| [WP-1](#wp-1-intentcontract--ir-converter-notify-step-handling) | `notify` step assumes `send_email` — non-send actions get wrong params | P1 | ⬜ Needs fix |
+| [WP-1](#wp-1-intentcontract--ir-converter-notify-step-handling) | `notify` step assumes `send_email` — non-send actions get wrong params | P1 | ✅ Fixed — schema-driven param binding |
 | [WP-2](#wp-2-field-name-mismatches-between-plugin-output-and-downstream-references) | Field name mismatches (`message_id` vs `id`) across plugins | P0 | ⚠️ Partial — compiler safety net, root cause remains |
 | [WP-3](#wp-3-ai_processing-steps-inside-scatter-gather) | `ai_processing` inside scatter-gather — memory/prompt/routing issues | P1 | ⬜ Needs architectural fix (defensive patches in place) |
 | [WP-4](#wp-4-transformmap-with-custom_code-natural-language) | `transform/map` with `custom_code` — runtime can't execute NL | P0 | ✅ Fixed — structured `mapping` from Phase 1 |
@@ -35,7 +35,7 @@ The weak points are ordered by likelihood of causing failures as new scenarios a
 
 **Severity:** High
 **Encountered as:** D-B9
-**Status:** ⬜ Needs generic fix
+**Status:** ✅ Fixed — schema-driven param binding
 
 **Problem:** `convertNotify()` in `IntentToIRConverter.ts` assumes all `notify` steps are `send_email`. The current fix uses a hardcoded `isSendAction` check (`send_email` or `send_message`). Any new plugin action that the LLM maps to `kind: "notify"` but isn't a send operation will get the wrong params.
 
@@ -457,18 +457,18 @@ Scatter-gather error awareness:
 
 ## Implementation Priority
 
-| Priority | Weak Point | Impact | Effort |
+| Priority | Weak Point | Impact | Status |
 |----------|-----------|--------|--------|
-| **P0** | WP-2: Field name mismatches | Breaks every cross-plugin flow | Medium — extend O10 |
-| **P0** | WP-4: `custom_code` map | Breaks every transform with non-matching field names | Medium — compiler field mapping |
-| **P1** | WP-3: AI in scatter-gather | Breaks any AI inside loops | High — new LLM call path |
-| **P1** | WP-1: notify step handling | Breaks non-send plugin actions | Low — schema-driven binding |
-| **P2** | WP-5: group output shape | Breaks complex grouping | Low — explicit config |
-| **P2** | WP-10: Scatter error handling | Misleading success reports | Medium |
-| **P2** | WP-6: Structured ref objects | Breaks computed values | Low |
-| **P3** | WP-9: LLM output validation | Only caught in Phase E | Medium + token cost |
-| **P3** | WP-7: Label resolution | Race condition, extra API calls | Low |
-| **P3** | WP-8: Email encoding | Non-English content | Low |
+| **P0** | WP-2: Field name mismatches | Breaks every cross-plugin flow | ⚠️ Partial fix |
+| **P0** | WP-4: `custom_code` map | Breaks every transform with non-matching field names | ✅ Fixed |
+| **P1** | WP-3: AI in scatter-gather | Breaks any AI inside loops | ⬜ Needs architectural fix |
+| **P1** | WP-1: notify step handling | Breaks non-send plugin actions | ✅ Fixed |
+| **P2** | WP-5: group output shape | Breaks complex grouping | ⬜ Needs fix |
+| **P2** | WP-10: Scatter error handling | Misleading success reports | ⬜ Needs fix |
+| **P2** | WP-6: Structured ref objects | Breaks computed values | ⚠️ Partial fix |
+| **P3** | WP-9: LLM output validation | Only caught in Phase E | ⬜ Deferred |
+| **P3** | WP-7: Label resolution | Race condition, extra API calls | ✅ Fixed |
+| **P3** | WP-8: Email encoding | Non-English content | ⚠️ Partial fix |
 
 ---
 
@@ -477,5 +477,6 @@ Scatter-gather error awareness:
 | Date | Change | Details |
 |------|--------|---------|
 | 2026-03-30 | Initial document | 10 weak points identified from D-B7 through D-B13 bug fixes across 2 scenarios. Proposed solutions documented for each. |
+| 2026-03-30 | WP-1 implemented | Schema-driven param binding for `convertNotify()`. Loads action's parameter schema from plugin definition, matches IntentContract sources (recipients, content, options) to schema params by name. No more hardcoded `isSendAction` check. Falls back to heuristic if schema unavailable. Verified: `send_email` gets `recipients`+`content`, `modify_email` gets `message_id`+`add_labels`+`mark_important` — both via schema matching. |
 | 2026-03-30 | WP-4 implemented | Structured field mapping from Phase 1 through runtime. LLM prompt updated to emit `mapping: [{to, from}]` for map transforms. IR converter converts to `field_mapping`. Runtime Mode 0 applies deterministic rename. Verified on Gmail Urgency Flagging: LLM emitted correct mapping (`sender←from`, `subject←subject`, `received_date←date`, `matched_keywords←urgency_classification`), `custom_code` eliminated. Backward compatible — old IntentContracts without mapping fall through to Mode 4. |
 | 2026-03-30 | WP-2 implemented | Generic field name reconciliation in Phase 5. Schema registry built from workflow output_schemas + scatter item variables. Upstream tracing resolves item schemas through filter/transform chains. Strategies: prefix stripping (`message_id`→`id`), case-insensitive match, underscore/space normalization. Replaces D-B10 Gmail-specific hack. Verified on Gmail Urgency Flagging scenario. |
