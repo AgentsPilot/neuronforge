@@ -1,0 +1,45 @@
+AVAILABLE DOMAINS (use these exact strings):
+document, email, internal, storage, table, web
+
+AVAILABLE CAPABILITIES (use these exact strings):
+append, create, create_draft, download, extract_structured_data, fetch_content, generate, get, list, search, send_message, summarize, update, upload, upsert
+
+CONNECTED PLUGINS:
+
+- chatgpt-research (chatgpt-research) [openai]
+  Domains: internal, web
+  Capabilities: generate, search, summarize
+  Example actions:
+    - research_topic: web/search
+    - summarize_content: internal/summarize
+    - answer_question: internal/generate
+
+- document-extractor (document-extractor) [internal]
+  Domains: document
+  Capabilities: extract_structured_data
+  Example actions:
+    - extract_structured_data: document/extract_structured_data
+
+- google-drive (google-drive) [google]
+  Domains: storage
+  Capabilities: create, fetch_content, get, list, search, update, upload, upsert
+  Example actions:
+    - list_files: storage/list
+    - search_files: storage/search
+    - get_file_metadata: storage/get
+
+- google-mail (google-mail) [google]
+  Domains: email
+  Capabilities: create_draft, download, search, send_message, update
+  Example actions:
+    - send_email: email/send_message
+    - search_emails: email/search
+    - create_draft: email/create_draft
+
+- google-sheets (google-sheets) [google]
+  Domains: table
+  Capabilities: append, create, get, update, upsert
+  Example actions:
+    - read_range: table/get
+    - write_range: table/update
+    - append_rows: table/append

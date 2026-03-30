@@ -1,0 +1,12 @@
+{
+  "issues": [
+    {
+      "severity": "CRITICAL",
+      "step": "step10",
+      "problem": "Email body in else branch is plain string",
+      "current": "No leads with Stage = 4 were found in the current sheet data.",
+      "fix": "{{No leads with Stage = 4 were found in the current sheet data.}}"
+    }
+  ],
+  "total": 1
+}

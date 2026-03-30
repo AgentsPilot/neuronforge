@@ -40,6 +40,9 @@ export class GoogleSheetsPluginExecutor extends GoogleBasePluginExecutor {
       case 'get_spreadsheet_info':
         result = await this.getSpreadsheetInfo(connection, parameters);
         break;
+      case 'get_or_create_sheet_tab':
+        result = await this.getOrCreateSheetTab(connection, parameters);
+        break;
       default:
         return {
           success: false,
@@ -288,6 +291,87 @@ export class GoogleSheetsPluginExecutor extends GoogleBasePluginExecutor {
         index: sheet.properties.index
       })) || [],
       created_at: new Date().toISOString()
+    };
+  }
+
+  // Get existing sheet tab by name or create if it doesn't exist (prevents duplicates)
+  private async getOrCreateSheetTab(connection: any, parameters: any): Promise<any> {
+    this.logger.debug('Get or create sheet tab');
+
+    const { spreadsheet_id, tab_name } = parameters;
+    if (!spreadsheet_id || !tab_name) {
+      throw new Error('spreadsheet_id and tab_name are required');
+    }
+
+    // Get spreadsheet info to check if tab exists
+    const spreadsheetInfo = await this.getSpreadsheetInfo(connection, {
+      spreadsheet_id,
+      include_sheet_data: false
+    });
+
+    // Check if tab already exists
+    const existingTab = spreadsheetInfo.sheets.find(
+      (sheet: any) => sheet.title === tab_name
+    );
+
+    if (existingTab) {
+      this.logger.debug({ sheetId: existingTab.sheet_id }, 'Found existing sheet tab');
+      return {
+        spreadsheet_id,
+        sheet_id: existingTab.sheet_id,
+        title: existingTab.title,
+        index: existingTab.index,
+        created: false,
+        message: `Sheet tab "${tab_name}" already exists`
+      };
+    }
+
+    // Tab doesn't exist - create it
+    this.logger.debug('Sheet tab not found, creating new one');
+
+    const url = `${this.sheetsApisUrl}/${spreadsheet_id}:batchUpdate`;
+    const requestBody = {
+      requests: [
+        {
+          addSheet: {
+            properties: {
+              title: tab_name
+            }
+          }
+        }
+      ]
+    };
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${connection.access_token}`,
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
+      body: JSON.stringify(requestBody)
+    });
+
+    if (!response.ok) {
+      const errorData = await response.text();
+      this.logger.error({ errorData, status: response.status }, 'Failed to create sheet tab');
+      throw new Error(`Sheets API error: ${response.status} - ${errorData}`);
+    }
+
+    const data = await response.json();
+    const newSheet = data.replies?.[0]?.addSheet?.properties;
+
+    if (!newSheet) {
+      throw new Error('Failed to create sheet tab - no properties returned');
+    }
+
+    return {
+      spreadsheet_id,
+      sheet_id: newSheet.sheetId,
+      title: newSheet.title,
+      index: newSheet.index,
+      created: true,
+      message: `Sheet tab "${tab_name}" created successfully`
     };
   }
 

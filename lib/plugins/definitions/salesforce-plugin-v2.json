@@ -1,0 +1,868 @@
+{
+  "plugin": {
+    "name": "salesforce",
+    "version": "1.0.0",
+    "description": "Manage leads, accounts, contacts, opportunities, and cases in Salesforce CRM",
+    "context": "Use for CRM operations: creating leads, managing accounts, tracking opportunities, and organizing sales pipeline. Salesforce is the leading CRM platform for sales and customer relationship management.",
+    "icon": "<Cloud className='w-5 h-5 text-blue-600'/>",
+    "category": "crm",
+    "isPopular": true,
+    "auth_config": {
+      "auth_type": "oauth2_salesforce",
+      "client_id": "${SALESFORCE_CLIENT_ID}",
+      "client_secret": "${SALESFORCE_CLIENT_SECRET}",
+      "redirect_uri": "${NEXT_PUBLIC_APP_URL}/oauth/callback/salesforce",
+      "auth_url": "https://login.salesforce.com/services/oauth2/authorize",
+      "token_url": "https://login.salesforce.com/services/oauth2/token",
+      "refresh_url": "https://login.salesforce.com/services/oauth2/token",
+      "profile_url": "https://login.salesforce.com/services/oauth2/userinfo",
+      "required_scopes": [
+        "api",
+        "refresh_token",
+        "full"
+      ],
+      "token_expiry_seconds": 7200,
+      "requires_pkce": true
+    }
+  },
+  "actions": {
+    "create_lead": {
+      "description": "Create a new lead in Salesforce CRM",
+      "usage_context": "When user wants to add new sales leads, capture prospects, or record potential customers",
+      "idempotent": false,
+      "domain": "crm",
+      "capability": "create",
+      "input_entity": "lead",
+      "output_entity": "lead",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "output_fields": ["id", "first_name", "last_name", "email", "company", "status"],
+      "required_params": ["last_name", "company"],
+      "optional_params": ["first_name", "email", "phone", "status", "lead_source"],
+      "must_support": ["custom_fields", "status_tracking"],
+      "parameters": {
+        "type": "object",
+        "required": ["last_name", "company"],
+        "properties": {
+          "first_name": {
+            "type": "string",
+            "description": "Lead's first name"
+          },
+          "last_name": {
+            "type": "string",
+            "description": "Lead's last name"
+          },
+          "email": {
+            "type": "string",
+            "description": "Lead's email address"
+          },
+          "company": {
+            "type": "string",
+            "description": "Lead's company name"
+          },
+          "phone": {
+            "type": "string",
+            "description": "Lead's phone number"
+          },
+          "status": {
+            "type": "string",
+            "enum": ["Open - Not Contacted", "Working - Contacted", "Closed - Converted", "Closed - Not Converted"],
+            "default": "Open - Not Contacted",
+            "description": "Lead status"
+          },
+          "lead_source": {
+            "type": "string",
+            "enum": ["Web", "Phone Inquiry", "Partner Referral", "Purchased List", "Other"],
+            "description": "Source of the lead"
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Unique Salesforce Lead ID",
+            "x-guaranteed": true
+          },
+          "first_name": { "type": "string" },
+          "last_name": { "type": "string", "x-guaranteed": true },
+          "email": { "type": "string" },
+          "company": { "type": "string", "x-guaranteed": true },
+          "status": { "type": "string", "x-guaranteed": true },
+          "created_at": {
+            "type": "string",
+            "description": "Timestamp when lead was created (ISO 8601)",
+            "x-guaranteed": true
+          }
+        }
+      },
+      "output_guidance": {
+        "success_description": "Lead created successfully",
+        "sample_output": {
+          "id": "00Q5e00000HgYzBEAV",
+          "first_name": "John",
+          "last_name": "Doe",
+          "email": "john.doe@company.com",
+          "company": "Acme Corp",
+          "status": "Open - Not Contacted",
+          "created_at": "2026-03-17T16:00:00Z"
+        },
+        "common_errors": {
+          "auth_failed": "Your Salesforce connection has expired. Please reconnect in Settings → Connected Apps.",
+          "required_field_missing": "Last name and company are required to create a lead.",
+          "duplicate_lead": "A lead with this email already exists.",
+          "insufficient_permissions": "You don't have permission to create leads in Salesforce."
+        }
+      }
+    },
+    "query_leads": {
+      "description": "Search and retrieve leads from Salesforce using filters",
+      "usage_context": "When user wants to find leads, filter by criteria, or list prospects",
+      "idempotent": true,
+      "domain": "crm",
+      "capability": "search",
+      "input_entity": null,
+      "output_entity": "lead",
+      "input_cardinality": null,
+      "output_cardinality": "collection",
+      "output_fields": ["id", "first_name", "last_name", "email", "company", "phone", "status"],
+      "required_params": [],
+      "optional_params": ["email", "company", "status", "created_date", "limit"],
+      "must_support": ["full_text_search", "date_filtering", "status_filtering"],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "email": {
+            "type": "string",
+            "description": "Filter by email address"
+          },
+          "company": {
+            "type": "string",
+            "description": "Filter by company name (partial match supported)"
+          },
+          "status": {
+            "type": "string",
+            "enum": ["Open - Not Contacted", "Working - Contacted", "Closed - Converted", "Closed - Not Converted"],
+            "description": "Filter by lead status"
+          },
+          "created_date": {
+            "type": "string",
+            "description": "Filter by creation date (ISO 8601, e.g., '2026-03-01')"
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 200,
+            "default": 100,
+            "description": "Maximum number of results to return"
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "leads": {
+            "type": "array",
+            "description": "List of matching leads",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": { "type": "string", "description": "Salesforce Lead ID" },
+                "first_name": { "type": "string" },
+                "last_name": { "type": "string" },
+                "email": { "type": "string" },
+                "company": { "type": "string" },
+                "phone": { "type": "string" },
+                "status": { "type": "string" },
+                "created_date": { "type": "string" }
+              }
+            }
+          },
+          "lead_count": {
+            "type": "integer",
+            "description": "Number of leads returned",
+            "x-guaranteed": true
+          },
+          "searched_at": {
+            "type": "string",
+            "description": "Timestamp when search was performed (ISO 8601)",
+            "x-guaranteed": true
+          }
+        }
+      },
+      "output_guidance": {
+        "success_description": "Retrieved leads from Salesforce",
+        "sample_output": {
+          "leads": [
+            {
+              "id": "00Q5e00000HgYzBEAV",
+              "first_name": "John",
+              "last_name": "Doe",
+              "email": "john.doe@company.com",
+              "company": "Acme Corp",
+              "phone": "+1234567890",
+              "status": "Working - Contacted",
+              "created_date": "2026-03-15"
+            }
+          ],
+          "lead_count": 1,
+          "searched_at": "2026-03-17T16:00:00Z"
+        },
+        "common_errors": {
+          "auth_failed": "Your Salesforce connection has expired. Please reconnect.",
+          "insufficient_permissions": "You don't have permission to query leads."
+        }
+      }
+    },
+    "update_lead": {
+      "description": "Update an existing lead's information",
+      "usage_context": "When user wants to modify lead details, update status, or change contact information",
+      "idempotent": true,
+      "domain": "crm",
+      "capability": "update",
+      "input_entity": "lead",
+      "output_entity": "lead",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "output_fields": ["id", "updated_fields", "updated_at"],
+      "required_params": ["lead_id"],
+      "optional_params": ["first_name", "last_name", "email", "phone", "status", "company"],
+      "must_support": ["partial_updates", "status_changes"],
+      "parameters": {
+        "type": "object",
+        "required": ["lead_id"],
+        "properties": {
+          "lead_id": {
+            "type": "string",
+            "description": "The ID of the lead to update",
+            "x-variable-mapping": {
+              "from_type": "lead",
+              "field_path": "id",
+              "description": "Extract lead ID from lead object"
+            }
+          },
+          "first_name": {
+            "type": "string",
+            "description": "Updated first name"
+          },
+          "last_name": {
+            "type": "string",
+            "description": "Updated last name"
+          },
+          "email": {
+            "type": "string",
+            "description": "Updated email address"
+          },
+          "phone": {
+            "type": "string",
+            "description": "Updated phone number"
+          },
+          "status": {
+            "type": "string",
+            "enum": ["Open - Not Contacted", "Working - Contacted", "Closed - Converted", "Closed - Not Converted"],
+            "description": "Updated lead status"
+          },
+          "company": {
+            "type": "string",
+            "description": "Updated company name"
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Lead ID",
+            "x-guaranteed": true
+          },
+          "success": {
+            "type": "boolean",
+            "x-guaranteed": true
+          },
+          "updated_at": {
+            "type": "string",
+            "description": "Timestamp when lead was updated (ISO 8601)",
+            "x-guaranteed": true
+          }
+        }
+      },
+      "output_guidance": {
+        "success_description": "Lead updated successfully",
+        "sample_output": {
+          "id": "00Q5e00000HgYzBEAV",
+          "success": true,
+          "updated_at": "2026-03-17T16:00:00Z"
+        },
+        "common_errors": {
+          "auth_failed": "Your Salesforce connection has expired.",
+          "lead_not_found": "The specified lead was not found.",
+          "insufficient_permissions": "You don't have permission to update leads."
+        }
+      }
+    },
+    "create_account": {
+      "description": "Create a new account (company/organization) in Salesforce",
+      "usage_context": "When user wants to add companies, create customer accounts, or record organizations",
+      "idempotent": false,
+      "domain": "crm",
+      "capability": "create",
+      "input_entity": "account",
+      "output_entity": "account",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "output_fields": ["id", "name", "type", "industry", "website"],
+      "required_params": ["name"],
+      "optional_params": ["phone", "website", "industry", "type", "billing_city", "billing_country"],
+      "must_support": ["custom_fields", "address_fields"],
+      "parameters": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Account name (company/organization name)"
+          },
+          "phone": {
+            "type": "string",
+            "description": "Account phone number"
+          },
+          "website": {
+            "type": "string",
+            "description": "Account website URL"
+          },
+          "industry": {
+            "type": "string",
+            "enum": ["Technology", "Finance", "Healthcare", "Retail", "Manufacturing", "Education", "Other"],
+            "description": "Account industry"
+          },
+          "type": {
+            "type": "string",
+            "enum": ["Prospect", "Customer - Direct", "Customer - Channel", "Partner", "Other"],
+            "description": "Account type"
+          },
+          "billing_city": {
+            "type": "string",
+            "description": "Billing city"
+          },
+          "billing_country": {
+            "type": "string",
+            "description": "Billing country"
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Salesforce Account ID",
+            "x-guaranteed": true
+          },
+          "name": {
+            "type": "string",
+            "x-guaranteed": true
+          },
+          "type": { "type": "string" },
+          "industry": { "type": "string" },
+          "website": { "type": "string" },
+          "created_at": {
+            "type": "string",
+            "description": "Timestamp when account was created (ISO 8601)",
+            "x-guaranteed": true
+          }
+        }
+      },
+      "output_guidance": {
+        "success_description": "Account created successfully",
+        "sample_output": {
+          "id": "0015e00000XyZaBCDE",
+          "name": "Acme Corporation",
+          "type": "Customer - Direct",
+          "industry": "Technology",
+          "website": "https://acme.com",
+          "created_at": "2026-03-17T16:00:00Z"
+        },
+        "common_errors": {
+          "auth_failed": "Your Salesforce connection has expired.",
+          "duplicate_account": "An account with this name already exists.",
+          "insufficient_permissions": "You don't have permission to create accounts."
+        }
+      }
+    },
+    "query_accounts": {
+      "description": "Search and retrieve accounts from Salesforce",
+      "usage_context": "When user wants to find companies, filter accounts, or list customers",
+      "idempotent": true,
+      "domain": "crm",
+      "capability": "search",
+      "input_entity": null,
+      "output_entity": "account",
+      "input_cardinality": null,
+      "output_cardinality": "collection",
+      "output_fields": ["id", "name", "phone", "website", "industry", "type"],
+      "required_params": [],
+      "optional_params": ["name", "industry", "type", "limit"],
+      "must_support": ["text_search", "industry_filter", "type_filter"],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Filter by account name (partial match supported)"
+          },
+          "industry": {
+            "type": "string",
+            "description": "Filter by industry"
+          },
+          "type": {
+            "type": "string",
+            "description": "Filter by account type"
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 200,
+            "default": 100,
+            "description": "Maximum number of results"
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "accounts": {
+            "type": "array",
+            "description": "List of matching accounts",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": { "type": "string" },
+                "name": { "type": "string" },
+                "phone": { "type": "string" },
+                "website": { "type": "string" },
+                "industry": { "type": "string" },
+                "type": { "type": "string" }
+              }
+            }
+          },
+          "account_count": {
+            "type": "integer",
+            "x-guaranteed": true
+          },
+          "searched_at": {
+            "type": "string",
+            "x-guaranteed": true
+          }
+        }
+      },
+      "output_guidance": {
+        "success_description": "Retrieved accounts from Salesforce",
+        "sample_output": {
+          "accounts": [
+            {
+              "id": "0015e00000XyZaBCDE",
+              "name": "Acme Corporation",
+              "phone": "+1234567890",
+              "website": "https://acme.com",
+              "industry": "Technology",
+              "type": "Customer - Direct"
+            }
+          ],
+          "account_count": 1,
+          "searched_at": "2026-03-17T16:00:00Z"
+        },
+        "common_errors": {
+          "auth_failed": "Your Salesforce connection has expired.",
+          "insufficient_permissions": "You don't have permission to query accounts."
+        }
+      }
+    },
+    "create_contact": {
+      "description": "Create a new contact in Salesforce",
+      "usage_context": "When user wants to add contacts, record people at companies, or create contact records",
+      "idempotent": false,
+      "domain": "crm",
+      "capability": "create",
+      "input_entity": "contact",
+      "output_entity": "contact",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "output_fields": ["id", "first_name", "last_name", "email", "account_id"],
+      "required_params": ["last_name"],
+      "optional_params": ["first_name", "email", "phone", "account_id", "title"],
+      "must_support": ["account_association", "custom_fields"],
+      "parameters": {
+        "type": "object",
+        "required": ["last_name"],
+        "properties": {
+          "first_name": {
+            "type": "string",
+            "description": "Contact's first name"
+          },
+          "last_name": {
+            "type": "string",
+            "description": "Contact's last name"
+          },
+          "email": {
+            "type": "string",
+            "description": "Contact's email address"
+          },
+          "phone": {
+            "type": "string",
+            "description": "Contact's phone number"
+          },
+          "account_id": {
+            "type": "string",
+            "description": "Associated Salesforce Account ID",
+            "x-variable-mapping": {
+              "from_type": "account",
+              "field_path": "id",
+              "description": "Extract account ID from account object"
+            }
+          },
+          "title": {
+            "type": "string",
+            "description": "Contact's job title"
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Salesforce Contact ID",
+            "x-guaranteed": true
+          },
+          "first_name": { "type": "string" },
+          "last_name": { "type": "string", "x-guaranteed": true },
+          "email": { "type": "string" },
+          "account_id": { "type": "string" },
+          "created_at": {
+            "type": "string",
+            "x-guaranteed": true
+          }
+        }
+      },
+      "output_guidance": {
+        "success_description": "Contact created successfully",
+        "sample_output": {
+          "id": "0035e00000PqRsEFGH",
+          "first_name": "Jane",
+          "last_name": "Smith",
+          "email": "jane.smith@acme.com",
+          "account_id": "0015e00000XyZaBCDE",
+          "created_at": "2026-03-17T16:00:00Z"
+        },
+        "common_errors": {
+          "auth_failed": "Your Salesforce connection has expired.",
+          "account_not_found": "The specified account was not found.",
+          "insufficient_permissions": "You don't have permission to create contacts."
+        }
+      }
+    },
+    "query_contacts": {
+      "description": "Search and retrieve contacts from Salesforce",
+      "usage_context": "When user wants to find contacts, filter by criteria, or list people",
+      "idempotent": true,
+      "domain": "crm",
+      "capability": "search",
+      "input_entity": null,
+      "output_entity": "contact",
+      "input_cardinality": null,
+      "output_cardinality": "collection",
+      "output_fields": ["id", "first_name", "last_name", "email", "phone", "account_id", "title"],
+      "required_params": [],
+      "optional_params": ["email", "last_name", "account_id", "limit"],
+      "must_support": ["email_search", "account_filter"],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "email": {
+            "type": "string",
+            "description": "Filter by email address"
+          },
+          "last_name": {
+            "type": "string",
+            "description": "Filter by last name (partial match supported)"
+          },
+          "account_id": {
+            "type": "string",
+            "description": "Filter by associated account ID",
+            "x-variable-mapping": {
+              "from_type": "account",
+              "field_path": "id",
+              "description": "Extract account ID from account object"
+            }
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 200,
+            "default": 100,
+            "description": "Maximum number of results"
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "contacts": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": { "type": "string" },
+                "first_name": { "type": "string" },
+                "last_name": { "type": "string" },
+                "email": { "type": "string" },
+                "phone": { "type": "string" },
+                "account_id": { "type": "string" },
+                "title": { "type": "string" }
+              }
+            }
+          },
+          "contact_count": {
+            "type": "integer",
+            "x-guaranteed": true
+          },
+          "searched_at": {
+            "type": "string",
+            "x-guaranteed": true
+          }
+        }
+      },
+      "output_guidance": {
+        "success_description": "Retrieved contacts from Salesforce",
+        "sample_output": {
+          "contacts": [
+            {
+              "id": "0035e00000PqRsEFGH",
+              "first_name": "Jane",
+              "last_name": "Smith",
+              "email": "jane.smith@acme.com",
+              "phone": "+1234567890",
+              "account_id": "0015e00000XyZaBCDE",
+              "title": "VP of Sales"
+            }
+          ],
+          "contact_count": 1,
+          "searched_at": "2026-03-17T16:00:00Z"
+        },
+        "common_errors": {
+          "auth_failed": "Your Salesforce connection has expired.",
+          "insufficient_permissions": "You don't have permission to query contacts."
+        }
+      }
+    },
+    "create_opportunity": {
+      "description": "Create a new sales opportunity in Salesforce",
+      "usage_context": "When user wants to track deals, record potential sales, or manage pipeline",
+      "idempotent": false,
+      "domain": "crm",
+      "capability": "create",
+      "input_entity": "opportunity",
+      "output_entity": "opportunity",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "output_fields": ["id", "name", "amount", "stage", "close_date", "account_id"],
+      "required_params": ["name", "stage", "close_date"],
+      "optional_params": ["account_id", "amount", "probability", "description"],
+      "must_support": ["stage_tracking", "amount_tracking", "account_association"],
+      "parameters": {
+        "type": "object",
+        "required": ["name", "stage", "close_date"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Opportunity name/title"
+          },
+          "account_id": {
+            "type": "string",
+            "description": "Associated Salesforce Account ID",
+            "x-variable-mapping": {
+              "from_type": "account",
+              "field_path": "id",
+              "description": "Extract account ID from account object"
+            }
+          },
+          "amount": {
+            "type": "number",
+            "description": "Opportunity amount (in USD or account currency)"
+          },
+          "close_date": {
+            "type": "string",
+            "description": "Expected close date (ISO 8601 date format, e.g., '2026-04-01')"
+          },
+          "stage": {
+            "type": "string",
+            "enum": ["Prospecting", "Qualification", "Needs Analysis", "Value Proposition", "Proposal/Price Quote", "Negotiation/Review", "Closed Won", "Closed Lost"],
+            "description": "Sales stage of the opportunity"
+          },
+          "probability": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100,
+            "description": "Probability of closing (0-100%)"
+          },
+          "description": {
+            "type": "string",
+            "description": "Opportunity description or notes"
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Salesforce Opportunity ID",
+            "x-guaranteed": true
+          },
+          "name": {
+            "type": "string",
+            "x-guaranteed": true
+          },
+          "amount": { "type": "number" },
+          "stage": {
+            "type": "string",
+            "x-guaranteed": true
+          },
+          "close_date": {
+            "type": "string",
+            "x-guaranteed": true
+          },
+          "account_id": { "type": "string" },
+          "created_at": {
+            "type": "string",
+            "x-guaranteed": true
+          }
+        }
+      },
+      "output_guidance": {
+        "success_description": "Opportunity created successfully",
+        "sample_output": {
+          "id": "0065e00000AbCdEFGH",
+          "name": "Q2 Enterprise Deal",
+          "amount": 50000,
+          "stage": "Qualification",
+          "close_date": "2026-06-30",
+          "account_id": "0015e00000XyZaBCDE",
+          "created_at": "2026-03-17T16:00:00Z"
+        },
+        "common_errors": {
+          "auth_failed": "Your Salesforce connection has expired.",
+          "invalid_stage": "The specified stage is not valid.",
+          "account_not_found": "The specified account was not found.",
+          "insufficient_permissions": "You don't have permission to create opportunities."
+        }
+      }
+    },
+    "query_opportunities": {
+      "description": "Search and retrieve opportunities from Salesforce",
+      "usage_context": "When user wants to view pipeline, filter deals, or list sales opportunities",
+      "idempotent": true,
+      "domain": "crm",
+      "capability": "search",
+      "input_entity": null,
+      "output_entity": "opportunity",
+      "input_cardinality": null,
+      "output_cardinality": "collection",
+      "output_fields": ["id", "name", "amount", "stage", "close_date", "account_id", "probability"],
+      "required_params": [],
+      "optional_params": ["account_id", "stage", "close_date_from", "close_date_to", "limit"],
+      "must_support": ["stage_filter", "date_range_filter", "account_filter"],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "account_id": {
+            "type": "string",
+            "description": "Filter by associated account ID",
+            "x-variable-mapping": {
+              "from_type": "account",
+              "field_path": "id",
+              "description": "Extract account ID from account object"
+            }
+          },
+          "stage": {
+            "type": "string",
+            "enum": ["Prospecting", "Qualification", "Needs Analysis", "Value Proposition", "Proposal/Price Quote", "Negotiation/Review", "Closed Won", "Closed Lost"],
+            "description": "Filter by sales stage"
+          },
+          "close_date_from": {
+            "type": "string",
+            "description": "Filter opportunities closing after this date (ISO 8601)"
+          },
+          "close_date_to": {
+            "type": "string",
+            "description": "Filter opportunities closing before this date (ISO 8601)"
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 200,
+            "default": 100,
+            "description": "Maximum number of results"
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "opportunities": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": { "type": "string" },
+                "name": { "type": "string" },
+                "amount": { "type": "number" },
+                "stage": { "type": "string" },
+                "close_date": { "type": "string" },
+                "account_id": { "type": "string" },
+                "probability": { "type": "integer" }
+              }
+            }
+          },
+          "opportunity_count": {
+            "type": "integer",
+            "x-guaranteed": true
+          },
+          "total_amount": {
+            "type": "number",
+            "description": "Sum of all opportunity amounts"
+          },
+          "searched_at": {
+            "type": "string",
+            "x-guaranteed": true
+          }
+        }
+      },
+      "output_guidance": {
+        "success_description": "Retrieved opportunities from Salesforce",
+        "sample_output": {
+          "opportunities": [
+            {
+              "id": "0065e00000AbCdEFGH",
+              "name": "Q2 Enterprise Deal",
+              "amount": 50000,
+              "stage": "Qualification",
+              "close_date": "2026-06-30",
+              "account_id": "0015e00000XyZaBCDE",
+              "probability": 50
+            }
+          ],
+          "opportunity_count": 1,
+          "total_amount": 50000,
+          "searched_at": "2026-03-17T16:00:00Z"
+        },
+        "common_errors": {
+          "auth_failed": "Your Salesforce connection has expired.",
+          "insufficient_permissions": "You don't have permission to query opportunities."
+        }
+      }
+    }
+  }
+}

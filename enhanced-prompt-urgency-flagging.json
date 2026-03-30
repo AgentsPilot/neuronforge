@@ -1,0 +1,80 @@
+{
+  "plan_title": "Gmail Urgency Flagging Agent",
+  "plan_description": "Scans Gmail Inbox emails, flags urgent messages based on keywords in subject/body, marks them as important, labels them as reviewed, and emails you a summary of what changed.",
+  "sections": {
+    "data": [
+      "- Search Gmail for all emails currently in the Inbox (read and unread).",
+      "- For each email found, read the email subject text.",
+      "- For each email found, read the email body text (plain text or best-available text version).",
+      "- Exclude any email that already has the tracking label \"AI-Reviewed\"."
+    ],
+    "actions": [
+      "- Determine whether an email is urgent by checking whether the subject OR body contains any of these keywords/phrases (case-insensitive): \"today\", \"urgent\", \"immediately\", \"now\", \"sensitive\".",
+      "- If the email is urgent, mark the email as important using Gmail's built-in important flag.",
+      "- If the email is urgent, apply the Gmail label \"AI-Reviewed\" to the email so it will be skipped in future runs.",
+      "- If the email is not urgent, do nothing (leave the email unchanged)."
+    ],
+    "output": [
+      "- Create a summary list of all emails that were marked important in this run.",
+      "- For each email in the summary list, include: sender, subject, received date/time, and a short note of which keyword(s) matched (if determinable).",
+      "- If no emails were found marked important, the summary must explicitly say that no urgent emails were found."
+    ],
+    "delivery": [
+      "- Send the summary as an email to avital.livovsky@gmail.com.",
+      "- Use a clear subject line such as: \"Urgent emails marked Important (summary)\".",
+      "- Put the summary directly in the email body (no attachments)."
+    ],
+    "processing_steps": [
+      "- Build a Gmail search query that targets Inbox emails and excludes the tracking label \"AI-Reviewed\".",
+      "- Retrieve the matching email list.",
+      "- For each email, evaluate the urgency keyword rules against subject and body.",
+      "- For urgent emails, apply the important flag and the \"AI-Reviewed\" label.",
+      "- Compile and send the summary email."
+    ]
+  },
+  "specifics": {
+    "services_involved": [
+      "google-mail",
+      "chatgpt-research"
+    ],
+    "user_inputs_required": [],
+    "resolved_user_inputs": [
+      {
+        "key": "user_email",
+        "value": "avital.livovsky@gmail.com"
+      },
+      {
+        "key": "scan_scope",
+        "value": "All Inbox emails"
+      },
+      {
+        "key": "urgency_method",
+        "value": "Keyword rules"
+      },
+      {
+        "key": "urgency_keywords",
+        "value": "today, urgent, immediately, now, sensitive"
+      },
+      {
+        "key": "urgent_actions",
+        "value": "Mark as important"
+      },
+      {
+        "key": "non_urgent_behavior",
+        "value": "Do nothing"
+      },
+      {
+        "key": "tracking_strategy",
+        "value": "Add tracking label"
+      },
+      {
+        "key": "tracking_label_name",
+        "value": "AI-Reviewed"
+      },
+      {
+        "key": "summary_delivery",
+        "value": "Email summary to user"
+      }
+    ]
+  }
+}

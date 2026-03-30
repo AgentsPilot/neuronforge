@@ -1,0 +1,568 @@
+/**
+ * RepairEngine - Auto-repair data shape mismatches during calibration
+ *
+ * When a step fails because its input has the wrong shape (object vs array),
+ * the RepairEngine analyzes the upstream step's output and proposes a fix:
+ *
+ * 1. Object with single array field → extract that field
+ * 2. Object with multiple array fields → extract best-match using SchemaAwareDataExtractor patterns
+ * 3. Single record (no array fields) → wrap in [object]
+ * 4. Deeply nested or incompatible → no repair possible
+ *
+ * All repairs operate on IN-MEMORY data only. No client data is persisted.
+ * The RepairEngine NEVER throws — all errors are caught and returned as 'not_fixable'.
+ *
+ * @module lib/pilot/shadow/RepairEngine
+ */
+
+import type { StepOutput } from '../types';
+import type {
+  FailureClassification,
+  RepairActionType,
+  RepairProposal,
+  RepairResult,
+} from './types';
+
+/**
+ * Metadata fields that should NOT be treated as primary data arrays.
+ * Mirrors SchemaAwareDataExtractor's METADATA_FIELDS set.
+ */
+const METADATA_FIELDS = new Set([
+  'count', 'total', 'total_count', 'totalCount', 'page', 'pages', 'per_page', 'perPage',
+  'offset', 'limit', 'start', 'size', 'has_more', 'hasMore', 'next_page', 'nextPage',
+  'next_page_token', 'nextPageToken', 'cursor', 'next_cursor', 'nextCursor',
+  'previous_page', 'previousPage', 'prev_cursor', 'prevCursor',
+  'pagination', 'paging', 'meta', 'metadata', '_metadata', '_meta',
+  'success', 'error', 'errors', 'status', 'message', 'code',
+  'removed', 'originalCount', 'original_count', 'length',
+  'warnings', 'info', 'debug', 'links', '_links',
+]);
+
+/**
+ * Priority patterns for identifying primary data arrays when multiple exist.
+ * Order matters — first match wins. Mirrors SchemaAwareDataExtractor.
+ */
+const PRIMARY_ARRAY_PATTERNS = [
+  /^items$/i,
+  /^results?$/i,
+  /^records?$/i,
+  /^entries$/i,
+  /^list$/i,
+  /^rows?$/i,
+  /^values$/i,
+  /^objects?$/i,
+  /^entities$/i,
+  /^resources?$/i,
+  /^elements$/i,
+  /^content$/i,
+  /^response$/i,
+];
+
+/** Shape classification for upstream data */
+type DataShapeClass =
+  | 'already_array'
+  | 'single_array_field'
+  | 'multiple_array_fields'
+  | 'single_record'
+  | 'deeply_nested'
+  | 'incompatible'
+  | 'api_envelope'           // {success: true, data: [...]}
+  | 'paginated_response'     // {items: [...], has_more: true}
+  | 'polymorphic_null'       // null that should be []
+  | 'hierarchical'           // {children: [...]}
+  | 'sparse_array'           // [{...}, null, {...}]
+  | 'multi_resource';        // {users: [...], posts: [...]}
+
+interface DataShapeAnalysis {
+  shape: DataShapeClass;
+  arrayFields: Array<{ name: string; length: number }>;
+  bestMatchField?: string;
+  envelopeKey?: string;      // For api_envelope: 'data', 'result', etc.
+  paginationInfo?: {         // For paginated_response
+    hasMore?: boolean;
+    nextCursor?: string;
+    offset?: number;
+    total?: number;
+  };
+}
+
+export class RepairEngine {
+
+  /**
+   * Propose a repair for a data_shape_mismatch failure.
+   *
+   * @param classification - The failure classification from FailureClassifier
+   * @param failedStepId - The step that failed
+   * @param upstreamStepId - The upstream step whose output may need fixing
+   * @param upstreamOutput - The upstream step's StepOutput (in-memory)
+   * @param failedStep - Optional: The failed step definition for context (description, config, etc.)
+   * @returns RepairProposal with action type and details, or action='none'
+   */
+  proposeRepair(
+    classification: FailureClassification,
+    failedStepId: string,
+    upstreamStepId: string,
+    upstreamOutput: StepOutput | undefined,
+    failedStep?: any
+  ): RepairProposal {
+    const noRepair: RepairProposal = {
+      action: 'none',
+      description: 'No repair possible',
+      confidence: 0,
+      targetStepId: upstreamStepId,
+      risk: 'high',
+    };
+
+    // Only repair data_shape_mismatch failures
+    if (classification.category !== 'data_shape_mismatch') {
+      return { ...noRepair, description: `Repair not applicable for ${classification.category}` };
+    }
+
+    if (!upstreamOutput) {
+      return { ...noRepair, description: 'No upstream output available' };
+    }
+
+    const data = upstreamOutput.data;
+
+    // Special case: handle null/undefined polymorphic responses
+    if (data === null || data === undefined) {
+      return {
+        action: 'normalize_to_array',
+        description: 'Convert null/undefined to empty array',
+        confidence: 0.9,
+        targetStepId: upstreamStepId,
+        risk: 'low',
+      };
+    }
+
+    const analysis = this.analyzeUpstreamData(data, failedStep);
+
+    switch (analysis.shape) {
+      case 'already_array':
+        // Check if it's a sparse array with nulls
+        if (Array.isArray(data) && data.some(item => item === null || item === undefined)) {
+          return {
+            action: 'compact_sparse_array',
+            description: `Remove ${data.filter(i => i == null).length} null/undefined items from array`,
+            confidence: 0.8,
+            targetStepId: upstreamStepId,
+            risk: 'low',
+          };
+        }
+        return { ...noRepair, description: 'Upstream data is already an array' };
+
+      case 'api_envelope':
+        return {
+          action: 'extract_from_envelope',
+          description: `Extract array from API envelope (${analysis.envelopeKey} field)`,
+          confidence: 0.9,
+          targetStepId: upstreamStepId,
+          extractField: analysis.envelopeKey,
+          risk: 'low',
+        };
+
+      case 'paginated_response':
+        return {
+          action: 'extract_paginated_data',
+          description: `Extract '${analysis.bestMatchField}' array from paginated response`,
+          confidence: 0.9,
+          targetStepId: upstreamStepId,
+          extractField: analysis.bestMatchField,
+          paginationInfo: analysis.paginationInfo,
+          risk: 'low',
+        };
+
+      case 'single_array_field':
+        return {
+          action: 'extract_single_array',
+          description: `Extract '${analysis.bestMatchField}' array from object`,
+          confidence: 0.95,
+          targetStepId: upstreamStepId,
+          extractField: analysis.bestMatchField,
+          risk: 'low',
+        };
+
+      case 'multiple_array_fields':
+        return {
+          action: 'extract_named_array',
+          description: `Extract '${analysis.bestMatchField}' array (best match from ${analysis.arrayFields.length} arrays)`,
+          confidence: 0.8,
+          targetStepId: upstreamStepId,
+          extractField: analysis.bestMatchField,
+          risk: 'medium',
+        };
+
+      case 'multi_resource':
+        return {
+          action: 'extract_multiresource',
+          description: `Multiple entity arrays detected (${analysis.arrayFields.map(f => f.name).join(', ')}). User selection required.`,
+          confidence: 0,
+          targetStepId: upstreamStepId,
+          arrayFields: analysis.arrayFields,
+          risk: 'high',
+        };
+
+      case 'hierarchical':
+        return {
+          action: 'flatten_hierarchy',
+          description: `Flatten recursive tree structure (${analysis.bestMatchField} field)`,
+          confidence: 0.7,
+          targetStepId: upstreamStepId,
+          extractField: analysis.bestMatchField,
+          risk: 'medium',
+        };
+
+      case 'single_record':
+        return {
+          action: 'normalize_to_array',
+          description: 'Wrap single object in array',
+          confidence: 0.85,
+          targetStepId: upstreamStepId,
+          risk: 'low',
+        };
+
+      case 'deeply_nested':
+        return { ...noRepair, description: 'Data is deeply nested (depth > 3), cannot auto-repair' };
+
+      case 'polymorphic_null':
+        return {
+          action: 'normalize_to_array',
+          description: 'Convert null to empty array',
+          confidence: 0.9,
+          targetStepId: upstreamStepId,
+          risk: 'low',
+        };
+
+      case 'sparse_array':
+        return {
+          action: 'compact_sparse_array',
+          description: 'Remove null/undefined items from array',
+          confidence: 0.8,
+          targetStepId: upstreamStepId,
+          risk: 'low',
+        };
+
+      case 'incompatible':
+        return { ...noRepair, description: `Upstream data is incompatible type: ${typeof data}` };
+
+      default:
+        return noRepair;
+    }
+  }
+
+  /**
+   * Apply a repair proposal by modifying the upstream step's output data in memory.
+   * Returns a NEW StepOutput with modified data but same metadata.
+   *
+   * @param proposal - The repair proposal to apply
+   * @param upstreamOutput - The upstream step's current StepOutput
+   * @returns Modified StepOutput with repaired data, or null if repair fails
+   */
+  applyRepair(
+    proposal: RepairProposal,
+    upstreamOutput: StepOutput
+  ): StepOutput | null {
+    if (proposal.action === 'none') {
+      return null;
+    }
+
+    const data = upstreamOutput.data;
+
+    switch (proposal.action) {
+      case 'extract_single_array':
+      case 'extract_named_array': {
+        const field = proposal.extractField;
+        if (!field || !data || typeof data !== 'object' || !Array.isArray(data[field])) {
+          return null;
+        }
+        return {
+          ...upstreamOutput,
+          data: data[field],
+        };
+      }
+
+      case 'wrap_in_array': {
+        if (!data || typeof data !== 'object' || Array.isArray(data)) {
+          return null;
+        }
+        return {
+          ...upstreamOutput,
+          data: [data],
+        };
+      }
+
+      default:
+        return null;
+    }
+  }
+
+  /**
+   * Analyze upstream data to classify its shape and find the best array field.
+   * Detects 10+ generic patterns that work for ANY plugin.
+   * @param data Upstream step output
+   * @param failedStep Optional: The failed step definition for context
+   */
+  analyzeUpstreamData(data: any, failedStep?: any): DataShapeAnalysis {
+    // Already an array
+    if (Array.isArray(data)) {
+      // Check for sparse array (nulls/undefined)
+      if (data.some(item => item === null || item === undefined)) {
+        return { shape: 'sparse_array', arrayFields: [] };
+      }
+      return { shape: 'already_array', arrayFields: [] };
+    }
+
+    // Not an object → incompatible
+    if (!data || typeof data !== 'object') {
+      return { shape: 'incompatible', arrayFields: [] };
+    }
+
+    // PATTERN 1: API Envelope - {success: true, data: [...]} or {status: "ok", result: [...]}
+    const envelopeKeys = ['data', 'result', 'results', 'response', 'body', 'payload', 'content'];
+    for (const key of envelopeKeys) {
+      if (data[key] && Array.isArray(data[key]) && (data.success !== undefined || data.status !== undefined)) {
+        return {
+          shape: 'api_envelope',
+          arrayFields: [{ name: key, length: data[key].length }],
+          bestMatchField: key,
+          envelopeKey: key,
+        };
+      }
+    }
+
+    // Find all non-metadata array fields
+    const arrayFields: Array<{ name: string; length: number }> = [];
+    for (const [key, value] of Object.entries(data)) {
+      if (Array.isArray(value) && !METADATA_FIELDS.has(key) && !METADATA_FIELDS.has(key.toLowerCase())) {
+        arrayFields.push({ name: key, length: (value as any[]).length });
+      }
+    }
+
+    // PATTERN 2: Paginated Response - has pagination indicators + array
+    const paginationIndicators = ['has_more', 'hasMore', 'next_page_token', 'nextPageToken', 'next_cursor', 'nextCursor', 'offset', 'page', 'total_pages'];
+    const hasPaginationIndicator = paginationIndicators.some(key => data[key] !== undefined);
+
+    if (hasPaginationIndicator && arrayFields.length > 0) {
+      const bestMatch = arrayFields.length === 1 ? arrayFields[0].name : this.findBestArrayField(arrayFields, data, failedStep);
+      return {
+        shape: 'paginated_response',
+        arrayFields,
+        bestMatchField: bestMatch,
+        paginationInfo: {
+          hasMore: data.has_more ?? data.hasMore,
+          nextCursor: data.next_cursor ?? data.nextCursor ?? data.next_page_token ?? data.nextPageToken,
+          offset: data.offset,
+          total: data.total ?? data.total_count ?? data.totalCount,
+        },
+      };
+    }
+
+    // PATTERN 3: Hierarchical Data - has 'children' field
+    if (data.children && Array.isArray(data.children)) {
+      return {
+        shape: 'hierarchical',
+        arrayFields: [{ name: 'children', length: data.children.length }],
+        bestMatchField: 'children',
+      };
+    }
+
+    // PATTERN 4: Multi-Resource Response - multiple unrelated entity arrays
+    // Example: {users: [...], posts: [...], comments: [...]}
+    if (arrayFields.length >= 3) {
+      // Check if field names suggest different entity types (not just variants)
+      const entityNames = arrayFields.map(f => f.name.toLowerCase());
+      const hasDistinctEntities = new Set(entityNames.map(n => n.replace(/s$/, ''))).size === entityNames.length;
+
+      if (hasDistinctEntities) {
+        return {
+          shape: 'multi_resource',
+          arrayFields,
+        };
+      }
+    }
+
+    // PATTERN 5: Single array field (most common)
+    if (arrayFields.length === 1) {
+      return {
+        shape: 'single_array_field',
+        arrayFields,
+        bestMatchField: arrayFields[0].name,
+      };
+    }
+
+    // PATTERN 6: Multiple array fields (same entity type, different states)
+    // Example: {files: [...], folders: [...]} or {active_items: [...], archived_items: [...]}
+    if (arrayFields.length > 1) {
+      const bestMatch = this.findBestArrayField(arrayFields, data, failedStep);
+      return {
+        shape: 'multiple_array_fields',
+        arrayFields,
+        bestMatchField: bestMatch,
+      };
+    }
+
+    // No array fields — check if it's a single record
+    const nonMetaKeys = Object.keys(data).filter(
+      k => !METADATA_FIELDS.has(k) && !METADATA_FIELDS.has(k.toLowerCase()) && !k.startsWith('_')
+    );
+
+    if (nonMetaKeys.length > 0) {
+      // Check nesting depth to avoid deeply nested structures
+      if (this.getMaxDepth(data) > 3) {
+        return { shape: 'deeply_nested', arrayFields: [] };
+      }
+      return { shape: 'single_record', arrayFields: [] };
+    }
+
+    return { shape: 'incompatible', arrayFields: [] };
+  }
+
+  // ─── Private helpers ─────────────────────────────────────
+
+  /**
+   * Find the best array field from multiple candidates using priority patterns.
+   * Uses context from the failed step (description, config) to make smarter decisions.
+   */
+  private findBestArrayField(
+    arrayFields: Array<{ name: string; length: number }>,
+    _data: any,
+    failedStep?: any
+  ): string {
+    console.log('[RepairEngine] findBestArrayField called with:', {
+      arrayFields: arrayFields.map(f => f.name),
+      hasFailedStep: !!failedStep,
+      stepDescription: failedStep?.description,
+      stepCustomCode: failedStep?.config?.custom_code
+    });
+
+    // Priority 0: Context-aware matching from step description/config
+    if (failedStep) {
+      const contextText = [
+        failedStep.description || '',
+        failedStep.config?.custom_code || '',
+        failedStep.config?.field || '',
+        JSON.stringify(failedStep.config?.output_schema || {})
+      ].join(' ').toLowerCase();
+
+      console.log('[RepairEngine] Context text for matching:', contextText.substring(0, 200));
+
+      // Extract field name hints from context (e.g., "extract attachments", "flatten attachments")
+      for (const field of arrayFields) {
+        const fieldName = field.name.toLowerCase();
+        const includes = contextText.includes(fieldName);
+        console.log(`[RepairEngine] Checking field "${fieldName}": ${includes ? '✅ FOUND' : '❌ not found'}`);
+        // Check if the field name is mentioned in the context
+        if (includes) {
+          console.log(`[RepairEngine] 🎯 Selected field based on context match: "${field.name}"`);
+          return field.name;
+        }
+      }
+
+      // Check for semantic matches (e.g., "attachment" matches "attachments")
+      for (const field of arrayFields) {
+        const fieldBase = field.name.toLowerCase().replace(/s$/, ''); // Remove plural 's'
+        const includes = contextText.includes(fieldBase);
+        console.log(`[RepairEngine] Checking field base "${fieldBase}": ${includes ? '✅ FOUND' : '❌ not found'}`);
+        if (includes) {
+          console.log(`[RepairEngine] 🎯 Selected field based on semantic match: "${field.name}"`);
+          return field.name;
+        }
+      }
+
+      console.log('[RepairEngine] ⚠️  No context match found, falling back to heuristics');
+    } else {
+      console.log('[RepairEngine] ⚠️  No failedStep provided, using heuristics only');
+    }
+
+    // Priority 1: Pattern-based matching
+    for (const pattern of PRIMARY_ARRAY_PATTERNS) {
+      const match = arrayFields.find(f => pattern.test(f.name));
+      if (match) return match.name;
+    }
+
+    // Priority 2: Pluralized noun (ends in 's', length > 3)
+    const pluralFields = arrayFields.filter(
+      f => /^[a-z_]+s$/i.test(f.name) && f.name.length > 3 && !f.name.startsWith('_')
+    );
+    if (pluralFields.length === 1) return pluralFields[0].name;
+    if (pluralFields.length > 1) {
+      // Longest plural name wins (more specific)
+      pluralFields.sort((a, b) => b.name.length - a.name.length);
+      return pluralFields[0].name;
+    }
+
+    // Priority 3: Largest non-empty array
+    const nonEmpty = arrayFields.filter(f => f.length > 0);
+    if (nonEmpty.length > 0) {
+      nonEmpty.sort((a, b) => b.length - a.length);
+      return nonEmpty[0].name;
+    }
+
+    // Fallback: first array field
+    return arrayFields[0].name;
+  }
+
+  /**
+   * Get the maximum nesting depth of an object.
+   * Used to detect deeply nested structures that can't be auto-repaired.
+   */
+  private getMaxDepth(obj: any, currentDepth: number = 0): number {
+    if (currentDepth > 5) return currentDepth; // cap recursion
+    if (!obj || typeof obj !== 'object' || Array.isArray(obj)) {
+      return currentDepth;
+    }
+
+    let maxDepth = currentDepth;
+    for (const value of Object.values(obj)) {
+      if (value && typeof value === 'object' && !Array.isArray(value)) {
+        const depth = this.getMaxDepth(value, currentDepth + 1);
+        if (depth > maxDepth) maxDepth = depth;
+      }
+    }
+    return maxDepth;
+  }
+}
+
+/**
+ * Detect the upstream step ID from a failed step's definition.
+ *
+ * Resolution order:
+ * 1. Parse `dependencies[]` array (explicit dependency IDs)
+ * 2. Parse `input` field for `{{stepX}}` or `{{stepX.data}}` references
+ * 3. Parse `params` object values for `{{stepX}}` references
+ * 4. Fallback: last step in completedSteps
+ *
+ * @returns The upstream step ID, or null if not determinable
+ */
+export function detectUpstreamStepId(
+  stepDef: { dependencies?: string[]; input?: string; params?: Record<string, any> },
+  completedSteps: string[]
+): string | null {
+  // 1. Explicit dependencies (last one is most likely the direct input provider)
+  if (stepDef.dependencies && stepDef.dependencies.length > 0) {
+    return stepDef.dependencies[stepDef.dependencies.length - 1];
+  }
+
+  // 2. Parse input field for {{stepX}} references
+  if (typeof stepDef.input === 'string') {
+    const match = stepDef.input.match(/\{\{(step\d+|[a-zA-Z_]\w*)\b/);
+    if (match) return match[1];
+  }
+
+  // 3. Parse params values for {{stepX}} references
+  if (stepDef.params) {
+    for (const value of Object.values(stepDef.params)) {
+      if (typeof value === 'string') {
+        const match = value.match(/\{\{(step\d+|[a-zA-Z_]\w*)\b/);
+        if (match) return match[1];
+      }
+    }
+  }
+
+  // 4. Fallback: last completed step
+  if (completedSteps.length > 0) {
+    return completedSteps[completedSteps.length - 1];
+  }
+
+  return null;
+}

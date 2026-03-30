@@ -1,0 +1,1238 @@
+{
+  "agent_id": "43ffbc8a-406d-4a43-9f3f-4e7554160eda",
+  "agent_name": "Invoice and Expenses Classification - Testing",
+  "workflow_steps": [
+    {
+      "id": "step1",
+      "type": "action",
+      "config": {
+        "query": "{{config.gmail_search_query}}",
+        "max_results": "{{config.gmail_search_max_results}}",
+        "include_attachments": true
+      },
+      "plugin": "google-mail",
+      "step_id": "step1",
+      "operation": "search_emails",
+      "description": "Search Gmail for invoice/expense emails with PDF attachments from last 24 hours",
+      "output_schema": {
+        "type": "object",
+        "source": "plugin",
+        "properties": {
+          "emails": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "source": "plugin",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "Gmail message ID"
+                },
+                "to": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "Recipient addresses"
+                },
+                "body": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "Email body text (NOTE: Usually empty in search results - use 'snippet' field instead for email content)"
+                },
+                "date": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "Email date"
+                },
+                "from": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "Sender address"
+                },
+                "labels": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "source": "plugin"
+                  },
+                  "source": "plugin",
+                  "description": "Gmail labels"
+                },
+                "snippet": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "Email preview snippet (first ~200 chars of email body - USE THIS for content matching/filtering)"
+                },
+                "subject": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "Email subject"
+                },
+                "thread_id": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "Gmail thread ID"
+                },
+                "attachments": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "source": "plugin",
+                    "properties": {
+                      "size": {
+                        "type": "number",
+                        "source": "plugin",
+                        "description": "File size in bytes"
+                      },
+                      "filename": {
+                        "type": "string",
+                        "source": "plugin",
+                        "description": "Attachment filename"
+                      },
+                      "mimeType": {
+                        "type": "string",
+                        "source": "plugin",
+                        "description": "MIME type (application/pdf, image/png, etc.)"
+                      },
+                      "message_id": {
+                        "type": "string",
+                        "source": "plugin",
+                        "description": "Email message ID (required for get_email_attachment action)"
+                      },
+                      "attachment_id": {
+                        "type": "string",
+                        "source": "plugin",
+                        "description": "Attachment ID (required for get_email_attachment action)"
+                      }
+                    }
+                  },
+                  "source": "plugin",
+                  "description": "Attachment metadata (if include_attachments=true). Each item contains: filename, mimeType, size, attachment_id (use with get_email_attachment), message_id (email ID)"
+                }
+              }
+            },
+            "source": "plugin",
+            "description": "Array of matching emails"
+          },
+          "searched_at": {
+            "type": "string",
+            "source": "plugin",
+            "description": "ISO 8601 timestamp of search"
+          },
+          "total_found": {
+            "type": "number",
+            "source": "plugin",
+            "description": "Number of emails returned"
+          },
+          "search_query": {
+            "type": "string",
+            "source": "plugin",
+            "description": "The search query that was executed"
+          },
+          "total_available": {
+            "type": "number",
+            "source": "plugin",
+            "description": "Estimated total matching emails"
+          }
+        },
+        "description": "Search results with email details"
+      },
+      "output_variable": "matching_emails"
+    },
+    {
+      "id": "step2",
+      "type": "transform",
+      "input": "{{matching_emails.emails}}",
+      "config": {
+        "type": "flatten",
+        "field": "attachments",
+        "input": "matching_emails",
+        "custom_code": "Extract attachments array from each email, preserving email metadata (sender, subject, message_id)",
+        "output_schema": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "attachment_id",
+              "filename",
+              "message_id"
+            ],
+            "properties": {
+              "size": {
+                "type": "number"
+              },
+              "sender": {
+                "type": "string"
+              },
+              "subject": {
+                "type": "string"
+              },
+              "filename": {
+                "type": "string"
+              },
+              "mimeType": {
+                "type": "string"
+              },
+              "message_id": {
+                "type": "string"
+              },
+              "attachment_id": {
+                "type": "string"
+              },
+              "received_date": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      },
+      "step_id": "step2",
+      "operation": "flatten",
+      "description": "Extract PDF attachments array from emails",
+      "output_schema": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "source": "ai_declared",
+          "properties": {
+            "size": {
+              "type": "number",
+              "source": "ai_declared"
+            },
+            "sender": {
+              "type": "string",
+              "source": "ai_declared"
+            },
+            "subject": {
+              "type": "string",
+              "source": "ai_declared"
+            },
+            "filename": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "mimeType": {
+              "type": "string",
+              "source": "ai_declared"
+            },
+            "message_id": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "attachment_id": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "received_date": {
+              "type": "string",
+              "source": "ai_declared"
+            }
+          }
+        },
+        "source": "ai_declared"
+      },
+      "output_variable": "all_attachments"
+    },
+    {
+      "id": "step3",
+      "type": "transform",
+      "input": "{{all_attachments}}",
+      "config": {
+        "type": "filter",
+        "input": "all_attachments",
+        "condition": {
+          "field": "mimeType",
+          "value": "application/pdf",
+          "operator": "eq",
+          "conditionType": "simple"
+        },
+        "custom_code": "Filter for PDF attachments only"
+      },
+      "step_id": "step3",
+      "operation": "filter",
+      "description": "Keep only PDF attachments (mime_type check)",
+      "output_schema": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "source": "ai_declared",
+          "properties": {
+            "size": {
+              "type": "number",
+              "source": "ai_declared"
+            },
+            "sender": {
+              "type": "string",
+              "source": "ai_declared"
+            },
+            "subject": {
+              "type": "string",
+              "source": "ai_declared"
+            },
+            "filename": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "mimeType": {
+              "type": "string",
+              "source": "ai_declared"
+            },
+            "message_id": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "attachment_id": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "received_date": {
+              "type": "string",
+              "source": "ai_declared"
+            }
+          }
+        },
+        "source": "inferred"
+      },
+      "output_variable": "pdf_attachments"
+    },
+    {
+      "id": "step4",
+      "type": "scatter_gather",
+      "gather": {
+        "operation": "collect"
+      },
+      "scatter": {
+        "input": "{{pdf_attachments}}",
+        "steps": [
+          {
+            "id": "step5",
+            "type": "action",
+            "config": {
+              "filename": "{{attachment.filename}}",
+              "message_id": "{{attachment.message_id}}",
+              "attachment_id": "{{attachment.attachment_id}}"
+            },
+            "plugin": "google-mail",
+            "step_id": "step5",
+            "operation": "get_email_attachment",
+            "description": "Download PDF attachment content for extraction and storage",
+            "output_schema": {
+              "type": "object",
+              "source": "plugin",
+              "properties": {
+                "data": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "Base64-encoded file content for processing"
+                },
+                "size": {
+                  "type": "number",
+                  "source": "plugin",
+                  "required": true,
+                  "description": "File size in bytes"
+                },
+                "filename": {
+                  "type": "string",
+                  "source": "plugin",
+                  "required": true,
+                  "description": "Attachment filename"
+                },
+                "is_image": {
+                  "type": "boolean",
+                  "source": "plugin",
+                  "description": "True if attachment is an image"
+                },
+                "mimeType": {
+                  "type": "string",
+                  "source": "plugin",
+                  "required": true,
+                  "description": "MIME type (application/pdf, image/png, etc.)"
+                },
+                "extracted_text": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "Extracted text from PDF/document (if applicable)"
+                }
+              },
+              "description": "Attachment content with metadata"
+            },
+            "output_variable": "attachment_content"
+          },
+          {
+            "id": "step6",
+            "type": "action",
+            "config": {
+              "fields": [
+                {
+                  "name": "type",
+                  "type": "string",
+                  "required": false
+                },
+                {
+                  "name": "vendor",
+                  "type": "string",
+                  "required": false
+                },
+                {
+                  "name": "date",
+                  "type": "date",
+                  "required": false
+                },
+                {
+                  "name": "amount",
+                  "type": "number",
+                  "required": false
+                },
+                {
+                  "name": "invoice_number",
+                  "type": "string",
+                  "required": false
+                },
+                {
+                  "name": "category",
+                  "type": "string",
+                  "required": false
+                }
+              ],
+              "file_content": "{{attachment_content.data}}"
+            },
+            "plugin": "document-extractor",
+            "step_id": "step6",
+            "operation": "extract_structured_data",
+            "description": "Extract structured invoice/expense fields from PDF",
+            "output_schema": {
+              "type": "object",
+              "source": "ai_declared",
+              "properties": {
+                "date": {
+                  "type": "string",
+                  "source": "ai_declared",
+                  "required": false,
+                  "description": "Transaction or invoice date"
+                },
+                "type": {
+                  "type": "string",
+                  "source": "ai_declared",
+                  "required": false,
+                  "description": "Document type: expense or invoice"
+                },
+                "amount": {
+                  "type": "number",
+                  "source": "ai_declared",
+                  "required": false,
+                  "description": "Transaction amount as numeric value"
+                },
+                "vendor": {
+                  "type": "string",
+                  "source": "ai_declared",
+                  "required": false,
+                  "description": "Vendor or merchant name"
+                },
+                "category": {
+                  "type": "string",
+                  "source": "ai_declared",
+                  "required": false,
+                  "description": "Expense category"
+                },
+                "invoice_number": {
+                  "type": "string",
+                  "source": "ai_declared",
+                  "required": false,
+                  "description": "Invoice or receipt number"
+                }
+              }
+            },
+            "output_variable": "extracted_fields"
+          },
+          {
+            "id": "step6_sanitize",
+            "type": "ai_processing",
+            "input": "{{extracted_fields}}",
+            "config": {
+              "type": "generate",
+              "ai_type": "generate",
+              "instruction": "You MUST return a complete object with all fields from the input. The \"vendor\" field is REQUIRED and cannot be null or empty. If the input has null, empty, or missing \"vendor\", you MUST set it to \"Unknown Vendor\". Keep all other fields exactly as they are in the input."
+            },
+            "prompt": "You MUST return a complete object with all fields from the input. The \"vendor\" field is REQUIRED and cannot be null or empty. If the input has null, empty, or missing \"vendor\", you MUST set it to \"Unknown Vendor\". Keep all other fields exactly as they are in the input.",
+            "step_id": "step6_sanitize",
+            "description": "Sanitize extracted fields: replace null \"vendor\" with \"Unknown Vendor\"",
+            "output_schema": {
+              "type": "object",
+              "source": "ai_declared",
+              "properties": {
+                "date": {
+                  "type": "string",
+                  "source": "ai_declared",
+                  "required": false,
+                  "description": "Transaction or invoice date"
+                },
+                "type": {
+                  "type": "string",
+                  "source": "ai_declared",
+                  "required": false,
+                  "description": "Document type: expense or invoice"
+                },
+                "amount": {
+                  "type": "number",
+                  "source": "ai_declared",
+                  "required": false,
+                  "description": "Transaction amount as numeric value"
+                },
+                "vendor": {
+                  "type": "string",
+                  "source": "ai_declared",
+                  "required": true,
+                  "description": "Vendor or merchant name (REQUIRED: use \"Unknown Vendor\" if null/empty)"
+                },
+                "category": {
+                  "type": "string",
+                  "source": "ai_declared",
+                  "required": false,
+                  "description": "Expense category"
+                },
+                "invoice_number": {
+                  "type": "string",
+                  "source": "ai_declared",
+                  "required": false,
+                  "description": "Invoice or receipt number"
+                }
+              }
+            },
+            "output_variable": "extracted_fields"
+          },
+          {
+            "id": "step7",
+            "type": "action",
+            "config": {
+              "folder_name": "{{extracted_fields.vendor}}",
+              "parent_folder_id": "{{config.base_folder_id}}"
+            },
+            "plugin": "google-drive",
+            "step_id": "step7",
+            "operation": "get_or_create_folder",
+            "description": "Get or create vendor subfolder under base folder",
+            "output_schema": {
+              "type": "object",
+              "source": "plugin",
+              "properties": {
+                "created": {
+                  "type": "boolean",
+                  "source": "plugin",
+                  "description": "True if folder was newly created, false if it already existed"
+                },
+                "folder_id": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "ID of the folder (existing or newly created)"
+                },
+                "created_at": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "Timestamp when folder was created (if new) or found (if existing)"
+                },
+                "folder_name": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "Name of the folder"
+                },
+                "web_view_link": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "URL to view the folder"
+                },
+                "parent_folder_id": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "ID of the parent folder"
+                }
+              }
+            },
+            "output_variable": "vendor_folder"
+          },
+          {
+            "id": "step8",
+            "type": "action",
+            "config": {
+              "file_name": "{{attachment_content.filename}}",
+              "folder_id": "{{vendor_folder.folder_id}}",
+              "mime_type": "application/pdf",
+              "file_content": "{{attachment_content.data}}"
+            },
+            "plugin": "google-drive",
+            "step_id": "step8",
+            "operation": "upload_file",
+            "description": "Upload PDF attachment to vendor folder in Drive",
+            "output_schema": {
+              "type": "object",
+              "source": "plugin",
+              "properties": {
+                "file_id": {
+                  "type": "string",
+                  "source": "plugin",
+                  "required": true,
+                  "description": "ID of the uploaded file"
+                },
+                "mimeType": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "MIME type of the file"
+                },
+                "file_name": {
+                  "type": "string",
+                  "source": "plugin",
+                  "required": true,
+                  "description": "Name of the uploaded file"
+                },
+                "file_size": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "Size of the uploaded file"
+                },
+                "folder_id": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "ID of the folder containing the file"
+                },
+                "uploaded_at": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "Timestamp when file was uploaded (ISO 8601)"
+                },
+                "web_view_link": {
+                  "type": "string",
+                  "source": "plugin",
+                  "required": true,
+                  "description": "URL to view the file"
+                },
+                "web_content_link": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "URL to download the file"
+                }
+              }
+            },
+            "output_variable": "drive_file"
+          },
+          {
+            "id": "step9",
+            "type": "action",
+            "config": {
+              "role": "reader",
+              "file_id": "{{drive_file}}",
+              "permission_type": "anyone_with_link"
+            },
+            "plugin": "google-drive",
+            "step_id": "step9",
+            "operation": "share_file",
+            "description": "Generate shareable link for uploaded PDF",
+            "output_schema": {
+              "type": "object",
+              "source": "plugin",
+              "properties": {
+                "file_id": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "ID of the shared file"
+                },
+                "file_name": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "Name of the shared file"
+                },
+                "shared_at": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "Timestamp when file was shared (ISO 8601)"
+                },
+                "shared_with": {
+                  "type": "array",
+                  "source": "plugin",
+                  "description": "List of users the file was shared with"
+                },
+                "permission_id": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "ID of the created permission"
+                },
+                "web_view_link": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "Shareable URL to view the file"
+                },
+                "permission_type": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "Type of permission granted"
+                },
+                "web_content_link": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "URL to download the file (if applicable)"
+                }
+              }
+            },
+            "output_variable": "shared_file"
+          },
+          {
+            "id": "step10",
+            "type": "ai_processing",
+            "input": {
+              "shared_file": "{{shared_file}}",
+              "extracted_fields": "{{extracted_fields}}"
+            },
+            "config": {
+              "type": "generate",
+              "ai_type": "generate",
+              "instruction": "Create a structured record combining extracted fields (type, vendor, date, amount, invoice_number, category) with email metadata (sender, subject, received_date) and the Drive shareable link from shared_file. Ensure amount is numeric or null if not found.",
+              "output_schema": {
+                "type": "object",
+                "required": [
+                  "type",
+                  "vendor",
+                  "date",
+                  "amount",
+                  "invoice_number",
+                  "category",
+                  "drive_link",
+                  "sender",
+                  "subject",
+                  "received_date"
+                ],
+                "properties": {
+                  "date": {
+                    "type": "string",
+                    "description": "Transaction date"
+                  },
+                  "type": {
+                    "type": "string",
+                    "description": "Document type"
+                  },
+                  "amount": {
+                    "type": "number",
+                    "description": "Numeric amount or null"
+                  },
+                  "sender": {
+                    "type": "string",
+                    "description": "Email sender"
+                  },
+                  "vendor": {
+                    "type": "string",
+                    "description": "Vendor or merchant name"
+                  },
+                  "subject": {
+                    "type": "string",
+                    "description": "Email subject"
+                  },
+                  "category": {
+                    "type": "string",
+                    "description": "Expense category"
+                  },
+                  "drive_link": {
+                    "type": "string",
+                    "description": "Shareable Drive link"
+                  },
+                  "received_date": {
+                    "type": "string",
+                    "description": "Email received date"
+                  },
+                  "invoice_number": {
+                    "type": "string",
+                    "description": "Invoice/receipt number"
+                  }
+                }
+              }
+            },
+            "prompt": "Create a structured record combining extracted fields (type, vendor, date, amount, invoice_number, category) with email metadata (sender, subject, received_date) and the Drive shareable link from shared_file. Ensure amount is numeric or null if not found.",
+            "step_id": "step10",
+            "description": "Build complete item record with extracted fields, email metadata, and Drive link",
+            "input_schema": {
+              "type": "object",
+              "source": "ai_declared",
+              "properties": {
+                "date": {
+                  "type": "string",
+                  "source": "ai_declared",
+                  "required": false,
+                  "description": "Transaction or invoice date"
+                },
+                "type": {
+                  "type": "string",
+                  "source": "ai_declared",
+                  "required": false,
+                  "description": "Document type: expense or invoice"
+                },
+                "amount": {
+                  "type": "number",
+                  "source": "ai_declared",
+                  "required": false,
+                  "description": "Transaction amount as numeric value"
+                },
+                "vendor": {
+                  "type": "string",
+                  "source": "ai_declared",
+                  "required": false,
+                  "description": "Vendor or merchant name"
+                },
+                "category": {
+                  "type": "string",
+                  "source": "ai_declared",
+                  "required": false,
+                  "description": "Expense category"
+                },
+                "invoice_number": {
+                  "type": "string",
+                  "source": "ai_declared",
+                  "required": false,
+                  "description": "Invoice or receipt number"
+                }
+              }
+            },
+            "output_schema": {
+              "type": "object",
+              "source": "ai_declared",
+              "properties": {
+                "date": {
+                  "type": "string",
+                  "source": "ai_declared",
+                  "description": "Transaction date"
+                },
+                "type": {
+                  "type": "string",
+                  "source": "ai_declared",
+                  "description": "Document type"
+                },
+                "amount": {
+                  "type": "number",
+                  "source": "ai_declared",
+                  "description": "Numeric amount or null"
+                },
+                "sender": {
+                  "type": "string",
+                  "source": "ai_declared",
+                  "description": "Email sender"
+                },
+                "vendor": {
+                  "type": "string",
+                  "source": "ai_declared",
+                  "description": "Vendor or merchant name"
+                },
+                "subject": {
+                  "type": "string",
+                  "source": "ai_declared",
+                  "description": "Email subject"
+                },
+                "category": {
+                  "type": "string",
+                  "source": "ai_declared",
+                  "description": "Expense category"
+                },
+                "drive_link": {
+                  "type": "string",
+                  "source": "ai_declared",
+                  "description": "Shareable Drive link"
+                },
+                "received_date": {
+                  "type": "string",
+                  "source": "ai_declared",
+                  "description": "Email received date"
+                },
+                "invoice_number": {
+                  "type": "string",
+                  "source": "ai_declared",
+                  "description": "Invoice/receipt number"
+                }
+              }
+            },
+            "output_variable": "item_record"
+          }
+        ],
+        "itemVariable": "attachment"
+      },
+      "step_id": "step4",
+      "description": "Loop over pdf_attachments",
+      "output_variable": "processed_items"
+    },
+    {
+      "id": "step11",
+      "type": "transform",
+      "input": "{{processed_items}}",
+      "config": {
+        "type": "filter",
+        "input": "processed_items",
+        "condition": {
+          "conditions": [
+            {
+              "field": "amount",
+              "operator": "exists",
+              "conditionType": "simple"
+            },
+            {
+              "field": "amount",
+              "value": "{{config.amount_threshold}}",
+              "operator": "gt",
+              "conditionType": "simple"
+            }
+          ],
+          "conditionType": "complex_and"
+        },
+        "custom_code": "Keep only items with amount greater than threshold",
+        "output_schema": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [],
+            "properties": {
+              "date": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string"
+              },
+              "amount": {
+                "type": "string"
+              },
+              "vendor": {
+                "type": "string"
+              },
+              "category": {
+                "type": "string"
+              },
+              "drive_link": {
+                "type": "string"
+              },
+              "invoice_number": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      },
+      "step_id": "step11",
+      "operation": "filter",
+      "description": "Filter items where amount > 50 for Sheet insertion",
+      "output_schema": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "source": "ai_declared",
+          "properties": {
+            "date": {
+              "type": "string",
+              "source": "ai_declared",
+              "description": "Transaction date"
+            },
+            "type": {
+              "type": "string",
+              "source": "ai_declared",
+              "description": "Document type"
+            },
+            "amount": {
+              "type": "number",
+              "source": "ai_declared",
+              "description": "Numeric amount or null"
+            },
+            "sender": {
+              "type": "string",
+              "source": "ai_declared",
+              "description": "Email sender"
+            },
+            "vendor": {
+              "type": "string",
+              "source": "ai_declared",
+              "description": "Vendor or merchant name"
+            },
+            "subject": {
+              "type": "string",
+              "source": "ai_declared",
+              "description": "Email subject"
+            },
+            "category": {
+              "type": "string",
+              "source": "ai_declared",
+              "description": "Expense category"
+            },
+            "drive_link": {
+              "type": "string",
+              "source": "ai_declared",
+              "description": "Shareable Drive link"
+            },
+            "received_date": {
+              "type": "string",
+              "source": "ai_declared",
+              "description": "Email received date"
+            },
+            "invoice_number": {
+              "type": "string",
+              "source": "ai_declared",
+              "description": "Invoice/receipt number"
+            }
+          }
+        },
+        "source": "inferred"
+      },
+      "output_variable": "high_value_items"
+    },
+    {
+      "id": "step12",
+      "type": "conditional",
+      "steps": [
+        {
+          "id": "step13",
+          "type": "action",
+          "config": {
+            "tab_name": "{{config.sheet_tab_name}}",
+            "spreadsheet_id": "{{config.spreadsheet_id}}"
+          },
+          "plugin": "google-sheets",
+          "step_id": "step13",
+          "operation": "get_or_create_sheet_tab",
+          "description": "Get or create sheet tab for appending rows",
+          "output_schema": {
+            "type": "object",
+            "source": "plugin",
+            "properties": {
+              "existed": {
+                "type": "boolean",
+                "source": "plugin",
+                "description": "True if tab already existed, false if newly created"
+              },
+              "sheet_id": {
+                "type": "number",
+                "source": "plugin",
+                "description": "Unique numeric ID of the sheet tab"
+              },
+              "tab_name": {
+                "type": "string",
+                "source": "plugin",
+                "required": true,
+                "description": "Name of the sheet tab (alias for sheet_name)"
+              },
+              "sheet_name": {
+                "type": "string",
+                "source": "plugin",
+                "required": true,
+                "description": "Name of the sheet tab"
+              },
+              "spreadsheet_id": {
+                "type": "string",
+                "source": "plugin",
+                "required": true,
+                "description": "ID of the spreadsheet"
+              }
+            }
+          },
+          "output_variable": "sheet_tab"
+        },
+        {
+          "id": "step14",
+          "type": "action",
+          "config": {
+            "range": "{{config.sheet_tab_name}}",
+            "fields": {
+              "Date": "high_value_items.date",
+              "Type": "high_value_items.type",
+              "Amount": "high_value_items.amount",
+              "Category": "high_value_items.category",
+              "Drive link": "high_value_items.drive_link",
+              "Invoice/receipt #": "high_value_items.invoice_number",
+              "Vendor / merchant": "high_value_items.vendor"
+            },
+            "spreadsheet_id": "{{config.spreadsheet_id}}"
+          },
+          "plugin": "google-sheets",
+          "step_id": "step14",
+          "operation": "append_rows",
+          "description": "Append high-value items to Google Sheet",
+          "output_schema": {
+            "type": "object",
+            "source": "plugin",
+            "properties": {
+              "values": {
+                "type": "array",
+                "source": "plugin",
+                "description": "The values that were appended"
+              },
+              "sheet_name": {
+                "type": "string",
+                "source": "plugin",
+                "description": "Name of the sheet where data was appended"
+              },
+              "appended_at": {
+                "type": "string",
+                "source": "plugin",
+                "description": "Timestamp when data was appended (ISO 8601)"
+              },
+              "table_range": {
+                "type": "string",
+                "source": "plugin",
+                "description": "Full range of the table including appended data"
+              },
+              "appended_rows": {
+                "type": "number",
+                "source": "plugin",
+                "required": true,
+                "description": "Number of rows appended"
+              },
+              "updated_range": {
+                "type": "string",
+                "source": "plugin",
+                "required": true,
+                "description": "The range where data was appended"
+              },
+              "appended_cells": {
+                "type": "number",
+                "source": "plugin",
+                "description": "Total number of cells appended"
+              },
+              "appended_columns": {
+                "type": "number",
+                "source": "plugin",
+                "description": "Number of columns in appended data"
+              }
+            }
+          },
+          "output_variable": "sheet_result"
+        }
+      ],
+      "step_id": "step12",
+      "condition": {
+        "field": "high_value_items",
+        "operator": "exists",
+        "conditionType": "simple"
+      },
+      "description": "Conditional: node_11"
+    },
+    {
+      "id": "step15",
+      "type": "ai_processing",
+      "input": "{{processed_items}}",
+      "config": {
+        "type": "generate",
+        "ai_type": "generate",
+        "instruction": "Create an HTML email digest with a table containing all processed items. Include columns: Type, Vendor / merchant, Date, Amount, Invoice/receipt #, Category, Drive link. If no items exist, state 'No invoices or expenses found in the last 24 hours.' Use professional formatting with a clear table structure.",
+        "output_schema": {
+          "type": "object",
+          "required": [
+            "subject",
+            "body"
+          ],
+          "properties": {
+            "body": {
+              "type": "string",
+              "description": "HTML email body with table"
+            },
+            "subject": {
+              "type": "string",
+              "description": "Email subject line"
+            }
+          }
+        }
+      },
+      "prompt": "Create an HTML email digest with a table containing all processed items. Include columns: Type, Vendor / merchant, Date, Amount, Invoice/receipt #, Category, Drive link. If no items exist, state 'No invoices or expenses found in the last 24 hours.' Use professional formatting with a clear table structure.",
+      "step_id": "step15",
+      "description": "Generate digest email content with table of all processed items",
+      "input_schema": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "source": "ai_declared",
+          "properties": {
+            "date": {
+              "type": "string",
+              "source": "ai_declared",
+              "description": "Transaction date"
+            },
+            "type": {
+              "type": "string",
+              "source": "ai_declared",
+              "description": "Document type"
+            },
+            "amount": {
+              "type": "number",
+              "source": "ai_declared",
+              "description": "Numeric amount or null"
+            },
+            "sender": {
+              "type": "string",
+              "source": "ai_declared",
+              "description": "Email sender"
+            },
+            "vendor": {
+              "type": "string",
+              "source": "ai_declared",
+              "description": "Vendor or merchant name"
+            },
+            "subject": {
+              "type": "string",
+              "source": "ai_declared",
+              "description": "Email subject"
+            },
+            "category": {
+              "type": "string",
+              "source": "ai_declared",
+              "description": "Expense category"
+            },
+            "drive_link": {
+              "type": "string",
+              "source": "ai_declared",
+              "description": "Shareable Drive link"
+            },
+            "received_date": {
+              "type": "string",
+              "source": "ai_declared",
+              "description": "Email received date"
+            },
+            "invoice_number": {
+              "type": "string",
+              "source": "ai_declared",
+              "description": "Invoice/receipt number"
+            }
+          }
+        },
+        "source": "inferred"
+      },
+      "output_schema": {
+        "type": "object",
+        "source": "ai_declared",
+        "properties": {
+          "body": {
+            "type": "string",
+            "source": "ai_declared",
+            "description": "HTML email body with table"
+          },
+          "subject": {
+            "type": "string",
+            "source": "ai_declared",
+            "description": "Email subject line"
+          }
+        }
+      },
+      "output_variable": "digest_content"
+    },
+    {
+      "id": "step16",
+      "type": "action",
+      "config": {
+        "content": {
+          "subject": "{{digest_content.subject}}",
+          "html_body": "{{digest_content.body}}"
+        },
+        "recipients": {
+          "to": [
+            "{{config.digest_recipient}}"
+          ]
+        }
+      },
+      "plugin": "google-mail",
+      "step_id": "step16",
+      "operation": "send_email",
+      "description": "Send digest email to recipient"
+    }
+  ]
+}

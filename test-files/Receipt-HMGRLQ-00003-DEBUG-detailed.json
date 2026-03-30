@@ -1,0 +1,41 @@
+{
+  "filename": "Receipt-HMGRLQ-00003.pdf",
+  "extractionResult": {
+    "success": true,
+    "data": {
+      "invoice_number": "HMGRLQ-00003",
+      "vendor": "ngrok Inc.",
+      "date": "Nov 23, 2025",
+      "total_amount": "$10.00",
+      "customer_info": "to:"
+    },
+    "confidence": 0.75,
+    "needsLlmFallback": false,
+    "metadata": {
+      "extractionMethod": "text",
+      "processingTimeMs": 846,
+      "textLength": 970,
+      "fieldsExtracted": 5,
+      "fieldsRequested": 5,
+      "missingFields": [],
+      "uncertainFields": []
+    },
+    "rawText": "RECEIPT\nngrok Inc. \n548 Market St\nPMB 26741\nSan Francisco, CA 94104-5401\nBill to:\nBarak Meiri \nEfroni 5\nKadima Zuran, M 4282300\nmeiribarak@gmail.com \nInvoice numberHMGRLQ-00003\nIL VAT035743889\nReceipt dateNov 23, 2025\nPayment dateNov 23, 2025\nAmount paid$10.00\nDescriptionQuantityRateAmount\nBackend HTTP Requests\nOct 23 – Nov 22, 2025\n$0.00\nTier: 0-100,000, $0.00 per 100,000131 × $0.00$0.00\nTier: 100,000-10,000,000, $1.00 per 100,00000 × $1.00$0.00\nTier: 10,000,000-100,000,000, $0.75 per 100,00000 × $0.75$0.00\nTier: 100,000,000-1,000,000,000, $0.55 per 100,00000 × $0.55$0.00\nTier: 1,000,000,000-∞, $0.35 per 100,00000 × $0.35$0.00\nOutgoing Traffic\nOct 23 – Nov 22, 2025\n$0.00\nTier: 0 - 50.006718$0.00$0.00\nTier: 5 - ∞0$0.10$0.00\nHobbyist Monthly License\nNov 23 – Dec 22, 2025\n1$10.00$10.00\nSubtotal$10.00\nAmount paid$10.00\nIf you would like to make payments, update billing details, or view account status, please visit https://\ndashboard.ngrok.com/billing. \n1 of 1"
+  },
+  "metadata": {
+    "extractionMethod": "text",
+    "processingTimeMs": 846,
+    "textLength": 970,
+    "fieldsExtracted": 5,
+    "fieldsRequested": 5,
+    "missingFields": [],
+    "uncertainFields": []
+  },
+  "fields": {
+    "invoice_number": "HMGRLQ-00003",
+    "vendor": "ngrok Inc.",
+    "date": "Nov 23, 2025",
+    "total_amount": "$10.00",
+    "customer_info": "to:"
+  }
+}

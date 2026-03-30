@@ -292,6 +292,279 @@
           "insufficient_permissions": "Gmail draft permissions are insufficient. Please reconnect with full email access."
         }
       }
+<<<<<<< Updated upstream
+=======
+    },
+    "modify_message": {
+      "description": "Modify Gmail message properties (mark important, add/remove labels, mark read/unread)",
+      "usage_context": "Use when you need to update email flags, labels, or read status. Requires message ID from search_emails result.",
+      "idempotent": true,
+      "domain": "email",
+      "capability": "update",
+      "input_entity": "email",
+      "output_entity": "email",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "output_fields": [
+        "message_id",
+        "labels",
+        "important",
+        "read",
+        "modified_at"
+      ],
+      "required_params": [
+        "message_id"
+      ],
+      "optional_params": [
+        "add_labels",
+        "remove_labels",
+        "mark_important",
+        "mark_read"
+      ],
+      "must_support": [
+        "label_management",
+        "importance_flag",
+        "read_status"
+      ],
+      "parameters": {
+        "type": "object",
+        "required": [
+          "message_id"
+        ],
+        "properties": {
+          "message_id": {
+            "type": "string",
+            "description": "Gmail message ID to modify",
+            "x-variable-mapping": {
+              "field_path": "id",
+              "description": "Extract message ID from email object"
+            }
+          },
+          "add_labels": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Labels to add to the message (creates label if it doesn't exist)",
+            "x-semantic-aliases": ["add_label", "label", "labels", "add_tag", "tag"]
+          },
+          "remove_labels": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Labels to remove from the message"
+          },
+          "mark_important": {
+            "type": "boolean",
+            "description": "Set message importance flag (true=important, false=not important)",
+            "x-semantic-aliases": ["important", "is_important", "set_important"]
+          },
+          "mark_read": {
+            "type": "boolean",
+            "description": "Set message read status (true=mark as read, false=mark as unread)",
+            "x-semantic-aliases": ["read", "is_read", "set_read", "mark_as_read"]
+          }
+        }
+      },
+      "rules": {
+        "limits": {
+          "max_labels": {
+            "condition": "total_labels > 100",
+            "action": "block",
+            "message": "Cannot add more than 100 labels to a single message"
+          }
+        },
+        "confirmations": {
+          "remove_important_labels": {
+            "condition": "removing_system_labels == true",
+            "action": "confirm",
+            "message": "Remove system labels like INBOX, IMPORTANT, or STARRED?"
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "description": "Updated message with modified properties",
+        "properties": {
+          "message_id": {
+            "type": "string",
+            "description": "Gmail message ID",
+            "x-guaranteed": true
+          },
+          "labels": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Current labels on the message after modification"
+          },
+          "important": {
+            "type": "boolean",
+            "description": "Current importance flag state"
+          },
+          "read": {
+            "type": "boolean",
+            "description": "Current read status"
+          },
+          "modified_at": {
+            "type": "string",
+            "description": "ISO 8601 timestamp when modification occurred",
+            "x-guaranteed": true
+          }
+        },
+        "required": [
+          "message_id",
+          "modified_at"
+        ]
+      },
+      "output_guidance": {
+        "success_description": "Modified message",
+        "sample_output": {
+          "message_id": "18abc123def",
+          "labels": [
+            "INBOX",
+            "IMPORTANT",
+            "AI-Reviewed"
+          ],
+          "important": true,
+          "read": false,
+          "modified_at": "2025-01-01T00:00:00.000Z"
+        },
+        "common_errors": {
+          "auth_failed": "Gmail connection has expired. Please reconnect in Settings → Connected Apps.",
+          "message_not_found": "Message not found. It may have been deleted or moved to trash.",
+          "label_limit_exceeded": "Gmail label limit reached. Please delete unused labels and try again.",
+          "insufficient_permissions": "Gmail modify permissions are insufficient. Please reconnect with full email modify access.",
+          "api_rate_limit": "Too many modification requests. Please wait a moment and try again."
+        }
+      }
+    },
+    "get_email_attachment": {
+      "description": "Download email attachment content for processing",
+      "usage_context": "Use when you need to extract or analyze content from email attachments (PDFs, images, documents). First search emails with include_attachments:true to get attachment IDs.",
+      "idempotent": true,
+      "domain": "email",
+      "capability": "download",
+      "input_entity": "attachment",
+      "output_entity": "file",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "output_fields": [
+        "filename",
+        "mimeType",
+        "size",
+        "data",
+        "extracted_text",
+        "is_image"
+      ],
+      "required_params": [
+        "message_id",
+        "attachment_id"
+      ],
+      "optional_params": [
+        "filename"
+      ],
+      "must_support": [
+        "pdf_download",
+        "image_download",
+        "text_extraction"
+      ],
+      "parameters": {
+        "type": "object",
+        "required": [
+          "message_id",
+          "attachment_id"
+        ],
+        "properties": {
+          "message_id": {
+            "type": "string",
+            "description": "Gmail message ID containing the attachment",
+            "x-variable-mapping": {
+              "field_path": "message_id",
+              "description": "Extract message_id from attachment reference"
+            }
+          },
+          "attachment_id": {
+            "type": "string",
+            "description": "Gmail attachment ID from search_emails result",
+            "x-variable-mapping": {
+              "field_path": "attachment_id",
+              "description": "Extract attachment_id from attachment reference"
+            }
+          },
+          "filename": {
+            "type": "string",
+            "description": "Original filename for reference (optional but recommended)",
+            "x-variable-mapping": {
+              "field_path": "filename",
+              "description": "Extract filename from attachment reference"
+            }
+          }
+        }
+      },
+      "rules": {
+        "limits": {
+          "max_size": {
+            "condition": "attachment_size > 25000000",
+            "action": "block",
+            "message": "Attachment exceeds 25MB Gmail API limit"
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "description": "Attachment content with metadata",
+        "properties": {
+          "filename": {
+            "type": "string",
+            "description": "Attachment filename"
+          },
+          "mimeType": {
+            "type": "string",
+            "description": "MIME type (application/pdf, image/png, etc.)"
+          },
+          "size": {
+            "type": "integer",
+            "description": "File size in bytes"
+          },
+          "data": {
+            "type": "string",
+            "description": "Base64-encoded file content for processing"
+          },
+          "extracted_text": {
+            "type": "string",
+            "description": "Extracted text from PDF/document (if applicable)"
+          },
+          "is_image": {
+            "type": "boolean",
+            "description": "True if attachment is an image"
+          }
+        },
+        "required": [
+          "filename",
+          "mimeType",
+          "size"
+        ]
+      },
+      "output_guidance": {
+        "success_description": "Downloaded attachment",
+        "sample_output": {
+          "filename": "expenses.pdf",
+          "mimeType": "application/pdf",
+          "size": 245821,
+          "data": "JVBERi0xLjQK...",
+          "extracted_text": "Expense Report Q4 2025...",
+          "is_image": false
+        },
+        "common_errors": {
+          "auth_failed": "Gmail connection has expired. Please reconnect in Settings → Connected Apps.",
+          "attachment_not_found": "Attachment not found. Check if email still exists or try searching again.",
+          "size_exceeded": "Attachment exceeds 25MB limit. Gmail API cannot download larger files.",
+          "download_failed": "Failed to download attachment. Try again or contact support if issue persists."
+        }
+      }
+>>>>>>> Stashed changes
     }
   }
 }

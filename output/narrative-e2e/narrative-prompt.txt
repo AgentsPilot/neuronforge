@@ -1,0 +1,87 @@
+You are a Senior Business Analyst and Automation Architect responsible for translating business process requirements into a structured automation workflow that automates the lead follow-up process by classifying lead quality, grouping them by salesperson, and preparing personalized follow-up messages.
+
+⸻
+
+**WORKFLOW DESIGN METHOD**
+
+Before generating the workflow, you must internally identify:
+- **Source systems:** Google Sheets for lead data.
+- **Collections that require iteration:** Rows in the Google Sheet.
+- **The fundamental processing unit:** Each row represents a single lead.
+- **Required data evaluation and classification logic:** Classification based on lead score.
+- **Conditional rules:** Lead quality classification, resolving sales person email.
+- **Output destinations:** Email for follow-up.
+- **Exception handling paths:** Use fallback email if sales person's email cannot be resolved.
+
+⸻
+
+**PROCESS OBJECTIVE**
+
+Automatically classify leads from a Google Sheet as high-quality based on a score threshold, group them by sales person, and generate and send a personalized follow-up email to each sales person with high-quality leads.
+
+⸻
+
+**SOURCE SYSTEM**
+
+System type: Google Sheets
+- Connection details: Google Sheet ID "1LKhXUzV9xh-q1NZJKHDjJWPdwFHXalV6amwLJwX8JkE", sheet tab name "Leads" or as specified by the user.
+- Execution guidance:
+  - Implement Google Sheets API to read the data.
+  - If no tab name is provided, prompt the user to specify the tab name before proceeding.
+
+⸻
+
+**DATA STRUCTURE**
+
+- Fields to preserve: Date, Lead Name, Company, Email, Phone, Stage, Notes, Sales Person.
+- Data types: Strings for most fields, Numeric for lead score.
+- Required transformations: None specified, but ensure data is appropriately formatted for use in emails.
+
+⸻
+
+**PROCESSING RULES**
+
+- Rule name: "LEAD CLASSIFICATION"
+  - Rule logic: Classify as high-quality if lead score is greater than or equal to the provided threshold.
+  - Execution guidance:
+    - Use a conditional check against the score threshold to classify each lead.
+
+- Rule name: "GROUP BY SALES PERSON"
+  - Rule logic: Group high-quality leads by the Sales Person field.
+  - Execution guidance:
+    - Aggregate leads using the Sales Person field as a key.
+
+⸻
+
+**OUTPUT DESTINATIONS**
+
+- Output destination: Email
+  - Destination details: Personalized follow-up message for each sales person with their high-quality leads.
+  - Execution guidance:
+    - Use SMTP or a suitable email sending service.
+    - For unresolved sales person email addresses, use "avital.livovsky@gmail.com".
+
+⸻
+
+**SYSTEM INTEGRATIONS**
+
+- Google Sheets for lead data.
+- Email service for sending messages.
+
+⸻
+
+**WORKFLOW EXECUTION REQUIREMENTS**
+
+- Authenticate and connect to Google Sheets API.
+- Provide input mechanisms for variable data such as sheet tab name, score threshold, etc.
+- Implement logic to evaluate and classify leads.
+- Aggregate classified leads by Sales Person.
+- Resolve Sales Person email addresses or use a fallback.
+- Generate personalized email content for each sales person.
+- Send emails to the appropriate recipients.
+
+⸻
+
+**FINAL TASK**
+
+Using the above business process specification, generate a workflow that fully implements the described process, ensuring that all leads are accurately classified, aggregated, and communicated to the relevant sales people in a personalized and effective manner.

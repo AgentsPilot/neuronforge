@@ -232,6 +232,22 @@ export class ParallelExecutor {
         // Store output in item context
         itemContext.setStepOutput?.(step.id, output);
 
+<<<<<<< Updated upstream
+=======
+        // Register output_variable if specified (allows referencing by name instead of step ID)
+        // This mirrors the behavior in WorkflowPilot for consistency within scatter loops
+        const outputVariable = (step as any).output_variable;
+        if (outputVariable && itemContext.setVariable) {
+          itemContext.setVariable(outputVariable, output.data);
+          logger.info({
+            stepId: step.id,
+            outputVariable,
+            outputDataKeys: output.data ? Object.keys(output.data) : null,
+            outputDataSample: output.data && typeof output.data === 'object' ? JSON.stringify(output.data).slice(0, 200) : output.data
+          }, 'Registered output variable in scatter context');
+        }
+
+>>>>>>> Stashed changes
         // Collect result
         itemResults[step.id] = output.data;
 
@@ -248,7 +264,37 @@ export class ParallelExecutor {
 
       return itemResults;
     } catch (error: any) {
+<<<<<<< Updated upstream
       console.warn(`[ParallelExecutor] Scatter item ${index} failed: ${error.message}`);
+=======
+      logger.warn({ itemIndex: index, error: error.message }, 'Scatter item failed');
+
+      // In batch calibration mode, STOP execution immediately on first error
+      // This prevents downstream steps from running with corrupted data
+      if (parentContext.batchCalibrationMode) {
+        logger.error({
+          itemIndex: index,
+          scatterStepId: scatterStep.id,
+          error: error.message,
+          batchCalibrationMode: true
+        }, 'Batch calibration: scatter item failed - throwing error to stop workflow');
+
+        // Throw to stop the scatter-gather step and mark it as failed
+        throw new ExecutionError(
+          `Scatter item ${index} failed: ${error.message}`,
+          scatterStep.id,
+          {
+            item: index,
+            failedStep: 'scatter_item',
+            error: error.message,
+            errorCode: (error as any).code || 'SCATTER_ITEM_FAILED',
+            originalError: error
+          }
+        );
+      }
+
+      // In production mode, return error object (existing behavior for partial results)
+>>>>>>> Stashed changes
       return {
         error: error.message,
         item: index,

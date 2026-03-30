@@ -1,0 +1,619 @@
+{
+  "version": "intent.v1",
+  "goal": "Extract invoices and receipts from unread Gmail emails, store files in Google Drive, log transactions over $50 to Google Sheets, and send summary email",
+  "unit_of_work": {
+    "entity": "attachment",
+    "parent_entity": "email"
+  },
+  "config": [
+    {
+      "key": "user_email",
+      "type": "string",
+      "description": "Email address to send summary to",
+      "default": "offir.omer@gmail.com"
+    },
+    {
+      "key": "amount_threshold_usd",
+      "type": "number",
+      "description": "Minimum amount in USD to log to Google Sheets",
+      "default": 50
+    },
+    {
+      "key": "sheet_tab_name",
+      "type": "string",
+      "description": "Google Sheets tab name for expense logging",
+      "default": "Expenses"
+    },
+    {
+      "key": "google_sheet_id",
+      "type": "string",
+      "description": "Google Sheets spreadsheet ID",
+      "default": "1pM8WbXtPgaYqokHn_spgQAfR7SBuql3JUtE1ugDtOpc"
+    }
+  ],
+  "steps": [
+    {
+      "id": "find_unread_emails",
+      "kind": "data_source",
+      "summary": "Search Gmail for unread emails with PDF or image attachments",
+      "uses": [
+        {
+          "capability": "search",
+          "domain": "email",
+          "preferences": {
+            "provider_family": "google"
+          }
+        }
+      ],
+      "output": "unread_emails",
+      "source": {
+        "domain": "email",
+        "intent": "search"
+      },
+      "query": "is:unread has:attachment",
+      "retrieval": {
+        "include_attachments": true,
+        "include_metadata": true
+      }
+    },
+    {
+      "id": "extract_attachments",
+      "kind": "transform",
+      "summary": "Extract attachments array from emails",
+      "inputs": [
+        "unread_emails"
+      ],
+      "output": "all_attachments",
+      "transform": {
+        "op": "flatten",
+        "input": "unread_emails",
+        "description": "Extract attachments from emails, preserving email metadata (sender, subject)",
+        "output_schema": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "filename": {
+                "type": "string"
+              },
+              "mimeType": {
+                "type": "string"
+              },
+              "size": {
+                "type": "number"
+              },
+              "email_sender": {
+                "type": "string"
+              },
+              "email_subject": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "filename",
+              "mimeType"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "filter_invoice_attachments",
+      "kind": "transform",
+      "summary": "Keep only PDF and image attachments (candidate invoices/receipts)",
+      "inputs": [
+        "all_attachments"
+      ],
+      "output": "candidate_attachments",
+      "transform": {
+        "op": "filter",
+        "input": "all_attachments",
+        "description": "Filter for PDF and image file types",
+        "where": {
+          "op": "test",
+          "left": {
+            "kind": "ref",
+            "ref": "all_attachments",
+            "field": "mimeType"
+          },
+          "comparator": "in",
+          "right": {
+            "kind": "literal",
+            "value": [
+              "application/pdf",
+              "image/jpeg",
+              "image/jpg",
+              "image/png"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "create_drive_folder",
+      "kind": "artifact",
+      "summary": "Get or create Google Drive folder for storing invoice/receipt files",
+      "uses": [
+        {
+          "capability": "create",
+          "domain": "storage",
+          "preferences": {
+            "provider_family": "google"
+          }
+        }
+      ],
+      "output": "drive_folder",
+      "artifact": {
+        "domain": "storage",
+        "type": "folder",
+        "strategy": "get_or_create",
+        "name_hint": "Invoices_Receipts"
+      }
+    },
+    {
+      "id": "process_each_attachment",
+      "kind": "loop",
+      "summary": "Process each candidate attachment: download, upload to Drive, extract fields",
+      "inputs": [
+        "candidate_attachments",
+        "drive_folder"
+      ],
+      "output": "processed_transactions",
+      "loop": {
+        "over": "candidate_attachments",
+        "item_ref": "attachment",
+        "unit_of_work": {
+          "entity": "attachment"
+        },
+        "collect": {
+          "enabled": true,
+          "collect_as": "processed_transactions",
+          "from_step_output": "transaction_record"
+        },
+        "do": [
+          {
+            "id": "download_attachment",
+            "kind": "data_source",
+            "summary": "Download attachment content from Gmail",
+            "uses": [
+              {
+                "capability": "download",
+                "domain": "email",
+                "preferences": {
+                  "provider_family": "google"
+                }
+              }
+            ],
+            "inputs": [
+              "attachment"
+            ],
+            "output": "attachment_content",
+            "source": {
+              "domain": "email",
+              "intent": "download"
+            },
+            "payload": {
+              "attachment_id": {
+                "kind": "ref",
+                "ref": "attachment",
+                "field": "id"
+              }
+            }
+          },
+          {
+            "id": "upload_to_drive",
+            "kind": "deliver",
+            "summary": "Upload attachment to Google Drive folder",
+            "uses": [
+              {
+                "capability": "upload",
+                "domain": "storage",
+                "preferences": {
+                  "provider_family": "google"
+                }
+              }
+            ],
+            "inputs": [
+              "attachment_content",
+              "drive_folder"
+            ],
+            "output": "drive_file",
+            "deliver": {
+              "domain": "storage",
+              "intent": "upload",
+              "input": "attachment_content",
+              "destination": "drive_folder",
+              "mapping": [
+                {
+                  "from": {
+                    "kind": "ref",
+                    "ref": "attachment",
+                    "field": "filename"
+                  },
+                  "to": "name"
+                }
+              ]
+            }
+          },
+          {
+            "id": "extract_transaction_fields",
+            "kind": "extract",
+            "summary": "Extract structured transaction fields from attachment",
+            "uses": [
+              {
+                "capability": "extract_structured_data",
+                "domain": "document"
+              }
+            ],
+            "inputs": [
+              "attachment_content"
+            ],
+            "output": "extracted_fields",
+            "extract": {
+              "input": "attachment_content",
+              "fields": [
+                {
+                  "name": "date",
+                  "type": "date",
+                  "required": false,
+                  "description": "Transaction or invoice date"
+                },
+                {
+                  "name": "vendor",
+                  "type": "string",
+                  "required": false,
+                  "description": "Vendor or merchant name"
+                },
+                {
+                  "name": "amount",
+                  "type": "number",
+                  "required": true,
+                  "description": "Transaction amount (numeric value only)"
+                },
+                {
+                  "name": "currency",
+                  "type": "string",
+                  "required": false,
+                  "description": "Currency code (e.g., USD, EUR)"
+                },
+                {
+                  "name": "invoice_number",
+                  "type": "string",
+                  "required": false,
+                  "description": "Invoice or receipt number"
+                }
+              ]
+            }
+          },
+          {
+            "id": "merge_transaction_data",
+            "kind": "transform",
+            "summary": "Merge extracted fields with email metadata and Drive link",
+            "inputs": [
+              "extracted_fields",
+              "attachment",
+              "drive_file"
+            ],
+            "output": "transaction_record",
+            "transform": {
+              "op": "map",
+              "input": "extracted_fields",
+              "description": "Combine transaction fields with email sender, subject, and Drive file link",
+              "output_schema": {
+                "type": "object",
+                "properties": {
+                  "date": {
+                    "type": "string"
+                  },
+                  "vendor": {
+                    "type": "string"
+                  },
+                  "amount": {
+                    "type": "number"
+                  },
+                  "currency": {
+                    "type": "string"
+                  },
+                  "invoice_number": {
+                    "type": "string"
+                  },
+                  "email_sender": {
+                    "type": "string"
+                  },
+                  "email_subject": {
+                    "type": "string"
+                  },
+                  "drive_link": {
+                    "type": "string"
+                  },
+                  "filename": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "amount"
+                ]
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "filter_valid_transactions",
+      "kind": "transform",
+      "summary": "Keep only transactions with valid amount field",
+      "inputs": [
+        "processed_transactions"
+      ],
+      "output": "valid_transactions",
+      "transform": {
+        "op": "filter",
+        "input": "processed_transactions",
+        "description": "Filter transactions where amount exists and is not null",
+        "where": {
+          "op": "test",
+          "left": {
+            "kind": "ref",
+            "ref": "processed_transactions",
+            "field": "amount"
+          },
+          "comparator": "exists"
+        }
+      }
+    },
+    {
+      "id": "split_by_threshold",
+      "kind": "aggregate",
+      "summary": "Split transactions into high-value (>$50) and low-value (≤$50) groups",
+      "inputs": [
+        "valid_transactions"
+      ],
+      "output": "transaction_splits",
+      "aggregate": {
+        "input": "valid_transactions",
+        "outputs": [
+          {
+            "name": "high_value_transactions",
+            "type": "subset",
+            "where": {
+              "op": "test",
+              "left": {
+                "kind": "ref",
+                "ref": "valid_transactions",
+                "field": "amount"
+              },
+              "comparator": "gt",
+              "right": {
+                "kind": "config",
+                "key": "amount_threshold_usd"
+              }
+            }
+          },
+          {
+            "name": "low_value_transactions",
+            "type": "subset",
+            "where": {
+              "op": "test",
+              "left": {
+                "kind": "ref",
+                "ref": "valid_transactions",
+                "field": "amount"
+              },
+              "comparator": "lte",
+              "right": {
+                "kind": "config",
+                "key": "amount_threshold_usd"
+              }
+            }
+          },
+          {
+            "name": "total_count",
+            "type": "count"
+          },
+          {
+            "name": "total_amount",
+            "type": "sum",
+            "field": "amount"
+          }
+        ]
+      }
+    },
+    {
+      "id": "append_high_value_to_sheets",
+      "kind": "loop",
+      "summary": "Append each high-value transaction to Google Sheets",
+      "inputs": [
+        "high_value_transactions"
+      ],
+      "loop": {
+        "over": "high_value_transactions",
+        "item_ref": "transaction",
+        "unit_of_work": {
+          "entity": "transaction"
+        },
+        "do": [
+          {
+            "id": "append_transaction_row",
+            "kind": "deliver",
+            "summary": "Append transaction row to Google Sheets tab",
+            "uses": [
+              {
+                "capability": "append",
+                "domain": "table",
+                "preferences": {
+                  "provider_family": "google"
+                }
+              }
+            ],
+            "inputs": [
+              "transaction"
+            ],
+            "output": "sheet_row",
+            "deliver": {
+              "domain": "table",
+              "intent": "append",
+              "input": "transaction",
+              "mapping": [
+                {
+                  "from": {
+                    "kind": "ref",
+                    "ref": "transaction",
+                    "field": "date"
+                  },
+                  "to": "Date"
+                },
+                {
+                  "from": {
+                    "kind": "ref",
+                    "ref": "transaction",
+                    "field": "vendor"
+                  },
+                  "to": "Vendor"
+                },
+                {
+                  "from": {
+                    "kind": "ref",
+                    "ref": "transaction",
+                    "field": "amount"
+                  },
+                  "to": "Amount"
+                },
+                {
+                  "from": {
+                    "kind": "ref",
+                    "ref": "transaction",
+                    "field": "currency"
+                  },
+                  "to": "Currency"
+                },
+                {
+                  "from": {
+                    "kind": "ref",
+                    "ref": "transaction",
+                    "field": "invoice_number"
+                  },
+                  "to": "Invoice Number"
+                },
+                {
+                  "from": {
+                    "kind": "ref",
+                    "ref": "transaction",
+                    "field": "email_sender"
+                  },
+                  "to": "Email Sender"
+                },
+                {
+                  "from": {
+                    "kind": "ref",
+                    "ref": "transaction",
+                    "field": "email_subject"
+                  },
+                  "to": "Email Subject"
+                },
+                {
+                  "from": {
+                    "kind": "ref",
+                    "ref": "transaction",
+                    "field": "drive_link"
+                  },
+                  "to": "Drive Link"
+                }
+              ],
+              "options": {
+                "spreadsheet_id": {
+                  "kind": "config",
+                  "key": "google_sheet_id"
+                },
+                "tab_name": {
+                  "kind": "config",
+                  "key": "sheet_tab_name"
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "generate_summary_email",
+      "kind": "generate",
+      "summary": "Generate email summary with transaction tables and totals",
+      "uses": [
+        {
+          "capability": "generate",
+          "domain": "internal"
+        }
+      ],
+      "inputs": [
+        "valid_transactions",
+        "high_value_transactions",
+        "total_count",
+        "total_amount"
+      ],
+      "output": "email_content",
+      "generate": {
+        "format": "html",
+        "instruction": "Create an HTML email summary with:\n1. Opening paragraph stating total number of transactions extracted and total amount\n2. Table of ALL extracted transactions (valid_transactions) with columns: Date, Vendor, Amount, Currency, Invoice Number, Email Sender, Email Subject, Drive Link\n3. Separate section titled 'High-Value Transactions (>$50)' with table of high_value_transactions using same columns\n4. Use total_count and total_amount for the summary statistics\n5. Format amounts as currency, make Drive Link clickable\n6. Use professional email styling",
+        "outputs": [
+          {
+            "name": "subject",
+            "type": "string",
+            "description": "Email subject line"
+          },
+          {
+            "name": "body",
+            "type": "string",
+            "description": "HTML email body"
+          }
+        ]
+      }
+    },
+    {
+      "id": "send_summary_email",
+      "kind": "notify",
+      "summary": "Send summary email to user",
+      "uses": [
+        {
+          "capability": "send_message",
+          "domain": "email",
+          "preferences": {
+            "provider_family": "google"
+          }
+        }
+      ],
+      "inputs": [
+        "email_content"
+      ],
+      "notify": {
+        "channel": "email",
+        "recipients": {
+          "to": [
+            {
+              "kind": "config",
+              "key": "user_email"
+            }
+          ]
+        },
+        "content": {
+          "subject": {
+            "kind": "ref",
+            "ref": "email_content",
+            "field": "subject"
+          },
+          "body": {
+            "kind": "ref",
+            "ref": "email_content",
+            "field": "body"
+          },
+          "format": "html"
+        }
+      }
+    }
+  ],
+  "confidence": 0.95
+}

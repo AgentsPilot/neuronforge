@@ -365,7 +365,454 @@ export class GoogleDrivePluginExecutor extends GoogleBasePluginExecutor {
       files: files,
       next_page_token: data.nextPageToken,
       has_more: !!data.nextPageToken,
+<<<<<<< Updated upstream
       retrieved_at: new Date().toISOString()
+=======
+      retrieved_at: new Date().toISOString(),
+      // Legacy format (camelCase for backward compatibility)
+      folderId: folderId,
+      folderName: folderName,
+      itemCount: (data.files || []).length,
+      folderCount: folders.length,
+      fileCount: files.length,
+      nextPageToken: data.nextPageToken,
+      hasMore: !!data.nextPageToken,
+      retrievedAt: new Date().toISOString()
+    };
+  }
+
+  // Create a new folder
+  private async createFolder(connection: any, parameters: any): Promise<any> {
+    this.logger.debug('DEBUG: Creating folder via Google Drive API');
+
+    const folderName = parameters.folder_name;
+    if (!folderName) {
+      throw new Error('folder_name is required');
+    }
+
+    // Build request body
+    const requestBody: any = {
+      name: folderName,
+      mimeType: 'application/vnd.google-apps.folder'
+    };
+
+    // Add parent folder if specified
+    const parentFolderId = parameters.parent_folder_id;
+    if (parentFolderId) {
+      requestBody.parents = [parentFolderId];
+    }
+
+    // Add description if specified
+    if (parameters.description) {
+      requestBody.description = parameters.description;
+    }
+
+    const response = await fetch(`${this.googleApisUrl}/drive/v3/files`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${connection.access_token}`,
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
+      body: JSON.stringify(requestBody)
+    });
+
+    if (!response.ok) {
+      const errorData = await response.text();
+      this.logger.error({ err: errorData }, 'DEBUG: Create folder failed:', errorData);
+      throw new Error(`Failed to create folder: ${response.status} - ${errorData}`);
+    }
+
+    const folder = await response.json();
+
+    return {
+      // Primary format (snake_case to match schema)
+      folder_id: folder.id,
+      folder_name: folder.name,
+      web_view_link: folder.webViewLink || `https://drive.google.com/drive/folders/${folder.id}`,
+      created_at: new Date().toISOString(),
+      // Legacy format (camelCase for backward compatibility)
+      folderId: folder.id,
+      folderName: folder.name,
+      webViewLink: folder.webViewLink || `https://drive.google.com/drive/folders/${folder.id}`,
+      createdAt: new Date().toISOString()
+    };
+  }
+
+  // Get existing folder by name or create if it doesn't exist (prevents duplicates)
+  private async getOrCreateFolder(connection: any, parameters: any): Promise<any> {
+    this.logger.debug('DEBUG: Get or create folder via Google Drive API');
+
+    const folderName = parameters.folder_name;
+    if (!folderName) {
+      throw new Error('folder_name is required');
+    }
+
+    // Build search query
+    let query = `name='${folderName.replace(/'/g, "\\'")}' and mimeType='application/vnd.google-apps.folder' and trashed=false`;
+
+    // Add parent folder constraint if specified
+    const parentFolderId = parameters.parent_folder_id;
+    if (parentFolderId) {
+      query += ` and '${parentFolderId}' in parents`;
+    }
+
+    // Search for existing folder
+    const searchUrl = new URL(`${this.googleApisUrl}/drive/v3/files`);
+    searchUrl.searchParams.set('q', query);
+    searchUrl.searchParams.set('pageSize', '1');
+    searchUrl.searchParams.set('fields', 'files(id, name, webViewLink)');
+
+    const searchResponse = await fetch(searchUrl.toString(), {
+      headers: {
+        'Authorization': `Bearer ${connection.access_token}`,
+        'Accept': 'application/json',
+      },
+    });
+
+    if (!searchResponse.ok) {
+      const errorData = await searchResponse.text();
+      this.logger.error({ err: errorData }, 'DEBUG: Folder search failed:', errorData);
+      throw new Error(`Failed to search for folder: ${searchResponse.status} - ${errorData}`);
+    }
+
+    const searchData = await searchResponse.json();
+
+    // If folder exists, return it
+    if (searchData.files && searchData.files.length > 0) {
+      const existingFolder = searchData.files[0];
+      this.logger.debug({ folderId: existingFolder.id }, 'DEBUG: Found existing folder');
+
+      return {
+        // Primary format (snake_case to match schema)
+        folder_id: existingFolder.id,
+        folder_name: existingFolder.name,
+        web_view_link: existingFolder.webViewLink || `https://drive.google.com/drive/folders/${existingFolder.id}`,
+        parent_folder_id: parameters.parent_folder_id,
+        created: false, // Folder already existed
+        created_at: new Date().toISOString(),
+        // Legacy format (camelCase for backward compatibility)
+        folderId: existingFolder.id,
+        folderName: existingFolder.name,
+        webViewLink: existingFolder.webViewLink || `https://drive.google.com/drive/folders/${existingFolder.id}`,
+        createdAt: new Date().toISOString()
+      };
+    }
+
+    // Folder doesn't exist - create it
+    this.logger.debug('DEBUG: Folder not found, creating new one');
+
+    const requestBody: any = {
+      name: folderName,
+      mimeType: 'application/vnd.google-apps.folder'
+    };
+
+    const parentFolderId2 = parameters.parent_folder_id;
+    if (parentFolderId2) {
+      requestBody.parents = [parentFolderId2];
+    }
+
+    if (parameters.description) {
+      requestBody.description = parameters.description;
+    }
+
+    const createResponse = await fetch(`${this.googleApisUrl}/drive/v3/files`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${connection.access_token}`,
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
+      body: JSON.stringify(requestBody)
+    });
+
+    if (!createResponse.ok) {
+      const errorData = await createResponse.text();
+      this.logger.error({ err: errorData }, 'DEBUG: Create folder failed:', errorData);
+      throw new Error(`Failed to create folder: ${createResponse.status} - ${errorData}`);
+    }
+
+    const newFolder = await createResponse.json();
+    this.logger.debug({ folderId: newFolder.id }, 'DEBUG: Created new folder');
+
+    return {
+      // Primary format (snake_case to match schema)
+      folder_id: newFolder.id,
+      folder_name: newFolder.name,
+      web_view_link: newFolder.webViewLink || `https://drive.google.com/drive/folders/${newFolder.id}`,
+      parent_folder_id: parameters.parent_folder_id,
+      created: true, // Folder was newly created
+      created_at: new Date().toISOString(),
+      // Legacy format (camelCase for backward compatibility)
+      folderId: newFolder.id,
+      folderName: newFolder.name,
+      webViewLink: newFolder.webViewLink || `https://drive.google.com/drive/folders/${newFolder.id}`,
+      createdAt: new Date().toISOString()
+    };
+  }
+
+  // Upload a file to Drive
+  private async uploadFile(connection: any, parameters: any): Promise<any> {
+    this.logger.debug('DEBUG: Uploading file via Google Drive API');
+
+    const fileName = parameters.file_name;
+    const fileContent = parameters.file_content;
+
+    if (!fileName) {
+      throw new Error('file_name is required');
+    }
+    if (!fileContent) {
+      throw new Error('file_content is required');
+    }
+
+    // Log content details for debugging
+    this.logger.debug({
+      fileName,
+      contentType: typeof fileContent,
+      contentLength: typeof fileContent === 'string' ? fileContent.length : 'N/A',
+      contentPreview: typeof fileContent === 'string' ? fileContent.substring(0, 50) : 'not a string'
+    }, 'DEBUG: Upload file content details');
+
+    // Determine MIME type
+    const mimeType = parameters.mime_type || 'application/octet-stream';
+
+    // Build metadata
+    const metadata: any = {
+      name: fileName,
+      mimeType: mimeType
+    };
+
+    // Add parent folder if specified
+    const folderId = parameters.folder_id;
+    if (folderId) {
+      metadata.parents = [folderId];
+    }
+
+    // Add description if specified
+    if (parameters.description) {
+      metadata.description = parameters.description;
+    }
+
+    // Decode base64 content if needed
+    let binaryContent: string;
+    try {
+      // Remove any whitespace (newlines, spaces) from base64 content
+      const cleanedContent = typeof fileContent === 'string'
+        ? fileContent.replace(/\s/g, '')
+        : fileContent;
+
+      // Check if content is base64 encoded (standard or URL-safe)
+      // Base64 can use: A-Za-z0-9+/= (standard) or A-Za-z0-9-_= (URL-safe)
+      if (typeof cleanedContent === 'string' && cleanedContent.match(/^[A-Za-z0-9+/\-_]+=*$/)) {
+        // Already base64 encoded
+        // Convert URL-safe base64 to standard base64 if needed
+        binaryContent = cleanedContent.replace(/-/g, '+').replace(/_/g, '/');
+        this.logger.debug('DEBUG: Using provided base64 content');
+      } else {
+        // Encode to base64 if not already encoded
+        binaryContent = Buffer.from(fileContent).toString('base64');
+        this.logger.debug('DEBUG: Encoded content to base64');
+      }
+    } catch (error) {
+      this.logger.warn({ err: error }, 'DEBUG: Content encoding issue, using as-is');
+      binaryContent = fileContent;
+    }
+
+    // Log encoded content details
+    this.logger.debug({
+      encodedLength: binaryContent.length,
+      encodedPreview: binaryContent.substring(0, 50)
+    }, 'DEBUG: Base64 encoded content');
+
+    // Create multipart upload body
+    const boundary = '-------314159265358979323846';
+    const delimiter = `\r\n--${boundary}\r\n`;
+    const closeDelimiter = `\r\n--${boundary}--`;
+
+    const multipartBody =
+      delimiter +
+      'Content-Type: application/json; charset=UTF-8\r\n\r\n' +
+      JSON.stringify(metadata) +
+      delimiter +
+      `Content-Type: ${mimeType}\r\n` +
+      'Content-Transfer-Encoding: base64\r\n\r\n' +
+      binaryContent +
+      closeDelimiter;
+
+    const response = await fetch(`${this.googleApisUrl}/upload/drive/v3/files?uploadType=multipart`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${connection.access_token}`,
+        'Content-Type': `multipart/related; boundary=${boundary}`,
+        'Accept': 'application/json',
+      },
+      body: multipartBody
+    });
+
+    if (!response.ok) {
+      const errorData = await response.text();
+      this.logger.error({ err: errorData }, 'DEBUG: Upload file failed:', errorData);
+      throw new Error(`Failed to upload file: ${response.status} - ${errorData}`);
+    }
+
+    const file = await response.json();
+
+    return {
+      // Primary format (snake_case to match schema)
+      file_id: file.id,
+      file_name: file.name,
+      file_size: this.formatFileSize(file.size),
+      mime_type: file.mimeType,
+      web_view_link: file.webViewLink || `https://drive.google.com/file/d/${file.id}/view`,
+      uploaded_at: new Date().toISOString(),
+      // Legacy format (camelCase for backward compatibility)
+      fileId: file.id,
+      fileName: file.name,
+      fileSize: this.formatFileSize(file.size),
+      mimeType: file.mimeType,
+      webViewLink: file.webViewLink || `https://drive.google.com/file/d/${file.id}/view`,
+      uploadedAt: new Date().toISOString()
+    };
+  }
+
+  // Share a file with permissions
+  private async shareFile(connection: any, parameters: any): Promise<any> {
+    this.logger.info({
+      file_id_received: parameters.file_id,
+      file_id_type: typeof parameters.file_id,
+      is_object: typeof parameters.file_id === 'object' && parameters.file_id !== null
+    }, '🔍 DEBUG: shareFile called - CHECKING IF NEW CODE IS RUNNING');
+
+    // ✅ FIX: Auto-unwrap file_id if workflow passed entire drive_file object
+    let fileId = parameters.file_id;
+    if (!fileId) {
+      throw new Error('file_id is required');
+    }
+
+    // ✅ FIX: Normalize permission_type from user-friendly values to Google Drive API values
+    // Schema allows: "anyone_with_link", "anyone_can_view", "anyone_can_edit", "specific_users"
+    // Google API expects: "anyone", "user", "group", "domain"
+    let permissionType: string;
+    let role: string;
+
+    const userPermissionType = parameters.permission_type || 'anyone_with_link';
+
+    if (userPermissionType === 'anyone_with_link' || userPermissionType === 'anyone_can_view') {
+      permissionType = 'anyone';
+      role = 'reader';
+    } else if (userPermissionType === 'anyone_can_edit') {
+      permissionType = 'anyone';
+      role = 'writer';
+    } else if (userPermissionType === 'specific_users') {
+      permissionType = 'user';
+      role = parameters.role || 'reader';
+    } else {
+      // Fallback for direct API values (backward compatibility)
+      permissionType = userPermissionType;
+      role = parameters.role || 'reader';
+    }
+
+    // Allow role override if explicitly provided
+    if (parameters.role) {
+      role = parameters.role;
+    }
+
+    // Build permission request
+    const permission: any = {
+      type: permissionType,
+      role: role
+    };
+
+    // Add email addresses if specified (for user/group permissions)
+    if (parameters.email_addresses && Array.isArray(parameters.email_addresses)) {
+      // For user/group type, we need to create individual permissions
+      if (permissionType === 'user' || permissionType === 'group') {
+        const permissionIds: string[] = [];
+
+        for (const email of parameters.email_addresses) {
+          const userPermission = {
+            type: permissionType,
+            role: role,
+            emailAddress: email
+          };
+
+          const response = await fetch(`${this.googleApisUrl}/drive/v3/files/${fileId}/permissions`, {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${connection.access_token}`,
+              'Content-Type': 'application/json',
+              'Accept': 'application/json',
+            },
+            body: JSON.stringify(userPermission)
+          });
+
+          if (!response.ok) {
+            const errorData = await response.text();
+            this.logger.error({ err: errorData }, `DEBUG: Failed to share with ${email}:`, errorData);
+            throw new Error(`Failed to share file with ${email}: ${response.status} - ${errorData}`);
+          }
+
+          const permissionData = await response.json();
+          permissionIds.push(permissionData.id);
+        }
+
+        // Get file metadata for web view link
+        const fileMetadata = await this.getFileMetadata(connection, { file_id: fileId });
+
+        return {
+          // Primary format (snake_case to match schema)
+          permission_ids: permissionIds,
+          file_id: fileId,
+          web_view_link: fileMetadata.web_view_link,
+          shared_with: parameters.email_addresses,
+          shared_at: new Date().toISOString(),
+          // Legacy format (camelCase for backward compatibility)
+          permissionIds: permissionIds,
+          fileId: fileId,
+          webViewLink: fileMetadata.web_view_link,
+          sharedWith: parameters.email_addresses,
+          sharedAt: new Date().toISOString()
+        };
+      }
+    }
+
+    // Create single permission (for 'anyone' or 'domain' type)
+    const response = await fetch(`${this.googleApisUrl}/drive/v3/files/${fileId}/permissions`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${connection.access_token}`,
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
+      body: JSON.stringify(permission)
+    });
+
+    if (!response.ok) {
+      const errorData = await response.text();
+      this.logger.error({ err: errorData }, 'DEBUG: Share file failed:', errorData);
+      throw new Error(`Failed to share file: ${response.status} - ${errorData}`);
+    }
+
+    const permissionData = await response.json();
+
+    // Get file metadata for web view link
+    const fileMetadata = await this.getFileMetadata(connection, { file_id: fileId });
+
+    return {
+      // Primary format (snake_case to match schema)
+      permission_id: permissionData.id,
+      file_id: fileId,
+      web_view_link: fileMetadata.web_view_link,
+      permission_type: permissionType,
+      role: role,
+      shared_at: new Date().toISOString(),
+      // Legacy format (camelCase for backward compatibility)
+      permissionId: permissionData.id,
+      fileId: fileId,
+      webViewLink: fileMetadata.web_view_link,
+      permissionType: permissionType,
+      sharedAt: new Date().toISOString()
+>>>>>>> Stashed changes
     };
   }
 
@@ -374,10 +821,11 @@ export class GoogleDrivePluginExecutor extends GoogleBasePluginExecutor {
   // Build query for list_files action
   private buildListQuery(parameters: any): string {
     const conditions: string[] = [];
-    
+
     // Folder filter
-    if (parameters.folder_id) {
-      conditions.push(`'${parameters.folder_id}' in parents`);
+    const folderId = parameters.folder_id;
+    if (folderId) {
+      conditions.push(`'${folderId}' in parents`);
     }
     
     // File type filters

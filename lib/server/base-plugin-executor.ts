@@ -174,13 +174,17 @@ export abstract class BasePluginExecutor {
   // Common utility: Count recipients in email parameters
   protected countRecipients(recipients: any): number {
     if (!recipients) return 0;
-    
+
     const to = recipients.to?.length || 0;
     const cc = recipients.cc?.length || 0;
     const bcc = recipients.bcc?.length || 0;
-    
+
     return to + cc + bcc;
   }
+
+  // NOTE: unwrapParameter method removed - now handled by schema-aware variable resolution
+  // in ExecutionContext.resolveVariable() which uses output_schema + parameter schema
+  // to intelligently extract fields when type mismatches are detected.
 
   // Common utility: Get connection status
   async getConnectionStatus(userId: string): Promise<any> {

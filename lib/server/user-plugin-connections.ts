@@ -235,6 +235,7 @@ export class UserPluginConnections {
         throw new Error('OAuth credentials not configured');
       }
 
+<<<<<<< Updated upstream
       // Exchange code for tokens
       const tokenResponse = await fetch(authConfig.token_url, {
         method: 'POST',
@@ -249,6 +250,56 @@ export class UserPluginConnections {
           grant_type: 'authorization_code',
           redirect_uri: authConfig.redirect_uri,
         }),
+=======
+      // Build token exchange parameters
+      const tokenParams: Record<string, string> = {
+        code,
+        grant_type: 'authorization_code',
+        redirect_uri: authConfig.redirect_uri,
+      };
+
+      // Determine if this provider uses JSON format for token exchange (e.g., Notion)
+      const useJsonFormat = (authConfig as any).token_format === 'json';
+
+      // Prepare headers
+      const headers: Record<string, string> = {
+        'Content-Type': useJsonFormat ? 'application/json' : 'application/x-www-form-urlencoded',
+        'Accept': 'application/json',
+      };
+
+      // Add code_verifier for PKCE if present
+      if (code_verifier) {
+        tokenParams.code_verifier = code_verifier;
+        logger.debug('Using PKCE for token exchange');
+      }
+
+      // Determine how to send credentials based on auth config
+      // Some providers (like Notion) require Basic Auth even without PKCE
+      if (code_verifier || (authConfig as any).uses_basic_auth) {
+        // Send credentials via Basic Auth header
+        const credentials = Buffer.from(`${authConfig.client_id}:${authConfig.client_secret}`).toString('base64');
+        headers['Authorization'] = `Basic ${credentials}`;
+        logger.debug('Sending credentials via Basic Auth header');
+      } else {
+        // For standard OAuth flows, send credentials in body
+        tokenParams.client_id = authConfig.client_id;
+        tokenParams.client_secret = authConfig.client_secret;
+        logger.debug('Sending credentials in request body (standard OAuth flow)');
+      }
+
+      // Prepare request body based on format
+      const body = useJsonFormat
+        ? JSON.stringify(tokenParams)
+        : new URLSearchParams(tokenParams);
+
+      logger.debug({ useJsonFormat, contentType: headers['Content-Type'] }, 'Token exchange request format');
+
+      // Exchange code for tokens
+      const tokenResponse = await fetch(authConfig.token_url, {
+        method: 'POST',
+        headers: headers,
+        body: body,
+>>>>>>> Stashed changes
       });
 
       if (!tokenResponse.ok) {
@@ -272,7 +323,22 @@ export class UserPluginConnections {
       const profileAccessToken = tokens.authed_user?.access_token || tokens.access_token;
 
       // Fetch user profile (provider-specific)
-      const profile = await this.fetchUserProfile(profileAccessToken, authConfig.auth_type, authConfig.profile_url);
+      // For Dropbox, profile fetch is optional due to API issues
+      let profile: any = {};
+      try {
+        profile = await this.fetchUserProfile(profileAccessToken, authConfig);
+      } catch (profileError: any) {
+        logger.warn({ pluginKey: plugin_key, error: profileError.message }, 'Profile fetch failed, using fallback');
+        // Use fallback profile for Dropbox
+        if (plugin_key === 'dropbox') {
+          profile = {
+            name: 'Dropbox User',
+            email: null
+          };
+        } else {
+          throw profileError; // Re-throw for other plugins
+        }
+      }
 
       // Calculate expiration
       const expiresAt = this.getExpiresAt(tokens.expires_in);
@@ -719,8 +785,16 @@ export class UserPluginConnections {
   }
 
   // Fetch user profile based on provider
+<<<<<<< Updated upstream
   private async fetchUserProfile(accessToken: string, authType: string, profileUrl?: string): Promise<any> {
     if (this.debug) console.log(`DEBUG: Fetching user profile for auth type: ${authType} profileUrl: ${profileUrl}`);
+=======
+  private async fetchUserProfile(accessToken: string, authConfig: PluginAuthConfig): Promise<any> {
+    const authType = authConfig.auth_type;
+    let profileUrl = authConfig.profile_url;
+
+    logger.debug({ authType, profileUrl }, 'Fetching user profile');
+>>>>>>> Stashed changes
 
     // Use provided profile_url if available, otherwise fall back to switch case
     if (!profileUrl) {
@@ -742,15 +816,35 @@ export class UserPluginConnections {
       }
     }
 
-    const response = await fetch(profileUrl, {
-      headers: {
-        'Authorization': `Bearer ${accessToken}`,
-        'Accept': 'application/json',
-      },
-    });
+    // Build headers with Authorization and Accept
+    const headers: Record<string, string> = {
+      'Authorization': `Bearer ${accessToken}`,
+      'Accept': 'application/json',
+    };
+
+    // Add any plugin-specific headers from auth config (e.g., Notion-Version for Notion)
+    if ((authConfig as any).profile_headers) {
+      Object.assign(headers, (authConfig as any).profile_headers);
+      logger.debug({ profileHeaders: (authConfig as any).profile_headers }, 'Adding plugin-specific headers to profile fetch');
+    }
+
+    // Dropbox and some other APIs require POST for profile endpoint
+    const method = (authConfig as any).profile_method || 'GET';
+
+    const fetchOptions: RequestInit = {
+      method,
+      headers
+    };
+
+    // Note: Dropbox POST endpoints typically don't require a body for simple queries
+    // The body is omitted, which is what Dropbox expects
+
+    const response = await fetch(profileUrl, fetchOptions);
 
     if (!response.ok) {
-      throw new Error(`Failed to fetch profile: ${response.status}`);
+      const errorText = await response.text();
+      logger.error({ status: response.status, errorText, profileUrl, method }, 'Profile fetch failed');
+      throw new Error(`Failed to fetch profile: ${response.status} - ${errorText}`);
     }
 
     const profile = await response.json();

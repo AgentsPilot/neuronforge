@@ -1,0 +1,27 @@
+{
+  "title": "Expense Extraction from Gmail Attachments",
+  "data": [
+    "- Search Gmail for emails where the subject contains the keyword \"expenses\".",
+    "- Include emails from all time (no lookback limit).",
+    "- From each matching email, collect attachments that are PDFs or images (JPG/PNG).",
+    "- For each attachment, capture basic source context: Gmail message id, email subject, and email received date/time (for duplicate checks and traceability)."
+  ],
+  "actions": [
+    "- For each PDF/image attachment, extract these fields when present: Date&time, Exp_Type, amount, Currency, payment type.",
+    "- Normalize extracted values so they are consistent in the sheet (e.g., amount as a number; currency as a short code/symbol when available).",
+    "- If the agent cannot confidently determine a field value (especially Exp_Type), leave that cell blank.",
+    "- Treat each attachment as one expense record (one row per attachment).",
+    "- Skip duplicates: if an attachment appears to already be logged, do not add a new row.",
+    "- Use a deterministic duplicate rule based on the combination of extracted fields and source context (at minimum: Date&time + amount + currency + vendor/payment type if available + attachment filename/email message id when available).",
+    "- If multiple expenses are found in a single attachment, split them into multiple rows when clearly separable; otherwise log a single row and leave unclear fields blank."
+  ],
+  "output": [
+    "- Append extracted expense records to Google Sheets",
+    "- Each row should contain: Date&time, Exp_Type, amount, Currency, payment type, plus source context (message id, email subject, received date)"
+  ],
+  "config_parameters": {
+    "gmail_search_query": "subject:expenses",
+    "expense_sheet_id": "1ABC-EXPENSE-SHEET-XYZ",
+    "expense_tab_name": "Expenses"
+  }
+}

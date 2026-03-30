@@ -15,6 +15,19 @@ import { SlackPluginExecutor } from './slack-plugin-executor';
 import { WhatsAppPluginExecutor } from './whatsapp-plugin-executor';
 import { HubSpotPluginExecutor } from './hubspot-plugin-executor';
 import { ChatGPTResearchPluginExecutor } from './chatgpt-research-plugin-executor';
+<<<<<<< Updated upstream
+=======
+import { LinkedInPluginExecutor } from './linkedin-plugin-executor';
+import { AirtablePluginExecutor } from './airtable-plugin-executor';
+import { DocumentExtractorPluginExecutor } from './document-extractor-plugin-executor';
+import { NotionPluginExecutor } from './notion-plugin-executor';
+import { OutlookPluginExecutor } from './outlook-plugin-executor';
+import { OneDrivePluginExecutor } from './onedrive-plugin-executor';
+import { DiscordPluginExecutor } from './discord-plugin-executor';
+import { SalesforcePluginExecutor } from './salesforce-plugin-executor';
+import { MetaAdsPluginExecutor } from './meta-ads-plugin-executor';
+import { DropboxPluginExecutor } from './dropbox-plugin-executor';
+>>>>>>> Stashed changes
 
 let pluginExecuterInstance: PluginExecuterV2 | null = null;
 
@@ -36,6 +49,19 @@ export class PluginExecuterV2 {
     'whatsapp': WhatsAppPluginExecutor,
     'hubspot': HubSpotPluginExecutor,
     'chatgpt-research': ChatGPTResearchPluginExecutor,
+<<<<<<< Updated upstream
+=======
+    'linkedin': LinkedInPluginExecutor,
+    'airtable': AirtablePluginExecutor,
+    'document-extractor': DocumentExtractorPluginExecutor,
+    'notion': NotionPluginExecutor,
+    'outlook': OutlookPluginExecutor,
+    'onedrive': OneDrivePluginExecutor,
+    'discord': DiscordPluginExecutor,
+    'salesforce': SalesforcePluginExecutor,
+    'meta-ads': MetaAdsPluginExecutor,
+    'dropbox': DropboxPluginExecutor,
+>>>>>>> Stashed changes
     // Add new plugin executors here
   };
 

@@ -127,6 +127,58 @@ export class WorkflowPilot {
   }
 
   /**
+   * Extract workflow configuration from agent
+   * Converts config array from IntentContract to a key-value object
+   *
+   * Config format in agent (from V6 pipeline):
+   * [
+   *   { "key": "amount_threshold_usd", "type": "number", "default": 50 }
+   * ]
+   *
+   * Returns:
+   * {
+   *   "amount_threshold_usd": 50
+   * }
+   */
+  private extractWorkflowConfig(agent: Agent): Record<string, any> {
+    const config: Record<string, any> = {};
+
+    // Extract config from input_schema (default_value fields)
+    if (agent.input_schema && Array.isArray(agent.input_schema)) {
+      console.log('[WorkflowPilot] Extracting config from input_schema:', agent.input_schema.length, 'fields');
+      for (const field of agent.input_schema) {
+        if (field.default_value !== undefined && field.default_value !== null && field.default_value !== '') {
+          console.log('[WorkflowPilot] Found config value:', field.name, '=', field.default_value);
+          config[field.name] = field.default_value;
+        }
+      }
+    }
+
+    // Fallback: Check if agent has legacy workflow_config field
+    if ((agent as any).workflow_config) {
+      const wfConfig = (agent as any).workflow_config;
+      console.log('[WorkflowPilot] Found legacy workflow_config:', wfConfig);
+
+      // If it's already a key-value object, use it directly
+      if (typeof wfConfig === 'object' && !Array.isArray(wfConfig)) {
+        return { ...config, ...wfConfig };
+      }
+
+      // If it's an array of config items (IntentContract format)
+      if (Array.isArray(wfConfig)) {
+        for (const item of wfConfig) {
+          if (item.key && item.default !== undefined) {
+            config[item.key] = item.default;
+          }
+        }
+      }
+    }
+
+    console.log('[WorkflowPilot] Final extracted config:', config);
+    return config;
+  }
+
+  /**
    * Execute workflow
    */
   async execute(
@@ -222,12 +274,29 @@ export class WorkflowPilot {
       inputValues
     );
 
+<<<<<<< Updated upstream
     const context = new ExecutionContext(
+=======
+    // Determine if this is batch calibration mode
+    const isBatchCalibration = runMode === 'batch_calibration';
+
+    // Extract workflow configuration from agent (if stored)
+    // Config is used for {{config.key}} variable references in workflow steps
+    const workflowConfig = this.extractWorkflowConfig(agent);
+
+    context = new ExecutionContext(
+>>>>>>> Stashed changes
       executionId,
       agent,
       userId,
       finalSessionId,
+<<<<<<< Updated upstream
       inputValues
+=======
+      inputValues,
+      isBatchCalibration,
+      workflowConfig
+>>>>>>> Stashed changes
     );
 
     // 3. Load memory context (skip if optimizations enabled for faster execution)
@@ -416,6 +485,46 @@ export class WorkflowPilot {
 
       console.log(`✅ [WorkflowPilot] Execution completed successfully: ${executionId}`);
 
+<<<<<<< Updated upstream
+=======
+      // NOTE: We do NOT automatically mark agent as production_ready here
+      // User must explicitly click "Approve for Production" button in the calibration UI
+      // This ensures user reviews all calibration results (including hardcoded values) before approving
+      console.log(`🔍 [WorkflowPilot] Agent will remain in calibration mode until user approves via UI`);
+
+      // Cleanup debug session
+      if (debugRunId) {
+        DebugSessionManager.cleanup(debugRunId);
+        console.log(`🐛 [WorkflowPilot] Debug session cleaned up: ${debugRunId}`);
+      }
+
+      // Cleanup in-memory checkpoints
+      const cpManager = (this as any)._checkpointManager as CheckpointManager | null;
+      if (cpManager) {
+        cpManager.clear();
+      }
+
+      // Batch calibration: collect hardcoded values and workflow structure issues after successful execution
+      if (isBatchCalibration) {
+        console.log('🔍 [WorkflowPilot] Batch calibration mode - collecting hardcoded values and workflow structure issues');
+        try {
+          const issueCollector = new IssueCollector();
+
+          // Collect hardcoded values
+          const hardcodeIssues = issueCollector.collectHardcodedValues(agent);
+          context.collectedIssues.push(...hardcodeIssues);
+          console.log(`🔍 [WorkflowPilot] Detected ${hardcodeIssues.length} hardcoded values`);
+
+          // Collect workflow structure issues (missing fields, wrong field names, etc.)
+          const structureIssues = issueCollector.collectWorkflowStructureIssues(agent, context);
+          context.collectedIssues.push(...structureIssues);
+          console.log(`🔍 [WorkflowPilot] Detected ${structureIssues.length} workflow structure issues`);
+        } catch (hardcodeErr) {
+          console.error('❌ [WorkflowPilot] Issue detection failed (non-critical):', hardcodeErr);
+        }
+      }
+
+>>>>>>> Stashed changes
       // Emit execution complete event globally
       ExecutionEventEmitter.emitExecutionComplete(executionId, agent.id, {
         success: true,
@@ -423,10 +532,37 @@ export class WorkflowPilot {
         total_duration_ms: context.totalExecutionTime,
       });
 
+<<<<<<< Updated upstream
+=======
+      // Collect execution summary for calibration
+      const executionSummary = executionSummaryCollector ? executionSummaryCollector.getSummary() : undefined;
+      if (executionSummary) {
+        console.log(`📊 [WorkflowPilot] Execution summary collected:`, {
+          data_sources: executionSummary.data_sources_accessed.length,
+          data_written: executionSummary.data_written.length,
+          items_processed: executionSummary.items_processed,
+          full_summary: JSON.stringify(executionSummary, null, 2)
+        });
+      } else {
+        console.log(`📊 [WorkflowPilot] No execution summary collected (collector: ${!!executionSummaryCollector})`);
+      }
+
+      // CRITICAL: For batch calibration, include ALL step outputs for error detection
+      // The finalOutput is schema-filtered and may not include intermediate steps
+      // Scatter-gather error detection needs to scan ALL step outputs, not just final output
+      const allStepOutputs: any = {};
+      if (isBatchCalibration) {
+        context.getAllStepOutputs().forEach((stepOutput, stepId) => {
+          allStepOutputs[stepId] = stepOutput.data;
+        });
+        console.log(`🔍 [WorkflowPilot] Batch calibration mode: included all ${Object.keys(allStepOutputs).length} step outputs for error detection`);
+      }
+
+>>>>>>> Stashed changes
       return {
         success: true,
         executionId,
-        output: finalOutput,
+        output: isBatchCalibration ? allStepOutputs : finalOutput,  // Use all outputs in calibration mode
         stepsCompleted: context.completedSteps.length,
         stepsFailed: context.failedSteps.length,
         stepsSkipped: context.skippedSteps.length,
@@ -475,6 +611,52 @@ export class WorkflowPilot {
         severity: 'critical',
       });
 
+<<<<<<< Updated upstream
+=======
+      // In batch calibration mode, collect issues from the execution error
+      // AND collect hardcoded values even if execution failed
+      // This ensures we show ALL improvements, not just the first error
+      // Allows users to fix both execution errors AND hardcode issues in one go
+      if (isBatchCalibration && context) {
+        try {
+          console.log('🔍 [WorkflowPilot] Batch calibration mode - collecting issues after failure');
+          const { IssueCollector } = await import('./shadow/IssueCollector');
+          const issueCollector = new IssueCollector();
+
+          // CRITICAL: Convert execution error to CollectedIssue with auto-repair proposal
+          // This enables auto-fix for data shape mismatches, filter bugs, etc.
+          const failedStepId = error.stepId || context.currentStep || 'unknown';
+          const pilotSteps = agent.pilot_steps || agent.workflow_steps || [];
+          const failedStepDef = pilotSteps.find(s => s.id === failedStepId || s.step_id === failedStepId);
+          const failedStepName = failedStepDef?.name || failedStepId;
+          const failedStepType = failedStepDef?.type || 'unknown';
+
+          const executionIssue = issueCollector.collectFromError(
+            error,
+            failedStepId,
+            failedStepName,
+            failedStepType,
+            context
+          );
+          context.collectedIssues.push(executionIssue);
+          console.log(`🔍 [WorkflowPilot] Collected execution error issue: ${executionIssue.category}, auto-repair: ${executionIssue.autoRepairAvailable}`);
+
+          // Also collect hardcoded values and workflow structure issues
+          const hardcodeIssues = issueCollector.collectHardcodedValues(agent);
+          context.collectedIssues.push(...hardcodeIssues);
+          console.log(`🔍 [WorkflowPilot] Detected ${hardcodeIssues.length} hardcoded values (after failure)`);
+
+          // Collect workflow structure issues
+          const structureIssues = issueCollector.collectWorkflowStructureIssues(agent, context);
+          context.collectedIssues.push(...structureIssues);
+          console.log(`🔍 [WorkflowPilot] Detected ${structureIssues.length} workflow structure issues (after failure)`);
+        } catch (issueCollectionErr: any) {
+          // Non-critical - issue collection is best-effort
+          console.error('❌ [WorkflowPilot] Issue collection failed (non-critical):', issueCollectionErr.message);
+        }
+      }
+
+>>>>>>> Stashed changes
       return {
         success: false,
         executionId,
@@ -911,7 +1093,13 @@ export class WorkflowPilot {
         subAgent,
         parentContext.userId,
         parentContext.sessionId,
+<<<<<<< Updated upstream
         {} // Empty input values - we'll map them manually
+=======
+        {}, // Empty input values - we'll map them manually
+        parentContext.batchCalibrationMode, // Inherit batch calibration mode
+        parentContext.workflowConfig // Inherit workflow config from parent
+>>>>>>> Stashed changes
       );
 
       // 3. Map inputs from parent context to sub-workflow context

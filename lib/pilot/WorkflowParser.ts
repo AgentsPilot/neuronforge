@@ -214,7 +214,8 @@ export class WorkflowParser {
         if (!step.plugin) {
           errors.push(`Action step ${step.id} missing plugin`);
         }
-        if (!step.action) {
+        // Accept both 'action' and 'operation' fields for backward compatibility
+        if (!step.action && !step.operation) {
           errors.push(`Action step ${step.id} missing action`);
         }
       }

@@ -66,6 +66,8 @@ export interface ActionStep extends WorkflowStepBase {
   type: 'action';
   plugin: string;
   action: string;
+  /** @deprecated Use 'action' instead. Kept for backward compatibility. */
+  operation?: string;
   params: Record<string, any>;
 }
 
@@ -337,7 +339,162 @@ export type ComparisonOperator =
   | 'is_not_empty'
   | 'matches'  // regex match
   | 'starts_with'
+<<<<<<< Updated upstream
   | 'ends_with';
+=======
+  | 'ends_with'
+  // Date operators (Wave 8 - schema alignment)
+  | 'within_last_days'  // Date is within N days from now
+  | 'before'  // Date is before reference date
+  | 'after';  // Date is after reference date
+
+// ============================================================================
+// DEPENDENCY INTERFACES (Wave 7 Type Safety Fix)
+// ============================================================================
+
+/**
+ * Interface for WorkflowOrchestrator
+ * Replaces `any` type for type safety
+ */
+export interface IOrchestrator {
+  /**
+   * Check if orchestration is active
+   */
+  isActive(): boolean;
+
+  /**
+   * Execute a step with orchestration
+   */
+  executeStep(
+    stepId: string,
+    stepData: {
+      step: WorkflowStep;
+      params: Record<string, any>;
+      context: Record<string, any>;
+      executionContext: IExecutionContext;
+    },
+    memoryContext?: MemoryContext,
+    pluginsRequired?: string[]
+  ): Promise<{
+    output: any;
+    tokensUsed: { total: number; input?: number; output?: number };
+    tokensSaved: number;
+    executionTime: number;
+    compressionApplied?: boolean;
+    routedModel?: string;
+  } | null>;
+
+  /**
+   * Orchestrator configuration
+   */
+  config?: {
+    aisRoutingEnabled?: boolean;
+    [key: string]: any;
+  };
+}
+
+/**
+ * Interface for StateManager
+ * Used by StepExecutor for persistence
+ */
+export interface IStateManager {
+  /**
+   * Log step execution start
+   */
+  logStepExecution(
+    workflowExecutionId: string,
+    stepId: string,
+    stepName: string,
+    stepType: string,
+    status: 'pending' | 'running' | 'completed' | 'failed' | 'skipped',
+    metadata?: Record<string, any>
+  ): Promise<void>;
+
+  /**
+   * Update step execution status
+   */
+  updateStepExecution(
+    workflowExecutionId: string,
+    stepId: string,
+    status: 'completed' | 'failed' | 'skipped',
+    metadata?: Record<string, any>,
+    errorMessage?: string
+  ): Promise<void>;
+}
+
+/**
+ * Interface for ParallelExecutor
+ * Used by StepExecutor for nested parallel operations
+ */
+export interface IParallelExecutor {
+  /**
+   * Execute scatter-gather step
+   */
+  executeScatterGather(
+    step: ScatterGatherStep,
+    context: IExecutionContext
+  ): Promise<any[]>;
+
+  /**
+   * Execute loop step
+   */
+  executeLoop(
+    step: LoopStep,
+    context: IExecutionContext
+  ): Promise<any[]>;
+}
+
+/**
+ * Interface for ExecutionContext (minimal interface for dependency injection)
+ * The full ExecutionContext class implements this plus additional methods
+ */
+export interface IExecutionContext {
+  // Execution metadata
+  executionId: string;
+  agentId: string;
+  userId: string;
+  sessionId: string;
+
+  // Agent configuration
+  agent: Agent;
+  inputValues: Record<string, any>;
+  workflowConfig: Record<string, any>; // Workflow configuration parameters (accessible via {{config.key}})
+
+  // Execution state
+  status: ExecutionStatus;
+  currentStep: string | null;
+  completedSteps: string[];
+  failedSteps: string[];
+  skippedSteps: string[];
+
+  // Runtime variables
+  variables: Record<string, any>;
+
+  // Memory context
+  memoryContext?: MemoryContext;
+
+  // Orchestration (Phase 4) - now typed
+  orchestrator?: IOrchestrator;
+
+  // Timing
+  startedAt: Date;
+  completedAt?: Date;
+
+  // Metrics
+  totalTokensUsed: number;
+  totalExecutionTime: number;
+
+  // Methods required by StepExecutor and ParallelExecutor
+  resolveVariable(reference: string): any;
+  resolveAllVariables(obj: any): any;
+  setVariable(name: string, value: any): void;
+  getStepOutput(stepId: string): StepOutput | undefined;
+  setStepOutput(stepId: string, output: StepOutput): void;
+  getAllStepOutputs(): Map<string, StepOutput>;
+  markStepSkipped(stepId: string): void;
+  clone(resetMetrics?: boolean): IExecutionContext;
+}
+>>>>>>> Stashed changes
 
 // ============================================================================
 // EXECUTION CONTEXT
@@ -620,6 +777,89 @@ export interface WorkflowExecutionResult {
   error?: string;
   errorStack?: string;
   failedStep?: string;
+<<<<<<< Updated upstream
+=======
+
+  // Execution summary for calibration (aggregated metadata, NO actual client data)
+  execution_summary?: CalibrationExecutionSummary;
+
+  // Batch calibration results
+  collectedIssues?: CollectedIssue[];
+  context?: any; // ExecutionContext (for hardcode detection after execution)
+}
+
+// ============================================================================
+// BATCH CALIBRATION INTERFACES
+// ============================================================================
+
+/**
+ * Issue collected during batch calibration
+ */
+export interface CollectedIssue {
+  id: string; // uuid
+  category: 'parameter_error' | 'hardcode_detected' | 'data_shape_mismatch' |
+            'logic_error' | 'execution_error' | 'data_unavailable' | 'configuration_missing';
+  severity: 'critical' | 'high' | 'medium' | 'low';
+
+  // Affected steps
+  affectedSteps: Array<{
+    stepId: string;
+    stepName: string;
+    friendlyName: string;
+  }>;
+
+  // Issue details
+  title: string; // "Parameter 'range' not found"
+  message: string; // Plain English explanation
+  technicalDetails: string; // Technical error message
+
+  // Fix information
+  suggestedFix?: {
+    type: 'parameter_correction' | 'parameterization' | 'data_repair' | 'logic_suggestion' | 'configuration_required' | 'workflow_structure';
+    action: any; // Depends on type
+    confidence: number; // 0-1
+  };
+
+  // Auto-repair info
+  autoRepairAvailable: boolean;
+  autoRepairProposal?: any; // RepairProposal from RepairEngine
+
+  // UI metadata
+  requiresUserInput: boolean;
+  estimatedImpact: 'high' | 'medium' | 'low';
+}
+
+/**
+ * Calibration session from database
+ */
+export interface CalibrationSession {
+  id: string;
+  agent_id: string;
+  user_id: string;
+  execution_id?: string;
+  status: 'running' | 'collecting_issues' | 'awaiting_fixes' | 'fixes_applied' | 'completed' | 'failed';
+  issues: CollectedIssue[];
+  issue_summary: {
+    critical: number;
+    warnings: number;
+    auto_repairs: number;
+  };
+  auto_repairs_proposed: any[];
+  user_fixes: Record<string, any>;
+  applied_fixes?: {
+    parameters: number;
+    parameterizations: number;
+    autoRepairs: number;
+  };
+  backup_pilot_steps?: any;
+  total_steps: number;
+  completed_steps: number;
+  failed_steps: number;
+  skipped_steps: number;
+  created_at: string;
+  updated_at: string;
+  completed_at?: string;
+>>>>>>> Stashed changes
 }
 
 // ============================================================================
@@ -700,6 +940,7 @@ export interface Agent {
   // Workflow
   workflow_steps?: WorkflowStep[];  // Legacy format (backward compatibility with old agents)
   pilot_steps?: WorkflowStep[];     // Pilot format (default for all new agents)
+  workflow_config?: Record<string, any> | Array<{key: string, type: string, default?: any}>; // V6: Workflow configuration parameters
 
   // Plugins
   plugins_required: string[];

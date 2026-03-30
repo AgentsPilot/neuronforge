@@ -153,12 +153,21 @@ function mapPluginToPluginKey(plugin: string): string {
     'slack': 'slack',
 
     'microsoft': 'outlook',
+    'onedrive': 'onedrive',
     'outlook': 'outlook',
 
     'google-calendar': 'google-calendar',
     'calendar': 'google-calendar',
 
-    'whatsapp': 'whatsapp'
+    'whatsapp': 'whatsapp',
+
+    'notion': 'notion',
+    'discord': 'discord',
+    'salesforce': 'salesforce',
+    'meta-ads': 'meta-ads',
+    'airtable': 'airtable',
+    'linkedin': 'linkedin',
+    'dropbox': 'dropbox'
   };
 
   return pluginMap[plugin] || plugin;

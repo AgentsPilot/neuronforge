@@ -1,0 +1,562 @@
+{
+  "domains": [
+    "document",
+    "email",
+    "internal",
+    "storage",
+    "table",
+    "web"
+  ],
+  "capabilities": [
+    "append",
+    "create",
+    "create_draft",
+    "download",
+    "extract_structured_data",
+    "fetch_content",
+    "generate",
+    "get",
+    "list",
+    "search",
+    "send_message",
+    "summarize",
+    "update",
+    "upload",
+    "upsert"
+  ],
+  "plugins": [
+    {
+      "key": "chatgpt-research",
+      "name": "chatgpt-research",
+      "provider_family": "openai",
+      "domains": [
+        "internal",
+        "web"
+      ],
+      "capabilities": [
+        "generate",
+        "search",
+        "summarize"
+      ],
+      "actions": [
+        {
+          "plugin_key": "chatgpt-research",
+          "plugin_name": "chatgpt-research",
+          "action_name": "research_topic",
+          "domain": "web",
+          "capability": "search",
+          "description": "Research a topic using web search and AI analysis - produces comprehensive, ready-to-use output",
+          "param_hints": [
+            "topic",
+            "depth",
+            "focus",
+            "output_format",
+            "max_length"
+          ],
+          "required_params": [
+            "topic"
+          ]
+        },
+        {
+          "plugin_key": "chatgpt-research",
+          "plugin_name": "chatgpt-research",
+          "action_name": "summarize_content",
+          "domain": "internal",
+          "capability": "summarize",
+          "description": "Summarize provided content using AI - for EXISTING external content only",
+          "param_hints": [
+            "content",
+            "length",
+            "style",
+            "focus_on"
+          ],
+          "required_params": [
+            "content"
+          ]
+        },
+        {
+          "plugin_key": "chatgpt-research",
+          "plugin_name": "chatgpt-research",
+          "action_name": "answer_question",
+          "domain": "internal",
+          "capability": "generate",
+          "description": "Answer questions using AI with optional web research",
+          "param_hints": [
+            "question",
+            "use_web_search",
+            "detail_level",
+            "include_sources"
+          ],
+          "required_params": [
+            "question"
+          ]
+        }
+      ]
+    },
+    {
+      "key": "document-extractor",
+      "name": "document-extractor",
+      "provider_family": "internal",
+      "domains": [
+        "document"
+      ],
+      "capabilities": [
+        "extract_structured_data"
+      ],
+      "actions": [
+        {
+          "plugin_key": "document-extractor",
+          "plugin_name": "document-extractor",
+          "action_name": "extract_structured_data",
+          "domain": "document",
+          "capability": "extract_structured_data",
+          "description": "Extract structured fields from document files (PDF, images, invoices, receipts)",
+          "param_hints": [
+            "file_content",
+            "file_url",
+            "mime_type",
+            "filename",
+            "fields",
+            "use_ai",
+            "language"
+          ],
+          "required_params": [
+            "fields"
+          ]
+        }
+      ]
+    },
+    {
+      "key": "google-drive",
+      "name": "google-drive",
+      "provider_family": "google",
+      "domains": [
+        "storage"
+      ],
+      "capabilities": [
+        "create",
+        "fetch_content",
+        "get",
+        "list",
+        "search",
+        "update",
+        "upload",
+        "upsert"
+      ],
+      "actions": [
+        {
+          "plugin_key": "google-drive",
+          "plugin_name": "google-drive",
+          "action_name": "list_files",
+          "domain": "storage",
+          "capability": "list",
+          "description": "List files and folders in Google Drive with optional filtering",
+          "param_hints": [
+            "folder_id",
+            "max_results",
+            "order_by",
+            "file_types",
+            "include_trashed"
+          ]
+        },
+        {
+          "plugin_key": "google-drive",
+          "plugin_name": "google-drive",
+          "action_name": "search_files",
+          "domain": "storage",
+          "capability": "search",
+          "description": "Search for files and folders using Google Drive's query syntax",
+          "param_hints": [
+            "query",
+            "max_results",
+            "search_scope",
+            "file_types"
+          ],
+          "required_params": [
+            "query"
+          ]
+        },
+        {
+          "plugin_key": "google-drive",
+          "plugin_name": "google-drive",
+          "action_name": "get_file_metadata",
+          "domain": "storage",
+          "capability": "get",
+          "description": "Get detailed information about a specific file or folder",
+          "param_hints": [
+            "file_id",
+            "include_permissions",
+            "include_export_links"
+          ],
+          "required_params": [
+            "file_id"
+          ]
+        },
+        {
+          "plugin_key": "google-drive",
+          "plugin_name": "google-drive",
+          "action_name": "read_file_content",
+          "domain": "storage",
+          "capability": "fetch_content",
+          "description": "Read and extract text content from a file",
+          "param_hints": [
+            "file_id",
+            "export_format",
+            "max_size_mb"
+          ],
+          "required_params": [
+            "file_id"
+          ]
+        },
+        {
+          "plugin_key": "google-drive",
+          "plugin_name": "google-drive",
+          "action_name": "get_folder_contents",
+          "domain": "storage",
+          "capability": "list",
+          "description": "Get all files and subfolders within a specific folder",
+          "param_hints": [
+            "folder_id",
+            "max_results",
+            "recursive",
+            "order_by"
+          ],
+          "required_params": [
+            "folder_id"
+          ]
+        },
+        {
+          "plugin_key": "google-drive",
+          "plugin_name": "google-drive",
+          "action_name": "upload_file",
+          "domain": "storage",
+          "capability": "upload",
+          "description": "Upload a file to Google Drive",
+          "param_hints": [
+            "file_content",
+            "file_name",
+            "folder_id",
+            "mime_type",
+            "description"
+          ],
+          "required_params": [
+            "file_content",
+            "file_name"
+          ]
+        },
+        {
+          "plugin_key": "google-drive",
+          "plugin_name": "google-drive",
+          "action_name": "create_folder",
+          "domain": "storage",
+          "capability": "create",
+          "description": "Create a new folder in Google Drive",
+          "param_hints": [
+            "folder_name",
+            "parent_folder_id",
+            "description"
+          ],
+          "required_params": [
+            "folder_name"
+          ]
+        },
+        {
+          "plugin_key": "google-drive",
+          "plugin_name": "google-drive",
+          "action_name": "get_or_create_folder",
+          "domain": "storage",
+          "capability": "upsert",
+          "description": "Get existing folder by name or create if it doesn't exist (prevents duplicates)",
+          "param_hints": [
+            "folder_name",
+            "parent_folder_id",
+            "description"
+          ],
+          "required_params": [
+            "folder_name"
+          ]
+        },
+        {
+          "plugin_key": "google-drive",
+          "plugin_name": "google-drive",
+          "action_name": "share_file",
+          "domain": "storage",
+          "capability": "update",
+          "description": "Share a file or folder and get a shareable link",
+          "param_hints": [
+            "file_id",
+            "permission_type",
+            "role",
+            "email_addresses"
+          ],
+          "required_params": [
+            "file_id"
+          ]
+        }
+      ]
+    },
+    {
+      "key": "google-mail",
+      "name": "google-mail",
+      "provider_family": "google",
+      "domains": [
+        "email"
+      ],
+      "capabilities": [
+        "create_draft",
+        "download",
+        "search",
+        "send_message",
+        "update"
+      ],
+      "actions": [
+        {
+          "plugin_key": "google-mail",
+          "plugin_name": "google-mail",
+          "action_name": "send_email",
+          "domain": "email",
+          "capability": "send_message",
+          "description": "Compose and send an email message",
+          "param_hints": [
+            "recipients",
+            "content",
+            "options"
+          ],
+          "required_params": [
+            "recipients",
+            "content"
+          ]
+        },
+        {
+          "plugin_key": "google-mail",
+          "plugin_name": "google-mail",
+          "action_name": "search_emails",
+          "domain": "email",
+          "capability": "search",
+          "description": "Search for emails in the user's Gmail account",
+          "param_hints": [
+            "query",
+            "max_results",
+            "include_attachments",
+            "content_level",
+            "folder"
+          ]
+        },
+        {
+          "plugin_key": "google-mail",
+          "plugin_name": "google-mail",
+          "action_name": "create_draft",
+          "domain": "email",
+          "capability": "create_draft",
+          "description": "Create a draft email without sending",
+          "param_hints": [
+            "recipients",
+            "content",
+            "save_location"
+          ],
+          "required_params": [
+            "content"
+          ]
+        },
+        {
+          "plugin_key": "google-mail",
+          "plugin_name": "google-mail",
+          "action_name": "modify_message",
+          "domain": "email",
+          "capability": "update",
+          "description": "Modify Gmail message properties (mark important, add/remove labels, mark read/unread)",
+          "param_hints": [
+            "message_id",
+            "add_labels",
+            "remove_labels",
+            "mark_important",
+            "mark_read"
+          ],
+          "required_params": [
+            "message_id"
+          ]
+        },
+        {
+          "plugin_key": "google-mail",
+          "plugin_name": "google-mail",
+          "action_name": "get_email_attachment",
+          "domain": "email",
+          "capability": "download",
+          "description": "Download email attachment content for processing",
+          "param_hints": [
+            "message_id",
+            "attachment_id",
+            "filename"
+          ],
+          "required_params": [
+            "message_id",
+            "attachment_id"
+          ]
+        }
+      ]
+    },
+    {
+      "key": "google-sheets",
+      "name": "google-sheets",
+      "provider_family": "google",
+      "domains": [
+        "table"
+      ],
+      "capabilities": [
+        "append",
+        "create",
+        "get",
+        "update",
+        "upsert"
+      ],
+      "actions": [
+        {
+          "plugin_key": "google-sheets",
+          "plugin_name": "google-sheets",
+          "action_name": "read_range",
+          "domain": "table",
+          "capability": "get",
+          "description": "Read data from a specific range of cells in a spreadsheet",
+          "param_hints": [
+            "spreadsheet_id",
+            "range",
+            "include_formula_values",
+            "major_dimension"
+          ],
+          "required_params": [
+            "spreadsheet_id",
+            "range"
+          ],
+          "config_params": [
+            {
+              "param": "spreadsheet_id",
+              "config_key": "spreadsheet_id"
+            }
+          ]
+        },
+        {
+          "plugin_key": "google-sheets",
+          "plugin_name": "google-sheets",
+          "action_name": "write_range",
+          "domain": "table",
+          "capability": "update",
+          "description": "Write or update data in a specific range of cells (OVERWRITES existing data)",
+          "param_hints": [
+            "spreadsheet_id",
+            "range",
+            "values",
+            "input_option",
+            "overwrite_existing"
+          ],
+          "required_params": [
+            "spreadsheet_id",
+            "range",
+            "values"
+          ],
+          "config_params": [
+            {
+              "param": "spreadsheet_id",
+              "config_key": "spreadsheet_id"
+            }
+          ]
+        },
+        {
+          "plugin_key": "google-sheets",
+          "plugin_name": "google-sheets",
+          "action_name": "append_rows",
+          "domain": "table",
+          "capability": "append",
+          "description": "Append new rows of data to the end of a sheet (ADDS without overwriting)",
+          "param_hints": [
+            "spreadsheet_id",
+            "range",
+            "values",
+            "input_option",
+            "insert_data_option"
+          ],
+          "required_params": [
+            "spreadsheet_id",
+            "range",
+            "values"
+          ],
+          "config_params": [
+            {
+              "param": "spreadsheet_id",
+              "config_key": "spreadsheet_id"
+            }
+          ]
+        },
+        {
+          "plugin_key": "google-sheets",
+          "plugin_name": "google-sheets",
+          "action_name": "create_spreadsheet",
+          "domain": "table",
+          "capability": "create",
+          "description": "Create a new Google Sheets spreadsheet",
+          "param_hints": [
+            "title",
+            "sheet_names",
+            "initial_data"
+          ],
+          "required_params": [
+            "title"
+          ]
+        },
+        {
+          "plugin_key": "google-sheets",
+          "plugin_name": "google-sheets",
+          "action_name": "get_or_create_spreadsheet",
+          "domain": "table",
+          "capability": "upsert",
+          "description": "Get existing spreadsheet by title or create if it doesn't exist (prevents duplicates)",
+          "param_hints": [
+            "title",
+            "sheet_names",
+            "initial_data"
+          ],
+          "required_params": [
+            "title"
+          ]
+        },
+        {
+          "plugin_key": "google-sheets",
+          "plugin_name": "google-sheets",
+          "action_name": "get_spreadsheet_info",
+          "domain": "table",
+          "capability": "get",
+          "description": "Get metadata and information about a spreadsheet",
+          "param_hints": [
+            "spreadsheet_id",
+            "include_sheet_data",
+            "include_data_ranges"
+          ],
+          "required_params": [
+            "spreadsheet_id"
+          ],
+          "config_params": [
+            {
+              "param": "spreadsheet_id",
+              "config_key": "spreadsheet_id"
+            }
+          ]
+        },
+        {
+          "plugin_key": "google-sheets",
+          "plugin_name": "google-sheets",
+          "action_name": "get_or_create_sheet_tab",
+          "domain": "table",
+          "capability": "upsert",
+          "description": "Get existing sheet tab or create if it doesn't exist within a spreadsheet (prevents duplicates)",
+          "param_hints": [
+            "spreadsheet_id",
+            "tab_name"
+          ],
+          "required_params": [
+            "spreadsheet_id",
+            "tab_name"
+          ]
+        }
+      ]
+    }
+  ]
+}

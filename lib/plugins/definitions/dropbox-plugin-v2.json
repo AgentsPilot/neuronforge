@@ -1,0 +1,735 @@
+{
+  "plugin": {
+    "name": "dropbox",
+    "version": "1.0.0",
+    "description": "Access, search, upload, and manage files and folders in Dropbox",
+    "context": "Use for accessing Dropbox files, searching documents, uploading files, creating folders, sharing files, and managing folder structures",
+    "icon": "<Cloud className='w-5 h-5 text-blue-600'/>",
+    "category": "productivity",
+    "isPopular": true,
+    "auth_config": {
+      "auth_type": "oauth2",
+      "client_id": "${DROPBOX_APP_KEY}",
+      "client_secret": "${DROPBOX_APP_SECRET}",
+      "redirect_uri": "${NEXT_PUBLIC_APP_URL}/oauth/callback/dropbox",
+      "auth_url": "https://www.dropbox.com/oauth2/authorize",
+      "token_url": "https://api.dropboxapi.com/oauth2/token",
+      "profile_url": "https://api.dropboxapi.com/2/users/get_current_account",
+      "profile_method": "POST",
+      "required_scopes": [],
+      "requires_pkce": true
+    },
+    "provider_family": "dropbox"
+  },
+  "actions": {
+    "list_files": {
+      "description": "List files and folders in a Dropbox folder",
+      "usage_context": "When user wants to browse their Dropbox contents or see files in a specific folder",
+      "idempotent": true,
+      "domain": "storage",
+      "capability": "list",
+      "input_entity": "folder",
+      "output_entity": "file",
+      "input_cardinality": "single",
+      "output_cardinality": "collection",
+      "output_fields": [
+        "id",
+        "name",
+        "path_display",
+        "size",
+        "client_modified",
+        "server_modified",
+        "is_downloadable"
+      ],
+      "required_params": [],
+      "optional_params": [
+        "path",
+        "recursive",
+        "limit"
+      ],
+      "must_support": [
+        "folder_browsing",
+        "recursive_listing"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "default": "",
+            "description": "Path to folder to list. Empty string '' for root folder. Example: '/Documents' or '/Photos/2024'"
+          },
+          "recursive": {
+            "type": "boolean",
+            "default": false,
+            "description": "If true, list files recursively in all subfolders"
+          },
+          "limit": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 2000,
+            "default": 100,
+            "description": "Maximum number of files to return"
+          },
+          "include_deleted": {
+            "type": "boolean",
+            "default": false,
+            "description": "If true, include deleted files"
+          }
+        }
+      },
+      "rules": {
+        "limits": {},
+        "confirmations": {}
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "files": {
+            "type": "array",
+            "description": "List of files and folders",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "description": "Unique file ID",
+                  "x-guaranteed": true
+                },
+                "name": {
+                  "type": "string",
+                  "description": "File name",
+                  "x-guaranteed": true
+                },
+                "path_display": {
+                  "type": "string",
+                  "description": "Full path of file"
+                },
+                "path_lower": {
+                  "type": "string",
+                  "description": "Lowercase version of path"
+                },
+                "size": {
+                  "type": "number",
+                  "description": "File size in bytes"
+                },
+                "client_modified": {
+                  "type": "string",
+                  "description": "Client-side modified time (ISO 8601)"
+                },
+                "server_modified": {
+                  "type": "string",
+                  "description": "Server-side modified time (ISO 8601)"
+                },
+                "is_folder": {
+                  "type": "boolean",
+                  "description": "Whether this is a folder"
+                },
+                "is_downloadable": {
+                  "type": "boolean",
+                  "description": "Whether file can be downloaded"
+                }
+              }
+            }
+          },
+          "file_count": {
+            "type": "integer",
+            "description": "Number of files returned"
+          },
+          "has_more": {
+            "type": "boolean",
+            "description": "Whether there are more files"
+          }
+        }
+      },
+      "output_guidance": {
+        "success_description": "Retrieved files",
+        "sample_output": {
+          "files": [
+            {
+              "id": "id:a4ayc_80_OEAAAAAAAAAXw",
+              "name": "example.pdf",
+              "path_display": "/Documents/example.pdf",
+              "size": 52480,
+              "client_modified": "2024-01-15T10:00:00Z",
+              "server_modified": "2024-01-15T10:00:00Z",
+              "is_folder": false,
+              "is_downloadable": true
+            }
+          ],
+          "file_count": 1,
+          "has_more": false
+        },
+        "common_errors": {
+          "auth_failed": "Dropbox connection expired. Please reconnect in Settings.",
+          "path_not_found": "Folder path does not exist. Check the path and try again.",
+          "insufficient_permissions": "Missing required permissions to access this folder."
+        }
+      }
+    },
+    "search_files": {
+      "description": "Search for files and folders in Dropbox by name or content",
+      "usage_context": "When user wants to find files matching specific keywords or search terms",
+      "idempotent": true,
+      "parameters": {
+        "type": "object",
+        "required": [
+          "query"
+        ],
+        "properties": {
+          "query": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Search query keywords"
+          },
+          "path": {
+            "type": "string",
+            "description": "Limit search to specific folder path. Empty for all files."
+          },
+          "max_results": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 1000,
+            "default": 50,
+            "description": "Maximum number of results to return"
+          },
+          "file_extensions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Filter by file extensions (e.g., ['pdf', 'docx'])"
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "files": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "path_display": {
+                  "type": "string"
+                },
+                "size": {
+                  "type": "number"
+                },
+                "server_modified": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "match_count": {
+            "type": "integer"
+          }
+        }
+      },
+      "output_guidance": {
+        "success_description": "Found files",
+        "sample_output": {
+          "files": [
+            {
+              "id": "id:a4ayc_80_OEAAAAAAAAAXw",
+              "name": "invoice.pdf",
+              "path_display": "/Documents/invoice.pdf",
+              "size": 52480
+            }
+          ],
+          "match_count": 1
+        }
+      }
+    },
+    "download_file": {
+      "description": "Download a file from Dropbox and get its content",
+      "usage_context": "When user needs to read file contents or download a file",
+      "idempotent": true,
+      "parameters": {
+        "type": "object",
+        "required": [
+          "path"
+        ],
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Path to file to download. Example: '/Documents/file.pdf'"
+          },
+          "return_base64": {
+            "type": "boolean",
+            "default": false,
+            "description": "If true, returns file content as base64 string"
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "File name"
+          },
+          "size": {
+            "type": "number",
+            "description": "File size in bytes"
+          },
+          "content": {
+            "type": "string",
+            "description": "File content (text or base64)"
+          },
+          "content_type": {
+            "type": "string",
+            "description": "MIME type of file"
+          }
+        }
+      },
+      "output_guidance": {
+        "success_description": "Downloaded file",
+        "sample_output": {
+          "name": "example.txt",
+          "size": 1024,
+          "content": "File content here...",
+          "content_type": "text/plain"
+        }
+      }
+    },
+    "upload_file": {
+      "description": "Upload a file to Dropbox",
+      "usage_context": "When user wants to save a file to their Dropbox",
+      "idempotent": false,
+      "domain": "storage",
+      "capability": "upload",
+      "parameters": {
+        "type": "object",
+        "required": [
+          "path",
+          "content"
+        ],
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Destination path including filename. Example: '/Documents/report.pdf'"
+          },
+          "content": {
+            "type": "string",
+            "description": "File content (text or base64 encoded)"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "add",
+              "overwrite",
+              "update"
+            ],
+            "default": "add",
+            "description": "Write mode: 'add' (fail if exists), 'overwrite' (replace), 'update' (version)"
+          },
+          "autorename": {
+            "type": "boolean",
+            "default": false,
+            "description": "If true, rename file if conflict exists"
+          },
+          "mute": {
+            "type": "boolean",
+            "default": false,
+            "description": "If true, don't notify user of upload"
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "File ID"
+          },
+          "name": {
+            "type": "string",
+            "description": "File name"
+          },
+          "path_display": {
+            "type": "string",
+            "description": "Full path of uploaded file"
+          },
+          "size": {
+            "type": "number",
+            "description": "File size in bytes"
+          },
+          "server_modified": {
+            "type": "string",
+            "description": "Upload timestamp"
+          }
+        }
+      },
+      "output_guidance": {
+        "success_description": "Uploaded file",
+        "sample_output": {
+          "id": "id:a4ayc_80_OEAAAAAAAAAXw",
+          "name": "report.pdf",
+          "path_display": "/Documents/report.pdf",
+          "size": 52480,
+          "server_modified": "2024-01-15T10:00:00Z"
+        }
+      }
+    },
+    "create_folder": {
+      "description": "Create a new folder in Dropbox",
+      "usage_context": "When user wants to create a new folder for organizing files",
+      "idempotent": false,
+      "domain": "storage",
+      "capability": "create_folder",
+      "parameters": {
+        "type": "object",
+        "required": [
+          "path"
+        ],
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Path of folder to create. Example: '/Documents/NewFolder'"
+          },
+          "autorename": {
+            "type": "boolean",
+            "default": false,
+            "description": "If true, rename if folder already exists"
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Folder ID"
+          },
+          "name": {
+            "type": "string",
+            "description": "Folder name"
+          },
+          "path_display": {
+            "type": "string",
+            "description": "Full path of folder"
+          }
+        }
+      },
+      "output_guidance": {
+        "success_description": "Created folder",
+        "sample_output": {
+          "id": "id:a4ayc_80_OEAAAAAAAAAXw",
+          "name": "NewFolder",
+          "path_display": "/Documents/NewFolder"
+        }
+      }
+    },
+    "get_or_create_folder": {
+      "description": "Get existing folder or create it if it doesn't exist (idempotent)",
+      "usage_context": "When user wants to ensure a folder exists before uploading files",
+      "idempotent": true,
+      "domain": "storage",
+      "capability": "create_folder",
+      "parameters": {
+        "type": "object",
+        "required": [
+          "path"
+        ],
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Path of folder. Example: '/Documents/Archive'"
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Folder ID"
+          },
+          "name": {
+            "type": "string",
+            "description": "Folder name"
+          },
+          "path_display": {
+            "type": "string",
+            "description": "Full path"
+          },
+          "already_existed": {
+            "type": "boolean",
+            "description": "True if folder already existed"
+          }
+        }
+      },
+      "output_guidance": {
+        "success_description": "Retrieved or created folder",
+        "sample_output": {
+          "id": "id:a4ayc_80_OEAAAAAAAAAXw",
+          "name": "Archive",
+          "path_display": "/Documents/Archive",
+          "already_existed": false
+        }
+      }
+    },
+    "delete_file": {
+      "description": "Delete a file or folder from Dropbox",
+      "usage_context": "When user wants to remove files or folders",
+      "idempotent": true,
+      "parameters": {
+        "type": "object",
+        "required": [
+          "path"
+        ],
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Path to file or folder to delete"
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "deleted_path": {
+            "type": "string",
+            "description": "Path that was deleted"
+          },
+          "deleted_at": {
+            "type": "string",
+            "description": "Deletion timestamp"
+          }
+        }
+      },
+      "output_guidance": {
+        "success_description": "Deleted file",
+        "sample_output": {
+          "deleted_path": "/Documents/old_file.pdf",
+          "deleted_at": "2024-01-15T10:00:00Z"
+        }
+      }
+    },
+    "move_file": {
+      "description": "Move a file or folder to a different location in Dropbox",
+      "usage_context": "When user wants to reorganize files or move items between folders",
+      "idempotent": false,
+      "parameters": {
+        "type": "object",
+        "required": [
+          "from_path",
+          "to_path"
+        ],
+        "properties": {
+          "from_path": {
+            "type": "string",
+            "description": "Current path of file/folder"
+          },
+          "to_path": {
+            "type": "string",
+            "description": "Destination path"
+          },
+          "autorename": {
+            "type": "boolean",
+            "default": false,
+            "description": "Rename if destination exists"
+          },
+          "allow_ownership_transfer": {
+            "type": "boolean",
+            "default": false,
+            "description": "Allow transferring ownership if moving to shared folder"
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "path_display": {
+            "type": "string",
+            "description": "New path after move"
+          }
+        }
+      },
+      "output_guidance": {
+        "success_description": "Moved file",
+        "sample_output": {
+          "id": "id:a4ayc_80_OEAAAAAAAAAXw",
+          "name": "moved_file.pdf",
+          "path_display": "/Archive/moved_file.pdf"
+        }
+      }
+    },
+    "copy_file": {
+      "description": "Copy a file or folder to another location in Dropbox",
+      "usage_context": "When user wants to duplicate files or create backups",
+      "idempotent": false,
+      "parameters": {
+        "type": "object",
+        "required": [
+          "from_path",
+          "to_path"
+        ],
+        "properties": {
+          "from_path": {
+            "type": "string",
+            "description": "Source path"
+          },
+          "to_path": {
+            "type": "string",
+            "description": "Destination path"
+          },
+          "autorename": {
+            "type": "boolean",
+            "default": false
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "path_display": {
+            "type": "string",
+            "description": "Path of copied file"
+          }
+        }
+      },
+      "output_guidance": {
+        "success_description": "Copied file",
+        "sample_output": {
+          "id": "id:a4ayc_80_OEAAAAAAAAAXw",
+          "name": "file_copy.pdf",
+          "path_display": "/Backup/file_copy.pdf"
+        }
+      }
+    },
+    "create_shared_link": {
+      "description": "Create a shared link for a file or folder",
+      "usage_context": "When user wants to share files with others via a link",
+      "idempotent": true,
+      "parameters": {
+        "type": "object",
+        "required": [
+          "path"
+        ],
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Path to file or folder to share"
+          },
+          "short_url": {
+            "type": "boolean",
+            "default": false,
+            "description": "Request a short URL"
+          },
+          "expires": {
+            "type": "string",
+            "description": "Expiration time (ISO 8601 format)"
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string",
+            "description": "Shared link URL"
+          },
+          "path": {
+            "type": "string",
+            "description": "Path of shared item"
+          },
+          "expires": {
+            "type": "string",
+            "description": "Link expiration time"
+          }
+        }
+      },
+      "output_guidance": {
+        "success_description": "Created shared link",
+        "sample_output": {
+          "url": "https://www.dropbox.com/s/abc123/file.pdf?dl=0",
+          "path": "/Documents/file.pdf"
+        }
+      }
+    },
+    "get_file_metadata": {
+      "description": "Get detailed metadata for a file or folder",
+      "usage_context": "When user needs file information without downloading content",
+      "idempotent": true,
+      "parameters": {
+        "type": "object",
+        "required": [
+          "path"
+        ],
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Path to file or folder"
+          },
+          "include_media_info": {
+            "type": "boolean",
+            "default": false,
+            "description": "Include photo/video metadata"
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "path_display": {
+            "type": "string"
+          },
+          "size": {
+            "type": "number"
+          },
+          "client_modified": {
+            "type": "string"
+          },
+          "server_modified": {
+            "type": "string"
+          },
+          "content_hash": {
+            "type": "string",
+            "description": "Hash of file content"
+          }
+        }
+      },
+      "output_guidance": {
+        "success_description": "Retrieved file metadata",
+        "sample_output": {
+          "id": "id:a4ayc_80_OEAAAAAAAAAXw",
+          "name": "report.pdf",
+          "path_display": "/Documents/report.pdf",
+          "path_lower": "/documents/report.pdf",
+          "size": 52480,
+          "client_modified": "2024-01-15T09:45:00Z",
+          "server_modified": "2024-01-15T10:00:00Z",
+          "is_folder": false,
+          "content_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      }
+    }
+  }
+}

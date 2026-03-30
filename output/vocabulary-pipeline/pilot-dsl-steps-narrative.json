@@ -1,0 +1,632 @@
+[
+  {
+    "step_id": "step1",
+    "type": "action",
+    "description": "Fetch unread emails from Gmail",
+    "plugin": "google-mail",
+    "operation": "search_emails",
+    "config": {
+      "query": "is:unread",
+      "include_attachments": true
+    },
+    "output_variable": "unread_emails",
+    "id": "step1"
+  },
+  {
+    "step_id": "step2",
+    "type": "action",
+    "description": "Get or create Google Drive folder for storing attachments",
+    "plugin": "google-drive",
+    "operation": "get_or_create_folder",
+    "config": {
+      "folder_name": "{{config.google_drive_folder_name}}"
+    },
+    "output_variable": "drive_folder",
+    "id": "step2"
+  },
+  {
+    "step_id": "step3",
+    "type": "transform",
+    "operation": "flatten",
+    "input": "{{unread_emails}}",
+    "description": "Extract attachments array from emails with email metadata",
+    "config": {
+      "type": "flatten",
+      "input": "unread_emails",
+      "custom_code": "Extract attachments from emails, preserving sender and subject metadata",
+      "output_schema": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "filename": {
+              "type": "string"
+            },
+            "mime_type": {
+              "type": "string"
+            },
+            "size": {
+              "type": "number"
+            },
+            "sender": {
+              "type": "string"
+            },
+            "subject": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "filename",
+            "mime_type",
+            "sender",
+            "subject"
+          ]
+        }
+      }
+    },
+    "output_variable": "email_attachments",
+    "id": "step3"
+  },
+  {
+    "step_id": "step4",
+    "type": "transform",
+    "operation": "filter",
+    "input": "{{email_attachments}}",
+    "description": "Filter attachments for supported file types (PDF, JPEG, PNG)",
+    "config": {
+      "type": "filter",
+      "input": "email_attachments",
+      "custom_code": "Keep only PDF, JPEG, and PNG attachments",
+      "condition": {
+        "operator": "in",
+        "value": [
+          "application/pdf",
+          "image/jpeg",
+          "image/jpg",
+          "image/png"
+        ],
+        "field": "item.mime_type",
+        "conditionType": "simple"
+      },
+      "output_schema": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "filename": {
+              "type": "string"
+            },
+            "mime_type": {
+              "type": "string"
+            },
+            "size": {
+              "type": "number"
+            },
+            "sender": {
+              "type": "string"
+            },
+            "subject": {
+              "type": "string"
+            },
+            "message_id": {
+              "type": "string"
+            },
+            "attachment_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "filename",
+            "mime_type",
+            "sender",
+            "subject",
+            "message_id",
+            "attachment_id"
+          ]
+        }
+      }
+    },
+    "output_variable": "supported_attachments",
+    "id": "step4"
+  },
+  {
+    "step_id": "step5",
+    "type": "scatter_gather",
+    "description": "Loop over supported_attachments",
+    "scatter": {
+      "input": "{{supported_attachments}}",
+      "steps": [
+        {
+          "step_id": "step6",
+          "type": "action",
+          "description": "Download attachment content from Gmail",
+          "plugin": "google-mail",
+          "operation": "get_email_attachment",
+          "config": {
+            "message_id": "attachment.message_id",
+            "attachment_id": "attachment.attachment_id",
+            "filename": "attachment.filename"
+          },
+          "output_variable": "attachment_content",
+          "id": "step6"
+        },
+        {
+          "step_id": "step7",
+          "type": "action",
+          "description": "Upload attachment to Google Drive folder",
+          "plugin": "google-drive",
+          "operation": "upload_file",
+          "config": {
+            "file_content": "attachment_content.content",
+            "file_name": "attachment_content.filename",
+            "folder_id": "drive_folder.folder_id"
+          },
+          "output_variable": "drive_file",
+          "id": "step7"
+        },
+        {
+          "step_id": "step8",
+          "type": "action",
+          "description": "Extract structured transaction fields from attachment",
+          "plugin": "document-extractor",
+          "operation": "extract_structured_data",
+          "config": {
+            "file_url": "drive_file",
+            "fields": [
+              {
+                "name": "transaction_date",
+                "type": "date",
+                "required": false
+              },
+              {
+                "name": "vendor_name",
+                "type": "string",
+                "required": false
+              },
+              {
+                "name": "amount",
+                "type": "number",
+                "required": false
+              },
+              {
+                "name": "currency",
+                "type": "string",
+                "required": false
+              },
+              {
+                "name": "invoice_number",
+                "type": "string",
+                "required": false
+              }
+            ]
+          },
+          "output_variable": "extracted_fields",
+          "id": "step8"
+        },
+        {
+          "step_id": "step9",
+          "type": "transform",
+          "operation": "map",
+          "input": "{{extracted_fields}}",
+          "description": "Merge extracted fields with email metadata and Drive link",
+          "config": {
+            "type": "map",
+            "input": "extracted_fields",
+            "custom_code": "Combine transaction fields with email sender, subject, and Drive file link",
+            "output_schema": {
+              "type": "object",
+              "properties": {
+                "transaction_date": {
+                  "type": "string"
+                },
+                "vendor_name": {
+                  "type": "string"
+                },
+                "amount": {
+                  "type": "number"
+                },
+                "currency": {
+                  "type": "string"
+                },
+                "invoice_number": {
+                  "type": "string"
+                },
+                "sender": {
+                  "type": "string"
+                },
+                "subject": {
+                  "type": "string"
+                },
+                "drive_link": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "sender",
+                "subject",
+                "drive_link"
+              ]
+            },
+            "attachment": "{{attachment}}",
+            "attachment_content": "{{attachment_content}}",
+            "drive_file": "{{drive_file}}"
+          },
+          "output_variable": "complete_record",
+          "id": "step9"
+        },
+        {
+          "step_id": "step10",
+          "type": "conditional",
+          "description": "Conditional: node_9",
+          "condition": {
+            "conditionType": "simple",
+            "field": "complete_record.amount",
+            "operator": "exists"
+          },
+          "steps": [
+            {
+              "step_id": "step11",
+              "type": "conditional",
+              "description": "Conditional: node_11",
+              "condition": {
+                "conditionType": "simple",
+                "field": "complete_record.amount",
+                "operator": "greater_than",
+                "value": "{{config.amount_threshold}}"
+              },
+              "steps": [
+                {
+                  "step_id": "step12",
+                  "type": "action",
+                  "description": "Append high-value transaction to Google Sheets",
+                  "plugin": "google-sheets",
+                  "operation": "append_rows",
+                  "config": {
+                    "range": "{{config.expenses_tab_name}}",
+                    "values": [
+                      [
+                        "{{complete_record.transaction_date}}",
+                        "{{complete_record.vendor_name}}",
+                        "{{complete_record.amount}}",
+                        "{{complete_record.currency}}",
+                        "{{complete_record.invoice_number}}",
+                        "{{complete_record.drive_link}}",
+                        "{{complete_record.sender}}",
+                        "{{complete_record.subject}}"
+                      ]
+                    ],
+                    "spreadsheet_id": "{{config.google_sheet_id}}"
+                  },
+                  "output_variable": "sheets_record",
+                  "id": "step12"
+                },
+                {
+                  "step_id": "step13",
+                  "type": "transform",
+                  "operation": "map",
+                  "input": "{{complete_record}}",
+                  "description": "Tag record as high-value transaction",
+                  "config": {
+                    "type": "map",
+                    "input": "complete_record",
+                    "custom_code": "Add category tag for high-value transaction",
+                    "output_schema": {
+                      "type": "object",
+                      "properties": {
+                        "transaction_date": {
+                          "type": "string"
+                        },
+                        "vendor_name": {
+                          "type": "string"
+                        },
+                        "amount": {
+                          "type": "number"
+                        },
+                        "currency": {
+                          "type": "string"
+                        },
+                        "invoice_number": {
+                          "type": "string"
+                        },
+                        "sender": {
+                          "type": "string"
+                        },
+                        "subject": {
+                          "type": "string"
+                        },
+                        "drive_link": {
+                          "type": "string"
+                        },
+                        "category": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "sender",
+                        "subject",
+                        "drive_link",
+                        "category"
+                      ]
+                    }
+                  },
+                  "output_variable": "attachment_result",
+                  "id": "step13"
+                }
+              ],
+              "else_steps": [
+                {
+                  "step_id": "step14",
+                  "type": "transform",
+                  "operation": "map",
+                  "input": "{{complete_record}}",
+                  "description": "Tag record as low-value transaction",
+                  "config": {
+                    "type": "map",
+                    "input": "complete_record",
+                    "custom_code": "Add category tag for low-value transaction",
+                    "output_schema": {
+                      "type": "object",
+                      "properties": {
+                        "transaction_date": {
+                          "type": "string"
+                        },
+                        "vendor_name": {
+                          "type": "string"
+                        },
+                        "amount": {
+                          "type": "number"
+                        },
+                        "currency": {
+                          "type": "string"
+                        },
+                        "invoice_number": {
+                          "type": "string"
+                        },
+                        "sender": {
+                          "type": "string"
+                        },
+                        "subject": {
+                          "type": "string"
+                        },
+                        "drive_link": {
+                          "type": "string"
+                        },
+                        "category": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "sender",
+                        "subject",
+                        "drive_link",
+                        "category"
+                      ]
+                    }
+                  },
+                  "output_variable": "attachment_result",
+                  "id": "step14"
+                }
+              ],
+              "id": "step11"
+            }
+          ],
+          "else_steps": [
+            {
+              "step_id": "step15",
+              "type": "transform",
+              "operation": "map",
+              "input": "{{complete_record}}",
+              "description": "Tag record as missing amount",
+              "config": {
+                "type": "map",
+                "input": "complete_record",
+                "custom_code": "Add category tag for missing amount",
+                "output_schema": {
+                  "type": "object",
+                  "properties": {
+                    "transaction_date": {
+                      "type": "string"
+                    },
+                    "vendor_name": {
+                      "type": "string"
+                    },
+                    "amount": {
+                      "type": "number"
+                    },
+                    "currency": {
+                      "type": "string"
+                    },
+                    "invoice_number": {
+                      "type": "string"
+                    },
+                    "sender": {
+                      "type": "string"
+                    },
+                    "subject": {
+                      "type": "string"
+                    },
+                    "drive_link": {
+                      "type": "string"
+                    },
+                    "category": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "sender",
+                    "subject",
+                    "drive_link",
+                    "category"
+                  ]
+                }
+              },
+              "output_variable": "attachment_result",
+              "id": "step15"
+            }
+          ],
+          "id": "step10"
+        }
+      ],
+      "itemVariable": "attachment"
+    },
+    "gather": {
+      "operation": "collect"
+    },
+    "output_variable": "processed_attachments",
+    "id": "step5"
+  },
+  {
+    "step_id": "step16",
+    "type": "transform",
+    "operation": "filter",
+    "input": "{{processed_attachments}}",
+    "description": "Filter subset for all_transactions",
+    "config": {
+      "type": "filter",
+      "input": "processed_attachments",
+      "condition": {
+        "operator": "exists",
+        "field": "item.category",
+        "conditionType": "simple"
+      }
+    },
+    "output_variable": "all_transactions",
+    "id": "step16"
+  },
+  {
+    "step_id": "step17",
+    "type": "transform",
+    "operation": "filter",
+    "input": "{{processed_attachments}}",
+    "description": "Filter subset for high_value_transactions",
+    "config": {
+      "type": "filter",
+      "input": "processed_attachments",
+      "condition": {
+        "operator": "eq",
+        "value": "high_value",
+        "field": "item.category",
+        "conditionType": "simple"
+      }
+    },
+    "output_variable": "high_value_transactions",
+    "id": "step17"
+  },
+  {
+    "step_id": "step18",
+    "type": "transform",
+    "operation": "filter",
+    "input": "{{processed_attachments}}",
+    "description": "Filter subset for low_value_transactions",
+    "config": {
+      "type": "filter",
+      "input": "processed_attachments",
+      "condition": {
+        "operator": "eq",
+        "value": "low_value",
+        "field": "item.category",
+        "conditionType": "simple"
+      }
+    },
+    "output_variable": "low_value_transactions",
+    "id": "step18"
+  },
+  {
+    "step_id": "step19",
+    "type": "transform",
+    "operation": "filter",
+    "input": "{{processed_attachments}}",
+    "description": "Filter subset for missing_amount_items",
+    "config": {
+      "type": "filter",
+      "input": "processed_attachments",
+      "condition": {
+        "operator": "eq",
+        "value": "missing_amount",
+        "field": "item.category",
+        "conditionType": "simple"
+      }
+    },
+    "output_variable": "missing_amount_items",
+    "id": "step19"
+  },
+  {
+    "step_id": "step20",
+    "type": "transform",
+    "operation": "reduce",
+    "input": "{{processed_attachments}}",
+    "description": "Count items for total_processed_count",
+    "config": {
+      "type": "reduce",
+      "input": "processed_attachments",
+      "reduce_operation": "count",
+      "reducer": "count"
+    },
+    "output_variable": "total_processed_count",
+    "id": "step20"
+  },
+  {
+    "step_id": "step21",
+    "type": "ai_processing",
+    "input": {
+      "all_transactions": "{{all_transactions}}",
+      "high_value_transactions": "{{high_value_transactions}}",
+      "low_value_transactions": "{{low_value_transactions}}",
+      "missing_amount_items": "{{missing_amount_items}}",
+      "total_processed_count": "{{total_processed_count}}"
+    },
+    "prompt": "Create a comprehensive summary email report with four sections: 1) All detected transactions, 2) Transactions greater than $50, 3) Transactions less than or equal to $50, 4) Attachments where amount could not be identified. Each entry must include Date, Vendor, Amount, Currency, Invoice Number, Sender Email, Email Subject, and Google Drive file link. Include total counts for each section.",
+    "description": "Generate comprehensive summary email report",
+    "config": {
+      "ai_type": "generate",
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "subject": {
+            "type": "string",
+            "description": "Email subject line"
+          },
+          "body": {
+            "type": "string",
+            "description": "HTML formatted email body"
+          }
+        },
+        "required": [
+          "subject",
+          "body"
+        ]
+      },
+      "type": "generate",
+      "instruction": "Create a comprehensive summary email report with four sections: 1) All detected transactions, 2) Transactions greater than $50, 3) Transactions less than or equal to $50, 4) Attachments where amount could not be identified. Each entry must include Date, Vendor, Amount, Currency, Invoice Number, Sender Email, Email Subject, and Google Drive file link. Include total counts for each section."
+    },
+    "output_variable": "summary_email_content",
+    "id": "step21"
+  },
+  {
+    "step_id": "step22",
+    "type": "action",
+    "description": "Send summary report to finance team",
+    "plugin": "google-mail",
+    "operation": "send_email",
+    "config": {
+      "recipients": {
+        "to": [
+          "{{config.summary_email_recipient}}"
+        ]
+      },
+      "content": {
+        "subject": "{{summary_email_content.subject}}",
+        "html_body": "{{summary_email_content.body}}"
+      }
+    },
+    "id": "step22"
+  }
+]

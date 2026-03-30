@@ -1,0 +1,46 @@
+Invoice
+AI
+Invoice number ZYVUTAKJ-0003
+Date of issue August 31, 2025
+Date due
+August 31, 2025
+Anthropic, PBC
+Bill to
+548 Market Street
+offir.omer@gmail.com's Organization
+PMB 90375
+14 Venus Drive
+San Francisco, California 94104
+Closter, New Jersey 07624
+United States
+United States
+support@anthropic.com
+offir.omer@gmail.com
+$80.72 USD due August 31, 2025
+Pay online
+While we prefer electronic payment methods,
+any checks must be sent to the address below, NOT to our San Francisco office.
+PAYMENT ADDRESS:
+Anthropic, PBC
+P.O. Box 104477
+Pasadena, CA 91189-4477
+Description
+Qty
+Unit price
+Amount
+Max plan - 5x
+1
+$100.00
+$100.00
+Aug 31 - Sep 30, 2025
+Unused time on Claude Pro after 01 Sep 2025
+1
+-$19.28
+Aug 31 - Sep 30, 2025
+Subtotal
+$80.72
+Total
+$80.72
+Amount due
+$80.72 USD
+Page 1 of 1

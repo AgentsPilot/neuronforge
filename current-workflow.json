@@ -1,0 +1,409 @@
+{
+  "agent_id": "4d30ef95-7246-4c7d-8ef3-c199fc611e0c",
+  "agent_name": "Gmail Expense-to-Sheets Logger (Deduplicated)",
+  "workflow_steps": [
+    {
+      "id": "step1",
+      "name": "Read all lead rows from Google Sheets tab",
+      "type": "action",
+      "action": "read_range",
+      "params": {
+        "range": "{{input.sheet_tab_name}}",
+        "spreadsheet_id": "{{input.spreadsheet_id}}"
+      },
+      "plugin": "google-sheets",
+      "step_id": "step1",
+      "description": "Read all lead rows from Google Sheets tab",
+      "output_schema": {
+        "type": "object",
+        "source": "plugin",
+        "properties": {
+          "range": {
+            "type": "string",
+            "source": "plugin",
+            "required": true,
+            "description": "The actual range that was read (may differ from requested)"
+          },
+          "values": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "source": "plugin"
+              },
+              "source": "plugin"
+            },
+            "source": "plugin",
+            "required": true,
+            "description": "2D array of cell values (rows of cells)"
+          },
+          "row_count": {
+            "type": "number",
+            "source": "plugin",
+            "required": true,
+            "description": "Number of rows returned"
+          },
+          "column_count": {
+            "type": "number",
+            "source": "plugin",
+            "description": "Number of columns returned"
+          },
+          "retrieved_at": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Timestamp when data was retrieved (ISO 8601)"
+          },
+          "major_dimension": {
+            "type": "string",
+            "source": "plugin",
+            "description": "How data is organized (ROWS or COLUMNS)"
+          }
+        }
+      },
+      "output_variable": "raw_leads"
+    },
+    {
+      "id": "step2",
+      "name": "Auto-normalize: Convert 2D array to objects",
+      "type": "transform",
+      "input": "{{raw_leads.values}}",
+      "config": {},
+      "step_id": "step2",
+      "operation": "rows_to_objects",
+      "description": "Auto-normalize: Convert 2D array to objects",
+      "output_variable": "raw_leads_objects"
+    },
+    {
+      "id": "step3",
+      "name": "Filter leads where Stage = 4",
+      "type": "transform",
+      "input": "{{raw_leads_objects}}",
+      "config": {
+        "type": "filter",
+        "input": "raw_leads_objects",
+        "condition": {
+          "field": "item.Stage",
+          "value": "{{input.stage_threshold}}",
+          "operator": "eq",
+          "conditionType": "simple"
+        },
+        "custom_code": "Keep only leads where Stage column equals 4",
+        "output_schema": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "Date",
+              "Lead Name",
+              "Company",
+              "Email",
+              "Phone",
+              "Stage",
+              "Notes",
+              "Sales Person"
+            ],
+            "properties": {
+              "Date": {
+                "type": "string"
+              },
+              "Email": {
+                "type": "string"
+              },
+              "Notes": {
+                "type": "string"
+              },
+              "Phone": {
+                "type": "string"
+              },
+              "Stage": {
+                "type": "number"
+              },
+              "Company": {
+                "type": "string"
+              },
+              "Lead Name": {
+                "type": "string"
+              },
+              "Sales Person": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      },
+      "step_id": "step3",
+      "operation": "filter",
+      "description": "Filter leads where Stage = 4",
+      "output_schema": {
+        "type": "object",
+        "source": "inferred",
+        "properties": {
+          "range": {
+            "type": "string",
+            "source": "plugin",
+            "required": true,
+            "description": "The actual range that was read (may differ from requested)"
+          },
+          "values": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "source": "plugin"
+              },
+              "source": "plugin"
+            },
+            "source": "plugin",
+            "required": true,
+            "description": "2D array of cell values (rows of cells)"
+          },
+          "row_count": {
+            "type": "number",
+            "source": "plugin",
+            "required": true,
+            "description": "Number of rows returned"
+          },
+          "column_count": {
+            "type": "number",
+            "source": "plugin",
+            "description": "Number of columns returned"
+          },
+          "retrieved_at": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Timestamp when data was retrieved (ISO 8601)"
+          },
+          "major_dimension": {
+            "type": "string",
+            "source": "plugin",
+            "description": "How data is organized (ROWS or COLUMNS)"
+          }
+        }
+      },
+      "output_variable": "qualified_leads"
+    },
+    {
+      "id": "step4",
+      "name": "Count items for total_qualified_count",
+      "type": "transform",
+      "input": "{{qualified_leads}}",
+      "config": {
+        "type": "reduce",
+        "input": "qualified_leads",
+        "reducer": "count",
+        "reduce_operation": "count"
+      },
+      "step_id": "step4",
+      "operation": "reduce",
+      "description": "Count items for total_qualified_count",
+      "output_schema": {
+        "type": "number",
+        "source": "inferred",
+        "description": "Count of total_qualified_count"
+      },
+      "output_variable": "total_qualified_count"
+    },
+    {
+      "id": "step5",
+      "name": "Conditional: node_3",
+      "type": "conditional",
+      "steps": [
+        {
+          "id": "step6",
+          "name": "Generate HTML table with qualified leads",
+          "type": "ai_processing",
+          "input": "qualified_leads",
+          "config": {
+            "type": "generate",
+            "input": "qualified_leads",
+            "ai_type": "generate",
+            "instruction": "Create an HTML email body with a professional table displaying all qualified leads. Include a header row with columns: Date, Lead Name, Company, Email, Phone, Stage, Notes, Sales Person. Format the table with borders and proper styling for email readability. Add a brief introduction stating the number of high-qualified (Stage = 4) leads found.",
+            "output_schema": {
+              "type": "object",
+              "required": [
+                "subject",
+                "body"
+              ],
+              "properties": {
+                "body": {
+                  "type": "string",
+                  "description": "HTML formatted email body with leads table"
+                },
+                "subject": {
+                  "type": "string",
+                  "description": "Email subject line mentioning high-qualified leads (Stage = 4)"
+                }
+              }
+            }
+          },
+          "prompt": "Create an HTML email body with a professional table displaying all qualified leads. Include a header row with columns: Date, Lead Name, Company, Email, Phone, Stage, Notes, Sales Person. Format the table with borders and proper styling for email readability. Add a brief introduction stating the number of high-qualified (Stage = 4) leads found.",
+          "step_id": "step6",
+          "description": "Generate HTML table with qualified leads",
+          "input_schema": {
+            "type": "object",
+            "source": "inferred",
+            "properties": {
+              "range": {
+                "type": "string",
+                "source": "plugin",
+                "required": true,
+                "description": "The actual range that was read (may differ from requested)"
+              },
+              "values": {
+                "type": "array",
+                "items": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "source": "plugin"
+                  },
+                  "source": "plugin"
+                },
+                "source": "plugin",
+                "required": true,
+                "description": "2D array of cell values (rows of cells)"
+              },
+              "row_count": {
+                "type": "number",
+                "source": "plugin",
+                "required": true,
+                "description": "Number of rows returned"
+              },
+              "column_count": {
+                "type": "number",
+                "source": "plugin",
+                "description": "Number of columns returned"
+              },
+              "retrieved_at": {
+                "type": "string",
+                "source": "plugin",
+                "description": "Timestamp when data was retrieved (ISO 8601)"
+              },
+              "major_dimension": {
+                "type": "string",
+                "source": "plugin",
+                "description": "How data is organized (ROWS or COLUMNS)"
+              }
+            }
+          },
+          "output_schema": {
+            "type": "object",
+            "source": "ai_declared",
+            "properties": {
+              "body": {
+                "type": "string",
+                "source": "ai_declared",
+                "description": "HTML formatted email body with leads table"
+              },
+              "subject": {
+                "type": "string",
+                "source": "ai_declared",
+                "description": "Email subject line mentioning high-qualified leads (Stage = 4)"
+              }
+            }
+          },
+          "output_variable": "email_content"
+        },
+        {
+          "id": "step7",
+          "name": "Send email with qualified leads table",
+          "type": "action",
+          "action": "send_email",
+          "params": {
+            "content": {
+              "subject": "{{email_content.subject}}",
+              "html_body": "{{email_content.body}}"
+            },
+            "recipients": {
+              "to": [
+                "{{input.email_recipients}}"
+              ]
+            }
+          },
+          "plugin": "google-mail",
+          "step_id": "step7",
+          "description": "Send email with qualified leads table"
+        }
+      ],
+      "step_id": "step5",
+      "condition": {
+        "field": "total_qualified_count",
+        "value": 0,
+        "operator": "greater_than",
+        "conditionType": "simple"
+      },
+      "else_steps": [
+        {
+          "id": "step8",
+          "name": "Generate email stating no qualified leads found",
+          "type": "ai_processing",
+          "config": {
+            "type": "generate",
+            "ai_type": "generate",
+            "instruction": "Create a brief, professional email stating that no high-qualified (Stage = 4) leads were found in the current review period. Keep the tone positive and informative.",
+            "output_schema": {
+              "type": "object",
+              "required": [
+                "subject",
+                "body"
+              ],
+              "properties": {
+                "body": {
+                  "type": "string",
+                  "description": "HTML formatted email body for no results"
+                },
+                "subject": {
+                  "type": "string",
+                  "description": "Email subject for no results case"
+                }
+              }
+            }
+          },
+          "prompt": "Create a brief, professional email stating that no high-qualified (Stage = 4) leads were found in the current review period. Keep the tone positive and informative.",
+          "step_id": "step8",
+          "description": "Generate email stating no qualified leads found",
+          "output_schema": {
+            "type": "object",
+            "source": "ai_declared",
+            "properties": {
+              "body": {
+                "type": "string",
+                "source": "ai_declared",
+                "description": "HTML formatted email body for no results"
+              },
+              "subject": {
+                "type": "string",
+                "source": "ai_declared",
+                "description": "Email subject for no results case"
+              }
+            }
+          },
+          "output_variable": "no_results_content"
+        },
+        {
+          "id": "step9",
+          "name": "Send email indicating no qualified leads found",
+          "type": "action",
+          "action": "send_email",
+          "params": {
+            "content": {
+              "subject": "{{no_results_content.subject}}",
+              "html_body": "{{no_results_content.body}}"
+            },
+            "recipients": {
+              "to": [
+                "{{input.email_recipients}}"
+              ]
+            }
+          },
+          "plugin": "google-mail",
+          "step_id": "step9",
+          "description": "Send email indicating no qualified leads found"
+        }
+      ],
+      "description": "Conditional: node_3"
+    }
+  ]
+}

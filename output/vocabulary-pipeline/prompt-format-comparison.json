@@ -1,0 +1,36 @@
+{
+  "narrative": {
+    "name": "Narrative Prompt",
+    "topLevelSteps": 12,
+    "totalSteps": 22,
+    "scatterGatherLoops": 1,
+    "conditionals": 2,
+    "nestedConditionalDepth": 2,
+    "pluginActions": 7,
+    "transforms": 11,
+    "aiProcessing": 1,
+    "declaredVariables": 17,
+    "configReferences": 5,
+    "variableReferences": 30
+  },
+  "structured": {
+    "name": "Structured Prompt",
+    "topLevelSteps": 16,
+    "totalSteps": 21,
+    "scatterGatherLoops": 2,
+    "conditionals": 0,
+    "nestedConditionalDepth": 0,
+    "pluginActions": 7,
+    "transforms": 11,
+    "aiProcessing": 1,
+    "declaredVariables": 19,
+    "configReferences": 5,
+    "variableReferences": 33
+  },
+  "comparison": {
+    "narrativeScore": 39,
+    "structuredScore": 27,
+    "narrativeAdvantage": 12,
+    "narrativeAdvantagePercent": "44.4"
+  }
+}

@@ -276,6 +276,7 @@ export default function V2DashboardPage() {
       </div>
 
       {/* Search Box */}
+<<<<<<< Updated upstream
       <div className="bg-[var(--v2-surface)] p-2.5 sm:p-3 shadow-[var(--v2-shadow-card)] flex items-center gap-2 sm:gap-3" style={{ borderRadius: 'var(--v2-radius-card)' }}>
           <Search className="w-4 h-4 sm:w-5 sm:h-5 text-[var(--v2-text-muted)] flex-shrink-0" />
           <input
@@ -290,6 +291,118 @@ export default function V2DashboardPage() {
               }
             }}
           />
+=======
+      <div className="bg-[var(--v2-surface)] shadow-[var(--v2-shadow-card)]" style={{ borderRadius: 'var(--v2-radius-card)' }}>
+        <div className={`p-2.5 sm:p-3 ${accountFrozen || stats.creditBalance < 2000 ? 'opacity-50 cursor-not-allowed' : ''}`}>
+          {/* Main Input Row */}
+          <div className="flex items-start gap-2 sm:gap-3">
+            <Search className="w-4 h-4 sm:w-5 sm:h-5 text-[var(--v2-text-muted)] flex-shrink-0 mt-1" />
+            <textarea
+              ref={textareaRef}
+              value={searchQuery}
+              onChange={(e) => {
+                if (!(accountFrozen || stats.creditBalance < 2000)) {
+                  setSearchQuery(e.target.value)
+                  // Auto-grow textarea up to max height
+                  const target = e.target as HTMLTextAreaElement
+                  target.style.height = 'auto'
+                  const newHeight = Math.min(target.scrollHeight, 256)
+                  target.style.height = newHeight + 'px'
+                }
+              }}
+              placeholder={accountFrozen ? "Account frozen - Purchase tokens to continue" : stats.creditBalance < 2000 ? "Insufficient balance - Need 2000 tokens to create agent" : "Describe what you want to automate..."}
+              className="flex-1 bg-transparent border-none outline-none text-sm sm:text-base text-[var(--v2-text-secondary)] placeholder:text-[var(--v2-text-muted)] resize-none max-h-64 overflow-y-auto scroll-smooth scrollbar-thin"
+              style={{
+                height: '48px',
+                minHeight: '48px',
+                scrollbarWidth: 'thin',
+                scrollbarColor: 'rgba(209, 213, 219, 0.5) transparent'
+              }}
+              disabled={accountFrozen || stats.creditBalance < 2000}
+              rows={1}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey && searchQuery.trim().length >= 20 && !accountFrozen && stats.creditBalance >= 2000) {
+                  e.preventDefault()
+                  router.push(`/v2/agents/new?prompt=${encodeURIComponent(searchQuery)}`)
+                  setShowIdeas(false)
+                }
+              }}
+            />
+          </div>
+
+          {/* Bottom Action Bar */}
+          <div className="flex items-center justify-between mt-2 pt-2 border-t border-[var(--v2-border)]">
+            {/* Left Side: Character Counter */}
+            <div className="flex items-center gap-2 text-xs text-[var(--v2-text-muted)]">
+              {searchQuery.length > 0 ? (
+                <>
+                  <span className={`font-medium ${searchQuery.trim().length < 20 ? 'text-red-500' : 'text-green-600'}`}>
+                    {searchQuery.length}
+                  </span>
+                  <span className="text-[var(--v2-text-muted)]">/ 20 min</span>
+                </>
+              ) : (
+                <span className="text-[var(--v2-text-muted)]">20 characters minimum</span>
+              )}
+            </div>
+
+            {/* Right Side: Action Buttons */}
+            <div className="flex items-center gap-2">
+              {/* Show Ideas Button */}
+              {promptIdeas.length > 0 && !accountFrozen && stats.creditBalance >= 2000 && (
+                <button
+                  onClick={() => setShowIdeas(!showIdeas)}
+                  className="px-3 py-1.5 text-xs font-medium text-[var(--v2-primary)] hover:text-[var(--v2-secondary)] transition-colors"
+                >
+                  {showIdeas ? 'Hide' : 'Show'} Ideas
+                </button>
+              )}
+
+              {/* Microphone Button */}
+              {isVoiceSupported && !accountFrozen && stats.creditBalance >= 2000 && (
+                <button
+                  type="button"
+                  onClick={toggleListening}
+                  className={`w-8 h-8 rounded-md flex items-center justify-center transition-all ${
+                    isListening
+                      ? 'bg-gradient-to-r from-red-500 to-pink-500 shadow-sm animate-pulse'
+                      : 'hover:bg-[var(--v2-surface-hover)] border border-transparent hover:border-[var(--v2-border)]'
+                  }`}
+                  title={isListening ? 'Stop recording' : 'Start voice input'}
+                >
+                  {isListening ? (
+                    <MicOff className="w-4 h-4 text-white" />
+                  ) : (
+                    <Mic className={`w-4 h-4 transition-colors ${isListening ? 'text-white' : 'text-[var(--v2-text-muted)] group-hover:text-[var(--v2-primary)]'}`} />
+                  )}
+                </button>
+              )}
+
+              {/* Submit Arrow Button */}
+              <button
+                onClick={() => {
+                  if (accountFrozen || stats.creditBalance < 2000 || searchQuery.trim().length < 20) return
+                  router.push(`/v2/agents/new?prompt=${encodeURIComponent(searchQuery)}`)
+                  setShowIdeas(false)
+                }}
+                disabled={accountFrozen || stats.creditBalance < 2000 || searchQuery.trim().length < 20}
+                className={`w-8 h-8 bg-gradient-to-r from-[var(--v2-primary)] to-[var(--v2-secondary)] text-white hover:opacity-90 transition-all rounded-md flex items-center justify-center ${accountFrozen || stats.creditBalance < 2000 || searchQuery.trim().length < 20 ? 'opacity-50 cursor-not-allowed' : 'shadow-sm'}`}
+                title={
+                  accountFrozen
+                    ? "Account frozen - Purchase tokens to continue"
+                    : stats.creditBalance < 2000
+                    ? "Insufficient balance - Need 2000 tokens to create agent"
+                    : searchQuery.trim().length < 20
+                    ? "Enter at least 20 characters to start building"
+                    : "Start Agent Builder with this prompt"
+                }
+              >
+                <ArrowRight className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        </div>
+>>>>>>> Stashed changes
       </div>
 
       {/* Cards Grid */}
