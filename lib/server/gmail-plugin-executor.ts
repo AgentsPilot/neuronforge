@@ -295,8 +295,9 @@ export class GmailPluginExecutor extends GoogleBasePluginExecutor {
     this.logger.debug({ message_id, add_labels, remove_labels, mark_important, mark_read }, 'Modifying email labels');
 
     // Build addLabelIds from explicit labels + shorthands
-    const addLabelNames: string[] = [...(add_labels || [])];
-    const removeLabelNames: string[] = [...(remove_labels || [])];
+    // Normalize: accept both array ["Label1"] and string "Label1" (config values may resolve as string)
+    const addLabelNames: string[] = Array.isArray(add_labels) ? [...add_labels] : (add_labels ? [add_labels] : []);
+    const removeLabelNames: string[] = Array.isArray(remove_labels) ? [...remove_labels] : (remove_labels ? [remove_labels] : []);
 
     // Apply mark_important shorthand
     if (mark_important === true) {

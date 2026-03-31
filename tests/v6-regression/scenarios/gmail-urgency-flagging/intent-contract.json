@@ -270,7 +270,7 @@
       ],
       "generate": {
         "format": "html",
-        "instruction": "Create an email summary of urgent emails that were marked as important. If urgent_count is 0, state 'No urgent emails were found in this scan.' Otherwise, create a formatted list showing: sender, subject, received date/time, and matched urgency keywords for each email in summary_data. Use clear formatting with headers and bullet points.",
+        "instruction": "Create an email summary of urgent emails that were marked as important. If urgent_count is 0, state that no urgent emails were found in this scan. Otherwise, create an HTML table with columns: Sender, Subject, Received Date, Matched Keywords. Use professional styling with borders, header row background, and padding.",
         "outputs": [
           {
             "name": "subject",

@@ -26,6 +26,20 @@ export abstract class BasePluginExecutor {
     this.logger.info({ userId, actionName }, 'Executing plugin action');
 
     try {
+      // Step 0: Normalize parameters before validation
+      // Config values may resolve as strings when the schema expects arrays.
+      // E.g., add_labels: "AgentsPilot" should become ["AgentsPilot"]
+      const pluginDef = this.pluginManager.getPluginDefinition(this.pluginName);
+      const actionDef = pluginDef?.actions?.[actionName];
+      if (actionDef?.parameters?.properties) {
+        for (const [key, schema] of Object.entries(actionDef.parameters.properties) as [string, any][]) {
+          if (schema.type === 'array' && key in parameters && typeof parameters[key] === 'string') {
+            parameters[key] = [parameters[key]];
+            this.logger.debug({ param: key, value: parameters[key] }, 'Normalized string → array for schema compliance');
+          }
+        }
+      }
+
       // Step 1: Validate parameters against plugin schema
       const validation = this.pluginManager.validateActionParameters(this.pluginName, actionName, parameters);
 

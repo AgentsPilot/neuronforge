@@ -18,7 +18,7 @@ The weak points are ordered by likelihood of causing failures as new scenarios a
 |----|-------|----------|--------|
 | [WP-1](#wp-1-intentcontract--ir-converter-notify-step-handling) | `notify` step assumes `send_email` — non-send actions get wrong params | P1 | ✅ Fixed — schema-driven param binding |
 | [WP-2](#wp-2-field-name-mismatches-between-plugin-output-and-downstream-references) | Field name mismatches (`message_id` vs `id`) across plugins | P0 | ⚠️ Partial — compiler safety net, root cause remains |
-| [WP-3](#wp-3-ai_processing-steps-inside-scatter-gather) | `ai_processing` inside scatter-gather — memory/prompt/routing issues | P1 | ⬜ Needs architectural fix (defensive patches in place) |
+| [WP-3](#wp-3-ai_processing-steps-inside-scatter-gather) | `ai_processing` inside scatter-gather — memory/prompt/routing issues | P1 | ✅ Fixed — `callLLMDirect()` bypasses runAgentKit |
 | [WP-4](#wp-4-transformmap-with-custom_code-natural-language) | `transform/map` with `custom_code` — runtime can't execute NL | P0 | ✅ Fixed — structured `mapping` from Phase 1 |
 | [WP-5](#wp-5-transformgroup-output-shape) | `transform/group` returns wrong shape for scatter-gather | P2 | ⬜ Needs fix (D-B12 patch in place) |
 | [WP-6](#wp-6-structured-config-reference-objects) | Structured ref objects `{kind:"config"}` not resolved | P2 | ⚠️ Partial — `config` handled, other kinds not |
@@ -118,7 +118,7 @@ These are deeper changes to Phase 1/2 and are deferred for later.
 
 **Severity:** High
 **Encountered as:** D-B13
-**Status:** ⬜ Needs architectural fix
+**Status:** ✅ Fixed — `callLLMDirect()` bypasses runAgentKit
 
 **Problem:** `runAgentKit` was designed for top-level agent execution — it loads memory, builds a full system prompt with plugin context, and manages conversation sessions. When called inside a scatter-gather loop (3-50 iterations), it:
 - Loads memory on every iteration (wasteful, sometimes corrupts output)
@@ -461,7 +461,7 @@ Scatter-gather error awareness:
 |----------|-----------|--------|--------|
 | **P0** | WP-2: Field name mismatches | Breaks every cross-plugin flow | ⚠️ Partial fix |
 | **P0** | WP-4: `custom_code` map | Breaks every transform with non-matching field names | ✅ Fixed |
-| **P1** | WP-3: AI in scatter-gather | Breaks any AI inside loops | ⬜ Needs architectural fix |
+| **P1** | WP-3: AI in scatter-gather | Breaks any AI inside loops | ✅ Fixed |
 | **P1** | WP-1: notify step handling | Breaks non-send plugin actions | ✅ Fixed |
 | **P2** | WP-5: group output shape | Breaks complex grouping | ⬜ Needs fix |
 | **P2** | WP-10: Scatter error handling | Misleading success reports | ⬜ Needs fix |
@@ -477,6 +477,10 @@ Scatter-gather error awareness:
 | Date | Change | Details |
 |------|--------|---------|
 | 2026-03-30 | Initial document | 10 weak points identified from D-B7 through D-B13 bug fixes across 2 scenarios. Proposed solutions documented for each. |
+| 2026-03-30 | WP-3 Phase E verified | Gmail Urgency Flagging: 8/8 steps, 11 emails classified + labeled + HTML table summary sent. callLLMDirect handles classify (51K tokens) and generate (2.5K tokens) correctly. Labels applied via string→array normalization in base executor. |
+| 2026-03-30 | HTML table preference | Added IntentContract prompt guidance: prefer HTML tables for email delivery when data is tabular. Generate steps now emit format:"html" with table instructions. |
+| 2026-03-30 | Base executor param normalization | String→array normalization in BasePluginExecutor before schema validation. Fixes config values resolving as strings when schema expects arrays (e.g., add_labels). |
+| 2026-03-30 | WP-3 implemented | `callLLMDirect()` method added to StepExecutor — direct provider call following BaseHandler.callLLM() pattern. All `ai_processing` steps (classify, generate, summarize, extract) now bypass both orchestration and `runAgentKit`. No memory loading, no plugin context, no tool loop. Removed D-B13 hacks: `_skipMemory` flag removed from `runAgentKit.ts`, system prompt override removed, orchestration skip expanded from generate-only to all ai_processing. `executeClassifyStep` also migrated to `callLLMDirect`. |
 | 2026-03-30 | WP-1 implemented | Schema-driven param binding for `convertNotify()`. Loads action's parameter schema from plugin definition, matches IntentContract sources (recipients, content, options) to schema params by name. No more hardcoded `isSendAction` check. Falls back to heuristic if schema unavailable. Verified: `send_email` gets `recipients`+`content`, `modify_email` gets `message_id`+`add_labels`+`mark_important` — both via schema matching. |
 | 2026-03-30 | WP-4 implemented | Structured field mapping from Phase 1 through runtime. LLM prompt updated to emit `mapping: [{to, from}]` for map transforms. IR converter converts to `field_mapping`. Runtime Mode 0 applies deterministic rename. Verified on Gmail Urgency Flagging: LLM emitted correct mapping (`sender←from`, `subject←subject`, `received_date←date`, `matched_keywords←urgency_classification`), `custom_code` eliminated. Backward compatible — old IntentContracts without mapping fall through to Mode 4. |
 | 2026-03-30 | WP-2 implemented | Generic field name reconciliation in Phase 5. Schema registry built from workflow output_schemas + scatter item variables. Upstream tracing resolves item schemas through filter/transform chains. Strategies: prefix stripping (`message_id`→`id`), case-insensitive match, underscore/space normalization. Replaces D-B10 Gmail-specific hack. Verified on Gmail Urgency Flagging scenario. |

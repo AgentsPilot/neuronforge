@@ -656,6 +656,13 @@ CORRECT approach - First check if field_x exists:
 
 **IMPORTANT**: The inputs array MUST include ALL data the generate step will reference. If your instruction mentions aggregates, metrics, or computed values, include those variables in inputs. This ensures they're available to the AI and avoids recomputation.
 
+**HTML FORMAT PREFERENCE**: When a generate or summarize step produces content that will be delivered via email (i.e., the output feeds into a send_email/notify step):
+- Default to format: "html" and instruct the AI to produce an HTML table for structured/tabular data
+- Use \`<table>\` with proper \`<thead>\` and \`<tbody>\` for lists of records (leads, emails, transactions, etc.)
+- Only use bullet points or plain text if the user's enhanced prompt explicitly requests it
+- Include professional styling: borders, header row background, padding
+- This ensures email recipients see well-formatted, scannable data tables
+
 ### 6.8) DECIDE - Conditional branching
 
 {

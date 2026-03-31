@@ -160,14 +160,13 @@ export class StepExecutor {
     // Check if step should use orchestration (only AI tasks, not deterministic plugin actions)
     const shouldUseOrchestration = this.shouldUseOrchestration(step);
 
-    // D-B13: Skip orchestration for ai_processing/generate steps.
-    // The orchestrator's intent classifier misroutes "generate" steps as "extract",
-    // causing ExtractHandler to handle HTML generation with a generic extraction prompt.
-    // executeLLMDecision handles these correctly with I3 structured extraction + step prompt.
-    const stepAiType = (step as any).config?.ai_type || (step as any).config?.type;
-    const skipOrchestrationForGenerate = step.type === 'ai_processing' && stepAiType === 'generate';
+    // WP-3: Skip orchestration for ALL ai_processing steps.
+    // ai_processing steps use callLLMDirect (lightweight, no runAgentKit overhead).
+    // Orchestration is only needed for llm_decision steps that require tool-calling.
+    // Previously (D-B13) only skipped for ai_type=generate, now skips for all ai_processing.
+    const skipOrchestrationForAIProcessing = step.type === 'ai_processing';
 
-    if (shouldUseOrchestration && !skipOrchestrationForGenerate && context.orchestrator && context.orchestrator.isActive()) {
+    if (shouldUseOrchestration && !skipOrchestrationForAIProcessing && context.orchestrator && context.orchestrator.isActive()) {
       logger.info({ stepId: step.id, stepType: step.type }, 'Using orchestration for AI task');
 
       try {
@@ -1326,59 +1325,56 @@ export class StepExecutor {
       promptString += `\n\nIMPORTANT: Respond with a valid JSON object containing these fields:\n${fields}\n\nRespond ONLY with the JSON object. No markdown code blocks, no text before or after. Ensure HTML content in string values is properly escaped.`;
     }
 
-    // Use AgentKit for intelligent decision (with optional model override)
-    // If a model was selected by routing, temporarily override the agent's model preference
-
-    // IMPORTANT: For ai_processing steps, don't pass plugins
-    // ai_processing = text analysis/summarization (no tool use)
-    // llm_decision = intelligent decision-making with tools (has plugin access)
+    // WP-3: Route ai_processing steps through callLLMDirect (lightweight, no runAgentKit overhead).
+    // llm_decision steps still use runAgentKit (they need tools/plugins).
     const isAIProcessing = step.type === 'ai_processing';
 
-    const agentForExecution: any = {
-      ...context.agent,
-      // Filter out plugins for ai_processing to prevent LLM from calling tools
-      plugins_required: isAIProcessing ? [] : context.agent.plugins_required,
-    };
+    let result: { success: boolean; response: string; tokensUsed: any; error?: string; toolCalls?: any[] };
 
-    // D-B13: For ai_processing steps, override the system prompt and skip memory injection.
-    // Without this, runAgentKit injects the full agent system_prompt + memory context into
-    // the LLM call. Inside scatter-gather, the memory context overwhelms the short per-item
-    // prompt, causing the LLM to echo back the memory dump instead of generating content.
-    // The step prompt + enriched params already contain everything the LLM needs.
     if (isAIProcessing) {
-      agentForExecution.system_prompt = promptString;
-      agentForExecution.enhanced_prompt = undefined;
-      agentForExecution.user_prompt = promptString;
-      agentForExecution._skipMemory = true;
-      // Also clear output_schema to prevent runAgentKit from adding output format instructions
-      // that conflict with I3 structured extraction
-      agentForExecution.output_schema = undefined;
-    }
-
-    // IMPORTANT: Do NOT inject step.config.output_schema into agent.output_schema
-    // - agent.output_schema = delivery instructions (array of {type: "EmailDraft", config: {...}})
-    // - step.config.output_schema = JSON Schema for structured extraction (handled by orchestration)
-    // Mixing these two causes "outputSchema.filter is not a function" error in runAgentKit
-
-    // Override model if selected by routing
-    if (selectedModel) {
-      agentForExecution.model_preference = selectedModel;
-    }
-
-    const result = await runAgentKit(
-      context.userId,
-      agentForExecution,
-      promptString,  // Use string version (vision handled by orchestration)
-      {},
-      context.sessionId
-    );
-
-    if (!result.success) {
-      throw new ExecutionError(
-        result.error || 'LLM decision failed',
-        'LLM_DECISION_FAILED',
-        step.id
+      // Direct provider call — no memory, no plugins, no tool loop
+      const directResult = await this.callLLMDirect(
+        promptString,
+        context,
+        step.id,
+        selectedModel
       );
+      result = {
+        success: true,
+        response: directResult.text,
+        tokensUsed: { total: directResult.totalTokens, prompt: directResult.inputTokens, completion: directResult.outputTokens },
+        toolCalls: [],
+      };
+    } else {
+      // llm_decision: use runAgentKit for tool-calling capabilities
+      const agentForExecution: any = {
+        ...context.agent,
+      };
+
+      // IMPORTANT: Do NOT inject step.config.output_schema into agent.output_schema
+      // - agent.output_schema = delivery instructions (array of {type: "EmailDraft", config: {...}})
+      // - step.config.output_schema = JSON Schema for structured extraction (handled by orchestration)
+      // Mixing these two causes "outputSchema.filter is not a function" error in runAgentKit
+
+      if (selectedModel) {
+        agentForExecution.model_preference = selectedModel;
+      }
+
+      result = await runAgentKit(
+        context.userId,
+        agentForExecution,
+        promptString,
+        {},
+        context.sessionId
+      );
+
+      if (!result.success) {
+        throw new ExecutionError(
+          result.error || 'LLM decision failed',
+          'LLM_DECISION_FAILED',
+          step.id
+        );
+      }
     }
 
     // Update routing metrics if routing was used
@@ -1501,6 +1497,85 @@ export class StepExecutor {
   }
 
   /**
+   * WP-3: Lightweight direct LLM call for ai_processing steps.
+   *
+   * Bypasses runAgentKit entirely — no memory loading, no plugin context,
+   * no tool-calling loop, no session management. Follows the BaseHandler.callLLM()
+   * pattern from the orchestration layer.
+   *
+   * Used for: classify, generate, summarize, extract — any AI step that
+   * processes data without needing plugin tools.
+   */
+  private async callLLMDirect(
+    prompt: string,
+    context: ExecutionContext,
+    stepId: string,
+    modelOverride?: string
+  ): Promise<{
+    text: string;
+    inputTokens: number;
+    outputTokens: number;
+    totalTokens: number;
+  }> {
+    // Determine model and provider
+    const modelPref = modelOverride || (context.agent as any).model_preference || '';
+    let provider: 'openai' | 'anthropic' = 'openai';
+    let model = 'gpt-4o';
+
+    if (modelPref.includes(':')) {
+      const [prov, mod] = modelPref.split(':');
+      provider = prov as 'openai' | 'anthropic';
+      model = mod;
+    } else if (modelPref) {
+      model = modelPref;
+      // Detect provider from model name
+      if (model.includes('claude') || model.includes('haiku') || model.includes('sonnet') || model.includes('opus')) {
+        provider = 'anthropic';
+      }
+    }
+
+    // Sanitize model name
+    model = model.trim().replace(/^["']|["']$/g, '');
+
+    logger.info({ stepId, model, provider }, 'WP-3: callLLMDirect — direct provider call (no runAgentKit)');
+
+    const { ProviderFactory } = await import('@/lib/ai/providerFactory');
+    const aiProvider = ProviderFactory.getProvider(provider);
+
+    const response = await aiProvider.chatCompletion(
+      {
+        model,
+        messages: [
+          { role: 'system', content: 'You are a workflow step executor. Follow the instructions precisely. When asked to generate HTML, respond with well-formatted HTML. When asked for JSON, respond with valid JSON only. Do not add commentary or explanation unless asked.' },
+          { role: 'user', content: prompt }
+        ],
+        temperature: 0.3,
+        max_tokens: 4096,
+      },
+      {
+        userId: context.userId,
+        feature: 'ai_processing',
+        component: 'step_executor_direct',
+        category: 'workflow_execution',
+        activity_type: 'llm_call',
+        activity_name: `ai_processing_${stepId}`,
+        workflow_step: stepId,
+        agent_id: context.agentId,
+        execution_id: context.executionId,
+      }
+    );
+
+    const text = response.choices?.[0]?.message?.content || '';
+
+    return {
+      text,
+      inputTokens: response.usage?.prompt_tokens || 0,
+      outputTokens: response.usage?.completion_tokens || 0,
+      totalTokens: response.usage?.total_tokens || 0,
+    };
+  }
+
+  /**
    * D-B8: Execute ai_processing/classify step with structured array I/O.
    *
    * Classify steps receive an array of items and must return the same array
@@ -1586,33 +1661,19 @@ TASK: For each item, determine which label applies. Return a JSON array with ${t
 
 Respond ONLY with the JSON array. No markdown, no explanation, no code blocks.`;
 
-    const isAIProcessing = step.type === 'ai_processing';
-    const agentForExecution: any = {
-      ...context.agent,
-      plugins_required: isAIProcessing ? [] : context.agent.plugins_required,
-    };
-    if (selectedModel) {
-      agentForExecution.model_preference = selectedModel;
-    }
+    // WP-3: Use callLLMDirect instead of runAgentKit for classify
+    const directResult = await this.callLLMDirect(classifyPrompt, context, step.id || step.step_id, selectedModel);
 
-    const result = await runAgentKit(
-      context.userId,
-      agentForExecution,
-      classifyPrompt,
-      {},
-      context.sessionId
-    );
-
-    if (!result.success) {
+    if (!directResult.text) {
       throw new ExecutionError(
-        result.error || 'Classify LLM call failed',
+        'Classify LLM call returned empty response',
         'LLM_DECISION_FAILED',
         step.id
       );
     }
 
     // Parse the LLM response as JSON array
-    const responseText = result.response || '';
+    const responseText = directResult.text || '';
     let classifications: any[] | null = null;
 
     try {
@@ -1657,7 +1718,7 @@ Respond ONLY with the JSON array. No markdown, no explanation, no code blocks.`;
 
     return {
       data: classifiedArray,
-      tokensUsed: result.tokensUsed,
+      tokensUsed: { total: directResult.totalTokens, prompt: directResult.inputTokens, completion: directResult.outputTokens },
     };
   }
 
