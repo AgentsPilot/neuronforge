@@ -17,13 +17,13 @@ The weak points are ordered by likelihood of causing failures as new scenarios a
 | ID | Issue | Priority | Status |
 |----|-------|----------|--------|
 | [WP-1](#wp-1-intentcontract--ir-converter-notify-step-handling) | `notify` step assumes `send_email` — non-send actions get wrong params | P1 | ✅ Fixed — schema-driven param binding |
-| [WP-2](#wp-2-field-name-mismatches-between-plugin-output-and-downstream-references) | Field name mismatches (`message_id` vs `id`) across plugins | P0 | ⚠️ Partial — compiler safety net, root cause remains |
+| [WP-2](#wp-2-field-name-mismatches-between-plugin-output-and-downstream-references) | Field name mismatches (`message_id` vs `id`) across plugins | P0 | ✅ Fixed — Phase 2 reconciliation + Phase 5 safety net |
 | [WP-3](#wp-3-ai_processing-steps-inside-scatter-gather) | `ai_processing` inside scatter-gather — memory/prompt/routing issues | P1 | ✅ Fixed — `callLLMDirect()` bypasses runAgentKit |
 | [WP-4](#wp-4-transformmap-with-custom_code-natural-language) | `transform/map` with `custom_code` — runtime can't execute NL | P0 | ✅ Fixed — structured `mapping` from Phase 1 |
 | [WP-5](#wp-5-transformgroup-output-shape) | `transform/group` returns wrong shape for scatter-gather | P2 | ✅ Fixed — compiler emits explicit config |
 | [WP-6](#wp-6-structured-config-reference-objects) | Structured ref objects `{kind:"config"}` not resolved | P2 | ✅ Fixed — all kinds handled |
 | [WP-7](#wp-7-gmail-label-resolution-timing) | Gmail label 409 conflict on concurrent creation | P3 | ✅ Fixed with 409 recovery |
-| [WP-8](#wp-8-email-subjectbody-encoding) | Non-ASCII chars garbled in email headers | P3 | ⚠️ Partial — Subject fixed, other headers not |
+| [WP-8](#wp-8-email-subjectbody-encoding) | Non-ASCII chars garbled in email headers | P3 | ✅ Fixed — all headers MIME-encoded |
 | [WP-9](#wp-9-phase-ad-mock-gap--llm-output-shape-validation) | Mocks don't validate LLM output shape | P3 | ⬜ Deferred (F7 — has token cost) |
 | [WP-10](#wp-10-scatter-gather-error-handling--silent-success-with-error-data) | Scatter-gather reports success with error data | P2 | ✅ Fixed — error filtering + all-failed detection |
 
@@ -65,7 +65,7 @@ Schema-driven param binding. Instead of guessing based on step kind, look up the
 
 **Severity:** Critical
 **Encountered as:** D-B10
-**Status:** ⚠️ Partial fix — compiler safety net implemented, root cause remains
+**Status:** ✅ Fixed — Phase 2 reconciliation (root cause) + Phase 5 safety net
 
 **Problem:** The IntentContract LLM references fields by the *consuming* action's parameter name (e.g., `message_id` for `modify_email`) rather than the *producing* action's output field name (e.g., `id` from `search_emails`). The compiler has O10 reconciliation but it doesn't cover scatter-gather item variables. The current fix (D-B10) is a string replacement hack that rewrites `.message_id}}` → `.id}}` globally — fragile and Gmail-specific.
 
@@ -389,7 +389,7 @@ Label resolution cache within a single `modifyEmail` batch:
 
 **Severity:** Low
 **Encountered as:** D-B11a
-**Status:** ✅ Fixed for Subject, ⬜ Other headers not handled
+**Status:** ✅ Fixed — all headers MIME-encoded
 
 **Problem:** `buildEmailMessage()` MIME-encodes the Subject header for non-ASCII characters, but other headers (From display name, To display name) and inline body text could also have encoding issues.
 
@@ -459,7 +459,7 @@ Scatter-gather error awareness:
 
 | Priority | Weak Point | Impact | Status |
 |----------|-----------|--------|--------|
-| **P0** | WP-2: Field name mismatches | Breaks every cross-plugin flow | ⚠️ Partial fix |
+| **P0** | WP-2: Field name mismatches | Breaks every cross-plugin flow | ✅ Fixed |
 | **P0** | WP-4: `custom_code` map | Breaks every transform with non-matching field names | ✅ Fixed |
 | **P1** | WP-3: AI in scatter-gather | Breaks any AI inside loops | ✅ Fixed |
 | **P1** | WP-1: notify step handling | Breaks non-send plugin actions | ✅ Fixed |
@@ -468,7 +468,7 @@ Scatter-gather error awareness:
 | **P2** | WP-6: Structured ref objects | Breaks computed values | ✅ Fixed |
 | **P3** | WP-9: LLM output validation | Only caught in Phase E | ⬜ Deferred |
 | **P3** | WP-7: Label resolution | Race condition, extra API calls | ✅ Fixed |
-| **P3** | WP-8: Email encoding | Non-English content | ⚠️ Partial fix |
+| **P3** | WP-8: Email encoding | Non-English content | ✅ Fixed |
 
 ---
 
@@ -477,6 +477,8 @@ Scatter-gather error awareness:
 | Date | Change | Details |
 |------|--------|---------|
 | 2026-03-30 | Initial document | 10 weak points identified from D-B7 through D-B13 bug fixes across 2 scenarios. Proposed solutions documented for each. |
+| 2026-03-31 | WP-8 implemented | `mimeEncodeHeader()` helper applies RFC 2047 encoding to all email headers: To, Cc, Bcc, Subject. Handles display names in addresses (`"ברק" <email>` → encoded display name + raw email). Previously only Subject was encoded. |
+| 2026-03-31 | WP-2 root cause fix | Phase 2 field reference reconciliation in CapabilityBinderV2. After DataSchemaBuilder builds data_schema with actual field names, `reconcileFieldReferences()` walks all bound steps, validates `{kind:"ref", field:"X"}` against source schema, rewrites mismatches using prefix strip/case/space strategies. Fixes the root cause at binding time — before IR conversion. Phase 5 safety net retained as defense-in-depth. |
 | 2026-03-31 | WP-6 implemented | Extended `rewriteConfigRefs` → `resolveStructuredRefs`. Now handles all `kind` values: `config` → `{{input.X}}`, `ref` → `{{var.field}}`, `literal` → raw value, `computed/concat` → joined string. Previously only handled `config`. |
 | 2026-03-31 | WP-5 implemented | Compiler emits explicit group output config: `output_format`, `key_field`, `items_field` derived from output_schema. Runtime reads explicit config first (WP-5), falls back to schema inference (D-B12), then legacy object format. Verified on leads-per-salesperson scenario: `output_format=array, key_field=salesperson, items_field=leads`. |
 | 2026-03-31 | WP-10 implemented | Scatter-gather error filtering in ParallelExecutor. After scatter completes: (1) separate success results from error objects `{error, item}`; (2) pass only successful items to gather; (3) if ALL items failed → throw ExecutionError instead of silent success; (4) attach `_scatter_metadata` with success/failed counts + error details. Downstream steps only see clean data. |

@@ -467,31 +467,46 @@ export class GmailPluginExecutor extends GoogleBasePluginExecutor {
   // Private helper methods
 
   // Build RFC 2822 email message
+  /**
+   * WP-8: RFC 2047 MIME-encode a header value if it contains non-ASCII characters.
+   * Returns the value unchanged if it's pure ASCII.
+   * For email addresses with display names like "ברק מאירי <barak@example.com>",
+   * only the display name part is encoded.
+   */
+  private mimeEncodeHeader(value: string): string {
+    if (!/[^\x00-\x7F]/.test(value)) return value;
+
+    // Check if it's an email address with display name: "Name <email>"
+    const emailMatch = value.match(/^(.+?)\s*<([^>]+)>$/);
+    if (emailMatch) {
+      const displayName = emailMatch[1].replace(/^["']|["']$/g, ''); // Strip quotes
+      const email = emailMatch[2];
+      const encoded = Buffer.from(displayName, 'utf-8').toString('base64');
+      return `=?UTF-8?B?${encoded}?= <${email}>`;
+    }
+
+    // Plain value (e.g., subject line)
+    const encoded = Buffer.from(value, 'utf-8').toString('base64');
+    return `=?UTF-8?B?${encoded}?=`;
+  }
+
   private buildEmailMessage(parameters: any): string {
     const { recipients, content } = parameters;
 
     let message = '';
 
-    // Headers
+    // WP-8: All headers use mimeEncodeHeader for non-ASCII safety
     if (recipients?.to?.length) {
-      message += `To: ${recipients.to.join(', ')}\r\n`;
+      message += `To: ${recipients.to.map((r: string) => this.mimeEncodeHeader(r)).join(', ')}\r\n`;
     }
     if (recipients?.cc?.length) {
-      message += `Cc: ${recipients.cc.join(', ')}\r\n`;
+      message += `Cc: ${recipients.cc.map((r: string) => this.mimeEncodeHeader(r)).join(', ')}\r\n`;
     }
     if (recipients?.bcc?.length) {
-      message += `Bcc: ${recipients.bcc.join(', ')}\r\n`;
+      message += `Bcc: ${recipients.bcc.map((r: string) => this.mimeEncodeHeader(r)).join(', ')}\r\n`;
     }
     if (content?.subject) {
-      // RFC 2047: MIME-encode subject if it contains non-ASCII characters
-      // Without this, characters like em-dash (—) become garbled (Ã¢Â€Â")
-      const hasNonAscii = /[^\x00-\x7F]/.test(content.subject);
-      if (hasNonAscii) {
-        const encoded = Buffer.from(content.subject, 'utf-8').toString('base64');
-        message += `Subject: =?UTF-8?B?${encoded}?=\r\n`;
-      } else {
-        message += `Subject: ${content.subject}\r\n`;
-      }
+      message += `Subject: ${this.mimeEncodeHeader(content.subject)}\r\n`;
     }
 
     // MIME headers for content type

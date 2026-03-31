@@ -112,15 +112,16 @@ export class CapabilityBinderV2 {
       connectedPlugins[key] = {
         definition,
         connection: {
-          userId,
-          pluginKey: key,
+          user_id: userId,
+          plugin_key: key,
+          plugin_name: key,
           username: 'system',
           status: 'active',
-          accessToken: 'system',
-          refreshToken: null,
-          expiresAt: null,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
+          access_token: 'system',
+          refresh_token: null,
+          expires_at: null,
+          connected_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
         }
       }
     }
@@ -169,6 +170,18 @@ export class CapabilityBinderV2 {
       logger.info(
         { slotCount: Object.keys(dataSchema.slots).length },
         '[CapabilityBinderV2] data_schema built successfully'
+      )
+    }
+
+    // WP-2 Phase 2: Reconcile field references against data_schema.
+    // The LLM may reference fields by the consuming action's param name (e.g., "message_id")
+    // when the producing step's output schema uses a different name (e.g., "id").
+    // Now that we have the data_schema with actual field names, validate and rewrite.
+    const reconciledCount = this.reconcileFieldReferences(boundSteps, dataSchema)
+    if (reconciledCount > 0) {
+      logger.info(
+        { reconciledCount },
+        '[CapabilityBinderV2] WP-2: Reconciled field references against data_schema'
       )
     }
 
@@ -575,5 +588,110 @@ export class CapabilityBinderV2 {
     }
 
     return unbound
+  }
+
+  /**
+   * WP-2: Reconcile field references in bound steps against the data_schema.
+   *
+   * Walks all value references ({kind: "ref", ref: "X", field: "Y"}) and checks
+   * if field "Y" exists in the source variable's schema (from data_schema.slots).
+   * If not, tries resolution strategies:
+   *   1. Prefix stripping: message_id → id, file_id → id, contact_id → id
+   *   2. Case-insensitive match: Subject → subject
+   *   3. Underscore/space normalization: lead_name → "Lead Name"
+   *
+   * Rewrites the field name in place so the IR converter gets correct references.
+   */
+  private reconcileFieldReferences(steps: BoundStep[], dataSchema: any): number {
+    let count = 0
+
+    // Build field lookup: variable name → set of known field names
+    const fieldsByVariable = new Map<string, Set<string>>()
+    if (dataSchema?.slots) {
+      for (const [varName, slot] of Object.entries(dataSchema.slots) as [string, any][]) {
+        const fields = new Set<string>()
+        // Direct properties
+        const props = slot.schema?.properties || slot.schema?.items?.properties || {}
+        for (const key of Object.keys(props)) {
+          fields.add(key)
+        }
+        if (fields.size > 0) {
+          fieldsByVariable.set(varName, fields)
+        }
+      }
+    }
+
+    const reconcileValue = (value: any): void => {
+      if (!value || typeof value !== 'object') return
+
+      if (value.kind === 'ref' && typeof value.field === 'string' && typeof value.ref === 'string') {
+        const varName = value.ref
+        const field = value.field
+        const knownFields = fieldsByVariable.get(varName)
+
+        if (knownFields && !knownFields.has(field)) {
+          // Strategy 1: Prefix stripping (message_id → id)
+          if (field.endsWith('_id') && knownFields.has('id')) {
+            logger.info({ ref: varName, from: field, to: 'id' }, '[WP-2] Reconciled field ref (prefix strip)')
+            value.field = 'id'
+            count++
+            return
+          }
+
+          // Strategy 2: Case-insensitive match
+          for (const known of knownFields) {
+            if (known.toLowerCase() === field.toLowerCase()) {
+              logger.info({ ref: varName, from: field, to: known }, '[WP-2] Reconciled field ref (case match)')
+              value.field = known
+              count++
+              return
+            }
+          }
+
+          // Strategy 3: Underscore/space normalization
+          const normalized = field.replace(/_/g, ' ')
+          for (const known of knownFields) {
+            if (known.toLowerCase() === normalized.toLowerCase()) {
+              logger.info({ ref: varName, from: field, to: known }, '[WP-2] Reconciled field ref (space/underscore)')
+              value.field = known
+              count++
+              return
+            }
+          }
+
+          logger.warn({ ref: varName, field, knownFields: [...knownFields] },
+            '[WP-2] Field not found in source schema and could not be reconciled')
+        }
+      }
+
+      // Recurse into arrays and objects
+      if (Array.isArray(value)) {
+        value.forEach(reconcileValue)
+      } else {
+        for (const val of Object.values(value)) {
+          reconcileValue(val)
+        }
+      }
+    }
+
+    const walkSteps = (steps: BoundStep[]): void => {
+      for (const step of steps) {
+        // Walk all value-bearing fields in the step
+        reconcileValue(step)
+
+        // Recurse into nested steps
+        if ((step as any).loop?.do) walkSteps((step as any).loop.do)
+        if ((step as any).decide?.then) walkSteps((step as any).decide.then)
+        if ((step as any).decide?.else) walkSteps((step as any).decide.else)
+        if ((step as any).parallel?.branches) {
+          for (const branch of (step as any).parallel.branches) {
+            if (branch.steps) walkSteps(branch.steps)
+          }
+        }
+      }
+    }
+
+    walkSteps(steps)
+    return count
   }
 }
