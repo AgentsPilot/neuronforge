@@ -20,12 +20,12 @@ The weak points are ordered by likelihood of causing failures as new scenarios a
 | [WP-2](#wp-2-field-name-mismatches-between-plugin-output-and-downstream-references) | Field name mismatches (`message_id` vs `id`) across plugins | P0 | ⚠️ Partial — compiler safety net, root cause remains |
 | [WP-3](#wp-3-ai_processing-steps-inside-scatter-gather) | `ai_processing` inside scatter-gather — memory/prompt/routing issues | P1 | ✅ Fixed — `callLLMDirect()` bypasses runAgentKit |
 | [WP-4](#wp-4-transformmap-with-custom_code-natural-language) | `transform/map` with `custom_code` — runtime can't execute NL | P0 | ✅ Fixed — structured `mapping` from Phase 1 |
-| [WP-5](#wp-5-transformgroup-output-shape) | `transform/group` returns wrong shape for scatter-gather | P2 | ⬜ Needs fix (D-B12 patch in place) |
-| [WP-6](#wp-6-structured-config-reference-objects) | Structured ref objects `{kind:"config"}` not resolved | P2 | ⚠️ Partial — `config` handled, other kinds not |
+| [WP-5](#wp-5-transformgroup-output-shape) | `transform/group` returns wrong shape for scatter-gather | P2 | ✅ Fixed — compiler emits explicit config |
+| [WP-6](#wp-6-structured-config-reference-objects) | Structured ref objects `{kind:"config"}` not resolved | P2 | ✅ Fixed — all kinds handled |
 | [WP-7](#wp-7-gmail-label-resolution-timing) | Gmail label 409 conflict on concurrent creation | P3 | ✅ Fixed with 409 recovery |
 | [WP-8](#wp-8-email-subjectbody-encoding) | Non-ASCII chars garbled in email headers | P3 | ⚠️ Partial — Subject fixed, other headers not |
 | [WP-9](#wp-9-phase-ad-mock-gap--llm-output-shape-validation) | Mocks don't validate LLM output shape | P3 | ⬜ Deferred (F7 — has token cost) |
-| [WP-10](#wp-10-scatter-gather-error-handling--silent-success-with-error-data) | Scatter-gather reports success with error data | P2 | ⬜ Needs fix |
+| [WP-10](#wp-10-scatter-gather-error-handling--silent-success-with-error-data) | Scatter-gather reports success with error data | P2 | ✅ Fixed — error filtering + all-failed detection |
 
 ---
 
@@ -295,7 +295,7 @@ if (config.field_mapping && typeof config.field_mapping === 'object') {
 
 **Severity:** Medium
 **Encountered as:** D-B12
-**Status:** ⬜ Needs generic fix
+**Status:** ✅ Fixed — compiler emits explicit output config
 
 **Problem:** `transformGroup()` returns `{grouped, groups, keys, count}` by default. The D-B12 fix adds schema-aware array conversion, but only when `output_schema.items.properties` has exactly one string field (group key) and one array field (items). If the schema has additional computed fields or different types, the mapping won't work.
 
@@ -332,7 +332,7 @@ Enhanced group transform with explicit config:
 
 **Severity:** Medium
 **Encountered as:** D-B7 (O29)
-**Status:** ✅ Fixed for `{kind: "config"}`, ⬜ Other kinds not handled
+**Status:** ✅ Fixed — all structured reference kinds handled
 
 **Problem:** The IR converter emits structured reference objects (`{kind: "config", key: "X"}`) instead of template strings (`"{{config.X}}"`). O29 handles `kind: "config"` in `rewriteConfigRefs()`, but other kinds (`kind: "ref"`, `kind: "computed"`, `kind: "literal"`) could also appear and would pass through unresolved.
 
@@ -433,7 +433,7 @@ Phase D+ mode with real LLM calls but mocked plugins. See F7 in execution workpl
 
 **Severity:** Medium
 **Encountered as:** Observed during D-B9 testing (step6 failed but workflow reported success)
-**Status:** ⬜ Needs fix
+**Status:** ✅ Fixed — error filtering + all-failed detection
 
 **Problem:** When a nested step inside scatter-gather fails, the scatter collects error objects `{error: "...", item: N}` instead of data. Downstream steps receive these error objects and either crash or produce garbage (empty summary tables). The workflow still reports `success: true` because top-level steps completed.
 
@@ -463,9 +463,9 @@ Scatter-gather error awareness:
 | **P0** | WP-4: `custom_code` map | Breaks every transform with non-matching field names | ✅ Fixed |
 | **P1** | WP-3: AI in scatter-gather | Breaks any AI inside loops | ✅ Fixed |
 | **P1** | WP-1: notify step handling | Breaks non-send plugin actions | ✅ Fixed |
-| **P2** | WP-5: group output shape | Breaks complex grouping | ⬜ Needs fix |
-| **P2** | WP-10: Scatter error handling | Misleading success reports | ⬜ Needs fix |
-| **P2** | WP-6: Structured ref objects | Breaks computed values | ⚠️ Partial fix |
+| **P2** | WP-5: group output shape | Breaks complex grouping | ✅ Fixed |
+| **P2** | WP-10: Scatter error handling | Misleading success reports | ✅ Fixed |
+| **P2** | WP-6: Structured ref objects | Breaks computed values | ✅ Fixed |
 | **P3** | WP-9: LLM output validation | Only caught in Phase E | ⬜ Deferred |
 | **P3** | WP-7: Label resolution | Race condition, extra API calls | ✅ Fixed |
 | **P3** | WP-8: Email encoding | Non-English content | ⚠️ Partial fix |
@@ -477,6 +477,9 @@ Scatter-gather error awareness:
 | Date | Change | Details |
 |------|--------|---------|
 | 2026-03-30 | Initial document | 10 weak points identified from D-B7 through D-B13 bug fixes across 2 scenarios. Proposed solutions documented for each. |
+| 2026-03-31 | WP-6 implemented | Extended `rewriteConfigRefs` → `resolveStructuredRefs`. Now handles all `kind` values: `config` → `{{input.X}}`, `ref` → `{{var.field}}`, `literal` → raw value, `computed/concat` → joined string. Previously only handled `config`. |
+| 2026-03-31 | WP-5 implemented | Compiler emits explicit group output config: `output_format`, `key_field`, `items_field` derived from output_schema. Runtime reads explicit config first (WP-5), falls back to schema inference (D-B12), then legacy object format. Verified on leads-per-salesperson scenario: `output_format=array, key_field=salesperson, items_field=leads`. |
+| 2026-03-31 | WP-10 implemented | Scatter-gather error filtering in ParallelExecutor. After scatter completes: (1) separate success results from error objects `{error, item}`; (2) pass only successful items to gather; (3) if ALL items failed → throw ExecutionError instead of silent success; (4) attach `_scatter_metadata` with success/failed counts + error details. Downstream steps only see clean data. |
 | 2026-03-30 | WP-3 Phase E verified | Gmail Urgency Flagging: 8/8 steps, 11 emails classified + labeled + HTML table summary sent. callLLMDirect handles classify (51K tokens) and generate (2.5K tokens) correctly. Labels applied via string→array normalization in base executor. |
 | 2026-03-30 | HTML table preference | Added IntentContract prompt guidance: prefer HTML tables for email delivery when data is tabular. Generate steps now emit format:"html" with table instructions. |
 | 2026-03-30 | Base executor param normalization | String→array normalization in BasePluginExecutor before schema validation. Fixes config values resolving as strings when schema expects arrays (e.g., add_labels). |

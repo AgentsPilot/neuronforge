@@ -2908,18 +2908,25 @@ Respond ONLY with the JSON array. No markdown, no explanation, no code blocks.`;
       count: (items as any[]).length
     }));
 
-    // D-B12: If output_schema defines a typed array (e.g., [{salesperson, leads}]),
-    // return an array matching that schema so downstream scatter-gather can iterate.
-    // Map generic {key, items} to the schema's field names.
+    // WP-5: Explicit output format from compiler config (preferred).
+    // The compiler emits output_format, key_field, items_field based on output_schema.
+    if (config.output_format === 'array' && config.key_field && config.items_field) {
+      logger.debug({ keyField: config.key_field, itemsField: config.items_field, groupCount: groups.length }, 'transformGroup: WP-5 explicit config → array');
+      return groups.map(g => ({
+        [config.key_field]: g.key,
+        [config.items_field]: g.items,
+      }));
+    }
+
+    // D-B12 fallback: Infer from output_schema if compiler didn't emit explicit config.
+    // Handles older DSLs or IntentContracts without WP-5 compiler support.
     const outputSchema = config.output_schema;
     if (outputSchema?.type === 'array' && outputSchema.items?.properties) {
-      const props = outputSchema.items.properties;
-      const propEntries = Object.entries(props) as Array<[string, any]>;
-      // Find the string field (group key name) and array field (group items name)
+      const propEntries = Object.entries(outputSchema.items.properties) as Array<[string, any]>;
       const keyField = propEntries.find(([_, v]) => v.type === 'string')?.[0] || 'key';
       const itemsField = propEntries.find(([_, v]) => v.type === 'array')?.[0] || 'items';
 
-      logger.debug({ keyField, itemsField, groupCount: groups.length }, 'transformGroup: returning schema-mapped array');
+      logger.debug({ keyField, itemsField, groupCount: groups.length }, 'transformGroup: D-B12 schema inference → array');
       return groups.map(g => ({
         [keyField]: g.key,
         [itemsField]: g.items,

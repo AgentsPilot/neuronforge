@@ -663,11 +663,27 @@ export class ExecutionGraphCompiler {
           transformedConfig.reducer = transformConfig.reduce_operation
           this.log(ctx, `  → Compiled reduce_operation to reducer`)
         }
-      } else if (transformConfig.type === 'group_by') {
+      } else if (transformConfig.type === 'group_by' || transformConfig.type === 'group') {
         // IR field: group_by_field → DSL field: group_by
         if (transformConfig.group_by_field) {
           transformedConfig.group_by = transformConfig.group_by_field
           this.log(ctx, `  → Compiled group_by_field to group_by`)
+        }
+
+        // WP-5: Emit explicit output format config from output_schema.
+        // Tells the runtime exactly what shape to return, no schema inference needed.
+        const earlyOutputSchema = (transform as any).output_schema
+        const groupOutputSchema = transformConfig.output_schema || earlyOutputSchema
+        if (groupOutputSchema?.type === 'array' && groupOutputSchema.items?.properties) {
+          const props = Object.entries(groupOutputSchema.items.properties) as Array<[string, any]>
+          const keyField = props.find(([_, v]) => v.type === 'string')?.[0]
+          const itemsField = props.find(([_, v]) => v.type === 'array')?.[0]
+          if (keyField && itemsField) {
+            transformedConfig.output_format = 'array'
+            transformedConfig.key_field = keyField
+            transformedConfig.items_field = itemsField
+            this.log(ctx, `  → WP-5: Compiled group output config: format=array, key_field=${keyField}, items_field=${itemsField}`)
+          }
         }
       } else if (transformConfig.type === 'sort') {
         // IR fields: sort_field, sort_order → DSL fields: sort_by, order
@@ -2702,7 +2718,7 @@ export class ExecutionGraphCompiler {
       // B10: Rewrite {{config.X}} → {{input.X}} in all step values
       // ExecutionContext doesn't support "config" as a variable root.
       // Production agents use {{input.X}} — config values are passed as inputValues at runtime.
-      const rewriteResult = this.rewriteConfigRefs(converted)
+      const rewriteResult = this.resolveStructuredRefs(converted)
       configRefsRewritten += rewriteResult.count
       const rewritten = rewriteResult.obj
 
@@ -2850,7 +2866,7 @@ export class ExecutionGraphCompiler {
     return findInSteps(workflow)
   }
 
-  private rewriteConfigRefs(obj: any): { obj: any; count: number } {
+  private resolveStructuredRefs(obj: any): { obj: any; count: number } {
     let count = 0
 
     const rewrite = (value: any): any => {
@@ -2866,12 +2882,37 @@ export class ExecutionGraphCompiler {
         return value.map(rewrite)
       }
       if (value && typeof value === 'object') {
-        // O29: Resolve structured config reference objects { kind: "config", key: "X" }
-        // The IR converter sometimes emits these instead of "{{config.X}}" strings.
-        // Convert to "{{input.X}}" so the Pilot runtime can resolve them.
-        if (value.kind === 'config' && typeof value.key === 'string') {
+        // WP-6: Resolve ALL structured reference objects that survived from the IR.
+        // The IR converter's resolveValueRef() should convert these to strings,
+        // but deeply nested values or edge cases may survive unresolved.
+        if (typeof value.kind === 'string') {
           count++
-          return `{{input.${value.key}}}`
+          switch (value.kind) {
+            case 'config':
+              // {kind: "config", key: "X"} → "{{input.X}}"
+              return `{{input.${value.key}}}`
+            case 'ref':
+              // {kind: "ref", ref: "varName", field: "fieldName"} → "{{varName.fieldName}}"
+              if (value.ref) {
+                return value.field ? `{{${value.ref}.${value.field}}}` : `{{${value.ref}}}`
+              }
+              return undefined
+            case 'literal':
+              // {kind: "literal", value: X} → X (the raw value)
+              return value.value
+            case 'computed':
+              // {kind: "computed", op: "concat", args: [...]} → try to resolve
+              if (value.op === 'concat' && Array.isArray(value.args)) {
+                const parts = value.args.map((arg: any) => rewrite(arg))
+                return parts.filter((p: any) => p !== undefined).join('')
+              }
+              // Can't resolve other computed ops — leave warning
+              return undefined
+            default:
+              // Unknown kind — pass through (will be caught by Phase A validation)
+              count-- // Don't count as resolved
+              break
+          }
         }
         const result: any = {}
         for (const [key, val] of Object.entries(value)) {

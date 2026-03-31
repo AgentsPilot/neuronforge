@@ -230,14 +230,60 @@ export class ParallelExecutor {
       context
     );
 
-    logger.info({ resultCount: scatterResults.length }, 'Scatter complete, gathering results');
-    if (scatterResults.length > 0) {
-      const sample = JSON.stringify(scatterResults[0] || {});
-      logger.debug({ sampleResult: sample.substring(0, 300) }, 'Scatter results sample');
+    // WP-10: Separate successful results from error objects before gathering.
+    // Error objects have { error: "...", item: N } — these should not be passed
+    // to downstream steps (map, generate) which expect real data.
+    const successResults: any[] = [];
+    const errorResults: any[] = [];
+
+    for (const result of scatterResults) {
+      if (result && typeof result === 'object' && 'error' in result && typeof result.error === 'string') {
+        errorResults.push(result);
+      } else {
+        successResults.push(result);
+      }
     }
 
-    // Gather: Aggregate results based on operation
-    const gatheredResult = this.gatherResults(scatterResults, gather.operation, gather.reduceExpression);
+    const totalItems = scatterResults.length;
+    const successCount = successResults.length;
+    const errorCount = errorResults.length;
+
+    logger.info({
+      totalItems,
+      successCount,
+      errorCount,
+      stepId: step.id,
+    }, 'Scatter complete — WP-10 error filtering');
+
+    if (errorCount > 0) {
+      logger.warn({
+        stepId: step.id,
+        errorCount,
+        errors: errorResults.slice(0, 3).map(e => e.error),
+      }, `WP-10: ${errorCount}/${totalItems} scatter items failed — filtering out error objects`);
+    }
+
+    // If ALL items failed, throw — don't silently pass empty array
+    if (successCount === 0 && errorCount > 0) {
+      throw new ExecutionError(
+        `Scatter-gather step ${step.id}: all ${totalItems} items failed. First error: ${errorResults[0]?.error}`,
+        step.id,
+        { errorCode: 'SCATTER_ALL_FAILED', totalItems, errorCount, firstError: errorResults[0]?.error }
+      );
+    }
+
+    // Gather: Aggregate only successful results
+    const gatheredResult = this.gatherResults(successResults, gather.operation, gather.reduceExpression);
+
+    // Attach error metadata to the result for reporting
+    if (Array.isArray(gatheredResult)) {
+      (gatheredResult as any)._scatter_metadata = {
+        total_items: totalItems,
+        successful: successCount,
+        failed: errorCount,
+        errors: errorResults,
+      };
+    }
 
     const resultStr = JSON.stringify(gatheredResult || {});
     logger.info({ stepId: step.id, resultPreview: resultStr.substring(0, 300) }, 'Scatter-gather complete');
