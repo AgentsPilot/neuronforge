@@ -81,7 +81,7 @@ When a procedure keyword is used, **follow the linked test manual step-by-step**
 | Keyword | Test Manual | Description |
 |---------|-------------|-------------|
 | `v6-pipeline` | `docs/v6/V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_SCRIPTS.md` | Full V6 pipeline validation: EP Key Hints → Compile → Phase A → Phase D → Phase E (optional) → QA Verdict |
-| `plugin-tests` | `docs/plugins/PLUGIN_TEST_SUITE_WORKPLAN.md` | Plugin executor unit & integration tests: 11 plugins, 68 actions, fetch-level mocking |
+| `plugin-tests` | `docs/plugins/PLUGIN_TEST_SUITE_WORKPLAN.md` | Plugin executor unit & integration tests: 11 plugins, 69 actions, fetch-level mocking |
 
 **`v6-pipeline` + scope combinations:**
 - `v6-pipeline` alone → follow the full manual (all phases)

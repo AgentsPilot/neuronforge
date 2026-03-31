@@ -11,6 +11,7 @@
 
 import { execSync } from 'child_process'
 import * as fs from 'fs'
+import * as os from 'os'
 import * as path from 'path'
 
 // ============================================================================
@@ -227,7 +228,38 @@ function applyEPFixes(enhancedPrompt: any, fixes: { original: string; fixed: str
 // ============================================================================
 
 const PROJECT_ROOT = path.resolve(__dirname, '..', '..')
-const EXEC_OPTS_BASE = { encoding: 'utf-8' as const, stdio: 'pipe' as const, maxBuffer: 10 * 1024 * 1024, cwd: PROJECT_ROOT }
+
+// Use local tsx binary directly instead of `npx tsx` to avoid nested npx spawning.
+// On Windows, `execSync('npx tsx ...')` goes through cmd.exe → npx → tsx → Node,
+// which can hang or timeout due to pipe buffering and process resolution delays.
+const isWindows = process.platform === 'win32'
+const TSX_BIN = isWindows
+  ? path.join(PROJECT_ROOT, 'node_modules', '.bin', 'tsx.cmd')
+  : path.join(PROJECT_ROOT, 'node_modules', '.bin', 'tsx')
+
+// All phase runners use execWithFileRedirect() below instead of execSync with pipe.
+
+/**
+ * Run a command via execSync, redirecting output to a temp file to avoid
+ * Windows pipe deadlocks. Returns the captured output as a string.
+ */
+function execWithFileRedirect(cmd: string, timeout: number): { output: string; exitCode: number } {
+  const tmpFile = path.join(os.tmpdir(), `regression-${Date.now()}-${Math.random().toString(36).slice(2)}.log`)
+  const redirectedCmd = isWindows
+    ? `${cmd} > "${tmpFile}" 2>&1`
+    : `${cmd} > "${tmpFile}" 2>&1`
+
+  try {
+    execSync(redirectedCmd, { cwd: PROJECT_ROOT, timeout, stdio: 'ignore', ...(isWindows ? { shell: 'cmd.exe' } : {}) })
+    const output = fs.existsSync(tmpFile) ? fs.readFileSync(tmpFile, 'utf-8') : ''
+    try { fs.unlinkSync(tmpFile) } catch { /* ignore cleanup errors */ }
+    return { output, exitCode: 0 }
+  } catch (err: any) {
+    const output = fs.existsSync(tmpFile) ? fs.readFileSync(tmpFile, 'utf-8') : ''
+    try { fs.unlinkSync(tmpFile) } catch { /* ignore cleanup errors */ }
+    return { output, exitCode: err.status || 1 }
+  }
+}
 
 function runCompile(
   enhancedPromptPath: string,
@@ -237,30 +269,27 @@ function runCompile(
 ): PhaseCompileResult {
   const start = Date.now()
   const cmd = [
-    'npx tsx --import ./scripts/env-preload.ts scripts/test-complete-pipeline-with-vocabulary.ts',
+    `"${TSX_BIN}" --import ./scripts/env-preload.ts scripts/test-complete-pipeline-with-vocabulary.ts`,
     `"${enhancedPromptPath}"`,
     `--intent-contract "${intentContractPath}"`,
     `--output-dir "${scenarioOutputDir}"`,
   ].join(' ')
 
+  const { output, exitCode } = execWithFileRedirect(cmd, 120_000)
+  logger.logSubProcess(exitCode === 0 ? 'Compile' : 'Compile (FAILED)', output)
+
+  // Check DSL output exists
+  const dslPath = path.join(scenarioOutputDir, 'phase4-pilot-dsl-steps.json')
+  if (!fs.existsSync(dslPath)) {
+    return { success: false, steps: 0, duration_ms: Date.now() - start, error: output.slice(-500) || 'phase4-pilot-dsl-steps.json not found' }
+  }
+
   try {
-    const output = execSync(cmd, { ...EXEC_OPTS_BASE, timeout: 120_000 })
-    logger.logSubProcess('Compile', output)
-
-    // Check DSL output exists
-    const dslPath = path.join(scenarioOutputDir, 'phase4-pilot-dsl-steps.json')
-    if (!fs.existsSync(dslPath)) {
-      return { success: false, steps: 0, duration_ms: Date.now() - start, error: 'phase4-pilot-dsl-steps.json not found after compilation' }
-    }
-
     const dslSteps = JSON.parse(fs.readFileSync(dslPath, 'utf-8'))
     const stepCount = Array.isArray(dslSteps) ? dslSteps.length : 0
-
     return { success: true, steps: stepCount, duration_ms: Date.now() - start }
   } catch (err: any) {
-    const output = (err.stdout || '') + (err.stderr || '')
-    logger.logSubProcess('Compile (FAILED)', output)
-    return { success: false, steps: 0, duration_ms: Date.now() - start, error: err.message?.slice(0, 500) || 'Unknown compile error' }
+    return { success: false, steps: 0, duration_ms: Date.now() - start, error: `Failed to parse DSL: ${err.message}` }
   }
 }
 
@@ -268,20 +297,12 @@ function runPhaseA(
   scenarioOutputDir: string,
   logger: RegressionLogger
 ): PhaseAResult {
-  const cmd = `npx tsx scripts/test-dsl-execution-simulator/index.ts --input-dir "${scenarioOutputDir}"`
+  const cmd = `"${TSX_BIN}" scripts/test-dsl-execution-simulator/index.ts --input-dir "${scenarioOutputDir}"`
 
-  try {
-    const output = execSync(cmd, { ...EXEC_OPTS_BASE, timeout: 60_000 })
-    logger.logSubProcess('Phase A', output)
+  const { output, exitCode } = execWithFileRedirect(cmd, 60_000)
+  logger.logSubProcess(exitCode === 0 ? 'Phase A' : 'Phase A (non-zero exit)', output)
 
-    return parsePhaseAReport(scenarioOutputDir)
-  } catch (err: any) {
-    const output = (err.stdout || '') + (err.stderr || '')
-    logger.logSubProcess('Phase A (non-zero exit)', output)
-
-    // Phase A may exit with code 1 but still write a report
-    return parsePhaseAReport(scenarioOutputDir)
-  }
+  return parsePhaseAReport(scenarioOutputDir)
 }
 
 function parsePhaseAReport(scenarioOutputDir: string): PhaseAResult {
@@ -321,19 +342,12 @@ function runPhaseD(
   logger: RegressionLogger
 ): PhaseDResult {
   const start = Date.now()
-  const cmd = `npx tsx --import ./scripts/env-preload.ts scripts/test-workflowpilot-execution.ts --input-dir "${scenarioOutputDir}"`
+  const cmd = `"${TSX_BIN}" --import ./scripts/env-preload.ts scripts/test-workflowpilot-execution.ts --input-dir "${scenarioOutputDir}"`
 
-  try {
-    const output = execSync(cmd, { ...EXEC_OPTS_BASE, timeout: 120_000 })
-    logger.logSubProcess('Phase D', output)
+  const { output, exitCode } = execWithFileRedirect(cmd, 120_000)
+  logger.logSubProcess(exitCode === 0 ? 'Phase D' : 'Phase D (non-zero exit)', output)
 
-    return parsePhaseDReport(scenarioOutputDir, start)
-  } catch (err: any) {
-    const output = (err.stdout || '') + (err.stderr || '')
-    logger.logSubProcess('Phase D (non-zero exit)', output)
-
-    return parsePhaseDReport(scenarioOutputDir, start)
-  }
+  return parsePhaseDReport(scenarioOutputDir, start)
 }
 
 function parsePhaseDReport(scenarioOutputDir: string, startTime: number): PhaseDResult {

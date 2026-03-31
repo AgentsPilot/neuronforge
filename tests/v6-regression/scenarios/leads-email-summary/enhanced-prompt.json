@@ -44,7 +44,7 @@
         ],
         "resolved_user_inputs": [
             {
-                "key": "user_email",
+                "key": "google_mail__email_send__user_email",
                 "value": "meiribarak@gmail.com"
             },
             {

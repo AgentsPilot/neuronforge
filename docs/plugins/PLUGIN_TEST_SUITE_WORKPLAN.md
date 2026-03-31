@@ -322,7 +322,7 @@ When a new plugin is created or new actions are added:
 | # | Item | Status |
 |---|------|--------|
 | 1 | Obtain PDF fixture for document-extractor tests | ✅ `Invoice677931.pdf` provided |
-| 2 | Verify Jest config supports `tests/plugins/` path | ⬜ To check during implementation |
+| 2 | Verify Jest config supports `tests/plugins/` path | ✅ Verified — `jest.config.js` with `ts-jest`, `setupFiles`, and `@/` path alias all working. 11 suites, 108 tests passing. |
 | 3 | Confirm document-extractor mocking approach | ✅ Mock `DeterministicExtractor.prototype.extract()` — no LLM, no fetch, uses pdf-parse + AWS Textract |
 
 ---

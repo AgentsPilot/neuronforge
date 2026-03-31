@@ -2615,6 +2615,33 @@ export class ExecutionGraphCompiler {
         }
         convertedCount++
 
+        // Fix: Ensure append_rows has top-level 'values' param.
+        // The IR converter may produce two patterns that need normalization:
+        //   1. fields.values: "{{row_data}}" → hoist to values
+        //   2. fields: {A: "ref1", B: "ref2"} → convert column map to values array
+        if (converted.action === 'append_rows' && !converted.params?.values && converted.params?.fields) {
+          const fields = converted.params.fields
+          if (fields.values) {
+            // Pattern 1: fields.values contains the data reference
+            converted.params.values = fields.values
+            delete converted.params.fields
+            this.log(ctx, `  → Hoisted fields.values → values for append_rows in ${converted.step_id || converted.id}`)
+          } else {
+            // Pattern 2: fields has column mappings {A: "ref", B: "ref", ...}
+            // Convert to values: [["{{ref}}", "{{ref}}", ...]] ordered by column letter
+            const colKeys = Object.keys(fields).filter(k => /^[A-Z]$/.test(k)).sort()
+            if (colKeys.length > 0) {
+              const row = colKeys.map(col => {
+                const ref = fields[col]
+                return typeof ref === 'string' && !ref.includes('{{') ? `{{${ref}}}` : ref
+              })
+              converted.params.values = [row]
+              delete converted.params.fields
+              this.log(ctx, `  → Converted column map to values array for append_rows: ${colKeys.length} columns`)
+            }
+          }
+        }
+
         // O26 Fix C: Anchor append_rows range to column range (e.g., "UrgentEmails" → "UrgentEmails!A:E")
         // Without column anchor, Sheets API auto-detects data region and may offset subsequent appends
         if (converted.action === 'append_rows' && converted.params?.range) {

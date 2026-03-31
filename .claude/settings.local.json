@@ -24,7 +24,8 @@
       "Bash(node -e \"const r=JSON.parse\\(require\\(''''fs''''\\).readFileSync\\(0,''''utf8''''\\)\\); console.log\\(''''  Name:'''', r.name\\); console.log\\(''''  Plugins:'''', r.plugins.join\\('''', ''''\\)\\); console.log\\(''''  Description:'''', r.description?.substring\\(0,100\\)\\)\")",
       "Bash(done)",
       "Bash(for f:*)",
-      "Bash(do sed:*)"
+      "Bash(do sed:*)",
+      "Bash(timeout 30 node_modules/.bin/tsx.cmd --import ./scripts/env-preload.ts scripts/test-complete-pipeline-with-vocabulary.ts tests/v6-regression/scenarios/complaint-email-logger/enhanced-prompt.json --intent-contract tests/v6-regression/scenarios/complaint-email-logger/intent-contract.json --output-dir /tmp/test-regression-output)"
     ]
   }
 }
