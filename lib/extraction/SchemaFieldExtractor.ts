@@ -9,9 +9,11 @@
  * 2. Textract key-value pairs → Match keys to schema field names
  * 3. Generic pattern matching → "FieldName: value" patterns
  * 4. Common patterns → Dates, amounts, emails, etc.
+ * 5. LLM-based intelligent mapping → Semantic understanding as final fallback
  */
 
 import { createLogger } from '@/lib/logger';
+import { LLMFieldMapper } from './LLMFieldMapper';
 import type {
   ExtractedField,
   OutputSchema,
@@ -68,12 +70,15 @@ export class SchemaFieldExtractor {
   /**
    * Extract fields based on output_schema
    */
-  extract(input: ExtractionInput, outputSchema: OutputSchema): SchemaExtractionResult {
+  async extract(input: ExtractionInput, outputSchema: OutputSchema): Promise<SchemaExtractionResult> {
     const startTime = Date.now();
     const fields: Record<string, ExtractedField> = {};
     const data: Record<string, any> = {};
     const missingFields: string[] = [];
     const uncertainFields: string[] = [];
+
+    // Track which key-value pairs have been used to prevent reuse
+    const usedKeyValuePairs = new Set<string>();
 
     logger.info({
       schemaFields: outputSchema.fields.map(f => f.name),
@@ -103,14 +108,87 @@ export class SchemaFieldExtractor {
         extracted = this.extractFromStructuredData(schemaField, input.structuredData);
       }
 
-      // Strategy 3: Check Textract key-value pairs
+      // Strategy 2.5: For well-defined types (email, phone, URL), try universal patterns FIRST
+      // This prevents ambiguous key-value pair matches (e.g., "address" matching payment address instead of email)
+      if (!extracted && input.text) {
+        const fieldNameLower = schemaField.name.toLowerCase();
+        const descriptionLower = schemaField.description?.toLowerCase() || '';
+
+        // Check if this is an email field
+        if (fieldNameLower.includes('email') || descriptionLower.includes('email')) {
+          const emailPattern = UNIVERSAL_PATTERNS.email?.[0];
+          if (emailPattern) {
+            const match = input.text.match(emailPattern);
+            if (match && match[1]) {
+              extracted = {
+                name: schemaField.name,
+                value: match[1].trim(),
+                confidence: 0.9,
+                source: 'universal_pattern',
+                rawMatch: match[0],
+              };
+            }
+          }
+        }
+
+        // Check if this is a phone field
+        if (!extracted && (fieldNameLower.includes('phone') || descriptionLower.includes('phone'))) {
+          const phonePattern = UNIVERSAL_PATTERNS.phone?.[0];
+          if (phonePattern) {
+            const match = input.text.match(phonePattern);
+            if (match && match[0]) {
+              extracted = {
+                name: schemaField.name,
+                value: match[0].trim(),
+                confidence: 0.85,
+                source: 'universal_pattern',
+                rawMatch: match[0],
+              };
+            }
+          }
+        }
+
+        // Check if this is a URL field
+        if (!extracted && (fieldNameLower.includes('url') || fieldNameLower.includes('link') || descriptionLower.includes('url'))) {
+          const urlPattern = UNIVERSAL_PATTERNS.url?.[0];
+          if (urlPattern) {
+            const match = input.text.match(urlPattern);
+            if (match && match[1]) {
+              extracted = {
+                name: schemaField.name,
+                value: match[1].trim(),
+                confidence: 0.9,
+                source: 'universal_pattern',
+                rawMatch: match[0],
+              };
+            }
+          }
+        }
+      }
+
+      // Strategy 3: Check Textract key-value pairs (with reuse prevention)
       if (!extracted && input.keyValuePairs?.length) {
-        extracted = this.extractFromKeyValuePairs(schemaField, input.keyValuePairs);
+        // Filter out already-used key-value pairs
+        const availableKvPairs = input.keyValuePairs.filter(kv =>
+          !usedKeyValuePairs.has(`${kv.key}:${kv.value}`)
+        );
+
+        extracted = this.extractFromKeyValuePairs(schemaField, availableKvPairs);
+
+        // Mark this key-value pair as used
+        if (extracted && extracted.source === 'textract_kv' && extracted.rawMatch) {
+          usedKeyValuePairs.add(extracted.rawMatch);
+        }
       }
 
       // Strategy 4: Check tables for array fields
       if (!extracted && schemaField.type === 'array' && input.tables?.length) {
         extracted = this.extractFromTables(schemaField, input.tables);
+      }
+
+      // Strategy 4.5: Check tables for vendor/company info in invoice header tables
+      if (!extracted && input.tables?.length && schemaField.type === 'string') {
+        extracted = this.extractFromInvoiceHeaderTable(schemaField, input.tables);
       }
 
       // Strategy 5: Generic text pattern matching
@@ -131,6 +209,58 @@ export class SchemaFieldExtractor {
         if (schemaField.required) {
           missingFields.push(schemaField.name);
         }
+      }
+    }
+
+    // Strategy 6: LLM-based intelligent mapping (FINAL FALLBACK)
+    // Only use if we have missing fields AND we have Textract data available
+    if (missingFields.length > 0 && (input.keyValuePairs?.length || input.text)) {
+      logger.info({
+        missingFieldsCount: missingFields.length,
+        hasKeyValuePairs: !!input.keyValuePairs?.length,
+      }, 'SchemaFieldExtractor: Triggering LLM fallback for missing fields');
+
+      try {
+        const llmMapper = new LLMFieldMapper();
+
+        // Only pass successfully extracted fields (filter out nulls)
+        const successfullyExtractedFields = Object.fromEntries(
+          Object.entries(data).filter(([_, value]) => value !== null)
+        );
+
+        const llmResult = await llmMapper.mapFields({
+          text: input.text || '',
+          keyValuePairs: input.keyValuePairs,
+          outputSchema: outputSchema,
+          partiallyExtractedFields: successfullyExtractedFields,
+        });
+
+        // Apply LLM-mapped fields (only for currently missing fields)
+        for (const [fieldName, value] of Object.entries(llmResult.mappedFields)) {
+          if (missingFields.includes(fieldName) && value) {
+            fields[fieldName] = {
+              name: fieldName,
+              value: value,
+              confidence: llmResult.confidence,
+              source: 'llm_mapping',
+            };
+            data[fieldName] = value;
+
+            // Remove from missing fields
+            const index = missingFields.indexOf(fieldName);
+            if (index > -1) {
+              missingFields.splice(index, 1);
+            }
+          }
+        }
+
+        logger.info({
+          mappedByLLM: Object.keys(llmResult.mappedFields).length,
+          remainingMissing: missingFields.length,
+        }, 'SchemaFieldExtractor: LLM fallback complete');
+
+      } catch (error) {
+        logger.error({ err: error }, 'SchemaFieldExtractor: LLM fallback failed (non-blocking)');
       }
     }
 
@@ -240,10 +370,14 @@ export class SchemaFieldExtractor {
   ): ExtractedField | null {
     const variations = this.getFieldNameVariations(schemaField);
 
-    for (const variation of variations) {
+    // Sort variations by length (longest first) to prioritize more specific matches
+    // Example: "amount due" should be checked before "amount"
+    const sortedVariations = variations.sort((a, b) => b.length - a.length);
+
+    // First pass: Try exact matches only
+    for (const variation of sortedVariations) {
       const normalizedVariation = this.normalizeKey(variation);
 
-      // Try exact match
       const exactMatch = keyValuePairs.find(
         kv => this.normalizeKey(kv.key) === normalizedVariation
       );
@@ -256,12 +390,30 @@ export class SchemaFieldExtractor {
           rawMatch: `${exactMatch.key}: ${exactMatch.value}`,
         };
       }
+    }
 
-      // Try partial match (key contains variation)
+    // Second pass: Try partial matches if no exact match found
+    // Use more intelligent partial matching that avoids false positives
+    for (const variation of sortedVariations) {
+      const normalizedVariation = this.normalizeKey(variation);
+
       const partialMatch = keyValuePairs.find(kv => {
         const normalizedKey = this.normalizeKey(kv.key);
-        return normalizedKey.includes(normalizedVariation) ||
-               normalizedVariation.includes(normalizedKey);
+
+        // Avoid matching when variation is too short (e.g., "due" matching "overdue")
+        if (normalizedVariation.length < 4) return false;
+
+        // Check if the variation is at the start of the key (e.g., "date" in "date of issue")
+        if (normalizedKey.startsWith(normalizedVariation)) return true;
+
+        // Check if the variation is at the end of the key (e.g., "date" in "invoice date")
+        if (normalizedKey.endsWith(normalizedVariation)) return true;
+
+        // Check if the key is at the start of the variation (for longer variations)
+        // e.g., "date" key matches "date issued" variation
+        if (normalizedVariation.startsWith(normalizedKey) && normalizedKey.length >= 4) return true;
+
+        return false;
       });
       if (partialMatch) {
         return {
@@ -311,6 +463,91 @@ export class SchemaFieldExtractor {
         confidence: table.confidence / 100,
         source: 'textract_table',
       };
+    }
+
+    return null;
+  }
+
+  /**
+   * Extract vendor/company info from invoice header tables
+   *
+   * In invoice PDFs, vendor info is often in a 2-column table with:
+   * - Left column: Vendor name, vendor address
+   * - Right column: "Bill to", customer name, customer address
+   *
+   * Example from Textract:
+   * Row 1: "Anthropic, PBC" | "Bill to"
+   * Row 2: "548 Market Street" | "offir.omer@gmail.com's Organization"
+   */
+  private extractFromInvoiceHeaderTable(
+    schemaField: OutputSchemaField,
+    tables: Array<{ rows: string[][]; confidence: number }>
+  ): ExtractedField | null {
+    const variations = this.getFieldNameVariations(schemaField);
+
+    // Check if this field is vendor/company related
+    const isVendorField = variations.some(v =>
+      ['vendor', 'company', 'seller', 'supplier', 'from'].includes(v.toLowerCase())
+    );
+
+    if (!isVendorField) return null;
+
+    // Look through tables for invoice header structure
+    for (const table of tables) {
+      if (table.rows.length < 2) continue;
+
+      // Check if this looks like an invoice header table
+      // Typically has "Bill to" or "Bill To" in the right column
+      const hasBillTo = table.rows.some(row =>
+        row.some(cell => /bill\s*to/i.test(cell))
+      );
+
+      if (hasBillTo) {
+        // The vendor info is typically in the first row, left column
+        // before the "Bill to" label
+        const firstRow = table.rows[0];
+        if (firstRow.length >= 2) {
+          const leftCell = firstRow[0]?.trim();
+          const rightCell = firstRow[1]?.trim();
+
+          // If right cell contains "Bill to", left cell is likely the vendor
+          if (/bill\s*to/i.test(rightCell) && leftCell && leftCell.length > 0) {
+            return {
+              name: schemaField.name,
+              value: leftCell,
+              confidence: 0.85,
+              source: 'textract_table',
+              rawMatch: `Table row: ${leftCell} | ${rightCell}`,
+            };
+          }
+        }
+
+        // Alternative: Check if vendor name appears in first column, any row before "Bill to"
+        for (let i = 0; i < table.rows.length; i++) {
+          const row = table.rows[i];
+          if (row.length >= 2) {
+            const leftCell = row[0]?.trim();
+            const rightCell = row[1]?.trim();
+
+            // Stop if we hit the "Bill to" row
+            if (/bill\s*to/i.test(leftCell) || /bill\s*to/i.test(rightCell)) {
+              break;
+            }
+
+            // Look for company-like patterns in left column
+            // Companies often have suffixes like LLC, Inc, PBC, Corp, Ltd
+            if (leftCell && /\b(LLC|Inc|PBC|Corp|Ltd|Limited|Corporation|Company)\b/i.test(leftCell)) {
+              return {
+                name: schemaField.name,
+                value: leftCell,
+                confidence: 0.8,
+                source: 'textract_table',
+                rawMatch: `Table cell: ${leftCell}`,
+              };
+            }
+          }
+        }
+      }
     }
 
     return null;
@@ -400,6 +637,7 @@ export class SchemaFieldExtractor {
   /**
    * Extract meaningful keywords from field description
    * Example: "Merchant/vendor name; if unclear..." → ["merchant", "vendor", "name"]
+   * Also extracts multi-word phrases: "Total amount, invoice total, or amount due" → ["total amount", "invoice total", "amount due", "total", "invoice", "amount", "due"]
    * This allows the system to work with ANY field the agent defines!
    */
   private extractKeywordsFromDescription(description: string): string[] {
@@ -415,14 +653,48 @@ export class SchemaFieldExtractor {
       'indicating', 'whether', 'any', 'row', 'use', 'normalized', 'consistent',
     ]);
 
-    // Extract words from description
-    const words = description
-      .toLowerCase()
-      .replace(/[^\w\s]/g, ' ') // Remove punctuation
-      .split(/\s+/)
-      .filter(word => word.length > 2 && !stopWords.has(word));
+    // Extract multi-word phrases (2-3 words) from description
+    // This captures phrases like "amount due", "invoice total", "date of issue", etc.
+    const normalized = description.toLowerCase().replace(/[^\w\s]/g, ' ');
+    const allWords = normalized.split(/\s+/).filter(w => w.length > 0);
 
-    // Add meaningful words
+    // Extract 2-word phrases
+    for (let i = 0; i < allWords.length - 1; i++) {
+      const word1 = allWords[i];
+      const word2 = allWords[i + 1];
+
+      // Skip if either word is a stop word
+      if (stopWords.has(word1) || stopWords.has(word2)) continue;
+
+      // Skip if either word is too short
+      if (word1.length < 3 || word2.length < 3) continue;
+
+      const phrase = `${word1} ${word2}`;
+      keywords.add(phrase);
+    }
+
+    // Extract 3-word phrases for more specific matches
+    for (let i = 0; i < allWords.length - 2; i++) {
+      const word1 = allWords[i];
+      const word2 = allWords[i + 1];
+      const word3 = allWords[i + 2];
+
+      // Skip if middle word is a stop word or any word is too short
+      if (stopWords.has(word2)) continue;
+      if (word1.length < 3 || word2.length < 3 || word3.length < 3) continue;
+
+      const phrase = `${word1} ${word2} ${word3}`;
+      keywords.add(phrase);
+    }
+
+    // Also extract individual meaningful words (as before)
+    // But filter out overly generic words that might cause false matches
+    const genericWords = new Set(['invoice', 'document', 'file', 'record', 'item', 'field']);
+
+    const words = normalized
+      .split(/\s+/)
+      .filter(word => word.length > 2 && !stopWords.has(word) && !genericWords.has(word));
+
     words.forEach(word => {
       keywords.add(word);
     });

@@ -79,7 +79,7 @@ export class DeterministicExtractor {
     }, 'DeterministicExtractor: Starting schema-driven extraction');
 
     try {
-      // Build extraction input based on file type
+      // Build extraction input based on file type (tries pdfjs-dist first for PDFs)
       const extractionInput = await this.buildExtractionInput(input);
 
       // If no schema provided, return raw text only
@@ -87,41 +87,143 @@ export class DeterministicExtractor {
         return this.createRawTextResult(extractionInput, startTime);
       }
 
-      // Run schema-driven extraction
-      const result = this.schemaExtractor.extract(extractionInput, config.outputSchema);
+      // Run initial schema-driven extraction with pdfjs-dist text
+      const initialResult = await this.schemaExtractor.extract(extractionInput, config.outputSchema);
 
-      const processingTime = Date.now() - startTime;
+      // Calculate required fields count
+      const requiredFieldsCount = config.outputSchema.fields.filter(f => f.required).length;
+      const requiredFieldsExtracted = config.outputSchema.fields.filter(f =>
+        f.required && initialResult.fields[f.name] !== null && initialResult.fields[f.name] !== undefined
+      ).length;
 
-      logger.info({
-        success: result.success,
-        extractionMethod: extractionInput.keyValuePairs?.length ? 'textract' :
-                         extractionInput.structuredData ? 'structured' : 'text',
-        fieldsExtracted: Object.keys(result.fields).length,
-        fieldsRequested: config.outputSchema.fields.length,
-        confidence: result.confidence,
-        processingTimeMs: processingTime,
-      }, 'DeterministicExtractor: Extraction complete');
+      // Check if we need Textract fallback
+      const needsTextractFallback = config.ocrFallback !== false && (
+        // Missing required fields
+        requiredFieldsExtracted < requiredFieldsCount ||
+        // Low confidence (below 70%)
+        initialResult.confidence < 0.7 ||
+        // Very few fields extracted (less than 50% of total fields)
+        Object.keys(initialResult.fields).length < config.outputSchema.fields.length * 0.5
+      );
 
-      return {
-        success: result.success,
-        data: result.data,
-        confidence: result.confidence,
-        needsLlmFallback: false,
-        metadata: {
-          extractionMethod: extractionInput.keyValuePairs?.length ? 'textract' :
-                           extractionInput.structuredData ? 'structured' : 'text',
-          processingTimeMs: processingTime,
-          textLength: extractionInput.text?.length || 0,
-          fieldsExtracted: Object.keys(result.fields).length,
+      // If initial extraction was good enough, return it
+      if (!needsTextractFallback) {
+        const processingTime = Date.now() - startTime;
+
+        logger.info({
+          success: initialResult.success,
+          extractionMethod: 'text',
+          fieldsExtracted: Object.keys(initialResult.fields).length,
           fieldsRequested: config.outputSchema.fields.length,
-          missingFields: result.missingFields,
-          uncertainFields: result.uncertainFields,
-        },
-        rawText: extractionInput.text,
-        errors: result.missingFields.length > 0
-          ? [`Missing required fields: ${result.missingFields.join(', ')}`]
-          : undefined,
-      };
+          confidence: initialResult.confidence,
+          processingTimeMs: processingTime,
+          textractFallback: false,
+        }, 'DeterministicExtractor: Extraction complete (pdfjs-dist sufficient)');
+
+        return {
+          success: initialResult.success,
+          data: initialResult.data,
+          confidence: initialResult.confidence,
+          needsLlmFallback: false,
+          metadata: {
+            extractionMethod: 'text',
+            processingTimeMs: processingTime,
+            textLength: extractionInput.text?.length || 0,
+            fieldsExtracted: Object.keys(initialResult.fields).length,
+            fieldsRequested: config.outputSchema.fields.length,
+            missingFields: initialResult.missingFields,
+            uncertainFields: initialResult.uncertainFields,
+          },
+          rawText: extractionInput.text,
+          errors: initialResult.missingFields.length > 0
+            ? [`Missing required fields: ${initialResult.missingFields.join(', ')}`]
+            : undefined,
+        };
+      }
+
+      // Initial extraction was insufficient - try Textract fallback
+      logger.info({
+        reason: requiredFieldsExtracted < requiredFieldsCount ? 'missing_required_fields' :
+                initialResult.confidence < 0.7 ? 'low_confidence' : 'insufficient_fields',
+        requiredFieldsExtracted,
+        requiredFieldsCount,
+        confidence: initialResult.confidence,
+        fieldsExtracted: Object.keys(initialResult.fields).length,
+      }, 'DeterministicExtractor: Triggering Textract fallback');
+
+      const textractResult = await this.tryTextract(input.content);
+
+      if (textractResult && (textractResult.keyValuePairs?.length || textractResult.tables?.length)) {
+        // Re-run extraction with Textract data
+        const enhancedInput = {
+          ...extractionInput,
+          text: textractResult.text || extractionInput.text,
+          keyValuePairs: textractResult.keyValuePairs,
+          tables: textractResult.tables,
+        };
+
+        const enhancedResult = await this.schemaExtractor.extract(enhancedInput, config.outputSchema);
+        const processingTime = Date.now() - startTime;
+
+        logger.info({
+          success: enhancedResult.success,
+          extractionMethod: 'textract',
+          fieldsExtracted: Object.keys(enhancedResult.fields).length,
+          fieldsRequested: config.outputSchema.fields.length,
+          confidence: enhancedResult.confidence,
+          processingTimeMs: processingTime,
+          improvement: enhancedResult.confidence - initialResult.confidence,
+        }, 'DeterministicExtractor: Extraction complete (with Textract)');
+
+        return {
+          success: enhancedResult.success,
+          data: enhancedResult.data,
+          confidence: enhancedResult.confidence,
+          needsLlmFallback: false,
+          metadata: {
+            extractionMethod: 'textract',
+            processingTimeMs: processingTime,
+            textLength: enhancedInput.text?.length || 0,
+            fieldsExtracted: Object.keys(enhancedResult.fields).length,
+            fieldsRequested: config.outputSchema.fields.length,
+            missingFields: enhancedResult.missingFields,
+            uncertainFields: enhancedResult.uncertainFields,
+          },
+          rawText: enhancedInput.text,
+          errors: enhancedResult.missingFields.length > 0
+            ? [`Missing required fields: ${enhancedResult.missingFields.join(', ')}`]
+            : undefined,
+        };
+      } else {
+        // Textract failed or unavailable - return initial result
+        const processingTime = Date.now() - startTime;
+
+        logger.warn({
+          textractAvailable: !!textractResult,
+          hasKeyValuePairs: textractResult?.keyValuePairs?.length || 0,
+          hasTables: textractResult?.tables?.length || 0,
+        }, 'DeterministicExtractor: Textract fallback failed, returning initial result');
+
+        return {
+          success: initialResult.success,
+          data: initialResult.data,
+          confidence: initialResult.confidence,
+          needsLlmFallback: false,
+          metadata: {
+            extractionMethod: 'text',
+            processingTimeMs: processingTime,
+            textLength: extractionInput.text?.length || 0,
+            fieldsExtracted: Object.keys(initialResult.fields).length,
+            fieldsRequested: config.outputSchema.fields.length,
+            missingFields: initialResult.missingFields,
+            uncertainFields: initialResult.uncertainFields,
+          },
+          rawText: extractionInput.text,
+          errors: initialResult.missingFields.length > 0
+            ? [`Missing required fields: ${initialResult.missingFields.join(', ')}`]
+            : undefined,
+        };
+      }
     } catch (error: any) {
       logger.error({ err: error }, 'DeterministicExtractor: Extraction failed');
       return this.createFailureResult(error.message, startTime, config.outputSchema);
@@ -168,33 +270,33 @@ export class DeterministicExtractor {
 
   /**
    * Handle PDF extraction
+   *
+   * Strategy: Always try free pdfjs-dist text extraction first.
+   * The main extract() method will intelligently decide if Textract fallback is needed
+   * based on the user's schema and extraction results.
    */
   private async handlePdf(
     input: DeterministicExtractionInput,
     extractionInput: ExtractionInput,
     ocrEnabled: boolean
   ): Promise<ExtractionInput> {
-    // First try free text extraction
+    // Always try free text extraction with pdfjs-dist first
     const pdfResult = await this.pdfDetector.analyze(input.content);
     extractionInput.text = pdfResult.textContent;
 
-    // If text extraction failed or low quality, try Textract for structured data
-    if (ocrEnabled && (pdfResult.type === 'scanned' || pdfResult.confidence < 0.5)) {
+    // Only use Textract immediately if PDF is clearly scanned (no text at all)
+    if (ocrEnabled && pdfResult.type === 'scanned' && pdfResult.textContent.length < 50) {
+      logger.info('DeterministicExtractor: PDF appears to be scanned with no extractable text, using Textract immediately');
       const textractResult = await this.tryTextract(input.content);
       if (textractResult) {
         extractionInput.text = textractResult.text || extractionInput.text;
         extractionInput.keyValuePairs = textractResult.keyValuePairs;
         extractionInput.tables = textractResult.tables;
       }
-    } else if (ocrEnabled && pdfResult.textContent.length > 50) {
-      // Even for text-based PDFs, try Textract's analyzeDocument for better structured extraction
-      // But only if we have valid text (not scanned gibberish)
-      const textractResult = await this.tryTextract(input.content);
-      if (textractResult && textractResult.keyValuePairs?.length) {
-        extractionInput.keyValuePairs = textractResult.keyValuePairs;
-        extractionInput.tables = textractResult.tables;
-      }
     }
+
+    // For all other cases, let the main extract() method decide if Textract is needed
+    // based on the user's schema and initial extraction results
 
     return extractionInput;
   }

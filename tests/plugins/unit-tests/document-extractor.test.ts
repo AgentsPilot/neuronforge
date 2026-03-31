@@ -11,29 +11,44 @@ import { DocumentExtractorPluginExecutor } from '@/lib/server/document-extractor
 import { createTestExecutor, expectSuccessResult, expectErrorResult } from '../common/test-helpers';
 import { restoreFetch, mockFetchSuccess } from '../common/mock-fetch';
 
+// Mock LLMFieldMapper so no real LLM calls occur (SchemaFieldExtractor imports it)
+const mockMapFields = jest.fn().mockResolvedValue({
+  mappedFields: {},
+  unmappedFields: [],
+  confidence: 0,
+});
+jest.mock('@/lib/extraction/LLMFieldMapper', () => {
+  return {
+    LLMFieldMapper: jest.fn().mockImplementation(() => ({
+      mapFields: mockMapFields,
+    })),
+  };
+});
+
 // Mock the DeterministicExtractor module so no real PDF parsing occurs
+const mockExtract = jest.fn().mockResolvedValue({
+  success: true,
+  confidence: 0.95,
+  data: {
+    invoice_number: '677931',
+    date: '17-Mar-2026',
+    vendor: 'Scooter Software',
+    amount: '31.50',
+    currency: 'USD',
+  },
+  rawText: 'Invoice #677931\nDated 17-Mar-2026\nScooter Software\nTotal: $31.50 USD',
+  metadata: {
+    fieldsExtracted: 5,
+    missingFields: [],
+    uncertainFields: [],
+    extractionMethod: 'pdf-parse',
+    processingTimeMs: 42,
+  },
+});
 jest.mock('@/lib/extraction/DeterministicExtractor', () => {
   return {
     DeterministicExtractor: jest.fn().mockImplementation(() => ({
-      extract: jest.fn().mockResolvedValue({
-        success: true,
-        confidence: 0.95,
-        data: {
-          invoice_number: '677931',
-          date: '17-Mar-2026',
-          vendor: 'Scooter Software',
-          amount: '31.50',
-          currency: 'USD',
-        },
-        rawText: 'Invoice #677931\nDated 17-Mar-2026\nScooter Software\nTotal: $31.50 USD',
-        metadata: {
-          fieldsExtracted: 5,
-          missingFields: [],
-          uncertainFields: [],
-          extractionMethod: 'pdf-parse',
-          processingTimeMs: 42,
-        },
-      }),
+      extract: mockExtract,
     })),
   };
 });
@@ -134,6 +149,63 @@ describe('DocumentExtractorPluginExecutor', () => {
 
       // Should succeed — system plugin path should not require a real OAuth connection
       expectSuccessResult(result);
+    });
+
+    it('should apply fallback defaults for missing required fields', async () => {
+      // When extraction returns null for a required field, the executor
+      // should apply a fallback default like "Unknown Vendor"
+      mockFetchSuccess({});
+
+      mockExtract.mockResolvedValueOnce({
+        success: true,
+        confidence: 0.6,
+        data: {
+          invoice_number: 'INV-001',
+          vendor: null, // Missing required field
+        },
+        rawText: 'Invoice INV-001',
+        metadata: {
+          fieldsExtracted: 1,
+          missingFields: ['vendor'],
+          uncertainFields: [],
+          extractionMethod: 'pdf-parse',
+          processingTimeMs: 30,
+        },
+      });
+
+      const result = await executor.executeAction(USER_ID, 'extract_structured_data', {
+        file_content: Buffer.from('%PDF-1.4 test').toString('base64'),
+        mime_type: 'application/pdf',
+        fields: [
+          { name: 'invoice_number', type: 'string', required: true },
+          { name: 'vendor', type: 'string', required: true, description: 'Vendor name' },
+        ],
+      });
+
+      expectSuccessResult(result);
+      expect(result.data.invoice_number).toBe('INV-001');
+      // Executor applies fallback "Unknown Vendor" for missing required fields
+      expect(result.data.vendor).toBe('Unknown Vendor');
+    });
+
+    it('should attach extraction metadata to result', async () => {
+      mockFetchSuccess({});
+
+      const result = await executor.executeAction(USER_ID, 'extract_structured_data', {
+        file_content: Buffer.from('%PDF-1.4 test').toString('base64'),
+        mime_type: 'application/pdf',
+        fields: [
+          { name: 'invoice_number', type: 'string', description: 'Invoice number' },
+        ],
+      });
+
+      expectSuccessResult(result);
+      const meta = result.data._extraction_metadata;
+      expect(meta).toBeDefined();
+      expect(meta.confidence).toBeDefined();
+      expect(meta.method).toBeDefined();
+      expect(meta.processing_time_ms).toBeDefined();
+      expect(meta.success).toBe(true);
     });
   });
 });

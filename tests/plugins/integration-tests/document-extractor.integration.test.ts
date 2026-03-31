@@ -26,6 +26,21 @@ import { DocumentExtractorPluginExecutor } from '@/lib/server/document-extractor
 import { createTestExecutor, expectSuccessResult } from '../common/test-helpers';
 import { mockFetchSuccess, restoreFetch } from '../common/mock-fetch';
 
+// Mock LLMFieldMapper to prevent real LLM API calls during integration tests.
+// The real DeterministicExtractor and SchemaFieldExtractor run, but LLM fallback
+// returns empty results so we only test deterministic extraction accuracy.
+jest.mock('@/lib/extraction/LLMFieldMapper', () => {
+  return {
+    LLMFieldMapper: jest.fn().mockImplementation(() => ({
+      mapFields: jest.fn().mockResolvedValue({
+        mappedFields: {},
+        unmappedFields: [],
+        confidence: 0,
+      }),
+    })),
+  };
+});
+
 const PLUGIN_KEY = 'document-extractor';
 const USER_ID = 'test-user-id';
 const FIXTURES_DIR = path.join(process.cwd(), 'tests', 'plugins', 'fixtures');

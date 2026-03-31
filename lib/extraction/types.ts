@@ -55,7 +55,9 @@ export type ExtractionSource =
   | 'textract_kv'       // Textract key-value pairs
   | 'textract_table'    // Textract table extraction
   | 'text_pattern'      // Text "FieldName: value" pattern
-  | 'universal_pattern'; // Universal type patterns (date, email, etc.)
+  | 'universal_pattern' // Universal type patterns (date, email, etc.)
+  | 'llm_mapping'       // LLM-based intelligent field mapping
+  | 'document_header';  // Extracted from document header
 
 export interface ExtractedField {
   name: string;
