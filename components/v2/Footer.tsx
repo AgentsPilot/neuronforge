@@ -7,78 +7,70 @@ import React, { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@/components/UserProvider'
 import { supabase } from '@/lib/supabaseClient'
+import { getPricingConfig } from '@/lib/utils/pricingConfig'
 import { DarkModeToggle } from '@/components/v2/DarkModeToggle'
+import { PluginRefreshModal } from '@/components/v2/PluginRefreshModal'
+import { getPluginAPIClient } from '@/lib/client/plugin-api-client'
 import {
   Clock,
   Plus,
   Globe,
+  Mail,
   MoreVertical,
   List,
-<<<<<<< Updated upstream
-  LayoutDashboard
-=======
   LayoutDashboard,
   Loader2,
   CheckCircle2,
   AlertCircle,
+  RefreshCw,
   PlugZap,
   XCircle,
-  Sparkles,
-  Search,
-  ChevronLeft,
-  ChevronRight
->>>>>>> Stashed changes
+  Sparkles
 } from 'lucide-react'
 import {
-  SiGmail,
-  SiGooglecalendar,
-  SiGoogledrive,
-  SiGoogledocs,
-  SiGooglesheets,
   SiGithub,
-  SiSlack,
-  SiHubspot,
-  SiWhatsapp,
   SiTwilio,
-  SiAmazon,
-  SiOpenai
+  SiAmazon
 } from 'react-icons/si'
+import { PluginIcon } from '@/components/PluginIcon'
 
 interface ConnectedPlugin {
   plugin_key: string
   plugin_name?: string
   status: string
+  is_expired?: boolean
+  connected_at?: string
+  expires_at?: string
+  last_used?: string
+  last_refreshed?: string
+  username?: string
 }
 
-export function V2Footer() {
+interface AvailablePlugin {
+  key: string
+  name: string
+  connected: boolean
+  status?: 'active' | 'disconnected' | 'expired'
+}
+
+interface V2FooterProps {
+  accountFrozen?: boolean
+}
+
+export function V2Footer({ accountFrozen: accountFrozenProp }: V2FooterProps) {
   const router = useRouter()
-<<<<<<< Updated upstream
-  const { user } = useAuth()
-  const [lastRunTime, setLastRunTime] = useState<Date | null>(null)
-  const [connectedPlugins, setConnectedPlugins] = useState<ConnectedPlugin[]>([])
-=======
-  const { user, connectedPlugins: connectedPluginsFromContext, refreshPlugins } = useAuth()
+  const { user, connectedPlugins: connectedPluginsFromContext } = useAuth()
   const [lastRunTime, setLastRunTime] = useState<Date | null>(null)
   const [displayPlugins, setDisplayPlugins] = useState<ConnectedPlugin[]>([])
   const [availablePlugins, setAvailablePlugins] = useState<AvailablePlugin[]>([])
   const [pluginsMenuOpen, setPluginsMenuOpen] = useState(false)
-  const [pluginSearchQuery, setPluginSearchQuery] = useState('')
->>>>>>> Stashed changes
   const [hoveredPlugin, setHoveredPlugin] = useState<string | null>(null)
-  const [tooltipPosition, setTooltipPosition] = useState<{ top: number; left: number } | null>(null)
   const [menuOpen, setMenuOpen] = useState(false)
-<<<<<<< Updated upstream
-=======
   const [refreshModalOpen, setRefreshModalOpen] = useState(false)
   const [selectedPlugin, setSelectedPlugin] = useState<ConnectedPlugin | null>(null)
   const [accountFrozen, setAccountFrozen] = useState(accountFrozenProp || false)
   const [pilotCredits, setPilotCredits] = useState<number>(0)
   const [hoveredButton, setHoveredButton] = useState<string | null>(null)
-
-  // Scroll state for plugin icons
-  const [canScrollLeft, setCanScrollLeft] = useState(false)
-  const [canScrollRight, setCanScrollRight] = useState(false)
-  const scrollContainerRef = React.useRef<HTMLDivElement>(null)
 
   // New state for inline refresh
   const [refreshingPlugin, setRefreshingPlugin] = useState<string | null>(null)
@@ -95,7 +87,6 @@ export function V2Footer() {
   // State for plugin disconnection flow
   const [disconnectPrompt, setDisconnectPrompt] = useState<string | null>(null)
   const [disconnecting, setDisconnecting] = useState<string | null>(null)
->>>>>>> Stashed changes
 
   useEffect(() => {
     if (!user) return
@@ -118,47 +109,36 @@ export function V2Footer() {
       }
     }
 
-    const fetchConnectedPlugins = async () => {
+    const fetchAccountStatus = async () => {
       try {
-        const { data: plugins, error } = await supabase
-          .from('plugin_connections')
-          .select('plugin_key, plugin_name, status')
-          .eq('user_id', user.id)
-          .eq('status', 'active')
+        // Fetch pricing config to convert tokens to pilot credits
+        const pricingConfig = await getPricingConfig(supabase)
+        const tokensPerCredit = pricingConfig.tokens_per_pilot_credit
 
-        if (!error && plugins) {
-          // Deduplicate plugins by plugin_key
-          const uniquePlugins = plugins.reduce((acc, plugin) => {
-            const existing = acc.find(p => p.plugin_key === plugin.plugin_key)
-            if (!existing) {
-              acc.push(plugin)
-            }
-            return acc
-          }, [] as ConnectedPlugin[])
-          setConnectedPlugins(uniquePlugins)
+        const { data: subscription } = await supabase
+          .from('user_subscriptions')
+          .select('account_frozen, balance')
+          .eq('user_id', user.id)
+          .single()
+
+        if (subscription) {
+          setAccountFrozen(subscription.account_frozen || false)
+          // Convert raw tokens to pilot credits
+          const credits = Math.floor((subscription.balance || 0) / tokensPerCredit)
+          setPilotCredits(credits)
         }
       } catch (error) {
-        console.error('Error fetching connected plugins:', error)
+        console.error('Error fetching account status:', error)
       }
     }
 
-<<<<<<< Updated upstream
-    fetchLastRun()
-    fetchConnectedPlugins()
-  }, [user])
-=======
     // Transform connected plugins from UserProvider context
     if (connectedPluginsFromContext) {
       const plugins: ConnectedPlugin[] = Object.values(connectedPluginsFromContext).map((plugin: any) => ({
         plugin_key: plugin.key,
         plugin_name: plugin.name || plugin.displayName,
         status: plugin.is_expired ? 'expired' : 'active',
-        is_expired: plugin.is_expired || false,
-        username: plugin.username,
-        connected_at: plugin.connected_at,
-        expires_at: plugin.expires_at,
-        last_used: plugin.last_used,
-        last_refreshed: plugin.last_refreshed
+        is_expired: plugin.is_expired || false
       }))
       setDisplayPlugins(plugins)
     }
@@ -186,24 +166,9 @@ export function V2Footer() {
 
       // Build connection status map
       const connectedMap = new Map<string, {connected: boolean, status: 'active' | 'disconnected' | 'expired'}>()
-
-      // Add connected plugins (with valid tokens)
       status.connected.forEach((p: any) => {
-        // Check if this plugin is in the active_expired array
-        const isExpired = status.active_expired && status.active_expired.includes(p.key)
-        connectedMap.set(p.key, { connected: true, status: isExpired ? 'expired' : 'active' })
+        connectedMap.set(p.key, { connected: true, status: p.is_expired ? 'expired' : 'active' })
       })
-
-      // Add expired plugins that might not be in connected array
-      if (status.active_expired && status.active_expired.length > 0) {
-        status.active_expired.forEach((key: string) => {
-          if (!connectedMap.has(key)) {
-            connectedMap.set(key, { connected: true, status: 'expired' })
-          }
-        })
-      }
-
-      // Add disconnected plugins
       status.disconnected.forEach((p: any) => {
         connectedMap.set(p.key, { connected: false, status: 'disconnected' })
       })
@@ -243,21 +208,12 @@ export function V2Footer() {
         plugin_key: plugin.key,
         plugin_name: plugin.name || plugin.displayName,
         status: plugin.is_expired ? 'expired' : 'active',
-        is_expired: plugin.is_expired || false,
-        username: plugin.username,
-        connected_at: plugin.connected_at,
-        expires_at: plugin.expires_at,
-        last_used: plugin.last_used,
-        last_refreshed: plugin.last_refreshed
+        is_expired: plugin.is_expired || false
       }))
 
-      // Only update if we actually got plugins, avoid clearing the list on error
-      if (plugins.length > 0 || status.connected.length === 0) {
-        setDisplayPlugins(plugins)
-      }
+      setDisplayPlugins(plugins)
     } catch (error) {
       console.error('Error loading plugins:', error)
-      // Don't clear existing plugins on error
     }
   }
 
@@ -281,10 +237,6 @@ export function V2Footer() {
 
         setTimeout(async () => {
           setRefreshStatus(null)
-          // Small delay to let backend update
-          await new Promise(resolve => setTimeout(resolve, 500))
-          // Refresh UserProvider context to update connected plugins globally
-          await refreshPlugins()
           await loadPlugins()
           await fetchAllAvailablePlugins()
         }, 2000)
@@ -336,13 +288,8 @@ export function V2Footer() {
 
         setTimeout(async () => {
           setRefreshStatus(null)
-          // Small delay to let backend update
-          await new Promise(resolve => setTimeout(resolve, 500))
-          // Refresh UserProvider context to update connected plugins globally
-          await refreshPlugins()
           // Reload plugins to get updated status
           await loadPlugins()
-          await fetchAllAvailablePlugins()
         }, 2000)
       } else {
         // OAuth failed
@@ -517,7 +464,6 @@ export function V2Footer() {
       setReconnectPrompt(plugin.plugin_key)
     }
   }
->>>>>>> Stashed changes
 
   const getTimeAgo = (date: Date | null) => {
     if (!date) return 'Never'
@@ -532,80 +478,7 @@ export function V2Footer() {
     return 'Just now'
   }
 
-  // Filter plugins based on search query
-  const filteredPlugins = React.useMemo(() => {
-    if (!pluginSearchQuery.trim()) {
-      return availablePlugins
-    }
-
-    const query = pluginSearchQuery.toLowerCase()
-    return availablePlugins.filter(plugin =>
-      plugin.name.toLowerCase().includes(query) ||
-      plugin.key.toLowerCase().includes(query)
-    )
-  }, [availablePlugins, pluginSearchQuery])
-
-  // Check scroll position to show/hide arrows
-  const checkScrollPosition = React.useCallback(() => {
-    const container = scrollContainerRef.current
-    if (!container) return
-
-    const scrollLeft = container.scrollLeft
-    const maxScroll = container.scrollWidth - container.clientWidth
-
-    setCanScrollLeft(scrollLeft > 5) // Add small threshold
-    setCanScrollRight(scrollLeft < maxScroll - 5) // Add small threshold
-  }, [])
-
-  // Update scroll position on mount and when plugins change
-  React.useEffect(() => {
-    // Multiple checks to ensure detection
-    const timer1 = setTimeout(() => checkScrollPosition(), 50)
-    const timer2 = setTimeout(() => checkScrollPosition(), 200)
-    const timer3 = setTimeout(() => checkScrollPosition(), 500)
-
-    const container = scrollContainerRef.current
-    if (container) {
-      container.addEventListener('scroll', checkScrollPosition)
-      window.addEventListener('resize', checkScrollPosition)
-      return () => {
-        container.removeEventListener('scroll', checkScrollPosition)
-        window.removeEventListener('resize', checkScrollPosition)
-        clearTimeout(timer1)
-        clearTimeout(timer2)
-        clearTimeout(timer3)
-      }
-    }
-    return () => {
-      clearTimeout(timer1)
-      clearTimeout(timer2)
-      clearTimeout(timer3)
-    }
-  }, [displayPlugins, checkScrollPosition])
-
-  // Scroll functions with callback to update state
-  const scrollLeft = () => {
-    const container = scrollContainerRef.current
-    if (!container) return
-    container.scrollBy({ left: -200, behavior: 'smooth' })
-    // Check position after animation
-    setTimeout(() => checkScrollPosition(), 400)
-  }
-
-  const scrollRight = () => {
-    const container = scrollContainerRef.current
-    if (!container) return
-    container.scrollBy({ left: 200, behavior: 'smooth' })
-    // Check position after animation
-    setTimeout(() => checkScrollPosition(), 400)
-  }
-
   const getPluginDisplayName = (pluginKey: string) => {
-<<<<<<< Updated upstream
-    // Extract readable name from plugin key (e.g., "google_gmail" -> "Gmail")
-    const name = pluginKey.split('_').pop() || pluginKey
-    return name.charAt(0).toUpperCase() + name.slice(1)
-=======
     // Map plugin keys to their proper display names
     const nameMap: Record<string, string> = {
       'google-mail': 'Google Mail',
@@ -625,13 +498,6 @@ export function V2Footer() {
       'airtable': 'Airtable',
       'chatgpt-research': 'ChatGPT Research',
       'linkedin': 'LinkedIn',
-      'notion': 'Notion',
-      'onedrive': 'OneDrive',
-      'discord': 'Discord',
-      'salesforce': 'Salesforce',
-      'meta-ads': 'Meta Ads',
-      'document-extractor': 'Document Extractor',
-      'dropbox': 'Dropbox',
     }
 
     // Return mapped name or format the key as fallback
@@ -644,29 +510,10 @@ export function V2Footer() {
       .split(/[-_]/)
       .map(word => word.charAt(0).toUpperCase() + word.slice(1))
       .join(' ')
->>>>>>> Stashed changes
   }
 
-  // Plugin icons mapping with real brand icons from react-icons/si (Simple Icons)
-  // Using authentic brand colors as seen in marketing page
+  // Plugin icons mapping - using PluginIcon for local SVG files
   const pluginIcons: Record<string, React.ReactNode> = {
-<<<<<<< Updated upstream
-    'google-mail': <SiGmail className="w-5 h-5 sm:w-6 sm:h-6" style={{ color: '#EA4335' }} />,
-    'gmail': <SiGmail className="w-5 h-5 sm:w-6 sm:h-6" style={{ color: '#EA4335' }} />,
-    'google-calendar': <SiGooglecalendar className="w-5 h-5 sm:w-6 sm:h-6" style={{ color: '#4285F4' }} />,
-    'google-drive': <SiGoogledrive className="w-5 h-5 sm:w-6 sm:h-6" style={{ color: '#4285F4' }} />,
-    'google-docs': <SiGoogledocs className="w-5 h-5 sm:w-6 sm:h-6" style={{ color: '#4285F4' }} />,
-    'google-sheets': <SiGooglesheets className="w-5 h-5 sm:w-6 sm:h-6" style={{ color: '#0F9D58' }} />,
-    'github': <SiGithub className="w-5 h-5 sm:w-6 sm:h-6" style={{ color: '#FFFFFF' }} />,
-    'slack': <SiSlack className="w-5 h-5 sm:w-6 sm:h-6" style={{ color: '#4A154B' }} />,
-    'hubspot': <SiHubspot className="w-5 h-5 sm:w-6 sm:h-6" style={{ color: '#FF7A59' }} />,
-    'outlook': <Mail className="w-5 h-5 sm:w-6 sm:h-6" style={{ color: '#0078D4' }} />,
-    'whatsapp': <SiWhatsapp className="w-5 h-5 sm:w-6 sm:h-6" style={{ color: '#25D366' }} />,
-    'whatsapp-business': <SiWhatsapp className="w-5 h-5 sm:w-6 sm:h-6" style={{ color: '#25D366' }} />,
-    'twilio': <SiTwilio className="w-5 h-5 sm:w-6 sm:h-6" style={{ color: '#F22F46' }} />,
-    'aws': <SiAmazon className="w-5 h-5 sm:w-6 sm:h-6" style={{ color: '#FF9900' }} />,
-    'chatgpt-research': <SiOpenai className="w-5 h-5 sm:w-6 sm:h-6" style={{ color: '#10A37F' }} />,
-=======
     'google-mail': <img src="/plugins/gmail-icon.svg" alt="Gmail" className="w-5 h-5 sm:w-6 sm:h-6" />,
     'gmail': <img src="/plugins/gmail-icon.svg" alt="Gmail" className="w-5 h-5 sm:w-6 sm:h-6" />,
     'google-calendar': <PluginIcon pluginId="google-calendar" className="w-5 h-5 sm:w-6 sm:h-6" alt="Google Calendar" />,
@@ -676,22 +523,13 @@ export function V2Footer() {
     'github': <SiGithub className="w-5 h-5 sm:w-6 sm:h-6" style={{ color: '#FFFFFF' }} />,
     'slack': <PluginIcon pluginId="slack" className="w-5 h-5 sm:w-6 sm:h-6" alt="Slack" />,
     'hubspot': <PluginIcon pluginId="hubspot" className="w-5 h-5 sm:w-6 sm:h-6" alt="HubSpot" />,
-    'outlook': <PluginIcon pluginId="outlook" className="w-5 h-5 sm:w-6 sm:h-6" alt="Outlook" />,
+    'outlook': <Mail className="w-5 h-5 sm:w-6 sm:h-6" style={{ color: '#0078D4' }} />,
     'whatsapp': <PluginIcon pluginId="whatsapp" className="w-5 h-5 sm:w-6 sm:h-6" alt="WhatsApp" />,
     'whatsapp-business': <PluginIcon pluginId="whatsapp" className="w-5 h-5 sm:w-6 sm:h-6" alt="WhatsApp Business" />,
     'twilio': <SiTwilio className="w-5 h-5 sm:w-6 sm:h-6" style={{ color: '#F22F46' }} />,
     'aws': <SiAmazon className="w-5 h-5 sm:w-6 sm:h-6" style={{ color: '#FF9900' }} />,
     'airtable': <PluginIcon pluginId="airtable" className="w-5 h-5 sm:w-6 sm:h-6" alt="Airtable" />,
     'chatgpt-research': <PluginIcon pluginId="chatgpt-research" className="w-5 h-5 sm:w-6 sm:h-6" alt="ChatGPT Research" />,
-    'notion': <PluginIcon pluginId="notion" className="w-5 h-5 sm:w-6 sm:h-6" alt="Notion" />,
-    'onedrive': <PluginIcon pluginId="onedrive" className="w-5 h-5 sm:w-6 sm:h-6" alt="OneDrive" />,
-    'discord': <PluginIcon pluginId="discord" className="w-5 h-5 sm:w-6 sm:h-6" alt="Discord" />,
-    'salesforce': <PluginIcon pluginId="salesforce" className="w-5 h-5 sm:w-6 sm:h-6" alt="Salesforce" />,
-    'meta-ads': <PluginIcon pluginId="meta-ads" className="w-5 h-5 sm:w-6 sm:h-6" alt="Meta Ads" />,
-    'linkedin': <PluginIcon pluginId="linkedin" className="w-5 h-5 sm:w-6 sm:h-6" alt="LinkedIn" />,
-    'document-extractor': <PluginIcon pluginId="document-extractor" className="w-5 h-5 sm:w-6 sm:h-6" alt="Document Extractor" />,
-    'dropbox': <PluginIcon pluginId="dropbox" className="w-5 h-5 sm:w-6 sm:h-6" alt="Dropbox" />,
->>>>>>> Stashed changes
   }
 
   const getPluginIcon = (pluginKey: string) => {
@@ -699,11 +537,7 @@ export function V2Footer() {
   }
 
   return (
-<<<<<<< Updated upstream
-    <div className="mt-6 sm:mt-8 lg:mt-10 pt-3 sm:pt-4 lg:pt-5">
-=======
-    <div className="mt-2 sm:mt-3 lg:mt-4 pt-3 sm:pt-4 lg:pt-5 pb-20">
->>>>>>> Stashed changes
+    <div className="mt-2 sm:mt-3 lg:mt-4 pt-3 sm:pt-4 lg:pt-5">
 
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-4">
         {/* Last Run */}
@@ -715,117 +549,28 @@ export function V2Footer() {
           </span>
         </div>
 
-<<<<<<< Updated upstream
         {/* Connected Plugin Icons - Center */}
-        {connectedPlugins.length > 0 && (
-          <div className="flex gap-2 sm:gap-3 flex-wrap justify-center">
-            {connectedPlugins.map((plugin) => (
-              <div
-                key={plugin.plugin_key}
-                className="relative w-12 h-12 sm:w-14 sm:h-14 bg-[var(--v2-surface)] flex items-center justify-center flex-shrink-0 cursor-pointer transition-all duration-200 hover:scale-110 border border-[var(--v2-border)] hover:border-[var(--v2-primary)] hover:shadow-lg"
-=======
-        {/* Connected Plugin Icons - Center with horizontal scroll */}
         {displayPlugins.length > 0 && (
-          <div className="relative flex-1 max-w-2xl flex items-center gap-2" style={{ overflow: 'visible' }}>
-            {/* Left scroll button - always show if more than 4 plugins */}
-            {displayPlugins.length > 4 && (
-              <button
-                onClick={scrollLeft}
-                disabled={!canScrollLeft}
-                className={`flex-shrink-0 w-8 h-8 flex items-center justify-center transition-all ${
-                  canScrollLeft
-                    ? 'bg-[var(--v2-primary)] text-white hover:bg-[var(--v2-primary)]/90 cursor-pointer shadow-lg'
-                    : 'bg-gray-300 dark:bg-gray-700 text-gray-500 dark:text-gray-400 cursor-not-allowed opacity-40'
-                }`}
-                style={{ borderRadius: '50%' }}
-                aria-label="Scroll left"
-              >
-                <ChevronLeft className="w-4 h-4" strokeWidth={3} />
-              </button>
-            )}
-
-            {/* Scrollable container */}
-            <div
-              ref={scrollContainerRef}
-              className="flex gap-2 sm:gap-3 overflow-x-auto py-2 px-2 justify-start scrollbar-hide flex-1"
-              style={{
-                scrollbarWidth: 'none',
-                msOverflowStyle: 'none',
-                WebkitOverflowScrolling: 'touch',
-                scrollSnapType: 'x proximity',
-                overflowY: 'visible'
-              }}
-            >
-              {displayPlugins.map((plugin) => (
+          <div className="flex gap-2 sm:gap-3 flex-wrap justify-center">
+            {displayPlugins.map((plugin) => (
               <div
                 key={plugin.plugin_key}
                 className={`relative w-12 h-12 sm:w-14 sm:h-14 bg-[var(--v2-surface)]
                   flex items-center justify-center flex-shrink-0
                   transition-all duration-200 border border-[var(--v2-border)]
                   ${!refreshingPlugin && !reconnecting && !disconnecting
-                    ? 'cursor-pointer hover:border-[var(--v2-primary)] hover:shadow-xl hover:z-10'
+                    ? 'cursor-pointer hover:scale-110 hover:border-[var(--v2-primary)] hover:shadow-lg'
                     : 'cursor-default'
                   }`}
->>>>>>> Stashed changes
                 style={{
                   borderRadius: 'var(--v2-radius-button)',
-                  boxShadow: 'var(--v2-shadow-card)',
-                  scrollSnapAlign: 'start'
+                  boxShadow: 'var(--v2-shadow-card)'
                 }}
-                onMouseEnter={(e) => {
-                  const rect = e.currentTarget.getBoundingClientRect()
-                  setTooltipPosition({
-                    top: rect.top - 8,
-                    left: rect.left + rect.width / 2
-                  })
-                  setHoveredPlugin(plugin.plugin_key)
-                }}
-                onMouseLeave={() => {
-                  setHoveredPlugin(null)
-                  setTooltipPosition(null)
-                }}
-<<<<<<< Updated upstream
                 onMouseEnter={() => setHoveredPlugin(plugin.plugin_key)}
                 onMouseLeave={() => setHoveredPlugin(null)}
-              >
-                {getPluginIcon(plugin.plugin_key)}
-                {/* Active indicator with V2 styling */}
-                <div
-                  className="absolute -top-1.5 -right-1.5 w-3.5 h-3.5 bg-green-500 rounded-full border-2 shadow-sm"
-                  style={{ borderColor: 'var(--v2-bg)' }}
-                ></div>
-
-                {/* Tooltip with V2 design */}
-                {hoveredPlugin === plugin.plugin_key && (
-                  <div
-                    className="absolute bottom-full left-1/2 -translate-x-1/2 mb-3 px-3 py-2 text-xs font-semibold whitespace-nowrap pointer-events-none animate-fade-in"
-                    style={{
-                      backgroundColor: 'var(--v2-surface)',
-                      border: '1px solid var(--v2-border)',
-                      color: 'var(--v2-text-primary)',
-                      borderRadius: 'var(--v2-radius-button)',
-                      boxShadow: 'var(--v2-shadow-card)',
-                      zIndex: 1000
-                    }}
-                  >
-                    {plugin.plugin_name || getPluginDisplayName(plugin.plugin_key)}
-                    {/* Tooltip arrow */}
-                    <div
-                      className="absolute left-1/2 -translate-x-1/2"
-                      style={{
-                        top: '100%',
-                        width: 0,
-                        height: 0,
-                        borderLeft: '6px solid transparent',
-                        borderRight: '6px solid transparent',
-                        borderTop: '6px solid var(--v2-surface)'
-                      }}
-                    ></div>
-=======
                 onClick={() => handlePluginClick(plugin)}
               >
                 {getPluginIcon(plugin.plugin_key)}
-
                 {/* Status indicator - green for active, split green/orange for expired */}
                 {plugin.is_expired ? (
                   // Split indicator: left green (connected), right orange (expired)
@@ -921,131 +666,118 @@ export function V2Footer() {
                     <p className="text-[9px] text-[var(--v2-text-secondary)] mt-2">
                       Disconnecting...
                     </p>
->>>>>>> Stashed changes
+                  </div>
+                )}
+
+                {/* Tooltip with V2 design and connection info */}
+                {hoveredPlugin === plugin.plugin_key && (
+                  <div
+                    className="absolute bottom-full left-1/2 -translate-x-1/2 mb-3 px-3 py-2.5 text-xs pointer-events-none animate-fade-in min-w-[200px]"
+                    style={{
+                      backgroundColor: 'var(--v2-surface)',
+                      border: '1px solid var(--v2-border)',
+                      color: 'var(--v2-text-primary)',
+                      borderRadius: 'var(--v2-radius-button)',
+                      boxShadow: 'var(--v2-shadow-card)',
+                      zIndex: 1000
+                    }}
+                  >
+                    <div className="font-semibold mb-1">
+                      {getPluginDisplayName(plugin.plugin_key)}
+                    </div>
+
+                    {/* Connection Status */}
+                    <div className="space-y-0.5 text-[10px] text-[var(--v2-text-muted)]">
+                      <div className="flex justify-between gap-3">
+                        <span>Status:</span>
+                        <span className={plugin.is_expired ? 'text-orange-500 font-medium' : 'text-green-500 font-medium'}>
+                          {plugin.is_expired ? 'Token Expired' : 'Connected'}
+                        </span>
+                      </div>
+
+                      {plugin.username && (
+                        <div className="flex justify-between gap-3">
+                          <span>Account:</span>
+                          <span className="font-medium text-[var(--v2-text-primary)] truncate max-w-[150px]" title={plugin.username}>
+                            {plugin.username}
+                          </span>
+                        </div>
+                      )}
+
+                      {plugin.connected_at && (
+                        <div className="flex justify-between gap-3">
+                          <span>Connected:</span>
+                          <span className="font-medium text-[var(--v2-text-primary)]">
+                            {new Date(plugin.connected_at).toLocaleDateString()}
+                          </span>
+                        </div>
+                      )}
+
+                      {plugin.expires_at && (
+                        <div className="flex justify-between gap-3">
+                          <span>Expires:</span>
+                          <span className="font-medium text-[var(--v2-text-primary)]">
+                            {new Date(plugin.expires_at).toLocaleDateString()}
+                          </span>
+                        </div>
+                      )}
+
+                      {plugin.last_refreshed && (
+                        <div className="flex justify-between gap-3">
+                          <span>Last Refresh:</span>
+                          <span className="font-medium text-[var(--v2-text-primary)]">
+                            {getTimeAgo(new Date(plugin.last_refreshed))}
+                          </span>
+                        </div>
+                      )}
+
+                      {plugin.last_used && (
+                        <div className="flex justify-between gap-3">
+                          <span>Last Used:</span>
+                          <span className="font-medium text-[var(--v2-text-primary)]">
+                            {getTimeAgo(new Date(plugin.last_used))}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Call to Action */}
+                    {plugin.is_expired ? (
+                      <div className="text-orange-600 dark:text-orange-400 text-[11px] mt-2 pt-2 border-t border-[var(--v2-border)] font-semibold flex items-center gap-1.5">
+                        <RefreshCw className="w-3 h-3" />
+                        Click to refresh token
+                      </div>
+                    ) : (
+                      <div className="text-red-600 dark:text-red-400 text-[11px] mt-2 pt-2 border-t border-[var(--v2-border)] font-semibold flex items-center gap-1.5">
+                        <XCircle className="w-3 h-3" />
+                        Click to disconnect
+                      </div>
+                    )}
+                    {/* Tooltip arrow */}
+                    <div
+                      className="absolute left-1/2 -translate-x-1/2"
+                      style={{
+                        top: '100%',
+                        width: 0,
+                        height: 0,
+                        borderLeft: '6px solid transparent',
+                        borderRight: '6px solid transparent',
+                        borderTop: '6px solid var(--v2-surface)'
+                      }}
+                    ></div>
                   </div>
                 )}
               </div>
             ))}
-            </div>
-
-            {/* Tooltip rendered outside scroll container */}
-            {hoveredPlugin && tooltipPosition && (() => {
-              const plugin = displayPlugins.find(p => p.plugin_key === hoveredPlugin)
-              if (!plugin) return null
-
-              return (
-                <div
-                  className="fixed px-3 py-2.5 text-xs pointer-events-none min-w-[200px] max-w-[280px]"
-                  style={{
-                    backgroundColor: 'var(--v2-surface)',
-                    border: '1px solid var(--v2-border)',
-                    color: 'var(--v2-text-primary)',
-                    borderRadius: 'var(--v2-radius-button)',
-                    boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.3), 0 8px 10px -6px rgba(0, 0, 0, 0.2)',
-                    zIndex: 99999,
-                    top: `${tooltipPosition.top}px`,
-                    left: `${tooltipPosition.left}px`,
-                    transform: 'translate(-50%, -100%)'
-                  }}
-                >
-                  <div className="font-semibold mb-1">
-                    {getPluginDisplayName(plugin.plugin_key)}
-                  </div>
-
-                  <div className="space-y-0.5 text-[10px] text-[var(--v2-text-muted)]">
-                    <div className="flex justify-between gap-3">
-                      <span>Status:</span>
-                      <span className={plugin.is_expired ? 'text-orange-500 font-medium' : 'text-green-500 font-medium'}>
-                        {plugin.is_expired ? 'Token Expired' : 'Connected'}
-                      </span>
-                    </div>
-
-                    {plugin.username && (
-                      <div className="flex justify-between gap-3">
-                        <span>Account:</span>
-                        <span className="font-medium text-[var(--v2-text-primary)] truncate max-w-[150px]" title={plugin.username}>
-                          {plugin.username}
-                        </span>
-                      </div>
-                    )}
-
-                    {plugin.connected_at && (
-                      <div className="flex justify-between gap-3">
-                        <span>Connected:</span>
-                        <span className="font-medium text-[var(--v2-text-primary)]">
-                          {new Date(plugin.connected_at).toLocaleDateString()}
-                        </span>
-                      </div>
-                    )}
-
-                    {plugin.expires_at && (
-                      <div className="flex justify-between gap-3">
-                        <span>Expires:</span>
-                        <span className="font-medium text-[var(--v2-text-primary)]">
-                          {new Date(plugin.expires_at).toLocaleDateString()}
-                        </span>
-                      </div>
-                    )}
-
-                    {plugin.last_refreshed && (
-                      <div className="flex justify-between gap-3">
-                        <span>Last Refresh:</span>
-                        <span className="font-medium text-[var(--v2-text-primary)]">
-                          {new Date(plugin.last_refreshed).toLocaleDateString()}
-                        </span>
-                      </div>
-                    )}
-
-                    {plugin.last_used && (
-                      <div className="flex justify-between gap-3">
-                        <span>Last Used:</span>
-                        <span className="font-medium text-[var(--v2-text-primary)]">
-                          {new Date(plugin.last_used).toLocaleDateString()}
-                        </span>
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="mt-1.5 pt-1.5 border-t border-[var(--v2-border)] text-[9px] text-center text-[var(--v2-text-muted)]">
-                    {plugin.is_expired ? 'Click to refresh token' : 'Click to disconnect'}
-                  </div>
-                </div>
-              )
-            })()}
-
-            {/* Right scroll button - always show if more than 4 plugins */}
-            {displayPlugins.length > 4 && (
-              <button
-                onClick={scrollRight}
-                disabled={!canScrollRight}
-                className={`flex-shrink-0 w-8 h-8 flex items-center justify-center transition-all ${
-                  canScrollRight
-                    ? 'bg-[var(--v2-primary)] text-white hover:bg-[var(--v2-primary)]/90 cursor-pointer shadow-lg'
-                    : 'bg-gray-300 dark:bg-gray-700 text-gray-500 dark:text-gray-400 cursor-not-allowed opacity-40'
-                }`}
-                style={{ borderRadius: '50%' }}
-                aria-label="Scroll right"
-              >
-                <ChevronRight className="w-4 h-4" strokeWidth={3} />
-              </button>
-            )}
           </div>
         )}
 
         {/* Action Buttons */}
         <div className="flex gap-2 sm:gap-2.5">
-<<<<<<< Updated upstream
-=======
           {/* Plugins Menu Button */}
           <div className="relative">
             <button
-              onClick={() => {
-                setPluginsMenuOpen(!pluginsMenuOpen)
-                if (pluginsMenuOpen) {
-                  // Clear search when closing menu
-                  setPluginSearchQuery('')
-                }
-              }}
+              onClick={() => setPluginsMenuOpen(!pluginsMenuOpen)}
               onMouseEnter={() => setHoveredButton('plugins')}
               onMouseLeave={() => setHoveredButton(null)}
               className="w-9 h-9 sm:w-10 sm:h-10 bg-[var(--v2-surface)] shadow-[var(--v2-shadow-card)] flex items-center justify-center hover:scale-105 transition-transform duration-200 flex-shrink-0"
@@ -1088,46 +820,21 @@ export function V2Footer() {
                 {/* Backdrop */}
                 <div
                   className="fixed inset-0 z-40"
-                  onClick={() => {
-                    setPluginsMenuOpen(false)
-                    setPluginSearchQuery('')
-                  }}
+                  onClick={() => setPluginsMenuOpen(false)}
                 />
 
                 {/* Plugins Grid Menu */}
                 <div
-                  className="absolute right-0 bottom-full mb-2 w-[650px] max-h-[38rem] bg-[var(--v2-surface)] shadow-[var(--v2-shadow-card)] border border-[var(--v2-border)] z-50 flex flex-col"
+                  className="absolute right-0 bottom-full mb-2 w-80 max-h-96 overflow-y-auto bg-[var(--v2-surface)] shadow-[var(--v2-shadow-card)] border border-[var(--v2-border)] z-50 p-3"
                   style={{ borderRadius: 'var(--v2-radius-card)' }}
                 >
-                  {/* Search Header */}
-                  <div className="p-3 border-b border-[var(--v2-border)]">
-                    <div className="relative">
-                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--v2-text-muted)]" />
-                      <input
-                        type="text"
-                        placeholder="Search plugins..."
-                        value={pluginSearchQuery}
-                        onChange={(e) => setPluginSearchQuery(e.target.value)}
-                        className="w-full pl-10 pr-3 py-2 bg-[var(--v2-bg)] border border-[var(--v2-border)] text-[var(--v2-text-primary)] placeholder-[var(--v2-text-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--v2-primary)] focus:border-transparent"
-                        style={{ borderRadius: 'var(--v2-radius-button)' }}
-                      />
-                    </div>
-                  </div>
-
-                  {/* Scrollable plugins list */}
-                  <div className="overflow-y-auto p-3" style={{ maxHeight: 'calc(38rem - 4rem)' }}>
                   <div className="text-sm font-semibold text-[var(--v2-text-primary)] mb-3 px-1">
                     Available Plugins
                   </div>
 
                   {/* Grid of plugins */}
-                  <div className="grid grid-cols-4 gap-2">
-                    {filteredPlugins.length === 0 ? (
-                      <div className="col-span-3 text-center py-8 text-[var(--v2-text-muted)] text-sm">
-                        No plugins found matching "{pluginSearchQuery}"
-                      </div>
-                    ) : (
-                      filteredPlugins.map((plugin) => (
+                  <div className="grid grid-cols-3 gap-2">
+                    {availablePlugins.map((plugin) => (
                       <button
                         key={plugin.key}
                         onClick={() => !plugin.connected && handlePluginConnect(plugin.key)}
@@ -1171,44 +878,104 @@ export function V2Footer() {
                           </div>
                         )}
                       </button>
-                    )))
-                  }
+                    ))}
                   </div>
 
                   {/* Footer hint */}
                   <div className="mt-3 pt-3 border-t border-[var(--v2-border)] text-[10px] text-[var(--v2-text-muted)] text-center">
                     Click on a plugin to connect via OAuth
                   </div>
-                  </div>
                 </div>
               </>
             )}
           </div>
 
->>>>>>> Stashed changes
           {/* Dark Mode Toggle */}
           <DarkModeToggle />
 
-          <button
-            onClick={() => router.push('/agents/new')}
-            className="w-9 h-9 sm:w-10 sm:h-10 bg-[var(--v2-surface)] shadow-[var(--v2-shadow-card)] flex items-center justify-center hover:scale-105 transition-transform duration-200 flex-shrink-0"
-            style={{ borderRadius: 'var(--v2-radius-button)' }}
-            title="Create New Agent"
-          >
-            <Plus className="w-4.5 h-4.5 sm:w-5 sm:h-5 text-[#3B82F6]" />
-          </button>
+          {/* Create Agent Button */}
+          <div className="relative">
+            <button
+              onClick={() => !(accountFrozen || pilotCredits < 2000) && router.push('/agents/new')}
+              onMouseEnter={() => setHoveredButton('create')}
+              onMouseLeave={() => setHoveredButton(null)}
+              className={`w-9 h-9 sm:w-10 sm:h-10 bg-[var(--v2-surface)] shadow-[var(--v2-shadow-card)] flex items-center justify-center transition-transform duration-200 flex-shrink-0 ${accountFrozen || pilotCredits < 2000 ? 'opacity-50 cursor-not-allowed' : 'hover:scale-105'}`}
+              style={{ borderRadius: 'var(--v2-radius-button)' }}
+              disabled={accountFrozen || pilotCredits < 2000}
+              aria-label="Create New Agent"
+            >
+              <Plus className="w-4.5 h-4.5 sm:w-5 sm:h-5 text-[#3B82F6]" />
+            </button>
+
+            {/* Tooltip */}
+            {hoveredButton === 'create' && (
+              <div
+                className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-1.5 text-xs whitespace-nowrap pointer-events-none animate-fade-in"
+                style={{
+                  backgroundColor: 'var(--v2-surface)',
+                  border: '1px solid var(--v2-border)',
+                  color: 'var(--v2-text-primary)',
+                  borderRadius: 'var(--v2-radius-button)',
+                  boxShadow: 'var(--v2-shadow-card)',
+                  zIndex: 1000
+                }}
+              >
+                {accountFrozen ? "Account Frozen" : pilotCredits < 2000 ? "Insufficient Balance" : "Create New Agent"}
+                <div
+                  className="absolute left-1/2 -translate-x-1/2"
+                  style={{
+                    top: '100%',
+                    width: 0,
+                    height: 0,
+                    borderLeft: '4px solid transparent',
+                    borderRight: '4px solid transparent',
+                    borderTop: '4px solid var(--v2-border)'
+                  }}
+                ></div>
+              </div>
+            )}
+          </div>
 
           {/* 3-dot menu */}
           <div className="relative">
             <button
               onClick={() => setMenuOpen(!menuOpen)}
+              onMouseEnter={() => setHoveredButton('menu')}
+              onMouseLeave={() => setHoveredButton(null)}
               className="w-9 h-9 sm:w-10 sm:h-10 bg-[var(--v2-surface)] shadow-[var(--v2-shadow-card)] flex items-center justify-center hover:scale-105 transition-transform duration-200 flex-shrink-0"
               style={{ borderRadius: 'var(--v2-radius-button)' }}
-              title="Menu"
               aria-label="Menu"
             >
               <MoreVertical className="w-4.5 h-4.5 sm:w-5 sm:h-5 text-[var(--v2-text-secondary)]" />
             </button>
+
+            {/* Tooltip */}
+            {hoveredButton === 'menu' && !menuOpen && (
+              <div
+                className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-1.5 text-xs whitespace-nowrap pointer-events-none animate-fade-in"
+                style={{
+                  backgroundColor: 'var(--v2-surface)',
+                  border: '1px solid var(--v2-border)',
+                  color: 'var(--v2-text-primary)',
+                  borderRadius: 'var(--v2-radius-button)',
+                  boxShadow: 'var(--v2-shadow-card)',
+                  zIndex: 1000
+                }}
+              >
+                Menu
+                <div
+                  className="absolute left-1/2 -translate-x-1/2"
+                  style={{
+                    top: '100%',
+                    width: 0,
+                    height: 0,
+                    borderLeft: '4px solid transparent',
+                    borderRight: '4px solid transparent',
+                    borderTop: '4px solid var(--v2-border)'
+                  }}
+                ></div>
+              </div>
+            )}
 
             {menuOpen && (
               <>
@@ -1222,16 +989,6 @@ export function V2Footer() {
                 <div className="absolute right-0 bottom-full mb-2 w-48 bg-[var(--v2-surface)] shadow-[var(--v2-shadow-card)] border border-[var(--v2-border)] z-50 overflow-hidden" style={{ borderRadius: 'var(--v2-radius-card)' }}>
                   <button
                     onClick={() => {
-                      router.push('/v2/agent-list')
-                      setMenuOpen(false)
-                    }}
-                    className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
-                  >
-                    <List className="w-4 h-4 text-[var(--v2-text-secondary)]" />
-                    <span className="text-sm font-medium text-[var(--v2-text-primary)]">Agent List</span>
-                  </button>
-                  <button
-                    onClick={() => {
                       router.push('/v2/dashboard')
                       setMenuOpen(false)
                     }}
@@ -1242,10 +999,34 @@ export function V2Footer() {
                   </button>
                   <button
                     onClick={() => {
-                      router.push('/agents/new')
+                      router.push('/v2/agent-list')
                       setMenuOpen(false)
                     }}
                     className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+                  >
+                    <List className="w-4 h-4 text-[var(--v2-text-secondary)]" />
+                    <span className="text-sm font-medium text-[var(--v2-text-primary)]">Agent List</span>
+                  </button>
+                  <button
+                    onClick={() => {
+                      router.push('/v2/templates')
+                      setMenuOpen(false)
+                    }}
+                    className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+                  >
+                    <Sparkles className="w-4 h-4 text-[var(--v2-text-secondary)]" />
+                    <span className="text-sm font-medium text-[var(--v2-text-primary)]">Templates</span>
+                  </button>
+                  <button
+                    onClick={() => {
+                      if (!accountFrozen && pilotCredits >= 2000) {
+                        router.push('/agents/new')
+                        setMenuOpen(false)
+                      }
+                    }}
+                    className={`w-full flex items-center gap-3 px-4 py-3 text-left transition-colors ${accountFrozen || pilotCredits < 2000 ? 'opacity-50 cursor-not-allowed' : 'hover:bg-gray-100 dark:hover:bg-gray-800'}`}
+                    disabled={accountFrozen || pilotCredits < 2000}
+                    title={accountFrozen ? "Account frozen - Purchase tokens to continue" : pilotCredits < 2000 ? "Insufficient balance - Need 2000 tokens to create agent" : ""}
                   >
                     <Plus className="w-4 h-4 text-[var(--v2-text-secondary)]" />
                     <span className="text-sm font-medium text-[var(--v2-text-primary)]">Create Agent</span>
@@ -1256,8 +1037,6 @@ export function V2Footer() {
           </div>
         </div>
       </div>
-<<<<<<< Updated upstream
-=======
 
       {/* Plugin Refresh Modal */}
       {selectedPlugin && user && (
@@ -1379,7 +1158,7 @@ export function V2Footer() {
               </div>
 
               {/* Title */}
-              <h3 className="text-lg font-semibold text-[var(--v2-text-primary)] text-center mb-2">
+              <h3 className="text-lg font-semibold text-[var(--v2-text)] text-center mb-2">
                 Disconnect Plugin
               </h3>
 
@@ -1439,17 +1218,7 @@ export function V2Footer() {
         .animate-fade-in {
           animation: fade-in 0.2s ease-in-out;
         }
-
-        /* Hide scrollbar completely */
-        .scrollbar-hide::-webkit-scrollbar {
-          display: none;
-        }
-        .scrollbar-hide {
-          -ms-overflow-style: none;
-          scrollbar-width: none;
-        }
       `}</style>
->>>>>>> Stashed changes
     </div>
   )
 }
