@@ -53,7 +53,7 @@ const OUTPUT_SCHEMA: OutputSchema = {
 };
 
 async function debugPdf(filename: string) {
-  const pdfPath = path.join(process.cwd(), 'test-files', filename);
+  const pdfPath = path.join(process.cwd(), 'tests', 'plugins', 'fixtures', filename);
 
   console.log('━'.repeat(100));
   console.log(`DEBUGGING: ${filename}`);
@@ -101,7 +101,7 @@ async function debugPdf(filename: string) {
   console.log();
 
   // Save full raw text for manual inspection
-  const outputPath = path.join(process.cwd(), 'test-files', filename.replace('.pdf', '-DEBUG-raw-text.txt'));
+  const outputPath = path.join(process.cwd(), 'tests', 'plugins', 'fixtures', filename.replace('.pdf', '-DEBUG-raw-text.txt'));
   if (result.rawText) {
     fs.writeFileSync(outputPath, result.rawText, 'utf-8');
     console.log(`💾 Full raw text saved to: ${outputPath}`);
@@ -109,7 +109,7 @@ async function debugPdf(filename: string) {
   console.log();
 
   // Get detailed extraction info
-  const detailedPath = path.join(process.cwd(), 'test-files', filename.replace('.pdf', '-DEBUG-detailed.json'));
+  const detailedPath = path.join(process.cwd(), 'tests', 'plugins', 'fixtures', filename.replace('.pdf', '-DEBUG-detailed.json'));
   fs.writeFileSync(detailedPath, JSON.stringify({
     filename,
     extractionResult: result,

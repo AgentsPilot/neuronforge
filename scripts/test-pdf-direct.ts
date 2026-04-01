@@ -12,7 +12,7 @@ import type { OutputSchema } from '@/lib/extraction/types';
 // Load environment variables from .env.local
 config({ path: path.join(process.cwd(), '.env.local') });
 
-const TEST_PDF_PATH = path.join(process.cwd(), 'test-files', 'Invoice-ZYVUTAKJ-0003 (1) (1).pdf');
+const TEST_PDF_PATH = path.join(process.cwd(), 'tests', 'plugins', 'fixtures', 'Invoice-ZYVUTAKJ-0003 (1) (1).pdf');
 
 // Fields to extract: Invoice number, Address, Vendor, Date, Amount
 const OUTPUT_SCHEMA: OutputSchema = {

@@ -16,7 +16,7 @@ const FAILING_PDFS = [
 ];
 
 async function inspectPdf(filename: string) {
-  const pdfPath = path.join(process.cwd(), 'test-files', filename);
+  const pdfPath = path.join(process.cwd(), 'tests', 'plugins', 'fixtures', filename);
 
   console.log('━'.repeat(100));
   console.log(`INSPECTING TEXTRACT DATA: ${filename}`);
@@ -71,7 +71,7 @@ async function inspectPdf(filename: string) {
   console.log();
 
   // Save detailed output
-  const outputPath = path.join(process.cwd(), 'test-files', filename.replace('.pdf', '-TEXTRACT-ANALYSIS.json'));
+  const outputPath = path.join(process.cwd(), 'tests', 'plugins', 'fixtures', filename.replace('.pdf', '-TEXTRACT-ANALYSIS.json'));
   fs.writeFileSync(outputPath, JSON.stringify({
     filename,
     text: result.text,

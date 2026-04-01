@@ -120,6 +120,32 @@ User approves → TL triggers RM
 3. Ensure LLMFieldMapper is mocked or disabled so no real LLM calls happen
 4. Verify all 4 PDF fixture tests pass
 
+### WP-5: Script Reorganization (Dev)
+
+**Objective:** Convert 2 debug scripts into Jest integration tests and update 3 remaining scripts to use correct fixture paths.
+
+**Group 1 -- Converted to Jest integration tests:**
+1. `scripts/test-all-invoices.ts` -> `tests/plugins/integration-tests/document-extractor-all-invoices.integration.test.ts`
+   - 4 per-PDF test cases + 1 cross-PDF consistency check (5 tests total)
+   - Mocks LLMFieldMapper, uses `tests/plugins/fixtures/` for PDFs
+   - Assertions on `result.success`, `result.data`, `result.metadata`, and `result.confidence`
+
+2. `scripts/test-different-fields.ts` -> `tests/plugins/integration-tests/document-extractor-different-fields.integration.test.ts`
+   - 4 field-combination tests + 2 schema-driven behavior tests (6 tests total)
+   - Verifies different field schemas (payment, contact, line items, unusual fields)
+   - Confirms `fieldsRequested` matches schema length
+
+**Group 2 -- Debug scripts updated to use correct paths:**
+3. `scripts/debug-failing-pdfs.ts` -- `test-files` -> `tests/plugins/fixtures`
+4. `scripts/inspect-textract-kv-pairs.ts` -- `test-files` -> `tests/plugins/fixtures`
+5. `scripts/test-pdf-direct.ts` -- `test-files` -> `tests/plugins/fixtures`
+
+**Deleted after conversion:**
+- `scripts/test-all-invoices.ts`
+- `scripts/test-different-fields.ts`
+
+**Verification:** 14 suites, 125 tests pass (including 11 new tests from the 2 converted files).
+
 ### WP-4: Test Execution and Verification (QA)
 
 **Objective:** Run all plugin tests and confirm everything passes.
@@ -158,6 +184,7 @@ User approves → TL triggers RM
 | WP-2 | Unit test updates | ✅ Done | Dev |
 | WP-3 | Integration test updates | ✅ Done | Dev |
 | WP-4 | Test execution and verification | ✅ Done | QA |
+| WP-5 | Script reorganization (convert to tests + fix paths) | ✅ Done | Dev |
 
 ---
 
@@ -170,6 +197,7 @@ User approves → TL triggers RM
 | 2026-03-31 | WP-2 done | Unit tests updated: added LLMFieldMapper mock, added fallback-defaults test, added metadata test. 6/6 pass. |
 | 2026-03-31 | WP-3 done | Integration tests updated: added LLMFieldMapper mock. All 4 PDF fixture tests pass. Extraction output identical to previous (text-only path unchanged). |
 | 2026-03-31 | WP-4 done | QA verification complete. All tests pass, no regressions, no extraction-related TypeScript errors. |
+| 2026-03-31 | WP-5 done | Script reorganization: converted `test-all-invoices.ts` and `test-different-fields.ts` to Jest integration tests. Updated 3 debug scripts to use `tests/plugins/fixtures/`. Deleted original converted scripts. 14 suites, 125 tests pass. |
 
 ---
 
