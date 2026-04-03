@@ -566,7 +566,17 @@ export class IntentToIRConverter {
    */
   private convertLoop(step: LoopStep & BoundStep, ctx: ConversionContext): string {
     const nodeId = this.generateNodeId(ctx)
-    const collectionVar = this.resolveRefName(step.loop.over, ctx)
+    // D-B16: loop.over may be a ValueRef object (e.g., {kind: "config", key: "summary_recipients"})
+    // instead of a plain string. Resolve it using resolveValueRef for structured refs.
+    let collectionVar: string
+    if (typeof step.loop.over === 'string') {
+      collectionVar = this.resolveRefName(step.loop.over, ctx)
+    } else if (step.loop.over && typeof step.loop.over === 'object' && 'kind' in step.loop.over) {
+      const resolved = this.resolveValueRef(step.loop.over as any, ctx)
+      collectionVar = typeof resolved === 'string' ? resolved.replace(/\{\{|\}\}/g, '') : String(resolved || 'unknown')
+    } else {
+      collectionVar = String(step.loop.over || 'unknown')
+    }
     const itemVar = step.loop.item_ref
     const outputVar = step.loop.collect?.collect_as || `${step.id}_results`
 

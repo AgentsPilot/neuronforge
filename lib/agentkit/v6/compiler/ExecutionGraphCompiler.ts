@@ -6786,6 +6786,7 @@ export class ExecutionGraphCompiler {
     if (!dataSchema || !node.loop) return
 
     // Check iterate_over slot is array type
+    if (typeof node.loop.iterate_over !== 'string') return // D-B16: skip validation for non-string iterate_over
     const iterateVar = node.loop.iterate_over.split('.')[0]
     const iterateSlot = dataSchema.slots[iterateVar]
     if (iterateSlot && iterateSlot.schema.type !== 'array') {

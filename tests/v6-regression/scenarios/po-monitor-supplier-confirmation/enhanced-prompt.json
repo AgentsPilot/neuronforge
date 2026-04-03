@@ -1,0 +1,96 @@
+{
+    "plan_title": "Purchase Order Monitor + Supplier Confirmation Agent",
+    "plan_description": "Searches Gmail for order emails, extracts purchase order details from attachments, drafts an HTML summary table, and replies with confirmations to suppliers.",
+    "sections": {
+        "data": [
+            "- Search Gmail for emails received in the last 7 days where the subject contains the word “Orders”.",
+            "- For each matched email, collect all attachments that are: PDF, images (JPG/PNG), DOCX, or XLSX.",
+            "- Treat the collected attachments as purchase orders to be scanned for order details.",
+            "- Extract (when present) the supplier email address from the purchase order attachment content (not from the email sender).",
+            "- Extract these purchase order fields from each attachment: order date and time, order_ID, Vendor, QTY, cost, amount, status."
+        ],
+        "actions": [
+            "- For each matched email, process all purchase order attachments (do not stop at the first attachment).",
+            "- Convert extracted fields into a normalized row format with these columns: order date and time, order_ID, Vendor, QTY, cost, amount, status.",
+            "- If any required field is missing or unclear in an attachment, leave the field blank and flag the row as “Needs review”.",
+            "- Build an HTML summary table containing one row per purchase order attachment.",
+            "- Reply in the same email thread with a short acknowledgement confirmation to the supplier email extracted from the purchase order attachment.",
+            "- Use a short acknowledgement confirmation message (example style): “Confirmed. We received PO {order_ID}. Thank you.”",
+            "- If the supplier email cannot be extracted from the purchase order attachment, do not send a confirmation for that purchase order and include it as “Needs review” in the summary table."
+        ],
+        "output": [
+            "- Produce an HTML table embedded in the email body (not as an attachment).",
+            "- The table columns must be exactly: order date and time, order_ID, Vendor, QTY, cost, amount, status.",
+            "- Include a clear indicator in the table when a row is flagged as “Needs review” (for example, set status to “Needs review” when status is missing/unclear, or append “(Needs review)” to the status value)."
+        ],
+        "delivery": [
+            "- Send the HTML summary table as a new email to meiribarak@gmail.com.",
+            "- Also send the HTML summary table as a new email to eomer3@gmail.com.",
+            "- Also send the HTML summary table as a new email to offir.omer@gmail.com.",
+            "- Send supplier confirmations by replying in the same thread as the original order email."
+        ],
+        "processing_steps": [
+            "- Find matching order emails (subject contains “Orders”, last 7 days).",
+            "- Download and scan all PO attachments (PDF/images/DOCX/XLSX).",
+            "- Extract structured PO fields and supplier email from each attachment.",
+            "- Normalize extracted values into consistent formats (dates, numbers, currency).",
+            "- Generate an HTML table summary.",
+            "- Send the summary as a new email to the configured recipients.",
+            "- Reply in-thread to suppliers with the confirmation message when supplier email is available."
+        ]
+    },
+    "specifics": {
+        "services_involved": [
+            "google-mail",
+            "chatgpt-research"
+        ],
+        "user_inputs_required": [
+        ],
+        "resolved_user_inputs": [
+            {
+                "key": "google_mail__email_send__recipients",
+                "value": "meiribarak@gmail.com"
+            },
+            {
+                "key": "additional_summary_recipients",
+                "value": "eomer3@gmail.com; offir.omer@gmail.com"
+            },
+            {
+                "key": "summary_email_style",
+                "value": "new email"
+            },
+            {
+                "key": "email_filter_rule",
+                "value": "subject contains “Orders”"
+            },
+            {
+                "key": "email_lookback_window",
+                "value": "last 7 days"
+            },
+            {
+                "key": "attachment_types",
+                "value": "PDF, images (JPG/PNG), DOCX, XLSX"
+            },
+            {
+                "key": "summary_destination",
+                "value": "HTML table in email body"
+            },
+            {
+                "key": "supplier_email_source",
+                "value": "extract from PO attachment"
+            },
+            {
+                "key": "confirmation_style",
+                "value": "reply in same thread; short acknowledgement"
+            },
+            {
+                "key": "multi_attachment_handling",
+                "value": "process all attachments"
+            },
+            {
+                "key": "missing_field_handling",
+                "value": "leave blank and flag as Needs review"
+            }
+        ]
+    }
+}

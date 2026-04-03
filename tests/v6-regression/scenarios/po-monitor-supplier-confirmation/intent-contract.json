@@ -1,0 +1,591 @@
+{
+  "version": "intent.v1",
+  "goal": "Monitor Gmail for purchase order emails, extract structured data from attachments, send HTML summary table to recipients, and reply to suppliers with confirmations",
+  "unit_of_work": {
+    "entity": "email",
+    "parent_entity": "inbox"
+  },
+  "config": [
+    {
+      "key": "gmail_search_query",
+      "type": "string",
+      "description": "Gmail search query combining subject filter and time window",
+      "default": "subject:Orders newer_than:7d"
+    },
+    {
+      "key": "attachment_mime_types",
+      "type": "json",
+      "description": "MIME types for purchase order attachments to process",
+      "default": [
+        "application/pdf",
+        "image/jpeg",
+        "image/png",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+      ]
+    },
+    {
+      "key": "po_fields",
+      "type": "json",
+      "description": "Purchase order fields to extract from attachments",
+      "default": [
+        "order date and time",
+        "order_ID",
+        "Vendor",
+        "QTY",
+        "cost",
+        "amount",
+        "status"
+      ]
+    },
+    {
+      "key": "summary_recipients",
+      "type": "json",
+      "description": "Email addresses to receive HTML summary table",
+      "default": [
+        "meiribarak@gmail.com",
+        "eomer3@gmail.com",
+        "offir.omer@gmail.com"
+      ]
+    },
+    {
+      "key": "confirmation_template",
+      "type": "string",
+      "description": "Template for supplier confirmation message",
+      "default": "Confirmed. We received PO {order_ID}. Thank you."
+    }
+  ],
+  "required_outcomes": [
+    "All purchase order emails from last 7 days are processed",
+    "All attachments per email are scanned for PO data",
+    "HTML summary table sent to all configured recipients",
+    "Supplier confirmations sent when supplier email is available"
+  ],
+  "steps": [
+    {
+      "id": "search_order_emails",
+      "kind": "data_source",
+      "summary": "Search Gmail for order emails from last 7 days with subject containing 'Orders'",
+      "uses": [
+        {
+          "capability": "search",
+          "domain": "email",
+          "preferences": {
+            "provider_family": "google"
+          }
+        }
+      ],
+      "output": "order_emails",
+      "source": {
+        "domain": "email",
+        "intent": "search"
+      },
+      "query": {
+        "kind": "config",
+        "key": "gmail_search_query"
+      },
+      "retrieval": {
+        "max_results": 100,
+        "include_content": "full",
+        "include_attachments": true
+      }
+    },
+    {
+      "id": "extract_attachments",
+      "kind": "transform",
+      "summary": "Extract attachments array from emails",
+      "inputs": [
+        "order_emails"
+      ],
+      "output": "all_attachments",
+      "transform": {
+        "op": "flatten",
+        "input": "order_emails",
+        "description": "Extract attachments array from each email",
+        "output_schema": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "attachment_id": {
+                "type": "string"
+              },
+              "message_id": {
+                "type": "string"
+              },
+              "filename": {
+                "type": "string"
+              },
+              "mime_type": {
+                "type": "string"
+              },
+              "size": {
+                "type": "number"
+              },
+              "from": {
+                "type": "string"
+              },
+              "subject": {
+                "type": "string"
+              },
+              "date": {
+                "type": "string"
+              },
+              "thread_id": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "attachment_id",
+              "message_id",
+              "filename",
+              "mime_type"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "filter_po_attachments",
+      "kind": "transform",
+      "summary": "Filter attachments to keep only PDF, images, DOCX, XLSX files",
+      "inputs": [
+        "all_attachments"
+      ],
+      "output": "po_attachments",
+      "transform": {
+        "op": "filter",
+        "input": "all_attachments",
+        "description": "Keep only purchase order file types (PDF, JPG, PNG, DOCX, XLSX)",
+        "where": {
+          "op": "test",
+          "left": {
+            "kind": "ref",
+            "ref": "all_attachments",
+            "field": "mime_type"
+          },
+          "comparator": "in",
+          "right": {
+            "kind": "config",
+            "key": "attachment_mime_types"
+          }
+        }
+      }
+    },
+    {
+      "id": "process_each_attachment",
+      "kind": "loop",
+      "summary": "Process each purchase order attachment to extract data and send confirmations",
+      "inputs": [
+        "po_attachments"
+      ],
+      "output": "po_records",
+      "loop": {
+        "over": "po_attachments",
+        "item_ref": "attachment",
+        "unit_of_work": {
+          "entity": "attachment",
+          "parent_entity": "email"
+        },
+        "collect": {
+          "enabled": true,
+          "collect_as": "po_records",
+          "from_step_output": "po_record"
+        },
+        "do": [
+          {
+            "id": "download_attachment_content",
+            "kind": "data_source",
+            "summary": "Download attachment content for processing",
+            "uses": [
+              {
+                "capability": "download",
+                "domain": "email",
+                "preferences": {
+                  "provider_family": "google"
+                }
+              }
+            ],
+            "inputs": [
+              "attachment"
+            ],
+            "output": "attachment_content",
+            "source": {
+              "domain": "email",
+              "intent": "download"
+            },
+            "payload": {
+              "message_id": {
+                "kind": "ref",
+                "ref": "attachment",
+                "field": "message_id"
+              },
+              "attachment_id": {
+                "kind": "ref",
+                "ref": "attachment",
+                "field": "attachment_id"
+              },
+              "filename": {
+                "kind": "ref",
+                "ref": "attachment",
+                "field": "filename"
+              }
+            }
+          },
+          {
+            "id": "extract_po_fields",
+            "kind": "extract",
+            "summary": "Extract purchase order fields and supplier email from attachment",
+            "uses": [
+              {
+                "capability": "extract_structured_data",
+                "domain": "document"
+              }
+            ],
+            "inputs": [
+              "attachment_content",
+              "attachment"
+            ],
+            "output": "extracted_po_data",
+            "extract": {
+              "input": "attachment_content",
+              "fields": [
+                {
+                  "name": "order date and time",
+                  "type": "date",
+                  "required": false,
+                  "description": "Date and time when the order was placed"
+                },
+                {
+                  "name": "order_ID",
+                  "type": "string",
+                  "required": false,
+                  "description": "Unique purchase order identifier"
+                },
+                {
+                  "name": "Vendor",
+                  "type": "string",
+                  "required": false,
+                  "description": "Vendor or supplier name"
+                },
+                {
+                  "name": "QTY",
+                  "type": "number",
+                  "required": false,
+                  "description": "Quantity ordered"
+                },
+                {
+                  "name": "cost",
+                  "type": "currency",
+                  "required": false,
+                  "description": "Unit cost per item"
+                },
+                {
+                  "name": "amount",
+                  "type": "currency",
+                  "required": false,
+                  "description": "Total amount for the order"
+                },
+                {
+                  "name": "status",
+                  "type": "string",
+                  "required": false,
+                  "description": "Order status"
+                },
+                {
+                  "name": "supplier_email",
+                  "type": "string",
+                  "required": false,
+                  "description": "Supplier email address for confirmation"
+                }
+              ],
+              "deterministic": false,
+              "content_hints": {
+                "file_types": [
+                  "pdf",
+                  "image",
+                  "docx",
+                  "xlsx"
+                ]
+              }
+            }
+          },
+          {
+            "id": "build_po_record",
+            "kind": "generate",
+            "summary": "Build normalized purchase order record with review flag if fields missing",
+            "uses": [
+              {
+                "capability": "generate",
+                "domain": "internal"
+              }
+            ],
+            "inputs": [
+              "extracted_po_data",
+              "attachment"
+            ],
+            "output": "po_record",
+            "generate": {
+              "instruction": "Create a normalized purchase order record. If any of the required fields (order date and time, order_ID, Vendor, QTY, cost, amount, status) are missing or blank in extracted_po_data, set the status field to 'Needs review' (or append '(Needs review)' if status has a value). Include all fields from extracted_po_data plus email metadata (from, subject, thread_id) from attachment for confirmation purposes. Also include supplier_email field from extracted_po_data.",
+              "outputs": [
+                {
+                  "name": "order date and time",
+                  "type": "string",
+                  "description": "Normalized order date and time"
+                },
+                {
+                  "name": "order_ID",
+                  "type": "string",
+                  "description": "Purchase order ID"
+                },
+                {
+                  "name": "Vendor",
+                  "type": "string",
+                  "description": "Vendor name"
+                },
+                {
+                  "name": "QTY",
+                  "type": "string",
+                  "description": "Quantity"
+                },
+                {
+                  "name": "cost",
+                  "type": "string",
+                  "description": "Unit cost"
+                },
+                {
+                  "name": "amount",
+                  "type": "string",
+                  "description": "Total amount"
+                },
+                {
+                  "name": "status",
+                  "type": "string",
+                  "description": "Order status with review flag if needed"
+                },
+                {
+                  "name": "supplier_email",
+                  "type": "string",
+                  "description": "Supplier email for confirmation"
+                },
+                {
+                  "name": "thread_id",
+                  "type": "string",
+                  "description": "Email thread ID for reply"
+                },
+                {
+                  "name": "from",
+                  "type": "string",
+                  "description": "Original email sender"
+                },
+                {
+                  "name": "subject",
+                  "type": "string",
+                  "description": "Original email subject"
+                }
+              ]
+            }
+          },
+          {
+            "id": "check_supplier_email",
+            "kind": "decide",
+            "summary": "Check if supplier email was extracted for confirmation",
+            "inputs": [
+              "po_record"
+            ],
+            "decide": {
+              "condition": {
+                "op": "test",
+                "left": {
+                  "kind": "ref",
+                  "ref": "po_record",
+                  "field": "supplier_email"
+                },
+                "comparator": "exists"
+              },
+              "then": [
+                {
+                  "id": "generate_confirmation_message",
+                  "kind": "generate",
+                  "summary": "Generate supplier confirmation message using template",
+                  "uses": [
+                    {
+                      "capability": "generate",
+                      "domain": "internal"
+                    }
+                  ],
+                  "inputs": [
+                    "po_record"
+                  ],
+                  "output": "confirmation_message",
+                  "generate": {
+                    "instruction": "Generate a short confirmation message using the template from config. Replace {order_ID} with the actual order_ID from po_record. Keep the message brief and professional.",
+                    "format": "text",
+                    "outputs": [
+                      {
+                        "name": "body",
+                        "type": "string",
+                        "description": "Confirmation message body"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "id": "send_supplier_confirmation",
+                  "kind": "notify",
+                  "summary": "Reply in thread to supplier with confirmation",
+                  "uses": [
+                    {
+                      "capability": "send_message",
+                      "domain": "email",
+                      "preferences": {
+                        "provider_family": "google"
+                      }
+                    }
+                  ],
+                  "inputs": [
+                    "confirmation_message",
+                    "po_record"
+                  ],
+                  "notify": {
+                    "channel": "email",
+                    "recipients": {
+                      "to": [
+                        {
+                          "kind": "ref",
+                          "ref": "po_record",
+                          "field": "supplier_email"
+                        }
+                      ]
+                    },
+                    "content": {
+                      "subject": {
+                        "kind": "computed",
+                        "op": "concat",
+                        "args": [
+                          {
+                            "kind": "literal",
+                            "value": "Re: "
+                          },
+                          {
+                            "kind": "ref",
+                            "ref": "po_record",
+                            "field": "subject"
+                          }
+                        ]
+                      },
+                      "body": {
+                        "kind": "ref",
+                        "ref": "confirmation_message",
+                        "field": "body"
+                      },
+                      "format": "text"
+                    },
+                    "options": {
+                      "thread_id": {
+                        "kind": "ref",
+                        "ref": "po_record",
+                        "field": "thread_id"
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "generate_html_summary",
+      "kind": "generate",
+      "summary": "Generate HTML table summary of all purchase orders",
+      "uses": [
+        {
+          "capability": "generate",
+          "domain": "internal"
+        }
+      ],
+      "inputs": [
+        "po_records"
+      ],
+      "output": "html_summary",
+      "generate": {
+        "format": "html",
+        "instruction": "Create a professional HTML table with the following columns in this exact order: 'order date and time', 'order_ID', 'Vendor', 'QTY', 'cost', 'amount', 'status'. Include proper table headers in <thead> and data rows in <tbody>. Apply professional styling with borders, header background color, and cell padding. Each row should contain data from one purchase order record. The status column should clearly show 'Needs review' or '(Needs review)' when applicable.",
+        "outputs": [
+          {
+            "name": "html_table",
+            "type": "string",
+            "description": "Complete HTML table with all purchase order records"
+          },
+          {
+            "name": "subject",
+            "type": "string",
+            "description": "Email subject line for summary"
+          }
+        ]
+      }
+    },
+    {
+      "id": "send_summary_to_recipients",
+      "kind": "loop",
+      "summary": "Send HTML summary table to each configured recipient",
+      "inputs": [
+        "html_summary"
+      ],
+      "loop": {
+        "over": {
+          "kind": "config",
+          "key": "summary_recipients"
+        },
+        "item_ref": "recipient",
+        "do": [
+          {
+            "id": "send_summary_email",
+            "kind": "notify",
+            "summary": "Send HTML summary as new email to recipient",
+            "uses": [
+              {
+                "capability": "send_message",
+                "domain": "email",
+                "preferences": {
+                  "provider_family": "google"
+                }
+              }
+            ],
+            "inputs": [
+              "html_summary",
+              "recipient"
+            ],
+            "notify": {
+              "channel": "email",
+              "recipients": {
+                "to": [
+                  {
+                    "kind": "ref",
+                    "ref": "recipient"
+                  }
+                ]
+              },
+              "content": {
+                "subject": {
+                  "kind": "ref",
+                  "ref": "html_summary",
+                  "field": "subject"
+                },
+                "body": {
+                  "kind": "ref",
+                  "ref": "html_summary",
+                  "field": "html_table"
+                },
+                "format": "html"
+              }
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "confidence": 0.95
+}

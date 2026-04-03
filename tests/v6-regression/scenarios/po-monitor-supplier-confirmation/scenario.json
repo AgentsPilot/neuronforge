@@ -1,0 +1,12 @@
+{
+  "name": "Purchase Order Monitor + Supplier Confirmation Agent",
+  "description": "Search Gmail for order emails, extract PO details from attachments, generate HTML summary to multiple recipients, reply in-thread to suppliers with confirmation. Tests attachment extraction + multi-recipient delivery + thread reply.",
+  "created": "2026-04-01",
+  "plugins": ["google-mail"],
+  "expected": {
+    "min_steps": 4,
+    "step_types": ["action", "transform", "ai_processing", "scatter_gather"],
+    "phase_a_checks": 14,
+    "phase_d_success": true
+  }
+}
