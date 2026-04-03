@@ -1,0 +1,16 @@
+{
+  "name": "gmail-summary",
+  "description": "Summarize last 10 Gmail emails and save to Notion",
+  "user_prompt": "Summarize my last 10 Gmail emails and save the summary to a Notion page",
+  "user_context": {
+    "full_name": "Test User",
+    "email": "simulator@yourdomain.com",
+    "timezone": "Asia/Jerusalem"
+  },
+  "connected_services": ["google-mail", "notion"],
+  "clarification_overrides": {
+    "Which Notion database": "My daily summaries database"
+  },
+  "expected_services": ["google-mail", "notion"],
+  "tags": ["email", "summarization", "notion"]
+}

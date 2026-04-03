@@ -1,0 +1,13 @@
+{
+  "name": "leads-notion",
+  "description": "Extract leads from emails and log to Notion CRM database",
+  "user_prompt": "Find all emails from potential customers in my Gmail and add their details to my Notion CRM database",
+  "user_context": {
+    "full_name": "Test User",
+    "email": "simulator@yourdomain.com",
+    "timezone": "Asia/Jerusalem"
+  },
+  "connected_services": ["google-mail", "notion"],
+  "expected_services": ["google-mail", "notion"],
+  "tags": ["email", "leads", "crm", "notion"]
+}
