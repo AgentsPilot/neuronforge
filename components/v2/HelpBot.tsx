@@ -217,53 +217,53 @@ export function HelpBot(props: HelpBotProps) {
       {!isOpen && !controlledOpen && !isInputHelp && (
         <button
           onClick={() => setIsOpenInternal(true)}
-          className="fixed bottom-4 right-4 sm:bottom-6 sm:right-6 w-14 h-14 sm:w-16 sm:h-16 bg-gradient-to-br from-[var(--v2-primary)] to-purple-600 text-white shadow-[var(--v2-shadow-card)] hover:shadow-2xl hover:scale-110 active:scale-95 transition-all duration-300 flex items-center justify-center z-50 group"
+          className="fixed bottom-4 right-4 sm:bottom-6 sm:right-6 w-14 h-14 sm:w-16 sm:h-16 bg-[var(--v2-primary)] text-white shadow-[var(--v2-shadow-card)] hover:shadow-xl hover:scale-110 active:scale-95 transition-all duration-300 flex items-center justify-center z-50 group"
           style={{ borderRadius: 'var(--v2-radius-card)' }}
           title="Help & Support"
         >
           <MessageCircle className="w-6 h-6 sm:w-7 sm:h-7 group-hover:rotate-12 transition-transform duration-300" />
-          <div className="absolute -top-1 -right-1 w-3 h-3 bg-green-500 rounded-full border-2 border-white dark:border-gray-900 animate-pulse"></div>
-          <Sparkles className="absolute top-1 right-1 w-3 h-3 text-yellow-300 animate-pulse" />
+          <div className="absolute -top-1 -right-1 w-3 h-3 bg-green-500 dark:bg-green-400 rounded-full border-2 border-white dark:border-slate-900 animate-pulse"></div>
+          <Sparkles className="absolute top-1 right-1 w-3 h-3 text-yellow-300 dark:text-yellow-200 animate-pulse" />
         </button>
       )}
 
       {(isOpen || (isInputHelp && context)) && (
         <div className="fixed bottom-4 right-4 sm:bottom-6 sm:right-6 w-[calc(100vw-2rem)] sm:w-[440px] h-[calc(100vh-8rem)] sm:h-[680px] max-h-[calc(100vh-2rem)] bg-[var(--v2-surface)] shadow-[var(--v2-shadow-card)] z-50 flex flex-col border border-[var(--v2-border)] backdrop-blur-xl animate-in slide-in-from-bottom-4 duration-300" style={{ borderRadius: 'var(--v2-radius-card)' }}>
           {/* Header */}
-          <div className="flex items-center justify-between px-4 sm:px-5 py-4 border-b border-[var(--v2-border)]/50 bg-gradient-to-r from-[var(--v2-primary)] via-purple-600 to-[var(--v2-primary)] text-white backdrop-blur-xl">
+          <div className="flex items-center justify-between px-4 sm:px-5 py-4 border-b border-[var(--v2-border)] bg-[var(--v2-surface-hover)]">
             <div className="flex items-center gap-3">
               <div className="relative">
-                <div className="w-10 h-10 bg-white/20 backdrop-blur-sm rounded-xl flex items-center justify-center ring-2 ring-white/30 shadow-lg">
-                  <MessageCircle className="w-5 h-5" />
+                <div className="w-10 h-10 bg-[var(--v2-primary)]/10 rounded-xl flex items-center justify-center ring-2 ring-[var(--v2-primary)]/20">
+                  <MessageCircle className="w-5 h-5 text-[var(--v2-primary)]" />
                 </div>
-                <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-green-400 rounded-full border-2 border-white shadow-sm animate-pulse"></div>
+                <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-green-500 dark:bg-green-400 rounded-full border-2 border-white dark:border-slate-800 shadow-sm animate-pulse"></div>
               </div>
               <div>
-                <div className="font-semibold text-sm sm:text-base tracking-tight">
+                <div className="font-semibold text-sm sm:text-base text-[var(--v2-text-primary)]">
                   {isInputHelp ? `Help With: ${context?.fieldName}` : `${pageContext.title} Assistant`}
                 </div>
-                <div className="text-xs opacity-90 flex items-center gap-1.5 mt-0.5">
-                  <div className="w-1.5 h-1.5 bg-green-400 rounded-full animate-pulse"></div>
+                <div className="text-xs text-[var(--v2-text-muted)] flex items-center gap-1.5 mt-0.5">
+                  <div className="w-1.5 h-1.5 bg-green-500 dark:bg-green-400 rounded-full animate-pulse"></div>
                   <span className="font-medium">Online now</span>
                 </div>
               </div>
             </div>
             <button
               onClick={() => { if (onClose) onClose(); setIsOpenInternal(false); }}
-              className="p-2 hover:bg-white/20 rounded-lg transition-all duration-200 active:scale-95 backdrop-blur-sm"
+              className="p-2 hover:bg-gray-100 dark:hover:bg-slate-700/40 rounded-lg transition-all duration-200 active:scale-95"
               title="Close"
             >
-              <X className="w-5 h-5" />
+              <X className="w-5 h-5 text-[var(--v2-text-secondary)]" />
             </button>
           </div>
           {/* Messages */}
-          <div className="flex-1 overflow-y-auto p-3 sm:p-4 space-y-4 bg-gradient-to-b from-gray-50/50 to-transparent dark:from-gray-900/20" onClick={handleMessageClick}>
+          <div className="flex-1 overflow-y-auto p-3 sm:p-4 space-y-4 bg-gradient-to-b from-slate-50/50 to-transparent dark:from-slate-800/20" onClick={handleMessageClick}>
             {messages.map((message, index) => (
               <div key={index} className={`flex flex-col ${message.role === 'user' ? 'items-end' : 'items-start'} animate-in fade-in slide-in-from-bottom-2 duration-300`}>
                 <div className={`max-w-[85%] sm:max-w-[80%] px-4 py-3 shadow-sm ${
                   message.role === 'user'
                     ? 'bg-gradient-to-br from-[var(--v2-primary)] to-purple-600 text-white'
-                    : 'bg-white dark:bg-gray-800 text-[var(--v2-text-primary)] border border-[var(--v2-border)]'
+                    : 'bg-white dark:bg-slate-800 text-[var(--v2-text-primary)] border border-[var(--v2-border)]'
                 }`}
                   style={{
                     borderRadius: message.role === 'user' ? '16px 16px 4px 16px' : '16px 16px 16px 4px',
@@ -286,8 +286,8 @@ export function HelpBot(props: HelpBotProps) {
                       onClick={() => handleFeedback(index, 'up')}
                       className={`p-1.5 rounded-lg transition-all duration-200 active:scale-95 ${
                         message.feedbackGiven === 'up'
-                          ? 'text-green-600 bg-green-100 dark:bg-green-900/30 ring-2 ring-green-200 dark:ring-green-800'
-                          : 'text-gray-400 hover:text-green-600 hover:bg-green-50 dark:hover:bg-green-900/20'
+                          ? 'text-green-600 dark:text-green-400 bg-green-100 dark:bg-green-900/30 ring-2 ring-green-200 dark:ring-green-700'
+                          : 'text-slate-400 dark:text-slate-500 hover:text-green-600 dark:hover:text-green-400 hover:bg-green-50 dark:hover:bg-green-900/20'
                       }`}
                       title="Helpful"
                     >
@@ -297,8 +297,8 @@ export function HelpBot(props: HelpBotProps) {
                       onClick={() => handleFeedback(index, 'down')}
                       className={`p-1.5 rounded-lg transition-all duration-200 active:scale-95 ${
                         message.feedbackGiven === 'down'
-                          ? 'text-red-600 bg-red-100 dark:bg-red-900/30 ring-2 ring-red-200 dark:ring-red-800'
-                          : 'text-gray-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20'
+                          ? 'text-red-600 dark:text-red-400 bg-red-100 dark:bg-red-900/30 ring-2 ring-red-200 dark:ring-red-700'
+                          : 'text-slate-400 dark:text-slate-500 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20'
                       }`}
                       title="Not helpful"
                     >
@@ -310,7 +310,7 @@ export function HelpBot(props: HelpBotProps) {
             ))}
             {isLoading && (
               <div className="flex justify-start animate-in fade-in slide-in-from-bottom-2 duration-300">
-                <div className="bg-white dark:bg-gray-800 border border-[var(--v2-border)] px-4 py-3 rounded-2xl rounded-bl-sm shadow-sm">
+                <div className="bg-white dark:bg-slate-800 border border-[var(--v2-border)] px-4 py-3 rounded-2xl rounded-bl-sm shadow-sm">
                   <div className="flex items-center gap-2">
                     <Loader2 className="w-4 h-4 text-[var(--v2-primary)] animate-spin" />
                     <span className="text-xs text-[var(--v2-text-muted)]">Thinking...</span>
@@ -322,16 +322,16 @@ export function HelpBot(props: HelpBotProps) {
           </div>
           {/* Quick Questions */}
           {messages.length === 1 && !isLoading && !isInputHelp && (
-            <div className="px-3 sm:px-4 py-3 border-t border-[var(--v2-border)] bg-gray-50/50 dark:bg-gray-900/20 backdrop-blur-sm">
-              <div className="text-xs font-medium text-[var(--v2-text-muted)] mb-2 flex items-center gap-1">
-                <Sparkles className="w-3 h-3" /> Quick questions:
+            <div className="px-3 sm:px-4 py-3 border-t border-[var(--v2-border)] bg-[var(--v2-surface-hover)] backdrop-blur-sm">
+              <div className="text-xs font-medium text-[var(--v2-text-primary)] mb-2 flex items-center gap-1">
+                <Sparkles className="w-3 h-3 text-[var(--v2-primary)]" /> Quick questions:
               </div>
               <div className="flex flex-wrap gap-2">
                 {pageContext.helpTopics.slice(0, 2).map((topic, index) => (
                   <button
                     key={index}
                     onClick={() => handleQuickQuestion(topic)}
-                    className="text-xs px-3 py-1.5 bg-white dark:bg-gray-800 border border-[var(--v2-border)] hover:border-[var(--v2-primary)] hover:bg-[var(--v2-primary)]/5 active:scale-95 transition-all duration-200 font-medium text-[var(--v2-text-secondary)] hover:text-[var(--v2-primary)]"
+                    className="text-xs px-3 py-2 bg-[var(--v2-surface)] border border-[var(--v2-border)] hover:border-[var(--v2-primary)] hover:bg-gray-100 dark:hover:bg-slate-700/40 active:scale-95 transition-all duration-200 font-medium text-[var(--v2-text-primary)]"
                     style={{ borderRadius: 'var(--v2-radius-button)' }}
                   >
                     {topic}
@@ -349,14 +349,14 @@ export function HelpBot(props: HelpBotProps) {
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && handleSend()}
                 placeholder={isInputHelp ? 'Paste your link or info here...' : 'Ask me anything...'}
-                className="flex-1 px-4 py-3 bg-white dark:bg-gray-800 border border-[var(--v2-border)] text-sm text-[var(--v2-text-primary)] placeholder:text-[var(--v2-text-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--v2-primary)] focus:border-transparent transition-all duration-200"
+                className="flex-1 px-4 py-3 bg-white dark:bg-slate-800 border border-[var(--v2-border)] text-sm text-[var(--v2-text-primary)] placeholder:text-[var(--v2-text-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--v2-primary)] focus:border-transparent transition-all duration-200"
                 style={{ borderRadius: 'var(--v2-radius-button)' }}
                 disabled={isLoading}
               />
               <button
                 onClick={handleSend}
                 disabled={!input.trim() || isLoading}
-                className="px-4 py-3 bg-gradient-to-br from-[var(--v2-primary)] to-purple-600 text-white hover:shadow-lg hover:scale-105 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100 transition-all duration-200 flex items-center justify-center"
+                className="px-4 py-3 bg-[var(--v2-primary)] text-white hover:bg-[var(--v2-primary)]/90 dark:bg-[var(--v2-primary)] dark:hover:bg-[var(--v2-primary)]/80 hover:shadow-lg hover:scale-105 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100 transition-all duration-200 flex items-center justify-center"
                 style={{ borderRadius: 'var(--v2-radius-button)' }}
               >
                 <Send className="w-4 h-4" />

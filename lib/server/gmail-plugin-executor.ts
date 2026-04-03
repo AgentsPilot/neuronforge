@@ -32,6 +32,8 @@ export class GmailPluginExecutor extends GoogleBasePluginExecutor {
         return await this.createDraft(connection, parameters);
       case 'get_email_attachment':
         return await this.getEmailAttachment(connection, parameters);
+      case 'modify_message':
+        return await this.modifyMessage(connection, parameters);
       default:
         throw new Error(`Action ${actionName} not supported`);
     }
@@ -271,6 +273,90 @@ export class GmailPluginExecutor extends GoogleBasePluginExecutor {
       this.logger.error({ err: error, message_id, attachment_id }, 'Attachment download error');
       throw new Error(`Failed to download attachment: ${error.message}`);
     }
+  }
+
+  // Modify message labels and properties
+  private async modifyMessage(connection: any, parameters: any): Promise<any> {
+    const { message_id, add_labels, remove_labels, mark_important, mark_read } = parameters;
+
+    if (!message_id) {
+      throw new Error('message_id is required');
+    }
+
+    this.logger.debug({ message_id, add_labels, remove_labels, mark_important, mark_read }, 'Modifying message');
+
+    // Build modification request
+    const requestBody: any = {};
+
+    // Handle label modifications
+    const labelsToAdd: string[] = [];
+    const labelsToRemove: string[] = [];
+
+    if (add_labels && Array.isArray(add_labels)) {
+      labelsToAdd.push(...add_labels);
+    }
+    if (remove_labels && Array.isArray(remove_labels)) {
+      labelsToRemove.push(...remove_labels);
+    }
+
+    // Handle importance flag (IMPORTANT label)
+    if (mark_important === true) {
+      labelsToAdd.push('IMPORTANT');
+    } else if (mark_important === false) {
+      labelsToRemove.push('IMPORTANT');
+    }
+
+    // Handle read/unread status (UNREAD label - note the inverse logic)
+    if (mark_read === true) {
+      labelsToRemove.push('UNREAD');
+    } else if (mark_read === false) {
+      labelsToAdd.push('UNREAD');
+    }
+
+    // Only add to request if we have changes
+    if (labelsToAdd.length > 0) {
+      requestBody.addLabelIds = labelsToAdd;
+    }
+    if (labelsToRemove.length > 0) {
+      requestBody.removeLabelIds = labelsToRemove;
+    }
+
+    // If no modifications specified, return error
+    if (labelsToAdd.length === 0 && labelsToRemove.length === 0) {
+      throw new Error('At least one modification must be specified (add_labels, remove_labels, mark_important, or mark_read)');
+    }
+
+    // Make API request
+    const response = await fetch(
+      `${this.gmailApisUrl}/users/me/messages/${message_id}/modify`,
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${connection.access_token}`,
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+        body: JSON.stringify(requestBody)
+      }
+    );
+
+    if (!response.ok) {
+      const errorData = await response.text();
+      this.logger.error({ status: response.status, errorData }, 'Message modification failed');
+      throw new Error(`Gmail API error: ${response.status} - ${errorData}`);
+    }
+
+    const result = await response.json();
+
+    return {
+      message_id: result.id,
+      thread_id: result.threadId,
+      labels: result.labelIds || [],
+      labels_added: labelsToAdd,
+      labels_removed: labelsToRemove,
+      modified_at: new Date().toISOString(),
+      message: 'Message modified successfully'
+    };
   }
 
   // Private helper methods

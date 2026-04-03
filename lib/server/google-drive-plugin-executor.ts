@@ -365,9 +365,6 @@ export class GoogleDrivePluginExecutor extends GoogleBasePluginExecutor {
       files: files,
       next_page_token: data.nextPageToken,
       has_more: !!data.nextPageToken,
-<<<<<<< Updated upstream
-      retrieved_at: new Date().toISOString()
-=======
       retrieved_at: new Date().toISOString(),
       // Legacy format (camelCase for backward compatibility)
       folderId: folderId,
@@ -812,7 +809,6 @@ export class GoogleDrivePluginExecutor extends GoogleBasePluginExecutor {
       webViewLink: fileMetadata.web_view_link,
       permissionType: permissionType,
       sharedAt: new Date().toISOString()
->>>>>>> Stashed changes
     };
   }
 

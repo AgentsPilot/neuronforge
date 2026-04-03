@@ -15,17 +15,18 @@ import {
   Clock,
   Plus,
   Globe,
-  Mail,
   MoreVertical,
   List,
   LayoutDashboard,
   Loader2,
   CheckCircle2,
   AlertCircle,
-  RefreshCw,
   PlugZap,
   XCircle,
-  Sparkles
+  Sparkles,
+  Search,
+  ChevronLeft,
+  ChevronRight
 } from 'lucide-react'
 import {
   SiGithub,
@@ -59,18 +60,25 @@ interface V2FooterProps {
 
 export function V2Footer({ accountFrozen: accountFrozenProp }: V2FooterProps) {
   const router = useRouter()
-  const { user, connectedPlugins: connectedPluginsFromContext } = useAuth()
+  const { user, connectedPlugins: connectedPluginsFromContext, refreshPlugins } = useAuth()
   const [lastRunTime, setLastRunTime] = useState<Date | null>(null)
   const [displayPlugins, setDisplayPlugins] = useState<ConnectedPlugin[]>([])
   const [availablePlugins, setAvailablePlugins] = useState<AvailablePlugin[]>([])
   const [pluginsMenuOpen, setPluginsMenuOpen] = useState(false)
+  const [pluginSearchQuery, setPluginSearchQuery] = useState('')
   const [hoveredPlugin, setHoveredPlugin] = useState<string | null>(null)
+  const [tooltipPosition, setTooltipPosition] = useState<{ top: number; left: number } | null>(null)
   const [menuOpen, setMenuOpen] = useState(false)
   const [refreshModalOpen, setRefreshModalOpen] = useState(false)
   const [selectedPlugin, setSelectedPlugin] = useState<ConnectedPlugin | null>(null)
   const [accountFrozen, setAccountFrozen] = useState(accountFrozenProp || false)
   const [pilotCredits, setPilotCredits] = useState<number>(0)
   const [hoveredButton, setHoveredButton] = useState<string | null>(null)
+
+  // Scroll state for plugin icons
+  const [canScrollLeft, setCanScrollLeft] = useState(false)
+  const [canScrollRight, setCanScrollRight] = useState(false)
+  const scrollContainerRef = React.useRef<HTMLDivElement>(null)
 
   // New state for inline refresh
   const [refreshingPlugin, setRefreshingPlugin] = useState<string | null>(null)
@@ -138,7 +146,12 @@ export function V2Footer({ accountFrozen: accountFrozenProp }: V2FooterProps) {
         plugin_key: plugin.key,
         plugin_name: plugin.name || plugin.displayName,
         status: plugin.is_expired ? 'expired' : 'active',
-        is_expired: plugin.is_expired || false
+        is_expired: plugin.is_expired || false,
+        username: plugin.username,
+        connected_at: plugin.connected_at,
+        expires_at: plugin.expires_at,
+        last_used: plugin.last_used,
+        last_refreshed: plugin.last_refreshed
       }))
       setDisplayPlugins(plugins)
     }
@@ -166,9 +179,24 @@ export function V2Footer({ accountFrozen: accountFrozenProp }: V2FooterProps) {
 
       // Build connection status map
       const connectedMap = new Map<string, {connected: boolean, status: 'active' | 'disconnected' | 'expired'}>()
+
+      // Add connected plugins (with valid tokens)
       status.connected.forEach((p: any) => {
-        connectedMap.set(p.key, { connected: true, status: p.is_expired ? 'expired' : 'active' })
+        // Check if this plugin is in the active_expired array
+        const isExpired = status.active_expired && status.active_expired.includes(p.key)
+        connectedMap.set(p.key, { connected: true, status: isExpired ? 'expired' : 'active' })
       })
+
+      // Add expired plugins that might not be in connected array
+      if (status.active_expired && status.active_expired.length > 0) {
+        status.active_expired.forEach((key: string) => {
+          if (!connectedMap.has(key)) {
+            connectedMap.set(key, { connected: true, status: 'expired' })
+          }
+        })
+      }
+
+      // Add disconnected plugins
       status.disconnected.forEach((p: any) => {
         connectedMap.set(p.key, { connected: false, status: 'disconnected' })
       })
@@ -208,12 +236,21 @@ export function V2Footer({ accountFrozen: accountFrozenProp }: V2FooterProps) {
         plugin_key: plugin.key,
         plugin_name: plugin.name || plugin.displayName,
         status: plugin.is_expired ? 'expired' : 'active',
-        is_expired: plugin.is_expired || false
+        is_expired: plugin.is_expired || false,
+        username: plugin.username,
+        connected_at: plugin.connected_at,
+        expires_at: plugin.expires_at,
+        last_used: plugin.last_used,
+        last_refreshed: plugin.last_refreshed
       }))
 
-      setDisplayPlugins(plugins)
+      // Only update if we actually got plugins, avoid clearing the list on error
+      if (plugins.length > 0 || status.connected.length === 0) {
+        setDisplayPlugins(plugins)
+      }
     } catch (error) {
       console.error('Error loading plugins:', error)
+      // Don't clear existing plugins on error
     }
   }
 
@@ -237,6 +274,10 @@ export function V2Footer({ accountFrozen: accountFrozenProp }: V2FooterProps) {
 
         setTimeout(async () => {
           setRefreshStatus(null)
+          // Small delay to let backend update
+          await new Promise(resolve => setTimeout(resolve, 500))
+          // Refresh UserProvider context to update connected plugins globally
+          await refreshPlugins()
           await loadPlugins()
           await fetchAllAvailablePlugins()
         }, 2000)
@@ -288,8 +329,13 @@ export function V2Footer({ accountFrozen: accountFrozenProp }: V2FooterProps) {
 
         setTimeout(async () => {
           setRefreshStatus(null)
+          // Small delay to let backend update
+          await new Promise(resolve => setTimeout(resolve, 500))
+          // Refresh UserProvider context to update connected plugins globally
+          await refreshPlugins()
           // Reload plugins to get updated status
           await loadPlugins()
+          await fetchAllAvailablePlugins()
         }, 2000)
       } else {
         // OAuth failed
@@ -478,6 +524,74 @@ export function V2Footer({ accountFrozen: accountFrozenProp }: V2FooterProps) {
     return 'Just now'
   }
 
+  // Filter plugins based on search query
+  const filteredPlugins = React.useMemo(() => {
+    if (!pluginSearchQuery.trim()) {
+      return availablePlugins
+    }
+
+    const query = pluginSearchQuery.toLowerCase()
+    return availablePlugins.filter(plugin =>
+      plugin.name.toLowerCase().includes(query) ||
+      plugin.key.toLowerCase().includes(query)
+    )
+  }, [availablePlugins, pluginSearchQuery])
+
+  // Check scroll position to show/hide arrows
+  const checkScrollPosition = React.useCallback(() => {
+    const container = scrollContainerRef.current
+    if (!container) return
+
+    const scrollLeft = container.scrollLeft
+    const maxScroll = container.scrollWidth - container.clientWidth
+
+    setCanScrollLeft(scrollLeft > 5) // Add small threshold
+    setCanScrollRight(scrollLeft < maxScroll - 5) // Add small threshold
+  }, [])
+
+  // Update scroll position on mount and when plugins change
+  React.useEffect(() => {
+    // Multiple checks to ensure detection
+    const timer1 = setTimeout(() => checkScrollPosition(), 50)
+    const timer2 = setTimeout(() => checkScrollPosition(), 200)
+    const timer3 = setTimeout(() => checkScrollPosition(), 500)
+
+    const container = scrollContainerRef.current
+    if (container) {
+      container.addEventListener('scroll', checkScrollPosition)
+      window.addEventListener('resize', checkScrollPosition)
+      return () => {
+        container.removeEventListener('scroll', checkScrollPosition)
+        window.removeEventListener('resize', checkScrollPosition)
+        clearTimeout(timer1)
+        clearTimeout(timer2)
+        clearTimeout(timer3)
+      }
+    }
+    return () => {
+      clearTimeout(timer1)
+      clearTimeout(timer2)
+      clearTimeout(timer3)
+    }
+  }, [displayPlugins, checkScrollPosition])
+
+  // Scroll functions with callback to update state
+  const scrollLeft = () => {
+    const container = scrollContainerRef.current
+    if (!container) return
+    container.scrollBy({ left: -200, behavior: 'smooth' })
+    // Check position after animation
+    setTimeout(() => checkScrollPosition(), 400)
+  }
+
+  const scrollRight = () => {
+    const container = scrollContainerRef.current
+    if (!container) return
+    container.scrollBy({ left: 200, behavior: 'smooth' })
+    // Check position after animation
+    setTimeout(() => checkScrollPosition(), 400)
+  }
+
   const getPluginDisplayName = (pluginKey: string) => {
     // Map plugin keys to their proper display names
     const nameMap: Record<string, string> = {
@@ -498,6 +612,13 @@ export function V2Footer({ accountFrozen: accountFrozenProp }: V2FooterProps) {
       'airtable': 'Airtable',
       'chatgpt-research': 'ChatGPT Research',
       'linkedin': 'LinkedIn',
+      'notion': 'Notion',
+      'onedrive': 'OneDrive',
+      'discord': 'Discord',
+      'salesforce': 'Salesforce',
+      'meta-ads': 'Meta Ads',
+      'document-extractor': 'Document Extractor',
+      'dropbox': 'Dropbox',
     }
 
     // Return mapped name or format the key as fallback
@@ -523,13 +644,21 @@ export function V2Footer({ accountFrozen: accountFrozenProp }: V2FooterProps) {
     'github': <SiGithub className="w-5 h-5 sm:w-6 sm:h-6" style={{ color: '#FFFFFF' }} />,
     'slack': <PluginIcon pluginId="slack" className="w-5 h-5 sm:w-6 sm:h-6" alt="Slack" />,
     'hubspot': <PluginIcon pluginId="hubspot" className="w-5 h-5 sm:w-6 sm:h-6" alt="HubSpot" />,
-    'outlook': <Mail className="w-5 h-5 sm:w-6 sm:h-6" style={{ color: '#0078D4' }} />,
+    'outlook': <PluginIcon pluginId="outlook" className="w-5 h-5 sm:w-6 sm:h-6" alt="Outlook" />,
     'whatsapp': <PluginIcon pluginId="whatsapp" className="w-5 h-5 sm:w-6 sm:h-6" alt="WhatsApp" />,
     'whatsapp-business': <PluginIcon pluginId="whatsapp" className="w-5 h-5 sm:w-6 sm:h-6" alt="WhatsApp Business" />,
     'twilio': <SiTwilio className="w-5 h-5 sm:w-6 sm:h-6" style={{ color: '#F22F46' }} />,
     'aws': <SiAmazon className="w-5 h-5 sm:w-6 sm:h-6" style={{ color: '#FF9900' }} />,
     'airtable': <PluginIcon pluginId="airtable" className="w-5 h-5 sm:w-6 sm:h-6" alt="Airtable" />,
     'chatgpt-research': <PluginIcon pluginId="chatgpt-research" className="w-5 h-5 sm:w-6 sm:h-6" alt="ChatGPT Research" />,
+    'notion': <PluginIcon pluginId="notion" className="w-5 h-5 sm:w-6 sm:h-6" alt="Notion" />,
+    'onedrive': <PluginIcon pluginId="onedrive" className="w-5 h-5 sm:w-6 sm:h-6" alt="OneDrive" />,
+    'discord': <PluginIcon pluginId="discord" className="w-5 h-5 sm:w-6 sm:h-6" alt="Discord" />,
+    'salesforce': <PluginIcon pluginId="salesforce" className="w-5 h-5 sm:w-6 sm:h-6" alt="Salesforce" />,
+    'meta-ads': <PluginIcon pluginId="meta-ads" className="w-5 h-5 sm:w-6 sm:h-6" alt="Meta Ads" />,
+    'linkedin': <PluginIcon pluginId="linkedin" className="w-5 h-5 sm:w-6 sm:h-6" alt="LinkedIn" />,
+    'document-extractor': <PluginIcon pluginId="document-extractor" className="w-5 h-5 sm:w-6 sm:h-6" alt="Document Extractor" />,
+    'dropbox': <PluginIcon pluginId="dropbox" className="w-5 h-5 sm:w-6 sm:h-6" alt="Dropbox" />,
   }
 
   const getPluginIcon = (pluginKey: string) => {
@@ -537,7 +666,7 @@ export function V2Footer({ accountFrozen: accountFrozenProp }: V2FooterProps) {
   }
 
   return (
-    <div className="mt-2 sm:mt-3 lg:mt-4 pt-3 sm:pt-4 lg:pt-5">
+    <div className="mt-2 sm:mt-3 lg:mt-4 pt-3 sm:pt-4 lg:pt-5 pb-20">
 
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-4">
         {/* Last Run */}
@@ -549,28 +678,69 @@ export function V2Footer({ accountFrozen: accountFrozenProp }: V2FooterProps) {
           </span>
         </div>
 
-        {/* Connected Plugin Icons - Center */}
+        {/* Connected Plugin Icons - Center with horizontal scroll */}
         {displayPlugins.length > 0 && (
-          <div className="flex gap-2 sm:gap-3 flex-wrap justify-center">
-            {displayPlugins.map((plugin) => (
+          <div className="relative flex-1 max-w-2xl flex items-center gap-2" style={{ overflow: 'visible' }}>
+            {/* Left scroll button - always show if more than 4 plugins */}
+            {displayPlugins.length > 4 && (
+              <button
+                onClick={scrollLeft}
+                disabled={!canScrollLeft}
+                className={`flex-shrink-0 w-8 h-8 flex items-center justify-center transition-all ${
+                  canScrollLeft
+                    ? 'bg-[var(--v2-primary)] text-white hover:bg-[var(--v2-primary)]/90 cursor-pointer shadow-lg'
+                    : 'bg-gray-300 dark:bg-gray-700 text-gray-500 dark:text-gray-400 cursor-not-allowed opacity-40'
+                }`}
+                style={{ borderRadius: '50%' }}
+                aria-label="Scroll left"
+              >
+                <ChevronLeft className="w-4 h-4" strokeWidth={3} />
+              </button>
+            )}
+
+            {/* Scrollable container */}
+            <div
+              ref={scrollContainerRef}
+              className="flex gap-2 sm:gap-3 overflow-x-auto py-2 px-2 justify-start scrollbar-hide flex-1"
+              style={{
+                scrollbarWidth: 'none',
+                msOverflowStyle: 'none',
+                WebkitOverflowScrolling: 'touch',
+                scrollSnapType: 'x proximity',
+                overflowY: 'visible'
+              }}
+            >
+              {displayPlugins.map((plugin) => (
               <div
                 key={plugin.plugin_key}
                 className={`relative w-12 h-12 sm:w-14 sm:h-14 bg-[var(--v2-surface)]
                   flex items-center justify-center flex-shrink-0
                   transition-all duration-200 border border-[var(--v2-border)]
                   ${!refreshingPlugin && !reconnecting && !disconnecting
-                    ? 'cursor-pointer hover:scale-110 hover:border-[var(--v2-primary)] hover:shadow-lg'
+                    ? 'cursor-pointer hover:border-[var(--v2-primary)] hover:shadow-xl hover:z-10'
                     : 'cursor-default'
                   }`}
                 style={{
                   borderRadius: 'var(--v2-radius-button)',
-                  boxShadow: 'var(--v2-shadow-card)'
+                  boxShadow: 'var(--v2-shadow-card)',
+                  scrollSnapAlign: 'start'
                 }}
-                onMouseEnter={() => setHoveredPlugin(plugin.plugin_key)}
-                onMouseLeave={() => setHoveredPlugin(null)}
+                onMouseEnter={(e) => {
+                  const rect = e.currentTarget.getBoundingClientRect()
+                  setTooltipPosition({
+                    top: rect.top - 8,
+                    left: rect.left + rect.width / 2
+                  })
+                  setHoveredPlugin(plugin.plugin_key)
+                }}
+                onMouseLeave={() => {
+                  setHoveredPlugin(null)
+                  setTooltipPosition(null)
+                }}
                 onClick={() => handlePluginClick(plugin)}
               >
                 {getPluginIcon(plugin.plugin_key)}
+
                 {/* Status indicator - green for active, split green/orange for expired */}
                 {plugin.is_expired ? (
                   // Split indicator: left green (connected), right orange (expired)
@@ -668,107 +838,111 @@ export function V2Footer({ accountFrozen: accountFrozenProp }: V2FooterProps) {
                     </p>
                   </div>
                 )}
-
-                {/* Tooltip with V2 design and connection info */}
-                {hoveredPlugin === plugin.plugin_key && (
-                  <div
-                    className="absolute bottom-full left-1/2 -translate-x-1/2 mb-3 px-3 py-2.5 text-xs pointer-events-none animate-fade-in min-w-[200px]"
-                    style={{
-                      backgroundColor: 'var(--v2-surface)',
-                      border: '1px solid var(--v2-border)',
-                      color: 'var(--v2-text-primary)',
-                      borderRadius: 'var(--v2-radius-button)',
-                      boxShadow: 'var(--v2-shadow-card)',
-                      zIndex: 1000
-                    }}
-                  >
-                    <div className="font-semibold mb-1">
-                      {getPluginDisplayName(plugin.plugin_key)}
-                    </div>
-
-                    {/* Connection Status */}
-                    <div className="space-y-0.5 text-[10px] text-[var(--v2-text-muted)]">
-                      <div className="flex justify-between gap-3">
-                        <span>Status:</span>
-                        <span className={plugin.is_expired ? 'text-orange-500 font-medium' : 'text-green-500 font-medium'}>
-                          {plugin.is_expired ? 'Token Expired' : 'Connected'}
-                        </span>
-                      </div>
-
-                      {plugin.username && (
-                        <div className="flex justify-between gap-3">
-                          <span>Account:</span>
-                          <span className="font-medium text-[var(--v2-text-primary)] truncate max-w-[150px]" title={plugin.username}>
-                            {plugin.username}
-                          </span>
-                        </div>
-                      )}
-
-                      {plugin.connected_at && (
-                        <div className="flex justify-between gap-3">
-                          <span>Connected:</span>
-                          <span className="font-medium text-[var(--v2-text-primary)]">
-                            {new Date(plugin.connected_at).toLocaleDateString()}
-                          </span>
-                        </div>
-                      )}
-
-                      {plugin.expires_at && (
-                        <div className="flex justify-between gap-3">
-                          <span>Expires:</span>
-                          <span className="font-medium text-[var(--v2-text-primary)]">
-                            {new Date(plugin.expires_at).toLocaleDateString()}
-                          </span>
-                        </div>
-                      )}
-
-                      {plugin.last_refreshed && (
-                        <div className="flex justify-between gap-3">
-                          <span>Last Refresh:</span>
-                          <span className="font-medium text-[var(--v2-text-primary)]">
-                            {getTimeAgo(new Date(plugin.last_refreshed))}
-                          </span>
-                        </div>
-                      )}
-
-                      {plugin.last_used && (
-                        <div className="flex justify-between gap-3">
-                          <span>Last Used:</span>
-                          <span className="font-medium text-[var(--v2-text-primary)]">
-                            {getTimeAgo(new Date(plugin.last_used))}
-                          </span>
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Call to Action */}
-                    {plugin.is_expired ? (
-                      <div className="text-orange-600 dark:text-orange-400 text-[11px] mt-2 pt-2 border-t border-[var(--v2-border)] font-semibold flex items-center gap-1.5">
-                        <RefreshCw className="w-3 h-3" />
-                        Click to refresh token
-                      </div>
-                    ) : (
-                      <div className="text-red-600 dark:text-red-400 text-[11px] mt-2 pt-2 border-t border-[var(--v2-border)] font-semibold flex items-center gap-1.5">
-                        <XCircle className="w-3 h-3" />
-                        Click to disconnect
-                      </div>
-                    )}
-                    {/* Tooltip arrow */}
-                    <div
-                      className="absolute left-1/2 -translate-x-1/2"
-                      style={{
-                        top: '100%',
-                        width: 0,
-                        height: 0,
-                        borderLeft: '6px solid transparent',
-                        borderRight: '6px solid transparent',
-                        borderTop: '6px solid var(--v2-surface)'
-                      }}
-                    ></div>
-                  </div>
-                )}
               </div>
             ))}
+            </div>
+
+            {/* Tooltip rendered outside scroll container */}
+            {hoveredPlugin && tooltipPosition && (() => {
+              const plugin = displayPlugins.find(p => p.plugin_key === hoveredPlugin)
+              if (!plugin) return null
+
+              return (
+                <div
+                  className="fixed px-3 py-2.5 text-xs pointer-events-none min-w-[200px] max-w-[280px]"
+                  style={{
+                    backgroundColor: 'var(--v2-surface)',
+                    border: '1px solid var(--v2-border)',
+                    color: 'var(--v2-text-primary)',
+                    borderRadius: 'var(--v2-radius-button)',
+                    boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.3), 0 8px 10px -6px rgba(0, 0, 0, 0.2)',
+                    zIndex: 99999,
+                    top: `${tooltipPosition.top}px`,
+                    left: `${tooltipPosition.left}px`,
+                    transform: 'translate(-50%, -100%)'
+                  }}
+                >
+                  <div className="font-semibold mb-1">
+                    {getPluginDisplayName(plugin.plugin_key)}
+                  </div>
+
+                  <div className="space-y-0.5 text-[10px] text-[var(--v2-text-muted)]">
+                    <div className="flex justify-between gap-3">
+                      <span>Status:</span>
+                      <span className={plugin.is_expired ? 'text-orange-500 font-medium' : 'text-green-500 font-medium'}>
+                        {plugin.is_expired ? 'Token Expired' : 'Connected'}
+                      </span>
+                    </div>
+
+                    {plugin.username && (
+                      <div className="flex justify-between gap-3">
+                        <span>Account:</span>
+                        <span className="font-medium text-[var(--v2-text-primary)] truncate max-w-[150px]" title={plugin.username}>
+                          {plugin.username}
+                        </span>
+                      </div>
+                    )}
+
+                    {plugin.connected_at && (
+                      <div className="flex justify-between gap-3">
+                        <span>Connected:</span>
+                        <span className="font-medium text-[var(--v2-text-primary)]">
+                          {new Date(plugin.connected_at).toLocaleDateString()}
+                        </span>
+                      </div>
+                    )}
+
+                    {plugin.expires_at && (
+                      <div className="flex justify-between gap-3">
+                        <span>Expires:</span>
+                        <span className="font-medium text-[var(--v2-text-primary)]">
+                          {new Date(plugin.expires_at).toLocaleDateString()}
+                        </span>
+                      </div>
+                    )}
+
+                    {plugin.last_refreshed && (
+                      <div className="flex justify-between gap-3">
+                        <span>Last Refresh:</span>
+                        <span className="font-medium text-[var(--v2-text-primary)]">
+                          {new Date(plugin.last_refreshed).toLocaleDateString()}
+                        </span>
+                      </div>
+                    )}
+
+                    {plugin.last_used && (
+                      <div className="flex justify-between gap-3">
+                        <span>Last Used:</span>
+                        <span className="font-medium text-[var(--v2-text-primary)]">
+                          {new Date(plugin.last_used).toLocaleDateString()}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="mt-1.5 pt-1.5 border-t border-[var(--v2-border)] text-[9px] text-center text-[var(--v2-text-muted)]">
+                    {plugin.is_expired ? 'Click to refresh token' : 'Click to disconnect'}
+                  </div>
+                </div>
+              )
+            })()}
+
+            {/* Right scroll button - always show if more than 4 plugins */}
+            {displayPlugins.length > 4 && (
+              <button
+                onClick={scrollRight}
+                disabled={!canScrollRight}
+                className={`flex-shrink-0 w-8 h-8 flex items-center justify-center transition-all ${
+                  canScrollRight
+                    ? 'bg-[var(--v2-primary)] text-white hover:bg-[var(--v2-primary)]/90 cursor-pointer shadow-lg'
+                    : 'bg-gray-300 dark:bg-gray-700 text-gray-500 dark:text-gray-400 cursor-not-allowed opacity-40'
+                }`}
+                style={{ borderRadius: '50%' }}
+                aria-label="Scroll right"
+              >
+                <ChevronRight className="w-4 h-4" strokeWidth={3} />
+              </button>
+            )}
           </div>
         )}
 
@@ -777,7 +951,13 @@ export function V2Footer({ accountFrozen: accountFrozenProp }: V2FooterProps) {
           {/* Plugins Menu Button */}
           <div className="relative">
             <button
-              onClick={() => setPluginsMenuOpen(!pluginsMenuOpen)}
+              onClick={() => {
+                setPluginsMenuOpen(!pluginsMenuOpen)
+                if (pluginsMenuOpen) {
+                  // Clear search when closing menu
+                  setPluginSearchQuery('')
+                }
+              }}
               onMouseEnter={() => setHoveredButton('plugins')}
               onMouseLeave={() => setHoveredButton(null)}
               className="w-9 h-9 sm:w-10 sm:h-10 bg-[var(--v2-surface)] shadow-[var(--v2-shadow-card)] flex items-center justify-center hover:scale-105 transition-transform duration-200 flex-shrink-0"
@@ -820,21 +1000,46 @@ export function V2Footer({ accountFrozen: accountFrozenProp }: V2FooterProps) {
                 {/* Backdrop */}
                 <div
                   className="fixed inset-0 z-40"
-                  onClick={() => setPluginsMenuOpen(false)}
+                  onClick={() => {
+                    setPluginsMenuOpen(false)
+                    setPluginSearchQuery('')
+                  }}
                 />
 
                 {/* Plugins Grid Menu */}
                 <div
-                  className="absolute right-0 bottom-full mb-2 w-80 max-h-96 overflow-y-auto bg-[var(--v2-surface)] shadow-[var(--v2-shadow-card)] border border-[var(--v2-border)] z-50 p-3"
+                  className="absolute right-0 bottom-full mb-2 w-[650px] max-h-[38rem] bg-[var(--v2-surface)] shadow-[var(--v2-shadow-card)] border border-[var(--v2-border)] z-50 flex flex-col"
                   style={{ borderRadius: 'var(--v2-radius-card)' }}
                 >
+                  {/* Search Header */}
+                  <div className="p-3 border-b border-[var(--v2-border)]">
+                    <div className="relative">
+                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--v2-text-muted)]" />
+                      <input
+                        type="text"
+                        placeholder="Search plugins..."
+                        value={pluginSearchQuery}
+                        onChange={(e) => setPluginSearchQuery(e.target.value)}
+                        className="w-full pl-10 pr-3 py-2 bg-[var(--v2-bg)] border border-[var(--v2-border)] text-[var(--v2-text-primary)] placeholder-[var(--v2-text-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--v2-primary)] focus:border-transparent"
+                        style={{ borderRadius: 'var(--v2-radius-button)' }}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Scrollable plugins list */}
+                  <div className="overflow-y-auto p-3" style={{ maxHeight: 'calc(38rem - 4rem)' }}>
                   <div className="text-sm font-semibold text-[var(--v2-text-primary)] mb-3 px-1">
                     Available Plugins
                   </div>
 
                   {/* Grid of plugins */}
-                  <div className="grid grid-cols-3 gap-2">
-                    {availablePlugins.map((plugin) => (
+                  <div className="grid grid-cols-4 gap-2">
+                    {filteredPlugins.length === 0 ? (
+                      <div className="col-span-3 text-center py-8 text-[var(--v2-text-muted)] text-sm">
+                        No plugins found matching "{pluginSearchQuery}"
+                      </div>
+                    ) : (
+                      filteredPlugins.map((plugin) => (
                       <button
                         key={plugin.key}
                         onClick={() => !plugin.connected && handlePluginConnect(plugin.key)}
@@ -878,12 +1083,14 @@ export function V2Footer({ accountFrozen: accountFrozenProp }: V2FooterProps) {
                           </div>
                         )}
                       </button>
-                    ))}
+                    )))
+                  }
                   </div>
 
                   {/* Footer hint */}
                   <div className="mt-3 pt-3 border-t border-[var(--v2-border)] text-[10px] text-[var(--v2-text-muted)] text-center">
                     Click on a plugin to connect via OAuth
+                  </div>
                   </div>
                 </div>
               </>
@@ -1158,7 +1365,7 @@ export function V2Footer({ accountFrozen: accountFrozenProp }: V2FooterProps) {
               </div>
 
               {/* Title */}
-              <h3 className="text-lg font-semibold text-[var(--v2-text)] text-center mb-2">
+              <h3 className="text-lg font-semibold text-[var(--v2-text-primary)] text-center mb-2">
                 Disconnect Plugin
               </h3>
 
@@ -1217,6 +1424,15 @@ export function V2Footer({ accountFrozen: accountFrozenProp }: V2FooterProps) {
         }
         .animate-fade-in {
           animation: fade-in 0.2s ease-in-out;
+        }
+
+        /* Hide scrollbar completely */
+        .scrollbar-hide::-webkit-scrollbar {
+          display: none;
+        }
+        .scrollbar-hide {
+          -ms-overflow-style: none;
+          scrollbar-width: none;
         }
       `}</style>
     </div>

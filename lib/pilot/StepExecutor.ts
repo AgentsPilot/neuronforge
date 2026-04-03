@@ -14,7 +14,6 @@
 import { SupabaseClient } from '@supabase/supabase-js';
 import type {
   WorkflowStep,
-  ExecutionContext,
   StepOutput,
   ActionStep,
   LLMDecisionStep,
@@ -25,8 +24,12 @@ import type {
   EnrichmentStep,
   ValidationStep,
   ComparisonStep,
+  DeterministicExtractionStep,
+  IStateManager,
+  IParallelExecutor,
 } from './types';
 import { ExecutionError } from './types';
+import { ExecutionContext } from './ExecutionContext';
 import { PluginExecuterV2 } from '@/lib/server/plugin-executer-v2';
 import { runAgentKit } from '@/lib/agentkit/runAgentKit';
 import { AuditTrailService } from '@/lib/services/AuditTrailService';
@@ -35,6 +38,16 @@ import { ConditionalEvaluator } from './ConditionalEvaluator';
 import { DataOperations } from './DataOperations';
 import { StepCache } from './StepCache';
 import { AISConfigService } from '@/lib/services/AISConfigService';
+import { createLogger } from '@/lib/logger';
+import { schemaExtractor, analyzeOutputSchema } from './utils/SchemaAwareDataExtractor';
+import { VisionContentBuilder } from './utils/VisionContentBuilder';
+import { DeterministicExtractor } from '@/lib/extraction';
+import { IssueCollector } from './shadow/IssueCollector';
+import { FailureClassifier } from './shadow/FailureClassifier';
+import { ExecutionSummaryCollector } from './shadow/ExecutionSummaryCollector';
+
+// Create module-level logger for structured logging to dev.log
+const logger = createLogger({ module: 'StepExecutor', service: 'workflow-pilot' });
 // TODO: Implement these classes for per-step routing
 // import { TaskComplexityAnalyzer } from './TaskComplexityAnalyzer';
 // import { PerStepModelRouter } from './PerStepModelRouter';
@@ -43,19 +56,33 @@ export class StepExecutor {
   private supabase: SupabaseClient;
   private auditTrail: AuditTrailService;
   private conditionalEvaluator: ConditionalEvaluator;
-  private stateManager: any; // StateManager (avoiding circular dependency)
+  private stateManager?: IStateManager; // Wave 7: Now properly typed
   private stepCache: StepCache;
+  private parallelExecutor?: IParallelExecutor; // Wave 7: Now properly typed
+  // Batch calibration services
+  private issueCollector: IssueCollector;
+  private failureClassifier: FailureClassifier;
   // private complexityAnalyzer: TaskComplexityAnalyzer;
   // private modelRouter: PerStepModelRouter;
 
-  constructor(supabase: SupabaseClient, stateManager?: any, stepCache?: StepCache) {
+  constructor(supabase: SupabaseClient, stateManager?: IStateManager, stepCache?: StepCache) {
     this.supabase = supabase;
     this.auditTrail = AuditTrailService.getInstance();
     this.conditionalEvaluator = new ConditionalEvaluator();
     this.stateManager = stateManager;
     this.stepCache = stepCache || new StepCache(false);
+    this.issueCollector = new IssueCollector();
+    this.failureClassifier = new FailureClassifier();
     // this.complexityAnalyzer = new TaskComplexityAnalyzer();
     // this.modelRouter = new PerStepModelRouter();
+  }
+
+  /**
+   * Inject ParallelExecutor to handle nested scatter-gather steps
+   * Called after construction to avoid circular dependency
+   */
+  setParallelExecutor(parallelExecutor: IParallelExecutor): void {
+    this.parallelExecutor = parallelExecutor;
   }
 
   /**
@@ -67,15 +94,65 @@ export class StepExecutor {
   ): Promise<StepOutput> {
     const startTime = Date.now();
 
-    console.log(`[StepExecutor] Executing step ${step.id}: ${step.name} (type: ${step.type})`);
+    logger.info({ stepId: step.id, stepName: step.name, stepType: step.type }, 'Executing step');
+
+    // === BATCH CALIBRATION: DEPENDENCY CHECK ===
+    // In batch mode, check if dependencies failed with non-recoverable errors
+    if (context.batchCalibrationMode) {
+      const shouldSkip = this.shouldSkipDueToDependencies(step, context);
+      if (shouldSkip) {
+        logger.info({
+          stepId: step.id,
+          stepName: step.name,
+          reason: 'dependency_failed'
+        }, 'Skipping step due to failed dependency');
+
+        // Skip this step to avoid cascading errors
+        context.skippedSteps.push(step.id);
+
+        // Log skipped step to database
+        if (this.stateManager) {
+          await this.stateManager.logStepExecution(
+            context.executionId,
+            step.id,
+            step.name,
+            step.type,
+            'skipped',
+            {
+              skipped: true,
+              reason: 'dependency_failed',
+              message: 'Skipped because a required upstream step failed'
+            }
+          );
+        }
+
+        return {
+          stepId: step.id,
+          plugin: (step as any).plugin || 'system',
+          action: (step as any).action || step.type,
+          data: null,
+          metadata: {
+            success: false,
+            executedAt: new Date().toISOString(),
+            executionTime: 0,
+            skipped: true,
+            // @ts-ignore - adding custom metadata for batch calibration
+            reason: 'dependency_failed',
+            // @ts-ignore
+            message: 'Skipped because a required upstream step failed'
+          }
+        };
+      }
+    }
 
     // === CACHING CHECK ===
     // Check cache before execution (for deterministic steps only)
     const cacheableTypes = ['action', 'transform', 'validation', 'comparison'];
     if (cacheableTypes.includes(step.type)) {
-      const cachedOutput = this.stepCache.get(step.id, step.type, step.params || {});
+      const stepParams = (step as any).params || {};
+      const cachedOutput = this.stepCache.get(step.id, step.type, stepParams);
       if (cachedOutput) {
-        console.log(`💾 [StepExecutor] Cache hit for step ${step.id}, skipping execution`);
+        logger.debug({ stepId: step.id }, 'Cache hit - skipping execution');
         return cachedOutput;
       }
     }
@@ -85,15 +162,28 @@ export class StepExecutor {
     const shouldUseOrchestration = this.shouldUseOrchestration(step);
 
     if (shouldUseOrchestration && context.orchestrator && context.orchestrator.isActive()) {
-      console.log(`🎯 [StepExecutor] Using orchestration for AI task: ${step.id} (type: ${step.type})`);
+      logger.info({ stepId: step.id, stepType: step.type }, 'Using orchestration for AI task');
 
       try {
         // ✅ CRITICAL: Resolve variables BEFORE passing to orchestration
         // This ensures {{step1.data.emails}} is resolved to actual data for Step 2
-        const resolvedParams = context.resolveAllVariables(step.params || {});
+        // For AI processing steps, check BOTH params AND input fields
+        const stepAny = step as any;
+        const stepParams = stepAny.params || {};
 
-        console.log(`🔍 [StepExecutor] Orchestration step ${step.id} params BEFORE resolution:`, JSON.stringify(step.params, null, 2));
-        console.log(`🔍 [StepExecutor] Orchestration step ${step.id} params AFTER resolution:`, JSON.stringify(resolvedParams, null, 2));
+        // ✅ FIX: Include 'input' field if present (used by ai_processing steps)
+        if (stepAny.input !== undefined) {
+          stepParams.input = stepAny.input;
+        }
+        // Include 'prompt' field if present
+        if (stepAny.prompt !== undefined) {
+          stepParams.prompt = stepAny.prompt;
+        }
+
+        const resolvedParams = context.resolveAllVariables(stepParams);
+
+        logger.debug({ stepId: step.id, paramsBefore: stepParams }, 'Orchestration step params BEFORE resolution');
+        logger.debug({ stepId: step.id, paramsAfter: resolvedParams }, 'Orchestration step params AFTER resolution');
 
         // Execute via orchestration handlers
         const orchestrationResult = await context.orchestrator.executeStep(
@@ -110,8 +200,11 @@ export class StepExecutor {
 
         if (orchestrationResult) {
           // Return orchestrated result
-          console.log(`✅ [StepExecutor] Orchestration executed step ${step.id} successfully`);
-          console.log(`   Tokens: ${orchestrationResult.tokensUsed.total}, Saved: ${orchestrationResult.tokensSaved}`);
+          logger.info({
+            stepId: step.id,
+            tokensUsed: orchestrationResult.tokensUsed.total,
+            tokensSaved: orchestrationResult.tokensSaved
+          }, 'Orchestration executed step successfully');
 
           return {
             stepId: step.id,
@@ -132,39 +225,48 @@ export class StepExecutor {
           };
         }
       } catch (orchestrationError: any) {
-        console.warn(`⚠️  [StepExecutor] Orchestration failed for step ${step.id}, falling back to normal execution:`, orchestrationError.message);
+        logger.warn({ err: orchestrationError, stepId: step.id }, 'Orchestration failed - falling back to normal execution');
         // Fall through to normal execution
       }
     } else if (!shouldUseOrchestration && context.orchestrator?.isActive()) {
-      console.log(`⚡ [StepExecutor] Skipping orchestration for deterministic step: ${step.id} (type: ${step.type}) - executing plugin directly`);
+      logger.debug({ stepId: step.id, stepType: step.type }, 'Skipping orchestration for deterministic step - executing plugin directly');
     }
 
     // === NORMAL EXECUTION (Fallback or when orchestration is disabled) ===
 
     // Log step execution start to workflow_step_executions table
     if (this.stateManager) {
+      const metadata: any = {
+        started_at: new Date().toISOString(),
+        step_description: step.description,
+      };
+
+      // Include plugin info for action steps
+      if (step.type === 'action') {
+        if ((step as any).plugin) {
+          metadata.plugin = (step as any).plugin;
+        }
+        if ((step as any).action) {
+          metadata.action = (step as any).action;
+        }
+      }
+
       await this.stateManager.logStepExecution(
         context.executionId,
         step.id,
         step.name,
         step.type,
         'running',
-        {
-          started_at: new Date().toISOString(),
-          step_description: step.description,
-        }
+        metadata
       );
     }
 
     try {
       // Resolve parameters with variable substitution
-      const resolvedParams = context.resolveAllVariables(step.params || {});
+      // For action steps: resolve step.params
+      // For other step types (transform, loop, etc.): resolve top-level fields
+      let resolvedParams: any;
 
-<<<<<<< Updated upstream
-      // 🔍 DEBUG: Log variable resolution
-      console.log(`🔍 [StepExecutor] Step ${step.id} params BEFORE resolution:`, JSON.stringify(step.params, null, 2));
-      console.log(`🔍 [StepExecutor] Step ${step.id} params AFTER resolution:`, JSON.stringify(resolvedParams, null, 2));
-=======
       if (step.type === 'action') {
         // PILOT DSL uses 'config' field, not 'params'
         const stepAny = step as any;
@@ -219,7 +321,6 @@ export class StepExecutor {
         stepType: step.type,
         paramsAfter: resolvedParams,
       }, 'Step params AFTER resolution');
->>>>>>> Stashed changes
 
       let result: any;
       let tokensUsed: number | { total: number; prompt: number; completion: number } = 0;
@@ -231,12 +332,24 @@ export class StepExecutor {
           const actionResult = await this.executeAction(step as ActionStep, resolvedParams, context);
           result = actionResult.data;
           tokensUsed = actionResult.pluginTokens || 0;
-          console.log(`📊 [StepExecutor] Plugin action returned ${tokensUsed} tokens`);
+          logger.debug({ stepId: step.id, tokensUsed }, 'Plugin action returned tokens');
           break;
 
         case 'ai_processing':  // Smart Agent Builder uses this type
+          // RUNTIME SAFETY: Auto-detect file inputs and use deterministic extraction
+          // This prevents LLM from receiving binary file data even if workflow uses wrong step type
+          if (this.shouldUseDeterministicExtraction(step, resolvedParams, context)) {
+            logger.info({ stepId: step.id }, 'Auto-detected file input in ai_processing step - using deterministic extraction');
+            result = await this.executeDeterministicExtraction(step, resolvedParams, context);
+          } else {
+            const llmResult = await this.executeLLMDecision(step as AIProcessingStep, resolvedParams, context);
+            result = llmResult.data;
+            tokensUsed = llmResult.tokensUsed;
+          }
+          break;
+
         case 'llm_decision':
-          const llmResult = await this.executeLLMDecision(step as LLMDecisionStep | AIProcessingStep, resolvedParams, context);
+          const llmResult = await this.executeLLMDecision(step as LLMDecisionStep, resolvedParams, context);
           result = llmResult.data;
           tokensUsed = llmResult.tokensUsed;
           break;
@@ -270,17 +383,43 @@ export class StepExecutor {
             step.id
           );
 
+        case 'parallel':
+          // V6 Format: Parallel step with nested steps to run concurrently
+          if (!this.parallelExecutor) {
+            throw new ExecutionError(
+              'Parallel steps require ParallelExecutor to be injected via setParallelExecutor()',
+              'MISSING_PARALLEL_EXECUTOR',
+              step.id
+            );
+          }
+          logger.info({ stepId: step.id, nestedSteps: (step as any).steps?.length }, 'Executing parallel step');
+          result = await this.parallelExecutor.executeParallel((step as any).steps || [], context);
+          // Convert Map to object for consistent output format
+          if (result instanceof Map) {
+            const resultObj: Record<string, any> = {};
+            result.forEach((value, key) => {
+              resultObj[key] = value?.data ?? value;
+            });
+            result = resultObj;
+          }
+          break;
+
         case 'switch':
           result = await this.executeSwitch(step as SwitchStep, context);
           break;
 
         case 'scatter_gather':
-          // Scatter-gather is handled by ParallelExecutor
-          throw new ExecutionError(
-            'Scatter-gather steps should be executed by ParallelExecutor',
-            'INVALID_STEP_TYPE',
-            step.id
-          );
+          // V4 Format: Nested scatter-gather steps are delegated to ParallelExecutor
+          if (!this.parallelExecutor) {
+            throw new ExecutionError(
+              'Scatter-gather steps require ParallelExecutor to be injected via setParallelExecutor()',
+              'MISSING_PARALLEL_EXECUTOR',
+              step.id
+            );
+          }
+          logger.info({ stepId: step.id }, 'Delegating scatter-gather step to ParallelExecutor');
+          result = await this.parallelExecutor.executeScatterGather(step, context);
+          break;
 
         case 'enrichment':
           result = await this.executeEnrichment(step as EnrichmentStep, context);
@@ -294,6 +433,10 @@ export class StepExecutor {
           result = await this.executeComparison(step as ComparisonStep, context);
           break;
 
+        case 'deterministic_extraction':
+          result = await this.executeDeterministicExtraction(step, resolvedParams, context);
+          break;
+
         default:
           throw new ExecutionError(
             `Unknown step type: ${(step as any).type}`,
@@ -303,6 +446,27 @@ export class StepExecutor {
       }
 
       const executionTime = Date.now() - startTime;
+
+      // Calculate item count for business intelligence
+      // Handles both direct arrays and nested array structures
+      const itemCount = this.calculateItemCount(result);
+
+      // 🔍 Extract field names for business intelligence (BEFORE building output)
+      // This ensures field_names are included in output.metadata for WorkflowPilot
+      let fieldNames: string[] = [];
+      if (Array.isArray(result) && result.length > 0 && typeof result[0] === 'object' && result[0] !== null) {
+        // Extract field names from first item (for UI preview)
+        fieldNames = Object.keys(result[0]).slice(0, 10);
+        console.log(`✅ [StepExecutor] Extracted ${fieldNames.length} field names from step ${step.id}:`, fieldNames);
+      } else if (result && typeof result === 'object' && !Array.isArray(result)) {
+        // For object results, get top-level keys
+        fieldNames = Object.keys(result).slice(0, 10);
+        console.log(`✅ [StepExecutor] Extracted ${fieldNames.length} fields from object result (step ${step.id}):`, fieldNames);
+      } else if (itemCount > 0) {
+        // Log when we have items but no field extraction
+        console.warn(`⚠️  [StepExecutor] Step ${step.id} (${step.name}) has ${itemCount} items but no field names extracted.`);
+        console.warn(`    Result type: ${typeof result}, isArray: ${Array.isArray(result)}, hasData: ${result && 'data' in result}`);
+      }
 
       // Build step output
       const output: StepOutput = {
@@ -314,26 +478,49 @@ export class StepExecutor {
           success: true,
           executedAt: new Date().toISOString(),
           executionTime,
-          itemCount: Array.isArray(result) ? result.length : undefined,
+          itemCount,
           tokensUsed: tokensUsed || undefined,
+          field_names: fieldNames.length > 0 ? fieldNames : undefined, // ✅ CRITICAL: Include field_names in output.metadata
         },
       };
 
-      // Update step execution to completed in workflow_step_executions table
-      if (this.stateManager) {
-        await this.stateManager.updateStepExecution(
+      // 🔍 DEBUG: Log step output for debugging
+      console.log(`🔍 [StepExecutor] Step ${step.id} completed:`, {
+        stepId: step.id,
+        stepType: step.type,
+        operation: (step as any).operation,
+        dataType: typeof result,
+        dataIsArray: Array.isArray(result),
+        dataLength: Array.isArray(result) ? result.length : undefined,
+        dataPreview: Array.isArray(result)
+          ? `array[${result.length}]${result.length > 0 ? ` first item: ${JSON.stringify(result[0])?.slice(0, 100) || 'undefined'}` : ' (empty)'}`
+          : (JSON.stringify(result) || 'undefined').slice(0, 200)
+      });
+
+      // Cache step output in database for resume flow (privacy-first: temporary storage)
+      // IMPORTANT: Must await to prevent race condition on resume
+      try {
+        const { executionOutputCache } = await import('./ExecutionOutputCache');
+        await executionOutputCache.setStepOutput(
           context.executionId,
           step.id,
-          'completed',
+          result, // Full data (temporary in execution_trace.cached_outputs)
           {
+            plugin: step.plugin,
+            action: (step as any).action,
             success: true,
             execution_time: executionTime,
             tokens_used: tokensUsed || undefined,
-            item_count: Array.isArray(result) ? result.length : undefined,
-            completed_at: new Date().toISOString(),
+            item_count: itemCount, // ✅ Use calculated item count
           }
         );
+      } catch (err) {
+        console.warn(`[StepExecutor] Failed to cache step ${step.id} output (non-critical):`, err);
       }
+
+      // ✅ NOTE: Step execution metadata will be updated by WorkflowPilot
+      // We've already included field_names in output.metadata above (line ~448)
+      // WorkflowPilot will call updateStepExecution with the complete metadata
 
       // Audit trail
       await this.auditTrail.log({
@@ -352,23 +539,22 @@ export class StepExecutor {
         severity: 'info',
       });
 
-      console.log(`[StepExecutor] Step ${step.id} completed successfully in ${executionTime}ms`);
+      logger.info({ stepId: step.id, executionTimeMs: executionTime }, 'Step completed successfully');
 
       // === CACHE STORAGE ===
       // Store in cache if step type is cacheable
       if (cacheableTypes.includes(step.type)) {
-        this.stepCache.set(step.id, step.type, step.params || {}, output);
-        console.log(`💾 [StepExecutor] Cached result for step ${step.id}`);
+        const stepParams = (step as any).params || {};
+        this.stepCache.set(step.id, step.type, stepParams, output);
+        logger.debug({ stepId: step.id }, 'Cached step result');
       }
 
       return output;
     } catch (error: any) {
       const executionTime = Date.now() - startTime;
 
-      console.error(`[StepExecutor] Step ${step.id} failed:`, error);
+      logger.error({ err: error, stepId: step.id, executionTimeMs: executionTime }, 'Step execution failed');
 
-<<<<<<< Updated upstream
-=======
       // === BATCH CALIBRATION: COLLECT ISSUE AND DECIDE CONTINUATION ===
       if (context.batchCalibrationMode) {
         // Collect the issue for later presentation to user
@@ -459,7 +645,6 @@ export class StepExecutor {
       }
 
       // === NORMAL MODE: Original error handling ===
->>>>>>> Stashed changes
       // Update step execution to failed in workflow_step_executions table
       if (this.stateManager) {
         await this.stateManager.updateStepExecution(
@@ -533,12 +718,6 @@ export class StepExecutor {
       );
     }
 
-<<<<<<< Updated upstream
-    console.log(`[StepExecutor] Executing plugin: ${step.plugin}.${step.action}`);
-
-    const actionStartTime = Date.now();
-
-=======
     logger.info({ stepId: step.id, plugin: step.plugin, action }, 'Executing plugin action');
 
     const actionStartTime = Date.now();
@@ -560,31 +739,18 @@ export class StepExecutor {
       transformedParams,
     }, 'Plugin action transformed params');
 
->>>>>>> Stashed changes
     // Execute via PluginExecuterV2 (use getInstance for singleton)
     const pluginExecuter = await PluginExecuterV2.getInstance();
     const result = await pluginExecuter.execute(
       context.userId,
       step.plugin,
-<<<<<<< Updated upstream
-      step.action,
-      params
-=======
       action,
       transformedParams
->>>>>>> Stashed changes
     );
 
     const actionDuration = Date.now() - actionStartTime;
 
     if (!result.success) {
-<<<<<<< Updated upstream
-      throw new ExecutionError(
-        result.error || `Plugin execution failed: ${step.plugin}.${step.action}`,
-        'PLUGIN_EXECUTION_FAILED',
-        step.id,
-        { plugin: step.plugin, action: step.action, error: result.error }
-=======
       logger.error({
         stepId: step.id,
         plugin: step.plugin,
@@ -596,7 +762,6 @@ export class StepExecutor {
         result.message || result.error || `Plugin execution failed: ${step.plugin}.${action}`,
         step.id,
         { plugin: step.plugin, action, error: result.error, message: result.message }
->>>>>>> Stashed changes
       );
     }
 
@@ -636,9 +801,6 @@ export class StepExecutor {
         }
       });
 
-<<<<<<< Updated upstream
-      console.log(`✅ [StepExecutor] Tracked plugin action: ${step.plugin}.${step.action} (${actionDuration}ms, ${pluginTokens} tokens)`);
-=======
       logger.debug({
         stepId: step.id,
         plugin: step.plugin,
@@ -646,16 +808,13 @@ export class StepExecutor {
         durationMs: actionDuration,
         pluginTokens
       }, 'Tracked plugin action execution');
->>>>>>> Stashed changes
     } catch (trackingError) {
       // Token tracking failures should NOT fail plugin execution
-      console.warn(`⚠️  [StepExecutor] Failed to track plugin action (non-critical):`, trackingError);
+      logger.warn({ err: trackingError, stepId: step.id }, 'Failed to track plugin action (non-critical)');
     }
 
     // ✅ P0 FIX: Return plugin tokens so they flow through StepOutput → ExecutionContext
     // This ensures tokens are properly tracked via setStepOutput() which handles retries correctly
-<<<<<<< Updated upstream
-=======
     //
     // ✅ SCHEMA-DRIVEN: Attach source plugin/action metadata for downstream transforms
     // This allows transform operations to use schema-aware data handling without hardcoding
@@ -682,16 +841,13 @@ export class StepExecutor {
       }
     }
 
->>>>>>> Stashed changes
     return {
-      data: result.data,
+      data: outputData,
       pluginTokens: pluginTokens
     };
   }
 
   /**
-<<<<<<< Updated upstream
-=======
    * Transform parameters to match plugin schema expectations (GENERIC)
    *
    * Intelligently transforms parameters based on plugin schema:
@@ -976,14 +1132,28 @@ export class StepExecutor {
   }
 
   /**
->>>>>>> Stashed changes
    * Determine if a step should use orchestration
    * Only AI tasks (summarize, analyze, decide) need orchestration
    * Deterministic plugin actions should execute directly
    */
   private shouldUseOrchestration(step: WorkflowStep): boolean {
-    // AI processing steps NEED orchestration for LLM-based handling
-    if (step.type === 'ai_processing' || step.type === 'llm_decision') {
+    // LLM-based steps that need intelligent routing through orchestration
+    // These steps require:
+    // - Token budgeting per intent
+    // - Model routing based on AIS + complexity scores
+    // - Per-step execution tracking
+    // - Compression policies
+    const llmStepTypes = [
+      'ai_processing',   // AI processing tasks
+      'llm_decision',    // LLM-based decisions
+      'summarize',       // Content summarization
+      'extract',         // Information extraction
+      'generate'         // Content generation
+      // NOTE: 'transform' removed - most transforms are deterministic (map, filter, group, etc.)
+      // Only complex transforms with AI analysis should use ai_processing type
+    ];
+
+    if (llmStepTypes.includes(step.type)) {
       return true;
     }
 
@@ -993,13 +1163,8 @@ export class StepExecutor {
       return false;
     }
 
-    // Transform, enrich, validation steps may benefit from orchestration
-    // but typically don't need it - default to false for efficiency
-    if (step.type === 'transform' || step.type === 'enrich' || step.type === 'validation') {
-      return false;
-    }
-
-    // Other types (switch, delay, comparison) don't need orchestration
+    // Enrich, validation, comparison - default to false for efficiency
+    // These are typically deterministic operations
     return false;
   }
 
@@ -1012,7 +1177,7 @@ export class StepExecutor {
     params: any,
     context: ExecutionContext
   ): Promise<{ data: any; tokensUsed: { total: number; prompt: number; completion: number } }> {
-    console.log(`[StepExecutor] Executing LLM decision: ${step.name}`);
+    logger.info({ stepId: step.id, stepName: step.name }, 'Executing LLM decision');
 
     const stepStartTime = Date.now();
     let selectedModel: string | undefined;
@@ -1022,11 +1187,11 @@ export class StepExecutor {
     // TODO: Re-enable once TaskComplexityAnalyzer and PerStepModelRouter are implemented
     // Analyze step complexity and route to optimal model
     try {
-      // const isRoutingEnabled = await this.modelRouter.isEnabled();
-      const isRoutingEnabled = false; // Disabled until classes are implemented
+      // Check if per-step routing is enabled in orchestrator config (admin UI)
+      const isRoutingEnabled = context.orchestrator?.config?.aisRoutingEnabled || false;
 
       if (isRoutingEnabled) {
-        console.log(`🎯 [StepExecutor] Per-step routing enabled - analyzing complexity...`);
+        logger.debug({ stepId: step.id }, 'Per-step routing enabled - analyzing complexity');
 
         // // Analyze step complexity
         // const complexityAnalysis = await this.complexityAnalyzer.analyzeStep(step, context);
@@ -1062,24 +1227,16 @@ export class StepExecutor {
         //   routingDecision
         // );
       } else {
-        console.log(`ℹ️ [StepExecutor] Per-step routing disabled - using agent default model`);
+        logger.debug({ stepId: step.id }, 'Per-step routing disabled - using agent default model');
       }
     } catch (routingError) {
-      console.error('❌ [StepExecutor] Routing failed, falling back to agent default:', routingError);
+      logger.error({ err: routingError, stepId: step.id }, 'Routing failed - falling back to agent default');
       // Continue with agent default model
     }
 
     // Build prompt with context
     const prompt = step.prompt || step.description || step.name;
 
-<<<<<<< Updated upstream
-    // FIX: Extract variable references from prompt and resolve them into params
-    // This handles cases where Smart Agent Builder creates prompts like:
-    // "Analyze the following emails: {{step1.data}}"
-    // We need to extract step1.data and add it to params
-    console.log('🔍 [StepExecutor] Original params:', JSON.stringify(params, null, 2));
-    console.log('🔍 [StepExecutor] Prompt:', prompt);
-=======
     // ✅ CRITICAL FIX: AI steps should ONLY receive the data specified in their params
     // NOT the entire execution context which can be 65K+ tokens
     //
@@ -1089,7 +1246,6 @@ export class StepExecutor {
     //
     // We should NOT add more data from prompt references or previous steps
     // This prevents token bloat and ensures AI steps get exactly what they need
->>>>>>> Stashed changes
 
     logger.debug({
       stepId: step.id,
@@ -1098,55 +1254,6 @@ export class StepExecutor {
       prompt
     }, 'LLM decision with scoped params (only what step specified)');
 
-<<<<<<< Updated upstream
-    // Extract all {{variable}} references from the prompt
-    const variablePattern = /\{\{([^}]+)\}\}/g;
-    const matches = prompt.match(variablePattern);
-
-    if (matches && matches.length > 0) {
-      console.log('🔍 [StepExecutor] Found variable references in prompt:', matches);
-
-      for (const match of matches) {
-        try {
-          const resolved = context.resolveVariable(match);
-
-          // Extract the variable name for use as a key
-          // e.g., "{{step1.data}}" -> "step1_data"
-          const varName = match.replace(/\{\{|\}\}/g, '').replace(/\./g, '_');
-
-          // Only add to params if it's not already there
-          if (!enrichedParams[varName]) {
-            enrichedParams[varName] = resolved;
-            console.log(`🔍 [StepExecutor] Added "${varName}" to params from prompt variable "${match}"`);
-          }
-        } catch (error: any) {
-          console.warn(`🔍 [StepExecutor] Could not resolve variable "${match}" from prompt:`, error.message);
-        }
-      }
-    }
-
-    // If params are still empty after enrichment, try to get data from previous step
-    if (Object.keys(enrichedParams).length === 0) {
-      console.log('🔍 [StepExecutor] Params still empty, checking for previous step outputs...');
-
-      const allOutputs = context.getAllStepOutputs();
-      if (allOutputs.size > 0) {
-        // Get the last step's output
-        const outputsArray = Array.from(allOutputs.entries());
-        const [lastStepId, lastOutput] = outputsArray[outputsArray.length - 1];
-
-        console.log(`🔍 [StepExecutor] Using output from previous step "${lastStepId}" as default params`);
-        enrichedParams.data = lastOutput.data;
-      }
-    }
-
-    console.log('🔍 [StepExecutor] Enriched params:', JSON.stringify(enrichedParams, null, 2));
-
-    const contextSummary = this.buildContextSummary(context);
-
-    const fullPrompt = `
-${prompt}
-=======
     // Use params as-is - they're already resolved and scoped to this step's needs
     const scopedParams = params || {};
 
@@ -1159,16 +1266,17 @@ ${prompt}
       contextSummary,
       scopedParams  // ✅ Only pass what this step needs, not entire execution context
     );
->>>>>>> Stashed changes
 
-## Current Context:
-${contextSummary}
+    // Vision mode warning: runAgentKit doesn't support multimodal content
+    // Vision extraction should go through orchestration (ExtractHandler)
+    if (isVisionMode) {
+      logger.warn({ stepId: step.id }, 'Vision mode detected but runAgentKit fallback path. Vision requires orchestration to be enabled.');
+    }
 
-## Data for Analysis:
-${JSON.stringify(enrichedParams, null, 2)}
-
-Please analyze the above and provide your decision/response.
-    `.trim();
+    // Convert to string for runAgentKit (vision is handled by orchestration)
+    const promptString = typeof fullPrompt === 'string'
+      ? fullPrompt
+      : fullPrompt.find((p: any) => p.type === 'text')?.text || JSON.stringify(fullPrompt);
 
     // Use AgentKit for intelligent decision (with optional model override)
     // If a model was selected by routing, temporarily override the agent's model preference
@@ -1184,6 +1292,11 @@ Please analyze the above and provide your decision/response.
       plugins_required: isAIProcessing ? [] : context.agent.plugins_required
     };
 
+    // IMPORTANT: Do NOT inject step.config.output_schema into agent.output_schema
+    // - agent.output_schema = delivery instructions (array of {type: "EmailDraft", config: {...}})
+    // - step.config.output_schema = JSON Schema for structured extraction (handled by orchestration)
+    // Mixing these two causes "outputSchema.filter is not a function" error in runAgentKit
+
     // Override model if selected by routing
     if (selectedModel) {
       agentForExecution.model_preference = selectedModel;
@@ -1192,7 +1305,7 @@ Please analyze the above and provide your decision/response.
     const result = await runAgentKit(
       context.userId,
       agentForExecution,
-      fullPrompt,
+      promptString,  // Use string version (vision handled by orchestration)
       {},
       context.sessionId
     );
@@ -1279,12 +1392,18 @@ Please analyze the above and provide your decision/response.
 
   /**
    * Execute conditional step
+   * Supports two modes:
+   * 1. Legacy: Only evaluates condition (routing handled by orchestrator)
+   * 2. V4: Evaluates condition AND executes nested then_steps/else_steps
    */
   private async executeConditional(
     step: WorkflowStep,
     context: ExecutionContext
   ): Promise<any> {
-    if (!step.condition) {
+    const conditionalStep = step as any;
+    const stepCondition = conditionalStep.condition;
+
+    if (!stepCondition) {
       throw new ExecutionError(
         `Conditional step ${step.id} missing condition`,
         'MISSING_CONDITION',
@@ -1292,13 +1411,88 @@ Please analyze the above and provide your decision/response.
       );
     }
 
-    console.log(`[StepExecutor] Evaluating condition for step ${step.id}`);
+    logger.debug({ stepId: step.id, condition: stepCondition }, 'Evaluating condition');
 
-    const result = this.conditionalEvaluator.evaluate(step.condition, context);
+    const conditionResult = this.conditionalEvaluator.evaluate(stepCondition, context);
 
+    logger.info({ stepId: step.id, conditionResult }, 'Condition evaluated');
+
+    // V4 Format: Execute nested steps based on condition
+    // Support both formats: then_steps/else_steps (DSL) and then/else (PILOT normalized)
+    const hasV4Format = conditionalStep.then_steps || conditionalStep.else_steps || conditionalStep.then || conditionalStep.else;
+
+    if (hasV4Format) {
+      logger.debug({ stepId: step.id }, 'V4 conditional detected - executing nested steps');
+
+      const branchToExecute = conditionResult ? (conditionalStep.then || conditionalStep.then_steps) : (conditionalStep.else || conditionalStep.else_steps);
+      const branchName = conditionResult ? 'then' : 'else';
+
+      if (branchToExecute && Array.isArray(branchToExecute) && branchToExecute.length > 0) {
+        logger.info({ stepId: step.id, branchName, stepCount: branchToExecute.length }, 'Executing conditional branch');
+
+        const branchResults: any[] = [];
+
+        // Execute each step in the branch sequentially
+        for (let i = 0; i < branchToExecute.length; i++) {
+          const branchStep = branchToExecute[i];
+          logger.debug({ stepId: step.id, branchName, index: i, branchStepId: branchStep.id, branchStepType: branchStep.type }, 'Executing branch step');
+
+          try {
+            const branchStepResult = await this.execute(branchStep, context);
+            branchResults.push(branchStepResult);
+
+            // Store the result in context so subsequent steps can reference it
+            context.setStepOutput(branchStep.id, branchStepResult);
+
+            // ✅ FIX: Register output_variable if specified (allows referencing by name)
+            // This was missing - conditional branch steps could only be accessed by step ID, not by output_variable name
+            const outputVariable = (branchStep as any).output_variable;
+            if (outputVariable && branchStepResult) {
+              // Extract the actual data from StepOutput format if needed
+              const dataToRegister = branchStepResult.data !== undefined ? branchStepResult.data : branchStepResult;
+              context.setVariable(outputVariable, dataToRegister);
+              logger.debug({ stepId: branchStep.id, outputVariable }, 'Registered output variable for conditional branch step');
+            }
+
+            // Collect execution metadata for calibration summaries
+            await this.collectExecutionMetadata(branchStep, branchStepResult, context);
+          } catch (error: any) {
+            logger.error({ err: error, stepId: step.id, branchName, branchStepId: branchStep.id }, 'Error executing branch step');
+
+            // If continueOnError is set, log and continue
+            if (branchStep.continueOnError) {
+              logger.warn({ stepId: step.id, branchStepId: branchStep.id }, 'continueOnError=true - continuing despite error');
+              branchResults.push({ error: error.message, stepId: branchStep.id });
+            } else {
+              throw error;
+            }
+          }
+        }
+
+        return {
+          result: conditionResult,
+          condition: stepCondition,
+          branch: branchName,
+          branchResults,
+          executedSteps: branchToExecute.length,
+        };
+      } else {
+        logger.debug({ stepId: step.id, branchName }, 'No steps to execute in branch');
+        return {
+          result: conditionResult,
+          condition: stepCondition,
+          branch: branchName,
+          branchResults: [],
+          executedSteps: 0,
+        };
+      }
+    }
+
+    // Legacy Format: Only evaluate condition (orchestrator handles routing)
+    logger.debug({ stepId: step.id }, 'Legacy conditional - returning evaluation only');
     return {
-      result,
-      condition: step.condition,
+      result: conditionResult,
+      condition: stepCondition,
     };
   }
 
@@ -1310,25 +1504,25 @@ Please analyze the above and provide your decision/response.
     step: SwitchStep,
     context: ExecutionContext
   ): Promise<any> {
-    console.log(`🔀 [StepExecutor] Executing switch step ${step.id}`);
+    logger.info({ stepId: step.id }, 'Executing switch step');
 
     // Evaluate the switch expression
     const evaluatedValue = context.resolveVariable?.(step.evaluate) ?? step.evaluate;
     const valueStr = String(evaluatedValue);
 
-    console.log(`🔀 [StepExecutor] Switch on "${step.evaluate}" = "${valueStr}"`);
+    logger.debug({ stepId: step.id, expression: step.evaluate, evaluatedValue: valueStr }, 'Switch expression evaluated');
 
     // Find matching case
     let matchedSteps: string[] | undefined;
 
     if (step.cases[valueStr]) {
       matchedSteps = step.cases[valueStr];
-      console.log(`✅ [StepExecutor] Matched case "${valueStr}" → steps: ${matchedSteps.join(', ')}`);
+      logger.info({ stepId: step.id, matchedCase: valueStr, matchedSteps }, 'Matched switch case');
     } else if (step.default) {
       matchedSteps = step.default;
-      console.log(`⚠️  [StepExecutor] No match, using default → steps: ${matchedSteps.join(', ')}`);
+      logger.warn({ stepId: step.id, defaultSteps: matchedSteps }, 'No match - using default case');
     } else {
-      console.log(`❌ [StepExecutor] No match and no default case`);
+      logger.warn({ stepId: step.id }, 'No match and no default case');
       matchedSteps = [];
     }
 
@@ -1351,14 +1545,14 @@ Please analyze the above and provide your decision/response.
     step: EnrichmentStep,
     context: ExecutionContext
   ): Promise<any> {
-    console.log(`📊 [StepExecutor] Executing enrichment step ${step.id}`);
+    logger.info({ stepId: step.id }, 'Executing enrichment step');
 
     // Resolve all sources
     const sources: Record<string, any> = {};
     for (const source of step.sources) {
       const value = context.resolveVariable?.(source.from) ?? null;
       sources[source.key] = value;
-      console.log(`📊 [StepExecutor] Source "${source.key}" resolved from ${source.from}`);
+      logger.debug({ stepId: step.id, sourceKey: source.key, sourceFrom: source.from }, 'Source resolved');
     }
 
     // Enrich data using DataOperations
@@ -1367,7 +1561,7 @@ Please analyze the above and provide your decision/response.
       mergeArrays: step.mergeArrays,
     });
 
-    console.log(`✅ [StepExecutor] Enrichment complete for ${step.id}`);
+    logger.info({ stepId: step.id, strategy: step.strategy }, 'Enrichment complete');
 
     return result;
   }
@@ -1380,7 +1574,7 @@ Please analyze the above and provide your decision/response.
     step: ValidationStep,
     context: ExecutionContext
   ): Promise<any> {
-    console.log(`✅ [StepExecutor] Executing validation step ${step.id}`);
+    logger.info({ stepId: step.id }, 'Executing validation step');
 
     // Resolve input data
     const data = context.resolveVariable?.(step.input);
@@ -1388,7 +1582,7 @@ Please analyze the above and provide your decision/response.
     // Validate using DataOperations
     const validationResult = DataOperations.validate(data, step.schema, step.rules);
 
-    console.log(`✅ [StepExecutor] Validation ${validationResult.valid ? 'passed' : 'failed'} for ${step.id}`);
+    logger.info({ stepId: step.id, valid: validationResult.valid, errorCount: validationResult.errors.length }, 'Validation complete');
 
     // Handle validation failure
     if (!validationResult.valid) {
@@ -1397,14 +1591,14 @@ Please analyze the above and provide your decision/response.
       if (onFail === 'throw') {
         throw new ExecutionError(
           `Validation failed: ${validationResult.errors.join(', ')}`,
-          'VALIDATION_FAILED',
           step.id,
           { errors: validationResult.errors }
         );
       } else if (onFail === 'skip') {
-        console.log(`⏭  [StepExecutor] Validation failed, skipping step ${step.id}`);
+        logger.warn({ stepId: step.id, errors: validationResult.errors }, 'Validation failed - skipping step');
+        context.markStepSkipped(step.id);
       }
-      // If 'continue', just log and return result
+      // If 'continue', just log and return result (don't mark as failed or skipped)
     }
 
     return {
@@ -1422,13 +1616,13 @@ Please analyze the above and provide your decision/response.
     step: ComparisonStep,
     context: ExecutionContext
   ): Promise<any> {
-    console.log(`🔍 [StepExecutor] Executing comparison step ${step.id}`);
+    logger.info({ stepId: step.id }, 'Executing comparison step');
 
     // Resolve left and right values
     const leftValue = context.resolveVariable?.(step.left);
     const rightValue = context.resolveVariable?.(step.right);
 
-    console.log(`🔍 [StepExecutor] Comparing "${step.left}" vs "${step.right}" with operation: ${step.operation}`);
+    logger.debug({ stepId: step.id, left: step.left, right: step.right, operation: step.operation }, 'Comparing values');
 
     // Compare using DataOperations
     const result = DataOperations.compare(
@@ -1438,7 +1632,7 @@ Please analyze the above and provide your decision/response.
       step.outputFormat || 'boolean'
     );
 
-    console.log(`✅ [StepExecutor] Comparison complete for ${step.id}`);
+    logger.info({ stepId: step.id, operation: step.operation }, 'Comparison complete');
 
     return result;
   }
@@ -1461,17 +1655,105 @@ Please analyze the above and provide your decision/response.
       );
     }
 
-    console.log(`[StepExecutor] Executing transform: ${operation}`);
+    logger.info({ stepId: step.id, operation }, 'Executing transform');
+    logger.debug({ stepId: step.id, params }, 'Transform params');
 
-    // Resolve input data
-    const data = input ? context.resolveVariable(input) : params.data;
+    // ✅ FIX: Input has already been resolved by resolveAllVariables (line 175-188)
+    // Don't try to resolve again, just use it directly
+    let data = input !== undefined ? input : params.data;
+
+    // 🔍 DEBUG: Log what we're actually receiving
+    // Note: JSON.stringify(undefined) returns undefined (not a string), so we need to handle this
+    const inputValueForLog = input === undefined
+      ? 'undefined'
+      : Array.isArray(input)
+        ? `array[${input.length}]`
+        : (JSON.stringify(input) || 'null').slice(0, 200);
+    logger.debug({
+      stepId: step.id,
+      operation,
+      inputType: typeof input,
+      inputIsArray: Array.isArray(input),
+      inputValue: inputValueForLog,
+      dataType: typeof data,
+      dataIsArray: Array.isArray(data)
+    }, '🔍 Transform input received');
 
     if (!data) {
+      logger.error({
+        stepId: step.id,
+        availableVariables: Object.keys(context.variables),
+        params
+      }, 'Transform step has no input data');
       throw new ExecutionError(
-        `Transform step ${step.id} has no input data`,
+        `Transform step ${step.id} has no input data. Available variables: ${Object.keys(context.variables).join(', ')}`,
         'MISSING_INPUT_DATA',
         step.id
       );
+    }
+
+    // Handle case where input resolves to a StepOutput object instead of direct data
+    // This happens when using {{stepX}} instead of {{stepX.data}} or {{stepX.data.field}}
+    // Similar to ParallelExecutor.executeScatterGather() auto-extraction logic
+    if (data && typeof data === 'object' && !Array.isArray(data)) {
+      // Check if it's a StepOutput structure: {stepId, plugin, action, data, metadata}
+      if (data.stepId && data.data !== undefined) {
+        logger.debug({ stepId: step.id }, 'Detected StepOutput object, extracting data field');
+        const extractedData = data.data;
+
+        // Case 1: data is already an array (common for collect/reduce operations or previous transforms)
+        if (Array.isArray(extractedData)) {
+          logger.debug({ stepId: step.id, length: extractedData.length }, 'StepOutput.data is an array - using directly');
+          data = extractedData;
+        }
+        // Case 2: data is an object - try to find the most appropriate field
+        else if (extractedData && typeof extractedData === 'object') {
+          // Use SchemaAwareDataExtractor for consistent array extraction
+          // This replaces hardcoded field name lists with schema-driven detection
+          const sourcePlugin = (extractedData as any)._sourcePlugin;
+          const sourceAction = (extractedData as any)._sourceAction;
+
+          const extractedArray = await schemaExtractor.extractArray(
+            extractedData,
+            sourcePlugin,
+            sourceAction
+          );
+
+          if (extractedArray.length > 0 || Array.isArray(extractedArray)) {
+            logger.debug({ stepId: step.id, length: extractedArray.length, sourcePlugin, sourceAction },
+              'Schema-aware array extraction from StepOutput.data');
+            data = extractedArray;
+          } else {
+            // No array fields found - for some operations (like 'set'), we might want the object itself
+            // Only throw error for operations that explicitly require arrays
+            if (['filter', 'map', 'reduce', 'sort', 'deduplicate', 'flatten', 'group', 'aggregate'].includes(operation)) {
+              logger.error({ stepId: step.id, availableFields: Object.keys(extractedData) },
+                'StepOutput.data has no array fields for array-requiring operation');
+              throw new ExecutionError(
+                `Transform step ${step.id} (operation: ${operation}): input resolved to StepOutput but data has no array fields. Available fields: ${Object.keys(extractedData).join(', ')}. Consider using {{input.data.FIELD}} to specify which field to use.`,
+                step.id,
+                { errorCode: 'INVALID_TRANSFORM_INPUT', availableFields: Object.keys(extractedData), operation }
+              );
+            }
+            // For other operations, use the object as-is
+            logger.debug({ stepId: step.id }, 'Using StepOutput.data object for non-array operation');
+            data = extractedData;
+          }
+        }
+        // Case 3: data is a primitive or null
+        else {
+          // For operations like 'set', primitives might be acceptable
+          if (['filter', 'map', 'reduce', 'sort', 'deduplicate', 'flatten', 'group', 'aggregate'].includes(operation)) {
+            throw new ExecutionError(
+              `Transform step ${step.id} (operation: ${operation}): input resolved to StepOutput with non-object data (type: ${typeof extractedData}). This operation requires array input.`,
+              step.id,
+              { errorCode: 'INVALID_TRANSFORM_INPUT', dataType: typeof extractedData, operation }
+            );
+          }
+          logger.debug({ stepId: step.id, dataType: typeof extractedData }, 'Using primitive from StepOutput.data');
+          data = extractedData;
+        }
+      }
     }
 
     switch (operation) {
@@ -1497,8 +1779,6 @@ Please analyze the above and provide your decision/response.
       case 'aggregate':
         return this.transformAggregate(data, config);
 
-<<<<<<< Updated upstream
-=======
       case 'deduplicate':
         return this.transformDeduplicate(data, config);
 
@@ -1536,7 +1816,6 @@ Please analyze the above and provide your decision/response.
       case 'fetch_content':
         return await this.transformFetchContent(data, config, context);
 
->>>>>>> Stashed changes
       default:
         throw new ExecutionError(
           `Unknown transform operation: ${operation}`,
@@ -1548,18 +1827,242 @@ Please analyze the above and provide your decision/response.
 
   /**
    * Map transformation
+   * Supports converting array of objects to 2D array for Google Sheets
    */
-  private transformMap(data: any[], mapping: Record<string, string>, context: ExecutionContext): any[] {
+  private transformMap(data: any[], config: any, context: ExecutionContext): any[] | any[][] {
+    // 🔍 DEBUG: Log what transformMap received
+    console.log('🔍 [transformMap] Received data:', {
+      type: typeof data,
+      isArray: Array.isArray(data),
+      value: Array.isArray(data) ? `array[${data.length}]` : JSON.stringify(data).slice(0, 300)
+    });
+
     if (!Array.isArray(data)) {
       throw new ExecutionError('Map operation requires array input', 'INVALID_INPUT_TYPE');
     }
 
+    // Check if config has an expression field (JavaScript expression to evaluate)
+    if (config && config.expression && typeof config.expression === 'string') {
+      // Evaluate JavaScript expression for the entire array
+      // Expression should reference 'item' variable (e.g., "item.map(row => [row.a, row.b])")
+      try {
+        // ✅ CRITICAL FIX: Resolve all {{...}} variables in the expression before evaluation
+        // The expression may reference other steps like {{step6.data}} which need to be resolved
+        let resolvedExpression = config.expression;
+
+        // Find all {{...}} patterns and resolve them
+        const variablePattern = /\{\{([^}]+)\}\}/g;
+        const matches = [...config.expression.matchAll(variablePattern)];
+
+        for (const match of matches) {
+          const fullMatch = match[0]; // e.g., "{{step6.data}}"
+          const varPath = match[1];   // e.g., "step6.data"
+
+          try {
+            const resolvedValue = context.resolveVariable(fullMatch);
+
+            // 🔍 DEBUG: Log what we resolved
+            console.log(`🔍 [transformMap] Resolved ${fullMatch}:`, {
+              type: typeof resolvedValue,
+              isArray: Array.isArray(resolvedValue),
+              value: Array.isArray(resolvedValue)
+                ? `array[${resolvedValue.length}]`
+                : JSON.stringify(resolvedValue).slice(0, 200)
+            });
+
+            // Replace the {{...}} with the resolved value
+            // For arrays and objects, we need to inject them as JSON that will be parsed
+            // ✅ CRITICAL: Check for array FIRST, before other type checks
+            // Empty arrays [] would pass the truthiness check but String([]) returns "" - FIXED
+            if (Array.isArray(resolvedValue)) {
+              // Always use JSON.stringify for arrays (including empty arrays)
+              resolvedExpression = resolvedExpression.replace(fullMatch, JSON.stringify(resolvedValue));
+            } else if (typeof resolvedValue === 'object' && resolvedValue !== null) {
+              // Non-array objects - serialize as JSON
+              resolvedExpression = resolvedExpression.replace(fullMatch, JSON.stringify(resolvedValue));
+            } else if (typeof resolvedValue === 'string') {
+              // Strings need to be JSON-escaped to preserve quotes
+              resolvedExpression = resolvedExpression.replace(fullMatch, JSON.stringify(resolvedValue));
+            } else if (typeof resolvedValue === 'number' || typeof resolvedValue === 'boolean') {
+              // Numbers and booleans can be inserted directly
+              resolvedExpression = resolvedExpression.replace(fullMatch, String(resolvedValue));
+            } else if (resolvedValue === undefined || resolvedValue === null) {
+              // ✅ CRITICAL FIX: Handle null/undefined from empty lookup data sources
+              // When a lookup sheet is empty, step6.data is null
+              // For expressions using .includes(), treat null as empty array []
+              // This prevents "Cannot read properties of null (reading 'includes')" errors
+
+              logger.warn({
+                variable: fullMatch,
+                resolvedValue,
+                expression: config.expression
+              }, 'Variable resolved to null/undefined - checking for array operations');
+
+              // Check if the expression is using array methods on this variable
+              const afterVariable = config.expression.split(fullMatch)[1] || '';
+              const usesArrayMethods = /^\s*\.(includes|indexOf|find|filter|map|some|every)\(/.test(afterVariable);
+
+              // ✅ FIX: Also check for common null-safety patterns
+              // Patterns like: ({{var}} || []).includes() or ({{var}}) || []
+              const expressionStr = config.expression;
+              const hasNullSafetyPattern =
+                // Pattern: ({{var}} || []) - user already handles null
+                expressionStr.includes(`(${fullMatch} || [])`) ||
+                expressionStr.includes(`(${fullMatch}||[])`) ||
+                // Pattern: {{var}} || [] - direct fallback
+                new RegExp(`${fullMatch.replace(/[{}]/g, '\\$&')}\\s*\\|\\|\\s*\\[\\]`).test(expressionStr);
+
+              if (usesArrayMethods) {
+                // Replace with empty array for array method operations
+                resolvedExpression = resolvedExpression.replace(fullMatch, '[]');
+                logger.info({
+                  variable: fullMatch,
+                  replacedWith: '[]'
+                }, 'Replaced null with [] for array operation');
+              } else if (hasNullSafetyPattern) {
+                // User already has null safety pattern - use null and let || [] handle it
+                resolvedExpression = resolvedExpression.replace(fullMatch, 'null');
+                logger.info({
+                  variable: fullMatch,
+                  replacedWith: 'null',
+                  reason: 'null-safety pattern detected'
+                }, 'Replaced with null - user has fallback pattern');
+              } else {
+                // Check context: is this variable likely to be used as array?
+                // If entire expression structure suggests array usage, use []
+                const looksLikeArrayUsage = expressionStr.includes('.map(') ||
+                  expressionStr.includes('.filter(') ||
+                  expressionStr.includes('.some(') ||
+                  expressionStr.includes('.every(') ||
+                  expressionStr.includes('.includes(') ||
+                  expressionStr.includes('.indexOf(') ||
+                  expressionStr.includes('.find(') ||
+                  expressionStr.includes('.forEach(');
+
+                if (looksLikeArrayUsage) {
+                  resolvedExpression = resolvedExpression.replace(fullMatch, '[]');
+                  logger.info({
+                    variable: fullMatch,
+                    replacedWith: '[]',
+                    reason: 'expression uses array methods'
+                  }, 'Replaced null with [] - expression uses array methods');
+                } else {
+                  // For non-array operations, use the literal null
+                  resolvedExpression = resolvedExpression.replace(fullMatch, 'null');
+                }
+              }
+            } else {
+              resolvedExpression = resolvedExpression.replace(fullMatch, String(resolvedValue));
+            }
+          } catch (error: any) {
+            console.error(`❌ [transformMap] Failed to resolve ${fullMatch}:`, error.message);
+            logger.warn({
+              variable: fullMatch,
+              error: error.message
+            }, 'Failed to resolve variable in map expression');
+            // ✅ FIX: Replace failed variable with [] for array contexts
+            if (config.expression.includes('.includes(') || config.expression.includes('.map(')) {
+              resolvedExpression = resolvedExpression.replace(fullMatch, '[]');
+              console.log(`✅ [transformMap] Replaced failed ${fullMatch} with []`);
+            }
+          }
+        }
+
+        // 🔍 DEBUG: Log the resolved expression before evaluation
+        console.log(`🔍 [transformMap] Final expression:`, resolvedExpression.slice(0, 200));
+
+        // ✅ SMART TUPLE EXTRACTION DETECTION
+        // If the expression is trying to extract `row[0]` from each item (tuple unwrap pattern),
+        // but the data is already unwrapped (items are objects, not arrays), skip the expression
+        // and return the data as-is. This handles cases where auto-unwrap already happened upstream.
+        const isTupleUnwrapExpression = /item\.map\s*\(\s*\w+\s*=>\s*\w+\[0\]\s*\)/.test(resolvedExpression);
+        if (isTupleUnwrapExpression && Array.isArray(data) && data.length > 0) {
+          const firstItem = data[0];
+          // Check if data is NOT tuples (i.e., items are objects, not arrays)
+          const isAlreadyUnwrapped = firstItem && typeof firstItem === 'object' && !Array.isArray(firstItem);
+          if (isAlreadyUnwrapped) {
+            console.log(`✅ [transformMap] Detected tuple unwrap expression but data is already unwrapped objects - returning data as-is`);
+            logger.info({
+              expression: resolvedExpression.slice(0, 100),
+              firstItemType: typeof firstItem,
+              itemCount: data.length
+            }, 'Skipping tuple unwrap - data already contains objects');
+            return data;
+          }
+        }
+
+        // The expression operates on the whole array, so we evaluate it once
+        const evalFn = new Function('item', `return ${resolvedExpression}`);
+        const result = evalFn(data);
+
+        return result;
+      } catch (error: any) {
+        throw new ExecutionError(
+          `Map expression evaluation failed: ${error.message}. Expression: ${config.expression}`,
+          'EXPRESSION_EVAL_ERROR'
+        );
+      }
+    }
+
+    // Check if this is a Google Sheets format conversion (columns + add_headers)
+    if (config && config.columns && Array.isArray(config.columns)) {
+      const columns = config.columns;  // Data field names for extraction
+      const headerNames = config.header_names || columns;  // Semantic names for display headers
+      const result: any[][] = [];
+
+      // ✅ CRITICAL FIX: Only add headers when there's actual data to append
+      // This prevents adding empty header rows on every execution when no new items exist
+      const hasData = data && data.length > 0;
+
+      // Determine if we should add headers
+      let shouldAddHeaders = false;
+      if (config.add_headers && hasData) {
+        // Check if add_headers_source is specified - only add if that source is empty
+        // This allows: "add_headers": true, "add_headers_source": "{{step2.data.values}}"
+        if (config.add_headers_source) {
+          const sourceData = context.resolveVariable(config.add_headers_source);
+          // Only add headers if the source sheet was empty
+          shouldAddHeaders = !sourceData || (Array.isArray(sourceData) && sourceData.length === 0);
+        } else {
+          // No source specified - always add headers (legacy behavior, not recommended)
+          shouldAddHeaders = true;
+        }
+      }
+
+      // Add header row if conditions are met
+      // Use semantic header_names for display if provided, otherwise use data field names
+      if (shouldAddHeaders) {
+        result.push(headerNames.map((col: string) => col));
+      }
+
+      // Convert each object to array row based on column order
+      // Use findFieldValue for fuzzy matching of semantic column names to data fields
+      data.forEach(item => {
+        const row = columns.map((col: string, index: number) => {
+          // Try the data column name first, then the semantic header name for fuzzy matching
+          let value = this.findFieldValue(item, col, {});
+
+          // If not found with data column, try semantic header name
+          if (value === undefined && headerNames[index] && headerNames[index] !== col) {
+            value = this.findFieldValue(item, headerNames[index], {});
+          }
+
+          return value !== undefined && value !== null ? String(value) : '';
+        });
+        result.push(row);
+      });
+
+      return result;
+    }
+
+    // Standard map operation with mapping configuration
+    const mapping = config || {};
     return data.map(item => {
       const mapped: any = {};
 
       // Create temporary context with current item
       const tempContext = context.clone();
-      tempContext.setVariable('current', item);
+      tempContext.setVariable('item', item);
 
       for (const [key, valueExpr] of Object.entries(mapping)) {
         if (typeof valueExpr === 'string' && valueExpr.includes('{{')) {
@@ -1575,19 +2078,80 @@ Please analyze the above and provide your decision/response.
 
   /**
    * Filter transformation
+   *
+   * Returns a structured object with backward compatibility:
+   * - New workflows: use {{stepX.data.items}} or {{stepX.data.filtered}}
+   * - Legacy workflows: array-like object with [index] access
    */
-  private transformFilter(data: any[], config: any, context: ExecutionContext): any[] {
+  private transformFilter(data: any[], config: any, context: ExecutionContext): any {
     if (!Array.isArray(data)) {
-      throw new ExecutionError('Filter operation requires array input', 'INVALID_INPUT_TYPE');
+      const dataType = data === null ? 'null' : data === undefined ? 'undefined' : typeof data;
+      const dataPreview = data && typeof data === 'object'
+        ? `object with keys: ${Object.keys(data).join(', ')}`
+        : String(data).substring(0, 100);
+      throw new ExecutionError(
+        `Filter operation requires array input, but received ${dataType}. Data: ${dataPreview}`,
+        'INVALID_INPUT_TYPE'
+      );
     }
 
-    return data.filter(item => {
+    const originalCount = data.length;
+    const conditionStr = typeof config.condition === 'string' ? config.condition : '';
+
+    // ✅ Detect pre-computed boolean tuple pattern: item[1] == true/false
+    // This pattern is used when complex filters can't be evaluated directly
+    // The data contains [originalItem, booleanResult] tuples
+    const isTupleFilterPattern = conditionStr.includes('item[1]') &&
+      (conditionStr.includes('== true') || conditionStr.includes('== false') ||
+       conditionStr.includes('=== true') || conditionStr.includes('=== false'));
+
+    if (isTupleFilterPattern) {
+      logger.debug({ condition: conditionStr }, 'Detected tuple filter pattern - will auto-unwrap results');
+    }
+
+    console.log(`🔍 [transformFilter] Filtering ${data.length} items with condition:`, JSON.stringify(config.condition).slice(0, 200));
+    if (data.length > 0) {
+      const sample = data[0];
+      console.log(`🔍 [transformFilter] First item type:`, Array.isArray(sample) ? `array[${sample.length}]` : (sample && typeof sample === 'object' ? `object{${Object.keys(sample).slice(0, 5).join(',')}}` : typeof sample));
+    }
+
+    const filtered = data.filter(item => {
       // Create temporary context with current item
       const tempContext = context.clone();
-      tempContext.setVariable('current', item);
+      tempContext.setVariable('item', item);
 
       return this.conditionalEvaluator.evaluate(config.condition, tempContext);
     });
+
+    // ✅ AUTO-UNWRAP: If this was a tuple filter pattern, extract the original items
+    // This saves an extra map step and prevents [item, boolean] tuples from leaking
+    let finalFiltered = filtered;
+    if (isTupleFilterPattern && filtered.length > 0) {
+      // Check if first item is actually a tuple (array with 2 elements)
+      const firstItem = filtered[0];
+      if (Array.isArray(firstItem) && firstItem.length === 2) {
+        logger.info({
+          originalCount: filtered.length
+        }, 'Auto-unwrapping tuple filter results - extracting item[0] from each tuple');
+
+        // Extract original items from tuples
+        finalFiltered = filtered.map(tuple => tuple[0]);
+      }
+    }
+
+    // ✅ CRITICAL FIX: Return actual array for proper array operations
+    // The filtered array is the primary data - downstream steps expect Array.isArray() to be true
+    // We add metadata properties directly to the array object for backward compatibility
+    const result: any = finalFiltered;
+
+    // Add metadata properties for backward compatibility with FilterHandler output
+    result.items = finalFiltered;
+    result.filtered = finalFiltered;
+    result.removed = originalCount - finalFiltered.length;
+    result.originalCount = originalCount;
+    result.count = finalFiltered.length;
+
+    return result;
   }
 
   /**
@@ -1621,55 +2185,245 @@ Please analyze the above and provide your decision/response.
 
   /**
    * Sort transformation
+   * Supports both single-field and multi-level sorting:
+   * - Single: { sort_by: 'field', order: 'asc' }
+   * - Multi: { sort_by: [{ field: 'Priority', direction: 'desc' }, { field: 'date', direction: 'asc' }] }
+   *
+   * Also supports legacy format:
+   * - { field: 'fieldName', order: 'asc' }
    */
   private transformSort(data: any[], config: any): any[] {
     if (!Array.isArray(data)) {
       throw new ExecutionError('Sort operation requires array input', 'INVALID_INPUT_TYPE');
     }
 
-    const { field, order = 'asc' } = config;
+    // Normalize config to multi-level sort format
+    let sortCriteria: Array<{ field: string; direction: string; type?: string }> = [];
+
+    if (Array.isArray(config.sort_by)) {
+      // Multi-level sort: sort_by is array of { field, direction }
+      sortCriteria = config.sort_by.map((s: any) => ({
+        field: s.field,
+        direction: s.direction || s.order || 'asc',
+        type: s.type
+      }));
+    } else if (config.sort_by) {
+      // Single sort with sort_by string
+      sortCriteria = [{
+        field: config.sort_by,
+        direction: config.order || 'asc',
+        type: config.type
+      }];
+    } else if (config.field) {
+      // Legacy format: { field, order }
+      sortCriteria = [{
+        field: config.field,
+        direction: config.order || 'asc',
+        type: config.type
+      }];
+    }
+
+    if (sortCriteria.length === 0) {
+      return data; // No sort criteria, return as-is
+    }
 
     return [...data].sort((a, b) => {
-      const aVal = field ? a[field] : a;
-      const bVal = field ? b[field] : b;
-
-      if (order === 'desc') {
-        return bVal > aVal ? 1 : bVal < aVal ? -1 : 0;
-      } else {
-        return aVal > bVal ? 1 : aVal < bVal ? -1 : 0;
+      // Apply each sort criterion in order until we find a difference
+      for (const criterion of sortCriteria) {
+        const result = this.compareByCriterion(a, b, criterion);
+        if (result !== 0) {
+          return result;
+        }
       }
+      return 0; // All criteria are equal
     });
   }
 
   /**
-   * Group transformation
+   * Compare two items by a single sort criterion
    */
-  private transformGroup(data: any[], config: any): Record<string, any[]> {
-    if (!Array.isArray(data)) {
-      throw new ExecutionError('Group operation requires array input', 'INVALID_INPUT_TYPE');
+  private compareByCriterion(
+    a: any,
+    b: any,
+    criterion: { field: string; direction: string; type?: string }
+  ): number {
+    const { field, direction, type } = criterion;
+    let aVal = field ? a[field] : a;
+    let bVal = field ? b[field] : b;
+
+    // Auto-detect and handle date values
+    const isDateField = type === 'date' || type === 'datetime' ||
+      (typeof aVal === 'string' && this.looksLikeDate(aVal)) ||
+      (typeof bVal === 'string' && this.looksLikeDate(bVal));
+
+    if (isDateField) {
+      const aTime = this.parseToTimestamp(aVal);
+      const bTime = this.parseToTimestamp(bVal);
+
+      if (aTime !== null && bTime !== null) {
+        aVal = aTime;
+        bVal = bTime;
+      }
     }
 
-    const { field } = config;
+    // Handle numeric strings for proper numeric sorting
+    const isNumericField = type === 'number' ||
+      (typeof aVal === 'string' && /^-?\d+(\.\d+)?$/.test(aVal.trim())) ||
+      (typeof bVal === 'string' && /^-?\d+(\.\d+)?$/.test(bVal?.trim() || ''));
 
-    return data.reduce((acc, item) => {
-      const key = field ? item[field] : item;
+    if (isNumericField && typeof aVal === 'string') {
+      aVal = parseFloat(aVal);
+      bVal = parseFloat(bVal);
+    }
+
+    // Handle null/undefined - sort them to end
+    if (aVal === null || aVal === undefined) return direction === 'desc' ? -1 : 1;
+    if (bVal === null || bVal === undefined) return direction === 'desc' ? 1 : -1;
+
+    // Compare values
+    if (direction === 'desc') {
+      return bVal > aVal ? 1 : bVal < aVal ? -1 : 0;
+    } else {
+      return aVal > bVal ? 1 : aVal < bVal ? -1 : 0;
+    }
+  }
+
+  /**
+   * Helper: Check if a string looks like a date
+   */
+  private looksLikeDate(value: string): boolean {
+    if (!value || typeof value !== 'string') return false;
+
+    // ISO 8601: 2024-01-15T10:30:00Z or 2024-01-15
+    if (/^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}:\d{2})?/.test(value)) return true;
+
+    // Common date formats: 01/15/2024, 15/01/2024, Jan 15, 2024
+    if (/^\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}$/.test(value)) return true;
+    if (/^[A-Za-z]{3,9}\s+\d{1,2},?\s+\d{2,4}$/.test(value)) return true;
+
+    return false;
+  }
+
+  /**
+   * Helper: Parse various date formats to Unix timestamp
+   */
+  private parseToTimestamp(value: any): number | null {
+    if (value === null || value === undefined) return null;
+
+    // Already a number (Unix timestamp)
+    if (typeof value === 'number') return value;
+
+    // Date object
+    if (value instanceof Date) return value.getTime();
+
+    // String - try parsing
+    if (typeof value === 'string') {
+      const date = new Date(value);
+      if (!isNaN(date.getTime())) {
+        return date.getTime();
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Group transformation
+   *
+   * Returns a structured object with backward compatibility:
+   * - New workflows: use {{stepX.data.groups}}, {{stepX.data.keys}}, or {{stepX.data.grouped}}
+   * - Legacy workflows: direct key access via {{stepX.data['key']}} still works
+   */
+  /**
+   * Group transformation - GENERIC for ALL data structure patterns
+   *
+   * Supports:
+   * - 2D arrays: group by column name
+   * - Arrays of objects: group by field name (including nested like "fields.Status")
+   * - Arrays of primitives: group by value
+   */
+  private transformGroup(data: any[], config: any): any {
+    // CRITICAL: Unwrap structured output from previous steps
+    const unwrappedData = this.unwrapStructuredOutput(data);
+
+    if (!Array.isArray(unwrappedData)) {
+      throw new ExecutionError(
+        `Group operation requires array input. Received: ${typeof unwrappedData}. ` +
+        `If this is from a previous step, make sure to reference the array field (e.g., step1.values, step1.items, step1.records)`,
+        'INVALID_INPUT_TYPE'
+      );
+    }
+
+    const { field, groupBy, column } = config;
+    const groupKey = column || field || groupBy; // Support 'column', 'field', and 'groupBy'
+
+    // Detect if 2D array pattern
+    const is2DArray = Array.isArray(unwrappedData[0]);
+
+    // Build grouped object using generic extractValueByKey
+    const grouped = unwrappedData.reduce((acc, item, index) => {
+      // Skip header row for 2D arrays
+      if (is2DArray && index === 0) {
+        return acc;
+      }
+
+      const key = groupKey
+        ? String(this.extractValueByKey(item, groupKey, unwrappedData))
+        : String(item);
+
       if (!acc[key]) {
         acc[key] = [];
       }
       acc[key].push(item);
       return acc;
     }, {} as Record<string, any[]>);
+
+    logger.debug({ groupKey: groupKey || 'value', groupCount: Object.keys(grouped).length, is2DArray }, 'Grouped data');
+
+    // Return both grouped object and array of groups for iteration
+    const groups = Object.entries(grouped).map(([key, items]) => ({
+      key,
+      items: items as any[],
+      count: (items as any[]).length
+    }));
+
+    const result: any = {
+      grouped,        // Original grouped object: { "Offir Omer": [...], "David Mor": [...] }
+      groups,         // Array of groups for iteration: [{key: "Offir Omer", items: [...], count: 3}, ...]
+      keys: Object.keys(grouped),  // Array of unique keys: ["Offir Omer", "David Mor"]
+      count: groups.length         // Number of unique groups
+    };
+
+    // ✅ BACKWARD COMPATIBILITY: Add grouped keys directly to result
+    // Allows {{stepX.data['key']}} to work like before
+    Object.keys(grouped).forEach(key => {
+      result[key] = grouped[key];
+    });
+
+    return result;
   }
 
   /**
    * Aggregate transformation
+   * Supports two formats:
+   * 1. New format: { aggregations: [{ field, operation, alias }] }
+   * 2. Legacy format: { aggregation_type: 'sum', field: 'amount' }
    */
   private transformAggregate(data: any[], config: any): any {
     if (!Array.isArray(data)) {
       throw new ExecutionError('Aggregate operation requires array input', 'INVALID_INPUT_TYPE');
     }
 
-    const { aggregations } = config;
+    let { aggregations } = config;
+
+    // Handle legacy format: { aggregation_type, field }
+    if (!aggregations && config.aggregation_type) {
+      aggregations = [{
+        operation: config.aggregation_type,
+        field: config.field || null,
+        alias: config.alias || config.field || config.aggregation_type
+      }];
+    }
 
     if (!aggregations || !Array.isArray(aggregations)) {
       throw new ExecutionError('Aggregate operation requires aggregations config', 'MISSING_AGGREGATIONS');
@@ -1679,9 +2433,12 @@ Please analyze the above and provide your decision/response.
 
     aggregations.forEach((agg: any) => {
       const { field, operation, alias } = agg;
-      const key = alias || `${field}_${operation}`;
+      const key = alias || (field ? `${field}_${operation}` : operation);
 
-      const values = data.map(item => item[field]).filter(v => v !== undefined && v !== null);
+      // For count without field, count all items; otherwise filter by field
+      const values = field
+        ? data.map(item => item[field]).filter(v => v !== undefined && v !== null)
+        : data;
 
       switch (operation) {
         case 'sum':
@@ -1715,8 +2472,6 @@ Please analyze the above and provide your decision/response.
   }
 
   /**
-<<<<<<< Updated upstream
-=======
    * Rows-to-Objects transformation
    * Converts a 2D array (like Google Sheets data) to an array of objects
    * Uses the first row as headers/field names
@@ -3049,7 +3804,6 @@ Please analyze the above and provide your decision/response.
   }
 
   /**
->>>>>>> Stashed changes
    * Execute delay step
    */
   private async executeDelay(step: DelayStep, params: any): Promise<void> {
@@ -3063,7 +3817,7 @@ Please analyze the above and provide your decision/response.
       );
     }
 
-    console.log(`[StepExecutor] Delaying for ${duration}ms`);
+    logger.debug({ stepId: step.id, durationMs: duration }, 'Delaying execution');
 
     await new Promise(resolve => setTimeout(resolve, duration));
   }
@@ -3098,6 +3852,91 @@ ${inputValues || 'None'}
 - Failed: ${context.failedSteps.length}
 - Skipped: ${context.skippedSteps.length}
     `.trim();
+  }
+
+  /**
+   * Build LLM prompt with vision support if images are present
+   *
+   * This method is SAFE for non-image workflows:
+   * - If no images found, returns standard text prompt
+   * - Only switches to vision mode when data contains actual image content
+   *   (items with isImage flag, image MIME types, and base64 content)
+   *
+   * @param prompt - The base prompt/instruction
+   * @param contextSummary - Summary of execution context
+   * @param params - Enriched parameters (may contain images)
+   * @returns Object with fullPrompt (string or vision content) and isVisionMode flag
+   */
+  private async buildLLMPrompt(
+    prompt: string,
+    contextSummary: string,
+    params: any
+  ): Promise<{ fullPrompt: string | any[]; isVisionMode: boolean }> {
+    // Check if data contains images for vision processing
+    // This returns false for non-image workflows (safe fallback to text mode)
+    const hasImages = VisionContentBuilder.hasImageContent(params);
+
+    if (hasImages) {
+      // Vision mode: Build multimodal content array for GPT-4o vision
+      // Use async version to support PDF-to-image conversion
+      const imageContent = await VisionContentBuilder.extractImageContentAsync(params);
+      logger.info({ imageCount: imageContent.length }, 'Vision mode: Building multimodal prompt');
+
+      // If no images after extraction (e.g., PDF conversion failed), fall back to text mode
+      if (imageContent.length === 0) {
+        logger.warn({}, 'Vision mode: No images extracted, falling back to text mode');
+        const textPrompt = `
+${prompt}
+
+## Current Context:
+${contextSummary}
+
+## Data for Analysis:
+${JSON.stringify(params, null, 2)}
+
+Please analyze the above and provide your decision/response.
+        `.trim();
+        return { fullPrompt: textPrompt, isVisionMode: false };
+      }
+
+      // Extract non-image data for text context
+      const textData = VisionContentBuilder.extractNonImageData(params);
+
+      const textPrompt = `
+${prompt}
+
+## Current Context:
+${contextSummary}
+
+## Item Metadata:
+${JSON.stringify(textData, null, 2)}
+
+Please analyze the image(s) above and extract the requested information.
+      `.trim();
+
+      // Build multimodal content: images first, then text
+      // Use 'low' detail to minimize token usage - 'low' uses 85 tokens per image
+      // vs 'high' which can use thousands of tokens based on image resolution
+      // For receipt/document extraction, 'low' is typically sufficient
+      const visionContent = VisionContentBuilder.buildVisionContent(textPrompt, imageContent, 'low');
+
+      return { fullPrompt: visionContent, isVisionMode: true };
+    }
+
+    // Standard text mode (default for non-image workflows)
+    const textPrompt = `
+${prompt}
+
+## Current Context:
+${contextSummary}
+
+## Data for Analysis:
+${JSON.stringify(params, null, 2)}
+
+Please analyze the above and provide your decision/response.
+    `.trim();
+
+    return { fullPrompt: textPrompt, isVisionMode: false };
   }
 
   /**
@@ -3142,15 +3981,13 @@ ${inputValues || 'None'}
 
     // If the cleaning removed too much (less than 50 chars), return original
     if (cleaned.length < 50) {
-      console.warn('[StepExecutor] Clean summary too short, using original output');
+      logger.warn({ cleanedLength: cleaned.length, originalLength: output.length }, 'Cleaned summary too short - using original');
       return output;
     }
 
-    console.log(`[StepExecutor] Cleaned summary: ${cleaned.length} chars (was ${output.length} chars)`);
+    logger.debug({ cleanedLength: cleaned.length, originalLength: output.length }, 'Cleaned summary output');
     return cleaned;
   }
-<<<<<<< Updated upstream
-=======
 
   /**
    * Runtime safety check: Detect if ai_processing step input contains file data
@@ -4044,5 +4881,4 @@ Respond with a JSON object containing the extracted field values.`;
 
     return typeof data === 'object' ? 1 : 0;
   }
->>>>>>> Stashed changes
 }

@@ -17,10 +17,17 @@ import type {
   ExecutionSummary,
   MemoryContext,
   VariableReference,
+  IOrchestrator,
+  IExecutionContext,
+  CollectedIssue,
 } from './types';
 import { VariableResolutionError, getTokenTotal } from './types';
+import { createLogger } from '@/lib/logger';
 
-export class ExecutionContext {
+// Create module-level logger for structured logging
+const logger = createLogger({ module: 'ExecutionContext', service: 'workflow-pilot' });
+
+export class ExecutionContext implements IExecutionContext {
   // Execution metadata
   public executionId: string;
   public agentId: string;
@@ -49,7 +56,8 @@ export class ExecutionContext {
   public memoryContext?: MemoryContext;
 
   // Orchestration (from WorkflowOrchestrator - Phase 4)
-  public orchestrator?: any; // WorkflowOrchestrator instance (avoiding circular dependency)
+  // Wave 8: Changed from `any` to `IOrchestrator` for type safety
+  public orchestrator?: IOrchestrator;
 
   // Timing
   public startedAt: Date;
@@ -59,18 +67,18 @@ export class ExecutionContext {
   public totalTokensUsed: number = 0;
   public totalExecutionTime: number = 0;
 
+  // Batch calibration mode
+  public batchCalibrationMode: boolean = false;
+  public collectedIssues: CollectedIssue[] = [];
+
   constructor(
     executionId: string,
     agent: Agent,
     userId: string,
     sessionId: string,
-<<<<<<< Updated upstream
-    inputValues: Record<string, any> = {}
-=======
     inputValues: Record<string, any> = {},
     batchCalibrationMode: boolean = false,
     workflowConfig: Record<string, any> = {}
->>>>>>> Stashed changes
   ) {
     this.executionId = executionId;
     this.agent = agent;
@@ -83,8 +91,6 @@ export class ExecutionContext {
     this.variables = {};
     this.status = 'running';
     this.startedAt = new Date();
-<<<<<<< Updated upstream
-=======
     this.batchCalibrationMode = batchCalibrationMode;
     this.collectedIssues = [];
 
@@ -97,7 +103,6 @@ export class ExecutionContext {
       configKeys: Object.keys(workflowConfig),
       batchCalibrationMode
     }, 'ExecutionContext created');
->>>>>>> Stashed changes
   }
 
   /**
@@ -108,24 +113,27 @@ export class ExecutionContext {
    * This prevents over-charging users for failed attempts
    */
   setStepOutput(stepId: string, output: StepOutput): void {
-    // 🔍 DEBUG: Log what's being stored
-    console.log(`🔍 [ExecutionContext] Storing output for ${stepId}:`, JSON.stringify({
-      data: output.data,
+    logger.debug({
+      stepId,
       plugin: output.plugin,
-      action: output.action
-    }, null, 2));
+      action: output.action,
+      success: output.metadata.success,
+      executionId: this.executionId
+    }, 'Storing step output');
 
     // ✅ P0 FIX: Check if this is a retry (step already executed)
     const previousOutput = this.stepOutputs.get(stepId);
     const isRetry = previousOutput !== undefined;
 
     if (isRetry) {
-      console.log(`🔄 [ExecutionContext] Retry detected for ${stepId} - de-duplicating tokens`);
-
       // ✅ P1: Use standardized getTokenTotal utility for consistent handling
       const previousTokenTotal = getTokenTotal(previousOutput.metadata.tokensUsed);
       this.totalTokensUsed -= previousTokenTotal;
-      console.log(`   Removed ${previousTokenTotal} tokens from previous attempt`);
+      logger.info({
+        stepId,
+        previousTokens: previousTokenTotal,
+        executionId: this.executionId
+      }, 'Retry detected - de-duplicating tokens');
 
       // SUBTRACT previous execution time
       this.totalExecutionTime -= previousOutput.metadata.executionTime;
@@ -160,8 +168,12 @@ export class ExecutionContext {
     this.totalTokensUsed += newTokenTotal;
 
     if (isRetry) {
-      console.log(`   Added ${newTokenTotal} tokens from new attempt`);
-      console.log(`   Total tokens after de-duplication: ${this.totalTokensUsed}`);
+      logger.debug({
+        stepId,
+        newTokens: newTokenTotal,
+        totalTokens: this.totalTokensUsed,
+        executionId: this.executionId
+      }, 'Tokens updated after retry de-duplication');
     }
 
     // Add NEW execution time
@@ -195,6 +207,7 @@ export class ExecutionContext {
   markStepSkipped(stepId: string): void {
     if (!this.skippedSteps.includes(stepId)) {
       this.skippedSteps.push(stepId);
+      logger.info({ stepId, executionId: this.executionId }, 'Step marked as skipped');
     }
   }
 
@@ -203,6 +216,12 @@ export class ExecutionContext {
    */
   setVariable(name: string, value: any): void {
     this.variables[name] = value;
+    logger.debug({
+      variableName: name,
+      valueType: Array.isArray(value) ? 'array' : typeof value,
+      valueLength: Array.isArray(value) ? value.length : undefined,
+      executionId: this.executionId
+    }, 'Variable set');
   }
 
   /**
@@ -222,14 +241,11 @@ export class ExecutionContext {
    * - {{config.amount_threshold_usd}} - Workflow configuration parameter
    * - {{var.counter}} - Runtime variable
    * - {{current.item}} - Loop current item
-<<<<<<< Updated upstream
-=======
    * - ["{{email.id}}"] - Literal expressions with embedded variables
    *
    * @param reference - Variable reference string like "{{step1.data.email}}"
    * @param expectedSchema - Optional JSON Schema defining expected type (for schema-aware extraction)
    * @param parameterName - Optional parameter name (used for schema-aware field extraction)
->>>>>>> Stashed changes
    */
   resolveVariable(reference: VariableReference, expectedSchema?: any, parameterName?: string): any {
     // If it's not a string, return as-is (already resolved)
@@ -242,6 +258,14 @@ export class ExecutionContext {
       return reference;
     }
 
+    // ✅ FIX #11: Handle literal expressions with embedded variables
+    // Example: "[\"{{email.gmail_message_link_id}}\"]" → ["actual_id_value"]
+    // This handles cases where LLM outputs JSON literals containing template variables
+    if (!reference.match(/^\{\{[^}]+\}\}$/)) {
+      // This is not a simple {{var}} reference, but contains {{var}} inside a literal
+      return this.resolveLiteralWithVariables(reference);
+    }
+
     // Extract variable path from {{...}}
     const match = reference.match(/\{\{([^}]+)\}\}/);
     if (!match) {
@@ -249,57 +273,18 @@ export class ExecutionContext {
     }
 
     const path = match[1].trim();
+    logger.debug({ reference, path, executionId: this.executionId }, 'Resolving variable');
 
-    // Parse path: "step1.data[0].email"
-    const parts = this.parsePath(path);
+    // Use the refactored resolveSimpleVariable method
+    const resolved = this.resolveSimpleVariable(path);
 
-    if (parts.length === 0) {
-      throw new VariableResolutionError(
-        `Invalid variable reference: ${reference}`,
-        reference
-      );
-    }
+    logger.debug({
+      reference,
+      resolvedType: Array.isArray(resolved) ? 'array' : typeof resolved,
+      resolvedLength: Array.isArray(resolved) ? resolved.length : undefined,
+      executionId: this.executionId
+    }, 'Variable resolved');
 
-<<<<<<< Updated upstream
-    const root = parts[0];
-
-    // Check if it's a step output reference
-    if (root.startsWith('step')) {
-      const stepId = root;
-      const stepOutput = this.stepOutputs.get(stepId);
-
-      if (!stepOutput) {
-        throw new VariableResolutionError(
-          `Step ${stepId} has not been executed yet or does not exist`,
-          reference,
-          stepId
-        );
-      }
-
-      // Navigate nested path: data.email
-      return this.getNestedValue(stepOutput, parts.slice(1));
-    }
-
-    // Check if it's an input value reference
-    if (root === 'input') {
-      return this.getNestedValue(this.inputValues, parts.slice(1));
-    }
-
-    // Check if it's a variable reference
-    if (root === 'var') {
-      return this.getNestedValue(this.variables, parts.slice(1));
-    }
-
-    // Check if it's a current item reference (for loops)
-    if (root === 'current') {
-      return this.getNestedValue(this.variables, parts);
-    }
-
-    throw new VariableResolutionError(
-      `Unknown variable reference root: ${root}`,
-      reference
-    );
-=======
     // ✅ SCHEMA-AWARE AUTO-EXTRACTION
     // If expectedSchema is provided and there's a type mismatch, attempt intelligent extraction
     if (expectedSchema && resolved && typeof resolved === 'object' && !Array.isArray(resolved)) {
@@ -318,7 +303,6 @@ export class ExecutionContext {
     }
 
     return resolved;
->>>>>>> Stashed changes
   }
 
   /**
@@ -422,9 +406,6 @@ export class ExecutionContext {
    * Resolve all variables in an object (recursive)
    */
   resolveAllVariables(obj: any): any {
-    // 🔍 DEBUG: Log available step outputs
-    console.log(`🔍 [ExecutionContext] Available step outputs:`, Array.from(this.stepOutputs.keys()));
-
     if (obj === null || obj === undefined) {
       return obj;
     }
@@ -443,8 +424,6 @@ export class ExecutionContext {
         try {
           console.log('[ExecutionContext] Resolving inline variable:', match);
           const value = this.resolveVariable(match);
-<<<<<<< Updated upstream
-=======
           console.log('[ExecutionContext] Resolved to:', value);
           // ✅ CRITICAL FIX: Use JSON.stringify for arrays and objects
           // String([]) returns "" (empty string) which breaks expressions
@@ -454,10 +433,9 @@ export class ExecutionContext {
           } else if (typeof value === 'object' && value !== null) {
             return JSON.stringify(value);
           }
->>>>>>> Stashed changes
           return String(value);
         } catch (error) {
-          console.warn(`Failed to resolve variable ${match}:`, error);
+          logger.warn({ err: error, variable: match, executionId: this.executionId }, 'Failed to resolve variable');
           return match;
         }
       });
@@ -479,8 +457,6 @@ export class ExecutionContext {
   }
 
   /**
-<<<<<<< Updated upstream
-=======
    * Resolve parameters with schema-aware type extraction
    *
    * This method is like resolveAllVariables but uses parameter schemas
@@ -734,19 +710,31 @@ export class ExecutionContext {
   }
 
   /**
->>>>>>> Stashed changes
    * Parse variable path into parts
    * Example: "step1.data[0].email" → ["step1", "data", "[0]", "email"]
+   * Example: "loop.item['Sales Person']" → ["loop", "item", "['Sales Person']"]
    */
   private parsePath(path: string): string[] {
     const parts: string[] = [];
     let current = '';
     let inBracket = false;
+    let inQuote = false;
+    let quoteChar = '';
 
     for (let i = 0; i < path.length; i++) {
       const char = path[i];
 
-      if (char === '[') {
+      if ((char === '"' || char === "'") && inBracket) {
+        // Toggle quote state when inside brackets
+        if (!inQuote) {
+          inQuote = true;
+          quoteChar = char;
+        } else if (char === quoteChar) {
+          inQuote = false;
+          quoteChar = '';
+        }
+        current += char;
+      } else if (char === '[') {
         if (current) {
           parts.push(current);
           current = '';
@@ -758,7 +746,7 @@ export class ExecutionContext {
         parts.push(current);
         current = '';
         inBracket = false;
-      } else if (char === '.' && !inBracket) {
+      } else if (char === '.' && !inBracket && !inQuote) {
         if (current) {
           parts.push(current);
           current = '';
@@ -776,50 +764,154 @@ export class ExecutionContext {
   }
 
   /**
+   * Find matching key with smart field name resolution
+   * Tries multiple naming conventions: snake_case, camelCase, PascalCase, lowercase
+   */
+  private findMatchingKey(obj: Record<string, any>, requestedKey: string): string | null {
+    const keys = Object.keys(obj);
+
+    // Try exact match first (case-sensitive)
+    if (keys.includes(requestedKey)) {
+      return requestedKey;
+    }
+
+    // Try case-insensitive match
+    const lowerRequested = requestedKey.toLowerCase();
+    const caseInsensitiveMatch = keys.find(k => k.toLowerCase() === lowerRequested);
+    if (caseInsensitiveMatch) {
+      return caseInsensitiveMatch;
+    }
+
+    // Convert snake_case to camelCase and vice versa
+    const snakeToCamel = (str: string) =>
+      str.replace(/_([a-z])/g, (_, letter) => letter.toUpperCase());
+
+    const camelToSnake = (str: string) =>
+      str.replace(/[A-Z]/g, letter => `_${letter.toLowerCase()}`);
+
+    // If requested key is snake_case, try camelCase version
+    if (requestedKey.includes('_')) {
+      const camelVersion = snakeToCamel(requestedKey);
+      if (keys.includes(camelVersion)) {
+        return camelVersion;
+      }
+      // Also try PascalCase (first letter uppercase)
+      const pascalVersion = camelVersion.charAt(0).toUpperCase() + camelVersion.slice(1);
+      if (keys.includes(pascalVersion)) {
+        return pascalVersion;
+      }
+    }
+
+    // If requested key is camelCase, try snake_case version
+    if (/[A-Z]/.test(requestedKey)) {
+      const snakeVersion = camelToSnake(requestedKey);
+      if (keys.includes(snakeVersion)) {
+        return snakeVersion;
+      }
+      // Also try lowercase version
+      const lowerVersion = requestedKey.toLowerCase();
+      if (keys.includes(lowerVersion)) {
+        return lowerVersion;
+      }
+    }
+
+    // No match found
+    return null;
+  }
+
+  /**
    * Get nested value from object using parsed path
    */
   private getNestedValue(obj: any, path: string[]): any {
     let current = obj;
 
-    for (const part of path) {
-      if (current === undefined || current === null) {
-        return undefined;
+    for (let i = 0; i < path.length; i++) {
+      const part = path[i];
+
+      // ✅ FIX: Distinguish between null and undefined
+      // undefined = key doesn't exist (resolution error)
+      // null = key exists but value is explicitly null (preserve it)
+      if (current === undefined) {
+        return undefined;  // Path doesn't exist
       }
 
-      // Handle array access: [0], [1], etc.
+      // ✅ FIX: If current is null and we're trying to access a property, return null
+      // This preserves explicit null values from API responses
+      if (current === null) {
+        // If there are more path parts, we can't traverse into null
+        // Return null to indicate "value exists but is null" rather than undefined
+        return null;
+      }
+
+      // Handle bracket notation: [0], [1], ['key'], ["key"], etc.
       if (part.startsWith('[') && part.endsWith(']')) {
-        const index = parseInt(part.slice(1, -1), 10);
+        const innerContent = part.slice(1, -1);
 
-        if (isNaN(index)) {
-          throw new VariableResolutionError(
-            `Invalid array index: ${part}`,
-            part
-          );
+        // Handle quoted string property access: ['Sales Person'] or ["Sales Person"]
+        if ((innerContent.startsWith("'") && innerContent.endsWith("'")) ||
+            (innerContent.startsWith('"') && innerContent.endsWith('"'))) {
+          const propertyName = innerContent.slice(1, -1);
+          current = current[propertyName];
         }
+        // Handle wildcard array access: [*]
+        else if (innerContent === '*') {
+          if (!Array.isArray(current)) {
+            throw new VariableResolutionError(
+              `Trying to access array wildcard on non-array value`,
+              part
+            );
+          }
+          // ✅ CRITICAL FIX: If there are remaining path parts after [*],
+          // map over the array and extract that path from each element
+          const remainingPath = path.slice(i + 1);
+          if (remainingPath.length > 0) {
+            // Extract nested value from each array element
+            // Example: values[*][4] → map each row to row[4]
+            return current.map(item => this.getNestedValue(item, remainingPath));
+          }
+          // No remaining path - return the array as-is
+          return current;
+        }
+        // Handle numeric array index: [0], [1], etc.
+        else {
+          const index = parseInt(innerContent, 10);
 
-        if (!Array.isArray(current)) {
-          throw new VariableResolutionError(
-            `Trying to access array index on non-array value: ${part}`,
-            part
-          );
-        }
+          if (isNaN(index)) {
+            throw new VariableResolutionError(
+              `Invalid array index: ${part}`,
+              part
+            );
+          }
 
-        current = current[index];
-      }
-      // Handle wildcard array access: [*]
-      else if (part === '[*]') {
-        if (!Array.isArray(current)) {
-          throw new VariableResolutionError(
-            `Trying to access array wildcard on non-array value`,
-            part
-          );
+          if (!Array.isArray(current)) {
+            throw new VariableResolutionError(
+              `Trying to access array index on non-array value: ${part}`,
+              part
+            );
+          }
+
+          current = current[index];
         }
-        // Return all items
-        return current;
       }
       // Handle object property access
       else {
-        current = current[part];
+        // Direct property access first (case-sensitive)
+        if (part in current) {
+          current = current[part];
+        }
+        // ✅ CRITICAL FIX: Smart field name resolution (snake_case ↔ camelCase)
+        // Handles naming convention mismatches between schemas and plugin implementations
+        // Example: attachment_id (schema) → attachmentId (runtime data)
+        else if (typeof current === 'object' && current !== null) {
+          const matchingKey = this.findMatchingKey(current, part);
+          if (matchingKey) {
+            current = current[matchingKey];
+          } else {
+            current = undefined;  // Key not found
+          }
+        } else {
+          current = undefined;
+        }
       }
     }
 
@@ -875,20 +967,19 @@ export class ExecutionContext {
 
   /**
    * Clone context (useful for parallel execution)
+   *
+   * @param resetMetrics - If true, resets token/time tracking to 0 (for parallel scatter execution)
+   *                       This prevents double-counting when cloned contexts are merged back
    */
-  clone(): ExecutionContext {
+  clone(resetMetrics: boolean = false): ExecutionContext {
     const cloned = new ExecutionContext(
       this.executionId,
       this.agent,
       this.userId,
       this.sessionId,
-<<<<<<< Updated upstream
-      { ...this.inputValues }
-=======
       { ...this.inputValues },
       this.batchCalibrationMode,
       { ...this.workflowConfig }
->>>>>>> Stashed changes
     );
 
     cloned.status = this.status;
@@ -899,9 +990,24 @@ export class ExecutionContext {
     cloned.stepOutputs = new Map(this.stepOutputs);
     cloned.variables = { ...this.variables };
     cloned.memoryContext = this.memoryContext;
+    cloned.orchestrator = this.orchestrator; // Copy orchestrator reference for consistent routing
     cloned.startedAt = this.startedAt;
-    cloned.totalTokensUsed = this.totalTokensUsed;
-    cloned.totalExecutionTime = this.totalExecutionTime;
+    cloned.collectedIssues = [...this.collectedIssues];
+
+    // Copy executionSummaryCollector reference for calibration metadata collection
+    if ((this as any).executionSummaryCollector) {
+      (cloned as any).executionSummaryCollector = (this as any).executionSummaryCollector;
+    }
+
+    // For parallel execution, reset metrics to 0 so only NEW tokens/time are tracked
+    // This prevents double-counting when merging back to parent
+    if (resetMetrics) {
+      cloned.totalTokensUsed = 0;
+      cloned.totalExecutionTime = 0;
+    } else {
+      cloned.totalTokensUsed = this.totalTokensUsed;
+      cloned.totalExecutionTime = this.totalExecutionTime;
+    }
 
     return cloned;
   }
@@ -922,6 +1028,9 @@ export class ExecutionContext {
 
     // Merge variables
     this.variables = { ...this.variables, ...other.variables };
+
+    // Merge collected issues (batch calibration)
+    this.collectedIssues = [...this.collectedIssues, ...other.collectedIssues];
 
     // Sum metrics
     this.totalTokensUsed += other.totalTokensUsed;
@@ -967,6 +1076,14 @@ export class ExecutionContext {
   markCompleted(): void {
     this.status = 'completed';
     this.completedAt = new Date();
+    logger.info({
+      executionId: this.executionId,
+      completedSteps: this.completedSteps.length,
+      failedSteps: this.failedSteps.length,
+      skippedSteps: this.skippedSteps.length,
+      totalTokensUsed: this.totalTokensUsed,
+      totalExecutionTimeMs: this.totalExecutionTime
+    }, 'Execution completed');
   }
 
   /**
@@ -975,6 +1092,12 @@ export class ExecutionContext {
   markFailed(): void {
     this.status = 'failed';
     this.completedAt = new Date();
+    logger.error({
+      executionId: this.executionId,
+      completedSteps: this.completedSteps.length,
+      failedSteps: this.failedSteps,
+      totalTokensUsed: this.totalTokensUsed
+    }, 'Execution failed');
   }
 
   /**
@@ -982,6 +1105,7 @@ export class ExecutionContext {
    */
   markPaused(): void {
     this.status = 'paused';
+    logger.info({ executionId: this.executionId, currentStep: this.currentStep }, 'Execution paused');
   }
 
   /**
@@ -990,6 +1114,7 @@ export class ExecutionContext {
   markCancelled(): void {
     this.status = 'cancelled';
     this.completedAt = new Date();
+    logger.warn({ executionId: this.executionId, currentStep: this.currentStep }, 'Execution cancelled');
   }
 
   /**
@@ -997,5 +1122,6 @@ export class ExecutionContext {
    */
   resume(): void {
     this.status = 'running';
+    logger.info({ executionId: this.executionId, currentStep: this.currentStep }, 'Execution resumed');
   }
 }

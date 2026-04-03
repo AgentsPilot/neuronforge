@@ -440,6 +440,151 @@
         }
       }
     },
+    "modify_message": {
+      "description": "Modify Gmail message properties (mark important, add/remove labels, mark read/unread)",
+      "usage_context": "Use when you need to update email flags, labels, or read status. Requires message ID from search_emails result.",
+      "idempotent": true,
+      "domain": "email",
+      "capability": "update",
+      "input_entity": "email",
+      "output_entity": "email",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "output_fields": [
+        "message_id",
+        "labels",
+        "important",
+        "read",
+        "modified_at"
+      ],
+      "required_params": [
+        "message_id"
+      ],
+      "optional_params": [
+        "add_labels",
+        "remove_labels",
+        "mark_important",
+        "mark_read"
+      ],
+      "must_support": [
+        "label_management",
+        "importance_flag",
+        "read_status"
+      ],
+      "parameters": {
+        "type": "object",
+        "required": [
+          "message_id"
+        ],
+        "properties": {
+          "message_id": {
+            "type": "string",
+            "description": "Gmail message ID to modify",
+            "x-variable-mapping": {
+              "field_path": "id",
+              "description": "Extract message ID from email object"
+            }
+          },
+          "add_labels": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Labels to add to the message (creates label if it doesn't exist)",
+            "x-semantic-aliases": ["add_label", "label", "labels", "add_tag", "tag"]
+          },
+          "remove_labels": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Labels to remove from the message"
+          },
+          "mark_important": {
+            "type": "boolean",
+            "description": "Set message importance flag (true=important, false=not important)",
+            "x-semantic-aliases": ["important", "is_important", "set_important"]
+          },
+          "mark_read": {
+            "type": "boolean",
+            "description": "Set message read status (true=mark as read, false=mark as unread)",
+            "x-semantic-aliases": ["read", "is_read", "set_read", "mark_as_read"]
+          }
+        }
+      },
+      "rules": {
+        "limits": {
+          "max_labels": {
+            "condition": "total_labels > 100",
+            "action": "block",
+            "message": "Cannot add more than 100 labels to a single message"
+          }
+        },
+        "confirmations": {
+          "remove_important_labels": {
+            "condition": "removing_system_labels == true",
+            "action": "confirm",
+            "message": "Remove system labels like INBOX, IMPORTANT, or STARRED?"
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "description": "Updated message with modified properties",
+        "properties": {
+          "message_id": {
+            "type": "string",
+            "description": "Gmail message ID",
+            "x-guaranteed": true
+          },
+          "labels": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Current labels on the message after modification"
+          },
+          "important": {
+            "type": "boolean",
+            "description": "Current importance flag state"
+          },
+          "read": {
+            "type": "boolean",
+            "description": "Current read status"
+          },
+          "modified_at": {
+            "type": "string",
+            "description": "ISO 8601 timestamp when modification occurred",
+            "x-guaranteed": true
+          }
+        },
+        "required": [
+          "message_id",
+          "modified_at"
+        ]
+      },
+      "output_guidance": {
+        "success_description": "Modified message",
+        "sample_output": {
+          "message_id": "18abc123def",
+          "labels": [
+            "INBOX",
+            "IMPORTANT",
+            "AI-Reviewed"
+          ],
+          "important": true,
+          "read": false,
+          "modified_at": "2025-01-01T00:00:00.000Z"
+        },
+        "common_errors": {
+          "auth_failed": "Gmail connection has expired. Please reconnect in Settings → Connected Apps.",
+          "message_not_found": "Message not found. It may have been deleted or moved to trash.",
+          "label_limit_exceeded": "Gmail label limit reached. Please delete unused labels and try again.",
+          "insufficient_permissions": "Gmail modify permissions are insufficient. Please reconnect with full email modify access.",
+          "api_rate_limit": "Too many modification requests. Please wait a moment and try again."
+        }
+      }
+    },
     "get_email_attachment": {
       "description": "Download email attachment content for processing",
       "usage_context": "Use when you need to extract or analyze content from email attachments (PDFs, images, documents). First search emails with include_attachments:true to get attachment IDs.",

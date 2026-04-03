@@ -100,8 +100,10 @@ export class DeterministicExtractor {
       const needsTextractFallback = config.ocrFallback !== false && (
         // Missing required fields
         requiredFieldsExtracted < requiredFieldsCount ||
-        // Low confidence (below 70%)
-        initialResult.confidence < 0.7 ||
+        // Confidence below 90% (raised threshold to catch more cases after removing hardcoded patterns)
+        initialResult.confidence < 0.90 ||
+        // Any missing fields (even optional ones) - Textract can help
+        initialResult.missingFields.length > 0 ||
         // Very few fields extracted (less than 50% of total fields)
         Object.keys(initialResult.fields).length < config.outputSchema.fields.length * 0.5
       );
@@ -195,32 +197,50 @@ export class DeterministicExtractor {
             : undefined,
         };
       } else {
-        // Textract failed or unavailable - return initial result
-        const processingTime = Date.now() - startTime;
-
+        // Textract failed or unavailable - still try LLM with PDF text only
         logger.warn({
           textractAvailable: !!textractResult,
           hasKeyValuePairs: textractResult?.keyValuePairs?.length || 0,
           hasTables: textractResult?.tables?.length || 0,
-        }, 'DeterministicExtractor: Textract fallback failed, returning initial result');
+        }, 'DeterministicExtractor: Textract fallback failed, attempting LLM with PDF text only');
+
+        // Re-run extraction with LLM fallback enabled (no Textract data, but PDF text available)
+        // This allows LLM to search the PDF text for missing fields
+        const enhancedInput = {
+          ...extractionInput,
+          // No key-value pairs or tables from Textract, but we have PDF text
+        };
+
+        const enhancedResult = await this.schemaExtractor.extract(enhancedInput, config.outputSchema);
+        const processingTime = Date.now() - startTime;
+
+        logger.info({
+          success: enhancedResult.success,
+          extractionMethod: 'text+llm',
+          fieldsExtracted: Object.keys(enhancedResult.fields).length,
+          fieldsRequested: config.outputSchema.fields.length,
+          confidence: enhancedResult.confidence,
+          processingTimeMs: processingTime,
+          improvement: enhancedResult.confidence - initialResult.confidence,
+        }, 'DeterministicExtractor: Extraction complete (PDF + LLM, no Textract)');
 
         return {
-          success: initialResult.success,
-          data: initialResult.data,
-          confidence: initialResult.confidence,
+          success: enhancedResult.success,
+          data: enhancedResult.data,
+          confidence: enhancedResult.confidence,
           needsLlmFallback: false,
           metadata: {
-            extractionMethod: 'text',
+            extractionMethod: 'text+llm',
             processingTimeMs: processingTime,
             textLength: extractionInput.text?.length || 0,
-            fieldsExtracted: Object.keys(initialResult.fields).length,
+            fieldsExtracted: Object.keys(enhancedResult.fields).length,
             fieldsRequested: config.outputSchema.fields.length,
-            missingFields: initialResult.missingFields,
-            uncertainFields: initialResult.uncertainFields,
+            missingFields: enhancedResult.missingFields,
+            uncertainFields: enhancedResult.uncertainFields,
           },
           rawText: extractionInput.text,
-          errors: initialResult.missingFields.length > 0
-            ? [`Missing required fields: ${initialResult.missingFields.join(', ')}`]
+          errors: enhancedResult.missingFields.length > 0
+            ? [`Missing required fields: ${enhancedResult.missingFields.join(', ')}`]
             : undefined,
         };
       }
@@ -281,7 +301,7 @@ export class DeterministicExtractor {
     ocrEnabled: boolean
   ): Promise<ExtractionInput> {
     // Always try free text extraction with pdfjs-dist first
-    const pdfResult = await this.pdfDetector.analyze(input.content);
+    const pdfResult = await this.pdfDetector.detect(input.content);
     extractionInput.text = pdfResult.textContent;
 
     // Only use Textract immediately if PDF is clearly scanned (no text at all)
@@ -402,8 +422,10 @@ export class DeterministicExtractor {
       // Use analyzeDocument for structured extraction
       const result = await textractClient.analyzeDocument(content);
 
-      if (!result.success) {
-        logger.warn({ error: result.error }, 'DeterministicExtractor: Textract failed');
+      // TextractAnalyzeResult doesn't have a success field
+      // Check if we got any meaningful data instead
+      if (!result.text && !result.keyValuePairs?.length && !result.tables?.length) {
+        logger.warn('DeterministicExtractor: Textract returned no data');
         return null;
       }
 

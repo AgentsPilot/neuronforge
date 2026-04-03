@@ -93,8 +93,9 @@ async function testPdfExtraction() {
 
     // Initialize plugin executor
     console.log('🔧 Initializing document extractor plugin...');
-    const userConnections = new UserPluginConnections('test-user-id');
-    const pluginManager = new PluginManagerV2();
+    const userConnections = new UserPluginConnections();
+    const pluginManager = new PluginManagerV2(userConnections);
+    await pluginManager.initialize();
     const executor = new DocumentExtractorPluginExecutor(userConnections, pluginManager);
     console.log('✅ Plugin initialized');
     console.log();

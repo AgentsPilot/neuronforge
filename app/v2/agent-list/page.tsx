@@ -8,7 +8,7 @@ import { useRouter } from 'next/navigation'
 import { useAuth } from '@/components/UserProvider'
 import { supabase } from '@/lib/supabaseClient'
 import { Card } from '@/components/v2/ui/card'
-import { V2Header } from '@/components/v2/V2Header'
+import { V2Logo, V2Controls } from '@/components/v2/V2Header'
 import {
   ArrowLeft,
   Bot,
@@ -402,6 +402,11 @@ export default function V2AgentListPage() {
         ))}
       </div>
 
+      {/* Logo */}
+      <div className="mb-3">
+        <V2Logo />
+      </div>
+
       {/* Top Bar: Back Button + Token Display + User Menu */}
       <div className="flex items-center justify-between">
         <button
@@ -412,7 +417,7 @@ export default function V2AgentListPage() {
           <ArrowLeft className="w-4 h-4" />
           Back to Dashboard
         </button>
-        <V2Header />
+        <V2Controls />
       </div>
 
       {/* Header */}

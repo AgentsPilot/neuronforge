@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import { useAuth } from '@/components/UserProvider'
 import { supabase } from '@/lib/supabaseClient'
 import { ArrowLeft } from 'lucide-react'
-import { V2Header } from '@/components/v2/V2Header'
+import { V2Logo, V2Controls } from '@/components/v2/V2Header'
 import NotificationsTabV2 from '@/components/v2/settings/NotificationsTabV2'
 import { NotificationSettings } from '@/types/settings'
 
@@ -96,17 +96,22 @@ export default function V2NotificationsPage() {
 
   return (
     <div className="space-y-4 sm:space-y-5 lg:space-y-6">
+      {/* Logo */}
+      <div className="mb-3">
+        <V2Logo />
+      </div>
+
       {/* Top Bar: Back Button + Token Display + User Menu */}
       <div className="flex items-center justify-between">
         <button
           onClick={() => router.push('/v2/dashboard')}
-          className="inline-flex items-center gap-2 px-4 py-2.5 bg-[var(--v2-surface)] text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] hover:scale-105 transition-all duration-200 text-sm font-medium shadow-[var(--v2-shadow-card)]"
+          className="inline-flex items-center gap-2 px-4 py-2.5 bg-[var(--v2-surface)] text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] hover:scale-105 transition-all duration-200 text-sm font-medium shadow-[var(--v2-text-primary)] shadow-[var(--v2-shadow-card)]"
           style={{ borderRadius: 'var(--v2-radius-button)' }}
         >
           <ArrowLeft className="w-4 h-4" />
           Back to Dashboard
         </button>
-        <V2Header />
+        <V2Controls />
       </div>
 
       {/* Header */}

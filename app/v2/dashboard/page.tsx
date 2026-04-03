@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import { useAuth } from '@/components/UserProvider'
 import { supabase } from '@/lib/supabaseClient'
 import { Card } from '@/components/v2/ui/card'
-import { V2Header } from '@/components/v2/V2Header'
+import { V2Logo, V2Controls } from '@/components/v2/V2Header'
 import { getPricingConfig } from '@/lib/utils/pricingConfig'
 import { PieChart, Pie, Cell, ResponsiveContainer } from 'recharts'
 import {
@@ -18,7 +18,10 @@ import {
   Coins,
   CheckCircle2,
   XCircle,
-  Bot
+  Bot,
+  Mic,
+  MicOff,
+  ArrowRight
 } from 'lucide-react'
 
 interface AgentStat {
@@ -61,10 +64,19 @@ export default function V2DashboardPage() {
     tokensPerCredit: 10,
     maxCredits: 100000
   })
+  // Voice input state
+  const [isListening, setIsListening] = useState(false)
+  const [isVoiceSupported, setIsVoiceSupported] = useState(false)
+  const recognitionRef = React.useRef<any>(null)
+  const isListeningRef = React.useRef(false)
   const [loading, setLoading] = useState(true)
   const [lastUpdated, setLastUpdated] = useState<Date>(new Date())
   const [searchQuery, setSearchQuery] = useState('')
   const [userName, setUserName] = useState<string>('')
+  const [promptIdeas, setPromptIdeas] = useState<any[]>([])
+  const [showIdeas, setShowIdeas] = useState(false)
+  const [accountFrozen, setAccountFrozen] = useState(false)
+  const textareaRef = React.useRef<HTMLTextAreaElement>(null)
 
   const fetchDashboardData = async () => {
     if (!user) return
@@ -86,7 +98,8 @@ export default function V2DashboardPage() {
         { data: subscriptionData },
         { data: recentRunsData },
         { data: agentExecutionCounts },
-        { data: profileData }
+        { data: profileData },
+        { data: promptIdeasData }
       ] = await Promise.all([
         supabase
           .from('agent_stats')
@@ -134,12 +147,23 @@ export default function V2DashboardPage() {
           .from('profiles')
           .select('full_name')
           .eq('id', user.id)
+          .single(),
+        // Get user's onboarding prompt ideas
+        supabase
+          .from('onboarding_prompt_ideas')
+          .select('ideas')
+          .eq('user_id', user.id)
           .single()
       ])
 
       // Set user name from profile
       if (profileData?.full_name) {
         setUserName(profileData.full_name)
+      }
+
+      // Set prompt ideas if available
+      if (promptIdeasData?.ideas) {
+        setPromptIdeas(promptIdeasData.ideas)
       }
 
       // Count actual executions per agent
@@ -220,6 +244,61 @@ export default function V2DashboardPage() {
     return () => clearInterval(interval)
   }, [user])
 
+  // Initialize Speech Recognition
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
+      if (SpeechRecognition) {
+        setIsVoiceSupported(true)
+        recognitionRef.current = new SpeechRecognition()
+        recognitionRef.current.continuous = false
+        recognitionRef.current.interimResults = true
+        recognitionRef.current.lang = 'en-US'
+
+        recognitionRef.current.onresult = (event: any) => {
+          let finalTranscript = ''
+          for (let i = 0; i < event.results.length; i++) {
+            if (event.results[i].isFinal) {
+              finalTranscript += event.results[i][0].transcript + ' '
+            }
+          }
+          if (finalTranscript) {
+            setSearchQuery(prev => prev + finalTranscript)
+          }
+        }
+
+        recognitionRef.current.onerror = (event: any) => {
+          if (event.error === 'not-allowed') {
+            alert('Microphone permission denied. Please allow microphone access.')
+          }
+          setIsListening(false)
+          isListeningRef.current = false
+        }
+
+        recognitionRef.current.onend = () => {
+          if (isListeningRef.current) {
+            setTimeout(() => {
+              if (isListeningRef.current && recognitionRef.current) {
+                try {
+                  recognitionRef.current.start()
+                } catch (e) {
+                  setIsListening(false)
+                  isListeningRef.current = false
+                }
+              }
+            }, 100)
+          }
+        }
+      }
+    }
+
+    return () => {
+      if (recognitionRef.current) {
+        recognitionRef.current.stop()
+      }
+    }
+  }, [])
+
   // Quick stats calculation
   const totalRuns = stats.agentStats.reduce((sum, stat) => sum + stat.count, 0)
   const lastRunTime = stats.agentStats.length > 0 && stats.agentStats[0].lastRun
@@ -237,6 +316,45 @@ export default function V2DashboardPage() {
     if (hours > 0) return `${hours}h ago`
     if (minutes > 0) return `${minutes}m ago`
     return 'Just now'
+  }
+
+  // Auto-resize textarea when searchQuery changes
+  React.useEffect(() => {
+    if (textareaRef.current) {
+      // Reset height to auto first to get accurate scrollHeight
+      textareaRef.current.style.height = 'auto'
+      // Set height based on content, capped at 128px
+      const newHeight = textareaRef.current.scrollHeight
+      textareaRef.current.style.height = Math.min(newHeight, 128) + 'px'
+    }
+  }, [searchQuery])
+
+  // Initialize textarea height on mount
+  React.useEffect(() => {
+    if (textareaRef.current) {
+      textareaRef.current.style.height = 'auto'
+    }
+  }, [])
+
+  // Voice input toggle
+  const toggleListening = async () => {
+    if (!recognitionRef.current) return
+
+    if (isListening) {
+      isListeningRef.current = false
+      setIsListening(false)
+      recognitionRef.current.stop()
+    } else {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+        stream.getTracks().forEach(track => track.stop())
+        isListeningRef.current = true
+        setIsListening(true)
+        recognitionRef.current.start()
+      } catch (error) {
+        alert('Please allow microphone access to use voice input')
+      }
+    }
   }
 
   if (loading) {
@@ -258,6 +376,11 @@ export default function V2DashboardPage() {
 
   return (
     <div className="space-y-2 sm:space-y-3 lg:space-y-4">
+      {/* Logo */}
+      <div className="mb-3">
+        <V2Logo />
+      </div>
+
       {/* Top Bar: Header + Token Display + User Menu */}
       <div className="flex items-start justify-between gap-4">
         {/* Header */}
@@ -271,27 +394,11 @@ export default function V2DashboardPage() {
         </div>
         {/* Token Display + User Menu */}
         <div className="flex-shrink-0">
-          <V2Header />
+          <V2Controls />
         </div>
       </div>
 
       {/* Search Box */}
-<<<<<<< Updated upstream
-      <div className="bg-[var(--v2-surface)] p-2.5 sm:p-3 shadow-[var(--v2-shadow-card)] flex items-center gap-2 sm:gap-3" style={{ borderRadius: 'var(--v2-radius-card)' }}>
-          <Search className="w-4 h-4 sm:w-5 sm:h-5 text-[var(--v2-text-muted)] flex-shrink-0" />
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Describe what you want to automate"
-            className="flex-1 bg-transparent border-none outline-none text-sm sm:text-base text-[var(--v2-text-secondary)] placeholder:text-[var(--v2-text-muted)]"
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && searchQuery.trim()) {
-                router.push(`/v2/agents/new?prompt=${encodeURIComponent(searchQuery)}`)
-              }
-            }}
-          />
-=======
       <div className="bg-[var(--v2-surface)] shadow-[var(--v2-shadow-card)]" style={{ borderRadius: 'var(--v2-radius-card)' }}>
         <div className={`p-2.5 sm:p-3 ${accountFrozen || stats.creditBalance < 2000 ? 'opacity-50 cursor-not-allowed' : ''}`}>
           {/* Main Input Row */}
@@ -402,7 +509,6 @@ export default function V2DashboardPage() {
             </div>
           </div>
         </div>
->>>>>>> Stashed changes
       </div>
 
       {/* Cards Grid */}

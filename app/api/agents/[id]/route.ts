@@ -249,7 +249,9 @@ export async function PUT(
       created_from_prompt: agentData.created_from_prompt,
       ai_generated_at: agentData.ai_generated_at ? new Date(agentData.ai_generated_at).toISOString() : null,
       status: agentData.status,
-      agent_config: agentData.agent_config || null
+      agent_config: agentData.agent_config || null,
+      insights_enabled: agentData.insights_enabled,
+      production_ready: agentData.production_ready
     };
 
     // CRITICAL FIX: Always include mode field in updates

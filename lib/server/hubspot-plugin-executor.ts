@@ -792,6 +792,281 @@ export class HubSpotPluginExecutor extends BasePluginExecutor {
     }
   }
 
+  // Create a new contact
+  private async createContact(connection: any, parameters: any): Promise<any> {
+    this.logger.debug('Creating HubSpot contact');
+
+    const { properties, associate_with_company } = parameters;
+
+    if (!properties || Object.keys(properties).length === 0) {
+      throw new Error('properties object is required with at least one property');
+    }
+
+    try {
+      const url = `${hubspotApiUrl}/objects/contacts`;
+      const requestBody: any = { properties };
+
+      // Add company association if provided
+      if (associate_with_company) {
+        requestBody.associations = [
+          {
+            to: { id: associate_with_company },
+            types: [
+              {
+                associationCategory: 'HUBSPOT_DEFINED',
+                associationTypeId: 280 // Contact to Company association type
+              }
+            ]
+          }
+        ];
+      }
+
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${connection.access_token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(requestBody)
+      });
+
+      const contactData = await this.handleHubSpotResponse(response, 'create_contact');
+
+      return {
+        success: true,
+        data: {
+          contact_id: contactData.id,
+          properties: contactData.properties,
+          created_at: contactData.createdAt,
+          contactId: contactData.id,
+          createdAt: contactData.createdAt
+        },
+        message: 'Contact created successfully'
+      };
+
+    } catch (error: any) {
+      this.logger.error({ err: error }, 'Error creating contact');
+      throw error;
+    }
+  }
+
+  // Create a note on a contact
+  private async createContactNote(connection: any, parameters: any): Promise<any> {
+    this.logger.debug('Creating contact note');
+
+    const { contact_id, note_body } = parameters;
+
+    if (!contact_id || !note_body) {
+      throw new Error('contact_id and note_body are required');
+    }
+
+    try {
+      const url = `${hubspotApiUrl}/objects/notes`;
+      const requestBody = {
+        properties: {
+          hs_note_body: note_body,
+          hs_timestamp: new Date().toISOString()
+        },
+        associations: [
+          {
+            to: { id: contact_id },
+            types: [
+              {
+                associationCategory: 'HUBSPOT_DEFINED',
+                associationTypeId: 202 // Note to Contact association type
+              }
+            ]
+          }
+        ]
+      };
+
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${connection.access_token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(requestBody)
+      });
+
+      const noteData = await this.handleHubSpotResponse(response, 'create_contact_note');
+
+      return {
+        success: true,
+        data: {
+          note_id: noteData.id,
+          contact_id: contact_id,
+          note_body: note_body,
+          created_at: noteData.createdAt,
+          noteId: noteData.id,
+          contactId: contact_id,
+          createdAt: noteData.createdAt
+        },
+        message: 'Note created and associated with contact successfully'
+      };
+
+    } catch (error: any) {
+      this.logger.error({ err: error }, 'Error creating contact note');
+      throw error;
+    }
+  }
+
+  // Create a new deal
+  private async createDeal(connection: any, parameters: any): Promise<any> {
+    this.logger.debug('Creating HubSpot deal');
+
+    const { properties, associate_with_contact, associate_with_company } = parameters;
+
+    if (!properties || Object.keys(properties).length === 0) {
+      throw new Error('properties object is required with at least one property (e.g., dealname)');
+    }
+
+    try {
+      const url = `${hubspotApiUrl}/objects/deals`;
+      const requestBody: any = { properties };
+
+      // Add associations if provided
+      const associations: any[] = [];
+
+      if (associate_with_contact) {
+        associations.push({
+          to: { id: associate_with_contact },
+          types: [
+            {
+              associationCategory: 'HUBSPOT_DEFINED',
+              associationTypeId: 3 // Deal to Contact association type
+            }
+          ]
+        });
+      }
+
+      if (associate_with_company) {
+        associations.push({
+          to: { id: associate_with_company },
+          types: [
+            {
+              associationCategory: 'HUBSPOT_DEFINED',
+              associationTypeId: 341 // Deal to Company association type
+            }
+          ]
+        });
+      }
+
+      if (associations.length > 0) {
+        requestBody.associations = associations;
+      }
+
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${connection.access_token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(requestBody)
+      });
+
+      const dealData = await this.handleHubSpotResponse(response, 'create_deal');
+
+      return {
+        success: true,
+        data: {
+          deal_id: dealData.id,
+          properties: dealData.properties,
+          created_at: dealData.createdAt,
+          dealId: dealData.id,
+          createdAt: dealData.createdAt
+        },
+        message: 'Deal created successfully'
+      };
+
+    } catch (error: any) {
+      this.logger.error({ err: error }, 'Error creating deal');
+      throw error;
+    }
+  }
+
+  // Create a task
+  private async createTask(connection: any, parameters: any): Promise<any> {
+    this.logger.debug('Creating HubSpot task');
+
+    const { subject, body, due_date, priority, associate_with_contact, status } = parameters;
+
+    if (!subject) {
+      throw new Error('subject is required');
+    }
+
+    try {
+      const url = `${hubspotApiUrl}/objects/tasks`;
+
+      const taskProperties: any = {
+        hs_task_subject: subject,
+        hs_task_status: status || 'NOT_STARTED',
+        hs_timestamp: new Date().toISOString()
+      };
+
+      if (body) {
+        taskProperties.hs_task_body = body;
+      }
+
+      if (due_date) {
+        taskProperties.hs_task_due_date = due_date;
+      }
+
+      if (priority) {
+        taskProperties.hs_task_priority = priority;
+      }
+
+      const requestBody: any = {
+        properties: taskProperties
+      };
+
+      // Add contact association if provided
+      if (associate_with_contact) {
+        requestBody.associations = [
+          {
+            to: { id: associate_with_contact },
+            types: [
+              {
+                associationCategory: 'HUBSPOT_DEFINED',
+                associationTypeId: 204 // Task to Contact association type
+              }
+            ]
+          }
+        ];
+      }
+
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${connection.access_token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(requestBody)
+      });
+
+      const taskData = await this.handleHubSpotResponse(response, 'create_task');
+
+      return {
+        success: true,
+        data: {
+          task_id: taskData.id,
+          subject: subject,
+          status: taskData.properties.hs_task_status,
+          due_date: due_date || null,
+          created_at: taskData.createdAt,
+          taskId: taskData.id,
+          dueDate: due_date || null,
+          createdAt: taskData.createdAt
+        },
+        message: 'Task created successfully'
+      };
+
+    } catch (error: any) {
+      this.logger.error({ err: error }, 'Error creating task');
+      throw error;
+    }
+  }
+
   // Helper: Get properties for activity type
   private getActivityProperties(activityType: string): string[] {
     const commonProps = ['hs_timestamp', 'hs_createdate', 'hubspot_owner_id'];

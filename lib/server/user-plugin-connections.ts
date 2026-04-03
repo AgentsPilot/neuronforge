@@ -3,91 +3,153 @@
 import { createClient } from '@supabase/supabase-js';
 import { savePluginConnection } from '../plugins/savePluginConnection';
 import { PluginAuthConfig, UserConnection, ConnectionStatus } from '@/lib/types/plugin-types'
+import { createLogger } from '@/lib/logger';
 
-let userConnectionsInstance: UserPluginConnections | null = null;
+// Create logger instance for plugin connections
+const logger = createLogger({ module: 'UserPluginConnections', service: 'plugin-system' });
+
+// Use globalThis to ensure singleton persists across module reloads (important for Next.js dev mode)
+const globalForUserConnections = globalThis as unknown as {
+  userConnectionsInstance: UserPluginConnections | null;
+};
 
 export class UserPluginConnections {
-  private supabase: any;
-  private debug = process.env.NODE_ENV === 'development';
+  private supabase: any;  
+  // Cache for token validation to avoid redundant logs and calculations
+  private tokenValidationCache = new Map<string, { isValid: boolean, checkedAt: number }>();
+  private readonly TOKEN_CACHE_TTL = 1000; // 1 second cache
 
   constructor() {
     // Create client for read operations (server-side with service role key for better permissions)
+    // Disable query caching to ensure fresh data for plugin connections
     this.supabase = createClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
+      process.env.SUPABASE_SERVICE_ROLE_KEY!,
+      {
+        db: {
+          schema: 'public',
+        },
+        global: {
+          headers: {
+            'cache-control': 'no-cache',
+          },
+        },
+      }
     );
-    if (this.debug) console.log('DEBUG: Server UserPluginConnections initialized');
+    logger.debug('UserPluginConnections instance created');
   }
 
   // Singleton factory for serverless functions
+  // Uses globalThis to persist across module reloads in Next.js dev mode
   static getInstance(): UserPluginConnections {
-    if (!userConnectionsInstance) {
-      if (process.env.NODE_ENV === 'development') {
-        console.log('DEBUG: Creating new UserPluginConnections instance for serverless function');
-      }
-      userConnectionsInstance = new UserPluginConnections();
+    if (!globalForUserConnections.userConnectionsInstance) {
+      logger.debug('Creating new UserPluginConnections instance for serverless function');
+      globalForUserConnections.userConnectionsInstance = new UserPluginConnections();
     }
-    return userConnectionsInstance;
+    return globalForUserConnections.userConnectionsInstance;
   }
 
-  // Get all connected plugin keys for user (only valid connections)
-  async getConnectedPluginKeys(userId: string): Promise<string[]> {
-    if (this.debug) console.log(`DEBUG: Getting connected plugin keys for user ${userId}`);
-    
+  // Private helper: Fetch active plugin connections from database
+  private async fetchActiveConnections(userId: string): Promise<UserConnection[]> {
     try {
       const { data: connections, error } = await this.supabase
         .from('plugin_connections')
-        .select('plugin_key, expires_at')
+        .select('*')
         .eq('user_id', userId)
         .eq('status', 'active');
 
       if (error) {
-        console.error('DEBUG: Database error fetching connections:', error);
+        logger.error({ err: error, userId }, 'Database error fetching connections');
         return [];
       }
 
-      // Filter out expired connections
-      const validConnections = connections?.filter(conn => this.isTokenValid(conn.expires_at)) || [];
-      const pluginKeys = validConnections.map(conn => conn.plugin_key);
-      
-      if (this.debug) console.log(`DEBUG: Found ${pluginKeys.length} valid connected plugins:`, pluginKeys);
-      
+      return connections || [];
+    } catch (error) {
+      logger.error({ err: error, userId }, 'Error fetching active connections');
+      return [];
+    }
+  }
+
+  // Get all active plugin connections (including expired tokens that can be refreshed)
+  // NOTE: This returns ALL active plugins, even with expired tokens
+  // Use this for execution flows where tokens can be refreshed
+  async getAllActivePlugins(userId: string): Promise<UserConnection[]> {
+    logger.debug({ userId }, 'Getting all active plugins (including expired tokens)');
+
+    const allConnections = await this.fetchActiveConnections(userId);
+
+    const expiredCount = allConnections.filter(conn => !this.isTokenValid(conn.expires_at)).length;
+    logger.debug({
+      userId,
+      totalActive: allConnections.length,
+      expiredCount
+    }, 'Active plugins retrieved');
+
+    return allConnections;
+  }
+
+  // Get all connected plugin connections for user (only active plugins with valid tokens)
+  // NOTE: This function does NOT refresh tokens - it only pulls active connections from the database
+  // Use this for status display and operations that don't require token refresh
+  async getConnectedPlugins(userId: string): Promise<UserConnection[]> {
+    logger.debug({ userId }, 'Getting connected plugins');
+
+    const connections = await this.fetchActiveConnections(userId);
+
+    // Filter out expired connections
+    const validConnections = connections.filter(conn => this.isTokenValid(conn.expires_at));
+
+    logger.debug({ userId, validCount: validConnections.length }, 'Valid connected plugins retrieved');
+
+    return validConnections;
+  }
+
+  // Get all connected plugin keys for user (only valid connections)
+  async getConnectedPluginKeys(userId: string): Promise<string[]> {
+    logger.debug({ userId }, 'Getting connected plugin keys');
+
+    try {
+      // Use getConnectedPlugins and extract just the keys
+      const connections = await this.getConnectedPlugins(userId);
+      const pluginKeys = connections.map(conn => conn.plugin_key);
+
+      logger.debug({ userId, count: pluginKeys.length, pluginKeys }, 'Connected plugin keys retrieved');
+
       return pluginKeys;
     } catch (error) {
-      console.error('DEBUG: Error getting connected plugin keys:', error);
+      logger.error({ err: error, userId }, 'Error getting connected plugin keys');
       return [];
     }
   }
 
   // Get all disconnected plugin keys for user (non-active connections)
-  async getDisconnectedPluginKeys(userId: string, availablePluginKeys: string[]): Promise<string[]> {
-    if (this.debug) console.log(`DEBUG: Getting disconnected plugin keys for user ${userId}`);
+  // @param connectedKeys - Optional pre-fetched connected keys to avoid duplicate DB query
+  async getDisconnectedPluginKeys(
+    userId: string,
+    availablePluginKeys: string[],
+    connectedKeys?: string[]
+  ): Promise<string[]> {
+    logger.debug({ userId }, 'Getting disconnected plugin keys');
 
     try {
-      // Get all active connections
-      const { data: activeConnections, error } = await this.supabase
-        .from('plugin_connections')
-        .select('plugin_key')
-        .eq('user_id', userId)
-        .eq('status', 'active');
-
-      if (error) {
-        console.error('DEBUG: Database error fetching active connections:', error);
-        // If error, assume all available plugins are disconnected
-        return availablePluginKeys;
-      }
+      // Use provided connectedKeys if available, otherwise fetch them
+      const keys = connectedKeys ?? await this.getConnectedPluginKeys(userId);
 
       // Create a set of connected plugin keys for fast lookup
-      const connectedKeys = new Set(activeConnections?.map((conn: any) => conn.plugin_key) || []);
+      const connectedSet = new Set(keys);
 
       // Filter available plugins to find disconnected ones
-      const disconnectedKeys = availablePluginKeys.filter(key => !connectedKeys.has(key));
+      const disconnectedKeys = availablePluginKeys.filter(key => !connectedSet.has(key));
 
-      if (this.debug) console.log(`DEBUG: Found ${disconnectedKeys.length} disconnected plugins out of ${availablePluginKeys.length} available`);
+      logger.debug({
+        userId,
+        disconnectedCount: disconnectedKeys.length,
+        availableCount: availablePluginKeys.length
+      }, 'Disconnected plugin keys retrieved');
 
       return disconnectedKeys;
     } catch (error) {
-      console.error('DEBUG: Error getting disconnected plugin keys:', error);
+      logger.error({ err: error, userId }, 'Error getting disconnected plugin keys');
       // If error, return all available plugins as potentially disconnected
       return availablePluginKeys;
     }
@@ -95,7 +157,7 @@ export class UserPluginConnections {
 
   // Get connection status for specific plugin
   async getConnectionStatus(userId: string, pluginKey: string): Promise<ConnectionStatus> {
-    if (this.debug) console.log(`DEBUG: Getting connection status for ${pluginKey}`);
+    logger.debug({ userId, pluginKey }, 'Getting connection status');
     
     try {
       const { data: connection, error } = await this.supabase
@@ -106,43 +168,43 @@ export class UserPluginConnections {
         .single();
 
       if (error || !connection) {
-        if (this.debug) console.log(`DEBUG: No connection found for ${pluginKey}`);
+        logger.debug({ userId, pluginKey }, 'No connection found');
         return { connected: false, reason: 'not_connected' };
       }
 
       if (connection.status !== 'active') {
-        if (this.debug) console.log(`DEBUG: Connection ${pluginKey} status is ${connection.status}`);
+        logger.debug({ userId, pluginKey, status: connection.status }, 'Connection status is not active');
         return { connected: false, reason: 'connection_error' };
       }
 
       if (!this.isTokenValid(connection.expires_at)) {
-        if (this.debug) console.log(`DEBUG: Token expired for ${pluginKey}`);
-        return { 
-          connected: false, 
+        logger.debug({ userId, pluginKey, expiresAt: connection.expires_at }, 'Token expired');
+        return {
+          connected: false,
           reason: 'token_expired',
           expires_at: connection.expires_at
         };
       }
 
-      if (this.debug) console.log(`DEBUG: Plugin ${pluginKey} is connected and valid`);
-      return { 
-        connected: true, 
+      logger.debug({ userId, pluginKey }, 'Plugin is connected and valid');
+      return {
+        connected: true,
         reason: 'connected',
         expires_at: connection.expires_at
       };
     } catch (error) {
-      console.error('DEBUG: Error getting connection status:', error);
+      logger.error({ err: error, userId, pluginKey }, 'Error getting connection status');
       return { connected: false, reason: 'connection_error' };
     }
   }
 
   // Get connection data for plugin (for API calls)
   async getConnection(userId: string, pluginKey: string, authConfig: PluginAuthConfig): Promise<UserConnection | null> {
-    if (this.debug) console.log(`DEBUG: Getting connection data for ${pluginKey}`);
+    logger.debug({ userId, pluginKey }, 'Getting connection data');
 
     // Check if this is a system plugin (no database connection required)
     if (authConfig.auth_type === 'platform_key') {
-      if (this.debug) console.log(`DEBUG: ${pluginKey} is a system plugin, returning virtual connection`);
+      logger.debug({ pluginKey }, 'System plugin - returning virtual connection');
 
       // Return a virtual connection for system plugins (no DB record needed)
       return {
@@ -175,7 +237,7 @@ export class UserPluginConnections {
         .single();
 
       if (error || !connection) {
-        if (this.debug) console.log(`DEBUG: No active connection found for ${pluginKey}`);
+        logger.debug({ userId, pluginKey }, 'No active connection found');
         return null;
       }
 
@@ -185,35 +247,38 @@ export class UserPluginConnections {
           ? Math.floor((new Date(connection.expires_at).getTime() - Date.now()) / 60000)
           : 0;
 
-        console.log(`🔄 Smart Refresh: ${pluginKey} token expires in ${minutesUntilExpiry} minutes, proactively refreshing before use...`);
+        logger.info({
+          pluginKey,
+          minutesUntilExpiry
+        }, 'Smart Refresh: Token expires soon, proactively refreshing before use');
 
         // Only attempt refresh if we have a refresh token
         if (!connection.refresh_token) {
-          console.error(`❌ Smart Refresh Failed: No refresh token available for ${pluginKey} - user needs to reconnect`);
+          logger.error({ pluginKey }, 'Smart Refresh Failed: No refresh token available - user needs to reconnect');
           return null;
         }
 
         const refreshedConnection = await this.refreshToken(connection, authConfig);
         if (refreshedConnection) {
-          console.log(`✅ Smart Refresh Success: ${pluginKey} token refreshed and ready for use`);
+          logger.info({ pluginKey }, 'Smart Refresh Success: Token refreshed and ready for use');
           return refreshedConnection;
         } else {
-          console.error(`❌ Smart Refresh Failed: ${pluginKey} - user needs to reconnect in Settings`);
+          logger.error({ pluginKey }, 'Smart Refresh Failed: User needs to reconnect in Settings');
           return null;
         }
       }
 
-      if (this.debug) console.log(`DEBUG: Valid connection found for ${pluginKey} - no refresh needed`);
+      logger.debug({ pluginKey }, 'Valid connection found - no refresh needed');
       return connection;
     } catch (error) {
-      console.error('DEBUG: Error getting connection:', error);
+      logger.error({ err: error, userId, pluginKey }, 'Error getting connection');
       return null;
     }
   }
 
   // Handle OAuth callback (called from API route)
   async handleOAuthCallback(code: string, state: string, authConfig: PluginAuthConfig, request?: any): Promise<UserConnection> {
-    if (this.debug) console.log('DEBUG: Handling OAuth callback server-side');
+    logger.debug('Handling OAuth callback server-side');
     
     try {
       if (!code) {
@@ -226,31 +291,15 @@ export class UserPluginConnections {
 
       // Parse state
       const parsedState = JSON.parse(decodeURIComponent(state));
-      const { user_id, plugin_key } = parsedState;
+      const { user_id, plugin_key, code_verifier } = parsedState;
 
-      if (this.debug) console.log(`DEBUG: OAuth callback for plugin ${plugin_key}, user ${user_id}`);
+      logger.debug({ pluginKey: plugin_key, userId: user_id }, 'OAuth callback for plugin');
 
       // Validate environment variables
       if (!authConfig.client_id || !authConfig.client_secret) {
         throw new Error('OAuth credentials not configured');
       }
 
-<<<<<<< Updated upstream
-      // Exchange code for tokens
-      const tokenResponse = await fetch(authConfig.token_url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-          'Accept': 'application/json',
-        },
-        body: new URLSearchParams({
-          client_id: authConfig.client_id,
-          client_secret: authConfig.client_secret,
-          code,
-          grant_type: 'authorization_code',
-          redirect_uri: authConfig.redirect_uri,
-        }),
-=======
       // Build token exchange parameters
       const tokenParams: Record<string, string> = {
         code,
@@ -299,28 +348,30 @@ export class UserPluginConnections {
         method: 'POST',
         headers: headers,
         body: body,
->>>>>>> Stashed changes
       });
 
       if (!tokenResponse.ok) {
         const errorText = await tokenResponse.text();
-        console.error('DEBUG: Token exchange failed:', errorText);
+        logger.error({ status: tokenResponse.status, errorText }, 'Token exchange failed');
         throw new Error(`Token exchange failed: ${tokenResponse.status}`);
       }
 
       const tokens = await tokenResponse.json();
-      if (this.debug) console.log('DEBUG: tokens response: ', tokens);
+      logger.debug({ hasAccessToken: !!tokens.access_token }, 'Tokens response received');
 
       if (!tokens.access_token) {
         throw new Error('No access token received');
       }
 
-      if (this.debug) console.log('DEBUG: Tokens received successfully');
+      logger.debug('Tokens received successfully');
 
       // For Slack OAuth v2, use the user token for profile fetch (authed_user.access_token)
       // For other providers, use the regular access_token
-      if (this.debug) console.log(`DEBUG: tokens.authed_user?.access_token: ${tokens.authed_user?.access_token} tokens.access_token: ${tokens.access_token}`);
       const profileAccessToken = tokens.authed_user?.access_token || tokens.access_token;
+      logger.debug({
+        hasAuthedUserToken: !!tokens.authed_user?.access_token,
+        hasAccessToken: !!tokens.access_token
+      }, 'Determining profile access token');
 
       // Fetch user profile (provider-specific)
       // For Dropbox, profile fetch is optional due to API issues
@@ -359,7 +410,7 @@ export class UserPluginConnections {
         status: 'active'
       };
 
-      if (this.debug) console.log(`DEBUG: Saving connection for ${plugin_key}`);
+      logger.debug({ pluginKey: plugin_key }, 'Saving connection');
 
       // Check if connection already exists to determine if this is new or reconnection
       const existingConnection = await this.supabase
@@ -373,7 +424,7 @@ export class UserPluginConnections {
 
       const data = await savePluginConnection(connectionData);
 
-      if (this.debug) console.log(`DEBUG: Connection saved successfully for ${plugin_key}`);
+      logger.info({ pluginKey: plugin_key, isNewConnection }, 'Connection saved successfully');
 
       // Audit trail logging
       try {
@@ -396,15 +447,15 @@ export class UserPluginConnections {
           severity: 'info',
           complianceFlags: ['SOC2'],
         });
-        if (this.debug) console.log(`DEBUG: Audit trail logged for ${plugin_key} connection`);
+        logger.debug({ pluginKey: plugin_key }, 'Audit trail logged for connection');
       } catch (auditError) {
-        console.error('DEBUG: Failed to log audit trail:', auditError);
+        logger.error({ err: auditError, pluginKey: plugin_key }, 'Failed to log audit trail');
         // Don't fail the connection if audit logging fails
       }
 
       return data;
     } catch (error) {
-      console.error('DEBUG: OAuth callback error:', error);
+      logger.error({ err: error }, 'OAuth callback error');
 
       // Audit trail for OAuth failures
       try {
@@ -420,7 +471,7 @@ export class UserPluginConnections {
             pluginKey = parsedState.plugin_key;
           }
         } catch (stateError) {
-          console.error('DEBUG: Failed to parse state:', stateError);
+          logger.error({ err: stateError }, 'Failed to parse state');
         }
 
         await AuditTrail.log({
@@ -439,50 +490,73 @@ export class UserPluginConnections {
           severity: 'warning',
           complianceFlags: ['SOC2'],
         });
-        if (this.debug) console.log(`DEBUG: Audit trail logged for OAuth failure`);
+        logger.debug({ pluginKey }, 'Audit trail logged for OAuth failure');
       } catch (auditError) {
-        console.error('DEBUG: Failed to log audit trail for OAuth failure:', auditError);
+        logger.error({ err: auditError }, 'Failed to log audit trail for OAuth failure');
         // Don't block the error throw
       }
 
       throw error;
     }
   }
-  
+
   // Refresh expired token
   async refreshToken(connection: UserConnection, authConfig: PluginAuthConfig): Promise<UserConnection | null> {
-    console.log(`🔄 Token Refresh: Attempting to refresh token for ${connection.plugin_key} (user: ${connection.user_id})`);
+    logger.info({
+      pluginKey: connection.plugin_key,
+      userId: connection.user_id
+    }, 'Token Refresh: Attempting to refresh token');
 
     if (!connection.refresh_token) {
-      console.error(`❌ Token Refresh Failed: No refresh token available for ${connection.plugin_key}`);
-      console.error(`   This usually means the user needs to reconnect the plugin to get a new refresh token`);
+      logger.error({
+        pluginKey: connection.plugin_key
+      }, 'Token Refresh Failed: No refresh token available - user needs to reconnect');
       return null;
     }
 
     try {
-      console.log(`📤 Token Refresh: Calling refresh endpoint: ${authConfig.refresh_url}`);
+      logger.debug({ refreshUrl: authConfig.refresh_url }, 'Token Refresh: Calling refresh endpoint');
+
+      // Build refresh token parameters
+      const refreshParams: Record<string, string> = {
+        refresh_token: connection.refresh_token,
+        grant_type: 'refresh_token',
+      };
+
+      // Prepare headers
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Accept': 'application/json',
+      };
+
+      // Check if this is a PKCE-enabled plugin (like Airtable)
+      if (authConfig.requires_pkce) {
+        // For PKCE plugins, send credentials via Basic Auth header
+        const credentials = Buffer.from(`${authConfig.client_id}:${authConfig.client_secret}`).toString('base64');
+        headers['Authorization'] = `Basic ${credentials}`;
+        logger.debug('Token Refresh: Using Basic Auth for PKCE plugin');
+      } else {
+        // For non-PKCE plugins, send credentials in body
+        refreshParams.client_id = authConfig.client_id;
+        refreshParams.client_secret = authConfig.client_secret;
+      }
+
       const response = await fetch(authConfig.refresh_url, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-        },
-        body: new URLSearchParams({
-          client_id: authConfig.client_id,
-          client_secret: authConfig.client_secret,
-          refresh_token: connection.refresh_token,
-          grant_type: 'refresh_token',
-        }),
+        headers: headers,
+        body: new URLSearchParams(refreshParams),
       });
 
       if (!response.ok) {
         const errorText = await response.text();
-        console.error(`❌ Token Refresh Failed: ${connection.plugin_key} - Status ${response.status}`);
-        console.error(`   Response: ${errorText}`);
-        console.error(`   This usually means:`);
-        console.error(`   - The refresh token has expired (Google tokens expire after 6 months of non-use)`);
-        console.error(`   - The refresh token was revoked by the user`);
-        console.error(`   - OAuth credentials changed`);
-        console.error(`   User needs to reconnect the plugin in Settings → Connected Apps`);
+        logger.error({
+          pluginKey: connection.plugin_key,
+          status: response.status,
+          errorText
+        }, 'Token Refresh Failed - User needs to reconnect in Settings');
+        logger.error({
+          pluginKey: connection.plugin_key
+        }, 'Common causes: Refresh token expired (Google: 6mo), token revoked, or OAuth credentials changed');
         return null;
       }
 
@@ -508,7 +582,10 @@ export class UserPluginConnections {
 
       const data = await savePluginConnection(updatedConnectionData);
 
-      console.log(`✅ Token Refresh Success: ${connection.plugin_key} - New token expires at ${expiresAt}`);
+      logger.info({
+        pluginKey: connection.plugin_key,
+        expiresAt
+      }, 'Token Refresh Success - New token saved');
 
       // NOTE: We deliberately do NOT log token refreshes to audit trail
       // Token refreshes are automatic background operations, not user actions
@@ -517,14 +594,14 @@ export class UserPluginConnections {
 
       return data;
     } catch (error) {
-      console.error('DEBUG: Token refresh error:', error);
+      logger.error({ err: error, pluginKey: connection.plugin_key }, 'Token refresh error');
       return null;
     }
   }
 
   // Disconnect plugin
   async disconnectPlugin(userId: string, pluginKey: string, request?: any): Promise<boolean> {
-    if (this.debug) console.log(`DEBUG: Disconnecting plugin ${pluginKey} for user ${userId}`);
+    logger.debug({ userId, pluginKey }, 'Disconnecting plugin');
 
     try {
       // Fetch connection details BEFORE disconnecting for audit trail
@@ -542,7 +619,7 @@ export class UserPluginConnections {
         .eq('plugin_key', pluginKey);
 
       if (error) {
-        console.error('DEBUG: Failed to disconnect plugin:', error);
+        logger.error({ err: error, userId, pluginKey }, 'Failed to disconnect plugin');
         return false;
       }
 
@@ -575,17 +652,17 @@ export class UserPluginConnections {
             severity: 'warning',
             complianceFlags: ['SOC2'],
           });
-          if (this.debug) console.log(`DEBUG: Audit trail logged for ${pluginKey} disconnection`);
+          logger.debug({ pluginKey }, 'Audit trail logged for disconnection');
         } catch (auditError) {
-          console.error('DEBUG: Failed to log audit trail:', auditError);
+          logger.error({ err: auditError, pluginKey }, 'Failed to log audit trail');
           // Don't fail the disconnect if audit logging fails
         }
       }
 
-      if (this.debug) console.log(`DEBUG: Plugin ${pluginKey} disconnected successfully`);
+      logger.info({ userId, pluginKey }, 'Plugin disconnected successfully');
       return true;
     } catch (error) {
-      console.error('DEBUG: Error disconnecting plugin:', error);
+      logger.error({ err: error, userId, pluginKey }, 'Error disconnecting plugin');
       return false;
     }
   }
@@ -596,7 +673,7 @@ export class UserPluginConnections {
     pluginKey: string,
     profileData: any
   ): Promise<boolean> {
-    if (this.debug) console.log(`DEBUG: Updating profile_data for ${pluginKey}, user ${userId}`);
+    logger.debug({ userId, pluginKey }, 'Updating profile_data');
 
     try {
       // Get existing connection to merge with new profile data
@@ -608,7 +685,7 @@ export class UserPluginConnections {
         .single();
 
       if (fetchError) {
-        console.error('DEBUG: Error fetching existing connection:', fetchError);
+        logger.error({ err: fetchError, userId, pluginKey }, 'Error fetching existing connection');
         return false;
       }
 
@@ -629,14 +706,14 @@ export class UserPluginConnections {
         .eq('plugin_key', pluginKey);
 
       if (updateError) {
-        console.error('DEBUG: Failed to update profile_data:', updateError);
+        logger.error({ err: updateError, userId, pluginKey }, 'Failed to update profile_data');
         return false;
       }
 
-      if (this.debug) console.log(`DEBUG: Profile data updated successfully for ${pluginKey}`);
+      logger.debug({ userId, pluginKey }, 'Profile data updated successfully');
       return true;
     } catch (error) {
-      console.error('DEBUG: Error updating connection profile data:', error);
+      logger.error({ err: error, userId, pluginKey }, 'Error updating connection profile data');
       return false;
     }
   }
@@ -647,7 +724,7 @@ export class UserPluginConnections {
     pluginKey: string,
     additionalData: Record<string, any>
   ): Promise<boolean> {
-    if (this.debug) console.log(`DEBUG: Updating additional config for ${pluginKey}, user ${userId}`);
+    logger.debug({ userId, pluginKey }, 'Updating additional config');
 
     try {
       // Get existing connection to preserve auth data
@@ -659,7 +736,7 @@ export class UserPluginConnections {
         .single();
 
       if (fetchError) {
-        console.error('DEBUG: Error fetching existing connection:', fetchError);
+        logger.error({ err: fetchError, userId, pluginKey }, 'Error fetching existing connection');
         return false;
       }
 
@@ -680,14 +757,14 @@ export class UserPluginConnections {
         .eq('plugin_key', pluginKey);
 
       if (updateError) {
-        console.error('DEBUG: Failed to update additional config:', updateError);
+        logger.error({ err: updateError, userId, pluginKey }, 'Failed to update additional config');
         return false;
       }
 
-      if (this.debug) console.log(`DEBUG: Additional config updated successfully for ${pluginKey}`);
+      logger.debug({ userId, pluginKey }, 'Additional config updated successfully');
       return true;
     } catch (error) {
-      console.error('DEBUG: Error updating additional config:', error);
+      logger.error({ err: error, userId, pluginKey }, 'Error updating additional config');
       return false;
     }
   }
@@ -697,7 +774,7 @@ export class UserPluginConnections {
     userId: string,
     pluginKey: string
   ): Promise<Record<string, any> | null> {
-    if (this.debug) console.log(`DEBUG: Getting additional config for ${pluginKey}, user ${userId}`);
+    logger.debug({ userId, pluginKey }, 'Getting additional config');
 
     try {
       const { data: connection, error } = await this.supabase
@@ -708,21 +785,21 @@ export class UserPluginConnections {
         .single();
 
       if (error || !connection) {
-        if (this.debug) console.log(`DEBUG: No connection found for ${pluginKey}`);
+        logger.debug({ userId, pluginKey }, 'No connection found');
         return null;
       }
 
       // Return additional data if it exists in nested structure
       return connection.profile_data?.additional || null;
     } catch (error) {
-      console.error('DEBUG: Error getting additional config:', error);
+      logger.error({ err: error, userId, pluginKey }, 'Error getting additional config');
       return null;
     }
   }
 
   // Get all user connections (for admin/debug purposes)
   async getAllUserConnections(userId: string): Promise<UserConnection[]> {
-    if (this.debug) console.log(`DEBUG: Getting all connections for user ${userId}`);
+    logger.debug({ userId }, 'Getting all connections for user');
     
     try {
       const { data: connections, error } = await this.supabase
@@ -732,13 +809,13 @@ export class UserPluginConnections {
         .order('connected_at', { ascending: false });
 
       if (error) {
-        console.error('DEBUG: Error fetching all connections:', error);
+        logger.error({ err: error, userId }, 'Error fetching all connections');
         return [];
       }
 
       return connections || [];
     } catch (error) {
-      console.error('DEBUG: Error getting all user connections:', error);
+      logger.error({ err: error, userId }, 'Error getting all user connections');
       return [];
     }
   }
@@ -748,15 +825,31 @@ export class UserPluginConnections {
   // Check if token is still valid
   public isTokenValid(expiresAt: string | null): boolean {
     if (!expiresAt) {
-      if (this.debug) console.log(`DEBUG: Token has no expiry, considered valid`);
       return true; // No expiry means it doesn't expire
     }
 
-    const expiryDate = new Date(expiresAt);
-    const now = new Date();
-    const isValid = expiryDate.getTime() > now.getTime();
+    const now = Date.now();
+    const cacheKey = expiresAt;
 
-    if (this.debug) console.log(`DEBUG: Token valid: ${isValid}, expires: ${expiryDate.toISOString()}`);
+    // Check cache first to avoid redundant calculations and logs
+    const cached = this.tokenValidationCache.get(cacheKey);
+    if (cached && (now - cached.checkedAt) < this.TOKEN_CACHE_TTL) {
+      return cached.isValid;
+    }
+
+    const expiryDate = new Date(expiresAt);
+    const isValid = expiryDate.getTime() > now;
+
+    // Only log once per unique token expiry (not on every call)
+    if (!cached) {
+      logger.debug({
+        isValid,
+        expiresAt: expiryDate.toISOString()
+      }, 'Token validity checked');
+    }
+
+    // Cache the result
+    this.tokenValidationCache.set(cacheKey, { isValid, checkedAt: now });
 
     return isValid;
   }
@@ -776,25 +869,22 @@ export class UserPluginConnections {
     // Refresh if token expires within buffer time or is already expired
     const shouldRefresh = timeUntilExpiry <= bufferMs;
 
-    if (this.debug) {
-      const minutesUntilExpiry = Math.floor(timeUntilExpiry / 60000);
-      console.log(`DEBUG: Token expires in ${minutesUntilExpiry} minutes. Should refresh: ${shouldRefresh} (buffer: ${bufferMinutes} min)`);
-    }
+    const minutesUntilExpiry = Math.floor(timeUntilExpiry / 60000);
+    logger.debug({
+      minutesUntilExpiry,
+      shouldRefresh,
+      bufferMinutes
+    }, 'Token refresh check');
 
     return shouldRefresh;
   }
 
   // Fetch user profile based on provider
-<<<<<<< Updated upstream
-  private async fetchUserProfile(accessToken: string, authType: string, profileUrl?: string): Promise<any> {
-    if (this.debug) console.log(`DEBUG: Fetching user profile for auth type: ${authType} profileUrl: ${profileUrl}`);
-=======
   private async fetchUserProfile(accessToken: string, authConfig: PluginAuthConfig): Promise<any> {
     const authType = authConfig.auth_type;
     let profileUrl = authConfig.profile_url;
 
     logger.debug({ authType, profileUrl }, 'Fetching user profile');
->>>>>>> Stashed changes
 
     // Use provided profile_url if available, otherwise fall back to switch case
     if (!profileUrl) {
@@ -848,21 +938,21 @@ export class UserPluginConnections {
     }
 
     const profile = await response.json();
-    
-    if (this.debug) console.log('DEBUG: User profile fetched successfully: ', profile);
-    
+
+    logger.debug('User profile fetched successfully');
+
     return profile;
   }
 
   // Get plugin display name for DB storage --> NEED TO BE FIXES/REMOVED in the future, need to take from plugin definition
   private getPluginDisplayName(pluginKey: string): string {
     const displayNames: Record<string, string> = {
-      'gmail': 'google-mail',      
+      'gmail': 'google-mail',
     };
-    
+
     return displayNames[pluginKey] || pluginKey;
   }
-  
+
   // Calculate expiration date from expires_in seconds
   private getExpiresAt(expires_in: any): string | null {
     if (!expires_in) {
@@ -878,30 +968,30 @@ export class UserPluginConnections {
     try {
       const parsedState = JSON.parse(decodeURIComponent(state));
       const { user_id, plugin_key, timestamp } = parsedState;
-      
+
       // Basic validation
       if (!user_id || !plugin_key || !timestamp) {
         throw new Error('Invalid state structure');
       }
-      
+
       // Check plugin key matches
       if (plugin_key !== expectedPluginKey) {
         throw new Error('Plugin key mismatch');
       }
-      
+
       // Check timestamp (reject if older than 1 hour)
       const stateAge = Date.now() - timestamp;
       if (stateAge > 3600000) { // 1 hour in milliseconds
         throw new Error('State parameter expired');
       }
-      
+
       return {
         valid: true,
         userId: user_id,
         pluginKey: plugin_key
       };
     } catch (error) {
-      if (this.debug) console.log('DEBUG: OAuth state validation failed:', error);
+      logger.debug({ err: error }, 'OAuth state validation failed');
       return {
         valid: false,
         userId: '',
@@ -918,15 +1008,15 @@ export class UserPluginConnections {
       timestamp: Date.now(),
       random: Math.random().toString(36).substring(2)
     };
-    
+
     return encodeURIComponent(JSON.stringify(state));
   }
 
   // Check if user has permission for plugin
   async hasPluginPermission(userId: string, pluginKey: string): Promise<boolean> {
     // Basic implementation - in production you might have more complex permission logic
-    if (this.debug) console.log(`DEBUG: Checking plugin permission for user ${userId}, plugin ${pluginKey}`);
-    
+    logger.debug({ userId, pluginKey }, 'Checking plugin permission');
+
     // For now, all authenticated users can connect to any plugin
     // You could add role-based access control here
     return true;
@@ -934,7 +1024,7 @@ export class UserPluginConnections {
 
   // Cleanup expired connections (utility method)
   async cleanupExpiredConnections(): Promise<number> {
-    if (this.debug) console.log('DEBUG: Cleaning up expired connections');
+    logger.debug('Cleaning up expired connections');
     
     try {
       const now = new Date().toISOString();
@@ -947,16 +1037,16 @@ export class UserPluginConnections {
         .select('id');
 
       if (error) {
-        console.error('DEBUG: Error cleaning up expired connections:', error);
+        logger.error({ err: error }, 'Error cleaning up expired connections');
         return 0;
       }
 
       const cleanedCount = data?.length || 0;
-      if (this.debug) console.log(`DEBUG: Cleaned up ${cleanedCount} expired connections`);
-      
+      logger.info({ cleanedCount }, 'Expired connections cleaned up');
+
       return cleanedCount;
     } catch (error) {
-      console.error('DEBUG: Error in cleanup process:', error);
+      logger.error({ err: error }, 'Error in cleanup process');
       return 0;
     }
   }

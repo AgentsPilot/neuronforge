@@ -1,14 +1,22 @@
 // app/v2/agents/[id]/page.tsx
-// V2 Individual Agent Detail Page - Redesigned layout with agent info, health, and executions
+// V2 Agent Detail Page - Redesigned with 2-column layout, settings drawer, and insights modal
 
 'use client'
 
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useState, useMemo, useCallback, lazy, Suspense } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { useAuth } from '@/components/UserProvider'
 import { supabase } from '@/lib/supabaseClient'
+import {
+  agentApi,
+  systemConfigApi,
+  sharedAgentApi,
+  metricsApi,
+} from '@/lib/client/agent-api'
+import { requestDeduplicator } from '@/lib/utils/request-deduplication'
+import type { Agent, Execution } from '@/lib/repositories/types'
 import { Card } from '@/components/v2/ui/card'
-import { V2Header } from '@/components/v2/V2Header'
+import { V2Logo, V2Controls } from '@/components/v2/V2Header'
 import {
   ArrowLeft,
   Play,
@@ -19,100 +27,61 @@ import {
   Activity,
   Clock,
   CheckCircle,
+  CheckCircle2,
   AlertCircle,
+  AlertTriangle,
+  Shield,
   Bot,
   Copy,
   Check,
   Loader2,
   TrendingUp,
   XCircle,
+  X,
   Zap,
   ChevronLeft,
   ChevronRight,
+  ChevronDown,
   Download,
   Share2,
-  FlaskConical,
+  Gauge,
   Rocket,
-  Brain
+  Brain,
+  PlayCircle,
+  Settings,
+  AlertOctagon
 } from 'lucide-react'
 import {
-  SiGmail,
-  SiSlack,
   SiNotion,
-  SiGoogledrive,
-  SiGooglecalendar,
-  SiGoogledocs,
-  SiGooglesheets,
-  SiGithub,
-  SiHubspot,
-  SiWhatsapp
+  SiGithub
 } from 'react-icons/si'
-import { Mail, Phone, Cloud, Database, Globe, Puzzle } from 'lucide-react'
+import { Mail, Phone, Cloud, Database, Globe, Puzzle, RefreshCw } from 'lucide-react'
+import { PluginIcon } from '@/components/PluginIcon'
 import { AgentIntensityCardV2 } from '@/components/v2/agents/AgentIntensityCardV2'
-import { AgentHealthCardV2 } from '@/components/v2/agents/AgentHealthCardV2'
-import { formatScheduleDisplay } from '@/lib/utils/scheduleFormatter'
+import { formatScheduleDisplay, formatNextRun } from '@/lib/utils/scheduleFormatter'
+import { InlineLoading } from '@/components/v2/ui/loading'
+import { clientLogger } from '@/lib/logger/client'
+import { MiniInsightCard, HealthStatus, NoIssuesState } from '@/components/v2/execution/MiniInsightCard'
+import { InsightsList } from '@/components/v2/insights/InsightsList'
 
-type Agent = {
-  id: string
-  agent_name: string
-  description?: string
-  status: string
-  mode?: string
-  schedule_cron?: string
-  timezone?: string
-  next_run?: string
-  created_at?: string
-  plugins_required?: string[]
-  connected_plugins?: Record<string, any>
-  input_schema?: any[]
-  output_schema?: any[]
-  user_prompt?: string
-  workflow_steps?: any[]
-}
+// PERFORMANCE: Lazy load heavy components that may not be used immediately
+const DraftAgentTour = lazy(() => import('@/components/agents/DraftAgentTour'))
 
-type Execution = {
-  id: string
-  status: string
-  started_at: string
-  completed_at?: string
-  execution_duration_ms?: number
-  error_message?: string
-  output?: any
-  logs?: {
-    tokensUsed?: {
-      total: number
-      prompt: number
-      completion: number
-    }
-    pilot?: boolean
-    agentkit?: boolean
-    model?: string
-    provider?: string
-    iterations?: number
-    toolCalls?: any[]
-    executionId?: string
-    stepsCompleted?: number
-    stepsFailed?: number
-    stepsSkipped?: number
-    totalSteps?: number
-    inputValuesUsed?: number
-  }
-}
-
-// Helper function to get plugin-specific icon (using real brand logos with brand colors)
+// Helper function to get plugin-specific icon
 const getPluginIcon = (pluginName: string) => {
   const name = pluginName.toLowerCase()
-  // Use brand colors for recognizable logos
-  if (name.includes('gmail') || name.includes('google-mail')) return <SiGmail className="w-4 h-4 text-red-500" />
-  if (name.includes('calendar')) return <SiGooglecalendar className="w-4 h-4 text-blue-500" />
-  if (name.includes('drive')) return <SiGoogledrive className="w-4 h-4 text-green-500" />
-  if (name.includes('docs') || name.includes('document')) return <SiGoogledocs className="w-4 h-4 text-blue-600" />
-  if (name.includes('sheets') || name.includes('excel')) return <SiGooglesheets className="w-4 h-4 text-emerald-500" />
+  if (name.includes('gmail') || name.includes('google-mail')) return <PluginIcon pluginId="google-mail" className="w-4 h-4" alt="Gmail" />
+  if (name.includes('calendar')) return <PluginIcon pluginId="google-calendar" className="w-4 h-4" alt="Google Calendar" />
+  if (name.includes('drive')) return <PluginIcon pluginId="google-drive" className="w-4 h-4" alt="Google Drive" />
+  if (name.includes('docs') || name.includes('document')) return <PluginIcon pluginId="google-docs" className="w-4 h-4" alt="Google Docs" />
+  if (name.includes('sheets') || name.includes('excel')) return <PluginIcon pluginId="google-sheets" className="w-4 h-4" alt="Google Sheets" />
   if (name.includes('github')) return <SiGithub className="w-4 h-4 text-gray-900 dark:text-white" />
-  if (name.includes('slack')) return <SiSlack className="w-4 h-4 text-[#4A154B]" />
-  if (name.includes('hubspot') || name.includes('crm')) return <SiHubspot className="w-4 h-4 text-orange-500" />
+  if (name.includes('slack')) return <PluginIcon pluginId="slack" className="w-4 h-4" alt="Slack" />
+  if (name.includes('hubspot') || name.includes('crm')) return <PluginIcon pluginId="hubspot" className="w-4 h-4" alt="HubSpot" />
   if (name.includes('notion')) return <SiNotion className="w-4 h-4 text-gray-900 dark:text-white" />
-  if (name.includes('whatsapp')) return <SiWhatsapp className="w-4 h-4 text-green-500" />
+  if (name.includes('whatsapp')) return <PluginIcon pluginId="whatsapp" className="w-4 h-4" alt="WhatsApp" />
+  if (name.includes('airtable')) return <PluginIcon pluginId="airtable" className="w-4 h-4" alt="Airtable" />
+  if (name.includes('chatgpt') || name.includes('openai')) return <PluginIcon pluginId="chatgpt-research" className="w-4 h-4" alt="ChatGPT" />
   if (name.includes('outlook') || name.includes('microsoft')) return <Mail className="w-4 h-4 text-blue-600" />
   if (name.includes('twilio') || name.includes('phone')) return <Phone className="w-4 h-4 text-red-600" />
   if (name.includes('aws') || name.includes('cloud')) return <Cloud className="w-4 h-4 text-orange-500" />
@@ -128,206 +97,693 @@ export default function V2AgentDetailPage() {
   const { user, connectedPlugins } = useAuth()
   const agentId = params.id as string
 
+  // Core data state
   const [agent, setAgent] = useState<Agent | null>(null)
   const [executions, setExecutions] = useState<Execution[]>([])
   const [allExecutions, setAllExecutions] = useState<Execution[]>([])
+  const [totalExecutionCount, setTotalExecutionCount] = useState<number>(0)
   const [selectedExecution, setSelectedExecution] = useState<Execution | null>(null)
+  const [executionResults, setExecutionResults] = useState<any | null>(null) // Structured execution results
   const [loading, setLoading] = useState(true)
+  const [refreshingExecutions, setRefreshingExecutions] = useState(false)
   const [executing, setExecuting] = useState(false)
+  const [insights, setInsights] = useState<any[]>([]) // Business + technical insights
+
+  // UI state
   const [copiedId, setCopiedId] = useState(false)
-  const [activeTab, setActiveTab] = useState<'results' | 'analytics'>('results')
   const [executionPage, setExecutionPage] = useState(1)
   const [actionLoading, setActionLoading] = useState<string | null>(null)
+
+  // NEW: Drawer and modal state
+  const [showSettingsDrawer, setShowSettingsDrawer] = useState(false)
+  const [showInsightsModal, setShowInsightsModal] = useState(false)
+
+  // Modals
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+  const [showShareConfirm, setShowShareConfirm] = useState(false)
+  const [showShareSuccess, setShowShareSuccess] = useState(false)
+
+  // Sharing data
+  const [shareCreditsAwarded, setShareCreditsAwarded] = useState(0)
+  const [shareQualityScore, setShareQualityScore] = useState(0)
+  const [sharingRewardAmount, setSharingRewardAmount] = useState(500)
+  const [sharingValidation, setSharingValidation] = useState<any>(null)
+  const [sharingStatus, setSharingStatus] = useState<any>(null)
+  const [sharingConfig, setSharingConfig] = useState<any>(null)
+  const [shareRewardActive, setShareRewardActive] = useState(true)
+  const [hasBeenShared, setHasBeenShared] = useState(false)
+
+  // Other
   const [memoryCount, setMemoryCount] = useState(0)
-  const EXECUTIONS_PER_PAGE = 10
+  const [tokensPerPilotCredit, setTokensPerPilotCredit] = useState<number>(10)
 
-  useEffect(() => {
-    if (user && agentId) {
-      fetchAgentData()
-    }
-  }, [user, agentId])
+  // Inline editing state (kept for compatibility)
+  const [isEditingDetails, setIsEditingDetails] = useState(false)
+  const [isEditingSchedule, setIsEditingSchedule] = useState(false)
+  const [editedName, setEditedName] = useState('')
+  const [editedDescription, setEditedDescription] = useState('')
+  const [editedScheduleCron, setEditedScheduleCron] = useState('')
+  const [editedMode, setEditedMode] = useState('')
+  const [editedTimezone, setEditedTimezone] = useState('')
+  const [isSaving, setIsSaving] = useState(false)
 
-  const fetchMemoryCount = async () => {
-    if (!agentId) return
+  // Schedule editing state
+  const [scheduleMode, setScheduleMode] = useState<'manual' | 'scheduled'>('manual')
+  const [scheduleType, setScheduleType] = useState<'hourly' | 'daily' | 'weekly' | 'monthly' | ''>('')
+  const [scheduleTime, setScheduleTime] = useState<string>('09:00')
+  const [selectedDays, setSelectedDays] = useState<string[]>([])
+  const [selectedMonthDay, setSelectedMonthDay] = useState<string>('1')
+  const [hourlyInterval, setHourlyInterval] = useState<string>('1')
+  const [dailyOption, setDailyOption] = useState<'everyday' | 'weekdays' | 'weekends'>('everyday')
 
-    try {
-      const { count, error } = await supabase
-        .from('run_memories')
-        .select('*', { count: 'exact', head: true })
-        .eq('agent_id', agentId)
+  const EXECUTIONS_PER_PAGE = 5
+  const [executionTimeFilter, setExecutionTimeFilter] = useState<'7days' | '30days' | 'all'>('all')
+  const [showTimeFilterDropdown, setShowTimeFilterDropdown] = useState(false)
 
-      if (!error && count !== null) {
-        setMemoryCount(count)
-      }
-    } catch (error) {
-      console.error('Error fetching memory count:', error)
-    }
-  }
-
-  const fetchAgentData = async () => {
+  // IMPROVED: Batched data fetch wrapped in useCallback to prevent unnecessary re-fetches
+  const fetchAllData = useCallback(async () => {
     if (!user || !agentId) return
 
     setLoading(true)
     try {
-      // Fetch agent details
-      const { data: agentData, error: agentError } = await supabase
-        .from('agents')
-        .select('*, connected_plugins, plugins_required')
-        .eq('id', agentId)
-        .eq('user_id', user.id)
-        .single()
+      // Parallel fetch all data
+      // PERFORMANCE: Limit to 50 executions and skip token enrichment for faster load
+      const [agentResult, executionsResult, configResult, rewardStatus, insightsResult] = await Promise.all([
+        agentApi.getById(agentId, user.id),
+        agentApi.getExecutions(agentId, user.id, { limit: 50, includeTokens: false }),
+        systemConfigApi.getByKeys(['tokens_per_pilot_credit', 'agent_sharing_reward_amount']),
+        fetch('/api/admin/reward-config').then(r => r.json()).catch(() => ({ success: false })),
+        fetch(`/api/v6/insights?agentId=${agentId}&status=new,viewed`).then(r => r.json()).catch(() => ({ success: false, data: [] }))
+      ])
 
-      if (agentError) throw agentError
-      setAgent(agentData)
+      // Process agent
+      if (!agentResult.success || !agentResult.data) {
+        throw new Error(agentResult.error || 'Failed to fetch agent')
+      }
+      setAgent(agentResult.data.agent as Agent)
 
-      // Fetch ALL executions for health score calculation
-      const { data: allExecutionsData, error: allExecutionsError } = await supabase
-        .from('agent_executions')
-        .select('*')
-        .eq('agent_id', agentId)
-        .order('started_at', { ascending: false })
-
-      if (allExecutionsError) {
-        console.error('Error fetching all executions:', allExecutionsError)
+      // Process executions
+      console.log('[AgentPage] Executions result:', executionsResult)
+      if (executionsResult.success && executionsResult.data) {
+        const enrichedExecutions = executionsResult.data as Execution[]
+        console.log('[AgentPage] Setting executions:', enrichedExecutions.length, 'executions')
+        setAllExecutions(enrichedExecutions)
+        setExecutions(enrichedExecutions)
+        // Don't set selectedExecution here - let the useEffect handle it based on time filter
+      } else {
+        console.log('[AgentPage] No executions found or error:', executionsResult.error)
       }
 
-      if (allExecutionsData) {
-        console.log(`[V2 Agent Page] Fetched ${allExecutionsData.length} executions for agent ${agentId}`);
-
-        // Enrich executions with token data from token_usage table when logs are missing
-        const enrichedExecutions = await Promise.all(
-          allExecutionsData.map(async (execution) => {
-            // Check if logs have complete token data
-            const hasCompleteTokenData =
-              execution.logs?.tokensUsed?.total &&
-              execution.logs?.tokensUsed?.prompt &&
-              execution.logs?.tokensUsed?.completion;
-
-            console.log(`[V2 Agent Page] Execution ${execution.id}:`, {
-              hasCompleteTokenData,
-              logsTokenData: execution.logs?.tokensUsed,
-              status: execution.status,
-              started_at: execution.started_at
-            });
-
-            if (!hasCompleteTokenData) {
-              console.log(`[V2 Agent Page] Execution ${execution.id} missing token data in logs, fetching from token_usage table...`);
-
-              // Fetch ALL token data records for this execution (classification, steps, memory, etc.)
-              const { data: tokenDataRecords, error: tokenError } = await supabase
-                .from('token_usage')
-                .select('input_tokens, output_tokens, activity_type')
-                .eq('execution_id', execution.id);
-
-              console.log(`[V2 Agent Page] Token usage query result for execution ${execution.id}:`, {
-                found: !!tokenDataRecords,
-                count: tokenDataRecords?.length || 0,
-                error: tokenError,
-                records: tokenDataRecords
-              });
-
-              if (!tokenError && tokenDataRecords && tokenDataRecords.length > 0) {
-                // Sum ALL token records for this execution (classification + steps + memory)
-                const inputTokens = tokenDataRecords.reduce((sum, record) => sum + (record.input_tokens || 0), 0);
-                const outputTokens = tokenDataRecords.reduce((sum, record) => sum + (record.output_tokens || 0), 0);
-                const totalTokens = inputTokens + outputTokens;
-
-                console.log(`[V2 Agent Page] ✅ Enriched execution ${execution.id} with token data (${tokenDataRecords.length} records):`, {
-                  input: inputTokens,
-                  output: outputTokens,
-                  total: totalTokens,
-                  source: 'token_usage_table_summed'
-                });
-
-                return {
-                  ...execution,
-                  logs: {
-                    ...(execution.logs || {}),
-                    tokensUsed: {
-                      prompt: inputTokens,
-                      completion: outputTokens,
-                      total: totalTokens,
-                      _source: 'token_usage_table_summed' // Debug flag
-                    }
-                  }
-                };
-              } else {
-                console.warn(`[V2 Agent Page] ⚠️ No token data found for execution ${execution.id} in either logs or token_usage table`);
-              }
-            } else {
-              console.log(`[V2 Agent Page] ✅ Execution ${execution.id} has complete token data in logs:`, execution.logs.tokensUsed);
-            }
-
-            return execution;
-          })
-        );
-
-        console.log(`[V2 Agent Page] Enrichment complete. Summary:`, {
-          totalExecutions: enrichedExecutions.length,
-          withTokenData: enrichedExecutions.filter(e => e.logs?.tokensUsed?.total).length,
-          withoutTokenData: enrichedExecutions.filter(e => !e.logs?.tokensUsed?.total).length
-        });
-
-        setAllExecutions(enrichedExecutions)
-
-        // Set all executions for paginated display
-        setExecutions(enrichedExecutions)
-
-        // Set first execution as selected by default
-        if (enrichedExecutions.length > 0) {
-          setSelectedExecution(enrichedExecutions[0])
+      // Process config
+      if (configResult.success && configResult.data) {
+        const tokensValue = Number(configResult.data['tokens_per_pilot_credit'])
+        if (tokensValue > 0 && tokensValue <= 1000) {
+          setTokensPerPilotCredit(tokensValue)
+        }
+        const rewardValue = Number(configResult.data['agent_sharing_reward_amount'])
+        if (rewardValue) {
+          setSharingRewardAmount(rewardValue)
         }
       }
 
-      // Fetch memory count (non-blocking)
-      fetchMemoryCount()
+      // Process reward status
+      if (rewardStatus.success && rewardStatus.rewards) {
+        const shareReward = rewardStatus.rewards.find((r: any) => r.reward_key === 'agent_sharing')
+        setShareRewardActive(shareReward?.is_active ?? false)
+      } else {
+        setShareRewardActive(false)
+      }
+
+      // Process insights
+      console.log('[AgentPage] Insights result:', insightsResult)
+      if (insightsResult.success && insightsResult.data) {
+        console.log('[AgentPage] Setting insights:', insightsResult.data.length, 'insights')
+        setInsights(insightsResult.data)
+      } else {
+        console.log('[AgentPage] No insights found or error:', insightsResult.error)
+      }
+
+      // PERFORMANCE: Defer non-critical data until after initial render
+      // This reduces blocking time and improves perceived performance
+      setTimeout(() => {
+        fetchMemoryCount()
+        fetchTotalExecutionCount()
+      }, 500)
     } catch (error) {
-      console.error('Error fetching agent data:', error)
+      clientLogger.error('Error fetching agent data', error as Error)
       router.push('/v2/agent-list')
     } finally {
       setLoading(false)
     }
-  }
+  }, [user?.id, agentId, router])
 
-  const handleRunAgent = async () => {
-    if (!agent) return
+  // Manual refresh function for Recent Activity only (stable, doesn't trigger re-renders)
+  const handleRefresh = useCallback(async () => {
+    if (!user || !agentId) return
 
-    setExecuting(true)
+    setRefreshingExecutions(true)
     try {
-      const response = await fetch('/api/run-agent', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ agentId: agent.id })
-      })
+      // Clear cache for this agent's executions
+      requestDeduplicator.clear(`executions-${agentId}-false-50`)
 
-      if (response.ok) {
-        // Refresh executions after running
-        await fetchAgentData()
+      // Fetch only executions (not all data)
+      const executionsResult = await agentApi.getExecutions(agentId, user.id, { limit: 50, includeTokens: false })
+
+      if (executionsResult.success && executionsResult.data) {
+        const enrichedExecutions = executionsResult.data as Execution[]
+        setAllExecutions(enrichedExecutions)
+        setExecutions(enrichedExecutions)
+        // The useEffect will handle selecting the first execution
       }
     } catch (error) {
-      console.error('Error running agent:', error)
+      clientLogger.error('Error refreshing executions', error as Error)
     } finally {
-      setExecuting(false)
+      setRefreshingExecutions(false)
+    }
+  }, [user?.id, agentId])
+
+  // Batched data fetching - IMPROVEMENT
+  useEffect(() => {
+    if (user && agentId) {
+      const pageLogger = clientLogger.child({ component: 'V2AgentDetailPage', agentId, userId: user.id })
+      pageLogger.info({ agentId }, 'Agent detail page mounted')
+
+      fetchAllData()
+
+      return () => {
+        pageLogger.debug('Agent detail page unmounted')
+      }
+    }
+  }, [user?.id, agentId])
+
+  // Pre-fetch sharing eligibility when agent data is loaded (NON-BLOCKING)
+  // PERFORMANCE: Defer this call to reduce initial load time - sharing info is not critical
+  useEffect(() => {
+    if (agentId && user && shareRewardActive && agent) {
+      // Delay by 1 second to let page render first
+      const timer = setTimeout(() => checkSharingEligibility(), 1000)
+      return () => clearTimeout(timer)
+    }
+  }, [agentId, user?.id, shareRewardActive, agent?.id])
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (showTimeFilterDropdown) {
+        const target = event.target as HTMLElement
+        if (!target.closest('.time-filter-dropdown')) {
+          setShowTimeFilterDropdown(false)
+        }
+      }
+    }
+
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [showTimeFilterDropdown])
+
+  // Update selected execution when executions load or time filter changes
+  // Always select the first execution from the filtered list to ensure "Latest Execution" card shows the most recent
+  useEffect(() => {
+    if (executions.length === 0) return
+
+    // Filter executions by current time filter
+    const now = new Date()
+    const filteredExecutions = executions.filter(exec => {
+      if (executionTimeFilter === 'all') return true
+
+      const executionDate = new Date(exec.started_at)
+      const daysDiff = Math.floor((now.getTime() - executionDate.getTime()) / (1000 * 60 * 60 * 24))
+
+      if (executionTimeFilter === '7days') return daysDiff <= 7
+      if (executionTimeFilter === '30days') return daysDiff <= 30
+      return true
+    })
+
+    // Always select the first (most recent) execution from filtered list
+    if (filteredExecutions.length > 0 && filteredExecutions[0].id !== selectedExecution?.id) {
+      const firstExec = filteredExecutions[0]
+      console.log('[Auto-select] Updating to first filtered execution:', {
+        id: firstExec.id,
+        started_at: firstExec.started_at,
+        status: firstExec.status,
+        isPilot: !!firstExec.logs?.pilot
+      })
+
+      setSelectedExecution(firstExec)
+
+      // Fetch results if it's a Pilot execution, otherwise clear results
+      if (firstExec.logs?.pilot) {
+        fetchExecutionResults(firstExec.id)
+      } else {
+        setExecutionResults(null)
+      }
+    }
+  }, [executions, executionTimeFilter]) // Remove selectedExecution?.id from deps to avoid infinite loop
+
+  // Auto-refresh executions when page becomes visible after being away for a while
+  useEffect(() => {
+    let lastVisibleTime = Date.now()
+    const REFRESH_THRESHOLD = 60000 // Only refresh if away for more than 60 seconds
+
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        // Page is being hidden, record the time
+        lastVisibleTime = Date.now()
+      } else if (agentId) {
+        // Page is becoming visible
+        const timeAway = Date.now() - lastVisibleTime
+
+        // Only refresh if user was away for more than the threshold
+        if (timeAway > REFRESH_THRESHOLD) {
+          requestDeduplicator.clear(`executions-${agentId}-false-50`)
+          fetchAllData()
+        }
+      }
+    }
+
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange)
+  }, [agentId, fetchAllData])
+
+  const fetchMemoryCount = async () => {
+    if (!agentId || !user?.id) return
+
+    const result = await agentApi.getMemoryCount(agentId, user.id)
+    if (result.success && result.data !== undefined) {
+      setMemoryCount(result.data)
+    }
+  }
+
+  const fetchTotalExecutionCount = async () => {
+    if (!agentId) return
+
+    try {
+      const { count, error } = await supabase
+        .from('workflow_executions')
+        .select('id', { count: 'exact', head: true })
+        .eq('agent_id', agentId)
+
+      if (!error && count !== null) {
+        setTotalExecutionCount(count)
+      }
+    } catch (error) {
+      console.error('[fetchTotalExecutionCount] Error:', error)
+    }
+  }
+
+  const fetchExecutionResults = async (executionId: string) => {
+    console.log('[fetchExecutionResults] Fetching results for execution:', executionId)
+
+    try {
+      // Fetch execution_results from workflow_executions table
+      const { data, error } = await supabase
+        .from('workflow_executions')
+        .select('execution_results')
+        .eq('id', executionId)
+        .single()
+
+      console.log('[fetchExecutionResults] Query response:', { data, error })
+
+      if (error) {
+        console.error('[fetchExecutionResults] Error fetching execution_results:', error)
+        setExecutionResults(null)
+        return
+      }
+
+      if (data?.execution_results) {
+        console.log('[fetchExecutionResults] ✅ Found execution_results:', {
+          summary: data.execution_results.summary,
+          totalItems: data.execution_results.totalItems,
+          totalSteps: data.execution_results.totalSteps
+        })
+        setExecutionResults(data.execution_results)
+      } else {
+        console.log('[fetchExecutionResults] ⚠️ No execution_results found for this execution')
+        setExecutionResults(null)
+      }
+    } catch (error) {
+      console.error('[fetchExecutionResults] ❌ Exception:', error)
+      setExecutionResults(null)
+    }
+  }
+
+  const checkSharingEligibility = async () => {
+    if (!user?.id || !agent?.id) return
+
+    try {
+      const { AgentSharingValidator } = await import('@/lib/credits/agentSharingValidation')
+      const validator = new AgentSharingValidator(supabase)
+
+      const validation = await validator.validateSharing(user.id, agent.id)
+      setSharingValidation(validation)
+
+      const status = await validator.getSharingStatus(user.id)
+      setSharingStatus(status)
+
+      const config = validator.getConfig()
+      setSharingConfig(config)
+    } catch (error) {
+      clientLogger.error('Error checking sharing eligibility', error as Error)
     }
   }
 
   const handleToggleStatus = async () => {
-    if (!agent) return
+    if (!agent || !user) return
 
+    // Toggle logic:
+    // - active -> inactive
+    // - draft -> active (activate draft agent)
+    // - inactive -> active
     const newStatus = agent.status === 'active' ? 'inactive' : 'active'
+    const pageLogger = clientLogger.child({ agentId: agent.id })
+    pageLogger.info({ currentStatus: agent.status, newStatus }, 'Toggling agent status')
+
+    // Optimistic update
+    const previousAgent = { ...agent }
+    setAgent({ ...agent, status: newStatus })
 
     try {
-      const { error } = await supabase
-        .from('agents')
-        .update({ status: newStatus })
-        .eq('id', agent.id)
+      const result = await agentApi.updateStatus(agent.id, user.id, newStatus)
 
-      if (!error) {
-        setAgent({ ...agent, status: newStatus })
+      if (result.success && result.data) {
+        setAgent(result.data as Agent)
+        pageLogger.info({ newStatus: result.data.status }, 'Agent status toggled')
+      } else {
+        // Revert on failure
+        setAgent(previousAgent)
+        pageLogger.error({ error: result.error }, 'Failed to toggle status')
       }
     } catch (error) {
-      console.error('Error toggling status:', error)
+      // Revert on error
+      setAgent(previousAgent)
+      pageLogger.error({ err: error }, 'Error toggling status')
+    }
+  }
+
+  const handleToggleInsights = async () => {
+    if (!agent || !user) return
+
+    // Default to false if undefined, then toggle
+    const currentValue = agent.insights_enabled ?? false
+    const newInsightsEnabled = !currentValue
+
+    console.log('🔄 Toggling insights:', {
+      agentId: agent.id,
+      currentValue,
+      newValue: newInsightsEnabled,
+      agentHasField: 'insights_enabled' in agent,
+      fullAgent: agent
+    })
+
+    // Optimistic update - update UI immediately
+    setAgent({ ...agent, insights_enabled: newInsightsEnabled })
+
+    try {
+      const result = await agentApi.update(agent.id, user.id, {
+        insights_enabled: newInsightsEnabled
+      })
+
+      console.log('📥 API Response:', {
+        success: result.success,
+        hasData: !!result.data,
+        returnedValue: result.data?.insights_enabled,
+        fullData: result.data,
+        error: result.error
+      })
+
+      if (result.success && result.data) {
+        // Confirm the update with server response
+        setAgent(result.data as Agent)
+        clientLogger.info('Insights toggled', { agentId: agent.id, newValue: result.data.insights_enabled })
+        console.log('✅ Toggle successful, final value:', result.data.insights_enabled)
+      } else {
+        // Revert optimistic update on failure
+        setAgent({ ...agent, insights_enabled: currentValue })
+        clientLogger.error('Failed to toggle insights', new Error(result.error || 'Unknown error'))
+        console.error('❌ Toggle failed, reverting. Error:', result.error)
+      }
+    } catch (error) {
+      // Revert optimistic update on exception
+      setAgent({ ...agent, insights_enabled: currentValue })
+      clientLogger.error('Error toggling insights', error as Error)
+      console.error('❌ Exception, reverting:', error)
+    }
+  }
+
+  const handleSandboxClick = () => {
+    if (!agent) return
+    router.push(`/v2/sandbox/${agent.id}`)
+  }
+
+  // Schedule helpers
+  const getDaySuffix = (day: number) => {
+    if (day >= 11 && day <= 13) return 'th'
+    switch (day % 10) {
+      case 1: return 'st'
+      case 2: return 'nd'
+      case 3: return 'rd'
+      default: return 'th'
+    }
+  }
+
+  const getScheduleDescription = () => {
+    if (!scheduleType) return 'No schedule set'
+
+    if (scheduleType === 'hourly') {
+      return hourlyInterval === '1' ? 'Every hour' : `Every ${hourlyInterval} hours`
+    }
+
+    if (scheduleType === 'daily') {
+      if (dailyOption === 'everyday') return `Every day at ${scheduleTime}`
+      if (dailyOption === 'weekdays') return `Weekdays at ${scheduleTime}`
+      if (dailyOption === 'weekends') return `Weekends at ${scheduleTime}`
+    }
+
+    if (scheduleType === 'weekly') {
+      if (selectedDays.length === 0) return 'Weekly - Select days'
+      const dayNames = selectedDays.map(d => d.charAt(0).toUpperCase() + d.slice(0, 3))
+      return `${dayNames.join(', ')} at ${scheduleTime}`
+    }
+
+    if (scheduleType === 'monthly') {
+      return `${selectedMonthDay}${getDaySuffix(parseInt(selectedMonthDay))} of month at ${scheduleTime}`
+    }
+
+    return 'Configure schedule'
+  }
+
+  const buildCronExpression = (): string | null => {
+    if (scheduleMode === 'manual') return null
+    if (!scheduleType) return null
+
+    const [hour, minute] = scheduleTime.split(':').map(Number)
+
+    if (scheduleType === 'hourly') {
+      const interval = parseInt(hourlyInterval) || 1
+      return interval === 1 ? '0 * * * *' : `0 */${interval} * * *`
+    }
+
+    if (scheduleType === 'daily') {
+      if (dailyOption === 'everyday') {
+        return `${minute} ${hour} * * *`
+      }
+      if (dailyOption === 'weekdays') {
+        return `${minute} ${hour} * * 1-5`
+      }
+      if (dailyOption === 'weekends') {
+        return `${minute} ${hour} * * 0,6`
+      }
+    }
+
+    if (scheduleType === 'weekly' && selectedDays.length > 0) {
+      const dayMap: Record<string, number> = {
+        sunday: 0, monday: 1, tuesday: 2, wednesday: 3,
+        thursday: 4, friday: 5, saturday: 6
+      }
+      const cronDays = selectedDays
+        .map(d => dayMap[d.toLowerCase()])
+        .sort((a, b) => a - b)
+        .join(',')
+      return `${minute} ${hour} * * ${cronDays}`
+    }
+
+    if (scheduleType === 'monthly') {
+      const day = parseInt(selectedMonthDay) || 1
+      return `${minute} ${hour} ${day} * *`
+    }
+
+    return null
+  }
+
+  const handleDayToggle = (day: string) => {
+    setSelectedDays(prev => {
+      if (prev.includes(day)) {
+        if (prev.length === 1) return prev
+        return prev.filter(d => d !== day)
+      } else {
+        return [...prev, day]
+      }
+    })
+  }
+
+  const handleOnDemand = () => {
+    setScheduleMode('manual')
+    setScheduleType('')
+  }
+
+  const handleEditClick = () => {
+    if (!agent) return
+
+    setEditedName(agent.agent_name)
+    setEditedDescription(agent.description || '')
+
+    setIsEditingDetails(true)
+  }
+
+  const handleEditScheduleClick = () => {
+    if (!agent) return
+
+    setEditedScheduleCron(agent.schedule_cron || '')
+    setEditedMode(agent.mode || 'on_demand')
+    setEditedTimezone(agent.timezone || '')
+
+    if (agent.mode === 'scheduled' && agent.schedule_cron) {
+      setScheduleMode('scheduled')
+      const parts = agent.schedule_cron.split(' ')
+      if (parts.length === 5) {
+        const [minute, hour, dayOfMonth, month, dayOfWeek] = parts
+
+        if (hour.includes('*')) {
+          setScheduleType('hourly')
+          const match = hour.match(/\*\/(\d+)/)
+          if (match) {
+            setHourlyInterval(match[1])
+          } else {
+            setHourlyInterval('1')
+          }
+        }
+        else if (dayOfMonth !== '*' && !dayOfMonth.includes('-') && !dayOfMonth.includes(',')) {
+          setScheduleType('monthly')
+          setSelectedMonthDay(dayOfMonth)
+          setScheduleTime(`${hour.padStart(2, '0')}:${minute.padStart(2, '0')}`)
+        }
+        else if (dayOfWeek !== '*' && dayOfWeek.includes(',')) {
+          setScheduleType('weekly')
+          const dayMap = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
+          const days = dayOfWeek.split(',').map(d => dayMap[parseInt(d)])
+          setSelectedDays(days)
+          setScheduleTime(`${hour.padStart(2, '0')}:${minute.padStart(2, '0')}`)
+        }
+        else if (dayOfMonth === '*' && month === '*') {
+          setScheduleType('daily')
+          setScheduleTime(`${hour.padStart(2, '0')}:${minute.padStart(2, '0')}`)
+          if (dayOfWeek === '*') {
+            setDailyOption('everyday')
+          } else if (dayOfWeek === '1-5') {
+            setDailyOption('weekdays')
+          } else if (dayOfWeek === '0,6') {
+            setDailyOption('weekends')
+          }
+        }
+      }
+    } else {
+      setScheduleMode('manual')
+      setScheduleType('')
+    }
+
+    setIsEditingSchedule(true)
+  }
+
+  const handleCancelEditDetails = () => {
+    setIsEditingDetails(false)
+    setEditedName('')
+    setEditedDescription('')
+  }
+
+  const handleCancelEditSchedule = () => {
+    setIsEditingSchedule(false)
+    setEditedScheduleCron('')
+    setEditedMode('')
+    setEditedTimezone('')
+    setScheduleMode('manual')
+    setScheduleType('')
+    setScheduleTime('09:00')
+    setSelectedDays([])
+    setSelectedMonthDay('1')
+    setHourlyInterval('1')
+    setDailyOption('everyday')
+  }
+
+  const handleSaveEditDetails = async () => {
+    if (!agent || !user) return
+
+    setIsSaving(true)
+    try {
+      const result = await agentApi.update(agent.id, user.id, {
+        agent_name: editedName,
+        description: editedDescription
+      })
+
+      if (!result.success) {
+        clientLogger.error('Error updating agent details', new Error(result.error))
+        return
+      }
+
+      if (result.data) {
+        setAgent(result.data as Agent)
+        clientLogger.info('Agent details saved', { agentId: agent.id })
+      } else {
+        setAgent({
+          ...agent,
+          agent_name: editedName,
+          description: editedDescription
+        })
+      }
+
+      setIsEditingDetails(false)
+    } catch (error) {
+      clientLogger.error('Error saving agent details', error as Error)
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
+  const handleSaveEditSchedule = async () => {
+    if (!agent || !user) return
+
+    setIsSaving(true)
+    try {
+      const cronExpression = buildCronExpression()
+      const mode = scheduleMode === 'manual' ? 'on_demand' : 'scheduled'
+
+      const result = await agentApi.update(agent.id, user.id, {
+        schedule_cron: cronExpression,
+        mode: mode,
+        timezone: editedTimezone || null
+      })
+
+      if (!result.success) {
+        clientLogger.error('Error updating agent schedule', new Error(result.error))
+        return
+      }
+
+      if (result.data) {
+        setAgent(result.data as Agent)
+        clientLogger.info('Agent schedule saved', { agentId: agent.id })
+      } else {
+        setAgent({
+          ...agent,
+          schedule_cron: cronExpression,
+          mode: mode,
+          timezone: editedTimezone || null
+        })
+      }
+
+      setIsEditingSchedule(false)
+    } catch (error) {
+      clientLogger.error('Error saving agent schedule', error as Error)
+    } finally {
+      setIsSaving(false)
     }
   }
 
@@ -342,21 +798,19 @@ export default function V2AgentDetailPage() {
     return !!connectedPlugins[plugin]
   }
 
-  const calculateHealthScore = () => {
+  // Memoized health calculation
+  const health = useMemo(() => {
     if (allExecutions.length === 0) return { score: 0, maxScore: 0, percentage: 0, recentScore: 0, recentMaxScore: 0, failedCount: 0 }
 
-    // Calculate overall success rate from ALL executions
     const totalSuccessCount = allExecutions.filter(e =>
       e.status === 'completed' || e.status === 'success'
     ).length
     const totalPercentage = (totalSuccessCount / allExecutions.length) * 100
 
-    // Calculate failed count
     const failedCount = allExecutions.filter(e =>
       e.status === 'failed' || e.status === 'error'
     ).length
 
-    // Calculate recent (last 5) success rate for context
     const recentExecutions = allExecutions.slice(0, 5)
     const recentSuccessCount = recentExecutions.filter(e =>
       e.status === 'completed' || e.status === 'success'
@@ -370,7 +824,7 @@ export default function V2AgentDetailPage() {
       recentMaxScore: recentExecutions.length,
       failedCount
     }
-  }
+  }, [allExecutions])
 
   const formatDuration = (ms?: number) => {
     if (!ms) return 'N/A'
@@ -407,31 +861,19 @@ export default function V2AgentDetailPage() {
   const handleDuplicateAgent = async () => {
     if (!agent || !user) return
 
+    clientLogger.info('Duplicating agent', { agentId: agent.id })
     setActionLoading('duplicate')
     try {
-      const { data: newAgent, error } = await supabase
-        .from('agents')
-        .insert([{
-          user_id: user.id,
-          agent_name: `${agent.agent_name} (Copy)`,
-          description: agent.description,
-          connected_plugins: agent.connected_plugins,
-          plugins_required: agent.plugins_required,
-          mode: agent.mode,
-          schedule_cron: agent.schedule_cron,
-          timezone: agent.timezone,
-          status: 'draft'
-        }])
-        .select()
-        .single()
+      const result = await agentApi.duplicate(agentId, user.id)
 
-      if (error) {
-        console.error('Error duplicating agent:', error)
+      if (!result.success) {
+        clientLogger.error('Error duplicating agent', new Error(result.error))
         return
       }
 
-      if (newAgent) {
-        router.push(`/v2/agents/${newAgent.id}`)
+      if (result.data) {
+        clientLogger.info('Agent duplicated', { originalId: agent.id, newId: result.data.id })
+        router.push(`/v2/agents/${result.data.id}`)
       }
     } finally {
       setActionLoading(null)
@@ -441,23 +883,115 @@ export default function V2AgentDetailPage() {
   const handleDeleteAgent = async () => {
     if (!agent || !user) return
 
+    clientLogger.info('Deleting agent', { agentId: agent.id })
     setActionLoading('delete')
     try {
-      const { error } = await supabase
-        .from('agents')
-        .delete()
-        .eq('id', agentId)
-        .eq('user_id', user.id)
+      const result = await agentApi.delete(agentId, user.id)
 
-      if (error) {
-        console.error('Error deleting agent:', error)
+      if (!result.success) {
+        clientLogger.error('Error deleting agent', new Error(result.error))
         return
       }
 
+      clientLogger.info('Agent deleted', { agentId: agent.id })
       router.push('/v2/agent-list')
     } finally {
       setActionLoading(null)
       setShowDeleteConfirm(false)
+    }
+  }
+
+  const handleShareAgentClick = () => {
+    if (!agent || !user || agent.status !== 'active') {
+      clientLogger.debug('Share validation failed', { hasAgent: !!agent, hasUser: !!user, status: agent?.status })
+      return
+    }
+
+    clientLogger.debug('Opening share modal', { agentId: agent.id })
+    setShowShareConfirm(true)
+  }
+
+  const handleShareAgent = async () => {
+    if (!agent || !user || agent.status !== 'active') {
+      return
+    }
+
+    setShowShareConfirm(false)
+    setActionLoading('share')
+    try {
+      const { AgentSharingValidator } = await import('@/lib/credits/agentSharingValidation')
+      const { RewardService } = await import('@/lib/credits/rewardService')
+      const { AgentScoreService } = await import('@/lib/services/AgentScoreService')
+
+      const validator = new AgentSharingValidator(supabase)
+      const rewardService = new RewardService(supabase)
+      const scoreService = new AgentScoreService(supabase)
+
+      const validation = await validator.validateSharing(user.id, agent.id)
+      if (!validation.valid) {
+        alert(validation.reason || 'This agent does not meet sharing requirements')
+        return
+      }
+
+      const existsResult = await sharedAgentApi.existsByOriginalAgent(agent.id, user.id)
+      if (existsResult.success && existsResult.data) {
+        alert('This agent has already been shared!')
+        return
+      }
+
+      const qualityScore = await scoreService.calculateQualityScore(agent.id)
+      const diversityPenalty = await scoreService.getExecutionDiversityPenalty(agent.id)
+
+      const finalScore = {
+        ...qualityScore,
+        overall_score: qualityScore.overall_score * diversityPenalty
+      }
+
+      const metricsResult = await metricsApi.getBasicMetrics(agent.id, user.id)
+      const metrics = metricsResult.data
+
+      const shareResult = await sharedAgentApi.share(agent.id, user.id, {
+        description: agent.description || undefined,
+        quality_score: finalScore.overall_score,
+        reliability_score: finalScore.reliability_score,
+        efficiency_score: finalScore.efficiency_score,
+        adoption_score: finalScore.adoption_score,
+        complexity_score: finalScore.complexity_score,
+        base_executions: metrics?.total_executions || 0,
+        base_success_rate: metrics?.successful_executions && metrics?.total_executions
+          ? (metrics.successful_executions / metrics.total_executions) * 100
+          : 0,
+      })
+
+      if (!shareResult.success) {
+        clientLogger.error('Error sharing agent', new Error(shareResult.error))
+        alert(`Failed to share agent: ${shareResult.error}`)
+        return
+      }
+
+      const rewardResult = await rewardService.awardAgentSharingReward(
+        user.id,
+        agent.id,
+        agent.agent_name
+      )
+
+      if (rewardResult.success) {
+        setShareCreditsAwarded(rewardResult.creditsAwarded || 0)
+        setShareQualityScore(Math.round(finalScore.overall_score))
+        setShowShareSuccess(true)
+        setHasBeenShared(true)
+        clientLogger.info('Agent shared successfully', { agentId: agent.id, qualityScore: finalScore.overall_score, creditsAwarded: rewardResult.creditsAwarded })
+
+        setTimeout(() => setShowShareSuccess(false), 5000)
+      }
+
+      await fetchAllData()
+    } catch (error) {
+      clientLogger.error('Error in handleShareAgent', error as Error)
+      alert('Failed to share agent. Please try again.')
+    } finally {
+      setActionLoading(null)
+      setShowShareConfirm(false)
     }
   }
 
@@ -487,35 +1021,51 @@ export default function V2AgentDetailPage() {
   }
 
   if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-screen">
-        <Loader2 className="w-8 h-8 animate-spin text-[var(--v2-primary)]" />
-      </div>
-    )
+    return <InlineLoading size="md" />
   }
 
   if (!agent) {
     return null
   }
 
-  const health = calculateHealthScore()
   const safePluginsRequired = Array.isArray(agent.plugins_required) ? agent.plugins_required : []
 
+  // Calculate execution health status from insights
+  const calculateHealthStatus = (): 'healthy' | 'needs_attention' | 'critical' => {
+    if (insights.length === 0) return 'healthy'
+
+    const hasCritical = insights.some((i: any) => i.severity === 'critical')
+    const hasHigh = insights.some((i: any) => i.severity === 'high')
+
+    if (selectedExecution?.status === 'failed' || hasCritical) {
+      return 'critical'
+    }
+
+    if (hasHigh) {
+      return 'needs_attention'
+    }
+
+    return 'healthy'
+  }
+
+  const healthStatus = calculateHealthStatus()
+
+  // Separate business and technical insights
+  const businessInsights = insights.filter((i: any) => i.category === 'growth')
+  const technicalInsights = insights.filter((i: any) => i.category === 'data_quality')
+
+  console.log('[AgentPage] Total insights:', insights.length)
+  console.log('[AgentPage] Business insights (growth):', businessInsights.length)
+  console.log('[AgentPage] Technical insights (data_quality):', technicalInsights.length)
+
+  // Get health bar color
+  const getHealthColor = () => {
+    if (health.percentage >= 80) return 'bg-gradient-to-r from-green-500 to-emerald-600'
+    if (health.percentage >= 60) return 'bg-gradient-to-r from-yellow-500 to-orange-500'
+    return 'bg-gradient-to-r from-red-500 to-red-600'
+  }
+
   return (
-<<<<<<< Updated upstream
-    <div className="space-y-4 sm:space-y-5 lg:space-y-6">
-      {/* Top Bar: Back Button + User Menu */}
-      <div className="flex items-center justify-between">
-        <button
-          onClick={() => router.push('/v2/agent-list')}
-          className="inline-flex items-center gap-2 px-4 py-2.5 bg-[var(--v2-surface)] text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] hover:scale-105 transition-all duration-200 text-sm font-medium shadow-[var(--v2-shadow-card)]"
-          style={{ borderRadius: 'var(--v2-radius-button)' }}
-        >
-          <ArrowLeft className="w-4 h-4" />
-          Back to Agents
-        </button>
-        <V2Header />
-=======
     <div className="min-h-screen" style={{ background: 'var(--v2-background)' }}>
       {/* PERFORMANCE: Lazy load tour component with Suspense */}
       <Suspense fallback={null}>
@@ -638,7 +1188,7 @@ export default function V2AgentDetailPage() {
             <button
               data-tour="edit-button"
               onClick={() => setShowSettingsDrawer(true)}
-              className="inline-flex items-center gap-2 px-4 py-2 bg-[var(--v2-surface)] text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] border border-[var(--v2-border)] hover:bg-[var(--v2-surface-hover)] transition-colors font-medium text-sm"
+              className="inline-flex items-center gap-2 px-4 py-2 bg-[var(--v2-surface)] text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] border border-gray-200 dark:border-slate-700 hover:bg-gray-100 dark:hover:bg-slate-600/40 transition-colors font-medium text-sm"
               style={{ borderRadius: 'var(--v2-radius-button)' }}
             >
               <Settings className="w-4 h-4" />
@@ -647,7 +1197,7 @@ export default function V2AgentDetailPage() {
             {!agent.production_ready && (
               <button
                 onClick={handleSandboxClick}
-                className="inline-flex items-center gap-2 px-4 py-2 bg-[var(--v2-surface)] text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] border border-[var(--v2-border)] hover:bg-[var(--v2-surface-hover)] transition-colors font-medium text-sm"
+                className="inline-flex items-center gap-2 px-4 py-2 bg-[var(--v2-surface)] text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] border border-gray-200 dark:border-slate-700 hover:bg-gray-100 dark:hover:bg-slate-600/40 transition-colors font-medium text-sm"
                 style={{ borderRadius: 'var(--v2-radius-button)' }}
               >
                 <Gauge className="w-4 h-4" />
@@ -741,7 +1291,7 @@ export default function V2AgentDetailPage() {
                   <div className="relative time-filter-dropdown">
                     <button
                       onClick={() => setShowTimeFilterDropdown(!showTimeFilterDropdown)}
-                      className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium bg-[var(--v2-surface)] text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] border border-[var(--v2-border)] transition-all"
+                      className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium bg-[var(--v2-surface)] text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] border border-gray-200 dark:border-slate-700 transition-all"
                       style={{ borderRadius: 'var(--v2-radius-button)' }}
                     >
                       {executionTimeFilter === '7days' && 'Last 7 days'}
@@ -764,7 +1314,7 @@ export default function V2AgentDetailPage() {
                           className={`w-full text-left px-3 py-2 text-sm font-medium transition-colors ${
                             executionTimeFilter === '7days'
                               ? 'bg-[var(--v2-primary)] text-white'
-                              : 'text-[var(--v2-text-secondary)] hover:bg-[var(--v2-surface-hover)] hover:text-[var(--v2-text-primary)]'
+                              : 'text-[var(--v2-text-secondary)] hover:bg-gray-100 dark:hover:bg-slate-700/40 hover:text-[var(--v2-text-primary)]'
                           }`}
                         >
                           Last 7 days
@@ -778,7 +1328,7 @@ export default function V2AgentDetailPage() {
                           className={`w-full text-left px-3 py-2 text-sm font-medium transition-colors ${
                             executionTimeFilter === '30days'
                               ? 'bg-[var(--v2-primary)] text-white'
-                              : 'text-[var(--v2-text-secondary)] hover:bg-[var(--v2-surface-hover)] hover:text-[var(--v2-text-primary)]'
+                              : 'text-[var(--v2-text-secondary)] hover:bg-gray-100 dark:hover:bg-slate-700/40 hover:text-[var(--v2-text-primary)]'
                           }`}
                         >
                           Last 30 days
@@ -792,7 +1342,7 @@ export default function V2AgentDetailPage() {
                           className={`w-full text-left px-3 py-2 text-sm font-medium transition-colors ${
                             executionTimeFilter === 'all'
                               ? 'bg-[var(--v2-primary)] text-white'
-                              : 'text-[var(--v2-text-secondary)] hover:bg-[var(--v2-surface-hover)] hover:text-[var(--v2-text-primary)]'
+                              : 'text-[var(--v2-text-secondary)] hover:bg-gray-100 dark:hover:bg-slate-700/40 hover:text-[var(--v2-text-primary)]'
                           }`}
                         >
                           All time
@@ -803,18 +1353,18 @@ export default function V2AgentDetailPage() {
 
                   <button
                     onClick={handleRefresh}
-                    disabled={loading}
-                    className="p-2 hover:bg-[var(--v2-surface-hover)] rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    disabled={refreshingExecutions}
+                    className="p-2 hover:bg-gray-100 dark:hover:bg-slate-700/40 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                     title="Refresh executions"
                   >
-                    <RefreshCw className={`w-4 h-4 text-[var(--v2-text-muted)] ${loading ? 'animate-spin' : ''}`} />
+                    <RefreshCw className={`w-4 h-4 text-[var(--v2-text-muted)] ${refreshingExecutions ? 'animate-spin' : ''}`} />
                   </button>
                   <TrendingUp className="w-5 h-5 text-[var(--v2-text-muted)]" />
                 </div>
               </div>
             </div>
 
-            <div className="space-y-2 flex-1">
+            <div className="space-y-2 flex-1 overflow-hidden">
               {(() => {
                 // Filter executions by time range
                 const now = new Date()
@@ -858,7 +1408,7 @@ export default function V2AgentDetailPage() {
                         className={`w-full p-2 transition-all text-left border-2 ${
                           selectedExecution?.id === exec.id
                             ? 'border-[var(--v2-primary)]'
-                            : 'bg-[var(--v2-surface)] hover:bg-[var(--v2-surface-hover)] border-transparent'
+                            : 'bg-[var(--v2-surface)] hover:bg-gray-100 dark:hover:bg-slate-700/40 border-transparent'
                         }`}
                         style={{ borderRadius: 'var(--v2-radius-button)' }}
                       >
@@ -890,50 +1440,95 @@ export default function V2AgentDetailPage() {
                     )}
 
                     {totalPages > 1 && (
-                      <div className="pt-3 border-t border-[var(--v2-border)] space-y-2">
-                        {/* Showing X-Y of Z text */}
+                      <div className="mt-3 pt-3 pb-2 border-t border-[var(--v2-border)] space-y-2">
+                        {/* Row 1: Showing X-Y of Z text */}
                         <div className="text-xs text-[var(--v2-text-muted)] text-center">
-                          Showing {startIndex + 1}-{Math.min(endIndex, filteredExecutions.length)} of {filteredExecutions.length} executions
+                          Showing {startIndex + 1}-{Math.min(endIndex, filteredExecutions.length)} of {filteredExecutions.length}
                         </div>
 
-                        {/* Pagination controls */}
-                        <div className="flex items-center justify-center gap-1">
+                        {/* Row 2: Pagination controls */}
+                        <div className="flex items-center justify-center gap-0.5 scale-90">
                           <button
                             onClick={() => setExecutionPage(prev => Math.max(1, prev - 1))}
                             disabled={executionPage === 1}
-                            className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] disabled:opacity-50 disabled:cursor-not-allowed transition-all bg-[var(--v2-surface)] border border-[var(--v2-border)]"
+                            className="flex items-center justify-center p-1.5 text-xs font-medium text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] disabled:opacity-50 disabled:cursor-not-allowed transition-all bg-[var(--v2-surface)] border border-gray-200 dark:border-slate-700"
                             style={{ borderRadius: 'var(--v2-radius-button)' }}
+                            title="Previous"
                           >
-                            <ChevronLeft className="w-3 h-3" />
-                            Previous
+                            <ChevronLeft className="w-3.5 h-3.5" />
                           </button>
 
-                          {/* Page number buttons */}
-                          <div className="flex items-center gap-1">
-                            {Array.from({ length: totalPages }, (_, i) => i + 1).map((page) => (
-                              <button
-                                key={page}
-                                onClick={() => setExecutionPage(page)}
-                                className={`px-2.5 py-1.5 text-xs font-medium transition-all ${
-                                  executionPage === page
-                                    ? 'bg-[var(--v2-primary)] text-white'
-                                    : 'bg-[var(--v2-surface)] text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] border border-[var(--v2-border)]'
-                                }`}
-                                style={{ borderRadius: 'var(--v2-radius-button)' }}
-                              >
-                                {page}
-                              </button>
-                            ))}
-                          </div>
+                          {/* Page number buttons with smart pagination */}
+                          {(() => {
+                            const maxVisible = 9;
+                            const pages = [];
+
+                            if (totalPages <= maxVisible) {
+                              // Show all pages if total is small
+                              for (let i = 1; i <= totalPages; i++) {
+                                pages.push(i);
+                              }
+                            } else {
+                              // Smart pagination: always show first, last, and pages around current
+                              pages.push(1);
+
+                              let start = Math.max(2, executionPage - 2);
+                              let end = Math.min(totalPages - 1, executionPage + 2);
+
+                              // Adjust range if we're near the start or end
+                              if (executionPage <= 4) {
+                                end = Math.min(totalPages - 1, 7);
+                              } else if (executionPage >= totalPages - 3) {
+                                start = Math.max(2, totalPages - 6);
+                              }
+
+                              if (start > 2) pages.push('...');
+
+                              for (let i = start; i <= end; i++) {
+                                pages.push(i);
+                              }
+
+                              if (end < totalPages - 1) pages.push('...');
+                              pages.push(totalPages);
+                            }
+
+                            return pages.map((page, idx) => {
+                              if (page === '...') {
+                                return (
+                                  <span
+                                    key={`ellipsis-${idx}`}
+                                    className="px-2.5 py-1.5 text-xs text-[var(--v2-text-muted)]"
+                                  >
+                                    ...
+                                  </span>
+                                );
+                              }
+
+                              return (
+                                <button
+                                  key={page}
+                                  onClick={() => setExecutionPage(page as number)}
+                                  className={`min-w-[28px] px-2 py-1.5 text-xs font-medium transition-all ${
+                                    executionPage === page
+                                      ? 'bg-[var(--v2-primary)] text-white'
+                                      : 'bg-[var(--v2-surface)] text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] border border-gray-200 dark:border-slate-700'
+                                  }`}
+                                  style={{ borderRadius: 'var(--v2-radius-button)' }}
+                                >
+                                  {page}
+                                </button>
+                              );
+                            });
+                          })()}
 
                           <button
                             onClick={() => setExecutionPage(prev => Math.min(totalPages, prev + 1))}
                             disabled={executionPage === totalPages}
-                            className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] disabled:opacity-50 disabled:cursor-not-allowed transition-all bg-[var(--v2-surface)] border border-[var(--v2-border)]"
+                            className="flex items-center justify-center p-1.5 text-xs font-medium text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] disabled:opacity-50 disabled:cursor-not-allowed transition-all bg-[var(--v2-surface)] border border-gray-200 dark:border-slate-700"
                             style={{ borderRadius: 'var(--v2-radius-button)' }}
+                            title="Next"
                           >
-                            Next
-                            <ChevronRight className="w-3 h-3" />
+                            <ChevronRight className="w-3.5 h-3.5" />
                           </button>
                         </div>
                       </div>
@@ -1316,417 +1911,47 @@ export default function V2AgentDetailPage() {
             )}
           </Card>
         </div>
->>>>>>> Stashed changes
       </div>
 
-      {/* Main Grid Layout */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-5 lg:gap-6 lg:grid-rows-[auto_auto]">
-        {/* Left Column */}
-        <div className="space-y-4 sm:space-y-5 lg:col-span-1 lg:row-span-2">
-          {/* Agent Info Card */}
-          <Card className="!p-4 sm:!p-6">
-            <div className="flex items-center gap-3 mb-4">
-              <Bot className="w-7 h-7 sm:w-8 sm:h-8 text-[#10B981]" />
-              <div className="flex-1">
-                <h2 className="text-lg sm:text-xl font-semibold text-[var(--v2-text-primary)]">
-                  {agent.agent_name}
-                </h2>
-                <p className="text-xs sm:text-sm text-[var(--v2-text-secondary)]">
-                  {agent.mode === 'scheduled' ? 'Scheduled Agent' : 'On-Demand Agent'}
-                </p>
-                {memoryCount > 0 && (
-                  <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-gradient-to-r from-purple-50 to-indigo-50 dark:from-purple-900/20 dark:to-indigo-900/20 border border-purple-200 dark:border-purple-700 shadow-sm mt-2">
-                    <Brain className="h-4 w-4 text-purple-600 dark:text-purple-400" />
-                    <span className="font-semibold text-purple-700 dark:text-purple-300 text-xs">
-                      Learning Active
-                    </span>
-                  </div>
-                )}
-              </div>
-            </div>
+      {/* Settings Drawer Overlay */}
+      {showSettingsDrawer && (
+        <div
+          className="fixed inset-0 bg-black/50 z-40 transition-opacity"
+          onClick={() => setShowSettingsDrawer(false)}
+        />
+      )}
 
-            {/* Agent ID with Copy */}
-            <div className="mb-4">
-              <label className="text-xs font-medium text-[var(--v2-text-muted)] mb-1 block">
-                Agent ID
-              </label>
-              <div className="flex items-center gap-2 p-2 bg-[var(--v2-surface)] rounded-lg" style={{ borderRadius: 'var(--v2-radius-button)' }}>
-                <code className="text-xs text-[var(--v2-text-primary)] flex-1 truncate">
-                  {agent.id}
-                </code>
-                <button
-                  onClick={copyAgentId}
-                  className="p-1.5 hover:bg-[var(--v2-surface-hover)] transition-colors"
-                  style={{ borderRadius: 'var(--v2-radius-button)' }}
-                >
-                  {copiedId ? (
-                    <Check className="w-3.5 h-3.5 text-green-600 dark:text-green-400" />
-                  ) : (
-                    <Copy className="w-3.5 h-3.5 text-[var(--v2-text-muted)]" />
-                  )}
-                </button>
-              </div>
-            </div>
-
-            {/* Created Date */}
-            {agent.created_at && (
-              <div className="mb-4">
-                <label className="text-xs font-medium text-[var(--v2-text-muted)] mb-1 block">
-                  Created
-                </label>
-                <p className="text-sm text-[var(--v2-text-primary)]">
-                  {new Date(agent.created_at).toLocaleString('en-US', {
-                    month: 'long',
-                    day: 'numeric',
-                    year: 'numeric',
-                    hour: '2-digit',
-                    minute: '2-digit'
-                  })}
-                </p>
-              </div>
-            )}
-
-            {/* Schedule */}
-            <div className="mb-4">
-              <label className="text-xs font-medium text-[var(--v2-text-muted)] mb-1 block">
-                Schedule
-              </label>
-              <p className="text-sm text-[var(--v2-text-primary)]">
-                {formatScheduleDisplay(agent.mode || 'on_demand', agent.schedule_cron)}
-              </p>
-            </div>
-
-            {/* Description */}
-            {agent.description && (
-              <div className="mb-4">
-                <label className="text-xs font-medium text-[var(--v2-text-muted)] mb-1 block">
-                  Description
-                </label>
-                <p className="text-sm text-[var(--v2-text-primary)]">
-                  {agent.description}
-                </p>
-              </div>
-            )}
-
-            {/* Plugins */}
-            <div>
-              <label className="text-xs font-medium text-[var(--v2-text-muted)] mb-2 block">
-                Integrations ({safePluginsRequired.length})
-              </label>
-              {safePluginsRequired.length > 0 ? (
-                <div className="flex flex-wrap gap-2">
-                  {safePluginsRequired.map(plugin => {
-                    const isConnected = getPluginStatus(plugin)
-
-                    return (
-                      <div
-                        key={plugin}
-                        className="relative group"
-                      >
-                        {/* Plugin Icon with Status Badge */}
-                        <div className="w-10 h-10 rounded-xl bg-[var(--v2-surface)] border border-[var(--v2-border)] flex items-center justify-center shadow-sm transition-all duration-300 hover:scale-110 cursor-pointer">
-                          {getPluginIcon(plugin)}
-                        </div>
-                        {/* Status Badge Overlay */}
-                        <div className={`absolute -top-1 -right-1 w-4 h-4 rounded-full border-2 border-[var(--v2-surface)] shadow-md flex items-center justify-center transition-all duration-300 ${
-                          isConnected ? 'bg-green-600 dark:bg-green-500' : 'bg-red-600 dark:bg-red-500'
-                        }`}>
-                          {isConnected && (
-                            <Check className="w-2.5 h-2.5 text-white" strokeWidth={3} />
-                          )}
-                        </div>
-                      </div>
-                    )
-                  })}
-                </div>
-              ) : (
-                <p className="text-xs text-[var(--v2-text-muted)]">No integrations configured</p>
-              )}
-            </div>
-
-            {/* Action Buttons */}
-            <div className="mt-6 pt-6 border-t border-[var(--v2-border)] flex items-center gap-2 flex-wrap">
-              {/* Launch/Pause */}
-              <div className="relative group">
-                <button
-                  onClick={handleToggleStatus}
-                  className={`flex items-center justify-center w-10 h-10 hover:scale-110 transition-all duration-200 border shadow-sm ${
-                    agent.status === 'active'
-                      ? 'bg-[var(--v2-surface)] border-[var(--v2-border)] text-orange-600 dark:text-orange-400 hover:bg-orange-50 dark:hover:bg-orange-900/20 hover:border-orange-200 dark:hover:border-orange-800'
-                      : 'bg-[var(--v2-surface)] border-[var(--v2-border)] text-green-600 dark:text-green-400 hover:bg-green-50 dark:hover:bg-green-900/20 hover:border-green-200 dark:hover:border-green-800'
-                  }`}
-                  style={{ borderRadius: 'var(--v2-radius-button)' }}
-                >
-                  {agent.status === 'active' ? <Pause className="w-4 h-4" /> : <Rocket className="w-4 h-4" />}
-                </button>
-                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 bg-gray-900 dark:bg-gray-700 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-10">
-                  {agent.status === 'active' ? 'Pause Agent' : 'Launch Agent'}
-                </div>
-              </div>
-
-              {/* Run Agent */}
-              <div className="relative group">
-                <button
-                  onClick={() => router.push(`/v2/agents/${agent.id}/run`)}
-                  className="flex items-center justify-center w-10 h-10 bg-[var(--v2-surface)] border border-[var(--v2-border)] text-purple-600 dark:text-purple-400 hover:bg-purple-50 dark:hover:bg-purple-900/20 hover:border-purple-200 dark:hover:border-purple-800 hover:scale-110 transition-all duration-200 shadow-sm"
-                  style={{ borderRadius: 'var(--v2-radius-button)' }}
-                >
-                  <Play className="w-4 h-4" />
-                </button>
-                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 bg-gray-900 dark:bg-gray-700 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-10">
-                  Run Agent
-                </div>
-              </div>
-
-              {/* Edit */}
-              <div className="relative group">
-                <button
-                  onClick={() => router.push(`/agents/${agent.id}/edit`)}
-                  className="flex items-center justify-center w-10 h-10 bg-[var(--v2-surface)] border border-[var(--v2-border)] text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 hover:border-blue-200 dark:hover:border-blue-800 hover:scale-110 transition-all duration-200 shadow-sm"
-                  style={{ borderRadius: 'var(--v2-radius-button)' }}
-                >
-                  <Edit className="w-4 h-4" />
-                </button>
-                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 bg-gray-900 dark:bg-gray-700 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-10">
-                  Edit Agent
-                </div>
-              </div>
-
-              {/* Export */}
-              <div className="relative group">
-                <button
-                  onClick={handleExportConfiguration}
-                  className="flex items-center justify-center w-10 h-10 bg-[var(--v2-surface)] border border-[var(--v2-border)] text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 hover:border-emerald-200 dark:hover:border-emerald-800 hover:scale-110 transition-all duration-200 shadow-sm"
-                  style={{ borderRadius: 'var(--v2-radius-button)' }}
-                >
-                  <Download className="w-4 h-4" />
-                </button>
-                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 bg-gray-900 dark:bg-gray-700 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-10">
-                  Export Config
-                </div>
-              </div>
-
-              {/* Duplicate */}
-              <div className="relative group">
-                <button
-                  onClick={handleDuplicateAgent}
-                  disabled={actionLoading === 'duplicate'}
-                  className="flex items-center justify-center w-10 h-10 bg-[var(--v2-surface)] border border-[var(--v2-border)] text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-900/20 hover:border-slate-200 dark:hover:border-slate-800 hover:scale-110 transition-all duration-200 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100"
-                  style={{ borderRadius: 'var(--v2-radius-button)' }}
-                >
-                  {actionLoading === 'duplicate' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Copy className="w-4 h-4" />}
-                </button>
-                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 bg-gray-900 dark:bg-gray-700 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-10">
-                  {actionLoading === 'duplicate' ? 'Duplicating...' : 'Duplicate Agent'}
-                </div>
-              </div>
-
-              {/* Share */}
-              <div className="relative group">
-                <button
-                  disabled={agent.status !== 'active'}
-                  className="flex items-center justify-center w-10 h-10 bg-[var(--v2-surface)] border border-[var(--v2-border)] text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 hover:border-indigo-200 dark:hover:border-indigo-800 hover:scale-110 transition-all duration-200 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100"
-                  style={{ borderRadius: 'var(--v2-radius-button)' }}
-                >
-                  <Share2 className="w-4 h-4" />
-                </button>
-                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 bg-gray-900 dark:bg-gray-700 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-10">
-                  {agent.status !== 'active' ? 'Activate to share' : 'Share Agent'}
-                </div>
-              </div>
-
-              {/* Delete */}
-              <div className="relative group">
-                <button
-                  onClick={() => setShowDeleteConfirm(true)}
-                  className="flex items-center justify-center w-10 h-10 bg-[var(--v2-surface)] border border-[var(--v2-border)] text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 hover:border-red-200 dark:hover:border-red-800 hover:scale-110 transition-all duration-200 shadow-sm"
-                  style={{ borderRadius: 'var(--v2-radius-button)' }}
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
-                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 bg-gray-900 dark:bg-gray-700 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-10">
-                  Delete Agent
-                </div>
-              </div>
-            </div>
-          </Card>
-
-          {/* AIS Complexity Card */}
-          <Card className="!p-4 sm:!p-6">
-            <AgentIntensityCardV2 agentId={agentId} />
-          </Card>
+      {/* Settings Drawer */}
+      <div
+        className={`fixed top-0 right-0 h-screen w-[500px] bg-[var(--v2-surface)] shadow-2xl z-50 transform transition-transform duration-300 overflow-y-auto ${
+          showSettingsDrawer ? 'translate-x-0' : 'translate-x-full'
+        }`}
+      >
+        <div className="sticky top-0 bg-[var(--v2-surface)] border-b border-[var(--v2-border)] px-6 py-4 flex items-center justify-between z-10">
+          <h2 className="text-xl font-semibold text-[var(--v2-text-primary)]">Agent Settings</h2>
+          <button
+            onClick={() => setShowSettingsDrawer(false)}
+            className="text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)] transition-colors"
+          >
+            <X className="w-6 h-6" />
+          </button>
         </div>
 
-        {/* Middle Column - Execution History */}
-        <Card className="!p-4 sm:!p-6 flex flex-col lg:row-span-2" data-section="execution-history">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="text-base font-semibold text-[var(--v2-text-primary)]">
-              Execution History
-            </h3>
-            <TrendingUp className="w-5 h-5 text-[var(--v2-text-muted)]" />
-          </div>
-
-          {/* Agent Health Display */}
-          <div className="mb-6">
-            <AgentHealthCardV2
-              score={health.score}
-              maxScore={health.maxScore}
-              percentage={health.percentage}
-              totalRuns={allExecutions.length}
-              status={agent.status}
-              recentScore={health.recentScore}
-              recentMaxScore={health.recentMaxScore}
-              failedCount={health.failedCount}
+        <div className="p-6 space-y-8">
+          {/* AIS Complexity */}
+          <div className="rounded-xl p-5 border-l-4 border-indigo-500 dark:border-indigo-400 bg-[var(--v2-surface)]">
+            <AgentIntensityCardV2
+              agentId={agentId}
+              latestExecutionTime={executions[0]?.started_at ? new Date(executions[0].started_at).getTime() : undefined}
             />
           </div>
 
-          {/* Execution List */}
-          <div className="space-y-2">
-            {(() => {
-              const totalPages = Math.ceil(executions.length / EXECUTIONS_PER_PAGE)
-              const startIndex = (executionPage - 1) * EXECUTIONS_PER_PAGE
-              const endIndex = startIndex + EXECUTIONS_PER_PAGE
-              const paginatedExecutions = executions.slice(startIndex, endIndex)
-
-              return (
-                <>
-                  {paginatedExecutions.map((exec) => (
-                    <button
-                      key={exec.id}
-                      onClick={() => setSelectedExecution(exec)}
-                      className={`w-full flex items-center justify-between p-3 transition-all text-left ${
-                        selectedExecution?.id === exec.id
-                          ? 'bg-[var(--v2-surface-hover)] border border-[var(--v2-border)]'
-                          : 'bg-[var(--v2-surface)] hover:bg-[var(--v2-surface-hover)] border border-[var(--v2-border)]'
-                      }`}
-                      style={{ borderRadius: 'var(--v2-radius-button)' }}
-                    >
-                      <div className="flex items-center gap-3 flex-1 min-w-0">
-                        {getStatusIcon(exec.status)}
-                        <div className="flex-1 min-w-0">
-                          <div className="text-xs font-medium text-[var(--v2-text-primary)] truncate">
-                            Run #{exec.id.slice(0, 8)}
-                          </div>
-                          <div className="text-xs text-[var(--v2-text-muted)]">
-                            {formatDate(exec.started_at)}
-                          </div>
-                        </div>
-                      </div>
-                      <div className="text-xs font-medium text-[var(--v2-text-muted)]">
-                        {formatDuration(exec.execution_duration_ms)}
-                      </div>
-                    </button>
-                  ))}
-
-                  {executions.length === 0 && (
-                    <div className="text-center py-8 text-sm text-[var(--v2-text-muted)]">
-                      No executions yet
-                    </div>
-                  )}
-
-                  {/* Pagination */}
-                  {totalPages > 1 && (
-                    <div className="flex items-center justify-between pt-4 border-t border-[var(--v2-border)]">
-                      <button
-                        onClick={() => setExecutionPage(prev => Math.max(1, prev - 1))}
-                        disabled={executionPage === 1}
-                        className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                        style={{ borderRadius: 'var(--v2-radius-button)' }}
-                      >
-                        <ChevronLeft className="w-3.5 h-3.5" />
-                        Previous
-                      </button>
-                      <span className="text-xs text-[var(--v2-text-muted)]">
-                        Page {executionPage} of {totalPages}
-                      </span>
-                      <button
-                        onClick={() => setExecutionPage(prev => Math.min(totalPages, prev + 1))}
-                        disabled={executionPage === totalPages}
-                        className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                        style={{ borderRadius: 'var(--v2-radius-button)' }}
-                      >
-                        Next
-                        <ChevronRight className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  )}
-                </>
-              )
-            })()}
-          </div>
-        </Card>
-
-        {/* Right Column - Execution Details */}
-        <Card className="!p-4 sm:!p-6 flex flex-col lg:row-span-2">
-          <h3 className="text-base font-semibold text-[var(--v2-text-primary)] mb-4">
-            Execution Details
-          </h3>
-
-          {/* Tabs */}
-          <div className="mb-6">
-            <div className="flex gap-4 border-b border-[var(--v2-border)] w-fit">
-              <button
-                onClick={() => setActiveTab('results')}
-                className={`pb-2 px-1 text-sm font-medium transition-colors ${
-                  activeTab === 'results'
-                    ? 'text-[var(--v2-primary)] font-semibold border-b-2 border-[var(--v2-primary)]'
-                    : 'text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)]'
-                }`}
-              >
-                Results
-              </button>
-              <button
-                onClick={() => setActiveTab('analytics')}
-                className={`pb-2 px-1 text-sm font-medium transition-colors ${
-                  activeTab === 'analytics'
-                    ? 'text-[var(--v2-primary)] font-semibold border-b-2 border-[var(--v2-primary)]'
-                    : 'text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)]'
-                }`}
-              >
-                Analytics
-              </button>
-            </div>
-          </div>
-
-<<<<<<< Updated upstream
-          {selectedExecution ? (
-            <>
-              {/* Results Tab */}
-              {activeTab === 'results' && (
-                <div className="space-y-4">
-                  {/* Execution Summary - No Card Wrapper */}
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        {getStatusIcon(selectedExecution.status)}
-                        <span className="text-sm font-semibold capitalize text-[var(--v2-text-primary)]">
-                          {selectedExecution.status}
-                        </span>
-=======
-          {/* Created Date */}
-          {agent.created_at && (
-            <div>
-              <label className="text-xs font-medium text-[var(--v2-text-muted)] mb-2 block">
-                Created
-              </label>
-              <p className="text-sm text-[var(--v2-text-primary)] p-2 bg-[var(--v2-surface)] rounded-lg border border-[var(--v2-border)]" style={{ borderRadius: 'var(--v2-radius-button)' }}>
-                {new Date(agent.created_at).toLocaleString('en-US', {
-                  month: 'long',
-                  day: 'numeric',
-                  year: 'numeric',
-                  hour: '2-digit',
-                  minute: '2-digit'
-                })}
-              </p>
-            </div>
-          )}
-
-          {/* Agent Name & Description */}
+          {/* Agent Details Section */}
           <div>
             <h3 className="text-xs font-semibold text-[var(--v2-text-muted)] uppercase tracking-wide mb-4">
               Agent Details
             </h3>
-            {!isEditing ? (
+            {!isEditingDetails ? (
               <div className="space-y-3">
                 <div>
                   <label className="text-xs font-medium text-[var(--v2-text-muted)] mb-2 block">
@@ -1744,9 +1969,46 @@ export default function V2AgentDetailPage() {
                     {agent.description || 'No description'}
                   </p>
                 </div>
+                <div>
+                  <label className="text-xs font-medium text-[var(--v2-text-muted)] mb-2 block">
+                    Agent ID
+                  </label>
+                  <div className="flex items-center gap-2 p-2 bg-[var(--v2-surface)] rounded-lg border border-[var(--v2-border)]" style={{ borderRadius: 'var(--v2-radius-button)' }}>
+                    <code className="text-xs text-[var(--v2-text-primary)] flex-1 truncate font-mono">
+                      {agent.id}
+                    </code>
+                    <button
+                      onClick={copyAgentId}
+                      className="p-1.5 hover:bg-gray-100 dark:hover:bg-slate-700/40 transition-colors"
+                      style={{ borderRadius: 'var(--v2-radius-button)' }}
+                    >
+                      {copiedId ? (
+                        <Check className="w-3.5 h-3.5 text-green-600 dark:text-green-400" />
+                      ) : (
+                        <Copy className="w-3.5 h-3.5 text-[var(--v2-text-muted)]" />
+                      )}
+                    </button>
+                  </div>
+                </div>
+                {agent.created_at && (
+                  <div>
+                    <label className="text-xs font-medium text-[var(--v2-text-muted)] mb-2 block">
+                      Created
+                    </label>
+                    <p className="text-sm text-[var(--v2-text-primary)] p-2 bg-[var(--v2-surface)] rounded-lg border border-[var(--v2-border)]" style={{ borderRadius: 'var(--v2-radius-button)' }}>
+                      {new Date(agent.created_at).toLocaleString('en-US', {
+                        month: 'long',
+                        day: 'numeric',
+                        year: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit'
+                      })}
+                    </p>
+                  </div>
+                )}
                 <button
                   onClick={handleEditClick}
-                  className="inline-flex items-center gap-2 px-3 py-2 text-xs font-medium text-[var(--v2-primary)] hover:bg-[var(--v2-surface-hover)] rounded-lg transition-colors border border-[var(--v2-border)]"
+                  className="inline-flex items-center gap-2 px-3 py-2 text-xs font-medium text-[var(--v2-primary)] hover:bg-gray-100 dark:hover:bg-slate-700/40 rounded-lg transition-colors border border-[var(--v2-border)]"
                   style={{ borderRadius: 'var(--v2-radius-button)' }}
                 >
                   <Edit className="w-3.5 h-3.5" />
@@ -1763,7 +2025,7 @@ export default function V2AgentDetailPage() {
                     type="text"
                     value={editedName}
                     onChange={(e) => setEditedName(e.target.value)}
-                    className="w-full text-sm text-[var(--v2-text-primary)] bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[var(--v2-primary)]"
+                    className="w-full text-sm text-[var(--v2-text-primary)] bg-white dark:bg-slate-800 border border-[var(--v2-border)] rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[var(--v2-primary)]"
                     placeholder="Agent name"
                     autoFocus
                   />
@@ -1775,14 +2037,14 @@ export default function V2AgentDetailPage() {
                   <textarea
                     value={editedDescription}
                     onChange={(e) => setEditedDescription(e.target.value)}
-                    className="w-full text-sm text-[var(--v2-text-primary)] bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[var(--v2-primary)] resize-none"
+                    className="w-full text-sm text-[var(--v2-text-primary)] bg-white dark:bg-slate-800 border border-[var(--v2-border)] rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[var(--v2-primary)] resize-none"
                     placeholder="Agent description"
                     rows={3}
                   />
                 </div>
                 <div className="flex items-center gap-2">
                   <button
-                    onClick={handleSaveEdit}
+                    onClick={handleSaveEditDetails}
                     disabled={isSaving || !editedName.trim()}
                     className="inline-flex items-center gap-2 px-4 py-2 text-xs font-medium bg-gradient-to-r from-[var(--v2-primary)] to-[var(--v2-secondary)] text-white hover:opacity-90 transition-opacity rounded-lg disabled:opacity-50 disabled:cursor-not-allowed"
                     style={{ borderRadius: 'var(--v2-radius-button)' }}
@@ -1800,9 +2062,9 @@ export default function V2AgentDetailPage() {
                     )}
                   </button>
                   <button
-                    onClick={handleCancelEdit}
+                    onClick={handleCancelEditDetails}
                     disabled={isSaving}
-                    className="inline-flex items-center gap-2 px-4 py-2 text-xs font-medium text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] hover:bg-[var(--v2-surface-hover)] rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed border border-[var(--v2-border)]"
+                    className="inline-flex items-center gap-2 px-4 py-2 text-xs font-medium text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] hover:bg-gray-100 dark:hover:bg-slate-700/40 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed border border-[var(--v2-border)]"
                     style={{ borderRadius: 'var(--v2-radius-button)' }}
                   >
                     <X className="w-3.5 h-3.5" />
@@ -1831,390 +2093,317 @@ export default function V2AgentDetailPage() {
                       {/* Plugin Icon with Status Badge */}
                       <div className="w-10 h-10 rounded-xl bg-[var(--v2-surface)] border border-[var(--v2-border)] flex items-center justify-center shadow-sm transition-all duration-300 hover:scale-110 cursor-pointer">
                         {getPluginIcon(plugin)}
->>>>>>> Stashed changes
                       </div>
-                      <div className="text-xs text-[var(--v2-text-muted)]">
-                        {new Date(selectedExecution.started_at).toLocaleString('en-US', {
-                          month: 'short',
-                          day: 'numeric',
-                          hour: '2-digit',
-                          minute: '2-digit'
-                        })}
-                      </div>
-                    </div>
-
-                    {selectedExecution.execution_duration_ms && (
-                      <div className="flex items-center justify-between text-xs">
-                        <span className="text-[var(--v2-text-muted)]">Duration:</span>
-                        <span className="font-semibold text-[var(--v2-text-primary)]">
-                          {formatDuration(selectedExecution.execution_duration_ms)}
-                        </span>
-                      </div>
-                    )}
-
-                    {selectedExecution.completed_at && (
-                      <div className="flex items-center justify-between text-xs">
-                        <span className="text-[var(--v2-text-muted)]">Completed:</span>
-                        <span className="font-medium text-[var(--v2-text-primary)]">
-                          {new Date(selectedExecution.completed_at).toLocaleString('en-US', {
-                            month: 'short',
-                            day: 'numeric',
-                            hour: '2-digit',
-                            minute: '2-digit'
-                          })}
-                        </span>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Error Message */}
-                  {selectedExecution.error_message && (
-                    <div>
-                      <label className="text-xs font-medium text-[var(--v2-text-muted)] mb-1 block">
-                        Error Message
-                      </label>
-                      <div className="p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
-                        <p className="text-xs text-red-700 dark:text-red-400 font-mono break-words overflow-wrap-anywhere">
-                          {selectedExecution.error_message}
-                        </p>
+                      {/* Status Badge Overlay */}
+                      <div className={`absolute -top-1 -right-1 w-4 h-4 rounded-full border-2 border-[var(--v2-surface)] shadow-md flex items-center justify-center transition-all duration-300 ${
+                        isConnected ? 'bg-green-600 dark:bg-green-500' : 'bg-red-600 dark:bg-red-500'
+                      }`}>
+                        {isConnected && (
+                          <Check className="w-2.5 h-2.5 text-white" strokeWidth={3} />
+                        )}
                       </div>
                     </div>
-                  )}
+                  )
+                })}
+              </div>
+            ) : (
+              <p className="text-xs text-[var(--v2-text-muted)] p-4 bg-[var(--v2-surface-hover)] rounded-lg">
+                No integrations configured
+              </p>
+            )}
+          </div>
 
-                  {/* Execution Summary for Smart Executions */}
-                  {selectedExecution.logs?.pilot && (
-                    <div className="border rounded-lg p-4" style={{ backgroundColor: 'var(--v2-status-executing-bg)', borderColor: 'var(--v2-status-executing-border)' }}>
-                      <h4 className="text-sm font-semibold mb-3 flex items-center gap-2" style={{ color: 'var(--v2-status-executing-text)' }}>
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
-                        </svg>
-                        Smart Execution Summary
+          {/* Agent Status */}
+          <div>
+            <h3 className="text-xs font-semibold text-[var(--v2-text-muted)] uppercase tracking-wide mb-4">
+              Agent Status
+            </h3>
+            <div className="space-y-3">
+              <div className="flex items-center justify-between p-4 bg-[var(--v2-surface-hover)] rounded-lg">
+                <div>
+                  <h4 className="text-sm font-semibold text-[var(--v2-text-primary)] mb-1">
+                    {agent.status === 'active' ? 'Active' : agent.status === 'draft' ? 'Not Active (Draft)' : 'Inactive'}
+                  </h4>
+                  <p className="text-xs text-[var(--v2-text-muted)]">
+                    {agent.status === 'active'
+                      ? 'Agent is running and will execute on schedule'
+                      : agent.status === 'draft'
+                      ? 'Agent is in draft mode. Activate to start running.'
+                      : 'Agent is inactive and will not execute'}
+                  </p>
+                </div>
+                <button
+                  data-tour="activate-button"
+                  onClick={handleToggleStatus}
+                  className={`w-12 h-6 rounded-full relative transition-colors ${
+                    agent.status === 'active' ? 'bg-[var(--v2-primary)]' : 'bg-[var(--v2-border)]'
+                  }`}
+                  style={{ borderRadius: 'var(--v2-radius-button)' }}
+                >
+                  <div
+                    className={`w-4 h-4 bg-white dark:bg-slate-200 rounded-full absolute top-1 transition-transform ${
+                      agent.status === 'active' ? 'translate-x-7' : 'translate-x-1'
+                    }`}
+                    style={{ boxShadow: '0 1px 3px rgba(0, 0, 0, 0.1)' }}
+                  />
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Schedule Settings */}
+          <div>
+            <h3 className="text-xs font-semibold text-[var(--v2-text-muted)] uppercase tracking-wide mb-4">
+              Schedule
+            </h3>
+            <div className="space-y-3">
+              {!isEditingSchedule ? (
+                <div className="p-4 bg-[var(--v2-surface-hover)] rounded-lg">
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="flex-1">
+                      <h4 className="text-sm font-semibold text-[var(--v2-text-primary)] mb-1">
+                        {agent.mode === 'scheduled' ? 'Scheduled' : 'On-Demand'}
                       </h4>
-                      <div className="grid grid-cols-2 gap-3 text-xs">
-                        <div className="flex justify-between">
-                          <span className="text-[var(--v2-text-secondary)]">Steps Completed:</span>
-                          <span className="font-bold text-[var(--v2-text-primary)]">{selectedExecution.logs.stepsCompleted || 0}</span>
-                        </div>
-                        {(selectedExecution.logs.stepsFailed || 0) > 0 && (
-                          <div className="flex justify-between">
-                            <span className="text-[var(--v2-text-secondary)]">Steps Failed:</span>
-                            <span className="font-bold text-red-600 dark:text-red-400">{selectedExecution.logs.stepsFailed}</span>
-                          </div>
-                        )}
-                        {(selectedExecution.logs.stepsSkipped || 0) > 0 && (
-                          <div className="flex justify-between">
-                            <span className="text-[var(--v2-text-secondary)]">Steps Skipped:</span>
-                            <span className="font-bold text-yellow-600 dark:text-yellow-400">{selectedExecution.logs.stepsSkipped}</span>
-                          </div>
-                        )}
-                        {selectedExecution.execution_duration_ms && (
-                          <div className="flex justify-between">
-                            <span className="text-[var(--v2-text-secondary)]">Duration:</span>
-                            <span className="font-bold text-[var(--v2-text-primary)]">{formatDuration(selectedExecution.execution_duration_ms)}</span>
-                          </div>
-                        )}
-                        {selectedExecution.logs.executionId && (
-                          <div className="col-span-2 pt-2 mt-2 border-t" style={{ borderColor: 'var(--v2-status-executing-border)' }}>
-                            <span className="text-[var(--v2-text-secondary)]">Execution ID:</span>
-                            <p className="font-mono text-[10px] text-[var(--v2-text-primary)] mt-1 break-all">
-                              {selectedExecution.logs.executionId}
-                            </p>
-                          </div>
-                        )}
-                      </div>
+                      <p className="text-xs text-[var(--v2-text-muted)]">
+                        {agent.mode === 'scheduled'
+                          ? formatScheduleDisplay(agent.mode, agent.schedule_cron ?? undefined)
+                          : 'Run manually when needed'}
+                      </p>
                     </div>
-                  )}
-
-                  {/* Output */}
-                  {selectedExecution.output && (
-                    <div>
-                      <label className="text-xs font-medium text-[var(--v2-text-muted)] mb-1 block">
-                        Output
-                      </label>
-                      <div className="p-3 bg-[var(--v2-surface)] max-h-64 overflow-y-auto" style={{ borderRadius: 'var(--v2-radius-button)' }}>
-                        <pre className="text-xs text-[var(--v2-text-primary)] whitespace-pre-wrap break-words">
-                          {JSON.stringify(selectedExecution.output, null, 2)}
-                        </pre>
+                    <button
+                      onClick={handleEditScheduleClick}
+                      className="px-3 py-1.5 text-xs font-medium bg-gradient-to-r from-[var(--v2-primary)] to-[var(--v2-secondary)] text-white hover:opacity-90 transition-opacity rounded-lg flex items-center gap-1"
+                    >
+                      <Edit className="w-3.5 h-3.5" />
+                      Edit
+                    </button>
+                  </div>
+                  {agent.mode === 'scheduled' && agent.next_run_at && (
+                    <div className="pt-3 border-t border-[var(--v2-border)]">
+                      <div className="flex items-center gap-2 text-xs text-[var(--v2-text-muted)]">
+                        <Clock className="w-3.5 h-3.5" />
+                        <span>Next run: {formatNextRun(agent.next_run_at, agent.timezone ?? undefined)}</span>
                       </div>
                     </div>
                   )}
                 </div>
-              )}
+              ) : (
+                <div className="p-4 bg-[var(--v2-surface-hover)] rounded-lg space-y-4">
+                  {/* Schedule Mode Selection */}
+                  <div>
+                    <label className="text-xs font-medium text-[var(--v2-text-secondary)] mb-2 block">Mode</label>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        onClick={handleOnDemand}
+                        className={`p-3 border transition-all ${
+                          scheduleMode === 'manual'
+                            ? 'border-[var(--v2-primary)] bg-[var(--v2-primary)]/10'
+                            : 'border-[var(--v2-border)] hover:border-[var(--v2-primary)] hover:bg-gray-100 dark:hover:bg-slate-700/40'
+                        }`}
+                        style={{ borderRadius: 'var(--v2-radius-button)' }}
+                      >
+                        <div className="flex items-center gap-2">
+                          <PlayCircle className="h-4 w-4 text-[var(--v2-primary)] flex-shrink-0" />
+                          <div className="text-left">
+                            <p className="font-semibold text-[var(--v2-text-primary)] text-xs">On-demand</p>
+                            <p className="text-[10px] text-[var(--v2-text-muted)] leading-tight">Manual</p>
+                          </div>
+                        </div>
+                      </button>
 
-              {/* Analytics Tab */}
-              {activeTab === 'analytics' && (
-                <div className="space-y-4">
-                  {/* Execution Type Badge */}
-                  {(selectedExecution.logs?.pilot || selectedExecution.logs?.agentkit) && (
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs font-medium text-[var(--v2-text-muted)]">Execution Type:</span>
-                      <span className={`text-xs px-2.5 py-1 rounded-full font-semibold ${
-                        selectedExecution.logs.pilot
-                          ? 'bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-400'
-                          : 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400'
-                      }`}>
-                        {selectedExecution.logs.pilot ? 'Smart Pilot' : 'AgentKit'}
-                      </span>
-                    </div>
-                  )}
-
-                  {/* Execution Metrics */}
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg p-3">
-                      <div className="text-xs text-[var(--v2-text-muted)] mb-1">Duration</div>
-                      <div className="text-lg font-bold text-[var(--v2-text-primary)]">
-                        {selectedExecution.execution_duration_ms
-                          ? formatDuration(selectedExecution.execution_duration_ms)
-                          : 'N/A'}
-                      </div>
-                    </div>
-                    <div className="bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg p-3">
-                      <div className="text-xs text-[var(--v2-text-muted)] mb-1">
-                        {selectedExecution.logs?.pilot ? 'Steps' : selectedExecution.logs?.agentkit ? 'Iterations' : 'Status'}
-                      </div>
-                      <div className="text-lg font-bold capitalize text-[var(--v2-text-primary)]">
-                        {selectedExecution.logs?.pilot
-                          ? `${selectedExecution.logs.stepsCompleted || 0}/${selectedExecution.logs.totalSteps || 0}`
-                          : selectedExecution.logs?.agentkit
-                          ? selectedExecution.logs.iterations || 'N/A'
-                          : selectedExecution.status}
-                      </div>
+                      <button
+                        onClick={() => setScheduleMode('scheduled')}
+                        className={`p-3 border transition-all ${
+                          scheduleMode === 'scheduled'
+                            ? 'border-[var(--v2-primary)] bg-[var(--v2-primary)]/10'
+                            : 'border-[var(--v2-border)] hover:border-[var(--v2-primary)] hover:bg-gray-100 dark:hover:bg-slate-700/40'
+                        }`}
+                        style={{ borderRadius: 'var(--v2-radius-button)' }}
+                      >
+                        <div className="flex items-center gap-2">
+                          <Clock className="h-4 w-4 text-[var(--v2-primary)] flex-shrink-0" />
+                          <div className="text-left">
+                            <p className="font-semibold text-[var(--v2-text-primary)] text-xs">Scheduled</p>
+                            <p className="text-[10px] text-[var(--v2-text-muted)] leading-tight">Auto run</p>
+                          </div>
+                        </div>
+                      </button>
                     </div>
                   </div>
 
-                  {/* Execution Progress (Pilot only) */}
-                  {selectedExecution.logs?.pilot && selectedExecution.logs.totalSteps && (
-                    <div className="bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg p-4">
-                      <h4 className="text-sm font-semibold text-[var(--v2-text-primary)] mb-3">
-                        Execution Progress
-                      </h4>
-                      <div className="space-y-3">
-                        {/* Progress Bar */}
-                        <div className="relative h-2 bg-[var(--v2-border)] rounded-full overflow-hidden">
-                          <div
-                            className="h-full bg-gradient-to-r from-[var(--v2-primary)] to-[var(--v2-secondary)] transition-all"
-                            style={{
-                              width: `${((selectedExecution.logs.stepsCompleted || 0) / selectedExecution.logs.totalSteps) * 100}%`
-                            }}
+                  {/* Schedule Configuration (shown when scheduled is selected) */}
+                  {scheduleMode === 'scheduled' && (
+                    <div className="space-y-3 pt-3 border-t border-[var(--v2-border)]">
+                      {/* Frequency Selection */}
+                      <div>
+                        <label className="block text-xs font-medium text-[var(--v2-text-secondary)] mb-2">
+                          Frequency
+                        </label>
+                        <div className="grid grid-cols-2 gap-2">
+                          {(['hourly', 'daily', 'weekly', 'monthly'] as const).map((type) => (
+                            <button
+                              key={type}
+                              onClick={() => setScheduleType(type)}
+                              className={`px-3 py-2 text-xs font-medium transition-all ${
+                                scheduleType === type
+                                  ? 'bg-[var(--v2-primary)] text-white'
+                                  : 'bg-[var(--v2-surface)] border border-[var(--v2-border)] text-[var(--v2-text-secondary)] hover:border-[var(--v2-primary)]'
+                              }`}
+                              style={{ borderRadius: 'var(--v2-radius-button)' }}
+                            >
+                              {type.charAt(0).toUpperCase() + type.slice(1)}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Hourly Interval */}
+                      {scheduleType === 'hourly' && (
+                        <div>
+                          <label className="block text-xs font-medium text-[var(--v2-text-secondary)] mb-2">
+                            Every N hours
+                          </label>
+                          <input
+                            type="number"
+                            min="1"
+                            max="24"
+                            value={hourlyInterval}
+                            onChange={(e) => setHourlyInterval(e.target.value)}
+                            className="w-full px-3 py-2 text-sm bg-[var(--v2-surface)] border border-[var(--v2-border)] text-[var(--v2-text-primary)] focus:outline-none focus:border-[var(--v2-primary)]"
+                            style={{ borderRadius: 'var(--v2-radius-button)' }}
                           />
                         </div>
+                      )}
 
-                        {/* Step Breakdown */}
-                        <div className="grid grid-cols-3 gap-2">
-                          <div className="text-center">
-                            <div className="text-lg font-bold text-green-600 dark:text-green-400">
-                              {selectedExecution.logs.stepsCompleted || 0}
-                            </div>
-                            <div className="text-[10px] text-[var(--v2-text-muted)]">Completed</div>
-                          </div>
-                          {(selectedExecution.logs.stepsFailed || 0) > 0 && (
-                            <div className="text-center">
-                              <div className="text-lg font-bold text-red-600 dark:text-red-400">
-                                {selectedExecution.logs.stepsFailed}
-                              </div>
-                              <div className="text-[10px] text-[var(--v2-text-muted)]">Failed</div>
-                            </div>
-                          )}
-                          {(selectedExecution.logs.stepsSkipped || 0) > 0 && (
-                            <div className="text-center">
-                              <div className="text-lg font-bold text-yellow-600 dark:text-yellow-400">
-                                {selectedExecution.logs.stepsSkipped}
-                              </div>
-                              <div className="text-[10px] text-[var(--v2-text-muted)]">Skipped</div>
-                            </div>
-                          )}
+                      {/* Time Selection (for daily/weekly/monthly) */}
+                      {scheduleType && scheduleType !== 'hourly' && (
+                        <div>
+                          <label className="block text-xs font-medium text-[var(--v2-text-secondary)] mb-2">
+                            Time
+                          </label>
+                          <input
+                            type="time"
+                            value={scheduleTime}
+                            onChange={(e) => setScheduleTime(e.target.value)}
+                            className="w-full px-3 py-2 text-sm bg-[var(--v2-surface)] border border-[var(--v2-border)] text-[var(--v2-text-primary)] focus:outline-none focus:border-[var(--v2-primary)]"
+                            style={{ borderRadius: 'var(--v2-radius-button)' }}
+                          />
                         </div>
-                      </div>
+                      )}
+
+                      {/* Daily Options */}
+                      {scheduleType === 'daily' && (
+                        <div>
+                          <label className="block text-xs font-medium text-[var(--v2-text-secondary)] mb-2">
+                            Days
+                          </label>
+                          <div className="grid grid-cols-3 gap-2">
+                            {(['everyday', 'weekdays', 'weekends'] as const).map((option) => (
+                              <button
+                                key={option}
+                                onClick={() => setDailyOption(option)}
+                                className={`px-3 py-2 text-xs font-medium transition-all ${
+                                  dailyOption === option
+                                    ? 'bg-[var(--v2-primary)] text-white'
+                                    : 'bg-[var(--v2-surface)] border border-[var(--v2-border)] text-[var(--v2-text-secondary)] hover:border-[var(--v2-primary)]'
+                                }`}
+                                style={{ borderRadius: 'var(--v2-radius-button)' }}
+                              >
+                                {option === 'everyday' ? 'Every day' : option.charAt(0).toUpperCase() + option.slice(1)}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Weekly Day Selection */}
+                      {scheduleType === 'weekly' && (
+                        <div>
+                          <label className="block text-xs font-medium text-[var(--v2-text-secondary)] mb-2">
+                            Days of week
+                          </label>
+                          <div className="grid grid-cols-7 gap-1">
+                            {['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'].map((day) => (
+                              <button
+                                key={day}
+                                onClick={() => handleDayToggle(day)}
+                                className={`px-1 py-2 text-xs font-medium transition-all ${
+                                  selectedDays.includes(day)
+                                    ? 'bg-[var(--v2-primary)] text-white'
+                                    : 'bg-[var(--v2-surface)] border border-[var(--v2-border)] text-[var(--v2-text-secondary)] hover:border-[var(--v2-primary)]'
+                                }`}
+                                style={{ borderRadius: 'var(--v2-radius-button)' }}
+                              >
+                                {day.slice(0, 3)}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Monthly Day Selection */}
+                      {scheduleType === 'monthly' && (
+                        <div>
+                          <label className="block text-xs font-medium text-[var(--v2-text-secondary)] mb-2">
+                            Day of month
+                          </label>
+                          <input
+                            type="number"
+                            min="1"
+                            max="31"
+                            value={selectedMonthDay}
+                            onChange={(e) => setSelectedMonthDay(e.target.value)}
+                            className="w-full px-3 py-2 text-sm bg-[var(--v2-surface)] border border-[var(--v2-border)] text-[var(--v2-text-primary)] focus:outline-none focus:border-[var(--v2-primary)]"
+                            style={{ borderRadius: 'var(--v2-radius-button)' }}
+                          />
+                        </div>
+                      )}
+
+                      {/* Schedule Preview */}
+                      {scheduleType && (
+                        <div className="p-3 bg-[var(--v2-surface)] border border-[var(--v2-border)]" style={{ borderRadius: 'var(--v2-radius-button)' }}>
+                          <p className="text-xs text-[var(--v2-text-secondary)]">
+                            <span className="font-medium">Schedule: </span>
+                            {getScheduleDescription()}
+                          </p>
+                        </div>
+                      )}
                     </div>
                   )}
 
-                  {/* AI Model Info */}
-                  {(selectedExecution.logs?.model || selectedExecution.logs?.provider) && (
-                    <div className="bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg p-4">
-                      <h4 className="text-sm font-semibold text-[var(--v2-text-primary)] mb-3">
-                        {selectedExecution.logs.pilot ? 'Execution Type' : 'AI Model Information'}
-                      </h4>
-                      <div className="space-y-2 text-xs">
-                        {selectedExecution.logs.pilot ? (
-                          <>
-                            <div className="flex justify-between">
-                              <span className="text-[var(--v2-text-muted)]">Type:</span>
-                              <span className="text-[var(--v2-text-primary)] font-medium">
-                                Smart Orchestrator
-                              </span>
-                            </div>
-                            <div className="flex justify-between">
-                              <span className="text-[var(--v2-text-muted)]">Steps Completed:</span>
-                              <span className="text-[var(--v2-text-primary)] font-medium">
-                                {selectedExecution.logs.stepsCompleted || 0}
-                              </span>
-                            </div>
-                            {(selectedExecution.logs.stepsFailed || 0) > 0 && (
-                              <div className="flex justify-between">
-                                <span className="text-[var(--v2-text-muted)]">Steps Failed:</span>
-                                <span className="text-red-600 dark:text-red-400 font-medium">
-                                  {selectedExecution.logs.stepsFailed}
-                                </span>
-                              </div>
-                            )}
-                            {(selectedExecution.logs.stepsSkipped || 0) > 0 && (
-                              <div className="flex justify-between">
-                                <span className="text-[var(--v2-text-muted)]">Steps Skipped:</span>
-                                <span className="text-yellow-600 dark:text-yellow-400 font-medium">
-                                  {selectedExecution.logs.stepsSkipped}
-                                </span>
-                              </div>
-                            )}
-                            <div className="pt-2 mt-2 border-t border-[var(--v2-border)]">
-                              <p className="text-[10px] text-[var(--v2-text-muted)] italic">
-                                Uses dynamic model routing per step for optimal performance
-                              </p>
-                            </div>
-                          </>
-                        ) : (
-                          <>
-                            {selectedExecution.logs.model && (
-                              <div className="flex justify-between">
-                                <span className="text-[var(--v2-text-muted)]">Model:</span>
-                                <span className="text-[var(--v2-text-primary)] font-medium">
-                                  {selectedExecution.logs.model}
-                                </span>
-                              </div>
-                            )}
-                            {selectedExecution.logs.provider && (
-                              <div className="flex justify-between">
-                                <span className="text-[var(--v2-text-muted)]">Provider:</span>
-                                <span className="text-[var(--v2-text-primary)] font-medium capitalize">
-                                  {selectedExecution.logs.provider}
-                                </span>
-                              </div>
-                            )}
-                          </>
-                        )}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Pilot Credits Usage */}
-                  <div className="bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg p-4">
-                    <h4 className="text-sm font-semibold text-[var(--v2-text-primary)] mb-3">
-                      Pilot Credits Usage
-                    </h4>
-                    <div className="space-y-3">
-                      {/* Total Pilot Credits */}
-                      <div className="flex justify-between items-center">
-                        <span className="text-xs text-[var(--v2-text-muted)]">Total Credits:</span>
-                        <span className="text-base font-bold text-[var(--v2-primary)]">
-                          {selectedExecution.logs?.tokensUsed?.total
-                            ? Math.ceil(selectedExecution.logs.tokensUsed.total / 10).toLocaleString()
-                            : '0'}
-                        </span>
-                      </div>
-
-                      {/* Credit Breakdown - Show breakdown only if we have real data */}
-                      {selectedExecution.logs?.tokensUsed?.prompt && selectedExecution.logs?.tokensUsed?.completion ? (
-                        <div className="grid grid-cols-2 gap-2">
-                          <div className="bg-blue-50 dark:bg-slate-800 border border-blue-200 dark:border-blue-700 rounded-lg p-2">
-                            <div className="text-[10px] text-blue-600 dark:text-blue-400 mb-0.5">Input</div>
-                            <div className="text-sm font-bold text-blue-700 dark:text-blue-300">
-                              {Math.ceil(selectedExecution.logs.tokensUsed.prompt / 10).toLocaleString()}
-                            </div>
-                          </div>
-                          <div className="bg-purple-50 dark:bg-slate-800 border border-purple-200 dark:border-purple-700 rounded-lg p-2">
-                            <div className="text-[10px] text-purple-600 dark:text-purple-400 mb-0.5">Output</div>
-                            <div className="text-sm font-bold text-purple-700 dark:text-purple-300">
-                              {Math.ceil(selectedExecution.logs.tokensUsed.completion / 10).toLocaleString()}
-                            </div>
-                          </div>
-                        </div>
+                  {/* Save/Cancel Buttons */}
+                  <div className="flex gap-2 pt-3 border-t border-[var(--v2-border)]">
+                    <button
+                      onClick={handleSaveEditSchedule}
+                      disabled={isSaving}
+                      className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-gradient-to-r from-[var(--v2-primary)] to-[var(--v2-secondary)] text-white hover:opacity-90 transition-opacity font-medium text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                      style={{ borderRadius: 'var(--v2-radius-button)' }}
+                    >
+                      {isSaving ? (
+                        <>
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                          Saving...
+                        </>
                       ) : (
-                        <div className="border rounded-lg p-2 text-center" style={{ backgroundColor: 'var(--v2-bg)', borderColor: 'var(--v2-border)' }}>
-                          <div className="text-[10px] mb-0.5" style={{ color: 'var(--v2-text-muted)' }}>Tokens Used</div>
-                          <div className="text-sm font-bold" style={{ color: 'var(--v2-text-primary)' }}>
-                            {selectedExecution.logs?.tokensUsed?.total
-                              ? Math.ceil(selectedExecution.logs.tokensUsed.total / 10).toLocaleString()
-                              : '0'}
-                          </div>
-                          <div className="text-[9px] mt-0.5" style={{ color: 'var(--v2-text-muted)' }}>Total</div>
-                        </div>
+                        <>
+                          <Check className="w-4 h-4" />
+                          Save
+                        </>
                       )}
-                    </div>
-                  </div>
-
-                  {/* Timeline */}
-                  <div>
-                    <label className="text-xs font-medium text-[var(--v2-text-muted)] mb-2 block">
-                      Execution Timeline
-                    </label>
-                    <div className="space-y-2">
-                      <div className="flex items-center gap-2 text-xs">
-                        <div className="w-2 h-2 rounded-full bg-blue-600 dark:bg-blue-400"></div>
-                        <span className="text-[var(--v2-text-muted)]">Started:</span>
-                        <span className="text-[var(--v2-text-primary)] font-medium">
-                          {new Date(selectedExecution.started_at).toLocaleTimeString()}
-                        </span>
-                      </div>
-                      {selectedExecution.completed_at && (
-                        <div className="flex items-center gap-2 text-xs">
-                          <div className="w-2 h-2 rounded-full bg-green-600 dark:bg-green-400"></div>
-                          <span className="text-[var(--v2-text-muted)]">Completed:</span>
-                          <span className="text-[var(--v2-text-primary)] font-medium">
-                            {new Date(selectedExecution.completed_at).toLocaleTimeString()}
-                          </span>
-                        </div>
-                      )}
-<<<<<<< Updated upstream
-                    </div>
-                  </div>
-
-                  {/* Performance Insights */}
-                  <div className="bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg p-4">
-                    <h4 className="text-sm font-semibold text-[var(--v2-text-primary)] mb-3">
-                      Performance Insights
-                    </h4>
-                    <div className="space-y-2 text-xs">
-                      <div className="flex justify-between">
-                        <span className="text-[var(--v2-text-muted)]">Execution Speed:</span>
-                        <span className="text-[var(--v2-text-primary)] font-medium">
-                          {selectedExecution.execution_duration_ms && selectedExecution.execution_duration_ms < 5000 ? 'Fast' :
-                           selectedExecution.execution_duration_ms && selectedExecution.execution_duration_ms < 15000 ? 'Normal' : 'Slow'}
-                        </span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-[var(--v2-text-muted)]">Success Rate:</span>
-                        <span className="text-[var(--v2-text-primary)] font-medium">
-                          {selectedExecution.status === 'completed' || selectedExecution.status === 'success' ? '100%' : '0%'}
-                        </span>
-                      </div>
-                    </div>
-=======
                     </button>
                     <button
-                      onClick={handleCancelEdit}
+                      onClick={handleCancelEditSchedule}
                       disabled={isSaving}
-                      className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-[var(--v2-surface)] text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] border border-[var(--v2-border)] hover:bg-[var(--v2-surface-hover)] transition-colors font-medium text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-[var(--v2-surface)] text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] border border-gray-200 dark:border-slate-700 hover:bg-gray-100 dark:hover:bg-slate-700/40 transition-colors font-medium text-sm disabled:opacity-50 disabled:cursor-not-allowed"
                       style={{ borderRadius: 'var(--v2-radius-button)' }}
                     >
                       <X className="w-4 h-4" />
                       Cancel
                     </button>
->>>>>>> Stashed changes
                   </div>
                 </div>
               )}
-
-            </>
-          ) : (
-            <div className="flex flex-col items-center justify-center py-12 text-center">
-              <Clock className="w-12 h-12 text-[var(--v2-text-muted)] opacity-20 mb-3" />
-              <p className="text-sm text-[var(--v2-text-muted)]">
-                Select an execution to view details
-              </p>
             </div>
-<<<<<<< Updated upstream
-          )}
-        </Card>
-=======
           </div>
 
           {/* Intelligence Features */}
@@ -2236,7 +2425,7 @@ export default function V2AgentDetailPage() {
                   style={{ borderRadius: 'var(--v2-radius-button)' }}
                 >
                   <div
-                    className={`w-4 h-4 bg-white rounded-full absolute top-1 transition-transform ${
+                    className={`w-4 h-4 bg-white dark:bg-slate-200 rounded-full absolute top-1 transition-transform ${
                       (agent.insights_enabled ?? false) ? 'translate-x-7' : 'translate-x-1'
                     }`}
                     style={{ boxShadow: '0 1px 3px rgba(0, 0, 0, 0.1)' }}
@@ -2255,7 +2444,7 @@ export default function V2AgentDetailPage() {
               <button
                 onClick={handleDuplicateAgent}
                 disabled={actionLoading === 'duplicate'}
-                className="w-full flex items-center gap-3 p-4 bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg hover:bg-[var(--v2-surface-hover)] transition-all disabled:opacity-50"
+                className="w-full flex items-center gap-3 p-4 bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg hover:bg-gray-100 dark:hover:bg-slate-600/50 transition-all disabled:opacity-50"
               >
                 {actionLoading === 'duplicate' ? <Loader2 className="w-5 h-5 animate-spin text-[var(--v2-text-secondary)]" /> : <Copy className="w-5 h-5 text-[var(--v2-text-secondary)]" />}
                 <div className="text-left flex-1">
@@ -2267,7 +2456,7 @@ export default function V2AgentDetailPage() {
               <button
                 onClick={handleShareAgentClick}
                 disabled={agent.status !== 'active' || actionLoading === 'share'}
-                className="w-full flex items-center gap-3 p-4 bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg hover:bg-[var(--v2-surface-hover)] transition-all disabled:opacity-50"
+                className="w-full flex items-center gap-3 p-4 bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg hover:bg-gray-100 dark:hover:bg-slate-600/50 transition-all disabled:opacity-50"
               >
                 {actionLoading === 'share' ? <Loader2 className="w-5 h-5 animate-spin text-[var(--v2-text-secondary)]" /> : <Share2 className="w-5 h-5 text-[var(--v2-text-secondary)]" />}
                 <div className="text-left flex-1">
@@ -2278,7 +2467,7 @@ export default function V2AgentDetailPage() {
 
               <button
                 onClick={handleExportConfiguration}
-                className="w-full flex items-center gap-3 p-4 bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg hover:bg-[var(--v2-surface-hover)] transition-all"
+                className="w-full flex items-center gap-3 p-4 bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg hover:bg-gray-100 dark:hover:bg-slate-600/50 transition-all"
               >
                 <Download className="w-5 h-5 text-[var(--v2-text-secondary)]" />
                 <div className="text-left flex-1">
@@ -2297,23 +2486,22 @@ export default function V2AgentDetailPage() {
             </h3>
             <button
               onClick={() => setShowDeleteConfirm(true)}
-              className="w-full flex items-center gap-3 p-4 bg-[var(--v2-surface)] border border-red-200 dark:border-red-900 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20 transition-all text-red-600 dark:text-red-400"
+              className="w-full flex items-center gap-3 p-4 bg-[var(--v2-surface)] border border-red-200 dark:border-red-700 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/40 transition-all"
             >
-              <Trash2 className="w-5 h-5 text-red-600 dark:text-red-400" />
+              <Trash2 className="w-5 h-5 text-red-600 dark:text-red-300" />
               <div className="text-left flex-1">
-                <h5 className="text-sm font-semibold">Delete Agent</h5>
-                <p className="text-xs">Permanently remove this agent</p>
+                <h5 className="text-sm font-semibold text-red-600 dark:text-red-300">Delete Agent</h5>
+                <p className="text-xs text-red-600 dark:text-red-400">Permanently remove this agent</p>
               </div>
             </button>
           </div>
         </div>
->>>>>>> Stashed changes
       </div>
 
       {/* Delete Confirmation Modal */}
       {showDeleteConfirm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-          <div className="bg-[var(--v2-surface)] rounded-2xl shadow-2xl max-w-md w-full p-6 border border-[var(--v2-border)]">
+          <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-2xl max-w-md w-full p-6 border border-[var(--v2-border)]">
             <div className="flex items-center gap-3 mb-4">
               <div className="w-12 h-12 bg-red-100 dark:bg-red-900/30 rounded-full flex items-center justify-center">
                 <Trash2 className="w-6 h-6 text-red-600 dark:text-red-400" />
@@ -2331,7 +2519,7 @@ export default function V2AgentDetailPage() {
             <div className="flex gap-3">
               <button
                 onClick={() => setShowDeleteConfirm(false)}
-                className="flex-1 px-4 py-2.5 bg-[var(--v2-surface)] text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] border border-[var(--v2-border)] hover:bg-[var(--v2-surface-hover)] transition-colors font-medium text-sm"
+                className="flex-1 px-4 py-2.5 bg-[var(--v2-surface)] text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] border border-gray-200 dark:border-slate-700 hover:bg-gray-100 dark:hover:bg-slate-700/40 transition-colors font-medium text-sm"
                 style={{ borderRadius: 'var(--v2-radius-button)' }}
               >
                 Cancel
@@ -2352,8 +2540,6 @@ export default function V2AgentDetailPage() {
           </div>
         </div>
       )}
-<<<<<<< Updated upstream
-=======
 
       {/* Share Confirmation Modal - Keep existing implementation */}
       {showShareConfirm && (
@@ -2432,7 +2618,7 @@ export default function V2AgentDetailPage() {
             <div className="flex gap-3">
               <button
                 onClick={() => setShowShareConfirm(false)}
-                className="flex-1 px-4 py-2.5 bg-[var(--v2-surface)] text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] border border-[var(--v2-border)] hover:bg-[var(--v2-surface-hover)] transition-colors font-medium text-sm"
+                className="flex-1 px-4 py-2.5 bg-[var(--v2-surface)] text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] border border-gray-200 dark:border-slate-700 hover:bg-gray-100 dark:hover:bg-slate-700/40 transition-colors font-medium text-sm"
                 style={{ borderRadius: 'var(--v2-radius-button)' }}
               >
                 {(hasBeenShared || sharingValidation?.details?.alreadyShared) ? 'Close' : 'Cancel'}
@@ -2505,7 +2691,7 @@ export default function V2AgentDetailPage() {
               </div>
               <button
                 onClick={() => setShowInsightsModal(false)}
-                className="text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)] transition-colors p-2 rounded-lg hover:bg-[var(--v2-surface-hover)]"
+                className="text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)] transition-colors p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-700/40"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -2590,7 +2776,6 @@ export default function V2AgentDetailPage() {
         </div>
       )}
 
->>>>>>> Stashed changes
     </div>
   )
 }

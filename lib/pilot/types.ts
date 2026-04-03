@@ -339,9 +339,6 @@ export type ComparisonOperator =
   | 'is_not_empty'
   | 'matches'  // regex match
   | 'starts_with'
-<<<<<<< Updated upstream
-  | 'ends_with';
-=======
   | 'ends_with'
   // Date operators (Wave 8 - schema alignment)
   | 'within_last_days'  // Date is within N days from now
@@ -494,7 +491,6 @@ export interface IExecutionContext {
   markStepSkipped(stepId: string): void;
   clone(resetMetrics?: boolean): IExecutionContext;
 }
->>>>>>> Stashed changes
 
 // ============================================================================
 // EXECUTION CONTEXT
@@ -777,8 +773,6 @@ export interface WorkflowExecutionResult {
   error?: string;
   errorStack?: string;
   failedStep?: string;
-<<<<<<< Updated upstream
-=======
 
   // Execution summary for calibration (aggregated metadata, NO actual client data)
   execution_summary?: CalibrationExecutionSummary;
@@ -859,7 +853,6 @@ export interface CalibrationSession {
   created_at: string;
   updated_at: string;
   completed_at?: string;
->>>>>>> Stashed changes
 }
 
 // ============================================================================

@@ -9,7 +9,7 @@ import {
   Shield,
   ArrowLeft
 } from 'lucide-react'
-import { V2Header } from '@/components/v2/V2Header'
+import { V2Logo, V2Controls } from '@/components/v2/V2Header'
 import ProfileTabV2 from '@/components/v2/settings/ProfileTabV2'
 import SecurityTabV2 from '@/components/v2/settings/SecurityTabV2'
 import { UserProfile, NotificationSettings, PluginConnection } from '@/types/settings'
@@ -123,6 +123,11 @@ export default function V2SettingsPage() {
 
   return (
     <div className="space-y-4 sm:space-y-5 lg:space-y-6">
+      {/* Logo */}
+      <div className="mb-3">
+        <V2Logo />
+      </div>
+
       {/* Top Bar: Back Button + Token Display + User Menu */}
       <div className="flex items-center justify-between">
         <button
@@ -133,7 +138,7 @@ export default function V2SettingsPage() {
           <ArrowLeft className="w-4 h-4" />
           Back to Dashboard
         </button>
-        <V2Header />
+        <V2Controls />
       </div>
 
       {/* Header */}
