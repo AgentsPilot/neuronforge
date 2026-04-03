@@ -1,0 +1,99 @@
+{
+    "plan_title": "Urgent Gantt Tasks Finishing Soon — Email Notifier",
+    "plan_description": "Reads your Gantt chart Google Sheet and emails you a table of urgent tasks scheduled to finish within the next three full days (excluding today).",
+    "sections": {
+        "data": [
+            "- Read tasks from the Google Sheet with ID \"1RHLbBXzrKv24gNgp7a4Lr7RlMIrP9fjacfGWjhPAbOE\".",
+            "- Use the sheet tab named \"Gantt\" as the task source.",
+            "- Treat the sheet as one task per row.",
+            "- Use column A (header \"Tasks\") as the task name field.",
+            "- Use column F as the task finish (end/due) date field.",
+            "- Use column G as the task Priority field.",
+            "- Use the timezone associated with your Google account for date comparisons."
+        ],
+        "actions": [
+            "- Identify valid task rows by requiring a non-empty task name in column A.",
+            "- Parse each task’s finish date from column F into a comparable date value.",
+            "- Determine whether a task is urgent by checking column G (Priority).",
+            "- Treat a task as urgent if column G (Priority) is exactly \"Critical\" or exactly \"High\".",
+            "- Compute the date window as: tomorrow through 3 days from now (3 full days excluding today), using your account timezone.",
+            "- Keep only tasks that are both (a) urgent and (b) have a finish date within that window.",
+            "- Sort the matching tasks by finish date ascending (earliest first).",
+            "- If there are no matching tasks, prepare a 'no urgent tasks finishing within the next 3 days (excluding today)' email body."
+        ],
+        "output": [
+            "- Generate an email-friendly table for the matching tasks.",
+            "- Include these columns in the table: Task (from column A), Finish date (from column F), Priority (from column G).",
+            "- Include a link to the source Google Sheet in the email."
+        ],
+        "delivery": [
+            "- Send the email to meiribarak@gmail.com.",
+            "- If there are zero matching tasks, still send an email stating that no urgent tasks are finishing within the next 3 days (excluding today)."
+        ],
+        "processing_steps": [
+            "- Load rows from the \"Gantt\" tab.",
+            "- Convert the rows into task objects with fields: task_name, finish_date, priority.",
+            "- Compute the date window (tomorrow through 3 days from now) in your account timezone.",
+            "- Filter to urgent tasks (Priority = Critical or High) within the window.",
+            "- Render the results as an email table and send."
+        ]
+    },
+    "specifics": {
+        "services_involved": [
+            "google-sheets",
+            "google-mail"
+        ],
+        "user_inputs_required": [
+        ],
+        "resolved_user_inputs": [
+            {
+                "key": "google_mail__email_send__recipients",
+                "value": "meiribarak@gmail.com"
+            },
+            {
+                "key": "google_sheets__table_read__spreadsheet_id",
+                "value": "1RHLbBXzrKv24gNgp7a4Lr7RlMIrP9fjacfGWjhPAbOE"
+            },
+            {
+                "key": "google_sheets__table_read__sheet_tab_name",
+                "value": "Gantt"
+            },
+            {
+                "key": "task_name_column",
+                "value": "A"
+            },
+            {
+                "key": "task_name_column_header",
+                "value": "Tasks"
+            },
+            {
+                "key": "finish_date_column",
+                "value": "F"
+            },
+            {
+                "key": "priority_column",
+                "value": "G"
+            },
+            {
+                "key": "urgent_priority_values",
+                "value": "Critical, High"
+            },
+            {
+                "key": "date_window_interpretation",
+                "value": "next_3_full_days_excluding_today"
+            },
+            {
+                "key": "timezone_choice",
+                "value": "use_my_timezone"
+            },
+            {
+                "key": "email_format",
+                "value": "table"
+            },
+            {
+                "key": "no_results_behavior",
+                "value": "send_none_email"
+            }
+        ]
+    }
+}

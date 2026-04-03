@@ -1,0 +1,12 @@
+{
+  "name": "Urgent Gantt Tasks Finishing Soon — Email Notifier",
+  "description": "Read Gantt sheet, filter tasks by Priority (Critical/High) with finish date in next 3 days, generate HTML table, send email. Tests Sheets read + date filtering + conditional no-results handling.",
+  "created": "2026-04-01",
+  "plugins": ["google-sheets", "google-mail"],
+  "expected": {
+    "min_steps": 4,
+    "step_types": ["action", "transform", "ai_processing", "conditional"],
+    "phase_a_checks": 14,
+    "phase_d_success": true
+  }
+}

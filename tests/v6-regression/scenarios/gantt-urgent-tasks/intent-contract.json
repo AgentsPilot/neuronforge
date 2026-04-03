@@ -1,0 +1,337 @@
+{
+  "version": "intent.v1",
+  "goal": "Read urgent tasks from Gantt Google Sheet finishing within next 3 days (excluding today) and email summary table",
+  "unit_of_work": {
+    "entity": "task",
+    "parent_entity": "gantt_sheet"
+  },
+  "config": [
+    {
+      "key": "spreadsheet_id",
+      "type": "string",
+      "description": "Google Sheets spreadsheet ID",
+      "default": "1RHLbBXzrKv24gNgp7a4Lr7RlMIrP9fjacfGWjhPAbOE"
+    },
+    {
+      "key": "sheet_tab_name",
+      "type": "string",
+      "description": "Sheet tab name containing tasks",
+      "default": "Gantt"
+    },
+    {
+      "key": "task_name_column",
+      "type": "string",
+      "description": "Column letter for task names",
+      "default": "A"
+    },
+    {
+      "key": "finish_date_column",
+      "type": "string",
+      "description": "Column letter for finish dates",
+      "default": "F"
+    },
+    {
+      "key": "priority_column",
+      "type": "string",
+      "description": "Column letter for priority",
+      "default": "G"
+    },
+    {
+      "key": "urgent_priority_values",
+      "type": "json",
+      "description": "Priority values considered urgent",
+      "default": [
+        "Critical",
+        "High"
+      ]
+    },
+    {
+      "key": "email_recipient",
+      "type": "string",
+      "description": "Email recipient address",
+      "default": "meiribarak@gmail.com"
+    },
+    {
+      "key": "date_window_days",
+      "type": "number",
+      "description": "Number of full days ahead to check (excluding today)",
+      "default": 3
+    }
+  ],
+  "steps": [
+    {
+      "id": "read_gantt_sheet",
+      "kind": "data_source",
+      "summary": "Read all task rows from Gantt sheet tab",
+      "uses": [
+        {
+          "capability": "get",
+          "domain": "table",
+          "preferences": {
+            "provider_family": "google"
+          }
+        }
+      ],
+      "output": "raw_sheet_rows",
+      "source": {
+        "domain": "table",
+        "intent": "read_range"
+      },
+      "payload": {
+        "spreadsheet_id": {
+          "kind": "config",
+          "key": "spreadsheet_id"
+        },
+        "range": {
+          "kind": "computed",
+          "op": "concat",
+          "args": [
+            {
+              "kind": "config",
+              "key": "sheet_tab_name"
+            },
+            {
+              "kind": "literal",
+              "value": "!A:G"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "filter_valid_tasks",
+      "kind": "transform",
+      "summary": "Keep only rows with non-empty task name in column A",
+      "inputs": [
+        "raw_sheet_rows"
+      ],
+      "output": "valid_task_rows",
+      "transform": {
+        "op": "filter",
+        "input": "raw_sheet_rows",
+        "description": "Filter rows where task name column (index 0 for column A) is not empty",
+        "where": {
+          "op": "test",
+          "left": {
+            "kind": "ref",
+            "ref": "raw_sheet_rows",
+            "field": "0"
+          },
+          "comparator": "exists"
+        }
+      }
+    },
+    {
+      "id": "parse_task_objects",
+      "kind": "transform",
+      "summary": "Map sheet rows to task objects with task_name, finish_date, priority fields",
+      "inputs": [
+        "valid_task_rows"
+      ],
+      "output": "parsed_tasks",
+      "transform": {
+        "op": "map",
+        "input": "valid_task_rows",
+        "mapping": [
+          {
+            "to": "task_name",
+            "from": "0"
+          },
+          {
+            "to": "finish_date",
+            "from": "5"
+          },
+          {
+            "to": "priority",
+            "from": "6"
+          }
+        ],
+        "output_schema": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "task_name": {
+                "type": "string"
+              },
+              "finish_date": {
+                "type": "string"
+              },
+              "priority": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "task_name",
+              "finish_date",
+              "priority"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "filter_urgent_tasks",
+      "kind": "transform",
+      "summary": "Keep only tasks with Priority = Critical or High",
+      "inputs": [
+        "parsed_tasks"
+      ],
+      "output": "urgent_tasks",
+      "transform": {
+        "op": "filter",
+        "input": "parsed_tasks",
+        "description": "Filter tasks where priority is in urgent values list",
+        "where": {
+          "op": "test",
+          "left": {
+            "kind": "ref",
+            "ref": "parsed_tasks",
+            "field": "priority"
+          },
+          "comparator": "in",
+          "right": {
+            "kind": "config",
+            "key": "urgent_priority_values"
+          }
+        }
+      }
+    },
+    {
+      "id": "filter_date_window",
+      "kind": "generate",
+      "summary": "Filter urgent tasks to those finishing within next 3 full days (excluding today) using account timezone",
+      "inputs": [
+        "urgent_tasks"
+      ],
+      "output": "tasks_in_window",
+      "uses": [
+        {
+          "capability": "generate",
+          "domain": "internal"
+        }
+      ],
+      "generate": {
+        "input": "urgent_tasks",
+        "instruction": "Filter tasks to keep only those where finish_date falls within the next 3 full days (excluding today). Use the user's Google account timezone for date comparisons. Parse finish_date strings into dates, compute tomorrow's date and 3 days from now, and keep tasks where finish_date is >= tomorrow and <= 3 days from now. Return filtered array of task objects.",
+        "outputs": [
+          {
+            "name": "filtered_tasks",
+            "type": "array",
+            "description": "Tasks finishing within date window"
+          }
+        ]
+      }
+    },
+    {
+      "id": "sort_by_finish_date",
+      "kind": "transform",
+      "summary": "Sort tasks by finish date ascending (earliest first)",
+      "inputs": [
+        "tasks_in_window"
+      ],
+      "output": "sorted_tasks",
+      "transform": {
+        "op": "sort",
+        "input": "tasks_in_window",
+        "description": "Sort tasks by finish_date field in ascending order",
+        "rules": {
+          "field": "finish_date",
+          "order": "asc"
+        }
+      }
+    },
+    {
+      "id": "count_matching_tasks",
+      "kind": "aggregate",
+      "summary": "Count number of matching tasks",
+      "inputs": [
+        "sorted_tasks"
+      ],
+      "output": "task_metrics",
+      "aggregate": {
+        "input": "sorted_tasks",
+        "outputs": [
+          {
+            "name": "task_count",
+            "type": "count"
+          }
+        ]
+      }
+    },
+    {
+      "id": "generate_email_content",
+      "kind": "generate",
+      "summary": "Generate HTML email with task table or no-results message",
+      "inputs": [
+        "sorted_tasks",
+        "task_count"
+      ],
+      "output": "email_content",
+      "uses": [
+        {
+          "capability": "generate",
+          "domain": "internal"
+        }
+      ],
+      "generate": {
+        "format": "html",
+        "instruction": "Generate an HTML email body. If task_count is 0, create a message stating 'No urgent tasks are finishing within the next 3 days (excluding today)'. If task_count > 0, create an HTML table with columns: Task (task_name), Finish Date (finish_date), Priority (priority). Include professional styling with borders, header row background, and padding. Add a link to the Google Sheet at the end using spreadsheet_id from config. Return object with subject and body fields.",
+        "outputs": [
+          {
+            "name": "subject",
+            "type": "string",
+            "description": "Email subject line"
+          },
+          {
+            "name": "body",
+            "type": "string",
+            "description": "HTML email body with table or no-results message"
+          }
+        ]
+      }
+    },
+    {
+      "id": "send_email_notification",
+      "kind": "notify",
+      "summary": "Send email with task summary to recipient",
+      "inputs": [
+        "email_content"
+      ],
+      "uses": [
+        {
+          "capability": "send_message",
+          "domain": "email",
+          "preferences": {
+            "provider_family": "google"
+          }
+        }
+      ],
+      "notify": {
+        "channel": "email",
+        "recipients": {
+          "to": [
+            {
+              "kind": "config",
+              "key": "email_recipient"
+            }
+          ]
+        },
+        "content": {
+          "subject": {
+            "kind": "ref",
+            "ref": "email_content",
+            "field": "subject"
+          },
+          "body": {
+            "kind": "ref",
+            "ref": "email_content",
+            "field": "body"
+          },
+          "format": "html"
+        }
+      }
+    }
+  ],
+  "confidence": 0.95
+}
