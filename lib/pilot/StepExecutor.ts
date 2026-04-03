@@ -2222,7 +2222,7 @@ Respond ONLY with the JSON array. No markdown, no explanation, no code blocks.`;
    * Map transformation
    * Supports converting array of objects to 2D array for Google Sheets
    */
-  private transformMap(data: any[], config: any, context: ExecutionContext): any[] | any[][] {
+  private transformMap(data: any[], config: any, context: ExecutionContext): any {
     logger.debug({
       dataType: typeof data,
       isArray: Array.isArray(data),
@@ -2686,26 +2686,47 @@ Respond ONLY with the JSON array. No markdown, no explanation, no code blocks.`;
   /**
    * Reduce transformation
    */
-  private transformReduce(data: any[], config: any): any {
+  private transformReduce(data: any[] | Record<string, any>, config: any): any {
     if (!Array.isArray(data)) {
-      throw new ExecutionError('Reduce operation requires array input', 'INVALID_INPUT_TYPE');
+      // Handle group transform legacy output: {grouped, groups, keys, count}
+      // For 'count' reducer, use the count/keys directly instead of requiring array
+      if (data && typeof data === 'object') {
+        const { reducer } = config;
+        if (reducer === 'count') {
+          if (typeof data.count === 'number') return data.count;
+          if (Array.isArray(data.keys)) return data.keys.length;
+          if (Array.isArray(data.groups)) return data.groups.length;
+        }
+        // Try to unwrap: find the first array field
+        const arrayField = Object.values(data).find(v => Array.isArray(v));
+        if (arrayField) {
+          logger.debug({ reducer }, 'Reduce: unwrapped object to array field');
+          data = arrayField as any;
+        } else {
+          throw new ExecutionError('Reduce operation requires array input, got object with keys: ' + Object.keys(data).join(', '), 'INVALID_INPUT_TYPE');
+        }
+      } else {
+        throw new ExecutionError('Reduce operation requires array input', 'INVALID_INPUT_TYPE');
+      }
     }
 
+    // At this point data is guaranteed to be an array
+    const arrayData = data as any[];
     const { reducer, initialValue } = config;
 
     // Simple reducers
     switch (reducer) {
       case 'sum':
-        return data.reduce((acc, item) => acc + (Number(item) || 0), initialValue || 0);
+        return arrayData.reduce((acc: number, item: any) => acc + (Number(item) || 0), initialValue || 0);
 
       case 'count':
-        return data.length;
+        return arrayData.length;
 
       case 'concat':
-        return data.reduce((acc, item) => acc.concat(item), initialValue || []);
+        return arrayData.reduce((acc: any[], item: any) => acc.concat(item), initialValue || []);
 
       case 'merge':
-        return data.reduce((acc, item) => ({ ...acc, ...item }), initialValue || {});
+        return arrayData.reduce((acc: Record<string, any>, item: any) => ({ ...acc, ...item }), initialValue || {});
 
       default:
         throw new ExecutionError(`Unknown reducer: ${reducer}`, 'UNKNOWN_REDUCER');

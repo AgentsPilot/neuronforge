@@ -1,0 +1,12 @@
+{
+  "name": "Gmail Orders PO Extractor (Per-Supplier XLSX Emails)",
+  "description": "Search Gmail for order emails, extract PO line items from attachments, group by vendor, generate per-vendor XLSX, email per-vendor + confirmation. Tests Gmail search + attachment extraction + grouping + scatter-gather delivery.",
+  "created": "2026-04-01",
+  "plugins": ["google-mail"],
+  "expected": {
+    "min_steps": 4,
+    "step_types": ["action", "transform", "ai_processing", "scatter_gather"],
+    "phase_a_checks": 14,
+    "phase_d_success": true
+  }
+}

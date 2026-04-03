@@ -1,0 +1,639 @@
+{
+  "version": "intent.v1",
+  "goal": "Search Gmail for 'Orders' emails from last 30 days, extract purchase order line items from attachments, group by Vendor, generate per-Vendor XLSX files, and email each XLSX to user with final confirmation",
+  "unit_of_work": {
+    "entity": "email",
+    "parent_entity": "gmail_search"
+  },
+  "config": [
+    {
+      "key": "gmail_search_query",
+      "type": "string",
+      "description": "Gmail search query for finding Orders emails",
+      "default": "subject:Orders newer_than:30d"
+    },
+    {
+      "key": "recipient_email",
+      "type": "string",
+      "description": "Email address to send XLSX summaries to",
+      "default": "meiribarak@gmail.com"
+    },
+    {
+      "key": "required_fields",
+      "type": "json",
+      "description": "List of required fields for Complete status",
+      "default": [
+        "Order Date/Time",
+        "Order_ID",
+        "Vendor",
+        "QTY",
+        "Cost",
+        "Amount"
+      ]
+    }
+  ],
+  "required_outcomes": [
+    "All purchase order attachments from matching emails are processed",
+    "Line items are extracted with required fields",
+    "One XLSX file per Vendor is generated",
+    "Each Vendor receives their XLSX via email",
+    "Final confirmation email is sent with summary statistics"
+  ],
+  "steps": [
+    {
+      "id": "search_orders_emails",
+      "kind": "data_source",
+      "summary": "Search Gmail for emails with 'Orders' in subject from last 30 days",
+      "uses": [
+        {
+          "capability": "search",
+          "domain": "email",
+          "preferences": {
+            "provider_family": "google"
+          }
+        }
+      ],
+      "output": "orders_emails",
+      "source": {
+        "domain": "email",
+        "intent": "search"
+      },
+      "query": {
+        "kind": "config",
+        "key": "gmail_search_query"
+      },
+      "retrieval": {
+        "max_results": 100,
+        "include_content": "full",
+        "include_attachments": true
+      }
+    },
+    {
+      "id": "extract_attachments",
+      "kind": "transform",
+      "summary": "Extract attachments array from emails",
+      "inputs": [
+        "orders_emails"
+      ],
+      "output": "all_attachments",
+      "transform": {
+        "op": "flatten",
+        "input": "orders_emails",
+        "description": "Extract attachments array from emails",
+        "output_schema": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "attachment_id": {
+                "type": "string"
+              },
+              "message_id": {
+                "type": "string"
+              },
+              "filename": {
+                "type": "string"
+              },
+              "mime_type": {
+                "type": "string"
+              },
+              "size": {
+                "type": "number"
+              },
+              "from": {
+                "type": "string"
+              },
+              "subject": {
+                "type": "string"
+              },
+              "date": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "attachment_id",
+              "message_id",
+              "filename"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "classify_purchase_orders",
+      "kind": "classify",
+      "summary": "Identify which attachments are purchase orders",
+      "inputs": [
+        "all_attachments"
+      ],
+      "output": "classified_attachments",
+      "classify": {
+        "input": "all_attachments",
+        "labels": [
+          "purchase_order",
+          "not_purchase_order"
+        ],
+        "multi_label": false,
+        "output_field": "attachment_type"
+      }
+    },
+    {
+      "id": "filter_purchase_orders",
+      "kind": "transform",
+      "summary": "Keep only purchase order attachments",
+      "inputs": [
+        "classified_attachments"
+      ],
+      "output": "po_attachments",
+      "transform": {
+        "op": "filter",
+        "input": "classified_attachments",
+        "description": "Keep only attachments classified as purchase orders",
+        "where": {
+          "op": "test",
+          "left": {
+            "kind": "ref",
+            "ref": "classified_attachments",
+            "field": "attachment_type"
+          },
+          "comparator": "eq",
+          "right": {
+            "kind": "literal",
+            "value": "purchase_order"
+          }
+        }
+      }
+    },
+    {
+      "id": "process_each_po_attachment",
+      "kind": "loop",
+      "summary": "Process each purchase order attachment to extract line items",
+      "inputs": [
+        "po_attachments"
+      ],
+      "output": "all_extracted_line_items",
+      "loop": {
+        "over": "po_attachments",
+        "item_ref": "po_attachment",
+        "unit_of_work": {
+          "entity": "attachment"
+        },
+        "collect": {
+          "enabled": true,
+          "collect_as": "all_extracted_line_items",
+          "from_step_output": "line_items_with_metadata"
+        },
+        "do": [
+          {
+            "id": "download_attachment_content",
+            "kind": "data_source",
+            "summary": "Download attachment content for extraction",
+            "uses": [
+              {
+                "capability": "download",
+                "domain": "email",
+                "preferences": {
+                  "provider_family": "google"
+                }
+              }
+            ],
+            "inputs": [
+              "po_attachment"
+            ],
+            "output": "attachment_content",
+            "source": {
+              "domain": "email",
+              "intent": "download"
+            },
+            "payload": {
+              "message_id": {
+                "kind": "ref",
+                "ref": "po_attachment",
+                "field": "message_id"
+              },
+              "attachment_id": {
+                "kind": "ref",
+                "ref": "po_attachment",
+                "field": "attachment_id"
+              },
+              "filename": {
+                "kind": "ref",
+                "ref": "po_attachment",
+                "field": "filename"
+              }
+            }
+          },
+          {
+            "id": "extract_po_line_items",
+            "kind": "extract",
+            "summary": "Extract purchase order line items with required fields",
+            "inputs": [
+              "attachment_content"
+            ],
+            "output": "extracted_line_items",
+            "uses": [
+              {
+                "capability": "extract_structured_data",
+                "domain": "document"
+              }
+            ],
+            "extract": {
+              "input": "attachment_content",
+              "fields": [
+                {
+                  "name": "Order Date/Time",
+                  "type": "date",
+                  "required": false,
+                  "description": "Order date and time, normalized format"
+                },
+                {
+                  "name": "Order_ID",
+                  "type": "string",
+                  "required": false,
+                  "description": "Order identifier or number"
+                },
+                {
+                  "name": "Vendor",
+                  "type": "string",
+                  "required": false,
+                  "description": "Vendor or supplier name"
+                },
+                {
+                  "name": "QTY",
+                  "type": "number",
+                  "required": false,
+                  "description": "Quantity, normalized numeric format"
+                },
+                {
+                  "name": "Cost",
+                  "type": "currency",
+                  "required": false,
+                  "description": "Unit cost, normalized numeric format"
+                },
+                {
+                  "name": "Amount",
+                  "type": "currency",
+                  "required": false,
+                  "description": "Total amount, normalized numeric format"
+                }
+              ],
+              "deterministic": false
+            }
+          },
+          {
+            "id": "add_status_field",
+            "kind": "generate",
+            "summary": "Add Status field with Complete/Needs review and missing field notes",
+            "inputs": [
+              "extracted_line_items",
+              "po_attachment"
+            ],
+            "output": "line_items_with_status",
+            "uses": [
+              {
+                "capability": "generate",
+                "domain": "internal"
+              }
+            ],
+            "generate": {
+              "input": "extracted_line_items",
+              "format": "json",
+              "instruction": "For each line item, add a Status field. Set Status='Complete' if all required fields (Order Date/Time, Order_ID, Vendor, QTY, Cost, Amount) are present and non-empty. Set Status='Needs review: missing <field1>, <field2>' if any required fields are missing or empty, listing which fields are missing. Return the line items array with the Status field added to each item.",
+              "outputs": [
+                {
+                  "name": "line_items_with_status",
+                  "type": "array",
+                  "description": "Line items with Status field added"
+                }
+              ]
+            }
+          },
+          {
+            "id": "merge_email_metadata",
+            "kind": "transform",
+            "summary": "Add email metadata (sender, subject) to each line item for reference",
+            "inputs": [
+              "line_items_with_status",
+              "po_attachment"
+            ],
+            "output": "line_items_with_metadata",
+            "transform": {
+              "op": "map",
+              "input": "line_items_with_status",
+              "description": "Add email sender and subject to each line item for traceability",
+              "mapping": [
+                {
+                  "to": "Order Date/Time",
+                  "from": "Order Date/Time"
+                },
+                {
+                  "to": "Order_ID",
+                  "from": "Order_ID"
+                },
+                {
+                  "to": "Vendor",
+                  "from": "Vendor"
+                },
+                {
+                  "to": "QTY",
+                  "from": "QTY"
+                },
+                {
+                  "to": "Cost",
+                  "from": "Cost"
+                },
+                {
+                  "to": "Amount",
+                  "from": "Amount"
+                },
+                {
+                  "to": "Status",
+                  "from": "Status"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "flatten_all_line_items",
+      "kind": "transform",
+      "summary": "Flatten collected line items from all attachments into single array",
+      "inputs": [
+        "all_extracted_line_items"
+      ],
+      "output": "flat_line_items",
+      "transform": {
+        "op": "flatten",
+        "input": "all_extracted_line_items",
+        "description": "Flatten nested arrays of line items into single flat array"
+      }
+    },
+    {
+      "id": "group_by_vendor",
+      "kind": "transform",
+      "summary": "Group line items by Vendor",
+      "inputs": [
+        "flat_line_items"
+      ],
+      "output": "vendor_groups",
+      "transform": {
+        "op": "group",
+        "input": "flat_line_items",
+        "description": "Group line items by Vendor field",
+        "rules": {
+          "group_by": "Vendor"
+        }
+      }
+    },
+    {
+      "id": "calculate_summary_metrics",
+      "kind": "aggregate",
+      "summary": "Calculate total vendors and total line items for confirmation email",
+      "inputs": [
+        "vendor_groups",
+        "flat_line_items"
+      ],
+      "output": "summary_metrics",
+      "aggregate": {
+        "input": "vendor_groups",
+        "outputs": [
+          {
+            "name": "total_vendors",
+            "type": "count"
+          },
+          {
+            "name": "total_line_items",
+            "type": "count",
+            "of": "flat_line_items"
+          }
+        ]
+      }
+    },
+    {
+      "id": "process_each_vendor",
+      "kind": "loop",
+      "summary": "For each Vendor group, generate XLSX and send email",
+      "inputs": [
+        "vendor_groups"
+      ],
+      "loop": {
+        "over": "vendor_groups",
+        "item_ref": "vendor_group",
+        "unit_of_work": {
+          "entity": "vendor_group"
+        },
+        "do": [
+          {
+            "id": "generate_vendor_xlsx",
+            "kind": "generate",
+            "summary": "Generate XLSX file with vendor's line items",
+            "inputs": [
+              "vendor_group"
+            ],
+            "output": "vendor_xlsx_content",
+            "uses": [
+              {
+                "capability": "generate",
+                "domain": "internal"
+              }
+            ],
+            "generate": {
+              "input": "vendor_group",
+              "format": "json",
+              "instruction": "Generate an XLSX file (base64-encoded) containing the line items for this vendor. Include columns in this exact order: Order Date/Time, Order_ID, Vendor, QTY, Cost, Amount, Status. Include a header row. Each line item should be one row. Return the base64-encoded XLSX content and the vendor name.",
+              "outputs": [
+                {
+                  "name": "xlsx_base64",
+                  "type": "string",
+                  "description": "Base64-encoded XLSX file content"
+                },
+                {
+                  "name": "vendor_name",
+                  "type": "string",
+                  "description": "Vendor name for filename and subject"
+                }
+              ]
+            }
+          },
+          {
+            "id": "compose_vendor_email",
+            "kind": "generate",
+            "summary": "Compose email subject and body for vendor XLSX",
+            "inputs": [
+              "vendor_xlsx_content"
+            ],
+            "output": "vendor_email_content",
+            "uses": [
+              {
+                "capability": "generate",
+                "domain": "internal"
+              }
+            ],
+            "generate": {
+              "input": "vendor_xlsx_content",
+              "format": "json",
+              "instruction": "Create email subject and body for sending vendor XLSX. Subject should be 'Orders summary – <Vendor Name>'. Body should be a brief professional message stating that the attached XLSX contains the purchase order line items for this vendor from the last 30 days.",
+              "outputs": [
+                {
+                  "name": "subject",
+                  "type": "string",
+                  "description": "Email subject line"
+                },
+                {
+                  "name": "body",
+                  "type": "string",
+                  "description": "Email body text"
+                }
+              ]
+            }
+          },
+          {
+            "id": "send_vendor_email",
+            "kind": "notify",
+            "summary": "Send email with vendor XLSX attachment",
+            "inputs": [
+              "vendor_email_content",
+              "vendor_xlsx_content"
+            ],
+            "uses": [
+              {
+                "capability": "send_message",
+                "domain": "email",
+                "preferences": {
+                  "provider_family": "google"
+                }
+              }
+            ],
+            "notify": {
+              "channel": "email",
+              "recipients": {
+                "to": [
+                  {
+                    "kind": "config",
+                    "key": "recipient_email"
+                  }
+                ]
+              },
+              "content": {
+                "subject": {
+                  "kind": "ref",
+                  "ref": "vendor_email_content",
+                  "field": "subject"
+                },
+                "body": {
+                  "kind": "ref",
+                  "ref": "vendor_email_content",
+                  "field": "body"
+                },
+                "format": "text"
+              },
+              "options": {
+                "attachments": [
+                  {
+                    "filename": {
+                      "kind": "computed",
+                      "op": "concat",
+                      "args": [
+                        {
+                          "kind": "ref",
+                          "ref": "vendor_xlsx_content",
+                          "field": "vendor_name"
+                        },
+                        {
+                          "kind": "literal",
+                          "value": "_Orders.xlsx"
+                        }
+                      ]
+                    },
+                    "content": {
+                      "kind": "ref",
+                      "ref": "vendor_xlsx_content",
+                      "field": "xlsx_base64"
+                    },
+                    "mime_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "compose_confirmation_email",
+      "kind": "generate",
+      "summary": "Compose final confirmation email with summary statistics",
+      "inputs": [
+        "total_vendors",
+        "total_line_items"
+      ],
+      "output": "confirmation_email_content",
+      "uses": [
+        {
+          "capability": "generate",
+          "domain": "internal"
+        }
+      ],
+      "generate": {
+        "format": "json",
+        "instruction": "Create a confirmation email stating that the Orders extraction workflow has completed. Include the total number of vendors processed and the total number of line items extracted. Use a professional, concise tone.",
+        "outputs": [
+          {
+            "name": "subject",
+            "type": "string",
+            "description": "Confirmation email subject"
+          },
+          {
+            "name": "body",
+            "type": "string",
+            "description": "Confirmation email body with statistics"
+          }
+        ]
+      }
+    },
+    {
+      "id": "send_confirmation_email",
+      "kind": "notify",
+      "summary": "Send final confirmation email to user",
+      "inputs": [
+        "confirmation_email_content"
+      ],
+      "uses": [
+        {
+          "capability": "send_message",
+          "domain": "email",
+          "preferences": {
+            "provider_family": "google"
+          }
+        }
+      ],
+      "notify": {
+        "channel": "email",
+        "recipients": {
+          "to": [
+            {
+              "kind": "config",
+              "key": "recipient_email"
+            }
+          ]
+        },
+        "content": {
+          "subject": {
+            "kind": "ref",
+            "ref": "confirmation_email_content",
+            "field": "subject"
+          },
+          "body": {
+            "kind": "ref",
+            "ref": "confirmation_email_content",
+            "field": "body"
+          },
+          "format": "text"
+        }
+      }
+    }
+  ],
+  "confidence": 0.95
+}

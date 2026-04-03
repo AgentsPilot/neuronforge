@@ -1,0 +1,92 @@
+{
+    "plan_title": "Gmail Orders PO Extractor (Per-Supplier XLSX Emails)",
+    "plan_description": "Finds Gmail emails with 'Orders' in the subject from the last 30 days, extracts purchase order line items from attachments, compiles per-supplier XLSX summary tables, and emails one XLSX per supplier to you, followed by a final confirmation email.",
+    "sections": {
+        "data": [
+            "- Search Gmail for messages where the subject line contains the keyword 'Orders'.",
+            "- Limit the search to emails from the last 30 days.",
+            "- For each matching email, collect all attachments (any file type).",
+            "- Only process attachments that appear to be purchase orders; ignore non-purchase-order attachments."
+        ],
+        "actions": [
+            "- For each matching email, evaluate each attachment and determine whether it is a purchase order; ignore non-purchase-order attachments.",
+            "- For each purchase order attachment, extract purchase order line items and create one output row per line item.",
+            "- For each extracted line-item row, extract the following fields: Order Date/Time, Order_ID, Vendor, QTY, Cost, Amount.",
+            "- Normalize extracted values so they are consistent across vendors (e.g., date/time format; numeric formatting for QTY, Cost, Amount).",
+            "- If the agent cannot confidently extract a field for a row, leave that field blank.",
+            "- Set Status = 'Complete' if Order Date/Time, Order_ID, Vendor, QTY, Cost, and Amount are all present for that row.",
+            "- Set Status = 'Needs review' if any of Order Date/Time, Order_ID, Vendor, QTY, Cost, or Amount is missing for that row.",
+            "- When Status = 'Needs review', append a short note inside the Status value listing which field(s) are missing or unclear (e.g., \"Needs review: missing Vendor, Cost\").",
+            "- Group all extracted rows by Vendor (supplier).",
+            "- For each Vendor group, generate a separate XLSX file containing only that Vendor’s rows.",
+            "- In each XLSX, include columns in this exact order: Order Date/Time, Order_ID, Vendor, QTY, Cost, Amount, Status."
+        ],
+        "output": [
+            "- Produce one XLSX summary table per Vendor (supplier).",
+            "- Each XLSX must include a header row with: Order Date/Time, Order_ID, Vendor, QTY, Cost, Amount, Status.",
+            "- Each XLSX must include one row per extracted purchase order line item."
+        ],
+        "delivery": [
+            "- Send one email per Vendor to meiribarak@gmail.com.",
+            "- Attach that Vendor’s XLSX summary file to the email.",
+            "- Use an email subject that includes the Vendor name and indicates it is an 'Orders' summary (e.g., \"Orders summary – <Vendor>\").",
+            "- After all Vendor emails are sent, send a final confirmation email to meiribarak@gmail.com stating how many Vendors were processed and how many total line-item rows were extracted."
+        ],
+        "processing_steps": [
+            "- Find candidate emails (subject contains 'Orders', last 30 days).",
+            "- Collect attachments from each email.",
+            "- Identify which attachments are purchase orders.",
+            "- Extract line items and required fields from each purchase order attachment.",
+            "- Apply Status rules and missing-field notes.",
+            "- Group rows by Vendor.",
+            "- Generate one XLSX per Vendor.",
+            "- Email each XLSX to the user, then send a final confirmation email."
+        ]
+    },
+    "specifics": {
+        "services_involved": [
+            "google-mail",
+            "chatgpt-research"
+        ],
+        "user_inputs_required": [
+        ],
+        "resolved_user_inputs": [
+            {
+                "key": "google_mail__email_send__recipients",
+                "value": "meiribarak@gmail.com"
+            },
+            {
+                "key": "google_mail__email_search__query",
+                "value": "subject:Orders newer_than:30d"
+            },
+            {
+                "key": "attachment_types",
+                "value": "any (process only those that appear to be purchase orders)"
+            },
+            {
+                "key": "output_format",
+                "value": "XLSX attachment"
+            },
+            {
+                "key": "delivery_grouping",
+                "value": "one email per Vendor (supplier)"
+            },
+            {
+                "key": "mixed_attachments_handling",
+                "value": "process purchase-order attachments only"
+            },
+            {
+                "key": "missing_fields_handling",
+                "value": "leave blanks; Status includes missing-field note when Needs review"
+            },
+            {
+                "key": "status_rule",
+                "value": "Complete if all required fields present; otherwise Needs review with missing-field note"
+            },
+            {
+                "key": "row_granularity",
+                "value": "one row per line item"
+            }
+        ]
+    }
+}

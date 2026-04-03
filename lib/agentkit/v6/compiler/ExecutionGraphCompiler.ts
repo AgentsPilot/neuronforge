@@ -2759,11 +2759,27 @@ export class ExecutionGraphCompiler {
         const baseName = ref.split('.')[0]
         if (ref.includes('.')) return input // Already has a dotted path
 
-        // Only unwrap if the source step is an action or ai_processing (returns object wrappers).
-        // Transform steps (filter, sort, map) output arrays even if their schema says "object".
+        // Only unwrap if the source step is an action, ai_processing, or group transform.
+        // Most transforms (filter, sort, map) output arrays. But group transforms return
+        // a legacy object {grouped, groups, keys, count} when no output_format is specified.
         const sourceStep = workflow.find((s: any) => s.output_variable === baseName)
-        if (sourceStep && (sourceStep.type === 'transform' || sourceStep.type === 'scatter_gather')) {
-          return input // Transforms already produce the right shape
+        if (sourceStep && sourceStep.type === 'transform') {
+          const isGroupTransform = sourceStep.operation === 'group' || sourceStep.operation === 'group_by'
+            || sourceStep.config?.type === 'group' || sourceStep.config?.type === 'group_by'
+          if (!isGroupTransform) {
+            return input // Non-group transforms already produce the right shape
+          }
+          // Group transform without explicit output_format returns legacy object.
+          // The iterable array is in the 'groups' field.
+          if (!sourceStep.config?.output_format) {
+            const newInput = `{{${baseName}.groups}}`
+            this.log(ctx, `  → Input unwrap: ${input} → ${newInput} (group transform legacy object → groups array)`)
+            return newInput
+          }
+          return input // Group with output_format already returns array
+        }
+        if (sourceStep && sourceStep.type === 'scatter_gather') {
+          return input // Scatter-gather already produces array
         }
 
         const sourceSchema = this.findOutputSchema(workflow, baseName)
@@ -5511,11 +5527,11 @@ export class ExecutionGraphCompiler {
       fixed.gather = restGather
     }
 
-    // If gather.operation = "flatten" but no output_variable, remove gather
+    // If gather.operation = "flatten" but no output_variable, default to "collect".
+    // Removing gather entirely breaks the scatter-gather step at runtime (D-B15).
     if (fixed.gather?.operation === 'flatten' && !fixed.output_variable) {
-      this.log(ctx, `  → ⚠️  Scatter_gather ${fixed.step_id} has gather.operation = 'flatten' but no output, removing gather`)
-      const { gather, ...rest } = fixed
-      return rest
+      this.log(ctx, `  → ⚠️  Scatter_gather ${fixed.step_id} has gather.operation = 'flatten' but no output — defaulting to 'collect'`)
+      fixed.gather = { operation: 'collect' }
     }
 
     return fixed
