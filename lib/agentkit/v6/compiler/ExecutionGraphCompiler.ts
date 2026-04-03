@@ -2749,6 +2749,49 @@ export class ExecutionGraphCompiler {
       configRefsRewritten += rewriteResult.count
       const rewritten = rewriteResult.obj
 
+      // Fix: Unwrap object-to-array references for scatter and transform inputs.
+      // When the input variable's output_schema is type:"object" with an array property
+      // (e.g., search_files returns {files: [...]}), rewrite the input to reference
+      // the array field: {{var}} → {{var.files}}
+      // This applies to scatter_gather inputs, and transform inputs (filter, sort, map).
+      const unwrapObjectToArray = (input: string): string => {
+        const ref = input.replace(/\{\{|\}\}/g, '').trim()
+        const baseName = ref.split('.')[0]
+        if (ref.includes('.')) return input // Already has a dotted path
+
+        // Only unwrap if the source step is an action or ai_processing (returns object wrappers).
+        // Transform steps (filter, sort, map) output arrays even if their schema says "object".
+        const sourceStep = workflow.find((s: any) => s.output_variable === baseName)
+        if (sourceStep && (sourceStep.type === 'transform' || sourceStep.type === 'scatter_gather')) {
+          return input // Transforms already produce the right shape
+        }
+
+        const sourceSchema = this.findOutputSchema(workflow, baseName)
+        if (sourceSchema && sourceSchema.type === 'object' && sourceSchema.properties) {
+          const arrayField = Object.entries(sourceSchema.properties)
+            .find(([_, v]: [string, any]) => v.type === 'array')?.[0]
+          if (arrayField) {
+            const newInput = `{{${baseName}.${arrayField}}}`
+            this.log(ctx, `  → Input unwrap: ${input} → ${newInput} (${arrayField} is the array field in ${baseName})`)
+            return newInput
+          }
+        }
+        return input
+      }
+
+      if (rewritten.type === 'scatter_gather' && rewritten.scatter?.input) {
+        rewritten.scatter.input = unwrapObjectToArray(rewritten.scatter.input)
+      }
+      if (rewritten.type === 'transform' && rewritten.input && typeof rewritten.input === 'string') {
+        rewritten.input = unwrapObjectToArray(rewritten.input)
+        if (rewritten.config?.input && typeof rewritten.config.input === 'string') {
+          rewritten.config.input = rewritten.config.input.replace(/\{\{|\}\}/g, '').trim()
+          // Keep config.input in sync (without {{ }})
+          const mainRef = rewritten.input.replace(/\{\{|\}\}/g, '').trim()
+          rewritten.config.input = mainRef
+        }
+      }
+
       // Recurse into nested steps
       if (rewritten.scatter?.steps) {
         rewritten.scatter = {

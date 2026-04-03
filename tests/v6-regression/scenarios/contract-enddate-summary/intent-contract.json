@@ -1,0 +1,466 @@
+{
+  "version": "intent.v1",
+  "goal": "Scan Google Docs in Drive folder 'Contracts', extract contract end dates, and email HTML summary of contracts ending within next 30 days",
+  "unit_of_work": {
+    "entity": "contract_document",
+    "parent_entity": "contracts_folder"
+  },
+  "config": [
+    {
+      "key": "drive_folder_name",
+      "type": "string",
+      "description": "Name of the Google Drive folder containing contracts",
+      "default": "Contracts"
+    },
+    {
+      "key": "contract_title_keywords",
+      "type": "json",
+      "description": "Keywords that must appear in contract document titles",
+      "default": [
+        "Contract",
+        "Agreement",
+        "MSA",
+        "SOW",
+        "Order Form",
+        "Statement of Work"
+      ]
+    },
+    {
+      "key": "email_recipient",
+      "type": "string",
+      "description": "Email address to send the contract summary report",
+      "default": "meiribarak@gmail.com"
+    },
+    {
+      "key": "days_ahead",
+      "type": "number",
+      "description": "Number of days ahead to check for contract end dates",
+      "default": 30
+    },
+    {
+      "key": "today_date",
+      "type": "string",
+      "description": "Reference date for calculations (ISO format YYYY-MM-DD)",
+      "default": "{{current_date}}"
+    }
+  ],
+  "required_outcomes": [
+    "Email sent with HTML table of contracts ending within 30 days",
+    "Documents without extractable end dates are included with notes"
+  ],
+  "steps": [
+    {
+      "id": "get_contracts_folder",
+      "kind": "artifact",
+      "summary": "Get the Contracts folder from Google Drive",
+      "uses": [
+        {
+          "capability": "upsert",
+          "domain": "storage",
+          "preferences": {
+            "provider_family": "google"
+          }
+        }
+      ],
+      "output": "contracts_folder",
+      "artifact": {
+        "domain": "storage",
+        "type": "folder",
+        "strategy": "use_existing",
+        "name_hint": "Contracts"
+      }
+    },
+    {
+      "id": "search_contract_docs",
+      "kind": "data_source",
+      "summary": "Search for Google Docs in Contracts folder with contract-related keywords in title",
+      "uses": [
+        {
+          "capability": "search",
+          "domain": "storage",
+          "preferences": {
+            "provider_family": "google"
+          }
+        }
+      ],
+      "inputs": [
+        "contracts_folder"
+      ],
+      "output": "candidate_docs",
+      "source": {
+        "domain": "storage",
+        "intent": "search"
+      },
+      "payload": {
+        "folder_id": {
+          "kind": "ref",
+          "ref": "contracts_folder",
+          "field": "id"
+        },
+        "mime_type": {
+          "kind": "literal",
+          "value": "application/vnd.google-apps.document"
+        }
+      },
+      "query": {
+        "kind": "computed",
+        "op": "format",
+        "args": [
+          {
+            "kind": "literal",
+            "value": "name contains '{}'"
+          },
+          {
+            "kind": "config",
+            "key": "contract_title_keywords"
+          }
+        ]
+      },
+      "retrieval": {
+        "max_results": 100,
+        "include_content": "none",
+        "include_metadata": true
+      }
+    },
+    {
+      "id": "process_each_document",
+      "kind": "loop",
+      "summary": "Process each candidate contract document to extract end dates and counterparty",
+      "inputs": [
+        "candidate_docs"
+      ],
+      "output": "processed_contracts",
+      "loop": {
+        "over": "candidate_docs",
+        "item_ref": "doc",
+        "unit_of_work": {
+          "entity": "contract_document"
+        },
+        "collect": {
+          "enabled": true,
+          "collect_as": "processed_contracts",
+          "from_step_output": "contract_data"
+        },
+        "do": [
+          {
+            "id": "fetch_doc_content",
+            "kind": "data_source",
+            "summary": "Retrieve full text content of the Google Doc",
+            "uses": [
+              {
+                "capability": "fetch_content",
+                "domain": "storage",
+                "preferences": {
+                  "provider_family": "google"
+                }
+              }
+            ],
+            "inputs": [
+              "doc"
+            ],
+            "output": "doc_content",
+            "source": {
+              "domain": "storage",
+              "intent": "fetch_content"
+            },
+            "payload": {
+              "file_id": {
+                "kind": "ref",
+                "ref": "doc",
+                "field": "id"
+              },
+              "export_format": {
+                "kind": "literal",
+                "value": "text/plain"
+              }
+            }
+          },
+          {
+            "id": "extract_contract_fields",
+            "kind": "extract",
+            "summary": "Extract contract end date, counterparty name, and notes from document text",
+            "uses": [
+              {
+                "capability": "extract_structured_data",
+                "domain": "document"
+              }
+            ],
+            "inputs": [
+              "doc_content"
+            ],
+            "output": "extracted_fields",
+            "extract": {
+              "input": "doc_content",
+              "fields": [
+                {
+                  "name": "end_date",
+                  "type": "date",
+                  "required": false,
+                  "description": "Contract end/expiration date. Check for explicit labels like 'End Date:', 'Expiration Date:', term sentences like 'This Agreement ends on...', or renewal clauses. If multiple dates found, choose the most likely contract end date."
+                },
+                {
+                  "name": "counterparty",
+                  "type": "string",
+                  "required": false,
+                  "description": "Counterparty name from the document (e.g., first party name block near top, or from 'between ... and ...' clause)"
+                },
+                {
+                  "name": "extraction_notes",
+                  "type": "string",
+                  "required": false,
+                  "description": "Notes about extraction: multiple dates detected, end date not found, counterparty not found, or other relevant observations"
+                }
+              ],
+              "deterministic": false,
+              "content_hints": {
+                "file_types": [
+                  "text/plain"
+                ],
+                "language": "en"
+              }
+            }
+          },
+          {
+            "id": "merge_doc_metadata",
+            "kind": "transform",
+            "summary": "Merge extracted fields with document metadata (title, link)",
+            "inputs": [
+              "extracted_fields",
+              "doc"
+            ],
+            "output": "contract_data",
+            "transform": {
+              "op": "map",
+              "input": "extracted_fields",
+              "description": "Combine extracted contract fields with document title and web link from metadata",
+              "mapping": [
+                {
+                  "to": "title",
+                  "from": "name"
+                },
+                {
+                  "to": "link",
+                  "from": "webViewLink"
+                },
+                {
+                  "to": "end_date",
+                  "from": "end_date"
+                },
+                {
+                  "to": "counterparty",
+                  "from": "counterparty"
+                },
+                {
+                  "to": "notes",
+                  "from": "extraction_notes"
+                }
+              ],
+              "output_schema": {
+                "type": "object",
+                "properties": {
+                  "title": {
+                    "type": "string"
+                  },
+                  "link": {
+                    "type": "string"
+                  },
+                  "end_date": {
+                    "type": "string"
+                  },
+                  "counterparty": {
+                    "type": "string"
+                  },
+                  "notes": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "title",
+                  "link"
+                ]
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "compute_days_remaining",
+      "kind": "generate",
+      "summary": "Compute days remaining for each contract (end_date - today) and add to contract data",
+      "uses": [
+        {
+          "capability": "generate",
+          "domain": "internal"
+        }
+      ],
+      "inputs": [
+        "processed_contracts"
+      ],
+      "output": "contracts_with_days",
+      "generate": {
+        "input": "processed_contracts",
+        "format": "json",
+        "instruction": "For each contract in the input array, compute 'days_remaining' as the difference in days between end_date and today's date (use config today_date). If end_date is missing or invalid, set days_remaining to null. Return the array with the new days_remaining field added to each contract object.",
+        "outputs": [
+          {
+            "name": "contracts_array",
+            "type": "array",
+            "description": "Array of contract objects with days_remaining field added"
+          }
+        ]
+      }
+    },
+    {
+      "id": "filter_next_30_days",
+      "kind": "transform",
+      "summary": "Filter contracts to include only those ending within next 30 days or with missing end dates",
+      "inputs": [
+        "contracts_with_days"
+      ],
+      "output": "filtered_contracts",
+      "transform": {
+        "op": "filter",
+        "input": "contracts_with_days",
+        "description": "Keep contracts where days_remaining is between 0 and 30 (inclusive), or where end_date is missing/null",
+        "where": {
+          "op": "or",
+          "conditions": [
+            {
+              "op": "and",
+              "conditions": [
+                {
+                  "op": "test",
+                  "left": {
+                    "kind": "ref",
+                    "ref": "contracts_with_days",
+                    "field": "days_remaining"
+                  },
+                  "comparator": "gte",
+                  "right": {
+                    "kind": "literal",
+                    "value": 0
+                  }
+                },
+                {
+                  "op": "test",
+                  "left": {
+                    "kind": "ref",
+                    "ref": "contracts_with_days",
+                    "field": "days_remaining"
+                  },
+                  "comparator": "lte",
+                  "right": {
+                    "kind": "config",
+                    "key": "days_ahead"
+                  }
+                }
+              ]
+            },
+            {
+              "op": "test",
+              "left": {
+                "kind": "ref",
+                "ref": "contracts_with_days",
+                "field": "end_date"
+              },
+              "comparator": "exists",
+              "right": {
+                "kind": "literal",
+                "value": false
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "sort_contracts",
+      "kind": "transform",
+      "summary": "Sort contracts by end date ascending, with missing end dates at bottom",
+      "inputs": [
+        "filtered_contracts"
+      ],
+      "output": "sorted_contracts",
+      "transform": {
+        "op": "sort",
+        "input": "filtered_contracts",
+        "description": "Sort by end_date ascending (nulls last)"
+      }
+    },
+    {
+      "id": "generate_html_table",
+      "kind": "generate",
+      "summary": "Generate HTML table with contract summary for email body",
+      "uses": [
+        {
+          "capability": "generate",
+          "domain": "internal"
+        }
+      ],
+      "inputs": [
+        "sorted_contracts"
+      ],
+      "output": "email_content",
+      "generate": {
+        "input": "sorted_contracts",
+        "format": "html",
+        "instruction": "Create a professional HTML email body with:\n1. A heading 'Contract End-Date Summary (Next 30 Days)'\n2. If sorted_contracts is empty or has no items with valid end dates, display a message: 'No contracts ending within the next 30 days were found.' and list any documents where end dates could not be extracted.\n3. Otherwise, create an HTML table with these columns: Document Title (linked), Counterparty, End Date, Days Remaining, Notes.\n4. Use proper HTML table structure with <thead> and <tbody>.\n5. Apply professional styling: borders, header background color, padding.\n6. Make the Document Title column a clickable link using the 'link' field.\n7. For rows with missing end dates, display 'Not found' in End Date and Days Remaining columns.",
+        "outputs": [
+          {
+            "name": "subject",
+            "type": "string",
+            "description": "Email subject line"
+          },
+          {
+            "name": "body",
+            "type": "string",
+            "description": "HTML email body with table"
+          }
+        ]
+      }
+    },
+    {
+      "id": "send_summary_email",
+      "kind": "notify",
+      "summary": "Send contract summary email to recipient",
+      "uses": [
+        {
+          "capability": "send_message",
+          "domain": "email",
+          "preferences": {
+            "provider_family": "google"
+          }
+        }
+      ],
+      "inputs": [
+        "email_content"
+      ],
+      "notify": {
+        "channel": "email",
+        "recipients": {
+          "to": [
+            {
+              "kind": "config",
+              "key": "email_recipient"
+            }
+          ]
+        },
+        "content": {
+          "subject": {
+            "kind": "ref",
+            "ref": "email_content",
+            "field": "subject"
+          },
+          "body": {
+            "kind": "ref",
+            "ref": "email_content",
+            "field": "body"
+          },
+          "format": "html"
+        }
+      }
+    }
+  ],
+  "confidence": 0.95
+}

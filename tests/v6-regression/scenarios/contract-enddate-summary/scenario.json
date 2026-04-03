@@ -1,0 +1,12 @@
+{
+  "name": "Contract End-Date Summary (Next 30 Days)",
+  "description": "Search Drive for contract docs, extract end dates via Google Docs, filter next 30 days, generate HTML summary table, send email. Tests Drive search + Docs read + AI extraction + date filtering.",
+  "created": "2026-04-01",
+  "plugins": ["google-drive", "google-docs", "google-mail"],
+  "expected": {
+    "min_steps": 4,
+    "step_types": ["action", "transform", "ai_processing", "scatter_gather"],
+    "phase_a_checks": 14,
+    "phase_d_success": true
+  }
+}

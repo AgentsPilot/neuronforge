@@ -2229,26 +2229,35 @@ Respond ONLY with the JSON array. No markdown, no explanation, no code blocks.`;
       length: Array.isArray(data) ? data.length : undefined
     }, 'transformMap received data');
 
-    if (!Array.isArray(data)) {
-      throw new ExecutionError('Map operation requires array input', 'INVALID_INPUT_TYPE');
-    }
-
-    // O24: Structured extraction modes — deterministic, no expression eval needed
-
     // Mode 0 (WP-4): field_mapping — explicit field rename/select from IntentContract
     // The LLM emits structured mappings: {sender: "from", subject: "subject", received_date: "date"}
     // This is the preferred mode — deterministic, no guessing, no alias tables.
+    // Handles both array input (map each item) and single object input (inside scatter-gather).
     if (config && config.field_mapping && typeof config.field_mapping === 'object') {
       const mapping = config.field_mapping as Record<string, string>;
-      logger.info({ mapping, itemCount: data.length }, '[transformMap] Using field_mapping (WP-4)');
-      return data.map(item => {
+      const applyMapping = (item: any) => {
         const mapped: Record<string, any> = {};
         for (const [targetField, sourceField] of Object.entries(mapping)) {
           mapped[targetField] = item[sourceField];
         }
         return mapped;
-      });
+      };
+
+      if (Array.isArray(data)) {
+        logger.info({ mapping, itemCount: data.length }, '[transformMap] Using field_mapping on array (WP-4)');
+        return data.map(applyMapping);
+      } else if (data && typeof data === 'object') {
+        // Single object input — common inside scatter-gather where each item is one object
+        logger.info({ mapping }, '[transformMap] Using field_mapping on single object (WP-4, scatter context)');
+        return applyMapping(data);
+      }
     }
+
+    if (!Array.isArray(data)) {
+      throw new ExecutionError('Map operation requires array input', 'INVALID_INPUT_TYPE');
+    }
+
+    // O24: Structured extraction modes — deterministic, no expression eval needed
 
     // Mode 1: column_index — extract a positional element from each row (for 2D arrays)
     // Example: config.column_index = 4 → items.map(row => row[4])

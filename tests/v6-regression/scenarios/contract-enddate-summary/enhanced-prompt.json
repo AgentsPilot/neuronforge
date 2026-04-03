@@ -1,0 +1,64 @@
+{
+    "plan_title": "Contract End-Date Summary (Next 30 Days)",
+    "plan_description": "Scans Google Docs in the Drive folder 'Contracts', extracts contract end/expiration dates, and emails an HTML summary table of contracts ending within the next 30 days (including documents where an end date could not be found).",
+    "sections": {
+        "data": [
+            "- Search Google Drive within the folder named “Contracts” for Google Docs.",
+            "- Restrict the candidate documents to those whose Google Doc title contains at least one of these keywords: “Contract”, “Agreement”, “MSA”, “SOW”, “Order Form”, “Statement of Work”.",
+            "- For each candidate Google Doc, retrieve the document text needed to locate end/expiration dates and counterparty names.",
+            "- Use today’s date as the reference date for all “next 30 days” calculations."
+        ],
+        "actions": [
+            "- For each candidate contract document, extract the contract end/expiration date by checking multiple patterns, including:",
+            "- If the document contains an explicit label (for example: “End Date: …” or “Expiration Date: …”), extract the date value that follows the label.",
+            "- If the document contains a term sentence (for example: “This Agreement ends on …”), extract the date from that sentence.",
+            "- If the document contains a renewal/auto-renewal clause that includes an end date, extract the end date from that clause.",
+            "- If multiple plausible end/expiration dates are found in a single document, choose the most likely contract end date and record a note explaining that multiple dates were detected.",
+            "- Attempt to extract a counterparty name from the document (for example: the first party name block near the top, or a line containing “between … and …”); if not found, leave it blank and add a note if helpful.",
+            "- Compute “days remaining” as (end_date - today) in days when an end date is available.",
+            "- Filter results to include only contracts with an end date between today and today + 30 days (inclusive).",
+            "- If an end date cannot be found for a candidate contract document, include the document in the report with end date blank and a note indicating the end date was not found."
+        ],
+        "output": [
+            "- Produce a single HTML table (embedded in the email body) containing one row per included document.",
+            "- Include these columns in the table: Document title, Document link, Counterparty, End date, Days remaining, Notes.",
+            "- Sort the table rows by end date ascending when an end date exists; place missing end-date rows at the bottom."
+        ],
+        "delivery": [
+            "- Send the email to meiribarak@gmail.com.",
+            "- Use a clear subject line indicating it is a contract end-date summary for the next 30 days.",
+            "- If no contracts are found ending within the next 30 days, send an email stating that no upcoming contract ends were detected, and (if any) include a short list of documents where an end date could not be found."
+        ],
+        "processing_steps": [
+            "- Build the candidate document list from the Drive folder “Contracts” and the title keyword filter.",
+            "- Read each candidate Google Doc’s text.",
+            "- Extract end/expiration date and counterparty (when possible).",
+            "- Compute days remaining and apply the next-30-days filter.",
+            "- Generate the HTML table and email it to the user."
+        ]
+    },
+    "specifics": {
+        "services_involved": [
+            "google-drive",
+            "google-docs",
+            "google-mail",
+            "chatgpt-research"
+        ],
+        "user_inputs_required": [
+        ],
+        "resolved_user_inputs": [
+            {
+                "key": "google_mail__email_send__recipients",
+                "value": "meiribarak@gmail.com"
+            },
+            {
+                "key": "drive_folder_name",
+                "value": "Contracts"
+            },
+            {
+                "key": "contract_title_keywords",
+                "value": "Contract, Agreement, MSA, SOW, Order Form, Statement of Work"
+            }
+        ]
+    }
+}
