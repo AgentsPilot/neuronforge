@@ -8,7 +8,7 @@
     "timezone": "Asia/Jerusalem"
   },
   "connected_services": ["google-mail", "notion"],
-  "clarification_overrides": {
+  "clarification_hints": {
     "Which Notion database": "My daily summaries database"
   },
   "expected_services": ["google-mail", "notion"],

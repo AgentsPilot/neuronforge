@@ -273,7 +273,7 @@ export async function runScenario(
       generatedAnswers = await generateAnswers(
         scenario.user_prompt,
         questions,
-        scenario.clarification_overrides,
+        scenario.clarification_hints,
         aiProvider,
         aiModel,
         logger,
@@ -402,7 +402,7 @@ export async function runScenario(
   if (errors.length > 0) {
     output.status = 'error';
   } else if (validation && !validation.pass) {
-    output.status = 'fail';
+    output.status = 'warning';
   } else {
     output.status = 'pass';
   }

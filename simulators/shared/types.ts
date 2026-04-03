@@ -18,7 +18,7 @@ export interface SimulatorLogger {
 
 export interface SummaryRow {
   scenario: string;
-  status: 'pass' | 'fail' | 'error';
+  status: 'pass' | 'fail' | 'error' | 'warning';
   duration: string;
   validation: string;
 }

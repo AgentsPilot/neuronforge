@@ -24,7 +24,7 @@ export const ScenarioSchema = z.object({
     domain: z.string().optional(),
   }).optional(),
   connected_services: z.array(z.string()).optional(),
-  clarification_overrides: z.record(z.string(), z.string()).optional(),
+  clarification_hints: z.record(z.string(), z.string()).optional(),
   expected_services: z.array(z.string()).optional(),
   tags: z.array(z.string()).optional(),
   ai_provider: z.string().optional(),
@@ -178,6 +178,6 @@ export interface SimulatorOutput {
     } | null;
   };
   validation: ValidationResult | null;
-  status: 'pass' | 'fail' | 'error';
+  status: 'pass' | 'warning' | 'fail' | 'error';
   errors: Array<{ phase: string; message: string; statusCode?: number; rawResponse?: unknown }>;
 }

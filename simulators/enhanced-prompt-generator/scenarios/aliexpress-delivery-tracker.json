@@ -1,0 +1,19 @@
+{
+  "name": "aliexpress-delivery-tracker",
+  "description": "Search Gmail for AliExpress delivery updates, consolidate by package number, summarize, send summary, mark as read, and move to shopping folder",
+  "user_prompt": "I would like you to search my gmail and pull mails from AliExpress with delivery updates and consolidate the delivery update based on the package number, and create a summary table with the package number, list of products in that package and a summary of the update. send me that summary table and mark all those mails as read, then move all those update emails to \"shopping\" in gmail.",
+  "user_context": {
+    "full_name": "Barak Meiri",
+    "email": "meiribarak@gmail.com",
+    "timezone": "Asia/Jerusalem"
+  },
+  "connected_services": ["google-mail"],
+  "clarification_hints": {
+    "criteria": "Filter by sender addresses containing aliexpress.com and subject lines containing delivery, shipping, or tracking",
+    "how far back": "Last 30 days",
+    "format": "HTML table",
+    "send": "Send it to my own email address"
+  },
+  "expected_services": ["google-mail"],
+  "tags": ["email", "ecommerce", "delivery-tracking", "organization"]
+}

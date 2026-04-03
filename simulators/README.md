@@ -93,7 +93,7 @@ Example (`gmail-summary.json`):
   "description": "Summarize last 10 Gmail emails and save to Notion",
   "user_prompt": "Summarize my last 10 Gmail emails and save the summary to a Notion page",
   "connected_services": ["google-mail", "notion"],
-  "clarification_overrides": {
+  "clarification_hints": {
     "Which Notion database": "My daily summaries database"
   }
 }
@@ -108,7 +108,7 @@ Example (`gmail-summary.json`):
 | `user_prompt` | Yes | The natural-language prompt to test |
 | `user_context` | No | User context overrides (name, email, timezone) |
 | `connected_services` | No | Plugin keys to pass as connected services |
-| `clarification_overrides` | No | Partial-match question text to predetermined answers |
+| `clarification_hints` | No | Partial-match question text to hints that guide the LLM's reasoning (not verbatim overrides) |
 | `expected_services` | No | Expected services in the final enhanced prompt |
 | `tags` | No | Tags for filtering/grouping |
 | `ai_provider` | No | Override LLM provider for this scenario |

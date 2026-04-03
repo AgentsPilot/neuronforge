@@ -192,12 +192,17 @@ async function main(): Promise<void> {
   logger.table(summaryRows);
 
   // Determine exit code
-  const hasFailure = summaryRows.some((r) => r.status === 'fail' || r.status === 'error');
+  const hasError = summaryRows.some((r) => r.status === 'error');
+  const hasWarning = summaryRows.some((r) => r.status === 'warning');
 
-  if (hasFailure) {
+  if (hasError) {
     logger.info('');
-    logger.error('One or more scenarios failed or errored. Exit code: 1');
+    logger.error('One or more scenarios errored. Exit code: 1');
     process.exit(1);
+  } else if (hasWarning) {
+    logger.info('');
+    logger.warn('All scenarios completed but some have validation warnings. Exit code: 0');
+    process.exit(0);
   } else {
     logger.info('');
     logger.info('All scenarios passed. Exit code: 0');

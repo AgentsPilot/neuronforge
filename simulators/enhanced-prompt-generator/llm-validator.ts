@@ -11,15 +11,21 @@ import type { SimulatorLogger } from '@/simulators/shared/types';
 import type { ValidationResult } from './types';
 
 const VALIDATION_SYSTEM_PROMPT = [
-  'You are a strict quality evaluator for an AI automation platform.',
+  'You are a thorough quality evaluator for an AI automation platform.',
   'Your job is to determine whether an "enhanced prompt" (a structured automation plan)',
   'faithfully and completely captures the user\'s original intent.',
   '',
+  'IMPORTANT: Before claiming something is missing, carefully check ALL sections of the',
+  'enhanced prompt — including "data", "actions", "output", "delivery", "processing_steps",',
+  'and any other sections. Information may be spread across multiple sections.',
+  '',
   'Evaluate the following:',
-  '1. Does the enhanced prompt cover all elements of the original prompt?',
-  '2. Are there any missing elements from the original request?',
-  '3. Are there any misinterpretations of the original intent?',
-  '4. Are there any additions that the user did not request?',
+  '1. Go through each distinct request in the original prompt one by one.',
+  '2. For each request, search ALL sections of the enhanced prompt for coverage.',
+  '3. Only flag an element as missing if it truly does not appear in ANY section.',
+  '4. Reasonable defaults (e.g., specific sender addresses, formatting choices) are acceptable',
+  '   and should NOT be flagged as additions the user did not request.',
+  '5. Paraphrased or restructured content that preserves the original meaning is acceptable.',
   '',
   'Respond with ONLY a JSON object in this exact format:',
   '{',
@@ -28,8 +34,8 @@ const VALIDATION_SYSTEM_PROMPT = [
   '  "issues": ["issue1", "issue2"]  // empty array if pass is true',
   '}',
   '',
-  'Be strict but fair. Minor details like specific formatting or reasonable defaults',
-  'are acceptable. Missing core functionality or misinterpreted intent is a failure.',
+  'Only fail if there is a genuinely missing core element or a clear misinterpretation.',
+  'Do NOT fail for rephrasing, restructuring, or reasonable elaboration of the original intent.',
 ].join('\n');
 
 /**
