@@ -18,11 +18,6 @@ import type {
 import { PROVIDERS } from '@/lib/ai/providerFactory';
 import { resolveThreadProviderConfig } from '@/lib/agent-creation/thread-provider-config';
 
-<<<<<<< ours
-//const aiAgentPromptTemplate = "Workflow-Agent-Creation-Prompt-v10-chatgpt";
-//const aiAgentPromptTemplate = "Workflow-Agent-Creation-Prompt-v13-chatgpt";
-=======
->>>>>>> theirs
 const aiAgentPromptTemplate = "Workflow-Agent-Creation-Prompt-v14-chatgpt";
 
 // Initialize Supabase client (still needed for AIAnalyticsService)
