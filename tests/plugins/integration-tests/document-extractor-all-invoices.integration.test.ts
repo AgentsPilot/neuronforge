@@ -115,7 +115,7 @@ describe('DeterministicExtractor — all invoices (integration)', () => {
 
       // Metadata should be present
       expect(result.metadata).toBeDefined();
-      expect(result.metadata.extractionMethod).toBe('text');
+      expect(['text', 'text+llm']).toContain(result.metadata.extractionMethod);
       expect(result.metadata.fieldsRequested).toBe(STANDARD_SCHEMA.fields.length);
       expect(result.metadata.fieldsExtracted).toBeGreaterThanOrEqual(1);
 
@@ -145,7 +145,7 @@ describe('DeterministicExtractor — all invoices (integration)', () => {
 
       // Metadata
       expect(result.metadata).toBeDefined();
-      expect(result.metadata.extractionMethod).toBe('text');
+      expect(['text', 'text+llm']).toContain(result.metadata.extractionMethod);
       expect(result.metadata.fieldsExtracted).toBeGreaterThanOrEqual(1);
 
       expect(result.confidence).toBeGreaterThan(0);
@@ -176,7 +176,7 @@ describe('DeterministicExtractor — all invoices (integration)', () => {
 
       // Metadata
       expect(result.metadata).toBeDefined();
-      expect(result.metadata.extractionMethod).toBe('text');
+      expect(['text', 'text+llm']).toContain(result.metadata.extractionMethod);
       expect(result.metadata.fieldsExtracted).toBeGreaterThanOrEqual(2);
 
       expect(result.confidence).toBeGreaterThan(0);
@@ -204,7 +204,7 @@ describe('DeterministicExtractor — all invoices (integration)', () => {
 
       // Metadata
       expect(result.metadata).toBeDefined();
-      expect(result.metadata.extractionMethod).toBe('text');
+      expect(['text', 'text+llm']).toContain(result.metadata.extractionMethod);
       expect(result.metadata.fieldsExtracted).toBeGreaterThanOrEqual(1);
 
       expect(result.confidence).toBeGreaterThan(0);

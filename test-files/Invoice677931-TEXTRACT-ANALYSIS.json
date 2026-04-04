@@ -1,0 +1,191 @@
+{
+  "filename": "Invoice677931.pdf",
+  "text": "SCOOTER\n625 N SEGOE RD SUITE 104 MADISON, WI 53705\nTEL +1 608 233 0240\nSOFTWARE\nSCOOTERSOFTWARE.COM\nINVOICE #677931\nDated 17-Mar-2026\nSold To\nDeliver License Key To\nBarak Meiri\nBarak Meiri <meiribarak@gmail.com>\nISRAEL\nInvoice Date\nYour P.O. Number\nTerms\nCurrency\nShip Via\n17-Mar-2026\nPrepaid\nUSD\nemail\nQty\nPart #\nDescription\nPrice\nTotal\n1\nBC5S1\nBeyond Compare 5 Standard Edition, per user\n35.00\n35.00\nLicensed to: Barak Meiri\nChuckie's Discount\n-3.50\nInvoice Total $ 31.50\n03/17/26 PayPal ID# 2SR04446U4472631U\n31.50\nBalance Due\n$ 0.00\nPage 1",
+  "keyValuePairs": [
+    {
+      "key": "Balance Due",
+      "value": "$ 0.00",
+      "confidence": 95.01646423339844
+    },
+    {
+      "key": "Invoice Total",
+      "value": "$ 31.50",
+      "confidence": 95.14399719238281
+    },
+    {
+      "key": "Invoice Date",
+      "value": "17-Mar-2026",
+      "confidence": 95.41099548339844
+    },
+    {
+      "key": "Terms",
+      "value": "Prepaid",
+      "confidence": 95.37907409667969
+    },
+    {
+      "key": "Description",
+      "value": "Beyond Compare 5 Standard Edition, per user Barak Meiri",
+      "confidence": 94.66472625732422
+    },
+    {
+      "key": "Currency",
+      "value": "USD",
+      "confidence": 95.3532485961914
+    },
+    {
+      "key": "Your P.O. Number",
+      "value": "",
+      "confidence": 92.94161224365234
+    },
+    {
+      "key": "TEL",
+      "value": "608 233 0240",
+      "confidence": 94.18647003173828
+    },
+    {
+      "key": "Licensed to:",
+      "value": "",
+      "confidence": 86.9892349243164
+    },
+    {
+      "key": "Sold To",
+      "value": "Barak Meiri ISRAEL",
+      "confidence": 95.13740539550781
+    },
+    {
+      "key": "Total",
+      "value": "35.00",
+      "confidence": 95.52720642089844
+    },
+    {
+      "key": "Qty",
+      "value": "1",
+      "confidence": 95.27215576171875
+    },
+    {
+      "key": "Ship Via",
+      "value": "email",
+      "confidence": 95.21688842773438
+    },
+    {
+      "key": "Deliver License Key To",
+      "value": "Barak Meiri <meiribarak@gmail.com>",
+      "confidence": 94.5110855102539
+    },
+    {
+      "key": "Price",
+      "value": "35.00",
+      "confidence": 95.65074920654297
+    },
+    {
+      "key": "INVOICE",
+      "value": "#677931",
+      "confidence": 94.29666900634766
+    },
+    {
+      "key": "Page",
+      "value": "1",
+      "confidence": 93.79768371582031
+    },
+    {
+      "key": "Part #",
+      "value": "BC5S1",
+      "confidence": 95.20018768310547
+    },
+    {
+      "key": "Dated",
+      "value": "17-Mar-2026",
+      "confidence": 46.70600891113281
+    },
+    {
+      "key": "Chuckie's Discount",
+      "value": "-3.50",
+      "confidence": 95.09956359863281
+    },
+    {
+      "key": "03/17/26 PayPal ID# 2SR04446U4472631U",
+      "value": "31.50",
+      "confidence": 87.78943634033203
+    },
+    {
+      "key": "SUITE",
+      "value": "104",
+      "confidence": 64.18236541748047
+    },
+    {
+      "key": "MADISON, WI",
+      "value": "53705",
+      "confidence": 59.78444290161133
+    }
+  ],
+  "tables": [
+    {
+      "rows": [
+        [
+          "Invoice Date",
+          "Your P.O. Number",
+          "",
+          "Terms",
+          "Currency",
+          "Ship Via"
+        ],
+        [
+          "17-Mar-2026",
+          "",
+          "",
+          "Prepaid",
+          "USD",
+          "email"
+        ]
+      ],
+      "confidence": 79.74446614583333
+    },
+    {
+      "rows": [
+        [
+          "Qty",
+          "Part #",
+          "Description",
+          "Price",
+          "Total"
+        ],
+        [
+          "1",
+          "BC5S1",
+          "Beyond Compare 5 Standard Edition, per user Licensed to: Barak Meiri",
+          "35.00",
+          "35.00"
+        ],
+        [
+          "",
+          "",
+          "Chuckie's",
+          "Discount",
+          "-3.50"
+        ],
+        [
+          "",
+          "",
+          "Invoice",
+          "Total",
+          "$ 31.50"
+        ],
+        [
+          "",
+          "",
+          "03/17/26 PayPal ID# 2SR04446U4472631U",
+          "",
+          "31.50"
+        ],
+        [
+          "",
+          "",
+          "",
+          "Balance Due",
+          "$ 0.00"
+        ]
+      ],
+      "confidence": 64.71842447916667
+    }
+  ]
+}

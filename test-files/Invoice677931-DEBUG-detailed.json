@@ -1,0 +1,41 @@
+{
+  "filename": "Invoice677931.pdf",
+  "extractionResult": {
+    "success": true,
+    "data": {
+      "invoice_number": "#677931",
+      "vendor": "Scooter Software",
+      "date": "d 17-Mar-2026",
+      "total_amount": "1BC5S1",
+      "customer_info": "To"
+    },
+    "confidence": 0.75,
+    "needsLlmFallback": false,
+    "metadata": {
+      "extractionMethod": "text",
+      "processingTimeMs": 1295,
+      "textLength": 522,
+      "fieldsExtracted": 5,
+      "fieldsRequested": 5,
+      "missingFields": [],
+      "uncertainFields": []
+    },
+    "rawText": "625 N SEGOE RD    SUITE 104    MADISON, WI 53705\nTEL +1 608 233 0240\nSCOOTERSOFTWARE.COM\nINVOICE #677931\nDated 17-Mar-2026\n\nSold To\nBarak Meiri\nISRAEL\nDeliver License Key To\nBarak Meiri <meiribarak@gmail.com>\n.\nInvoice DateYour P.O. NumberTermsCurrencyShip Via\n17-Mar-2026PrepaidUSDemail\nQtyPart #DescriptionPriceTotal\n1BC5S1\nBeyond Compare 5 Standard Edition, per user\n   Licensed to: Barak Meiri\n35.0035.00\nChuckie's Discount-3.50\nInvoice Total$ 31.50\n03/17/26  PayPal ID# 2SR04446U4472631U31.50\nBalance Due$ 0.00\nPage 1"
+  },
+  "metadata": {
+    "extractionMethod": "text",
+    "processingTimeMs": 1295,
+    "textLength": 522,
+    "fieldsExtracted": 5,
+    "fieldsRequested": 5,
+    "missingFields": [],
+    "uncertainFields": []
+  },
+  "fields": {
+    "invoice_number": "#677931",
+    "vendor": "Scooter Software",
+    "date": "d 17-Mar-2026",
+    "total_amount": "1BC5S1",
+    "customer_info": "To"
+  }
+}

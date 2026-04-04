@@ -1,0 +1,252 @@
+{
+  "filename": "Receipt-HMGRLQ-00003.pdf",
+  "text": "ngrok\nRECEIPT\nngrok Inc.\n548 Market St\nPMB 26741\nSan Francisco, CA 94104-5401\nBill to:\nInvoice number\nHMGRLQ-00003\nBarak Meiri\nEfroni 5\nIL VAT\n035743889\nKadima Zuran, M 4282300\nReceipt date\nNov 23, 2025\nmeiribarak@gmail.com\nPayment date\nNov 23, 2025\nAmount paid\n$10.00\nDescription\nQuantity\nRate\nAmount\nBackend HTTP Requests\n$0.00\nOct 23 - Nov 22, 2025\nTier: 0-100,000, $0.00 per 100,000\n13\n1 X $0.00\n$0.00\nTier: 100,000-10,000,000, $1.00 per 100,000\n0\n0 X $1.00\n$0.00\nTier: 10,000,000-100,000,000, $0.75 per 100,000\n0\n0 X $0.75\n$0.00\nTier: 100,000,000-1,000,000,000, $0.55 per 100,000\n0\n0 X $0.55\n$0.00\nTier: 1,000,000,000-00, $0.35 per 100,000\n0\n0 X $0.35\n$0.00\nOutgoing Traffic\n$0.00\nOct 23 - Nov 22, 2025\nTier: 0 - 5\n0.006718\n$0.00\n$0.00\nTier: 5 - ∞\n0\n$0.10\n$0.00\nHobbyist Monthly License\n1\n$10.00\n$10.00\nNov 23 - Dec 22, 2025\nSubtotal\n$10.00\nAmount paid\n$10.00\nIf you would like to make payments, update billing details, or view account status, please visit https://\n1 of 1\ndashboard.ngrok.com/billing.",
+  "keyValuePairs": [
+    {
+      "key": "Amount",
+      "value": "",
+      "confidence": 54.52422332763672
+    },
+    {
+      "key": "Tier:",
+      "value": "0 - 5",
+      "confidence": 86.59616088867188
+    },
+    {
+      "key": "Receipt date",
+      "value": "Nov 23, 2025",
+      "confidence": 95.54060363769531
+    },
+    {
+      "key": "Invoice number",
+      "value": "HMGRLQ-00003",
+      "confidence": 95.30786895751953
+    },
+    {
+      "key": "Payment date",
+      "value": "Nov 23, 2025",
+      "confidence": 95.59066772460938
+    },
+    {
+      "key": "Amount paid",
+      "value": "$10.00",
+      "confidence": 95.36908721923828
+    },
+    {
+      "key": "IL VAT",
+      "value": "035743889",
+      "confidence": 95.38594818115234
+    },
+    {
+      "key": "Bill to:",
+      "value": "Barak Meiri Efroni 5 Kadima Zuran, M 4282300 meiribarak@gmail.com",
+      "confidence": 95.17733764648438
+    },
+    {
+      "key": "Amount paid",
+      "value": "$10.00",
+      "confidence": 95.48114013671875
+    },
+    {
+      "key": "Subtotal",
+      "value": "$10.00",
+      "confidence": 95.42997741699219
+    },
+    {
+      "key": "Tier:",
+      "value": "0-100,000, $0.00 per 100,000",
+      "confidence": 74.37715148925781
+    },
+    {
+      "key": "Tier:",
+      "value": "100,000-10,000,000, $1.00",
+      "confidence": 68.22352600097656
+    },
+    {
+      "key": "Tier:",
+      "value": "10,000,000-100,000,000,",
+      "confidence": 66.96712493896484
+    },
+    {
+      "key": "Nov 23 - Dec",
+      "value": "22, 2025",
+      "confidence": 68.12152099609375
+    },
+    {
+      "key": "Tier:",
+      "value": "1,000,000,000-00,",
+      "confidence": 52.72407531738281
+    },
+    {
+      "key": "Tier:",
+      "value": "100,000,000-1,000,000,000,",
+      "confidence": 51.68519592285156
+    },
+    {
+      "key": "Tier: 5 - ∞",
+      "value": "0",
+      "confidence": 65.65081787109375
+    },
+    {
+      "key": "If you would like to make payments, update billing details, or view account status, please visit https://",
+      "value": "dashboard.ngrok.com/billing.",
+      "confidence": 63.10059356689453
+    },
+    {
+      "key": "Oct",
+      "value": "",
+      "confidence": 51.83750915527344
+    },
+    {
+      "key": "Oct",
+      "value": "",
+      "confidence": 55.53440475463867
+    },
+    {
+      "key": "PMB",
+      "value": "26741",
+      "confidence": 75.0682144165039
+    },
+    {
+      "key": "548 Market",
+      "value": "St",
+      "confidence": 46.28560256958008
+    },
+    {
+      "key": "23 -",
+      "value": "Nov 22, 2025",
+      "confidence": 56.50006103515625
+    },
+    {
+      "key": "23 - Nov",
+      "value": "22, 2025",
+      "confidence": 62.38726806640625
+    },
+    {
+      "key": "per",
+      "value": "100,000",
+      "confidence": 51.69551467895508
+    },
+    {
+      "key": "Hobbyist Monthly License",
+      "value": "1",
+      "confidence": 74.39966583251953
+    }
+  ],
+  "tables": [
+    {
+      "rows": [
+        [
+          "Invoice number",
+          "HMGRLQ-00003"
+        ],
+        [
+          "IL VAT",
+          "035743889"
+        ],
+        [
+          "Receipt date",
+          "Nov 23, 2025"
+        ],
+        [
+          "Payment date",
+          "Nov 23, 2025"
+        ],
+        [
+          "Amount paid",
+          "$10.00"
+        ]
+      ],
+      "confidence": 92.2900390625
+    },
+    {
+      "rows": [
+        [
+          "Description",
+          "Quantity",
+          "Rate",
+          "Amount"
+        ],
+        [
+          "Backend HTTP Requests",
+          "",
+          "",
+          "$0.00"
+        ],
+        [
+          "Oct 23 - Nov 22, 2025",
+          "",
+          "",
+          ""
+        ],
+        [
+          "Tier: 0-100,000, $0.00 per 100,000",
+          "13",
+          "1 X $0.00",
+          "$0.00"
+        ],
+        [
+          "Tier: 100,000-10,000,000, $1.00 per 100,000",
+          "0",
+          "0 X $1.00",
+          "$0.00"
+        ],
+        [
+          "Tier: 10,000,000-100,000,000, $0.75 per 100,000",
+          "0",
+          "0 X $0.75",
+          "$0.00"
+        ],
+        [
+          "Tier: 100,000,000-1,000,000,000, $0.55 per 100,000",
+          "0",
+          "0 X $0.55",
+          "$0.00"
+        ],
+        [
+          "Tier: 1,000,000,000-00, $0.35 per 100,000",
+          "0",
+          "0 X $0.35",
+          "$0.00"
+        ],
+        [
+          "Outgoing Traffic Oct 23 - Nov 22, 2025",
+          "",
+          "",
+          "$0.00"
+        ],
+        [
+          "Tier: 0 - 5",
+          "0.006718",
+          "$0.00",
+          "$0.00"
+        ],
+        [
+          "Tier: 5 - ∞",
+          "0",
+          "$0.10",
+          "$0.00"
+        ],
+        [
+          "Hobbyist Monthly License Nov 23 - Dec 22, 2025",
+          "1",
+          "$10.00",
+          "$10.00"
+        ],
+        [
+          "",
+          "",
+          "Subtotal",
+          "$10.00"
+        ],
+        [
+          "",
+          "",
+          "Amount paid",
+          "$10.00"
+        ]
+      ],
+      "confidence": 68.79664829799107
+    }
+  ]
+}

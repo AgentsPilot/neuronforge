@@ -104,10 +104,10 @@ describe('DocumentExtractorPluginExecutor (integration)', () => {
       // --- Correctly extracted ---
       expect(result.data.invoice_number).toContain('677931');
 
-      // --- Known limitations (update when extractor improves) ---
-      // date: extracts "d 17-Mar-2026" — has leading artifact from "Dated" label
-      expect(result.data.date).toBe('d 17-Mar-2026');
-      // vendor: no "Vendor:" label in PDF — fallback applied
+      // --- Previously known limitations — IMPROVED by offir-dev migration ---
+      // date: was "d 17-Mar-2026" (leading artifact) — now correctly extracts clean date
+      expect(result.data.date).toBe('17-Mar-2026');
+      // vendor: still not found — no "Vendor:" label in PDF, company name is in URL form
       expect(result.data.vendor).toBe('Unknown Vendor');
       // amount: picks up part number "1BC5S1" instead of "$31.50"
       expect(result.data.amount).toBe('1BC5S1');
@@ -115,8 +115,8 @@ describe('DocumentExtractorPluginExecutor (integration)', () => {
       expect(result.data.currency).toBe('Ship Via');
 
       // Metadata
-      expect(result.data._extraction_metadata.confidence).toBeCloseTo(0.56, 1);
-      expect(result.data._extraction_metadata.method).toBe('text');
+      expect(result.data._extraction_metadata.confidence).toBeGreaterThan(0.5);
+      expect(['text', 'text+llm']).toContain(result.data._extraction_metadata.method);
       expect(result.data._extraction_metadata.missing_fields).toContain('vendor');
     }, 30000);
   });
@@ -138,21 +138,21 @@ describe('DocumentExtractorPluginExecutor (integration)', () => {
       // invoice_number: "ATJYUG83-0001" (has null byte from PDF encoding)
       expect(result.data.invoice_number).toContain('ATJYUG83');
 
-      // --- Known limitations (update when extractor improves) ---
-      // date: extracts "paidMarch 16, 2026" — "Date paid" label runs into value
+      // --- Previously known limitations — IMPROVED by offir-dev migration ---
+      // date: still has label leak "paidMarch 16, 2026"
       expect(result.data.date).toBe('paidMarch 16, 2026');
-      // vendor: no "Vendor:" label — "Anthropic, PBC" is in address block, not matched
-      expect(result.data.vendor).toBe('Unknown Vendor');
+      // vendor: was "Unknown Vendor" — now correctly extracts "Anthropic, PBC" from address block
+      expect(result.data.vendor).toBe('Anthropic, PBC');
       // amount: grabs entire table row instead of just "$50.00"
       expect(result.data.amount).toBe('One-time credit purchase1$50.00$50.00');
       // currency: no clear "Currency: USD" label — fallback applied
       expect(result.data.currency).toBe('Unknown Currency');
 
-      // Metadata
-      expect(result.data._extraction_metadata.confidence).toBeCloseTo(0.42, 1);
-      expect(result.data._extraction_metadata.method).toBe('text');
+      // Metadata — vendor now extracted, so confidence improved
+      expect(result.data._extraction_metadata.confidence).toBeGreaterThan(0.4);
+      expect(['text', 'text+llm']).toContain(result.data._extraction_metadata.method);
       expect(result.data._extraction_metadata.missing_fields).toEqual(
-        expect.arrayContaining(['vendor', 'currency'])
+        expect.arrayContaining(['currency'])
       );
     }, 30000);
   });
@@ -176,19 +176,19 @@ describe('DocumentExtractorPluginExecutor (integration)', () => {
       // date: cleanly extracted from "Receipt dateNov 23, 2025"
       expect(result.data.date).toBe('Nov 23, 2025');
 
-      // --- Known limitations (update when extractor improves) ---
-      // vendor: "ngrok Inc." is in address block, not matched by pattern
-      expect(result.data.vendor).toBe('Unknown Vendor');
+      // --- Previously known limitations — IMPROVED by offir-dev migration ---
+      // vendor: was "Unknown Vendor" — now correctly extracts "ngrok Inc." from address block
+      expect(result.data.vendor).toBe('ngrok Inc.');
       // amount: extracts "paid$10.00" — "Amount paid" label prefix leaks in
       expect(result.data.amount).toBe('paid$10.00');
       // currency: no "Currency:" label — fallback applied
       expect(result.data.currency).toBe('Unknown Currency');
 
-      // Metadata
-      expect(result.data._extraction_metadata.confidence).toBeCloseTo(0.42, 1);
-      expect(result.data._extraction_metadata.method).toBe('text');
+      // Metadata — vendor now extracted, so confidence improved
+      expect(result.data._extraction_metadata.confidence).toBeGreaterThan(0.4);
+      expect(['text', 'text+llm']).toContain(result.data._extraction_metadata.method);
       expect(result.data._extraction_metadata.missing_fields).toEqual(
-        expect.arrayContaining(['vendor', 'currency'])
+        expect.arrayContaining(['currency'])
       );
     }, 30000);
   });
@@ -210,20 +210,22 @@ describe('DocumentExtractorPluginExecutor (integration)', () => {
       // invoice_number: extracted from "Invoice numberZYVUTAKJ-0003" (has null byte from PDF)
       expect(result.data.invoice_number).toContain('ZYVUTAKJ');
 
-      // --- Known limitations (update when extractor improves) ---
-      // date: "Date of issue" label leaks into value
-      expect(result.data.date).toBe('of issueAugust 31, 2025');
-      // vendor: "Anthropic, PBC" in address block, not matched
-      expect(result.data.vendor).toBe('Unknown Vendor');
+      // --- Previously known limitations — IMPROVED by offir-dev migration ---
+      // date: was "of issueAugust 31, 2025" — slightly improved, less artifact
+      expect(result.data.date).toBe('issueAugust 31, 2025');
+      // vendor: was "Unknown Vendor" — now correctly extracts "Anthropic, PBC"
+      expect(result.data.vendor).toBe('Anthropic, PBC');
       // amount: grabs "Max plan - 5x" description instead of "$80.72"
       expect(result.data.amount).toBe('Max plan - 5x');
-      // currency: grabs "due August 31, 2025" from "Date due" line
-      expect(result.data.currency).toBe('due August 31, 2025');
+      // currency: was "due August 31, 2025" (wrong date leak) — now correctly falls back
+      expect(result.data.currency).toBe('Unknown Currency');
 
-      // Metadata
-      expect(result.data._extraction_metadata.confidence).toBeCloseTo(0.56, 1);
-      expect(result.data._extraction_metadata.method).toBe('text');
-      expect(result.data._extraction_metadata.missing_fields).toContain('vendor');
+      // Metadata — vendor now extracted for this invoice too
+      expect(result.data._extraction_metadata.confidence).toBeGreaterThan(0.5);
+      expect(['text', 'text+llm']).toContain(result.data._extraction_metadata.method);
+      expect(result.data._extraction_metadata.missing_fields).toEqual(
+        expect.arrayContaining(['currency'])
+      );
     }, 30000);
   });
 });

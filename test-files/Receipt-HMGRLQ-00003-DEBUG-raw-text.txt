@@ -1,0 +1,37 @@
+RECEIPT
+ngrok Inc. 
+548 Market St
+PMB 26741
+San Francisco, CA 94104-5401
+Bill to:
+Barak Meiri 
+Efroni 5
+Kadima Zuran, M 4282300
+meiribarak@gmail.com 
+Invoice numberHMGRLQ-00003
+IL VAT035743889
+Receipt dateNov 23, 2025
+Payment dateNov 23, 2025
+Amount paid$10.00
+DescriptionQuantityRateAmount
+Backend HTTP Requests
+Oct 23 – Nov 22, 2025
+$0.00
+Tier: 0-100,000, $0.00 per 100,000131 × $0.00$0.00
+Tier: 100,000-10,000,000, $1.00 per 100,00000 × $1.00$0.00
+Tier: 10,000,000-100,000,000, $0.75 per 100,00000 × $0.75$0.00
+Tier: 100,000,000-1,000,000,000, $0.55 per 100,00000 × $0.55$0.00
+Tier: 1,000,000,000-∞, $0.35 per 100,00000 × $0.35$0.00
+Outgoing Traffic
+Oct 23 – Nov 22, 2025
+$0.00
+Tier: 0 - 50.006718$0.00$0.00
+Tier: 5 - ∞0$0.10$0.00
+Hobbyist Monthly License
+Nov 23 – Dec 22, 2025
+1$10.00$10.00
+Subtotal$10.00
+Amount paid$10.00
+If you would like to make payments, update billing details, or view account status, please visit https://
+dashboard.ngrok.com/billing. 
+1 of 1

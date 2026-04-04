@@ -31,10 +31,13 @@ export interface PdfDetectionThresholds {
 }
 
 // ============================================================================
-// Document Classification Types
+// Document Classification Types (DEPRECATED)
 // ============================================================================
+// Note: Document type classification removed - system now works generically
+// with any document type based on user-defined field schemas
 
-export type DocumentType = 'invoice' | 'receipt' | 'form' | 'contract' | 'generic';
+// Kept for backward compatibility only - not used in extraction logic
+export type DocumentType = 'generic';
 
 export interface DocumentClassification {
   type: DocumentType;
@@ -69,7 +72,7 @@ export interface ExtractedField {
 
 export interface ExtractionResult {
   success: boolean;
-  documentType: DocumentType;
+  documentType: DocumentType;  // Deprecated - always 'generic'
   fields: Record<string, ExtractedField>;
   confidence: number;  // Overall confidence
   metadata: {
@@ -109,7 +112,7 @@ export interface SchemaMappingResult {
 // ============================================================================
 
 export interface ExtractorConfig {
-  documentType?: DocumentType | 'auto';
+  documentType?: DocumentType | 'auto';  // Deprecated - not used
   ocrFallback?: boolean;
   outputSchema?: OutputSchema;
   confidenceThreshold?: number;  // Below this, trigger LLM fallback
@@ -172,8 +175,9 @@ export interface FieldPattern {
   postProcess?: (value: string) => any;
 }
 
+// Deprecated - pattern-based document classification no longer used
 export interface DocumentPatterns {
   documentType: DocumentType;
-  identificationPatterns: RegExp[];  // Used to classify document type
+  identificationPatterns: RegExp[];
   fieldPatterns: FieldPattern[];
 }
