@@ -1,0 +1,37 @@
+{
+  "plan_title": "AliExpress Delivery Update Summary",
+  "plan_description": "Searches Gmail for AliExpress delivery updates, consolidates them into a summary table, and emails the table to the user.",
+  "sections": {
+    "data": [
+      "- Search Gmail for emails from 'transaction@notice.aliexpress.com'.",
+      "- Filter emails containing keywords 'delivery update' or 'shipment' in the subject or body."
+    ],
+    "actions": [
+      "- Extract package number, list of products, and delivery summary (status and estimated delivery date) from each email.",
+      "- Consolidate extracted information into a summary table."
+    ],
+    "output": [
+      "- Create an HTML table with package number, list of products, and delivery summary."
+    ],
+    "delivery": [
+      "- Send an email to meiribarak@gmail.com with the subject 'AliExpress Delivery Updates Summary'.",
+      "- Include a brief message and the HTML summary table in the email body."
+    ],
+    "processing_steps": [
+      "- Mark all relevant emails as read.",
+      "- Move all relevant emails to the 'shopping' label in Gmail."
+    ]
+  },
+  "specifics": {
+    "services_involved": [
+      "google-mail"
+    ],
+    "user_inputs_required": [],
+    "resolved_user_inputs": [
+      {
+        "key": "google_mail__email_send__recipients",
+        "value": "meiribarak@gmail.com"
+      }
+    ]
+  }
+}

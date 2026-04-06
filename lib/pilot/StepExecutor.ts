@@ -1296,6 +1296,31 @@ export class StepExecutor {
 
     const contextSummary = this.buildContextSummary(context);
 
+    // WP-13: Guard ai_processing steps against hallucination when their input is
+    // empty. Without this guard, an LLM asked to "create an HTML table of
+    // delivery updates" will fabricate plausible rows when handed an empty
+    // array — and the downstream notify step will deliver the fake data to
+    // the user as if it were real.
+    //
+    // Layer 1: Short-circuit if the resolved input is empty. Return a
+    //          deterministic "no data" payload — no LLM call, no fabrication.
+    // Layer 2: If not empty, prepend an anti-hallucination system instruction
+    //          to the prompt. Defence in depth for cases where the input is
+    //          technically non-empty but contains no usable data.
+    if (step.type === 'ai_processing') {
+      const emptyCheck = this.detectEmptyAIProcessingInput(enrichedParams, step);
+      if (emptyCheck.isEmpty) {
+        logger.warn(
+          { stepId: step.id, reason: emptyCheck.reason },
+          '[WP-13] ai_processing input is empty — returning deterministic no-data response (skipping LLM call to prevent hallucination)'
+        );
+        return {
+          data: emptyCheck.noDataPayload,
+          tokensUsed: { total: 0, prompt: 0, completion: 0 },
+        };
+      }
+    }
+
     // Build prompt with vision support if images are present
     // Async to support PDF-to-image conversion
     const { fullPrompt, isVisionMode } = await this.buildLLMPrompt(
@@ -1314,6 +1339,19 @@ export class StepExecutor {
     let promptString = typeof fullPrompt === 'string'
       ? fullPrompt
       : fullPrompt.find((p: any) => p.type === 'text')?.text || JSON.stringify(fullPrompt);
+
+    // WP-13 Layer 2: Prepend anti-hallucination guardrail for ai_processing
+    // generate/summarize steps. Cheap (~40 tokens), catches cases where input
+    // is technically non-empty but has no usable content (e.g. object with
+    // empty arrays, all-whitespace strings).
+    if (step.type === 'ai_processing') {
+      promptString =
+        'IMPORTANT — DATA INTEGRITY RULE: If the input data provided below is empty, ' +
+        'null, or contains no real items, respond with exactly "No data available." ' +
+        'Do NOT invent, infer, or fabricate example values, names, IDs, dates, or ' +
+        'any other content. Returning placeholder or example data is a critical failure.\n\n' +
+        promptString;
+    }
 
     // I3: Append JSON output instruction when output_schema is defined
     // This tells the LLM to respond with structured JSON instead of free-form text
@@ -1430,11 +1468,16 @@ export class StepExecutor {
       ? this.cleanSummaryOutput(aiResponse)
       : aiResponse;
 
-    // I3: If step has output_schema with properties, extract structured JSON from LLM response
+    // I3: If step has output_schema with fields/properties, extract structured JSON from LLM response
     // This enables downstream steps to reference specific fields like {{variable.subject}}, {{variable.body}}
+    // Supports both schema shapes: {properties: {name: {...}}} and {fields: [{name, type, ...}]}.
     const stepOutputSchema = (step as any).config?.output_schema || (step as any).output_schema;
-    if (stepOutputSchema && stepOutputSchema.properties) {
-      const expectedFields = Object.keys(stepOutputSchema.properties);
+    const hasProperties = stepOutputSchema?.properties && typeof stepOutputSchema.properties === 'object';
+    const hasFieldsArray = Array.isArray(stepOutputSchema?.fields);
+    if (stepOutputSchema && (hasProperties || hasFieldsArray)) {
+      const expectedFields = hasProperties
+        ? Object.keys(stepOutputSchema.properties)
+        : stepOutputSchema.fields.map((f: any) => f.name).filter(Boolean);
 
       // D-B13: Handle case where response is already a parsed object (not a string)
       // runAgentKit may return a JSON object (e.g., memory context dump) instead of a string.
@@ -1538,6 +1581,26 @@ export class StepExecutor {
     model = model.trim().replace(/^["']|["']$/g, '');
 
     logger.info({ stepId, model, provider }, 'WP-3: callLLMDirect — direct provider call (no runAgentKit)');
+
+    // PD-3: Runtime token-budget warning. Estimate prompt tokens (~4 chars/token
+    // rule of thumb) and warn when approaching 80% of the target model's TPM
+    // budget. This surfaces token bloat early — before the provider returns a
+    // 429. Operators can see the warning in logs and investigate scatter/merge
+    // patterns feeding this step.
+    const estimatedTokens = Math.ceil(prompt.length / 4);
+    const tpmBudget = this.getModelTPMBudget(model);
+    if (tpmBudget && estimatedTokens > tpmBudget * 0.8) {
+      logger.warn(
+        {
+          stepId,
+          model,
+          estimatedTokens,
+          tpmBudget,
+          utilizationPct: Math.round((estimatedTokens / tpmBudget) * 100),
+        },
+        `[PD-3] LLM call estimated at ${estimatedTokens} tokens — exceeds 80% of ${tpmBudget} TPM budget for ${model}. Risk of 429. Investigate upstream scatter-gather or data inflation.`
+      );
+    }
 
     const { ProviderFactory } = await import('@/lib/ai/providerFactory');
     const aiProvider = ProviderFactory.getProvider(provider);
@@ -4489,6 +4552,127 @@ Please analyze the above and provide your decision/response.
   }
 
   /**
+   * PD-3: Approximate per-model TPM (tokens-per-minute) budget for the 80%
+   * warning threshold. Values are conservative defaults matching typical
+   * OpenAI/Anthropic free/low tier limits. Operators on higher tiers can
+   * tolerate these warnings (they're advisory only).
+   */
+  private getModelTPMBudget(model: string): number | null {
+    const m = (model || '').toLowerCase();
+    // OpenAI — typical Tier-1 limits
+    if (m.includes('gpt-4o-mini')) return 200000;
+    if (m.includes('gpt-4o')) return 30000;
+    if (m.includes('gpt-4-turbo')) return 30000;
+    if (m.includes('gpt-4')) return 10000;
+    if (m.includes('gpt-3.5')) return 60000;
+    // Anthropic — typical Tier-1 limits
+    if (m.includes('haiku')) return 50000;
+    if (m.includes('sonnet')) return 40000;
+    if (m.includes('opus')) return 20000;
+    // Unknown — skip check
+    return null;
+  }
+
+  /**
+   * WP-13: Detect whether an ai_processing step's input is effectively empty
+   * so we can short-circuit the LLM call and return a deterministic "no data"
+   * response instead of risking hallucinated output.
+   *
+   * Treats as empty:
+   *   - Missing / null / undefined input
+   *   - Empty array
+   *   - Array whose entries are all null/undefined/empty-string
+   *   - Object with no keys
+   *   - String that is empty or whitespace-only
+   *
+   * Returns a noDataPayload shaped to match common downstream expectations:
+   *   - If step has output_schema defining a single html/text field → string
+   *   - Otherwise → { message: "No data available." }
+   */
+  private detectEmptyAIProcessingInput(
+    enrichedParams: any,
+    step: any
+  ): { isEmpty: boolean; reason: string; noDataPayload: any } {
+    // Find the primary input the LLM will operate on. For ai_processing the
+    // convention (per DSL) is step.input → resolved into enrichedParams.input,
+    // but the resolver also stashes the raw variable under a derived key.
+    const primaryInput = enrichedParams?.input
+
+    // If primaryInput is missing but there are other resolved variables,
+    // pick the first non-scalar value as the candidate (matches runtime behaviour).
+    let candidate = primaryInput
+    if (candidate === undefined || candidate === null) {
+      for (const [k, v] of Object.entries(enrichedParams || {})) {
+        if (k === 'input') continue
+        if (v !== null && v !== undefined && typeof v !== 'function') {
+          candidate = v
+          break
+        }
+      }
+    }
+
+    const isEmpty = (() => {
+      if (candidate === null || candidate === undefined) return true
+      if (Array.isArray(candidate)) {
+        if (candidate.length === 0) return true
+        // All entries empty-ish
+        return candidate.every(
+          v =>
+            v === null ||
+            v === undefined ||
+            (typeof v === 'string' && v.trim() === '') ||
+            (typeof v === 'object' && Object.keys(v).length === 0)
+        )
+      }
+      if (typeof candidate === 'string') return candidate.trim() === ''
+      if (typeof candidate === 'object') return Object.keys(candidate).length === 0
+      return false
+    })()
+
+    if (!isEmpty) {
+      return { isEmpty: false, reason: '', noDataPayload: null }
+    }
+
+    // Build a no-data payload shaped to the step's output_schema (if any)
+    const outputSchema = step?.config?.output_schema || step?.output_schema
+    const NO_DATA_MESSAGE = 'No data available.'
+    let noDataPayload: any = { message: NO_DATA_MESSAGE }
+    if (outputSchema?.properties) {
+      noDataPayload = {}
+      for (const [fieldName, fieldDef] of Object.entries(outputSchema.properties) as any[]) {
+        const t = fieldDef?.type
+        if (t === 'string') {
+          // HTML table / body fields → wrap in a minimal HTML fragment so
+          // downstream email/notify steps deliver something sensible.
+          if (/html|body|table/i.test(fieldName)) {
+            noDataPayload[fieldName] = `<p>${NO_DATA_MESSAGE}</p>`
+          } else {
+            noDataPayload[fieldName] = NO_DATA_MESSAGE
+          }
+        } else if (t === 'array') {
+          noDataPayload[fieldName] = []
+        } else if (t === 'number') {
+          noDataPayload[fieldName] = 0
+        } else if (t === 'boolean') {
+          noDataPayload[fieldName] = false
+        } else {
+          noDataPayload[fieldName] = null
+        }
+      }
+    }
+
+    const reason = Array.isArray(candidate)
+      ? `input is empty/empty-entry array (length=${candidate.length})`
+      : candidate === null || candidate === undefined
+        ? 'input is null/undefined'
+        : typeof candidate === 'string'
+          ? 'input is empty/whitespace string'
+          : 'input is empty object'
+
+    return { isEmpty: true, reason, noDataPayload }
+  }
+
+  /**
    * Clean summary output by removing meta-commentary and narrative
    * Same logic as SummarizeHandler to ensure consistency across orchestrated and fallback paths
    * @private
@@ -4585,6 +4769,44 @@ Please analyze the above and provide your decision/response.
       (inputData.mimeType || inputData.mime_type || inputData.contentType); // Has MIME type
 
     if (isFileData) {
+      // WP-14 refinement: Distinguish between binary file data (needs OCR/parsing)
+      // and already-extracted text content (LLM can read directly).
+      //
+      // Route to deterministic extraction ONLY when `content` is actual base64
+      // binary data. If `content` is plain readable text (regardless of source
+      // MIME type), the upstream step already extracted it and the LLM should
+      // process it directly.
+      //
+      // Heuristic for "already text":
+      //   - MIME type starts with text/ or is JSON/XML/RTF
+      //   - OR `export_format` is text/plain (Google Drive read_file convention)
+      //   - OR `content` is a string but NOT base64-shaped (contains spaces,
+      //     punctuation, or printable chars that don't fit base64 alphabet)
+      const mime = (inputData.mimeType || inputData.mime_type || inputData.contentType || '').toLowerCase();
+      const content = inputData.content ?? inputData.data;
+      const looksLikeBase64 =
+        typeof content === 'string' &&
+        content.length > 100 &&
+        /^[A-Za-z0-9+/=\s]+$/.test(content) &&
+        !/\s{2,}/.test(content.slice(0, 200));
+      const isAlreadyTextContent =
+        mime.startsWith('text/') ||
+        mime === 'application/json' ||
+        mime === 'application/xml' ||
+        mime === 'application/rtf' ||
+        (typeof inputData.content === 'string' && inputData.export_format === 'text/plain') ||
+        (typeof content === 'string' && !looksLikeBase64);
+
+      if (isAlreadyTextContent) {
+        logger.info({
+          stepId: step.id,
+          mimeType: mime,
+          exportFormat: inputData.export_format,
+          looksLikeBase64,
+        }, '[WP-14] Input has file-like shape but content is already text — skipping deterministic extraction, using AI processing');
+        return false;
+      }
+
       logger.info({
         stepId: step.id,
         mimeType: inputData.mimeType || inputData.mime_type || inputData.contentType,

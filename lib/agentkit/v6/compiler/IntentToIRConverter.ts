@@ -141,6 +141,12 @@ export class IntentToIRConverter {
         data_schema: boundIntent.data_schema,
       }
 
+      // WP-11: Force content_level=full on fetch steps when downstream extraction needs body text.
+      // Fetch actions default to metadata/snippet to minimize payload — but that leaves body="" and
+      // silently breaks extract/ai steps that read it. Schema-driven: we only touch fetch steps
+      // whose plugin schema declares a `content_level` param, so this is generic (not gmail-specific).
+      this.enforceContentLevelForExtraction(ctx)
+
       // CRITICAL: Run schema compatibility validation (auto-fixes mismatches)
       logger.info('[IntentToIRConverter] Running schema compatibility validation...')
       const validationResult = validateSchemaCompatibility(executionGraph, this.pluginManager, true)
@@ -497,8 +503,34 @@ export class IntentToIRConverter {
       genericConfig.deterministic = true
     }
 
+    // WP-12: Plugin-based extractors like document-extractor expect file attachments
+    // (PDF/XLSX/image) — when given free-text email/message bodies they silently return
+    // "Unknown X" placeholders for every field. If the binder picked a file-extractor
+    // plugin but the source variable isn't a file attachment, fall back to AI extraction.
+    let effectivePluginKey = step.plugin_key
+    if (
+      effectivePluginKey &&
+      effectivePluginKey !== 'chatgpt-research' &&
+      this.pluginManager &&
+      step.action
+    ) {
+      const pluginExpectsFile = this.actionExpectsFileAttachment(effectivePluginKey, step.action)
+      if (pluginExpectsFile) {
+        const sourceIsFile = this.inputLooksLikeFileAttachment(step.extract.input, ctx)
+        if (!sourceIsFile) {
+          logger.info(
+            `[O-WP12] ${effectivePluginKey}.${step.action} expects file_attachment but extract.input resolves to text/object — routing to AI extraction instead`
+          )
+          ctx.warnings.push(
+            `[O-WP12] Rerouted extract step '${step.id}' from ${effectivePluginKey} to AI because source variable is not a file attachment.`
+          )
+          effectivePluginKey = undefined
+        }
+      }
+    }
+
     // Extract uses either AI (for LLM extraction) or deliver (for plugin-based extraction like document-extractor)
-    const operation: OperationConfig = step.plugin_key && step.plugin_key !== 'chatgpt-research'
+    const operation: OperationConfig = effectivePluginKey && effectivePluginKey !== 'chatgpt-research'
       ? (() => {
           // Schema-aware parameter mapping for plugin-based extraction
           let finalConfig = genericConfig
@@ -525,18 +557,24 @@ export class IntentToIRConverter {
           return {
             operation_type: 'deliver',
             deliver: {
-              plugin_key: step.plugin_key,
+              plugin_key: effectivePluginKey,
               action: step.action || 'extract_structured_data',
               config: finalConfig,
             },
-            description: step.summary || `Extract data using ${step.plugin_key}`
+            description: step.summary || `Extract data using ${effectivePluginKey}`
           }
         })()
       : {
+          // AI-only extraction branch — runs when there's no file-extractor plugin
+          // binding (i.e., the source is free-form text like an email body, a chat
+          // message, a webhook payload, or when WP-12 rerouted away from
+          // document-extractor). Use ai.type='extract' so the compiler emits an
+          // `ai_processing` DSL step (pure LLM call) rather than
+          // `deterministic_extraction` (file-oriented — requires PDF/Textract).
           operation_type: 'ai',
           ai: {
-            type: 'deterministic_extract',
-            instruction: `Extract structured data with fields: ${step.extract.fields.map((f: any) => f.name).join(', ')}`,
+            type: 'llm_extract',
+            instruction: `Extract the following structured fields from the input text. For each email/message, read the subject, snippet, and body, then extract: ${step.extract.fields.map((f: any) => `${f.name} (${f.type}${f.required ? ', required' : ''}${f.description ? ` — ${f.description}` : ''})`).join('; ')}. Return a JSON object with these fields. If a field cannot be found in the text, set its value to null.`,
             input: this.resolveRefName(step.extract.input, ctx),
             output_schema: {
               fields: step.extract.fields.map((f: any) => ({
@@ -1474,6 +1512,157 @@ export class IntentToIRConverter {
   private getPluginActionSchema(pluginKey: string, actionName: string): ActionDefinition | null {
     if (!this.pluginManager) return null
     return this.pluginManager.getActionDefinition(pluginKey, actionName) || null
+  }
+
+  /**
+   * WP-11: Force content_level=full on fetch steps whose output is consumed by
+   * downstream extract/ai steps. Schema-driven — only applies to fetch actions
+   * whose plugin schema declares a `content_level` enum param (generic, not
+   * gmail-specific).
+   *
+   * Without this, the default (e.g. Gmail search_emails → 'snippet') returns
+   * empty email bodies, and downstream extraction silently returns "Unknown X"
+   * placeholder values for every field.
+   */
+  private enforceContentLevelForExtraction(ctx: ConversionContext): void {
+    // Does the graph contain any extraction-like step (ai node, or deliver.extract_*)?
+    let hasExtractionConsumer = false
+    for (const node of ctx.nodes.values()) {
+      const op = node.operation
+      if (!op) continue
+      if (op.operation_type === 'ai') {
+        hasExtractionConsumer = true
+        break
+      }
+      if (
+        op.operation_type === 'deliver' &&
+        typeof op.deliver?.action === 'string' &&
+        /extract/i.test(op.deliver.action)
+      ) {
+        hasExtractionConsumer = true
+        break
+      }
+    }
+    if (!hasExtractionConsumer) return
+
+    // For each fetch node: if its plugin schema has a content_level enum param
+    // that includes 'full', set it to 'full' unless already explicit.
+    for (const node of ctx.nodes.values()) {
+      const op = node.operation
+      if (!op || op.operation_type !== 'fetch' || !op.fetch) continue
+
+      const { plugin_key, action, config } = op.fetch
+      if (!plugin_key || !action) continue
+
+      const schema = this.getPluginActionSchema(plugin_key, action)
+      const contentLevelProp = schema?.parameters?.properties?.content_level as ActionParameterProperty | undefined
+      if (!contentLevelProp) continue
+      const enumValues = (contentLevelProp as any).enum as string[] | undefined
+      if (!enumValues || !enumValues.includes('full')) continue
+
+      if ((config as any).content_level === 'full') continue
+
+      const previous = (config as any).content_level
+      ;(config as any).content_level = 'full'
+      logger.info(
+        `[O-WP11] Set content_level='full' for ${plugin_key}.${action} (was ${previous ?? 'unset'}) — graph has extraction consumer`
+      )
+      ctx.warnings.push(
+        `[O-WP11] Auto-set content_level='full' on ${plugin_key}.${action} because downstream step extracts from body text.`
+      )
+    }
+  }
+
+  /**
+   * WP-12: Does this plugin action declare an input param that expects a file
+   * attachment? Recognised signals:
+   *   1. `x-variable-mapping.from_type === 'file_attachment'`
+   *   2. `x-input-mapping.accepts` contains 'file_object' (e.g., document-extractor)
+   *   3. Param named `file_url` / `file_content` / `file_path` / `mime_type`
+   * If yes, the action is designed for files (PDF/XLSX/image) — not free-form text.
+   */
+  private actionExpectsFileAttachment(pluginKey: string, actionName: string): boolean {
+    const schema = this.getPluginActionSchema(pluginKey, actionName)
+    const props = schema?.parameters?.properties
+    if (!props) return false
+    const FILE_PARAM_NAMES = new Set(['file_url', 'file_content', 'file_path', 'mime_type', 'mimeType'])
+    for (const [paramName, paramDef] of Object.entries(props)) {
+      const pd = paramDef as ActionParameterProperty
+      const varMapping = (pd as any)['x-variable-mapping']
+      if (varMapping?.from_type === 'file_attachment') return true
+      const inputMapping = (pd as any)['x-input-mapping']
+      const accepts = Array.isArray(inputMapping?.accepts) ? inputMapping.accepts : []
+      if (accepts.includes('file_object') || accepts.includes('file_attachment')) return true
+      if (FILE_PARAM_NAMES.has(paramName)) return true
+    }
+    return false
+  }
+
+  /**
+   * WP-12: Does the named input variable resolve to something that looks like a
+   * file attachment? A file attachment schema has one of: file_url, attachment_id,
+   * mimeType, file_content. A text object (email, message, post) has body/subject/
+   * text/content/snippet instead. Walks data_schema to find the variable or its
+   * parent collection's item schema.
+   */
+  private inputLooksLikeFileAttachment(inputName: string, ctx: ConversionContext): boolean {
+    const dataSchema = ctx.dataSchema
+    if (!dataSchema?.slots) {
+      // Without schema info, be conservative — assume NOT a file so we fall back to AI
+      return false
+    }
+
+    const FILE_MARKERS = new Set(['file_url', 'attachment_id', 'mimeType', 'file_content', 'file_path'])
+    const TEXT_MARKERS = new Set(['body', 'subject', 'snippet', 'message', 'text', 'content'])
+
+    const inspectObjectSchema = (objSchema: any): 'file' | 'text' | 'unknown' => {
+      const props = objSchema?.properties
+      if (!props || typeof props !== 'object') return 'unknown'
+      const keys = Object.keys(props)
+      const hasFile = keys.some(k => FILE_MARKERS.has(k))
+      const hasText = keys.some(k => TEXT_MARKERS.has(k))
+      if (hasFile && !hasText) return 'file'
+      if (hasText && !hasFile) return 'text'
+      if (hasFile && hasText) return 'text' // email with attachments field is still text-primary
+      return 'unknown'
+    }
+
+    // Direct slot match (e.g., variable === a top-level slot name)
+    const directSlot = dataSchema.slots[inputName]
+    if (directSlot?.schema) {
+      const verdict = inspectObjectSchema(directSlot.schema)
+      if (verdict !== 'unknown') return verdict === 'file'
+    }
+
+    // Walk slots looking for item schemas whose TOP-LEVEL fields match our input's
+    // role. We prioritize text detection: any item-schema that looks like an email/
+    // message/post is treated as text, even if it has a nested `attachments` array.
+    // Only return 'file' if we find an item schema whose top-level fields are
+    // exclusively file markers (e.g., a standalone file attachment list).
+    let sawTextItems = false
+    let sawFileItems = false
+    for (const slot of Object.values(dataSchema.slots) as any[]) {
+      const slotSchema = slot?.schema
+      if (!slotSchema?.properties) continue
+      for (const propDef of Object.values(slotSchema.properties) as any[]) {
+        if (propDef?.type === 'array' && propDef.items?.type === 'object') {
+          const verdict = inspectObjectSchema(propDef.items)
+          if (verdict === 'text') sawTextItems = true
+          if (verdict === 'file') sawFileItems = true
+        }
+      }
+    }
+
+    // If any collection in the graph has text-like items, the loop variable
+    // is likely one of those (emails/messages/posts) — treat as text.
+    if (sawTextItems) return false
+    // Only when the graph exclusively contains file-like collections do we
+    // treat the input as a file attachment.
+    if (sawFileItems) return true
+
+    // Unknown — default to not-a-file so we fall back to AI extraction
+    // (safer than feeding free text to a file-extractor plugin).
+    return false
   }
 
   /**

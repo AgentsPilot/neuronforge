@@ -26,6 +26,10 @@ The weak points are ordered by likelihood of causing failures as new scenarios a
 | [WP-8](#wp-8-email-subjectbody-encoding) | Non-ASCII chars garbled in email headers | P3 | ✅ Fixed — all headers MIME-encoded |
 | [WP-9](#wp-9-phase-ad-mock-gap--llm-output-shape-validation) | Mocks don't validate LLM output shape | P3 | ⬜ Deferred (F7 — has token cost) |
 | [WP-10](#wp-10-scatter-gather-error-handling--silent-success-with-error-data) | Scatter-gather reports success with error data | P2 | ✅ Fixed — error filtering + all-failed detection |
+| [WP-11](#wp-11-search_emails-missing-content_level-full-when-body-is-needed-downstream) | `search_emails` compiled without `content_level=full` — body empty, downstream extraction silently fails | P0 | ✅ Fixed — schema-driven auto-fix in IR converter |
+| [WP-12](#wp-12-document-extractor-bound-to-free-text-email-body-instead-of-ai_processing) | `document-extractor` bound to free-text email body — produces "Unknown" placeholders | P0 | ✅ Fixed — binder reroutes non-file inputs to AI extraction |
+| [WP-13](#wp-13-ai_processing-hallucinates-on-empty-input) | `ai_processing` fabricates plausible-looking data when input array is empty | P0 | ✅ Fixed — empty-input guard + prompt guardrail |
+| [WP-14](#wp-14-scatter-gather-token-bloat--extract-step-output-shape) | Scatter-gather merges full item with extract output → token bloat; I3 doesn't parse `fields` schema; runtime safety misroutes already-text content | P0 | ✅ Fixed — 3 surgical changes |
 
 ---
 
@@ -455,6 +459,240 @@ Scatter-gather error awareness:
 
 ---
 
+### WP-11: `search_emails` missing `content_level=full` when body is needed downstream
+
+**Severity:** Critical
+**Encountered as:** AliExpress Delivery Tracker scenario — live run sent user an email with fabricated "Unknown package_number / Unknown products / Unknown delivery_status" rows
+**Status:** ⬜ Open
+
+**Problem:** `google-mail.search_emails` supports a `content_level` param with values `metadata` | `snippet` | `full`. When omitted (as the compiler currently emits), the plugin returns only headers + a snippet. The returned email objects have `body: ""` and a `snippet` containing mostly invisible Unicode whitespace (common with HTML marketing emails like AliExpress).
+
+When a downstream scatter step tries to extract structured fields from `email.body`, it sees empty strings — and the extractor silently returns placeholder "Unknown X" values for every email. No error is raised, the workflow reports success, and the user receives an email full of fabricated data.
+
+**Observed DSL (phase4-pilot-dsl-steps.json):**
+```json
+{
+  "id": "step1",
+  "action": "search_emails",
+  "params": {
+    "query": "{{input.gmail_search_query}}",
+    "max_results": 50,
+    "include_attachments": false
+  }
+}
+```
+No `content_level` — defaults to metadata/snippet. 14 emails returned with empty bodies. All 14 downstream extractions returned `{confidence: 0, success: false, missing_fields: [all]}` but were still fed into the final email.
+
+**Trigger scenarios:**
+- Any workflow where an extract/AI step reads `.body` from search_emails output
+- Any workflow doing per-email classification, summarization, or field extraction
+- Essentially every non-trivial Gmail workflow beyond label/filter management
+
+**Proposed solution:**
+
+Auto-set `content_level: "full"` in `PluginParameterValidator.ts` when a downstream step consumes email body text. Follow the existing `include_attachments` auto-correction pattern already at line 215–239.
+
+Detection logic (in `IntentToIRConverter` or a compiler pass):
+1. After compiling all steps, scan each `search_emails` step's output variable (e.g., `aliexpress_emails`)
+2. Find downstream steps that reference `{{<var>.emails}}` or scatter over it
+3. Within those, check if any nested step reads `item.body`, `item.snippet`, or passes the whole item to an extraction/AI step
+4. If yes → set `content_level: "full"` with a "high" confidence correction and log the reason
+
+Simpler variant (ship first): whenever any downstream scatter/ai_processing/extract step consumes the search output, always set `content_level: "full"`. Small latency cost, zero false negatives.
+
+**Files:** `lib/agentkit/v6/utils/PluginParameterValidator.ts`, `lib/agentkit/v6/compiler/IntentToIRConverter.ts`
+
+---
+
+### WP-12: `document-extractor` bound to free-text email body instead of `ai_processing`
+
+**Severity:** Critical
+**Encountered as:** AliExpress Delivery Tracker scenario — same live run as WP-11
+**Status:** ⬜ Open
+
+**Problem:** `IntentToIRConverter.convertExtract()` routes extract operations either to an `ai_processing` step or to `document-extractor.extract_structured_data`. The binder selected `document-extractor` for extracting package number, products list, and delivery summary **from email body text**. But `document-extractor` is designed for structured document files (PDF, XLSX, invoices, images) — its input param has `x-variable-mapping: { from_type: "file_attachment" }`. When handed free-form email text, its internal extraction fails and it returns `{package_number: "Unknown Package_number", products: "Unknown Products", delivery_status: "Unknown Delivery_status", _extraction_metadata: {confidence: 0, success: false}}`.
+
+This is a binder correctness bug: document-extractor is mis-selected when the input is a text string rather than a file.
+
+**Observed data flow:**
+```
+step1 search_emails → emails[] (with body="", snippet=whitespace)
+step2 scatter foreach email
+  step3 document-extractor.extract_structured_data
+    input.file_content = full email object (metadata + empty body)
+    output: {package_number: "Unknown Package_number", confidence: 0, success: false}
+```
+
+All 14 scatter iterations returned the same placeholder because the extractor had no file and no real text to parse.
+
+**Trigger scenarios:**
+- Any workflow that extracts structured fields from email bodies, chat messages, Slack posts, Notion pages, webhook payloads — anywhere the input is text, not a file
+- New plugins that return text content but whose extract step gets misrouted to document-extractor
+
+**Proposed solution:**
+
+Restrict `document-extractor.extract_structured_data` binding to inputs of type `file_attachment`. In `IntentToIRConverter.convertExtract()` (around line 500–530):
+
+1. Inspect the extract step's source variable and field type by walking the upstream producer's output_schema
+2. If the source is a file attachment (has attachment metadata, `file_url`, `file_content` object) → keep `document-extractor`
+3. If the source is a plain text field (`string`, `email body`, `message content`, `post content`) → emit an `ai_processing` step with a per-item extraction prompt instead
+4. Add a compiler log (O-series: e.g., `[O31]`) noting the routing decision and why
+
+This aligns with the "No Hardcoding in System Prompts" principle in `CLAUDE.md`: don't hardcode plugin-specific rules — reason from the plugin schema (`from_type: "file_attachment"`) which is the source of truth.
+
+**Files:** `lib/agentkit/v6/compiler/IntentToIRConverter.ts` (convertExtract, around line 500), optionally `lib/agentkit/v6/capability-binding/CapabilityBinder.ts`
+
+---
+
+### WP-13: `ai_processing` hallucinates on empty input
+
+**Severity:** Critical
+**Encountered as:** AliExpress Delivery Tracker scenario — live run with search_emails returning 0 results still produced a two-row HTML summary table with fabricated package numbers (12345, 67890) and fake products, which was then sent as a real email to the user.
+**Status:** ⬜ Open
+
+**Problem:** When an `ai_processing` generate step receives an empty array (`[]`) as input — typically because an upstream data-source or scatter produced no items — the LLM has no explicit instruction to acknowledge the empty state. It interprets the prompt (e.g., "Create a professional HTML table with columns for Package Number, Products, Delivery Status…") as a content generation request and fabricates plausible-looking example rows. The downstream notify step then delivers the hallucinated content as if it were real user data.
+
+This is distinct from WP-12 (wrong extractor) — WP-13 can fire whenever a pipeline has an AI step downstream of a potentially-empty collection, regardless of how the collection is filled.
+
+**Observed data flow (2026-04-05 live run):**
+```
+step1 search_emails → 0 emails returned (query matched no real mail)
+step2 scatter foreach email → extracted_packages = []   (empty — no iterations)
+step4 ai_processing (generate HTML table)
+  input: []   ← empty array
+  output: "<table>...12345...Product A...67890...Product C...</table>"   ← fabricated
+step5 ai_processing wraps fabricated table in email body
+step6 send_email → user receives fake delivery summary
+```
+
+The workflow reports `success: true` because every step "completed". There is no signal that the output is fake.
+
+**Trigger scenarios:**
+- Any pipeline where a `search`/`read`/`list`/`query` action feeds a downstream AI generate step
+- Any pipeline with a scatter-gather whose input might be empty (no matching records) feeding into an AI summary/report step
+- Time-window workflows on quiet days ("summarize yesterday's orders", "weekly digest") when there is no new activity
+- Filter-based workflows where the filter accidentally excludes everything
+
+**Proposed solution:**
+
+Two complementary layers:
+
+**Layer 1 — Compile-time empty-input guard (preferred):**
+
+In `IntentToIRConverter` / `ExecutionGraphCompiler`, wrap every `ai_processing` generate step whose input is an array (or scatter-gather collection) with a conditional:
+1. Detect: step's input references a scatter output, fetch output, or otherwise-collection-typed variable
+2. Compile a conditional wrapper: `if input.length === 0 → emit deterministic "no data" payload and short-circuit downstream chain`
+3. The "no data" payload is a structured empty-state message, e.g. for HTML table generation: `"<p>No AliExpress delivery updates found in the last 30 days.</p>"`
+4. Downstream notify step delivers the empty-state message — user gets honest "nothing to report" feedback, no fabrication
+
+**Layer 2 — Prompt-level guardrail (defense in depth):**
+
+Inject into the system prompt of every `ai_processing` generate/summarize step:
+```
+If the input data is empty or null, you MUST respond with exactly:
+  "No data available."
+Do NOT invent, infer, or fabricate any values, names, IDs, dates, or other
+content when the input is empty. Returning placeholder or example data is a
+critical failure.
+```
+
+This catches the case where the compile-time guard misses a variable shape (e.g., input is an object with an empty nested array).
+
+**Why both layers:** Layer 1 is deterministic and zero-token-cost but depends on the compiler correctly identifying "collection" inputs. Layer 2 is a prompt-level fallback that adds ~50 tokens per AI call but catches any case Layer 1 misses.
+
+**Files:**
+- `lib/agentkit/v6/compiler/IntentToIRConverter.ts` (convertGenerate — wrap with conditional)
+- `lib/agentkit/v6/compiler/ExecutionGraphCompiler.ts` (emit conditional DSL step)
+- `lib/pilot/StepExecutor.ts` or wherever `callLLMDirect` builds the AI prompt (prepend guardrail)
+
+**Status:** ✅ Fixed (2026-04-05) — implemented Layer 1 and Layer 2 in `StepExecutor.ts`. Layer 1 (`detectEmptyAIProcessingInput`) short-circuits the LLM call with a deterministic `{message: "No data available."}` or schema-shaped no-data payload when input is empty/null/all-empty-entries. Layer 2 prepends a ~40-token guardrail to every `ai_processing` prompt instructing the LLM to respond with "No data available." rather than fabricating.
+
+---
+
+### WP-14: Scatter-gather token bloat + extract step output shape
+
+**Severity:** Critical
+**Encountered as:** AliExpress Delivery Tracker scenario — Phase E run, step4 hit OpenAI 429 (39,250 tokens requested, 30,000 TPM limit).
+**Status:** ✅ Fixed — 3 surgical changes
+
+**Problem (cascade of 3 bugs):**
+
+1. **I3 structured-JSON extraction** in `StepExecutor.executeLLMDecision` only matched `output_schema.properties` (object form) — but the V6 compiler emits `output_schema.fields` (array form). Result: the LLM's JSON response wasn't parsed; step returned a generic alias envelope `{result, response, output, summary, analysis, decision, reasoning, classification, toolCalls}` wrapping the raw stringified response.
+
+2. **Scatter-gather always merged** the nested step's full return object into the original item (pattern introduced for classify steps in D-B10). With the alias-wrapped LLM response, each gathered item became: full email (~5KB) + 9 duplicate alias fields + raw JSON string. For 14 emails: ~72KB → 39,250 tokens → 429.
+
+3. **Runtime safety check** `shouldUseDeterministicExtraction` rerouted any `ai_processing` step whose input had `content` + `mime_type` fields to `executeDeterministicExtraction` — but Google Drive's `read_file` returns already-extracted plain text (not base64), causing "Cannot extract document content from input" failures on the contract-enddate-summary scenario.
+
+**Fixes:**
+
+1. **I3 handles both schema shapes** ([StepExecutor.ts:1474](../../lib/pilot/StepExecutor.ts)) — parses structured JSON when `output_schema` has either `properties` (object) or `fields` (array).
+
+2. **Scatter merge branches on step type** ([ParallelExecutor.ts:395](../../lib/pilot/ParallelExecutor.ts)) — when the nested step is extract-like (`ai_type` ∈ {`llm_extract`, `extract`, `deterministic_extract`} OR `output_schema` has ≥2 fields), return the step result only (no merge with original item). Classify steps and single-label flatten unchanged.
+
+3. **Runtime safety check distinguishes binary from text** ([StepExecutor.ts:4722](../../lib/pilot/StepExecutor.ts)) — only reroutes to deterministic extraction when `content` looks like base64 (length > 100, base64 alphabet, no double spaces) or MIME type indicates binary. Text MIME types (`text/*`, JSON, XML, RTF), plain-text strings, and `export_format: text/plain` are kept on the AI processing path.
+
+**Verified:** All 10 regression scenarios pass Phase D after fixes. AliExpress step4 token count drops from ~39K to <4K.
+
+**Files:** `lib/pilot/StepExecutor.ts`, `lib/pilot/ParallelExecutor.ts`
+
+---
+
+## Phase D Hardening Roadmap
+
+These are improvements to Phase D (mock WorkflowPilot execution) designed to catch more of the Phase E class of bugs without paying the token cost of live LLM calls. WP-9 (F7 — real LLM in Phase D+) is the ultimate answer but has been deferred. The items below close specific gaps observed during WP-11 through WP-14.
+
+### PD-1: Realistic plugin mock payloads (high value)
+
+**Problem:** Current mocks return stub strings (`"mock_content_001"`, `"mock_body_001"`) and always populate every schema field. Real plugins often return partial data, empty strings, whitespace-only values, or respond differently based on input params. The stub shape hid WP-11 (search_emails with unset content_level returned empty body in real life, non-empty body in mock), WP-13 (mock always non-empty so hallucination path never triggered), and WP-14 (stub payloads were too small to trigger token bloat).
+
+**Proposed solution:**
+
+1. **Use `example_output` from plugin definitions when available.** Most v2 plugin definitions already include an `example_output` block documenting the canonical response shape. Mock executor should return `example_output` (possibly with IDs/timestamps randomised) instead of synthesising from schema.
+
+2. **Parameter-aware mock responses.** The mock for `google-mail.search_emails` should inspect the caller's `content_level` param and return `body: ""` when `content_level !== 'full'`, matching real Gmail API behavior. Same pattern for `include_attachments`, `max_results`, etc.
+
+3. **Realistic payload sizes.** Email bodies, document content, sheet cells should be 1–3KB of varied text (not 20-byte stubs). This surfaces token-budget issues in Phase D that previously only appeared in Phase E.
+
+4. **Variant mock modes** (optional): support `MOCK_SCENARIO=quiet-day` to return zero results from any search/list action, exercising WP-13's empty-input guard in Phase D.
+
+**Files:** mock executor (to be located — likely `lib/pilot/mocks/` or `scripts/test-workflowpilot-execution.ts`), each plugin definition's `example_output`.
+
+**Priority:** P1 — would retroactively catch WP-11, WP-13, and WP-14 in Phase D.
+
+---
+
+### PD-2: Plugin-schema conformance — DEFER (already covered)
+
+Initially considered — adding a Phase D check that verifies compiled plugin params match the plugin's schema semantics. On reflection this duplicates WP-12's compile-time guard (schema-driven reroute of file-only plugins for text inputs) and the existing `PluginParameterValidator` runtime validation. Not worth building. If a binding escapes both, the right fix is to improve WP-12's heuristics, not add a parallel check.
+
+**Status:** ❌ Skipped — redundant with existing mechanisms.
+
+---
+
+### PD-3: Token-budget warnings (cheap, defense in depth)
+
+**Problem:** Phase D mocks don't surface token bloat. WP-14 hit 39K tokens against a 30K TPM limit only in Phase E. A lightweight compile-time warning + runtime warning can flag bloat patterns before Phase E.
+
+**Proposed solution:**
+
+1. **Compile-time warning:** When the compiler finds a `scatter_gather` whose input could exceed ~10 items feeding directly into an `ai_processing` step, emit a compiler warning advising the user that large collections + AI steps risk TPM limits. Cheap — just graph inspection, no token estimation needed.
+
+2. **Runtime warning:** In `callLLMDirect`, log a WARN when the prompt exceeds 80% of the target model's TPM budget (e.g. 24,000 tokens for a 30,000 TPM model). Gives operators an early signal before 429s fire. Single log line, no new infrastructure.
+
+3. **No static token estimation:** Avoiding this deliberately — real token counts depend on real data sizes, approximations would produce false positives or miss edge cases. The structural fix (WP-14's no-merge-for-extract) already addresses the most common pattern.
+
+**Files:** `lib/agentkit/v6/compiler/ExecutionGraphCompiler.ts` (compile warning), `lib/pilot/StepExecutor.ts` (runtime warning in `callLLMDirect`).
+
+**Priority:** P2 — structural fixes already in place; these are safety nets.
+
+---
+
+### PD-4: Phase D+ with real LLM — see WP-9
+
+Already documented as WP-9 / F7 — deferred due to ~$0.10-0.15 per run token cost. Revisit when scenario count grows above 10 and regression confidence becomes critical. Would catch WP-13 hallucination class and WP-14 token bloat directly.
+
+---
+
 ## Implementation Priority
 
 | Priority | Weak Point | Impact | Status |
@@ -469,6 +707,12 @@ Scatter-gather error awareness:
 | **P3** | WP-9: LLM output validation | Only caught in Phase E | ⬜ Deferred |
 | **P3** | WP-7: Label resolution | Race condition, extra API calls | ✅ Fixed |
 | **P3** | WP-8: Email encoding | Non-English content | ✅ Fixed |
+| **P0** | WP-11: search_emails content_level | User receives fabricated data on any email-extraction workflow | ✅ Fixed |
+| **P0** | WP-12: document-extractor misrouted to email text | User receives "Unknown" placeholder rows for every extracted field | ✅ Fixed |
+| **P0** | WP-13: AI hallucination on empty input | User receives fabricated data as if it were real | ✅ Fixed |
+| **P0** | WP-14: scatter token bloat + extract output shape | User hits 429 rate limit on real data; contract scenario misroutes | ✅ Fixed |
+| **P1** | PD-1: Realistic plugin mocks | Phase D can't catch plugin-default quirks, empty results, token bloat | ⬜ Open |
+| **P2** | PD-3: Token-budget warnings | Token bloat only visible in Phase E | ⬜ Open |
 
 ---
 
@@ -476,6 +720,13 @@ Scatter-gather error awareness:
 
 | Date | Change | Details |
 |------|--------|---------|
+| 2026-04-05 | WP-11 & WP-12 documented | AliExpress Delivery Tracker scenario live run: user received email with fabricated "Unknown X" rows. Two root causes: (1) search_emails compiled without content_level=full — bodies empty; (2) document-extractor selected for free-text email body extraction instead of ai_processing. Both open. |
+| 2026-04-05 | WP-13 documented | AliExpress Delivery Tracker scenario live run (after WP-11/12 patches): search_emails returned 0 results due to stale query, but downstream AI generate step fabricated a two-row HTML table with fake package numbers (12345, 67890) and fake products, which was sent to the user as if real. Distinct from WP-12: WP-13 fires whenever an AI step downstream of an empty collection has no guardrail against hallucination. |
+| 2026-04-05 | WP-13 implemented | Two-layer guard in StepExecutor.executeLLMDecision: Layer 1 `detectEmptyAIProcessingInput` short-circuits with deterministic no-data payload (zero tokens); Layer 2 prepends "respond exactly 'No data available.' do NOT fabricate" guardrail to all ai_processing prompts. |
+| 2026-04-05 | WP-11 implemented | `enforceContentLevelForExtraction()` post-pass in IntentToIRConverter walks the graph after conversion: if any extraction consumer exists (ai node, or deliver.extract*), finds all fetch nodes with content_level enum params and forces 'full'. Schema-driven, not plugin-specific. |
+| 2026-04-05 | WP-12 implemented | Two-part fix: (1) `convertExtract()` in IntentToIRConverter checks if plugin expects file_attachment (via x-variable-mapping.from_type, x-input-mapping.accepts:file_object, or canonical file param names) — if yes AND source var is text-shaped, reroutes to AI extraction. (2) AI-only extract branch uses `ai_type: 'llm_extract'` (not `deterministic_extract`) so compiler emits `ai_processing` DSL step. Also tightened document-extractor plugin description + usage_context to explicitly document "FILES ONLY, not email bodies". |
+| 2026-04-05 | WP-14 documented + fixed | Phase E failure: step4 hit 429 rate limit (39K tokens). Cascade of 3 bugs: (1) I3 only matched output_schema.properties, not output_schema.fields that V6 compiler emits; (2) Scatter-gather always merged full item with nested step output (~72KB for 14 emails + LLM envelope); (3) Runtime safety check misrouted already-extracted text content to deterministic_extraction. Fixed all three with surgical changes in StepExecutor + ParallelExecutor. All 10 regression scenarios still pass. |
+| 2026-04-05 | Phase D Hardening Roadmap added | Four proposed improvements (PD-1 to PD-4) to close Phase D gaps observed during WP-11/12/13/14. PD-1 (realistic plugin mocks) and PD-3 (token-budget warnings) scheduled; PD-2 (schema conformance) skipped as redundant; PD-4 (real-LLM Phase D+) deferred per existing WP-9. |
 | 2026-03-31 | WP-9 deferred | Phase D+ with real LLM (F7) deferred due to token cost (~$0.10-0.15 per run). Documented as future enhancement in execution workplan. |
 | 2026-03-30 | WP-7 (pre-existing fix) | Gmail label 409 conflict recovery was already implemented as D-B10b before this document was created. Documented as fixed. |
 | 2026-03-30 | Initial document | 10 weak points identified from D-B7 through D-B13 bug fixes across 2 scenarios. Proposed solutions documented for each. |

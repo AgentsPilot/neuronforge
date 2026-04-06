@@ -53,8 +53,17 @@ export function generateStubData(
   const key = `${plugin}/${action}`
   const schema = schemaRegistry.get(key)
 
+  // PD-1: Thread plugin/action/params through to the generator so field-name
+  // heuristics can produce parameter-aware stubs (e.g. Gmail content_level).
+  const effectiveOpts: GeneratorOptions = {
+    ...(opts || {}),
+    plugin,
+    action,
+    params,
+  }
+
   if (schema) {
-    return generateFromSchema(schema, opts)
+    return generateFromSchema(schema, effectiveOpts)
   }
 
   // Fallback — generic stub

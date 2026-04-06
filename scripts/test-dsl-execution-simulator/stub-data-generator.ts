@@ -8,12 +8,51 @@
 export interface GeneratorOptions {
   arrayItemCount?: number
   indexSuffix?: string // e.g., "001", "002" — used inside scatter-gather iterations
+  // PD-1: Parameter-aware stub generation. When set, string/array generation
+  // can vary based on the caller's action params (e.g. Gmail content_level
+  // controls whether `body` is populated).
+  plugin?: string
+  action?: string
+  params?: Record<string, any>
 }
 
 const DEFAULT_OPTIONS: GeneratorOptions = {
   arrayItemCount: 3,
   indexSuffix: '001',
 }
+
+// PD-1: Realistic payload body for email/document content. Roughly 1.2KB of
+// varied text so scatter-gather token bloat patterns show up in Phase D
+// (not just Phase E). Trimmed at runtime depending on content_level.
+const REALISTIC_EMAIL_BODY = [
+  'Dear Valued Customer,',
+  '',
+  'Thank you for your recent order. We are pleased to inform you that your package has been shipped and is on its way.',
+  '',
+  'Tracking Number: {{tracking}}',
+  'Estimated Delivery: Within 5-7 business days',
+  'Shipping Carrier: Express Logistics',
+  '',
+  'Order Details:',
+  '  - Item 1: Premium Widget Pro (x2)  $49.98',
+  '  - Item 2: Starter Accessory Pack   $19.99',
+  '  - Subtotal:                         $69.97',
+  '  - Shipping:                         $4.99',
+  '  - Tax:                              $5.60',
+  '  - Total:                            $80.56',
+  '',
+  'You can track your shipment using the tracking number above at our website.',
+  'If you have any questions about your order, please reply to this email or contact our support team.',
+  '',
+  'We appreciate your business and look forward to serving you again soon.',
+  '',
+  'Best regards,',
+  'The Customer Success Team',
+  '',
+  '---',
+  'This is an automated notification. Please do not reply directly to the sender address.',
+  'Your privacy matters: unsubscribe preferences are available in your account settings.',
+].join('\n')
 
 /**
  * Generate mock data from a JSON-schema-like output_schema object.
@@ -141,7 +180,20 @@ function generateStringByFieldName(lower: string, fieldName: string, desc: strin
   // Content
   if (lower === 'subject') return `Invoice #INV-${idx} from Acme Corp`
   if (lower === 'snippet') return `Please find attached invoice #INV-${idx} for services rendered...`
-  if (lower === 'body' || lower === 'html_body') return `<p>Invoice content for ${idx}</p>`
+  // PD-1: Parameter-aware body generation.
+  // Gmail `search_emails` returns body="" when content_level !== 'full' (real API behavior).
+  // For `full`, return a realistic ~1KB body so Phase D surfaces token-budget issues.
+  if (lower === 'body' || lower === 'html_body') {
+    const isGmailSearch = opts.plugin === 'google-mail' && opts.action === 'search_emails'
+    if (isGmailSearch) {
+      const contentLevel = opts.params?.content_level
+      // Default Gmail content_level is 'snippet' — body empty
+      if (contentLevel !== 'full') return ''
+    }
+    const tracking = `1Z999AA${idx}`
+    const realistic = REALISTIC_EMAIL_BODY.replace('{{tracking}}', tracking)
+    return lower === 'html_body' ? `<div>${realistic.replace(/\n/g, '<br>')}</div>` : realistic
+  }
   if (lower === 'data') return `base64_encoded_pdf_content_${idx}`
   if (lower === 'extracted_text') return `Invoice #INV-${idx}\nDate: 2026-03-22\nAmount: $149.99\nVendor: Acme Corp`
   if (lower === 'invoice_number') return `INV-${idx}`

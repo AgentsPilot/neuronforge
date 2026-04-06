@@ -254,6 +254,12 @@ export class ExecutionGraphCompiler {
       this.log(ctx, 'Phase 5: Converting to Pilot-compatible format')
       const pilotWorkflow = this.toPilotFormat(optimizedWorkflow, ctx)
 
+      // PD-3: Compile-time token-budget warning for scatter→AI patterns.
+      // Flags workflows where a scatter_gather whose input could exceed ~10
+      // items feeds directly into an ai_processing step. This is the most
+      // common pattern that produces token bloat in Phase E (seen in WP-14).
+      this.warnScatterIntoAIPatterns(pilotWorkflow, ctx)
+
       const compilationTime = Date.now() - startTime
       this.log(ctx, `Compilation complete in ${compilationTime}ms`)
 
@@ -3935,6 +3941,48 @@ export class ExecutionGraphCompiler {
    * Default: on_empty: "warn" for most steps.
    * Before scatter-gather: on_empty: "throw" (empty scatter input is always a problem).
    */
+  /**
+   * PD-3: Emit a compile-time warning when a scatter_gather's output feeds
+   * directly into an ai_processing step (or a chain of them). With enough
+   * scatter iterations, the downstream AI step can blow past the model's
+   * TPM budget — as seen in WP-14. This is structural guidance, not a
+   * hard error: the user may have intentionally designed a big scatter.
+   */
+  private warnScatterIntoAIPatterns(workflow: WorkflowStep[], ctx: CompilerContext): void {
+    const scatterOutputVars = new Set<string>()
+
+    const walk = (steps: any[]) => {
+      for (const step of steps) {
+        if (step?.type === 'scatter_gather' && step?.output_variable) {
+          scatterOutputVars.add(step.output_variable)
+        }
+        if (step?.scatter?.steps) walk(step.scatter.steps)
+        if (step?.steps) walk(step.steps)
+        if (step?.then_steps) walk(step.then_steps)
+        if (step?.else_steps) walk(step.else_steps)
+      }
+    }
+    walk(workflow as any[])
+
+    if (scatterOutputVars.size === 0) return
+
+    for (const step of workflow as any[]) {
+      if (step?.type !== 'ai_processing') continue
+      const input = typeof step.input === 'string' ? step.input : ''
+      // Match {{scatter_var}} or {{scatter_var.field}}
+      const refMatch = input.match(/\{\{([a-zA-Z0-9_]+)(?:\.[a-zA-Z0-9_.]+)?\}\}/)
+      const refName = refMatch?.[1]
+      if (refName && scatterOutputVars.has(refName)) {
+        this.log(
+          ctx,
+          `  ⚠️  [PD-3] ai_processing step '${step.step_id || step.id}' consumes scatter_gather output '${refName}' directly. ` +
+            `Risk of TPM limit at runtime when scatter produces many items. ` +
+            `Consider summarizing per-item before aggregating, or chunking the downstream AI call.`
+        )
+      }
+    }
+  }
+
   private addEmptyResultAssertions(workflow: WorkflowStep[], ctx: CompilerContext): void {
     let assertionsAdded = 0
 

@@ -1,0 +1,12 @@
+{
+  "name": "AliExpress Delivery Tracker",
+  "description": "Search Gmail for AliExpress delivery updates, extract package info via document-extractor, generate HTML summary via AI, send summary email, mark source emails as read and apply shopping label",
+  "created": "2026-04-05",
+  "plugins": ["google-mail", "document-extractor"],
+  "expected": {
+    "min_steps": 7,
+    "step_types": ["action", "ai_processing", "scatter_gather"],
+    "phase_a_checks": 14,
+    "phase_d_success": true
+  }
+}
