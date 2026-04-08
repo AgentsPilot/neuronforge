@@ -168,7 +168,14 @@
           "api_rate_limit": "HubSpot API rate limit exceeded. Please wait a moment and try again.",
           "insufficient_permissions": "Missing required permissions to access contact data. Contact may require additional scopes."
         }
-      }
+      },
+      "output_dependencies": [
+        {
+          "when_param": { "include_associations": false },
+          "unpopulated_fields": ["data.associations"],
+          "message": "associations object is empty when include_associations=false (default) — set include_associations=true to populate associated deals and companies"
+        }
+      ]
     },
     "get_contact_deals": {
       "description": "Get all deals associated with a specific contact",
@@ -830,7 +837,14 @@
           "api_rate_limit": "HubSpot API rate limit exceeded. Please wait a moment and try again.",
           "insufficient_permissions": "Missing required permissions to access deal data."
         }
-      }
+      },
+      "output_dependencies": [
+        {
+          "when_param": { "include_associations": false },
+          "unpopulated_fields": ["data.associations"],
+          "message": "associations object is empty when include_associations=false — set include_associations=true to populate associated contacts and companies"
+        }
+      ]
     },
     "create_contact": {
       "description": "Create a new contact in HubSpot CRM",

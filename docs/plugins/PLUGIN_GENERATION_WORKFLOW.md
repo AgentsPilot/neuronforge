@@ -367,6 +367,63 @@ Wait for user confirmation.
 4. Include `description` for every field to aid AI understanding
 5. Use `enum` for fields with fixed possible values
 6. Mark fields as required in the schema if they're always present in the response
+7. **Add `x-semantic-type` annotations** on object items that represent typed entities (see below)
+
+**`x-semantic-type` Annotations (Direction #3 — required for V6 pipeline)**:
+
+When an output_schema contains items that represent a known entity type, add `x-semantic-type` to the item schema. This enables the V6 binder to validate input-type compatibility at compile time — preventing mis-bindings like routing text to a file-only extractor.
+
+The canonical type vocabulary is defined in `lib/agentkit/v6/capability-binding/input-type-compat.ts`. When adding a new plugin:
+1. Check if your output items match an existing type (`email_message`, `file_attachment`, `record`, `row`, `folder`, `message`, `text_content`, etc.)
+2. If yes, add `"x-semantic-type": "<type>"` on the item object in your output_schema
+3. If your output represents a new entity type not in the vocabulary, add the new type to `FROM_TYPE_VALUES` in `input-type-compat.ts` and add a compatibility entry to `TYPE_COMPAT`
+4. Run `validatePluginTypeAnnotations.ts` to verify no unknown types were introduced
+
+Example — email search results:
+```json
+"emails": {
+  "type": "array",
+  "items": {
+    "type": "object",
+    "x-semantic-type": "email_message",
+    "properties": { ... }
+  }
+}
+```
+
+Example — file attachments:
+```json
+"attachments": {
+  "type": "array",
+  "items": {
+    "type": "object",
+    "x-semantic-type": "file_attachment",
+    "properties": { ... }
+  }
+}
+```
+
+**`output_dependencies` (Direction #1 — required when output fields are conditionally populated)**:
+
+If an action has parameters that control which output fields are populated, declare `output_dependencies` on the action. These are surfaced as `⚠` coupling hints in the LLM prompt, preventing silent data gaps (e.g., requesting email body without setting `content_level=full`).
+
+Add `output_dependencies` when:
+- A parameter controls the richness of the response (e.g., `content_level`, `include_attachments`, `include_associations`)
+- An input parameter requires a specific data type that may be mis-routed (e.g., file-only extractors)
+- Default parameter values cause important output fields to be empty
+
+Format:
+```json
+"output_dependencies": [
+  {
+    "when_param": { "content_level": "metadata" },
+    "unpopulated_fields": ["body", "snippet"],
+    "message": "body and snippet are empty unless content_level is 'snippet' or 'full'"
+  }
+]
+```
+
+The `message` field is injected verbatim into the LLM prompt as a `⚠` warning — write it as a clear, actionable instruction.
 
 **Example `output_schema` for complex response**:
 ```json
@@ -680,6 +737,18 @@ node -e "JSON.parse(require('fs').readFileSync('lib/plugins/definitions/{pluginN
 npx tsc --noEmit lib/server/{pluginName}-plugin-executor.ts
 ```
 
+**Validate semantic type annotations**:
+```bash
+npx tsx -e "
+import { validatePluginTypeAnnotations } from './lib/agentkit/v6/capability-binding/validatePluginTypeAnnotations';
+import * as fs from 'fs';
+const def = JSON.parse(fs.readFileSync('lib/plugins/definitions/{pluginName}-plugin-v2.json', 'utf8'));
+const warnings = validatePluginTypeAnnotations({ '{pluginName}': def });
+if (warnings.length === 0) console.log('✅ All type annotations valid');
+else warnings.forEach(w => console.log('⚠️', w.action_name, w.field_path, w.issue));
+"
+```
+
 **Check results**:
 ```
 🔍 Validation Results
@@ -687,6 +756,9 @@ npx tsc --noEmit lib/server/{pluginName}-plugin-executor.ts
 Plugin Definition JSON: ✅ Valid | ❌ Syntax Error
 Plugin Executor TypeScript: ✅ Valid | ❌ Syntax Error
 Registry Update: ✅ Verified | ⚠️ Manual check needed
+Type Annotations: ✅ All valid | ⚠️ Unknown types found (update input-type-compat.ts)
+output_dependencies: ✅ Added where needed | ⚠️ Missing for conditional output fields
+x-semantic-type: ✅ Added on typed entities | ⚠️ Missing on array items
 Test File: ✅ Generated
 
 {If errors, display them here}

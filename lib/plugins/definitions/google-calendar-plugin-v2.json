@@ -470,7 +470,14 @@
           "api_rate_limit": "Too many event creation requests. Please wait a moment and try again.",
           "insufficient_permissions": "Google Calendar write permissions are insufficient. Please reconnect with full access."
         }
-      }
+      },
+      "output_dependencies": [
+        {
+          "when_param": { "conference_solution": "none" },
+          "unpopulated_fields": ["meet_link", "hangout_link"],
+          "message": "meet_link and hangout_link are empty when conference_solution='none' (default) — set conference_solution='hangoutsMeet' to generate a Google Meet link"
+        }
+      ]
     },
     "update_event": {
       "description": "Update an existing calendar event",

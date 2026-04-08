@@ -236,6 +236,7 @@
             "description": "Array of messages in reverse chronological order",
             "items": {
               "type": "object",
+              "x-semantic-type": "message",
               "properties": {
                 "timestamp": {
                   "type": "string",
@@ -314,7 +315,14 @@
           "not_in_channel": "Bot is not a member of this channel.",
           "rate_limited": "Slack rate limit exceeded. Please wait and try again."
         }
-      }
+      },
+      "output_dependencies": [
+        {
+          "when_param": { "include_all_metadata": false },
+          "unpopulated_fields": ["messages[].reactions", "messages[].attachments"],
+          "message": "reactions and attachments arrays may be empty when include_all_metadata=false (default) — set include_all_metadata=true to populate full message metadata"
+        }
+      ]
     },
     "update_message": {
       "description": "Update or edit a previously sent message",

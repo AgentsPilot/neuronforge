@@ -153,7 +153,19 @@
           "api_rate_limit": "Too many requests in a short time. Please wait a moment and try again.",
           "insufficient_permissions": "Google Docs permissions are insufficient. Please reconnect with full document access."
         }
-      }
+      },
+      "output_dependencies": [
+        {
+          "when_param": { "plain_text_only": true },
+          "unpopulated_fields": ["structured_content", "full_document"],
+          "message": "structured_content and full_document are empty when plain_text_only=true (default) — set plain_text_only=false to get structured content"
+        },
+        {
+          "when_param": { "include_formatting": false },
+          "unpopulated_fields": ["full_document"],
+          "message": "full_document is empty when include_formatting=false (default) — set include_formatting=true to get the complete document object with formatting"
+        }
+      ]
     },
     "insert_text": {
       "description": "Insert text at a specific position in the document",

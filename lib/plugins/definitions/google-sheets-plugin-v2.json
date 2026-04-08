@@ -196,7 +196,14 @@
           "api_rate_limit": "Too many requests in a short time. Please wait a moment and try again.",
           "insufficient_permissions": "Google Sheets permissions are insufficient. Please reconnect with full spreadsheet access."
         }
-      }
+      },
+      "output_dependencies": [
+        {
+          "when_param": { "include_formula_values": true },
+          "unpopulated_fields": [],
+          "message": "values contain raw formula strings (e.g. '=SUM(A1:A10)') instead of calculated results when include_formula_values=true — downstream steps expecting numeric data will receive formula text"
+        }
+      ]
     },
     "write_range": {
       "description": "Write or update data in a specific range of cells (OVERWRITES existing data)",

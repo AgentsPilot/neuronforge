@@ -482,7 +482,14 @@
           "api_error": "AI service encountered an error. Please try rephrasing your question.",
           "timeout": "Question answering timed out. Try a simpler question."
         }
-      }
+      },
+      "output_dependencies": [
+        {
+          "when_param": { "include_sources": false },
+          "unpopulated_fields": ["sources", "source_count"],
+          "message": "sources array and source_count are empty when include_sources=false — set include_sources=true to get source citations"
+        }
+      ]
     }
   }
 }
