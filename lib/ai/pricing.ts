@@ -38,32 +38,58 @@ let cacheLastUpdated: number = 0;
 const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour cache
 
 // Fallback pricing if database is unavailable
+// Prices are per 1000 tokens (cost_per_million / 1000)
 const FALLBACK_PRICING = {
   'openai': {
+    // GPT-5.4 Series (March 2026 — Latest)
+    'gpt-5.4': { input: 0.0025, output: 0.015 },
+    'gpt-5.4-mini': { input: 0.00075, output: 0.0045 },
+    'gpt-5.4-nano': { input: 0.0002, output: 0.00125 },
+    'gpt-5.4-pro': { input: 0.03, output: 0.18 },
+    // GPT-5.2 Series
+    'gpt-5.2': { input: 0.00175, output: 0.014 },
+    // GPT-5.1 Series
+    'gpt-5.1': { input: 0.00125, output: 0.01 },
+    // GPT-5 Series
+    'gpt-5': { input: 0.00125, output: 0.01 },
+    'gpt-5-mini': { input: 0.00025, output: 0.002 },
+    'gpt-5-nano': { input: 0.00005, output: 0.0004 },
+    // GPT-4.1 Series
+    'gpt-4.1': { input: 0.002, output: 0.008 },
+    'gpt-4.1-mini': { input: 0.0004, output: 0.0016 },
+    'gpt-4.1-nano': { input: 0.0001, output: 0.0004 },
+    // o-Series (Reasoning)
+    'o3': { input: 0.002, output: 0.008 },
+    'o3-pro': { input: 0.02, output: 0.08 },
+    'o4-mini': { input: 0.0011, output: 0.0044 },
+    // GPT-4o Series (Legacy)
     'gpt-4o': { input: 0.0025, output: 0.01 },
     'gpt-4o-mini': { input: 0.00015, output: 0.0006 },
+    // Legacy
     'gpt-4-turbo': { input: 0.01, output: 0.03 },
     'gpt-4': { input: 0.03, output: 0.06 },
     'gpt-3.5-turbo': { input: 0.0005, output: 0.0015 },
   },
   'anthropic': {
-    // Claude 4.6 models (Feb 2026)
+    // Claude 4.6 Series (Feb 2026 — Latest)
     'claude-opus-4-6': { input: 0.005, output: 0.025 },
     'claude-sonnet-4-6': { input: 0.003, output: 0.015 },
-    // Claude 4.5 models (2025)
-    'claude-opus-4-5-20251101': { input: 0.015, output: 0.075 },
+    // Claude 4.5 Series
+    'claude-opus-4-5-20251101': { input: 0.005, output: 0.025 },
     'claude-sonnet-4-5-20250929': { input: 0.003, output: 0.015 },
     'claude-haiku-4-5-20251001': { input: 0.001, output: 0.005 },
-    // Claude 3.5 models (2024)
+    // Claude 4.1 Series
+    'claude-opus-4-1-20250805': { input: 0.015, output: 0.075 },
+    // Claude 4 Series
+    'claude-opus-4-20250514': { input: 0.015, output: 0.075 },
+    'claude-sonnet-4-20250514': { input: 0.003, output: 0.015 },
+    // Claude 3.5 Series
     'claude-3-5-sonnet-20241022': { input: 0.003, output: 0.015 },
-    'claude-3-5-haiku-20241022': { input: 0.001, output: 0.005 },
-    // Claude 3 models (2024)
+    'claude-3-5-haiku-20241022': { input: 0.0008, output: 0.004 },
+    // Claude 3 Series (Deprecated)
     'claude-3-opus-20240229': { input: 0.015, output: 0.075 },
     'claude-3-sonnet-20240229': { input: 0.003, output: 0.015 },
     'claude-3-haiku-20240307': { input: 0.00025, output: 0.00125 },
-    'claude-3-sonnet': { input: 0.003, output: 0.015 },
-    'claude-3-opus': { input: 0.015, output: 0.075 },
-    'claude-3-haiku': { input: 0.00025, output: 0.00125 },
   },
   'google': {
     'gemini-1.5-pro': { input: 0.00125, output: 0.005 },
@@ -71,11 +97,14 @@ const FALLBACK_PRICING = {
     'gemini-1.0-pro': { input: 0.0005, output: 0.0015 },
   },
   'kimi': {
-    // Kimi K2 Base Models - Highly competitive pricing (as of 2025)
-    'kimi-k2-0711-preview': { input: 0.00015, output: 0.0025 },  // $0.15 per M input, $2.50 per M output
-    'kimi-k2-0905-preview': { input: 0.00015, output: 0.0025 },  // Same pricing as 0711
-    // Kimi K2 Thinking Model - Enhanced reasoning capabilities
-    'kimi-k2-thinking': { input: 0.0006, output: 0.0025 },        // $0.60 per M input, $2.50 per M output
+    // Kimi K2.5 Series (Jan 2026 — Latest)
+    'kimi-k2.5': { input: 0.0006, output: 0.003 },
+    // Kimi K2 Series
+    'kimi-k2-0905-preview': { input: 0.0006, output: 0.0025 },
+    'kimi-k2-0711-preview': { input: 0.0006, output: 0.0025 },
+    'kimi-k2-turbo-preview': { input: 0.00115, output: 0.008 },
+    'kimi-k2-thinking': { input: 0.0006, output: 0.0025 },
+    'kimi-k2-thinking-turbo': { input: 0.00115, output: 0.008 },
   }
 } as const;
 

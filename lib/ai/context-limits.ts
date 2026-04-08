@@ -12,28 +12,34 @@ import type { ProviderName } from './providerFactory';
  * These represent the total context (input + output) the model supports.
  */
 export const MODEL_CONTEXT_LIMITS: Record<string, number> = {
+  // OpenAI GPT-5.4 Series (March 2026 — Latest)
+  'gpt-5.4': 1050000,
+  'gpt-5.4-mini': 400000,
+  'gpt-5.4-nano': 400000,
+  'gpt-5.4-pro': 1050000,
+
   // OpenAI GPT-5.2 Series
-  'gpt-5.2': 256000,
-  'gpt-5.2-pro': 256000,
+  'gpt-5.2': 400000,
 
   // OpenAI GPT-5.1 Series
-  'gpt-5.1': 256000,
+  'gpt-5.1': 400000,
 
   // OpenAI GPT-5 Series
-  'gpt-5': 128000,
-  'gpt-5-mini': 128000,
-  'gpt-5-nano': 128000,
+  'gpt-5': 400000,
+  'gpt-5-mini': 400000,
+  'gpt-5-nano': 400000,
 
   // OpenAI GPT-4.1 Series
-  'gpt-4.1': 1000000,
-  'gpt-4.1-mini': 1000000,
-  'gpt-4.1-nano': 128000,
+  'gpt-4.1': 1047576,
+  'gpt-4.1-mini': 1047576,
+  'gpt-4.1-nano': 1047576,
 
-  // OpenAI o-Series
+  // OpenAI o-Series (Reasoning)
   'o3': 200000,
+  'o3-pro': 200000,
   'o4-mini': 200000,
 
-  // OpenAI GPT-4o Series
+  // OpenAI GPT-4o Series (Legacy)
   'gpt-4o': 128000,
   'gpt-4o-mini': 128000,
 
@@ -42,9 +48,9 @@ export const MODEL_CONTEXT_LIMITS: Record<string, number> = {
   'gpt-4': 8192,
   'gpt-3.5-turbo': 16385,
 
-  // Anthropic Claude 4.6 Series (Feb 2026)
-  'claude-opus-4-6': 200000,
-  'claude-sonnet-4-6': 200000,
+  // Anthropic Claude 4.6 Series (Feb 2026 — Latest)
+  'claude-opus-4-6': 1000000,
+  'claude-sonnet-4-6': 1000000,
 
   // Anthropic Claude 4.5 Series
   'claude-opus-4-5-20251101': 200000,
@@ -58,33 +64,28 @@ export const MODEL_CONTEXT_LIMITS: Record<string, number> = {
   'claude-opus-4-20250514': 200000,
   'claude-sonnet-4-20250514': 200000,
 
-  // Anthropic Claude 3.7 Series
-  'claude-3-7-sonnet-20250219': 200000,
-
   // Anthropic Claude 3.5 Series
   'claude-3-5-sonnet-20241022': 200000,
   'claude-3-5-haiku-20241022': 200000,
 
-  // Anthropic Claude 3 Series (Legacy)
+  // Anthropic Claude 3 Series (Deprecated)
   'claude-3-opus-20240229': 200000,
   'claude-3-sonnet-20240229': 200000,
   'claude-3-haiku-20240307': 200000,
 
-  // Kimi K2 Series
-  'kimi-k2-0905-preview': 256000,
-  'kimi-k2-thinking': 256000,
-  'kimi-k2-0711-preview': 128000,
+  // Kimi K2.5 Series (Jan 2026 — Latest)
+  'kimi-k2.5': 262144,
 
-  // Kimi K1.5 Series
+  // Kimi K2 Series
+  'kimi-k2-0905-preview': 262144,
+  'kimi-k2-0711-preview': 131072,
+  'kimi-k2-turbo-preview': 262144,
+  'kimi-k2-thinking': 262144,
+  'kimi-k2-thinking-turbo': 262144,
+
+  // Kimi K1.5 Series (Legacy)
   'kimi-k1.5': 128000,
   'kimi-k1.5-long': 128000,
-
-  // Kimi Linear Series
-  'kimi-linear-48b': 1000000,
-
-  // Kimi Specialized
-  'kimi-dev-72b': 128000,
-  'kimi-vl': 128000,
 };
 
 /**
@@ -97,28 +98,34 @@ export const DEFAULT_CONTEXT_LIMIT = 32000;
  * This is separate from context limit - it's how much the model can generate in one response.
  */
 export const MODEL_MAX_OUTPUT_TOKENS: Record<string, number> = {
-  // OpenAI GPT-5.2 Series - large output capacity
-  'gpt-5.2': 32768,
-  'gpt-5.2-pro': 32768,
+  // OpenAI GPT-5.4 Series (March 2026 — Latest)
+  'gpt-5.4': 128000,
+  'gpt-5.4-mini': 128000,
+  'gpt-5.4-nano': 128000,
+  'gpt-5.4-pro': 128000,
+
+  // OpenAI GPT-5.2 Series
+  'gpt-5.2': 128000,
 
   // OpenAI GPT-5.1 Series
-  'gpt-5.1': 32768,
+  'gpt-5.1': 128000,
 
   // OpenAI GPT-5 Series
-  'gpt-5': 16384,
-  'gpt-5-mini': 16384,
-  'gpt-5-nano': 8192,
+  'gpt-5': 128000,
+  'gpt-5-mini': 128000,
+  'gpt-5-nano': 128000,
 
-  // OpenAI GPT-4.1 Series - massive context, generous output
+  // OpenAI GPT-4.1 Series
   'gpt-4.1': 32768,
   'gpt-4.1-mini': 32768,
-  'gpt-4.1-nano': 16384,
+  'gpt-4.1-nano': 32768,
 
-  // OpenAI o-Series - reasoning models with large output
+  // OpenAI o-Series (Reasoning)
   'o3': 100000,
-  'o4-mini': 65536,
+  'o3-pro': 100000,
+  'o4-mini': 100000,
 
-  // OpenAI GPT-4o Series
+  // OpenAI GPT-4o Series (Legacy)
   'gpt-4o': 16384,
   'gpt-4o-mini': 16384,
 
@@ -127,49 +134,44 @@ export const MODEL_MAX_OUTPUT_TOKENS: Record<string, number> = {
   'gpt-4': 8192,
   'gpt-3.5-turbo': 4096,
 
-  // Anthropic Claude 4.6 Series (Feb 2026)
-  'claude-opus-4-6': 16384,
-  'claude-sonnet-4-6': 16384,
+  // Anthropic Claude 4.6 Series (Feb 2026 — Latest)
+  'claude-opus-4-6': 128000,
+  'claude-sonnet-4-6': 64000,
 
   // Anthropic Claude 4.5 Series
-  'claude-opus-4-5-20251101': 16384,
-  'claude-sonnet-4-5-20250929': 16384,
-  'claude-haiku-4-5-20251001': 8192,
+  'claude-opus-4-5-20251101': 64000,
+  'claude-sonnet-4-5-20250929': 64000,
+  'claude-haiku-4-5-20251001': 64000,
 
   // Anthropic Claude 4.1 Series
-  'claude-opus-4-1-20250805': 16384,
+  'claude-opus-4-1-20250805': 32000,
 
   // Anthropic Claude 4 Series
-  'claude-opus-4-20250514': 16384,
-  'claude-sonnet-4-20250514': 16384,
-
-  // Anthropic Claude 3.7 Series
-  'claude-3-7-sonnet-20250219': 16384,
+  'claude-opus-4-20250514': 32000,
+  'claude-sonnet-4-20250514': 64000,
 
   // Anthropic Claude 3.5 Series
   'claude-3-5-sonnet-20241022': 8192,
   'claude-3-5-haiku-20241022': 8192,
 
-  // Anthropic Claude 3 Series (Legacy)
+  // Anthropic Claude 3 Series (Deprecated)
   'claude-3-opus-20240229': 4096,
   'claude-3-sonnet-20240229': 4096,
   'claude-3-haiku-20240307': 4096,
 
+  // Kimi K2.5 Series (Jan 2026 — Latest)
+  'kimi-k2.5': 32768,
+
   // Kimi K2 Series
   'kimi-k2-0905-preview': 16384,
-  'kimi-k2-thinking': 32768,
   'kimi-k2-0711-preview': 8192,
+  'kimi-k2-turbo-preview': 16384,
+  'kimi-k2-thinking': 32768,
+  'kimi-k2-thinking-turbo': 32768,
 
-  // Kimi K1.5 Series
+  // Kimi K1.5 Series (Legacy)
   'kimi-k1.5': 8192,
   'kimi-k1.5-long': 8192,
-
-  // Kimi Linear Series
-  'kimi-linear-48b': 16384,
-
-  // Kimi Specialized
-  'kimi-dev-72b': 8192,
-  'kimi-vl': 4096,
 };
 
 /**

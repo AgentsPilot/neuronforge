@@ -707,6 +707,7 @@ npm run lint       # ESLint
 | [SYSTEM_LOGGING_GUIDELINES.md](/docs/SYSTEM_LOGGING_GUIDELINES.md) | Pino logging standards and best practices | 2025-11-28 |
 | [USER_CONTEXT.md](/docs/USER_CONTEXT.md) | User context module for LLM personalization | not tracked |
 | [PLUGIN_GENERATION_WORKFLOW.md](/docs/PLUGIN_GENERATION_WORKFLOW.md) | Interactive plugin generation guide for Claude Code | not tracked |
+| [AI_PROVIDER_MODELS.md](/docs/AI_PROVIDER_MODELS.md) | Complete LLM provider/model catalogue with token limits and pricing | 2026-04-08 |
 
 ---
 
