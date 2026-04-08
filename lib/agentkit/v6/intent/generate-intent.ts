@@ -1,40 +1,86 @@
 // lib/agentkit/v6/intent/generate-intent.ts
 // Generate Intent Contract using vocabulary injection
 
-import Anthropic from '@anthropic-ai/sdk';
 import { buildCoreVocabularyInjection, type IntentContractV1 } from './core-vocabulary';
 import { buildPluginVocabularyInjection, type PluginRegistry } from './plugin-vocabulary';
 import { buildIntentSystemPrompt } from './intent-system-prompt';
 import { buildIntentSystemPromptV2 } from './intent-system-prompt-v2';
 import { buildIntentUserPrompt, type EnhancedPrompt } from './intent-user-prompt';
+import { ProviderFactory } from '@/lib/ai/providerFactory';
+import { systemConfigRepository } from '@/lib/repositories/SystemConfigRepository';
 import { createLogger } from '@/lib/logger';
 
 const logger = createLogger({ module: 'IntentGenerator', service: 'V6' });
 
 /**
- * Call Anthropic Claude to generate Intent Contract JSON
+ * Call LLM to generate Intent Contract JSON.
+ *
+ * Model/provider resolution priority:
+ *   1. Function args (provider, model) — for external override (e.g., test scripts)
+ *   2. system_settings_config DB keys: agent_generation_ai_provider, agent_generation_ai_model
+ *   3. Hardcoded defaults: anthropic / claude-sonnet-4-5-20250929
  */
-async function callLLMJson(args: { system: string; user: string }): Promise<string> {
-  const client = new Anthropic({
-    apiKey: process.env.ANTHROPIC_API_KEY,
-  });
+async function callLLMJson(args: {
+  system: string;
+  user: string;
+  provider?: string;
+  model?: string;
+}): Promise<string> {
+  // Resolve provider and model
+  let providerName = args.provider;
+  let modelName = args.model;
 
-  logger.info('[IntentGen] Calling Claude Sonnet 4.5 for Intent Contract generation');
-
-  const response = await client.messages.create({
-    model: 'claude-sonnet-4-5-20250929',
-    max_tokens: 16000, // Increased for complex workflows
-    temperature: 0.0,
-    system: args.system,
-    messages: [{ role: 'user', content: args.user }],
-  });
-
-  const textBlock = response.content.find((block) => block.type === 'text');
-  if (!textBlock || textBlock.type !== 'text') {
-    throw new Error('No text block in LLM response');
+  if (!providerName || !modelName) {
+    try {
+      const config = await systemConfigRepository.getAgentGenerationConfig();
+      if (!providerName) providerName = config.provider;
+      if (!modelName) modelName = config.model;
+    } catch {
+      // DB not available (e.g., test scripts) — fall back to defaults
+    }
   }
 
-  return textBlock.text;
+  providerName = providerName || 'anthropic';
+  modelName = modelName || 'claude-sonnet-4-5-20250929';
+
+  logger.info({ provider: providerName, model: modelName }, '[IntentGen] Calling LLM for Intent Contract generation');
+
+  const chatProvider = ProviderFactory.getProvider(providerName as 'openai' | 'anthropic' | 'kimi');
+  const maxOutputTokens = chatProvider.getMaxOutputTokens(modelName);
+
+  const completionParams: any = {
+    model: modelName,
+    max_tokens: maxOutputTokens,
+    temperature: 0.0,
+    messages: [
+      { role: 'system', content: args.system },
+      { role: 'user', content: args.user },
+    ],
+  };
+
+  // Only add response_format if provider supports it (Anthropic/Kimi handle JSON via prompting)
+  if (chatProvider.supportsResponseFormat) {
+    completionParams.response_format = { type: 'json_object' };
+  }
+
+  const response = await chatProvider.chatCompletion(
+    completionParams,
+    {
+      userId: 'system',
+      feature: 'intent_generation',
+      component: 'generate-intent',
+      category: 'v6_pipeline',
+      activity_type: 'intent_contract_generation',
+      activity_name: 'Generate Intent Contract V1',
+    }
+  );
+
+  const content = response.choices?.[0]?.message?.content || '';
+  if (!content) {
+    throw new Error('No content in LLM response');
+  }
+
+  return content;
 }
 
 /**

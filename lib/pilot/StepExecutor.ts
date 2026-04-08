@@ -1525,7 +1525,7 @@ export class StepExecutor {
     // Determine model and provider
     const modelPref = modelOverride || (context.agent as any).model_preference || '';
     let provider: 'openai' | 'anthropic' = 'openai';
-    let model = 'gpt-4o';
+    let model = 'gpt-5.4-mini';
 
     if (modelPref.includes(':')) {
       const [prov, mod] = modelPref.split(':');
@@ -1566,6 +1566,7 @@ export class StepExecutor {
 
     const { ProviderFactory } = await import('@/lib/ai/providerFactory');
     const aiProvider = ProviderFactory.getProvider(provider);
+    const maxOutputTokens = aiProvider.getMaxOutputTokens(model);
 
     const response = await aiProvider.chatCompletion(
       {
@@ -1575,7 +1576,7 @@ export class StepExecutor {
           { role: 'user', content: prompt }
         ],
         temperature: 0.3,
-        max_tokens: 4096,
+        max_tokens: maxOutputTokens,
       },
       {
         userId: context.userId,

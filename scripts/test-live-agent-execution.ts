@@ -7,12 +7,14 @@
  * Usage:
  *   npx tsx --import ./scripts/env-preload.ts scripts/test-live-agent-execution.ts \
  *     --agent-id <UUID> \
+ *     [--input-dir <path>] \
  *     [--dsl <path>] \
  *     [--config <path>]
  *
  * Defaults:
- *   --dsl    output/vocabulary-pipeline/phase4-pilot-dsl-steps.json
- *   --config output/vocabulary-pipeline/phase4-workflow-config.json
+ *   --input-dir  output/vocabulary-pipeline/
+ *   --dsl        <input-dir>/phase4-pilot-dsl-steps.json
+ *   --config     <input-dir>/phase4-workflow-config.json
  *
  * Requires: TEST_USER_ID in .env.local
  */
@@ -60,8 +62,9 @@ async function main() {
   }
 
   const agentId = getArg('agent-id')
-  const dslPath = getArg('dsl') || path.join(process.cwd(), 'output', 'vocabulary-pipeline', 'phase4-pilot-dsl-steps.json')
-  const configPath = getArg('config') || path.join(process.cwd(), 'output', 'vocabulary-pipeline', 'phase4-workflow-config.json')
+  const inputDir = getArg('input-dir') || path.join(process.cwd(), 'output', 'vocabulary-pipeline')
+  const dslPath = getArg('dsl') || path.join(inputDir, 'phase4-pilot-dsl-steps.json')
+  const configPath = getArg('config') || path.join(inputDir, 'phase4-workflow-config.json')
 
   const userId = process.env.TEST_USER_ID
   if (!userId) {

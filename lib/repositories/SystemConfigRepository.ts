@@ -354,7 +354,7 @@ export class SystemConfigRepository {
   }> {
     const [provider, model] = await Promise.all([
       this.getString('agent_generation_ai_provider', 'openai'),
-      this.getString('agent_generation_ai_model', 'gpt-5.2')
+      this.getString('agent_generation_ai_model', 'gpt-5.4')
     ]);
 
     return { provider, model };
