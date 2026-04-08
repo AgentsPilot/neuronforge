@@ -117,7 +117,29 @@ export const TYPE_COMPAT: Record<string, Set<string>> = {
   identifier: new Set(['identifier', 'string']),
 }
 
-// ─── Property-Name Markers ──────────────────────────────────────────────
+// ─── Atomic Building Blocks ─────────────────────────────────────────────
+// Each string is defined ONCE here. The exported Sets below compose from these.
+
+/** Names that indicate file-typed data (used in both property markers and param names) */
+const FILE_NAMES = ['file_content', 'file_url', 'file_path'] as const
+
+/** Names that indicate text-typed data (used in both property markers and param names) */
+const TEXT_NAMES = ['body', 'text', 'content', 'message'] as const
+
+/** File-indicator property names that only appear as object keys, not as param names */
+const FILE_PROPERTY_ONLY = ['attachment_id', 'mimeType'] as const
+
+/** Text-indicator property names that only appear as object keys, not as param names */
+const TEXT_PROPERTY_ONLY = ['subject', 'snippet'] as const
+
+/** Primary content param names that aren't file or text names */
+const OTHER_PRIMARY_PARAMS = ['data', 'input', 'document', 'source', 'html_body'] as const
+
+/** Canonical string for the file_attachment semantic type (avoid hardcoding in functions) */
+export const SEMANTIC_FILE_ATTACHMENT = 'file_attachment' as const
+export const SEMANTIC_TEXT_CONTENT = 'text_content' as const
+
+// ─── Composed Sets ──────────────────────────────────────────────────────
 
 /**
  * Object property names that indicate a file-typed data structure.
@@ -125,9 +147,7 @@ export const TYPE_COMPAT: Record<string, Set<string>> = {
  * when no explicit `x-semantic-type` annotation is present.
  * Also used by IntentToIRConverter.inputLooksLikeFileAttachment() (WP-12 safety net).
  */
-export const FILE_PROPERTY_MARKERS = new Set([
-  'file_url', 'attachment_id', 'mimeType', 'file_content', 'file_path',
-])
+export const FILE_PROPERTY_MARKERS: ReadonlySet<string> = new Set([...FILE_NAMES, ...FILE_PROPERTY_ONLY])
 
 /**
  * Object property names that indicate a text-typed data structure (email, message, post).
@@ -135,20 +155,14 @@ export const FILE_PROPERTY_MARKERS = new Set([
  * from file-primary objects. An object with both (e.g., email with attachments)
  * is treated as text-primary.
  */
-export const TEXT_PROPERTY_MARKERS = new Set([
-  'body', 'subject', 'snippet', 'message', 'text', 'content',
-])
-
-// ─── Parameter-Name Sets ────────────────────────────────────────────────
+export const TEXT_PROPERTY_MARKERS: ReadonlySet<string> = new Set([...TEXT_NAMES, ...TEXT_PROPERTY_ONLY])
 
 /**
  * Parameter names that imply the action requires file input.
  * Used as a heuristic fallback in extractFromType() when no explicit
  * x-variable-mapping or x-input-mapping is declared.
  */
-export const FILE_PARAM_NAMES = new Set([
-  'file_content', 'file_url', 'file_path',
-])
+export const FILE_PARAM_NAMES: ReadonlySet<string> = new Set(FILE_NAMES)
 
 /**
  * Parameter names that represent the action's primary content/data intake.
@@ -156,9 +170,8 @@ export const FILE_PARAM_NAMES = new Set([
  * Non-primary params (folder_id, parent_id, labels, attachments) get their
  * values from config or other variables, not from the step's inputs[].
  */
-export const PRIMARY_CONTENT_PARAMS = new Set([
-  'file_content', 'file_url', 'file_path', 'content', 'data', 'input',
-  'body', 'text', 'document', 'source', 'html_body', 'message',
+export const PRIMARY_CONTENT_PARAMS: ReadonlySet<string> = new Set([
+  ...FILE_NAMES, ...TEXT_NAMES, ...OTHER_PRIMARY_PARAMS,
 ])
 
 // ─── Functions ──────────────────────────────────────────────────────────
@@ -221,13 +234,13 @@ export function extractFromType(paramDef: any, paramName: string): string | unde
   // 2. x-input-mapping.accepts[]
   const inputMapping = paramDef?.['x-input-mapping']
   const accepts = Array.isArray(inputMapping?.accepts) ? inputMapping.accepts : []
-  if (accepts.includes('file_object') || accepts.includes('file_attachment')) {
-    return 'file_attachment'
+  if (accepts.includes('file_object') || accepts.includes(SEMANTIC_FILE_ATTACHMENT)) {
+    return SEMANTIC_FILE_ATTACHMENT
   }
 
   // 3. Param name heuristic (minimal — only for very clear file params)
   if (FILE_PARAM_NAMES.has(paramName)) {
-    return 'file_attachment'
+    return SEMANTIC_FILE_ATTACHMENT
   }
 
   return undefined

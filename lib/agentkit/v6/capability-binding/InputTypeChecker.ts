@@ -17,6 +17,8 @@ import {
   FILE_PROPERTY_MARKERS,
   TEXT_PROPERTY_MARKERS,
   PRIMARY_CONTENT_PARAMS,
+  SEMANTIC_FILE_ATTACHMENT,
+  SEMANTIC_TEXT_CONTENT,
 } from './input-type-compat'
 import { createLogger } from '@/lib/logger'
 
@@ -148,9 +150,9 @@ function resolveSemanticType(
     const hasFile = keys.some(k => FILE_PROPERTY_MARKERS.has(k))
     const hasText = keys.some(k => TEXT_PROPERTY_MARKERS.has(k))
 
-    if (hasFile && !hasText) return 'file_attachment'
-    if (hasText && !hasFile) return 'text_content'
-    if (hasFile && hasText) return 'text_content' // email with attachments field is still text-primary
+    if (hasFile && !hasText) return SEMANTIC_FILE_ATTACHMENT
+    if (hasText && !hasFile) return SEMANTIC_TEXT_CONTENT
+    if (hasFile && hasText) return SEMANTIC_TEXT_CONTENT // email with attachments field is still text-primary
   }
 
   return undefined

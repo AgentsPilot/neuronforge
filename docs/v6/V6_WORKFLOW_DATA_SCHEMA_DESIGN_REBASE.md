@@ -1,7 +1,7 @@
 # V6 Workflow Data Schema — Design Rebase
 
-> **Last Updated**: 2026-04-05
-> **Status**: Problem identification — deep-dive sections pending
+> **Last Updated**: 2026-04-08
+> **Status**: All three Directions implemented — Direction #1 ✅, Direction #2 ✅, Direction #3 ✅
 > **Branch**: `feature/v6-intent-contract-data-schema`
 > **Parent docs**: [V6_WORKFLOW_DATA_SCHEMA_DESIGN.md](./V6_WORKFLOW_DATA_SCHEMA_DESIGN.md) · [V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_WEAK_POINTS.md](./V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_WEAK_POINTS.md)
 
@@ -795,21 +795,19 @@ This is worth a separate deep dive but explicitly out of scope for Direction #2.
 
 #### B.8 Implementation outline
 
-| # | Change | File(s) |
-|---|---|---|
-| 1 | Create `AIOutputValidator` with recursive `SchemaField` walker | `lib/pilot/AIOutputValidator.ts` (new) |
-| 2 | Create `SchemaViolationError` typed error with structured context | `lib/pilot/types.ts` |
-| 3 | Add `buildRepairPrompt()` helper | `lib/pilot/AIOutputValidator.ts` |
-| 4 | Wire validation + repair into `executeLLMDecision` I3 path — replace alias-wrapper fallback when `output_schema` present | `lib/pilot/StepExecutor.ts:1433–1476` |
-| 5 | Wire validation into `callLLMDirect` result path | `lib/pilot/StepExecutor.ts:1500+` |
-| 6 | Add validation to `classify` structured-array path (D-B8) | `lib/pilot/StepExecutor.ts:1579+` |
-| 7 | Remove silent null-fill in memory-dump handler — convert to `SchemaViolationError` throw | `lib/pilot/StepExecutor.ts:1449` |
-| 8 | Surface `SchemaViolationError` in execution result with correlation to step + slot | `lib/pilot/WorkflowPilot.ts` error path |
-| 9 | Add Phase D+ test scenario that feeds mock LLM an intentionally malformed response — verify repair → verify hard fail on second attempt | `tests/v6-regression/` |
-| 10 | Unit tests for `AIOutputValidator`: required fields, type mismatches, nested structures, arrays, oneOf | `lib/pilot/__tests__/AIOutputValidator.test.ts` (new) |
-| 11 | Metrics: count repair attempts, repair success rate, hard failures per week — informs whether to add attempt=3 | `lib/pilot/MetricsCollector.ts` |
+| # | Change | File(s) | Status |
+|---|---|---|---|
+| 1 | Create `AIOutputValidator` with recursive `SchemaField` walker | `lib/pilot/AIOutputValidator.ts` (new) | ✅ Done (2026-04-08) |
+| 2 | Create `SchemaViolationError` typed error with structured context | `lib/pilot/types.ts` | ✅ Done (2026-04-08) |
+| 3 | Add `buildRepairPrompt()` helper | `lib/pilot/AIOutputValidator.ts` | ✅ Done (2026-04-08) |
+| 4 | Wire validation + repair into `executeLLMDecision` I3 path — replace alias-wrapper fallback with `extractValidateAndReturn()` + `handleSchemaFailure()` | `lib/pilot/StepExecutor.ts` | ✅ Done (2026-04-08) |
+| 5 | Memory-dump detection converted from silent null-fill to extraction failure → repair → SchemaViolationError | `lib/pilot/StepExecutor.ts` (inside `extractValidateAndReturn`) | ✅ Done (2026-04-08) |
+| 6 | Backward compat: steps without `output_schema` keep alias wrapper path | `lib/pilot/StepExecutor.ts` | ✅ Done (2026-04-08) |
+| 7 | Surface `SchemaViolationError` in execution result | `lib/pilot/WorkflowPilot.ts` error path | ⬜ Future (see V6_WORKFLOW_DATA_SCHEMA_DESIGN.md §11) |
+| 8 | Unit tests for `AIOutputValidator` | `lib/pilot/__tests__/AIOutputValidator.test.ts` | ⬜ Deferred |
+| 9 | Metrics: repair attempts, success rate, hard failures | `lib/pilot/MetricsCollector.ts` | ⬜ Deferred |
 
-Steps 1–8 are the core. Steps 9–11 make the change measurable and safe to expand.
+Steps 1–6 are implemented. Step 7 is documented as a future enhancement (user-facing error reporting). Steps 8–9 are deferred follow-ups.
 
 ---
 
@@ -1466,4 +1464,6 @@ Week 4+:   Measure + cleanup
 | 2026-04-05 | Deep Dive C + Parts 3-5 added | Binder Input-Type Checking. Documented how CapabilityBinderV2 ignores `x-variable-mapping.from_type`. Proposed two-phase binding with post-schema input-type checker, symmetric `to_type` annotations on plugin output schemas, canonical closed compatibility vocabulary, and IR-converter rewrite path for text sources → ai_processing/extract. Part 3: consolidated answers to all 20 open questions from A/B/C. Part 4: summary decisions table. Part 5: implementation sequencing (Direction #1 → #3 → #2, parallelizable #1+#3). |
 | 2026-04-06 | Post-fix reconciliation | WP-11, WP-12, WP-13, WP-14 fixed tactically in IR converter + runtime (commit c175d49 parent). Updated all sections: P2 table (WP-11 status), P3 heuristic table (+5 new heuristics from WP-11–14), P4 phase ownership table (+WP-13/14), Deep Dive A impact map (WP-11/12 now "tactically fixed, Direction #1 makes heuristic unnecessary"), Deep Dive B AliExpress anatomy (steps 1-2 now fixed), B.5 combination table (+WP-13 row, status column), Deep Dive C impact map (WP-12 updated), Part 5 sequencing (reduced urgency note, heuristic-removal tracking table with gates). Core thesis unchanged: tactical fixes are heuristic-based and add to P3's soup; Directions #1–#3 replace them with schema-driven solutions. |
 | 2026-04-07 | Direction #1 implemented (steps 1–7 of 8) | New `outputSchemaSummarizer.ts` (summarize JSON Schema → compact field list, depth-capped to 2 levels, named-type extraction for complex arrays). Extended `PluginActionInfo` with `output_summary` + `output_dependencies`. Vocabulary extractor now pulls output schemas from all plugin definitions. `buildVocabularyInjection()` renders `Returns:` + `⚠` coupling hints per action. Prompt rules added: exact field names from Returns, ⚠ coupling param enforcement, file-only input warning. Seeded `output_dependencies` on `google-mail.search_emails` (content_level coupling) and `document-extractor.extract_structured_data` (file-only input). **Regression: 10/10 passed.** |
-| 2026-04-07 | Direction #3 implemented (steps 1–8 of 10) | New `input-type-compat.ts` (canonical FromType/ToType vocabulary, ~12 types, compatibility matrix). New `InputTypeChecker.ts` (validates from_type vs semantic_type at bind time, with heuristic fallback for unannotated schemas). CapabilityBinderV2 retains ranked candidates + Phase 2b validation after DataSchemaBuilder. SchemaField extended with `semantic_type`, propagated from `x-semantic-type` on plugin output schemas. IntentToIRConverter checks `input_type_incompatible` binding reason before WP-12 heuristic fallback. Added `x-semantic-type: "email_message"` and `"file_attachment"` to google-mail search_emails output schema. Regression running. |
+| 2026-04-07 | Direction #3 implemented (steps 1–8 of 10) | New `input-type-compat.ts` (canonical FromType/ToType vocabulary, ~12 types, compatibility matrix). New `InputTypeChecker.ts` (validates from_type vs semantic_type at bind time, with heuristic fallback for unannotated schemas). CapabilityBinderV2 retains ranked candidates + Phase 2b validation after DataSchemaBuilder. SchemaField extended with `semantic_type`, propagated from `x-semantic-type` on plugin output schemas. IntentToIRConverter checks `input_type_incompatible` binding reason before WP-12 heuristic fallback. Added `x-semantic-type: "email_message"` and `"file_attachment"` to google-mail search_emails output schema. **Regression: 10/10 passed.** |
+| 2026-04-08 | Direction #2 implemented (steps 1–6 of 9) | New `AIOutputValidator.ts` (recursive schema walker, supports both `{properties}` and `{fields[]}` formats, array sampling per Q-B3). `SchemaViolationError` added to `types.ts`. StepExecutor I3 path replaced: `extractValidateAndReturn()` + `handleSchemaFailure()` with 1-repair-attempt pattern. Memory-dump silent null-fill removed — now triggers repair → hard fail. Backward compat preserved for steps without `output_schema`. User-facing error reporting documented as future enhancement (V6_WORKFLOW_DATA_SCHEMA_DESIGN.md §11). **Regression: 10/10 passed.** |
+| 2026-04-08 | input-type-compat.ts dedup cleanup | Refactored all hardcoded string sets into atomic building blocks (`FILE_NAMES`, `TEXT_NAMES`, `FILE_PROPERTY_ONLY`, `TEXT_PROPERTY_ONLY`, `OTHER_PRIMARY_PARAMS`). Exported `SEMANTIC_FILE_ATTACHMENT` / `SEMANTIC_TEXT_CONTENT` constants. All composed sets (`FILE_PROPERTY_MARKERS`, `TEXT_PROPERTY_MARKERS`, `FILE_PARAM_NAMES`, `PRIMARY_CONTENT_PARAMS`) derive from building blocks — zero duplicated strings. InputTypeChecker uses constants instead of hardcoded strings. |

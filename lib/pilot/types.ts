@@ -1323,6 +1323,45 @@ export class VariableResolutionError extends WorkflowError {
   }
 }
 
+/**
+ * Direction #2: AI output schema violation error.
+ * Thrown when an ai_processing step's output doesn't match its declared output_schema
+ * after one repair attempt. Contains structured diagnostic context.
+ */
+export class SchemaViolationError extends WorkflowError {
+  constructor(args: {
+    stepId: string
+    slotName?: string
+    expected: string
+    actual: string
+    errors: Array<{ path: string; reason: string; expected: string; actual: string }>
+    rawResponse?: string
+    repairAttempted: boolean
+  }) {
+    const errorLines = args.errors.slice(0, 5).map(e => `  - ${e.path || '(root)'}: ${e.reason} — expected ${e.expected}, got ${e.actual}`)
+    const message = [
+      `SCHEMA VIOLATION: AI step output does not match declared schema`,
+      `  Step: ${args.stepId}`,
+      args.slotName ? `  Slot: ${args.slotName}` : null,
+      `  Repair attempted: ${args.repairAttempted ? 'yes (failed)' : 'no'}`,
+      `  Expected: ${args.expected}`,
+      `  Actual: ${args.actual}`,
+      args.errors.length > 0 ? `  Errors:\n${errorLines.join('\n')}` : null,
+      args.errors.length > 5 ? `  ... and ${args.errors.length - 5} more` : null,
+    ].filter(Boolean).join('\n')
+
+    super(message, 'SCHEMA_VIOLATION', args.stepId, {
+      slotName: args.slotName,
+      expected: args.expected,
+      actual: args.actual,
+      errors: args.errors,
+      rawResponse: args.rawResponse?.substring(0, 1000),
+      repairAttempted: args.repairAttempted,
+    })
+    this.name = 'SchemaViolationError'
+  }
+}
+
 // ============================================================================
 // TYPE GUARDS
 // ============================================================================

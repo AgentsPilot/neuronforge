@@ -29,7 +29,8 @@ import type {
   IStateManager,
   IParallelExecutor,
 } from './types';
-import { ExecutionError } from './types';
+import { ExecutionError, SchemaViolationError } from './types';
+import { validateAIOutput, buildRepairPrompt, type AIOutputValidationResult } from './AIOutputValidator';
 import { ExecutionContext } from './ExecutionContext';
 import { PluginExecuterV2 } from '@/lib/server/plugin-executer-v2';
 import { runAgentKit } from '@/lib/agentkit/runAgentKit';
@@ -1468,54 +1469,15 @@ export class StepExecutor {
       ? this.cleanSummaryOutput(aiResponse)
       : aiResponse;
 
-    // I3: If step has output_schema with fields/properties, extract structured JSON from LLM response
-    // This enables downstream steps to reference specific fields like {{variable.subject}}, {{variable.body}}
-    // Supports both schema shapes: {properties: {name: {...}}} and {fields: [{name, type, ...}]}.
+    // I3 + Direction #2: If step has output_schema, extract structured JSON and validate.
+    // Schema declaration opts in to enforcement — no silent alias-wrapper fallback.
     const stepOutputSchema = (step as any).config?.output_schema || (step as any).output_schema;
     const hasProperties = stepOutputSchema?.properties && typeof stepOutputSchema.properties === 'object';
     const hasFieldsArray = Array.isArray(stepOutputSchema?.fields);
     if (stepOutputSchema && (hasProperties || hasFieldsArray)) {
-      const expectedFields = hasProperties
-        ? Object.keys(stepOutputSchema.properties)
-        : stepOutputSchema.fields.map((f: any) => f.name).filter(Boolean);
-
-      // D-B13: Handle case where response is already a parsed object (not a string)
-      // runAgentKit may return a JSON object (e.g., memory context dump) instead of a string.
-      // Check if it has expected fields or is garbage (memory_context, agent_memory_context).
-      if (typeof cleanedResponse === 'object' && cleanedResponse !== null) {
-        const hasExpectedField = expectedFields.some(f => f in cleanedResponse);
-        if (hasExpectedField) {
-          logger.info({ stepId: step.id, fields: Object.keys(cleanedResponse) }, 'I3: Response is already a structured object with expected fields');
-          return { data: cleanedResponse, tokensUsed: result.tokensUsed };
-        }
-        // Check if it's a known garbage response (memory dump)
-        if ('memory_context' in cleanedResponse || 'agent_memory_context' in cleanedResponse || 'user_profile' in cleanedResponse) {
-          logger.warn({ stepId: step.id, keys: Object.keys(cleanedResponse).slice(0, 5) },
-            'D-B13: LLM returned memory context dump instead of content — returning empty structured output');
-          // Return empty object with expected fields set to null so downstream doesn't crash
-          const emptyOutput: Record<string, any> = {};
-          for (const field of expectedFields) emptyOutput[field] = null;
-          return { data: emptyOutput, tokensUsed: result.tokensUsed };
-        }
-      }
-
-      // Standard I3: extract structured JSON from string response
-      if (typeof cleanedResponse === 'string') {
-        const structured = this.extractBalancedJSON(cleanedResponse, '{');
-        if (structured) {
-          try {
-            const parsed = JSON.parse(structured);
-            const hasExpectedField = expectedFields.some(f => f in parsed);
-            if (hasExpectedField) {
-              logger.info({ stepId: step.id, fields: Object.keys(parsed) }, 'I3: Extracted structured output from LLM response');
-              return { data: parsed, tokensUsed: result.tokensUsed };
-            }
-          } catch {
-            // Fall through to alias wrapper
-          }
-        }
-      }
-      logger.warn({ stepId: step.id }, 'I3: output_schema defined but could not extract structured JSON, returning alias wrapper');
+      return this.extractValidateAndReturn(
+        cleanedResponse, stepOutputSchema, step, context, result.tokensUsed, 1,
+      );
     }
 
     return {
@@ -1636,6 +1598,134 @@ export class StepExecutor {
       outputTokens: response.usage?.completion_tokens || 0,
       totalTokens: response.usage?.total_tokens || 0,
     };
+  }
+
+  /**
+   * Direction #2: Extract structured JSON from LLM response, validate against
+   * output_schema, and optionally repair once on failure.
+   *
+   * Flow:
+   *   1. Try to extract structured JSON from the response
+   *   2. Validate extracted data against the declared schema
+   *   3. If valid → return
+   *   4. If invalid and attempt === 1 → re-prompt LLM with validation errors, recurse with attempt 2
+   *   5. If invalid and attempt === 2 → throw SchemaViolationError (hard fail)
+   *
+   * Replaces the old I3 alias-wrapper fallback path for schema-declared steps.
+   */
+  private async extractValidateAndReturn(
+    response: string | Record<string, any>,
+    schema: any,
+    step: any,
+    context: ExecutionContext,
+    tokensUsed: any,
+    attempt: number,
+  ): Promise<{ data: any; tokensUsed: any }> {
+    const stepId = step.id || step.step_id
+
+    // Step 1: Extract structured data from response
+    let extracted: Record<string, any> | null = null
+
+    if (typeof response === 'object' && response !== null && !Array.isArray(response)) {
+      // Response is already an object — check if it's usable or garbage
+      const isGarbage = 'memory_context' in response || 'agent_memory_context' in response || 'user_profile' in response
+      if (isGarbage) {
+        logger.warn({ stepId, keys: Object.keys(response).slice(0, 5) },
+          '[Dir2] LLM returned memory context dump — treating as extraction failure')
+        // Fall through to repair path with null extracted
+      } else {
+        extracted = response
+      }
+    } else if (typeof response === 'string') {
+      // Try to parse JSON from string
+      const jsonStr = this.extractBalancedJSON(response, '{')
+      if (jsonStr) {
+        try {
+          extracted = JSON.parse(jsonStr)
+        } catch {
+          // Fall through to repair path
+        }
+      }
+    }
+
+    // Step 2: If extraction failed entirely, handle as schema failure
+    if (!extracted) {
+      return this.handleSchemaFailure(
+        step, context, typeof response === 'string' ? response : JSON.stringify(response),
+        schema, 'extraction_failed', attempt, null, tokensUsed,
+      )
+    }
+
+    // Step 3: Validate extracted data against schema
+    const validation = validateAIOutput(extracted, schema, stepId)
+
+    if (validation.valid) {
+      logger.info({ stepId, fields: Object.keys(extracted), attempt },
+        '[Dir2] AI output validated successfully against schema')
+      return { data: extracted, tokensUsed }
+    }
+
+    // Step 4: Validation failed — try repair or hard fail
+    return this.handleSchemaFailure(
+      step, context, typeof response === 'string' ? response : JSON.stringify(response),
+      schema, 'validation_failed', attempt, validation, tokensUsed,
+    )
+  }
+
+  /**
+   * Direction #2: Handle schema validation failure with optional repair attempt.
+   * Attempt 1 → re-prompt LLM with validation errors.
+   * Attempt 2 → throw SchemaViolationError.
+   */
+  private async handleSchemaFailure(
+    step: any,
+    context: ExecutionContext,
+    rawResponse: string,
+    schema: any,
+    reason: 'extraction_failed' | 'validation_failed',
+    attempt: number,
+    validation: AIOutputValidationResult | null,
+    tokensUsed: any,
+  ): Promise<{ data: any; tokensUsed: any }> {
+    const stepId = step.id || step.step_id
+
+    if (attempt === 1) {
+      // One repair attempt: re-prompt with the validation feedback
+      const originalPrompt = step.prompt || step.description || ''
+      const repairPrompt = buildRepairPrompt({
+        originalPrompt,
+        previousResponse: rawResponse,
+        schema,
+        validation,
+        reason,
+      })
+
+      logger.warn({ stepId, reason, errorCount: validation?.errors?.length ?? 0 },
+        '[Dir2] AI output validation failed — attempting repair (attempt 1)')
+
+      const repaired = await this.callLLMDirect(repairPrompt, context, stepId)
+
+      // Recurse with attempt 2 — parse the repair response
+      return this.extractValidateAndReturn(
+        repaired.text, schema, step, context,
+        { total: tokensUsed.total + repaired.totalTokens, prompt: tokensUsed.prompt + repaired.inputTokens, completion: tokensUsed.completion + repaired.outputTokens },
+        2,
+      )
+    }
+
+    // Attempt 2 failed — hard fail
+    logger.error({ stepId, reason, errors: validation?.errors?.slice(0, 3) },
+      '[Dir2] AI output validation failed after repair attempt — throwing SchemaViolationError')
+
+    throw new SchemaViolationError({
+      stepId,
+      slotName: step.output_variable,
+      expected: validation?.expectedShape ?? 'declared schema',
+      actual: validation?.actualShape ?? 'unparseable response',
+      errors: validation?.errors ?? [{ path: '', reason: reason, expected: 'valid JSON', actual: 'extraction failed' }],
+      rawResponse: rawResponse.substring(0, 1000),
+      repairAttempted: true,
+    })
   }
 
   /**

@@ -684,4 +684,30 @@ See the header comment in `input-type-compat.ts` for the full maintenance guide.
 
 ---
 
+## 11. Future: User-Facing SchemaViolationError Reporting (Direction #2)
+
+> **Status**: Not yet implemented — future enhancement
+> **Depends on**: Direction #2 (Runtime AI Output Validation) — `AIOutputValidator.ts`, `SchemaViolationError`
+
+### Problem
+
+When `SchemaViolationError` is thrown at runtime (AI step output doesn't match declared schema after one repair attempt), the error propagates through `WorkflowPilot` and the execution is marked `status: 'failed'`. The structured diagnostic (expected shape, actual shape, field-level validation errors, truncated LLM response) is logged and stored in `error.details`, but it is **not surfaced to the user in a meaningful way**.
+
+Today the user sees a generic "Execution failed" message. They have no visibility into:
+- Which step failed and why
+- What the LLM actually returned vs what was expected
+- Whether the issue is a prompt problem (LLM misunderstood the task) or a schema problem (declared schema doesn't match realistic output)
+
+### What needs to happen
+
+1. **Execution results UI**: When `WorkflowPilot` catches a `SchemaViolationError`, the `ExecutionResultsBuilder` should extract the structured `details` and format them into the execution report visible to the user. Show: step name, expected vs actual shape side-by-side, specific field errors.
+
+2. **Actionable guidance**: The error message should suggest next steps — e.g., "The AI step produced a 'string' where an 'array' was expected. This may indicate the prompt needs to be more explicit about output format, or the output_schema declaration needs to be updated."
+
+3. **Shadow Agent integration**: The `ShadowAgent` (execution observer) should detect `SchemaViolationError` patterns and suggest prompt or schema fixes in its post-execution analysis.
+
+4. **Notification for scheduled agents**: When a scheduled (unattended) agent hits a `SchemaViolationError`, the user should be notified — not just have a silent failure in the execution log. Consider email/in-app notification for agents that were previously succeeding but start failing schema validation.
+
+---
+
 *V6 Workflow Data Schema — Neuronforge*
