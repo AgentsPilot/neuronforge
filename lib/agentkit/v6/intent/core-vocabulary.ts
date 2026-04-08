@@ -138,7 +138,6 @@ export type TransformStep = CoreStepBase & {
     kind:
       | "filter"
       | "map"
-      | "select"
       | "merge"
       | "dedupe"
       | "sort"
@@ -150,7 +149,7 @@ export type TransformStep = CoreStepBase & {
       | "cast";
     source: Ref;
     expr?: Expr; // for filter/sort/group
-    template?: Record<string, Value | Ref>; // for select/map outputs
+    template?: Record<string, Value | Ref>; // for map outputs
     sort_by?: string;
     order?: "asc" | "desc";
     limit?: number;

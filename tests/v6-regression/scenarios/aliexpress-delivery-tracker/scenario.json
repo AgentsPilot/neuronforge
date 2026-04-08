@@ -7,6 +7,7 @@
     "min_steps": 7,
     "step_types": ["action", "ai_processing", "scatter_gather"],
     "phase_a_checks": 14,
-    "phase_d_success": true
+    "phase_d_success": true,
+    "phase_e_success": true
   }
 }

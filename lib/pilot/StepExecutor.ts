@@ -2329,6 +2329,10 @@ Respond ONLY with the JSON array. No markdown, no explanation, no code blocks.`;
         result = this.transformGroup(data, config);
         break;
 
+      case 'dedupe':
+        result = this.transformDedupe(data, config);
+        break;
+
       case 'render_table':
         result = this.transformRenderTable(data, config);
         break;
@@ -2896,6 +2900,32 @@ Respond ONLY with the JSON array. No markdown, no explanation, no code blocks.`;
    * Also supports legacy format:
    * - { field: 'fieldName', order: 'asc' }
    */
+  /**
+   * Deduplicate transformation — removes duplicate items from an array.
+   * If config.field or config.dedupe_field is specified, deduplicates by that field's value.
+   * Otherwise deduplicates by full object JSON hash.
+   */
+  private transformDedupe(data: any[], config: any): any[] {
+    if (!Array.isArray(data)) {
+      throw new ExecutionError('Dedupe operation requires array input', 'INVALID_INPUT_TYPE');
+    }
+
+    const field = config.field || config.dedupe_field || config.dedupe_by;
+    const seen = new Set<string>();
+
+    const result = data.filter(item => {
+      const key = field
+        ? String(item?.[field] ?? '')
+        : JSON.stringify(item);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+
+    logger.info({ field: field || '(full object)', inputCount: data.length, outputCount: result.length, removedCount: data.length - result.length }, 'Dedupe transform complete');
+    return result;
+  }
+
   private transformSort(data: any[], config: any): any[] {
     if (!Array.isArray(data)) {
       throw new ExecutionError('Sort operation requires array input', 'INVALID_INPUT_TYPE');

@@ -553,10 +553,11 @@ export class ExecutionGraphCompiler {
     // STEP 5: Validate against PILOT runtime-supported operations
     // This list comes from lib/pilot/schema/runtime-validator.ts and lib/pilot/StepExecutor.ts
     const validPilotOps = [
-      'select',  // Extract/rename fields from object
+      'select',  // D-B18: aliased to map at compile time
+      'custom',  // D-B18: aliased to map at compile time
       'set', 'map', 'filter', 'reduce', 'sort',
       'group', 'group_by',  // group_by is alias for group
-      'aggregate', 'deduplicate',
+      'aggregate', 'deduplicate', 'dedupe',  // dedupe is the runtime name
       'flatten', 'join', 'pivot', 'split', 'expand',
       'partition',  // Partition data by field value
       'rows_to_objects',  // For converting 2D arrays (like Sheets) to objects
@@ -642,6 +643,18 @@ export class ExecutionGraphCompiler {
           // Remove filter_expression from output - we only need condition (DSL format)
           delete transformedConfig.filter_expression
         }
+      } else if (transformConfig.type === 'deduplicate') {
+        // Alias deduplicate → dedupe (runtime uses 'dedupe')
+        transformConfig.type = 'dedupe'
+        transformedConfig.type = 'dedupe'
+        this.log(ctx, `  → Aliased 'deduplicate' → 'dedupe'`)
+      } else if (transformConfig.type === 'select' || transformConfig.type === 'custom') {
+        // D-B18: Alias select/custom → map. Both were removed from the IntentContract
+        // schema (WP-4 mapping is the correct approach). This handles old ICs that still have them.
+        const originalType = transformConfig.type
+        transformConfig.type = 'map'
+        transformedConfig.type = 'map'
+        this.log(ctx, `  → D-B18: Aliased '${originalType}' → 'map' (${originalType} removed from IC schema)`)
       } else if (transformConfig.type === 'map') {
         // IR field: map_expression → DSL field: expression
         if (transformConfig.map_expression) {

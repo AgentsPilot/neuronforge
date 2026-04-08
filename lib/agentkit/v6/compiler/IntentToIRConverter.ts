@@ -837,18 +837,21 @@ export class IntentToIRConverter {
     const inputVar = this.resolveRefName(step.deliver.input, ctx)
     genericParams.data = inputVar
 
-    // Add field mappings if present
-    // NOTE: The LLM now creates explicit loop structures in IntentContract when needed,
-    // so we use standard field mapping here. The loop is already created by convertLoop().
+    // D-B19: Map deliver.mapping entries directly to top-level genericParams.
+    // mapping[].to values are param names (spreadsheet_id, range, values), not nested fields.
+    // Use resolveValueRef for all from types to get proper {{ }} wrapping.
     if (step.deliver.mapping && step.deliver.mapping.length > 0) {
-      genericParams.fields = step.deliver.mapping.reduce((acc: any, m: any) => {
-        const value = typeof m.from === 'object' && 'ref' in m.from
-          ? this.resolveRefName(m.from.ref, ctx) + (m.from.field ? `.${m.from.field}` : '')
-          : this.resolveValueRef(m.from, ctx)
-
-        acc[m.to] = value
-        return acc
-      }, {} as Record<string, any>)
+      for (const m of step.deliver.mapping) {
+        if (typeof m.from === 'object' && 'kind' in m.from) {
+          genericParams[m.to] = this.resolveValueRef(m.from as any, ctx)
+        } else if (typeof m.from === 'object' && 'ref' in m.from) {
+          const varName = this.resolveRefName(m.from.ref, ctx)
+          genericParams[m.to] = m.from.field ? `${varName}.${m.from.field}` : varName
+        } else {
+          genericParams[m.to] = m.from
+        }
+        logger.debug(`  → deliver.mapping: ${m.to} = ${genericParams[m.to]}`)
+      }
     }
 
     // Process deliver options (may contain config references)

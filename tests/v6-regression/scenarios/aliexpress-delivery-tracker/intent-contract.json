@@ -23,12 +23,6 @@
       "type": "number",
       "description": "Maximum number of emails to retrieve",
       "default": 50
-    },
-    {
-      "key": "shopping_label",
-      "type": "string",
-      "description": "Gmail label to apply to processed emails",
-      "default": "shopping"
     }
   ],
   "steps": [
@@ -56,18 +50,17 @@
       },
       "retrieval": {
         "max_results": 50,
-        "include_content": "full",
-        "include_attachments": false
+        "include_content": "full"
       }
     },
     {
-      "id": "extract_delivery_info",
+      "id": "extract_package_details",
       "kind": "loop",
-      "summary": "Extract package details from each email",
+      "summary": "Extract package number, products, and delivery summary from each email",
       "inputs": [
         "aliexpress_emails"
       ],
-      "output": "extracted_deliveries",
+      "output": "extracted_packages",
       "loop": {
         "over": "aliexpress_emails",
         "item_ref": "email",
@@ -76,18 +69,18 @@
         },
         "collect": {
           "enabled": true,
-          "collect_as": "extracted_deliveries",
-          "from_step_output": "delivery_data"
+          "collect_as": "extracted_packages",
+          "from_step_output": "package_info"
         },
         "do": [
           {
             "id": "extract_fields",
             "kind": "extract",
-            "summary": "Extract package number, products, and delivery summary from email content",
+            "summary": "Extract package number, products list, and delivery summary from email body",
             "inputs": [
               "email"
             ],
-            "output": "delivery_data",
+            "output": "package_info",
             "uses": [
               {
                 "capability": "extract_structured_data",
@@ -107,13 +100,13 @@
                   "name": "products",
                   "type": "array",
                   "required": true,
-                  "description": "List of product names or descriptions"
+                  "description": "List of product names or descriptions in the shipment"
                 },
                 {
                   "name": "delivery_status",
                   "type": "string",
                   "required": true,
-                  "description": "Current delivery status (e.g., shipped, in transit, delivered)"
+                  "description": "Current delivery status (e.g., shipped, in transit, out for delivery)"
                 },
                 {
                   "name": "estimated_delivery_date",
@@ -129,13 +122,13 @@
       }
     },
     {
-      "id": "generate_html_table",
+      "id": "generate_html_summary",
       "kind": "generate",
-      "summary": "Generate HTML table with delivery summary",
+      "summary": "Create HTML table summarizing all package deliveries",
       "inputs": [
-        "extracted_deliveries"
+        "extracted_packages"
       ],
-      "output": "summary_table",
+      "output": "summary_content",
       "uses": [
         {
           "capability": "generate",
@@ -143,46 +136,14 @@
         }
       ],
       "generate": {
-        "input": "extracted_deliveries",
+        "input": "extracted_packages",
         "format": "html",
-        "instruction": "Create a professional HTML table with the following structure: columns for Package Number, Products (comma-separated list), Delivery Status, and Estimated Delivery Date. Include proper table styling with borders, header row background color, and cell padding. Format dates in a readable format (e.g., 'Jan 15, 2024'). If estimated delivery date is missing, show 'N/A'.",
+        "instruction": "Create a professional HTML table with the following structure: columns for Package Number, Products (comma-separated list), Delivery Status, and Estimated Delivery Date. Include proper table styling with borders, header row background color, and padding for readability. Add a brief introductory message above the table: 'Here is your AliExpress delivery updates summary:'",
         "outputs": [
           {
-            "name": "html_content",
+            "name": "html_body",
             "type": "string",
-            "description": "Complete HTML table with delivery information"
-          }
-        ]
-      }
-    },
-    {
-      "id": "compose_email_body",
-      "kind": "generate",
-      "summary": "Compose email body with message and HTML table",
-      "inputs": [
-        "summary_table"
-      ],
-      "output": "email_content",
-      "uses": [
-        {
-          "capability": "generate",
-          "domain": "internal"
-        }
-      ],
-      "generate": {
-        "input": "summary_table",
-        "format": "html",
-        "instruction": "Create an HTML email body that includes: 1) A brief greeting and introductory message explaining this is a summary of AliExpress delivery updates, 2) The HTML table from the input, 3) A closing message. Use professional email formatting with proper spacing and styling.",
-        "outputs": [
-          {
-            "name": "subject",
-            "type": "string",
-            "description": "Email subject line"
-          },
-          {
-            "name": "body",
-            "type": "string",
-            "description": "Complete HTML email body"
+            "description": "Complete HTML content with message and table"
           }
         ]
       }
@@ -190,9 +151,9 @@
     {
       "id": "send_summary_email",
       "kind": "notify",
-      "summary": "Send delivery summary email to user",
+      "summary": "Send summary email to user",
       "inputs": [
-        "email_content"
+        "summary_content"
       ],
       "uses": [
         {
@@ -215,14 +176,13 @@
         },
         "content": {
           "subject": {
-            "kind": "ref",
-            "ref": "email_content",
-            "field": "subject"
+            "kind": "literal",
+            "value": "AliExpress Delivery Updates Summary"
           },
           "body": {
             "kind": "ref",
-            "ref": "email_content",
-            "field": "body"
+            "ref": "summary_content",
+            "field": "html_body"
           },
           "format": "html"
         }
@@ -231,7 +191,7 @@
     {
       "id": "mark_emails_read",
       "kind": "loop",
-      "summary": "Mark all processed emails as read",
+      "summary": "Mark all AliExpress delivery emails as read",
       "inputs": [
         "aliexpress_emails"
       ],
@@ -263,7 +223,7 @@
               "message_id": {
                 "kind": "ref",
                 "ref": "email",
-                "field": "message_id"
+                "field": "id"
               },
               "mark_read": {
                 "kind": "literal",
@@ -275,9 +235,9 @@
       }
     },
     {
-      "id": "apply_shopping_label",
+      "id": "move_to_shopping_label",
       "kind": "loop",
-      "summary": "Apply shopping label to all processed emails",
+      "summary": "Move all AliExpress delivery emails to shopping label",
       "inputs": [
         "aliexpress_emails"
       ],
@@ -286,9 +246,9 @@
         "item_ref": "email",
         "do": [
           {
-            "id": "add_label",
+            "id": "apply_label",
             "kind": "data_source",
-            "summary": "Add shopping label to email",
+            "summary": "Apply shopping label to email",
             "inputs": [
               "email"
             ],
@@ -309,16 +269,12 @@
               "message_id": {
                 "kind": "ref",
                 "ref": "email",
-                "field": "message_id"
+                "field": "id"
               },
               "add_labels": {
-                "kind": "computed",
-                "op": "array",
-                "args": [
-                  {
-                    "kind": "config",
-                    "key": "shopping_label"
-                  }
+                "kind": "literal",
+                "value": [
+                  "shopping"
                 ]
               }
             }
@@ -326,11 +282,6 @@
         ]
       }
     }
-  ],
-  "required_outcomes": [
-    "Email summary sent to user with AliExpress delivery updates",
-    "All processed emails marked as read",
-    "All processed emails labeled with 'shopping' tag"
   ],
   "confidence": 0.95
 }

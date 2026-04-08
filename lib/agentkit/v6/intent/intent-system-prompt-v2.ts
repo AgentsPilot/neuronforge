@@ -289,7 +289,7 @@ Use standard comparison operators: "eq", "ne", "gt", "gte", "lt", "lte", "contai
   "output": "filtered_items",
 
   "transform": {
-    "op": string,  // "filter", "map", "reduce", "group", "sort", "flatten", "merge", "select", or "custom"
+    "op": string,  // "filter", "map", "reduce", "group", "sort", "flatten", "merge", or "dedupe"
     "input": "data_items",  // RefName
     "description"?: "human-readable transform description",
     "rules"?: JsonObject,  // optional structured rules (compiler interprets)
@@ -297,7 +297,7 @@ Use standard comparison operators: "eq", "ne", "gt", "gte", "lt", "lte", "contai
   }
 }
 
-Common transform operations include filter (subset), map (transform items), reduce (aggregate), group (by field), sort (order), flatten (nested arrays), merge (combine inputs), select (pick fields), etc.
+Common transform operations include filter (subset), map (transform items with structured mapping), reduce (aggregate), group (by field), sort (order), flatten (nested arrays), merge (combine inputs), dedupe (remove duplicates by field). NOTE: To pick/rename fields, use map with structured mapping. Do NOT use "select" or "custom" — they are not supported at runtime.
 
 NOTE: For splitting data into named subsets (e.g., valid vs invalid), prefer AggregateStep with subset outputs instead of TransformStep with group, as this creates explicit symbolic refs for each subset.
 
@@ -366,7 +366,7 @@ If you cannot express the transformation with structured fields/conditions/rules
 
 **CRITICAL: output_schema Rules for Transform Steps**
 
-Shape-changing transforms (\`map\`, \`group\`, \`merge\`, \`reduce\`, \`select\`) MUST include \`transform.output_schema\` describing the output structure with field names and types. The deterministic compiler cannot infer the output shape for these operations — only you know the intended structure.
+Shape-changing transforms (\`map\`, \`group\`, \`merge\`, \`reduce\`) MUST include \`transform.output_schema\` describing the output structure with field names and types. The deterministic compiler cannot infer the output shape for these operations — only you know the intended structure.
 
 Shape-preserving transforms (\`filter\`, \`sort\`, \`dedupe\`, \`flatten\`) do NOT need \`output_schema\` — the output has the same shape as the input. Exception: \`flatten\` that extracts nested objects into a new structure SHOULD include \`output_schema\`.
 
