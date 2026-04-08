@@ -217,7 +217,14 @@
           "ocr_failed": "OCR extraction failed. File may be corrupted or image quality too low",
           "field_not_found": "One or more required fields could not be extracted from the document"
         }
-      }
+      },
+      "output_dependencies": [
+        {
+          "when_param": {},
+          "unpopulated_fields": ["extracted_fields", "raw_text"],
+          "message": "This action requires a FILE as input (PDF, image, scanned document). If your source is text (email body, message, post), use an AI extract step instead — this action will return 'Unknown' placeholders for every field when given non-file input."
+        }
+      ]
     }
   }
 }

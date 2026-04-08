@@ -638,4 +638,50 @@ validateValue(value: any, schema: SchemaField, path: string): string[] {
 
 ---
 
+## 10. Input-Type Compatibility — Design Decision (Direction #3)
+
+> **Status**: Implemented (2026-04-07) — interim approach, to be revisited as the plugin catalog matures.
+> **Files**: `lib/agentkit/v6/capability-binding/input-type-compat.ts` (single source of truth)
+
+### What it is
+
+A **centralized semantic-type vocabulary and compatibility matrix** that governs whether a plugin action's input requirements match the data type produced by an upstream step. For example: `document-extractor.extract_structured_data` requires `from_type: "file_attachment"` — if the upstream data is an email body (`semantic_type: "email_message"`), the binder rejects the binding and falls back to AI extraction.
+
+### Why this approach (and what's interim about it)
+
+The vocabulary is a **hand-maintained const array** in `input-type-compat.ts`. The TypeScript types (`FromType`, `ToType`) and the runtime validation set (`KNOWN_SEMANTIC_TYPES`) are derived from it automatically. This was chosen over:
+
+- **Open vocabulary** (plugins declare any string) — rejected because it leads to drift and untestable compatibility (Q-C1 decision)
+- **JSON-Schema-only approach** (infer types from `type: "object"` + property shapes) — this is what the heuristic fallback does today, but it's fragile (property-name matching) and will be phased out
+
+The interim aspects:
+
+1. **Heuristic marker sets** (`FILE_PROPERTY_MARKERS`, `TEXT_PROPERTY_MARKERS`, `FILE_PARAM_NAMES`) exist as fallbacks for plugin definitions that lack explicit `x-semantic-type` annotations. These should shrink and eventually be deleted as plugin definitions are annotated. Track their firing rate to know when they're dead code.
+
+2. **`PRIMARY_CONTENT_PARAMS`** is a hand-maintained set that scopes which action parameters trigger type-checking. Ideally, plugin definitions would explicitly mark which parameter is the "primary content input" via an annotation (e.g., `x-primary-input: true`), removing the need for this set. That annotation doesn't exist yet.
+
+3. **The validator** (`validatePluginTypeAnnotations.ts`) catches new semantic type values that aren't in the canonical list. This ensures the vocabulary stays coherent, but it's a lint-time check — not a compile-time guarantee.
+
+### How to maintain it
+
+All type definitions flow from `input-type-compat.ts`:
+
+```
+FROM_TYPE_VALUES (const array)     → add new types here
+TO_TYPE_EXTRAS (const array)       → add new types here
+FromType / ToType                  → auto-derived, don't edit
+KNOWN_SEMANTIC_TYPES               → auto-derived, used by plugin validator
+TYPE_COMPAT                        → add compatibility rules here
+```
+
+See the header comment in `input-type-compat.ts` for the full maintenance guide.
+
+### When to revisit
+
+- When >80% of plugin actions have `x-semantic-type` annotations → delete heuristic marker sets
+- When a plugin needs a type not in the vocabulary → extend `FROM_TYPE_VALUES` + `TYPE_COMPAT`
+- When the `PRIMARY_CONTENT_PARAMS` heuristic causes false positives → consider adding `x-primary-input` annotation to plugin parameter schemas
+
+---
+
 *V6 Workflow Data Schema — Neuronforge*

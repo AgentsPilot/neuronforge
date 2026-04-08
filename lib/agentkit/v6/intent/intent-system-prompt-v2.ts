@@ -1295,19 +1295,20 @@ function buildVocabularyInjection(vocabulary: PluginVocabulary): string {
   }
   sections.push('')
 
-  // Connected plugins with actions and input parameters
+  // Connected plugins with actions, input parameters, and output schemas
   sections.push('**CONNECTED PLUGINS AND ACTIONS:**')
-  sections.push('(Each action shows its input parameters — use these for config defaults and query syntax)')
+  sections.push('(Each action shows its input parameters and output field names. Use the output field names')
+  sections.push(' when declaring step outputs and downstream field references.)')
   sections.push('')
   for (const plugin of vocabulary.plugins.slice(0, 10)) { // Show first 10 plugins
     sections.push(`**${plugin.name}** (${plugin.key})${plugin.provider_family ? ` [${plugin.provider_family}]` : ''}`)
     sections.push(`  Domains: ${plugin.domains.join(', ')} | Capabilities: ${plugin.capabilities.join(', ')}`)
 
-    // Show all actions with their input params
+    // Show all actions with their input params and output summaries
     for (const action of plugin.actions) {
       sections.push(`  - ${action.action_name} (${action.domain}/${action.capability}): ${action.description}`)
       if (action.input_params && action.input_params.length > 0) {
-        sections.push(`    Parameters:`)
+        sections.push(`    Input parameters:`)
         for (const param of action.input_params) {
           let paramLine = `      ${param.required ? '*' : ' '} ${param.name}: ${param.type}`
           if (param.enum) {
@@ -1320,6 +1321,16 @@ function buildVocabularyInjection(vocabulary: PluginVocabulary): string {
             paramLine += ` — ${param.description}`
           }
           sections.push(paramLine)
+        }
+      }
+      // Direction #1: Output schema summary — shows exact field names the action returns
+      if (action.output_summary) {
+        sections.push(`    ${action.output_summary}`)
+      }
+      // Direction #1: Coupling hints — fields that are empty unless a param is set
+      if (action.output_dependencies && action.output_dependencies.length > 0) {
+        for (const dep of action.output_dependencies) {
+          sections.push(`    ⚠ ${dep.message}`)
         }
       }
     }
@@ -1338,6 +1349,16 @@ function buildVocabularyInjection(vocabulary: PluginVocabulary): string {
   sections.push('- Match provider_family to connected plugins when possible (e.g., "google" for Gmail/Drive/Sheets)')
   sections.push('- Example: For Gmail operations, use domain="email" (NOT "messaging"), provider_family="google"')
   sections.push('- Example: For AI/LLM operations, use domain="internal", capability="generate"')
+  sections.push('')
+
+  // Direction #1: Output field reference rules
+  sections.push('**OUTPUT FIELD REFERENCE RULES:**')
+  sections.push('- When a step reads data from an upstream action, use the EXACT field names shown in that action\'s "Returns:" line')
+  sections.push('- Do NOT invent field names or use synonyms (e.g., use "from" not "sender", use "id" not "message_id", use "body" not "content")')
+  sections.push('- If a field is marked with ⚠, you MUST set the referenced parameter to the required value')
+  sections.push('  Example: If "⚠ body empty unless content_level=full", set content_level to "full" when your workflow reads .body')
+  sections.push('- For extract/transform steps that read fields from an upstream action, check the "Returns:" summary to find the correct field names')
+  sections.push('- If an action\'s input requires a file (marked as file_attachment type), do NOT route text/string sources to it — use an AI extract step instead')
   sections.push('')
 
   // Add user context if provided

@@ -40,6 +40,13 @@ export interface SchemaField {
 
   /** Where this schema came from */
   source?: 'plugin' | 'ai_declared' | 'inferred'
+
+  /**
+   * Direction #3: Semantic type annotation for input-type compatibility checking.
+   * Propagated from plugin output_schema `x-semantic-type` annotations.
+   * Used by InputTypeChecker to validate from_type/to_type compatibility at bind time.
+   */
+  semantic_type?: string
 }
 
 /**
@@ -118,6 +125,11 @@ function convertJsonSchemaToSchemaField(
 
   if (schema.description) {
     field.description = schema.description
+  }
+
+  // Direction #3: Propagate x-semantic-type annotation from plugin output schemas
+  if (schema['x-semantic-type']) {
+    field.semantic_type = schema['x-semantic-type']
   }
 
   // Convert nested properties for objects

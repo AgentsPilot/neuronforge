@@ -8,6 +8,7 @@
 import type { PluginManagerV2 } from '@/lib/server/plugin-manager-v2'
 import type { PluginDefinition, ActionDefinition } from '@/lib/types/plugin-types'
 import { createLogger } from '@/lib/logger'
+import { summarizeOutputSchema, formatSummaryForPrompt } from './outputSchemaSummarizer'
 
 const logger = createLogger({ module: 'PluginVocabularyExtractor', service: 'V6' })
 
@@ -21,6 +22,19 @@ export interface ActionParamInfo {
   default?: any
 }
 
+/**
+ * Describes a condition under which certain output fields are unpopulated.
+ * Declared on plugin action definitions as `output_dependencies`.
+ * Surfaced in the LLM prompt as ⚠ coupling hints.
+ *
+ * Design doc: docs/v6/V6_WORKFLOW_DATA_SCHEMA_DESIGN_REBASE.md (Deep Dive A, §A.4 B.3)
+ */
+export interface OutputDependency {
+  when_param: Record<string, any>   // e.g. { "content_level": "metadata" }
+  unpopulated_fields: string[]      // e.g. ["body", "snippet"]
+  message: string                   // human-readable warning for the LLM
+}
+
 export interface PluginActionInfo {
   plugin_key: string
   plugin_name: string
@@ -29,6 +43,10 @@ export interface PluginActionInfo {
   capability: string
   description: string
   input_params?: ActionParamInfo[]
+  /** Compact summary of the action's output schema (field names + types) */
+  output_summary?: string
+  /** Coupling hints: fields that are empty unless a specific param is set */
+  output_dependencies?: OutputDependency[]
 }
 
 export interface PluginVocabulary {
@@ -68,15 +86,16 @@ export class PluginVocabularyExtractor {
       connectedPlugins[key] = {
         definition,
         connection: {
-          userId,
-          pluginKey: key,
+          user_id: userId,
+          plugin_key: key,
+          plugin_name: key,
           username: 'system',
           status: 'active',
-          accessToken: 'system',
-          refreshToken: null,
-          expiresAt: null,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
+          access_token: 'system',
+          refresh_token: null,
+          expires_at: null,
+          connected_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
         }
       }
     }
@@ -150,6 +169,19 @@ export class PluginVocabularyExtractor {
           // Extract input parameters from action schema
           if (action.parameters?.properties) {
             actionInfo.input_params = this.extractParamInfo(action)
+          }
+
+          // Extract output schema summary (Direction #1 — Deep Dive A)
+          if (action.output_schema) {
+            const summary = summarizeOutputSchema(action.output_schema)
+            if (summary) {
+              actionInfo.output_summary = formatSummaryForPrompt(summary)
+            }
+          }
+
+          // Extract output dependencies / coupling hints
+          if ((action as any).output_dependencies) {
+            actionInfo.output_dependencies = (action as any).output_dependencies
           }
 
           actions.push(actionInfo)

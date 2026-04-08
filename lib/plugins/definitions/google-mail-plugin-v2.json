@@ -364,6 +364,7 @@
             "description": "Array of matching emails",
             "items": {
               "type": "object",
+              "x-semantic-type": "email_message",
               "properties": {
                 "id": {
                   "type": "string",
@@ -409,6 +410,7 @@
                   "description": "Attachment metadata (if include_attachments=true). Each item contains: filename, mimeType, size, attachment_id (use with get_email_attachment), message_id (email ID)",
                   "items": {
                     "type": "object",
+                    "x-semantic-type": "file_attachment",
                     "properties": {
                       "filename": {
                         "type": "string",
@@ -491,7 +493,19 @@
           "api_rate_limit": "Too many search requests. Please wait a moment and try again.",
           "insufficient_permissions": "Gmail read permissions are insufficient. Please reconnect with full email access."
         }
-      }
+      },
+      "output_dependencies": [
+        {
+          "when_param": { "content_level": "metadata" },
+          "unpopulated_fields": ["body", "snippet"],
+          "message": "body and snippet are empty unless content_level is 'snippet' or 'full'"
+        },
+        {
+          "when_param": { "content_level": "snippet" },
+          "unpopulated_fields": ["body"],
+          "message": "body is empty unless content_level='full' — only snippet is populated"
+        }
+      ]
     },
     "create_draft": {
       "description": "Create a draft email without sending",

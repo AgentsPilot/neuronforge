@@ -503,11 +503,27 @@ export class IntentToIRConverter {
       genericConfig.deterministic = true
     }
 
-    // WP-12: Plugin-based extractors like document-extractor expect file attachments
-    // (PDF/XLSX/image) — when given free-text email/message bodies they silently return
-    // "Unknown X" placeholders for every field. If the binder picked a file-extractor
-    // plugin but the source variable isn't a file attachment, fall back to AI extraction.
+    // Direction #3 (Phase 2b): If the binder already rejected this step's binding
+    // due to input-type incompatibility, route to AI extraction immediately.
+    // This is the schema-driven check — it runs before the WP-12 heuristic fallback.
     let effectivePluginKey = step.plugin_key
+    if (
+      step.binding_method === 'unbound' &&
+      step.binding_reason?.includes('input_type_incompatible')
+    ) {
+      logger.info(
+        `[O-Dir3] Extract step '${step.id}' unbound by Phase 2b (input_type_incompatible) — routing to AI extraction. ` +
+        `Rejected: ${(step.rejected_candidates || []).map(r => `${r.plugin_key}.${r.action_name}`).join(', ')}`
+      )
+      ctx.warnings.push(
+        `[O-Dir3] Rerouted extract step '${step.id}' to AI — binder rejected all candidates due to input-type incompatibility.`
+      )
+      effectivePluginKey = undefined
+    }
+
+    // WP-12 heuristic fallback: If the binder didn't catch it (e.g., missing
+    // x-semantic-type annotations), use the tactical heuristic as safety net.
+    // This path will be removed once plugin annotations are complete (see A.7 step 8).
     if (
       effectivePluginKey &&
       effectivePluginKey !== 'chatgpt-research' &&
@@ -519,10 +535,10 @@ export class IntentToIRConverter {
         const sourceIsFile = this.inputLooksLikeFileAttachment(step.extract.input, ctx)
         if (!sourceIsFile) {
           logger.info(
-            `[O-WP12] ${effectivePluginKey}.${step.action} expects file_attachment but extract.input resolves to text/object — routing to AI extraction instead`
+            `[O-WP12] ${effectivePluginKey}.${step.action} expects file_attachment but extract.input resolves to text/object — routing to AI extraction instead (heuristic fallback)`
           )
           ctx.warnings.push(
-            `[O-WP12] Rerouted extract step '${step.id}' from ${effectivePluginKey} to AI because source variable is not a file attachment.`
+            `[O-WP12] Rerouted extract step '${step.id}' from ${effectivePluginKey} to AI because source variable is not a file attachment (heuristic fallback).`
           )
           effectivePluginKey = undefined
         }

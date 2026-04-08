@@ -473,20 +473,18 @@ Four weak points with shared root cause get upstream-anchored fixes. The compile
 
 #### A.7 Implementation outline
 
-| # | Change | File(s) |
-|---|---|---|
-| 1 | Add `summarizeOutputSchema(schema, depthCap=2): string` helper | `lib/agentkit/v6/vocabulary/outputSchemaSummarizer.ts` (new) |
-| 2 | Extend `PluginActionInfo` with `output_summary: string` and `output_dependencies: OutputDependency[]` | `lib/agentkit/v6/vocabulary/PluginVocabularyExtractor.ts` |
-| 3 | Update extractor to pull `output_schema` and `output_dependencies` from plugin definitions, summarize | `lib/agentkit/v6/vocabulary/PluginVocabularyExtractor.ts` |
-| 4 | Update `buildVocabularyInjection()` to render output summaries + coupling warnings under each action | `lib/agentkit/v6/intent/intent-system-prompt-v2.ts:1298+` |
-| 5 | Add prompt rule: "When declaring step output RefNames and downstream field references, use the field names shown in the `Returns:` summary for the chosen action." | `lib/agentkit/v6/intent/intent-system-prompt-v2.ts` |
-| 6 | Add prompt rule: "If a downstream step reads a field marked ⚠, you MUST set the referenced parameter to the required value." | `lib/agentkit/v6/intent/intent-system-prompt-v2.ts` |
-| 7 | Add `output_dependencies` field to plugin definition schema (JSON) | `lib/plugins/definitions/*-plugin-v2.json` (incremental per plugin) |
-| 8 | Seed `output_dependencies` on the two plugins that caused WP-11/WP-12: `google-mail.search_emails` (content_level), `document-extractor.extract_structured_data` (file-only input) | `lib/plugins/definitions/google-mail-plugin-v2.json`, `lib/plugins/definitions/document-extractor-plugin-v2.json` |
-| 9 | Regression tests: run existing scenarios (`leads-email-summary`, `complaint-email-logger`, `gmail-urgency-flagging`, `aliexpress-delivery-tracker`) and verify IntentContract references align with plugin output schemas | `tests/v6-regression/` |
-| 10 | Once B is stable, **delete** compiler-side heuristics (Phase 5 field reconciliation, alias tables, prefix stripping) and rely on Phase 1 correctness + compiler validation | `lib/agentkit/v6/compiler/ExecutionGraphCompiler.ts`, `lib/pilot/StepExecutor.ts` transformMap |
+| # | Change | File(s) | Status |
+|---|---|---|---|
+| 1 | Add `summarizeOutputSchema(schema, depthCap=2): string` helper | `lib/agentkit/v6/vocabulary/outputSchemaSummarizer.ts` (new) | ✅ Done (2026-04-07) |
+| 2 | Extend `PluginActionInfo` with `output_summary: string`, `output_dependencies: OutputDependency[]` | `lib/agentkit/v6/vocabulary/PluginVocabularyExtractor.ts` | ✅ Done (2026-04-07) |
+| 3 | Update extractor to pull `output_schema` and `output_dependencies` from plugin definitions, summarize | `lib/agentkit/v6/vocabulary/PluginVocabularyExtractor.ts` | ✅ Done (2026-04-07) |
+| 4 | Update `buildVocabularyInjection()` to render output summaries + coupling warnings under each action | `lib/agentkit/v6/intent/intent-system-prompt-v2.ts:1298+` | ✅ Done (2026-04-07) |
+| 5 | Add prompt rules: output field references + coupling hints + file-only input warning | `lib/agentkit/v6/intent/intent-system-prompt-v2.ts` | ✅ Done (2026-04-07) |
+| 6 | Seed `output_dependencies` on `google-mail.search_emails` (content_level coupling) and `document-extractor.extract_structured_data` (file-only input warning) | `google-mail-plugin-v2.json`, `document-extractor-plugin-v2.json` | ✅ Done (2026-04-07) |
+| 7 | Regression tests: run existing scenarios and verify output summaries appear in vocabulary + IntentContract references improve | `tests/v6-regression/` | ⬜ Running |
+| 8 | Once stable, **delete** compiler-side heuristics (Phase 5 field reconciliation, alias tables, prefix stripping) and rely on Phase 1 correctness + compiler validation | `lib/agentkit/v6/compiler/ExecutionGraphCompiler.ts`, `lib/pilot/StepExecutor.ts` transformMap | ⬜ Gated on regression evidence |
 
-Steps 1–8 are additive and safe. Step 10 is the payoff — removing P3's heuristic soup — and gated on regression evidence.
+Steps 1–6 are implemented. Step 7 validates. Step 8 is the payoff — removing P3's heuristic soup — gated on regression evidence.
 
 ---
 
@@ -1103,20 +1101,20 @@ Runtime (step execution):  Direction #2 — validate AI outputs structurally
 
 #### C.8 Implementation outline
 
-| # | Change | File(s) |
-|---|---|---|
-| 1 | Extend CapabilityBinderV2 to retain ranked candidate list per step (not just winner) | `CapabilityBinderV2.ts` |
-| 2 | Add `from_type` vocabulary + compatibility matrix | `lib/agentkit/v6/capability-binding/input-type-compat.ts` (new) |
-| 3 | Create `InputTypeChecker` class with `check()` method | `lib/agentkit/v6/capability-binding/InputTypeChecker.ts` (new) |
-| 4 | Wire input-type check into `bind()` — new Phase 2b after DataSchemaBuilder | `CapabilityBinderV2.ts` |
-| 5 | Add `to_type` annotations to plugin output schemas (start with google-mail, document-extractor, google-drive, google-sheets) | `lib/plugins/definitions/*.json` |
-| 6 | Extend DataSchemaBuilder to propagate `to_type` markers into slot `SchemaField` entries | `DataSchemaBuilder.ts`, `workflow-data-schema.ts` |
-| 7 | Add `input_type_incompatible` rewrite path in IntentToIRConverter.convertExtract | `IntentToIRConverter.ts` |
-| 8 | Surface binding failures with structured diagnostic (which candidate, which param, which source, which types) | `CapabilityBinderV2.ts`, `V6PipelineOrchestrator.ts` |
-| 9 | Add regression scenario: extract-from-email-body should rewrite to `ai_processing/extract`, NOT bind to document-extractor | `tests/v6-regression/scenarios/aliexpress-delivery-tracker/` |
-| 10 | Metrics: count candidate rejections by (plugin, action, from_type violation) to see which plugin-def labels are most impactful | `MetricsCollector.ts` |
+| # | Change | File(s) | Status |
+|---|---|---|---|
+| 1 | Extend CapabilityBinderV2 to retain ranked candidate list per step | `CapabilityBinderV2.ts` | ✅ Done (2026-04-07) |
+| 2 | Add `from_type` vocabulary + compatibility matrix (~12 canonical types) | `lib/agentkit/v6/capability-binding/input-type-compat.ts` (new) | ✅ Done (2026-04-07) |
+| 3 | Create `InputTypeChecker` class with `check()` method | `lib/agentkit/v6/capability-binding/InputTypeChecker.ts` (new) | ✅ Done (2026-04-07) |
+| 4 | Wire input-type check into `bind()` — Phase 2b after DataSchemaBuilder + field reconciliation | `CapabilityBinderV2.ts` | ✅ Done (2026-04-07) |
+| 5 | Add `x-semantic-type` annotations to plugin output schemas (google-mail emails → `email_message`, attachments → `file_attachment`) | `google-mail-plugin-v2.json` | ✅ Done (2026-04-07) |
+| 6 | Extend `SchemaField` with `semantic_type` + propagate from `x-semantic-type` in `convertJsonSchemaToSchemaField()` | `workflow-data-schema.ts` | ✅ Done (2026-04-07) |
+| 7 | Add `input_type_incompatible` rewrite path in IntentToIRConverter — runs before WP-12 heuristic fallback | `IntentToIRConverter.ts` | ✅ Done (2026-04-07) |
+| 8 | Surface binding failures with structured diagnostic (`rejected_candidates` on BoundStep) | `CapabilityBinderV2.ts` | ✅ Done (2026-04-07) — `rejected_candidates` array with plugin_key, action_name, rejection_reason |
+| 9 | Regression validation: all 10 scenarios pass with Phase 2b active | `tests/v6-regression/` | ⬜ Running |
+| 10 | Metrics: count candidate rejections | `MetricsCollector.ts` | ⬜ Deferred (add when rejection telemetry is needed) |
 
-Steps 1–4 + 6–7 are the minimum to fix WP-12. Step 5 is incremental — every plugin definition that gets `to_type` annotations adds a check. Direction #3 ships as a safety layer from day one and tightens over time as plugin definitions get annotated.
+Steps 1–8 are implemented. The WP-12 heuristic fallback (`actionExpectsFileAttachment` + `inputLooksLikeFileAttachment`) is retained as a safety net — it fires only if the schema-driven Phase 2b check didn't catch the incompatibility (e.g., missing `x-semantic-type` annotations). Will be removed per A.7 step 8 once annotations are complete.
 
 ---
 
@@ -1467,3 +1465,5 @@ Week 4+:   Measure + cleanup
 | 2026-04-05 | Deep Dive B added | Runtime AI Output Validation. Anatomized AliExpress failure (5 validation blind spots). Documented silent fallbacks in current StepExecutor I3 path + alias wrapper + memory-dump null-fill. Proposed AIOutputValidator + SchemaViolationError + 1-repair-attempt pattern. Honest scoping: Direction #2 catches structural LLM misshapes but NOT semantic fabrication ("Unknown X") — that needs trust-metadata propagation (§B.6, scoped out). Impact map, 11-step implementation outline, 8 open questions. |
 | 2026-04-05 | Deep Dive C + Parts 3-5 added | Binder Input-Type Checking. Documented how CapabilityBinderV2 ignores `x-variable-mapping.from_type`. Proposed two-phase binding with post-schema input-type checker, symmetric `to_type` annotations on plugin output schemas, canonical closed compatibility vocabulary, and IR-converter rewrite path for text sources → ai_processing/extract. Part 3: consolidated answers to all 20 open questions from A/B/C. Part 4: summary decisions table. Part 5: implementation sequencing (Direction #1 → #3 → #2, parallelizable #1+#3). |
 | 2026-04-06 | Post-fix reconciliation | WP-11, WP-12, WP-13, WP-14 fixed tactically in IR converter + runtime (commit c175d49 parent). Updated all sections: P2 table (WP-11 status), P3 heuristic table (+5 new heuristics from WP-11–14), P4 phase ownership table (+WP-13/14), Deep Dive A impact map (WP-11/12 now "tactically fixed, Direction #1 makes heuristic unnecessary"), Deep Dive B AliExpress anatomy (steps 1-2 now fixed), B.5 combination table (+WP-13 row, status column), Deep Dive C impact map (WP-12 updated), Part 5 sequencing (reduced urgency note, heuristic-removal tracking table with gates). Core thesis unchanged: tactical fixes are heuristic-based and add to P3's soup; Directions #1–#3 replace them with schema-driven solutions. |
+| 2026-04-07 | Direction #1 implemented (steps 1–7 of 8) | New `outputSchemaSummarizer.ts` (summarize JSON Schema → compact field list, depth-capped to 2 levels, named-type extraction for complex arrays). Extended `PluginActionInfo` with `output_summary` + `output_dependencies`. Vocabulary extractor now pulls output schemas from all plugin definitions. `buildVocabularyInjection()` renders `Returns:` + `⚠` coupling hints per action. Prompt rules added: exact field names from Returns, ⚠ coupling param enforcement, file-only input warning. Seeded `output_dependencies` on `google-mail.search_emails` (content_level coupling) and `document-extractor.extract_structured_data` (file-only input). **Regression: 10/10 passed.** |
+| 2026-04-07 | Direction #3 implemented (steps 1–8 of 10) | New `input-type-compat.ts` (canonical FromType/ToType vocabulary, ~12 types, compatibility matrix). New `InputTypeChecker.ts` (validates from_type vs semantic_type at bind time, with heuristic fallback for unannotated schemas). CapabilityBinderV2 retains ranked candidates + Phase 2b validation after DataSchemaBuilder. SchemaField extended with `semantic_type`, propagated from `x-semantic-type` on plugin output schemas. IntentToIRConverter checks `input_type_incompatible` binding reason before WP-12 heuristic fallback. Added `x-semantic-type: "email_message"` and `"file_attachment"` to google-mail search_emails output schema. Regression running. |

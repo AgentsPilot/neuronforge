@@ -25,6 +25,7 @@ import type { WorkflowDataSchema } from '../logical-ir/schemas/workflow-data-sch
 import { createLogger } from '@/lib/logger'
 import { SubsetRefResolver, type SubsetResolutionResult } from './SubsetRefResolver'
 import { DataSchemaBuilder } from './DataSchemaBuilder'
+import { InputTypeChecker } from './InputTypeChecker'
 
 const logger = createLogger({ module: 'CapabilityBinderV2', service: 'V6' })
 
@@ -37,6 +38,10 @@ export type BoundStep = IntentStep & {
   binding_confidence?: number
   binding_method?: 'exact_match' | 'preference_match' | 'entity_match' | 'unbound'
   binding_reason?: string[]
+  /** Direction #3: Full ranked candidate list retained for Phase 2b re-selection */
+  _ranked_candidates?: ActionCandidate[]
+  /** Direction #3: Candidates rejected by input-type check */
+  rejected_candidates?: Array<{ plugin_key: string; action_name: string; rejection_reason: string }>
 }
 
 export type BoundIntentContract = IntentContract & {
@@ -185,6 +190,17 @@ export class CapabilityBinderV2 {
       )
     }
 
+    // Direction #3 — Phase 2b: Input-type compatibility validation.
+    // Now that data_schema exists, check that each bound action's input-type
+    // requirements (from_type) match the source slot's semantic type.
+    // If the top candidate fails, try the next-ranked one.
+    this.validateInputTypeCompatibility(boundSteps, dataSchema)
+
+    // Clean up internal-only fields before returning — _ranked_candidates
+    // holds full ActionDefinition/PluginDefinition objects that would bloat
+    // serialized output (JSON.stringify of the BoundIntentContract).
+    this.cleanupInternalFields(boundSteps)
+
     return boundIntent
   }
 
@@ -320,6 +336,9 @@ export class CapabilityBinderV2 {
     // Sort by score descending
     scoredCandidates.sort((a, b) => b.score - a.score)
     const best = scoredCandidates[0]
+
+    // Direction #3: Retain full ranked list for Phase 2b re-selection
+    boundStep._ranked_candidates = scoredCandidates
 
     // Bind to best candidate
     boundStep.plugin_key = best.plugin_key
@@ -693,5 +712,143 @@ export class CapabilityBinderV2 {
 
     walkSteps(steps)
     return count
+  }
+
+  /**
+   * Direction #3 — Phase 2b: Validate input-type compatibility for all bound steps.
+   *
+   * For each bound step with _ranked_candidates:
+   * 1. Check the current binding against the data_schema using InputTypeChecker
+   * 2. If incompatible, try the next candidate in the ranked list
+   * 3. If no candidate survives, mark unbound with reason 'input_type_incompatible'
+   *
+   * Mutates boundSteps in place.
+   */
+  private validateInputTypeCompatibility(
+    boundSteps: BoundStep[],
+    dataSchema: WorkflowDataSchema,
+  ): void {
+    const checker = new InputTypeChecker()
+
+    const walkSteps = (steps: BoundStep[]): void => {
+      for (const step of steps) {
+        if (step.plugin_key && step.action && step._ranked_candidates) {
+          this.checkAndReselect(step, checker, dataSchema)
+        }
+
+        // Recurse into nested steps
+        if ((step as any).loop?.do) walkSteps((step as any).loop.do)
+        if ((step as any).decide?.then) walkSteps((step as any).decide.then)
+        if ((step as any).decide?.else) walkSteps((step as any).decide.else)
+        if ((step as any).parallel?.branches) {
+          for (const branch of (step as any).parallel.branches) {
+            if (branch.steps) walkSteps(branch.steps)
+          }
+        }
+      }
+    }
+
+    walkSteps(boundSteps)
+  }
+
+  /**
+   * Check a single bound step's input-type compatibility.
+   * If the current binding fails, try next candidates in rank order.
+   */
+  private checkAndReselect(
+    step: BoundStep,
+    checker: InputTypeChecker,
+    dataSchema: WorkflowDataSchema,
+  ): void {
+    const candidates = step._ranked_candidates
+    if (!candidates || candidates.length === 0) return
+
+    // Get the step's input refs
+    const stepInputs = step.inputs as string[] | undefined
+
+    // Try each candidate in rank order
+    const rejections: Array<{ plugin_key: string; action_name: string; rejection_reason: string }> = []
+
+    for (const candidate of candidates) {
+      const result = checker.check(
+        candidate.action,
+        stepInputs,
+        dataSchema,
+        step.id,
+      )
+
+      if (result.compatible) {
+        // If we had to swap (current binding was rejected), rebind to this candidate
+        if (candidate.plugin_key !== step.plugin_key || candidate.action_name !== step.action) {
+          logger.info(
+            {
+              step_id: step.id,
+              rejected: `${step.plugin_key}.${step.action}`,
+              selected: `${candidate.plugin_key}.${candidate.action_name}`,
+              rejections: rejections.map(r => r.rejection_reason),
+            },
+            '[Phase 2b] Input-type check: swapped to compatible candidate'
+          )
+
+          step.plugin_key = candidate.plugin_key
+          step.action = candidate.action_name
+          step.binding_confidence = Math.min(candidate.score, 1.0)
+          step.binding_reason = [
+            ...(step.binding_reason || []),
+            `✅ Input types compatible (Phase 2b)`,
+          ]
+        }
+
+        step.rejected_candidates = rejections.length > 0 ? rejections : undefined
+        return // Found a compatible candidate
+      }
+
+      // This candidate failed — record rejection
+      const violation = result.violations[0]
+      rejections.push({
+        plugin_key: candidate.plugin_key,
+        action_name: candidate.action_name,
+        rejection_reason: violation?.reason || 'input_type_incompatible',
+      })
+    }
+
+    // All candidates failed input-type check
+    logger.warn(
+      {
+        step_id: step.id,
+        originalBinding: `${step.plugin_key}.${step.action}`,
+        rejections,
+      },
+      '[Phase 2b] All candidates rejected by input-type check — marking unbound'
+    )
+
+    step.plugin_key = undefined
+    step.action = undefined
+    step.binding_method = 'unbound'
+    step.binding_reason = [
+      ...(step.binding_reason || []),
+      'input_type_incompatible',
+    ]
+    step.rejected_candidates = rejections
+  }
+
+  /**
+   * Remove internal-only fields from bound steps before returning.
+   * _ranked_candidates holds full ActionDefinition/PluginDefinition objects
+   * that are only needed during Phase 2b and would massively bloat serialized output.
+   */
+  private cleanupInternalFields(steps: BoundStep[]): void {
+    for (const step of steps) {
+      delete step._ranked_candidates
+
+      if ((step as any).loop?.do) this.cleanupInternalFields((step as any).loop.do)
+      if ((step as any).decide?.then) this.cleanupInternalFields((step as any).decide.then)
+      if ((step as any).decide?.else) this.cleanupInternalFields((step as any).decide.else)
+      if ((step as any).parallel?.branches) {
+        for (const branch of (step as any).parallel.branches) {
+          if (branch.steps) this.cleanupInternalFields(branch.steps)
+        }
+      }
+    }
   }
 }
