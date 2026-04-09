@@ -48,9 +48,14 @@ async function callLLMJson(args: {
   const chatProvider = ProviderFactory.getProvider(providerName as 'openai' | 'anthropic' | 'kimi');
   const maxOutputTokens = chatProvider.getMaxOutputTokens(modelName);
 
+  // Cap max_tokens at 16000 for IC generation — ICs are typically 5-10K tokens.
+  // Higher values (e.g., 64K for claude-sonnet-4-6) trigger Anthropic's streaming
+  // requirement for operations > 10 minutes.
+  const cappedMaxTokens = Math.min(maxOutputTokens, 16000);
+
   const completionParams: any = {
     model: modelName,
-    max_tokens: maxOutputTokens,
+    max_tokens: cappedMaxTokens,
     temperature: 0.0,
     messages: [
       { role: 'system', content: args.system },

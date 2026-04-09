@@ -361,6 +361,23 @@ export class SystemConfigRepository {
   }
 
   /**
+   * Get agent execution AI processing configuration
+   * Fetches AI provider and model settings for ai_processing steps
+   * (classify, generate, extract, summarize via callLLMDirect)
+   */
+  async getAgentExecutionAIProcessingConfig(): Promise<{
+    provider: string;
+    model: string;
+  }> {
+    const [provider, model] = await Promise.all([
+      this.getString('agent_execution_ai_processing_provider', 'anthropic'),
+      this.getString('agent_execution_ai_processing_model', 'claude-sonnet-4-6')
+    ]);
+
+    return { provider, model };
+  }
+
+  /**
    * Infer category from key prefix
    */
   private inferCategory(key: string): string {

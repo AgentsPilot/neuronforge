@@ -47,6 +47,7 @@ import { DeterministicExtractor } from '@/lib/extraction';
 import { IssueCollector } from './shadow/IssueCollector';
 import { FailureClassifier } from './shadow/FailureClassifier';
 import { ExecutionSummaryCollector } from './shadow/ExecutionSummaryCollector';
+import { systemConfigRepository } from '@/lib/repositories/SystemConfigRepository';
 
 // Create module-level logger for structured logging to dev.log
 const logger = createLogger({ module: 'StepExecutor', service: 'workflow-pilot' });
@@ -1523,9 +1524,10 @@ export class StepExecutor {
     totalTokens: number;
   }> {
     // Determine model and provider
+    // Priority: modelOverride → agent.model_preference → DB config (with built-in defaults)
     const modelPref = modelOverride || (context.agent as any).model_preference || '';
-    let provider: 'openai' | 'anthropic' = 'openai';
-    let model = 'gpt-5.4-mini';
+    let provider: 'openai' | 'anthropic';
+    let model: string;
 
     if (modelPref.includes(':')) {
       const [prov, mod] = modelPref.split(':');
@@ -1536,7 +1538,14 @@ export class StepExecutor {
       // Detect provider from model name
       if (model.includes('claude') || model.includes('haiku') || model.includes('sonnet') || model.includes('opus')) {
         provider = 'anthropic';
+      } else {
+        provider = 'openai';
       }
+    } else {
+      // No override or agent preference — load from DB config (includes fallback defaults)
+      const config = await systemConfigRepository.getAgentExecutionAIProcessingConfig();
+      provider = config.provider as 'openai' | 'anthropic';
+      model = config.model;
     }
 
     // Sanitize model name
@@ -1567,6 +1576,9 @@ export class StepExecutor {
     const { ProviderFactory } = await import('@/lib/ai/providerFactory');
     const aiProvider = ProviderFactory.getProvider(provider);
     const maxOutputTokens = aiProvider.getMaxOutputTokens(model);
+    // Cap max_tokens to avoid Anthropic's streaming requirement for long operations.
+    // ai_processing steps (classify, generate, extract) typically need < 8K output.
+    const cappedMaxTokens = Math.min(maxOutputTokens, 16000);
 
     const response = await aiProvider.chatCompletion(
       {
@@ -1576,7 +1588,7 @@ export class StepExecutor {
           { role: 'user', content: prompt }
         ],
         temperature: 0.3,
-        max_tokens: maxOutputTokens,
+        max_tokens: cappedMaxTokens,
       },
       {
         userId: context.userId,

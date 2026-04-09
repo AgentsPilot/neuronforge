@@ -3,7 +3,7 @@
     "plan_description": "Scans Gmail Inbox emails, flags urgent messages based on keywords in subject/body, marks them as important, labels them as reviewed, and emails you a summary of what changed.",
     "sections": {
         "data": [
-            "- Search Gmail for all emails currently in the Inbox (read and unread).",
+            "- Search Gmail for emails in the Inbox from the last 30 days (read and unread).",
             "- For each email found, read the email subject text.",
             "- For each email found, read the email body text (plain text or best-available text version).",
             "- Exclude any email that already has the tracking label \"AgentsPilot\"."
@@ -45,8 +45,8 @@
                 "value": "meiribarak@gmail.com"
             },
             {
-                "key": "scan_scope",
-                "value": "All Inbox emails"
+                "key": "google_mail__email_search__query",
+                "value": "in:inbox -label:AgentsPilot newer_than:30d"
             },
             {
                 "key": "urgency_method",

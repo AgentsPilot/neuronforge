@@ -1752,6 +1752,17 @@ export class IntentToIRConverter {
       }
     }
 
+    // D-B19b: Copy deliver.mapping values to mappedParams BEFORE the data fallback.
+    // deliver.mapping sets params like message_id, add_labels directly in genericParams.
+    // Without this, the fallback overwrites message_id with the whole data ref.
+    for (const [key, value] of Object.entries(genericParams)) {
+      if (key !== 'data' && key !== 'destination' && key !== 'input_ref' && !mappedParams[key]) {
+        if (paramSchema[key]) {
+          mappedParams[key] = value
+        }
+      }
+    }
+
     // Final fallback: if data param exists and no mappings were made, pass data as-is
     if (genericParams.data && Object.keys(mappedParams).length === 0 && schema.parameters.required) {
       const firstRequired = schema.parameters.required[0]

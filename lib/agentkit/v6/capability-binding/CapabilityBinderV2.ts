@@ -133,7 +133,7 @@ export class CapabilityBinderV2 {
 
     logger.info(
       {
-        userConnected: Object.keys(await this.pluginManager.getExecutablePlugins(userId)).length,
+        userConnected: Object.keys(connectedPlugins).length - systemPlugins.length,
         systemAdded: systemPlugins.length,
         total: Object.keys(connectedPlugins).length
       },
@@ -732,7 +732,10 @@ export class CapabilityBinderV2 {
 
     const walkSteps = (steps: BoundStep[]): void => {
       for (const step of steps) {
-        if (step.plugin_key && step.action && step._ranked_candidates) {
+        // D-B20: Skip input-type validation for notify steps — they use structured
+        // notify.content/notify.recipients, not standard input refs. The checker
+        // rejects valid bindings because notify inputs don't match action input_entity.
+        if (step.plugin_key && step.action && step._ranked_candidates && step.kind !== 'notify') {
           this.checkAndReselect(step, checker, dataSchema)
         }
 

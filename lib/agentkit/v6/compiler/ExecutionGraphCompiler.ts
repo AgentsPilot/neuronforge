@@ -2800,6 +2800,9 @@ export class ExecutionGraphCompiler {
         if (sourceStep && sourceStep.type === 'scatter_gather') {
           return input // Scatter-gather already produces array
         }
+        if (sourceStep && sourceStep.type === 'ai_processing') {
+          return input // AI processing output shape is determined by callLLMDirect at runtime, not by bound plugin schema
+        }
 
         const sourceSchema = this.findOutputSchema(workflow, baseName)
         if (sourceSchema && sourceSchema.type === 'object' && sourceSchema.properties) {
