@@ -1,13 +1,14 @@
 {
   "name": "Customer Complaint Email Logger",
-  "description": "Gmail search for complaint keywords, dedup filter against existing sheet rows, scatter-gather append to Google Sheets",
+  "description": "Gmail search for complaint keywords, AI-based dedup against existing sheet rows, append new complaints to Google Sheets",
   "created": "2026-03-26",
   "plugins": ["google-mail", "google-sheets"],
   "expected": {
-    "min_steps": 6,
-    "step_types": ["action", "transform", "scatter_gather"],
+    "min_steps": 7,
+    "step_types": ["action", "ai_processing", "transform"],
     "phase_a_checks": 14,
     "phase_d_success": true,
-    "phase_e_success": true
+    "phase_e_success": true,
+    "phase_e_success_timestamp": "2026-04-10T00:00:00Z"
   }
 }
