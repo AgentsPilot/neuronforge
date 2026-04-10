@@ -432,6 +432,123 @@ export async function POST(req: NextRequest) {
               stepType: targetStep?.type
             }, 'Could not apply fix_filter_operation - step not found or not a transform');
           }
+        } else if (proposal.action === 'add_flatten_field' || proposal.action === 'fix_field_name' || proposal.action === 'fix_parameter_reference') {
+          // Workflow structure fixes: add missing flatten field, fix wrong field names, fix parameter references
+          const targetStepId = proposal.targetStepId;
+          const changeType = (issue.suggestedFix?.action as any)?.changeType;
+
+          if (changeType === 'add_flatten_field') {
+            // Add missing field parameter to flatten operation
+            const targetStep = findStepById(updatedSteps, targetStepId);
+            const fieldToAdd = (issue.suggestedFix?.action as any)?.field;
+
+            if (targetStep && targetStep.type === 'transform' && (targetStep as any).operation === 'flatten' && fieldToAdd) {
+              // Add or update config.field
+              if (!(targetStep as any).config) {
+                (targetStep as any).config = {};
+              }
+              (targetStep as any).config.field = fieldToAdd;
+
+              logger.info({
+                issueId: fix.issueId,
+                targetStepId,
+                field: fieldToAdd
+              }, 'Auto-repair: Added flatten field parameter');
+            } else {
+              logger.warn({
+                issueId: fix.issueId,
+                targetStepId,
+                stepFound: !!targetStep,
+                stepType: targetStep?.type,
+                operation: (targetStep as any)?.operation,
+                hasField: !!fieldToAdd
+              }, 'Could not apply add_flatten_field - step not found or invalid');
+            }
+          } else if (changeType === 'fix_field_name') {
+            // Fix wrong field name in filter operation
+            const targetStep = findStepById(updatedSteps, targetStepId);
+            const fromField = (issue.suggestedFix?.action as any)?.from;
+            const toField = (issue.suggestedFix?.action as any)?.to;
+
+            if (targetStep && targetStep.type === 'transform' && (targetStep as any).operation === 'filter' && fromField && toField) {
+              const config = (targetStep as any).config;
+              if (config?.condition) {
+                // Replace field name in condition
+                if (typeof config.condition === 'object' && config.condition.field) {
+                  config.condition.field = toField;
+                } else if (typeof config.condition === 'string') {
+                  // Replace in condition string (e.g., "item.mime_type == 'pdf'" -> "item.mimeType == 'pdf'")
+                  config.condition = config.condition.replace(new RegExp(`\\b${fromField}\\b`, 'g'), toField);
+                }
+              }
+
+              logger.info({
+                issueId: fix.issueId,
+                targetStepId,
+                from: fromField,
+                to: toField
+              }, 'Auto-repair: Fixed field name in filter');
+            } else {
+              logger.warn({
+                issueId: fix.issueId,
+                targetStepId,
+                stepFound: !!targetStep
+              }, 'Could not apply fix_field_name - step not found or invalid');
+            }
+          } else if (changeType === 'fix_parameter_reference') {
+            // Fix wrong parameter reference (e.g., {{step5.content}} -> {{step5.data}})
+            const targetStep = findStepById(updatedSteps, targetStepId);
+            const paramName = (issue.suggestedFix?.action as any)?.parameter;
+            const fromRef = (issue.suggestedFix?.action as any)?.from;
+            const toRef = (issue.suggestedFix?.action as any)?.to;
+
+            if (targetStep && paramName && fromRef && toRef) {
+              // Find and replace the parameter reference
+              const config = (targetStep as any).config || (targetStep as any).params || {};
+
+              const replaceInValue = (obj: any): any => {
+                if (typeof obj === 'string') {
+                  // Escape regex special characters in fromRef
+                  const escapedFrom = fromRef.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                  return obj.replace(new RegExp(escapedFrom, 'g'), toRef);
+                } else if (Array.isArray(obj)) {
+                  return obj.map(replaceInValue);
+                } else if (typeof obj === 'object' && obj !== null) {
+                  const result: any = {};
+                  for (const [key, value] of Object.entries(obj)) {
+                    result[key] = replaceInValue(value);
+                  }
+                  return result;
+                }
+                return obj;
+              };
+
+              // Replace in config/params
+              if ((targetStep as any).config) {
+                (targetStep as any).config = replaceInValue((targetStep as any).config);
+              }
+              if ((targetStep as any).params) {
+                (targetStep as any).params = replaceInValue((targetStep as any).params);
+              }
+
+              logger.info({
+                issueId: fix.issueId,
+                targetStepId,
+                parameter: paramName,
+                from: fromRef,
+                to: toRef
+              }, 'Auto-repair: Fixed parameter reference');
+            } else {
+              logger.warn({
+                issueId: fix.issueId,
+                targetStepId,
+                stepFound: !!targetStep,
+                hasParamName: !!paramName,
+                hasFromRef: !!fromRef,
+                hasToRef: !!toRef
+              }, 'Could not apply fix_parameter_reference - missing required data');
+            }
+          }
         } else {
           logger.warn({
             issueId: fix.issueId,

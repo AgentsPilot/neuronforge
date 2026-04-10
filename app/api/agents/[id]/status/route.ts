@@ -3,9 +3,10 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createLogger } from '@/lib/logger';
-import { agentRepository } from '@/lib/repositories';
+import { AgentRepository } from '@/lib/repositories/AgentRepository';
 
-const logger = createLogger({ module: 'API', route: '/api/agents/[id]/status' });
+const logger = createLogger({ module: 'AgentStatusAPI' });
+const agentRepository = new AgentRepository();
 
 function getUserIdFromRequest(request: NextRequest): string | null {
   const userIdHeader = request.headers.get('x-user-id');
@@ -39,10 +40,10 @@ export async function POST(
     const body = await request.json();
     const { status } = body;
 
-    if (!status || !['active', 'paused'].includes(status)) {
+    if (!status || !['active', 'inactive'].includes(status)) {
       requestLogger.warn({ status }, 'Invalid status value');
       return NextResponse.json(
-        { success: false, error: 'Invalid status. Must be "active" or "paused"' },
+        { success: false, error: 'Invalid status. Must be "active" or "inactive"' },
         { status: 400 }
       );
     }
@@ -50,7 +51,7 @@ export async function POST(
     requestLogger.debug({ newStatus: status }, 'Updating agent status');
 
     // Use repository methods for status updates
-    const { data: updatedAgent, error } = status === 'paused'
+    const { data: updatedAgent, error } = status === 'inactive'
       ? await agentRepository.pause(agentId, userId)
       : await agentRepository.activate(agentId, userId);
 
