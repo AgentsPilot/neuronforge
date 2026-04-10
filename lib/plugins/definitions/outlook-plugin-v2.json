@@ -1,0 +1,947 @@
+{
+  "plugin": {
+    "name": "outlook",
+    "version": "1.0.0",
+    "description": "Send, read, and manage Outlook emails and calendar events via Microsoft Graph API",
+    "context": "Use for accessing Microsoft Outlook email and calendar through Microsoft 365. Send emails, read messages, manage calendar events, and organize meetings. Supports attachments, drafts, and full email management.",
+    "icon": "<Mail className='w-5 h-5 text-blue-600'/>",
+    "category": "productivity",
+    "isPopular": true,
+    "auth_config": {
+      "auth_type": "oauth2_microsoft",
+      "client_id": "${MICROSOFT_CLIENT_ID}",
+      "client_secret": "${MICROSOFT_CLIENT_SECRET}",
+      "redirect_uri": "${NEXT_PUBLIC_APP_URL}/oauth/callback/outlook",
+      "auth_url": "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
+      "token_url": "https://login.microsoftonline.com/common/oauth2/v2.0/token",
+      "refresh_url": "https://login.microsoftonline.com/common/oauth2/v2.0/token",
+      "profile_url": "https://graph.microsoft.com/v1.0/me",
+      "required_scopes": [
+        "openid",
+        "profile",
+        "email",
+        "offline_access",
+        "https://graph.microsoft.com/Mail.ReadWrite",
+        "https://graph.microsoft.com/Mail.Send",
+        "https://graph.microsoft.com/Calendars.ReadWrite"
+      ],
+      "token_expiry_seconds": 3600
+    },
+    "provider_family": "microsoft"
+  },
+  "actions": {
+    "send_email": {
+      "description": "Send an email message via Outlook",
+      "usage_context": "When user wants to send emails, compose messages, or communicate via Outlook",
+      "idempotent": false,
+      "domain": "communication",
+      "capability": "send",
+      "input_entity": "email",
+      "output_entity": "email",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "output_fields": ["message_id", "sent_at", "status"],
+      "required_params": ["to", "subject"],
+      "optional_params": ["body", "cc", "bcc", "attachments", "importance"],
+      "must_support": ["html_body", "attachments", "cc_bcc"],
+      "parameters": {
+        "type": "object",
+        "required": ["to", "subject"],
+        "properties": {
+          "to": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Recipient email addresses"
+          },
+          "subject": {
+            "type": "string",
+            "description": "Email subject line"
+          },
+          "body": {
+            "type": "string",
+            "description": "Email body content (supports HTML)"
+          },
+          "cc": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "CC email addresses"
+          },
+          "bcc": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "BCC email addresses"
+          },
+          "importance": {
+            "type": "string",
+            "enum": ["low", "normal", "high"],
+            "default": "normal",
+            "description": "Email importance level"
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "message_id": {
+            "type": "string",
+            "description": "Unique message identifier",
+            "x-guaranteed": true
+          },
+          "sent_at": {
+            "type": "string",
+            "description": "Timestamp when email was sent (ISO 8601)",
+            "x-guaranteed": true
+          },
+          "status": {
+            "type": "string",
+            "description": "Send status",
+            "x-guaranteed": true
+          }
+        }
+      },
+      "output_guidance": {
+        "success_description": "Email sent successfully",
+        "sample_output": {
+          "message_id": "AAMkAGI2T...",
+          "sent_at": "2026-03-13T16:00:00Z",
+          "status": "sent"
+        },
+        "common_errors": {
+          "auth_failed": "Your Outlook connection has expired. Please reconnect in Settings → Connected Apps.",
+          "invalid_recipient": "One or more recipient email addresses are invalid.",
+          "quota_exceeded": "Email sending quota exceeded. Please try again later.",
+          "insufficient_permissions": "Mail.Send permission is required to send emails."
+        }
+      }
+    },
+    "search_emails": {
+      "description": "Search and retrieve email messages from Outlook mailbox",
+      "usage_context": "When user wants to find emails, search inbox, or filter messages by criteria",
+      "idempotent": true,
+      "domain": "communication",
+      "capability": "search",
+      "input_entity": null,
+      "output_entity": "email",
+      "input_cardinality": null,
+      "output_cardinality": "collection",
+      "output_fields": ["id", "subject", "from", "to", "received_at", "body_preview", "has_attachments"],
+      "required_params": [],
+      "optional_params": ["query", "folder", "max_results", "from_date", "to_date", "has_attachments"],
+      "must_support": ["full_text_search", "date_filtering", "folder_filtering", "attachment_filter"],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Search query (searches subject, body, from, to fields)"
+          },
+          "folder": {
+            "type": "string",
+            "enum": ["inbox", "sentitems", "drafts", "deleteditems"],
+            "default": "inbox",
+            "description": "Mailbox folder to search"
+          },
+          "max_results": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 100,
+            "default": 20,
+            "description": "Maximum number of emails to return"
+          },
+          "from_date": {
+            "type": "string",
+            "description": "Start date for search (ISO 8601)"
+          },
+          "to_date": {
+            "type": "string",
+            "description": "End date for search (ISO 8601)"
+          },
+          "has_attachments": {
+            "type": "boolean",
+            "description": "Filter emails that have attachments"
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "emails": {
+            "type": "array",
+            "description": "List of matching emails",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": { "type": "string", "description": "Unique message ID" },
+                "subject": { "type": "string", "description": "Email subject" },
+                "from": { "type": "string", "description": "Sender email address" },
+                "to": { "type": "array", "items": { "type": "string" }, "description": "Recipient addresses" },
+                "received_at": { "type": "string", "description": "Received timestamp (ISO 8601)" },
+                "body_preview": { "type": "string", "description": "First 255 characters of body" },
+                "has_attachments": { "type": "boolean", "description": "Whether email has attachments" }
+              }
+            }
+          },
+          "email_count": {
+            "type": "integer",
+            "description": "Number of emails returned",
+            "x-guaranteed": true
+          },
+          "searched_at": {
+            "type": "string",
+            "description": "Timestamp when search was performed (ISO 8601)",
+            "x-guaranteed": true
+          }
+        }
+      },
+      "output_guidance": {
+        "success_description": "Retrieved emails from Outlook",
+        "sample_output": {
+          "emails": [
+            {
+              "id": "AAMkAGI2T...",
+              "subject": "Meeting tomorrow",
+              "from": "john@example.com",
+              "to": ["me@example.com"],
+              "received_at": "2026-03-13T10:00:00Z",
+              "body_preview": "Hi, just confirming our meeting tomorrow at 2pm...",
+              "has_attachments": false
+            }
+          ],
+          "email_count": 1,
+          "searched_at": "2026-03-13T16:00:00Z"
+        },
+        "common_errors": {
+          "auth_failed": "Your Outlook connection has expired. Please reconnect in Settings → Connected Apps.",
+          "folder_not_found": "The specified folder was not found.",
+          "insufficient_permissions": "Mail.Read permission is required to search emails."
+        }
+      }
+    },
+    "create_draft": {
+      "description": "Create a draft email message in Outlook (saved to Drafts folder)",
+      "usage_context": "When user wants to prepare an email to send later or create a template message",
+      "idempotent": false,
+      "domain": "communication",
+      "capability": "create",
+      "input_entity": "email",
+      "output_entity": "email",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "output_fields": ["message_id", "created_at", "web_link"],
+      "required_params": ["subject"],
+      "optional_params": ["to", "body", "cc", "bcc"],
+      "must_support": ["html_body", "draft_management"],
+      "parameters": {
+        "type": "object",
+        "required": ["subject"],
+        "properties": {
+          "to": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Recipient email addresses"
+          },
+          "subject": {
+            "type": "string",
+            "description": "Email subject line"
+          },
+          "body": {
+            "type": "string",
+            "description": "Email body content (supports HTML)"
+          },
+          "cc": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "CC email addresses"
+          },
+          "bcc": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "BCC email addresses"
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "message_id": {
+            "type": "string",
+            "description": "Unique draft message ID",
+            "x-guaranteed": true
+          },
+          "created_at": {
+            "type": "string",
+            "description": "Timestamp when draft was created (ISO 8601)",
+            "x-guaranteed": true
+          },
+          "web_link": {
+            "type": "string",
+            "description": "URL to view/edit draft in Outlook",
+            "x-guaranteed": true
+          }
+        }
+      },
+      "output_guidance": {
+        "success_description": "Draft email created",
+        "sample_output": {
+          "message_id": "AAMkAGI2T...",
+          "created_at": "2026-03-13T16:00:00Z",
+          "web_link": "https://outlook.office365.com/mail/drafts/..."
+        },
+        "common_errors": {
+          "auth_failed": "Your Outlook connection has expired. Please reconnect in Settings → Connected Apps.",
+          "insufficient_permissions": "Mail.ReadWrite permission is required to create drafts."
+        }
+      }
+    },
+    "modify_message": {
+      "description": "Update properties of an email message (mark as read/unread, move to folder, flag, etc.)",
+      "usage_context": "When user wants to mark emails as read, organize messages, or update email properties",
+      "idempotent": true,
+      "domain": "communication",
+      "capability": "update",
+      "input_entity": "email",
+      "output_entity": "email",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "output_fields": ["message_id", "is_read", "updated_at"],
+      "required_params": ["message_id"],
+      "optional_params": ["is_read", "folder", "importance"],
+      "must_support": ["read_status", "folder_management", "importance_flags"],
+      "parameters": {
+        "type": "object",
+        "required": ["message_id"],
+        "properties": {
+          "message_id": {
+            "type": "string",
+            "description": "ID of the message to modify",
+            "x-variable-mapping": {
+              "from_type": "email",
+              "field_path": "id",
+              "description": "Extract message ID from email object"
+            }
+          },
+          "is_read": {
+            "type": "boolean",
+            "description": "Mark message as read (true) or unread (false)"
+          },
+          "folder": {
+            "type": "string",
+            "enum": ["inbox", "sentitems", "drafts", "deleteditems"],
+            "description": "Move message to specified folder"
+          },
+          "importance": {
+            "type": "string",
+            "enum": ["low", "normal", "high"],
+            "description": "Set message importance level"
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "message_id": {
+            "type": "string",
+            "description": "Message ID",
+            "x-guaranteed": true
+          },
+          "is_read": {
+            "type": "boolean",
+            "description": "Current read status",
+            "x-guaranteed": true
+          },
+          "updated_at": {
+            "type": "string",
+            "description": "Timestamp when message was updated (ISO 8601)",
+            "x-guaranteed": true
+          }
+        }
+      },
+      "output_guidance": {
+        "success_description": "Message updated successfully",
+        "sample_output": {
+          "message_id": "AAMkAGI2T...",
+          "is_read": true,
+          "updated_at": "2026-03-13T16:00:00Z"
+        },
+        "common_errors": {
+          "auth_failed": "Your Outlook connection has expired. Please reconnect in Settings → Connected Apps.",
+          "message_not_found": "The specified message was not found.",
+          "insufficient_permissions": "Mail.ReadWrite permission is required to modify messages."
+        }
+      }
+    },
+    "get_email_attachment": {
+      "description": "Download an attachment from an email message",
+      "usage_context": "When user wants to retrieve files attached to emails or process email attachments",
+      "idempotent": true,
+      "domain": "communication",
+      "capability": "fetch_content",
+      "input_entity": "email",
+      "output_entity": "file",
+      "input_cardinality": "single",
+      "output_cardinality": "collection",
+      "output_fields": ["attachment_id", "filename", "content_type", "size", "content"],
+      "required_params": ["message_id"],
+      "optional_params": ["attachment_id"],
+      "must_support": ["attachment_download", "base64_encoding"],
+      "parameters": {
+        "type": "object",
+        "required": ["message_id"],
+        "properties": {
+          "message_id": {
+            "type": "string",
+            "description": "ID of the email message",
+            "x-variable-mapping": {
+              "from_type": "email",
+              "field_path": "id",
+              "description": "Extract message ID from email object"
+            }
+          },
+          "attachment_id": {
+            "type": "string",
+            "description": "Specific attachment ID (if not provided, returns all attachments)"
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "attachments": {
+            "type": "array",
+            "description": "List of attachments",
+            "items": {
+              "type": "object",
+              "properties": {
+                "attachment_id": { "type": "string", "description": "Unique attachment ID" },
+                "filename": { "type": "string", "description": "Attachment filename" },
+                "content_type": { "type": "string", "description": "MIME type" },
+                "size": { "type": "integer", "description": "Size in bytes" },
+                "content": { "type": "string", "description": "Base64-encoded file content" }
+              }
+            }
+          },
+          "attachment_count": {
+            "type": "integer",
+            "description": "Number of attachments retrieved",
+            "x-guaranteed": true
+          }
+        }
+      },
+      "output_guidance": {
+        "success_description": "Retrieved email attachments",
+        "sample_output": {
+          "attachments": [
+            {
+              "attachment_id": "AAMkAGI2T...",
+              "filename": "report.pdf",
+              "content_type": "application/pdf",
+              "size": 245760,
+              "content": "JVBERi0xLjQKJeLjz9..."
+            }
+          ],
+          "attachment_count": 1
+        },
+        "common_errors": {
+          "auth_failed": "Your Outlook connection has expired. Please reconnect in Settings → Connected Apps.",
+          "message_not_found": "The specified message was not found.",
+          "attachment_not_found": "The specified attachment was not found.",
+          "file_too_large": "Attachment exceeds size limit (max 3MB per attachment).",
+          "insufficient_permissions": "Mail.Read permission is required to access attachments."
+        }
+      }
+    },
+    "list_events": {
+      "description": "List calendar events from Outlook Calendar",
+      "usage_context": "When user wants to view their schedule, check availability, or list upcoming meetings",
+      "idempotent": true,
+      "domain": "productivity",
+      "capability": "list",
+      "input_entity": "calendar",
+      "output_entity": "event",
+      "input_cardinality": "single",
+      "output_cardinality": "collection",
+      "output_fields": ["id", "subject", "start", "end", "location", "attendees", "organizer"],
+      "required_params": [],
+      "optional_params": ["start_date", "end_date", "max_results", "calendar_id"],
+      "must_support": ["date_range_filter", "timezone_handling", "attendee_info"],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "start_date": {
+            "type": "string",
+            "description": "Start date for event search (ISO 8601, defaults to today)"
+          },
+          "end_date": {
+            "type": "string",
+            "description": "End date for event search (ISO 8601, defaults to 7 days from now)"
+          },
+          "max_results": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 100,
+            "default": 50,
+            "description": "Maximum number of events to return"
+          },
+          "calendar_id": {
+            "type": "string",
+            "description": "Specific calendar ID (defaults to primary calendar)"
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "events": {
+            "type": "array",
+            "description": "List of calendar events",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": { "type": "string", "description": "Unique event ID" },
+                "subject": { "type": "string", "description": "Event title/subject" },
+                "start": { "type": "string", "description": "Event start time (ISO 8601)" },
+                "end": { "type": "string", "description": "Event end time (ISO 8601)" },
+                "location": { "type": "string", "description": "Event location" },
+                "attendees": { "type": "array", "items": { "type": "string" }, "description": "Attendee email addresses" },
+                "organizer": { "type": "string", "description": "Event organizer email" }
+              }
+            }
+          },
+          "event_count": {
+            "type": "integer",
+            "description": "Number of events returned",
+            "x-guaranteed": true
+          },
+          "retrieved_at": {
+            "type": "string",
+            "description": "Timestamp when events were retrieved (ISO 8601)",
+            "x-guaranteed": true
+          }
+        }
+      },
+      "output_guidance": {
+        "success_description": "Retrieved calendar events",
+        "sample_output": {
+          "events": [
+            {
+              "id": "AAMkAGI2T...",
+              "subject": "Team Standup",
+              "start": "2026-03-14T09:00:00Z",
+              "end": "2026-03-14T09:30:00Z",
+              "location": "Conference Room A",
+              "attendees": ["john@example.com", "jane@example.com"],
+              "organizer": "me@example.com"
+            }
+          ],
+          "event_count": 1,
+          "retrieved_at": "2026-03-13T16:00:00Z"
+        },
+        "common_errors": {
+          "auth_failed": "Your Outlook connection has expired. Please reconnect in Settings → Connected Apps.",
+          "calendar_not_found": "The specified calendar was not found.",
+          "insufficient_permissions": "Calendars.Read permission is required to list events."
+        }
+      }
+    },
+    "create_event": {
+      "description": "Create a new calendar event in Outlook Calendar",
+      "usage_context": "When user wants to schedule meetings, create appointments, or add events to calendar",
+      "idempotent": false,
+      "domain": "productivity",
+      "capability": "create",
+      "input_entity": "event",
+      "output_entity": "event",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "output_fields": ["id", "subject", "start", "end", "web_link"],
+      "required_params": ["subject", "start", "end"],
+      "optional_params": ["location", "attendees", "body", "is_online_meeting", "reminder_minutes"],
+      "must_support": ["attendee_invites", "timezone_handling", "online_meetings", "reminders"],
+      "parameters": {
+        "type": "object",
+        "required": ["subject", "start", "end"],
+        "properties": {
+          "subject": {
+            "type": "string",
+            "description": "Event title/subject"
+          },
+          "start": {
+            "type": "string",
+            "description": "Event start time (ISO 8601)"
+          },
+          "end": {
+            "type": "string",
+            "description": "Event end time (ISO 8601)"
+          },
+          "location": {
+            "type": "string",
+            "description": "Event location"
+          },
+          "attendees": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Attendee email addresses"
+          },
+          "body": {
+            "type": "string",
+            "description": "Event description/body"
+          },
+          "is_online_meeting": {
+            "type": "boolean",
+            "default": false,
+            "description": "Create as Microsoft Teams online meeting"
+          },
+          "reminder_minutes": {
+            "type": "number",
+            "default": 15,
+            "description": "Reminder time in minutes before event"
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Unique event ID",
+            "x-guaranteed": true
+          },
+          "subject": {
+            "type": "string",
+            "description": "Event title",
+            "x-guaranteed": true
+          },
+          "start": {
+            "type": "string",
+            "description": "Event start time (ISO 8601)",
+            "x-guaranteed": true
+          },
+          "end": {
+            "type": "string",
+            "description": "Event end time (ISO 8601)",
+            "x-guaranteed": true
+          },
+          "web_link": {
+            "type": "string",
+            "description": "URL to view event in Outlook",
+            "x-guaranteed": true
+          },
+          "online_meeting_url": {
+            "type": "string",
+            "description": "Teams meeting URL (if is_online_meeting was true)"
+          },
+          "created_at": {
+            "type": "string",
+            "description": "Timestamp when event was created (ISO 8601)",
+            "x-guaranteed": true
+          }
+        }
+      },
+      "output_guidance": {
+        "success_description": "Calendar event created",
+        "sample_output": {
+          "id": "AAMkAGI2T...",
+          "subject": "Team Meeting",
+          "start": "2026-03-14T14:00:00Z",
+          "end": "2026-03-14T15:00:00Z",
+          "web_link": "https://outlook.office365.com/...",
+          "created_at": "2026-03-13T16:00:00Z"
+        },
+        "common_errors": {
+          "auth_failed": "Your Outlook connection has expired. Please reconnect in Settings → Connected Apps.",
+          "invalid_time": "Event start time must be before end time.",
+          "invalid_attendees": "One or more attendee email addresses are invalid.",
+          "insufficient_permissions": "Calendars.ReadWrite permission is required to create events."
+        }
+      }
+    },
+    "update_event": {
+      "description": "Update an existing calendar event in Outlook Calendar",
+      "usage_context": "When user wants to modify event details, reschedule meetings, or update attendees",
+      "idempotent": true,
+      "domain": "productivity",
+      "capability": "update",
+      "input_entity": "event",
+      "output_entity": "event",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "output_fields": ["id", "subject", "start", "end", "updated_at"],
+      "required_params": ["event_id"],
+      "optional_params": ["subject", "start", "end", "location", "attendees", "body"],
+      "must_support": ["partial_updates", "attendee_management", "rescheduling"],
+      "parameters": {
+        "type": "object",
+        "required": ["event_id"],
+        "properties": {
+          "event_id": {
+            "type": "string",
+            "description": "ID of the event to update",
+            "x-variable-mapping": {
+              "from_type": "event",
+              "field_path": "id",
+              "description": "Extract event ID from event object"
+            }
+          },
+          "subject": {
+            "type": "string",
+            "description": "New event title/subject"
+          },
+          "start": {
+            "type": "string",
+            "description": "New event start time (ISO 8601)"
+          },
+          "end": {
+            "type": "string",
+            "description": "New event end time (ISO 8601)"
+          },
+          "location": {
+            "type": "string",
+            "description": "New event location"
+          },
+          "attendees": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Updated attendee email addresses"
+          },
+          "body": {
+            "type": "string",
+            "description": "Updated event description/body"
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Event ID",
+            "x-guaranteed": true
+          },
+          "subject": {
+            "type": "string",
+            "description": "Updated event title",
+            "x-guaranteed": true
+          },
+          "start": {
+            "type": "string",
+            "description": "Updated start time (ISO 8601)",
+            "x-guaranteed": true
+          },
+          "end": {
+            "type": "string",
+            "description": "Updated end time (ISO 8601)",
+            "x-guaranteed": true
+          },
+          "updated_at": {
+            "type": "string",
+            "description": "Timestamp when event was updated (ISO 8601)",
+            "x-guaranteed": true
+          }
+        }
+      },
+      "output_guidance": {
+        "success_description": "Calendar event updated",
+        "sample_output": {
+          "id": "AAMkAGI2T...",
+          "subject": "Team Meeting (Rescheduled)",
+          "start": "2026-03-15T14:00:00Z",
+          "end": "2026-03-15T15:00:00Z",
+          "updated_at": "2026-03-13T16:00:00Z"
+        },
+        "common_errors": {
+          "auth_failed": "Your Outlook connection has expired. Please reconnect in Settings → Connected Apps.",
+          "event_not_found": "The specified event was not found.",
+          "invalid_time": "Event start time must be before end time.",
+          "insufficient_permissions": "Calendars.ReadWrite permission is required to update events."
+        }
+      }
+    },
+    "delete_event": {
+      "description": "Delete a calendar event from Outlook Calendar",
+      "usage_context": "When user wants to cancel meetings or remove events from calendar",
+      "idempotent": true,
+      "domain": "productivity",
+      "capability": "delete",
+      "input_entity": "event",
+      "output_entity": null,
+      "input_cardinality": "single",
+      "output_cardinality": null,
+      "output_fields": ["deleted_at", "status"],
+      "required_params": ["event_id"],
+      "optional_params": ["send_cancellation"],
+      "must_support": ["cancellation_notice"],
+      "parameters": {
+        "type": "object",
+        "required": ["event_id"],
+        "properties": {
+          "event_id": {
+            "type": "string",
+            "description": "ID of the event to delete",
+            "x-variable-mapping": {
+              "from_type": "event",
+              "field_path": "id",
+              "description": "Extract event ID from event object"
+            }
+          },
+          "send_cancellation": {
+            "type": "boolean",
+            "default": true,
+            "description": "Send cancellation notice to attendees"
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "event_id": {
+            "type": "string",
+            "description": "ID of deleted event",
+            "x-guaranteed": true
+          },
+          "deleted_at": {
+            "type": "string",
+            "description": "Timestamp when event was deleted (ISO 8601)",
+            "x-guaranteed": true
+          },
+          "status": {
+            "type": "string",
+            "description": "Deletion status",
+            "x-guaranteed": true
+          }
+        }
+      },
+      "output_guidance": {
+        "success_description": "Calendar event deleted",
+        "sample_output": {
+          "event_id": "AAMkAGI2T...",
+          "deleted_at": "2026-03-13T16:00:00Z",
+          "status": "deleted"
+        },
+        "common_errors": {
+          "auth_failed": "Your Outlook connection has expired. Please reconnect in Settings → Connected Apps.",
+          "event_not_found": "The specified event was not found.",
+          "insufficient_permissions": "Calendars.ReadWrite permission is required to delete events."
+        }
+      }
+    },
+    "get_event_details": {
+      "description": "Get detailed information about a specific calendar event",
+      "usage_context": "When user wants to view complete event details, attendee responses, or meeting information",
+      "idempotent": true,
+      "domain": "productivity",
+      "capability": "get",
+      "input_entity": "event",
+      "output_entity": "event",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "output_fields": ["id", "subject", "start", "end", "location", "attendees", "organizer", "body", "response_status"],
+      "required_params": ["event_id"],
+      "optional_params": [],
+      "must_support": ["full_details", "attendee_responses", "meeting_info"],
+      "parameters": {
+        "type": "object",
+        "required": ["event_id"],
+        "properties": {
+          "event_id": {
+            "type": "string",
+            "description": "ID of the event to retrieve",
+            "x-variable-mapping": {
+              "from_type": "event",
+              "field_path": "id",
+              "description": "Extract event ID from event object"
+            }
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Event ID",
+            "x-guaranteed": true
+          },
+          "subject": {
+            "type": "string",
+            "description": "Event title",
+            "x-guaranteed": true
+          },
+          "start": {
+            "type": "string",
+            "description": "Event start time (ISO 8601)",
+            "x-guaranteed": true
+          },
+          "end": {
+            "type": "string",
+            "description": "Event end time (ISO 8601)",
+            "x-guaranteed": true
+          },
+          "location": {
+            "type": "string",
+            "description": "Event location"
+          },
+          "body": {
+            "type": "string",
+            "description": "Event description"
+          },
+          "attendees": {
+            "type": "array",
+            "description": "List of attendees with response status",
+            "items": {
+              "type": "object",
+              "properties": {
+                "email": { "type": "string" },
+                "name": { "type": "string" },
+                "response": { "type": "string", "enum": ["none", "accepted", "declined", "tentative"] }
+              }
+            }
+          },
+          "organizer": {
+            "type": "object",
+            "properties": {
+              "email": { "type": "string" },
+              "name": { "type": "string" }
+            }
+          },
+          "online_meeting_url": {
+            "type": "string",
+            "description": "Teams meeting URL if applicable"
+          },
+          "retrieved_at": {
+            "type": "string",
+            "description": "Timestamp when details were retrieved (ISO 8601)",
+            "x-guaranteed": true
+          }
+        }
+      },
+      "output_guidance": {
+        "success_description": "Retrieved event details",
+        "sample_output": {
+          "id": "AAMkAGI2T...",
+          "subject": "Team Meeting",
+          "start": "2026-03-14T14:00:00Z",
+          "end": "2026-03-14T15:00:00Z",
+          "location": "Conference Room A",
+          "body": "Discuss Q1 goals and roadmap",
+          "attendees": [
+            {
+              "email": "john@example.com",
+              "name": "John Doe",
+              "response": "accepted"
+            }
+          ],
+          "organizer": {
+            "email": "me@example.com",
+            "name": "Me"
+          },
+          "retrieved_at": "2026-03-13T16:00:00Z"
+        },
+        "common_errors": {
+          "auth_failed": "Your Outlook connection has expired. Please reconnect in Settings → Connected Apps.",
+          "event_not_found": "The specified event was not found.",
+          "insufficient_permissions": "Calendars.Read permission is required to view event details."
+        }
+      }
+    }
+  }
+}

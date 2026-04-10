@@ -2,8 +2,8 @@
   "plugin": {
     "name": "document-extractor",
     "version": "1.0.0",
-    "description": "Extract structured data from DOCUMENT FILES ONLY (PDFs, images, invoices, receipts, scanned forms) using deterministic OCR and parsing. Not for email bodies, chat messages, or any free-form text.",
-    "context": "Use ONLY when the source is a FILE attachment (PDF, PNG, JPG, scanned invoice, receipt) — the input must be a file_url, base64 file_content, or a file object with mime_type. DO NOT use this plugin to extract fields from email bodies, email snippets, chat messages, Slack posts, webhook text payloads, or any free-form text content — for those, use AI-based extraction instead. The plugin runs OCR/parsing against a binary file; when handed text it returns 'Unknown' placeholders for every field.",
+    "description": "Extract structured data from documents (PDFs, images, invoices, receipts) using deterministic OCR and parsing",
+    "context": "Use for extracting structured fields from documents, invoices, receipts, forms, and images. Provides deterministic OCR-based extraction without AI (fast and cost-effective).",
     "icon": "<FileText className='w-5 h-5 text-blue-600'/>",
     "category": "data_extraction",
     "isPopular": true,
@@ -23,8 +23,8 @@
   },
   "actions": {
     "extract_structured_data": {
-      "description": "Extract structured fields from DOCUMENT FILES ONLY (PDF, images, invoices, receipts, scanned forms). Requires a file as input (file_url, file_content, or file object). NOT for extracting from email bodies, chat messages, or free-form text.",
-      "usage_context": "Use ONLY when the input is a FILE attachment — a PDF, image, scanned invoice/receipt, or file object with mime_type. The plugin runs OCR/deterministic parsing against binary file content. DO NOT select this action when the source is an email body, email snippet, chat/message text, webhook text payload, or any plain-text string — those cases require AI-based extraction instead. Choosing this action for non-file inputs will return 'Unknown' placeholders for every field.",
+      "description": "Extract structured fields from document files (PDF, images, invoices, receipts)",
+      "usage_context": "When you need to extract specific fields from documents, invoices, receipts, forms, or images. Uses OCR and deterministic parsing for fast, reliable extraction.",
       "idempotent": true,
       "domain": "document",
       "capability": "extract_structured_data",
@@ -217,14 +217,7 @@
           "ocr_failed": "OCR extraction failed. File may be corrupted or image quality too low",
           "field_not_found": "One or more required fields could not be extracted from the document"
         }
-      },
-      "output_dependencies": [
-        {
-          "when_param": {},
-          "unpopulated_fields": ["extracted_fields", "raw_text"],
-          "message": "This action requires a FILE as input (PDF, image, scanned document). If your source is text (email body, message, post), use an AI extract step instead — this action will return 'Unknown' placeholders for every field when given non-file input."
-        }
-      ]
+      }
     }
   }
 }

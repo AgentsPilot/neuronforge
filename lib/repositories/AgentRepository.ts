@@ -82,6 +82,33 @@ export class AgentRepository {
 
       const { data, error } = await query;
       if (error) throw error;
+
+      // Fetch execution counts for all agents
+      if (data && data.length > 0) {
+        const agentIds = data.map(agent => agent.id);
+        const { data: execCounts } = await this.supabase
+          .from('agent_executions')
+          .select('agent_id')
+          .in('agent_id', agentIds);
+
+        // Count executions per agent
+        const countMap = new Map<string, number>();
+        if (execCounts) {
+          execCounts.forEach((exec: any) => {
+            const count = countMap.get(exec.agent_id) || 0;
+            countMap.set(exec.agent_id, count + 1);
+          });
+        }
+
+        // Add total_runs to each agent
+        const agentsWithRuns = data.map(agent => ({
+          ...agent,
+          total_runs: countMap.get(agent.id) || 0
+        }));
+
+        return { data: agentsWithRuns, error: null };
+      }
+
       return { data: data || [], error: null };
     } catch (error) {
       return { data: null, error: error as Error };

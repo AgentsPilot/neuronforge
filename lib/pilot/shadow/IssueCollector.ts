@@ -77,14 +77,28 @@ export class IssueCollector {
 
     // Check for parameter errors (configuration issues)
     // Pass step params to detect the actual parameter name from the step config
-    const stepParams = (step as any)?.params;
+    const stepParams = (step as any)?.params || (step as any)?.config;
 
     // Debug logging to help troubleshoot parameter detection
     if (!stepParams) {
       logger.warn({ stepId, stepFound: !!step }, 'No step params found for parameter error detection');
     }
 
-    const parameterError = this.detectParameterError(error.message, stepParams);
+    // Check if this is a missing workflow config issue BEFORE checking parameter errors
+    const missingConfigRef = this.detectMissingWorkflowConfig(error.message, stepParams, context);
+
+    // Debug logging for missing config detection
+    logger.info({
+      stepId,
+      errorMessage: error.message,
+      stepParams: JSON.stringify(stepParams),
+      missingConfigDetected: !!missingConfigRef,
+      configKeys: missingConfigRef?.configKeys,
+      workflowConfigKeys: Object.keys(context.workflowConfig || {}),
+      workflowConfigValues: context.workflowConfig
+    }, 'Missing config detection result');
+
+    const parameterError = !missingConfigRef ? this.detectParameterError(error.message, stepParams) : null;
 
     // Generate friendly messages
     const friendlyName = getFriendlyStepName(step || { name: stepName, type: stepType });
@@ -133,6 +147,27 @@ export class IssueCollector {
       }, 'Parameter error detected in batch calibration');
     }
 
+    // Handle missing workflow config ({{config.X}} references that couldn't be resolved)
+    if (missingConfigRef) {
+      finalCategory = 'configuration_missing';
+      severity = 'high';
+      suggestedFix = {
+        type: 'configuration_required' as any,
+        action: {
+          configKeys: missingConfigRef.configKeys,
+          affectedParameters: missingConfigRef.affectedParameters,
+          message: `Workflow requires configuration values: ${missingConfigRef.configKeys.join(', ')}`
+        },
+        confidence: 1.0
+      };
+
+      logger.info({
+        configKeys: missingConfigRef.configKeys,
+        affectedParameters: missingConfigRef.affectedParameters,
+        stepId
+      }, 'Missing workflow configuration detected');
+    }
+
     // Check if auto-repair is available (for data shape mismatches)
     let autoRepairProposal = null;
     let autoRepairAvailable = false;
@@ -166,7 +201,8 @@ export class IssueCollector {
             classification,
             stepId,
             upstreamStepId,
-            upstreamOutput
+            upstreamOutput,
+            step  // Pass the failed step definition for context
           );
 
           logger.info({
@@ -174,7 +210,9 @@ export class IssueCollector {
             upstreamStepId,
             proposalAction: autoRepairProposal?.action,
             extractField: autoRepairProposal?.extractField,
-            confidence: autoRepairProposal?.confidence
+            confidence: autoRepairProposal?.confidence,
+            stepDescription: step?.description,
+            stepConfig: step?.config
           }, 'DEBUG: RepairEngine proposal generated');
 
           autoRepairAvailable = autoRepairProposal?.action !== 'none';
@@ -292,6 +330,267 @@ export class IssueCollector {
 
       return issue;
     });
+  }
+
+  /**
+   * Detect workflow generation bugs by analyzing structure and execution results
+   * Called after batch calibration run finishes
+   *
+   * Detects:
+   * 1. Flatten operations missing field parameter (returns wrong data structure)
+   * 2. Filter operations using wrong field names (field doesn't exist in data)
+   * 3. Parameter references using wrong field names (mismatch with step output schema)
+   * 4. Data structure mismatches between connected steps
+   *
+   * This is what calibration is FOR - catching workflow generation bugs that prevent execution
+   */
+  collectWorkflowStructureIssues(
+    agent: Agent,
+    context: ExecutionContext
+  ): CollectedIssue[] {
+    logger.debug({ agentId: agent.id }, 'Analyzing workflow structure for generation bugs');
+
+    const pilotSteps = agent.pilot_steps || agent.workflow_steps || [];
+
+    if (pilotSteps.length === 0) {
+      return [];
+    }
+
+    const issues: CollectedIssue[] = [];
+    const allSteps = this.flattenSteps(pilotSteps);
+
+    // Get all step outputs for analysis
+    const allStepOutputs = context.getAllStepOutputs();
+
+    for (const step of allSteps) {
+      const stepId = step.step_id || step.id || 'unknown';
+
+      // Issue 1: Flatten operation missing field parameter
+      if (step.type === 'transform' && (step as any).operation === 'flatten') {
+        const config = (step as any).config || {};
+        const input = (step as any).input;
+
+        // Check if field parameter is missing
+        if (!config.field) {
+          // Get the step output to verify the bug
+          const stepOutput = allStepOutputs.get(stepId);
+
+          if (stepOutput && stepOutput.metadata.success) {
+            // Analyze the output structure to determine what field should have been used
+            const outputData = stepOutput.data;
+
+            // Check if description mentions extracting a specific field
+            const description = step.description || step.name || '';
+            const extractFieldMatch = description.match(/extract|flatten|get\s+(\w+)/i);
+            const suggestedField = extractFieldMatch ? extractFieldMatch[1] : null;
+
+            // Check if output is an array of objects with nested arrays
+            let detectedNestedArrayField: string | null = null;
+            if (Array.isArray(outputData) && outputData.length > 0 && typeof outputData[0] === 'object') {
+              // Look for array fields in the first object
+              for (const [key, value] of Object.entries(outputData[0])) {
+                if (Array.isArray(value)) {
+                  detectedNestedArrayField = key;
+                  break;
+                }
+              }
+            }
+
+            const fieldToExtract = suggestedField || detectedNestedArrayField || 'items';
+            const hasHighConfidence = !!(suggestedField || detectedNestedArrayField);
+
+            issues.push({
+              id: crypto.randomUUID(),
+              category: 'logic_error',
+              severity: 'critical',
+              affectedSteps: [{
+                stepId,
+                stepName: step.name || 'Flatten operation',
+                friendlyName: this.getStepName(agent, stepId)
+              }],
+              title: 'Flatten operation missing field parameter',
+              message: `This flatten operation is missing the 'field' parameter that specifies which nested array to extract. ${suggestedField ? `Based on the step description, it should extract the '${suggestedField}' field.` : detectedNestedArrayField ? `The data contains a nested '${detectedNestedArrayField}' array that should be extracted.` : 'Without this parameter, the flatten operation returns the input data unchanged.'}`,
+              technicalDetails: `Step ${stepId} has operation: "flatten" but config.field is missing. ${input ? `Input: ${input}. ` : ''}${suggestedField ? `Suggested field from description: '${suggestedField}'. ` : ''}${detectedNestedArrayField ? `Detected nested array field: '${detectedNestedArrayField}'.` : ''}`,
+              suggestedFix: {
+                type: 'workflow_structure' as const,
+                action: {
+                  changeType: 'add_flatten_field',
+                  stepId,
+                  field: fieldToExtract,
+                  description: `Add field parameter to extract nested array: config.field = "${fieldToExtract}"`
+                },
+                confidence: hasHighConfidence ? 0.9 : 0.7
+              },
+              autoRepairAvailable: hasHighConfidence,
+              autoRepairProposal: hasHighConfidence ? {
+                action: 'add_flatten_field',
+                description: `Add config.field = "${fieldToExtract}" to extract nested ${fieldToExtract} array`,
+                confidence: 0.9,
+                targetStepId: stepId,
+                risk: 'low' as const
+              } : undefined,
+              requiresUserInput: !hasHighConfidence,
+              estimatedImpact: 'high'
+            });
+          }
+        }
+      }
+
+      // Issue 2: Filter operation using wrong field name
+      if (step.type === 'transform' && (step as any).operation === 'filter') {
+        const config = (step as any).config || {};
+        const condition = config.condition || config.filter_expression;
+        const input = (step as any).input;
+
+        if (condition && typeof condition === 'object') {
+          const field = condition.field;
+
+          if (field && input) {
+            // Try to resolve the input to find the actual step that provides the data
+            const inputMatch = input.match(/\{\{(step\w+|\w+)\}\}/);
+            if (inputMatch) {
+              const sourceStepId = inputMatch[1];
+              const sourceOutput = allStepOutputs.get(sourceStepId);
+
+              if (sourceOutput && sourceOutput.data) {
+                // Check if the field exists in the source data
+                const dataArray = Array.isArray(sourceOutput.data) ? sourceOutput.data : [sourceOutput.data];
+
+                if (dataArray.length > 0) {
+                  const firstItem = dataArray[0];
+                  const availableFields = typeof firstItem === 'object' ? Object.keys(firstItem) : [];
+
+                  // Check if field exists (case-sensitive and case-insensitive)
+                  const fieldExists = availableFields.some(f => f === field);
+                  const similarField = availableFields.find(f => f.toLowerCase() === field.toLowerCase());
+
+                  if (!fieldExists) {
+                    issues.push({
+                      id: crypto.randomUUID(),
+                      category: 'logic_error',
+                      severity: 'critical',
+                      affectedSteps: [{
+                        stepId,
+                        stepName: step.name || 'Filter operation',
+                        friendlyName: this.getStepName(agent, stepId)
+                      }],
+                      title: `Filter using non-existent field: ${field}`,
+                      message: `This filter tries to filter by field '${field}' but the data doesn't have that field. ${similarField ? `The data has '${similarField}' instead (note the different naming convention).` : `Available fields: ${availableFields.join(', ')}`}`,
+                      technicalDetails: `Step ${stepId} filters by '${field}' but source step ${sourceStepId} data has fields: ${availableFields.join(', ')}`,
+                      suggestedFix: similarField ? {
+                        type: 'workflow_structure' as const,
+                        action: {
+                          changeType: 'fix_field_name',
+                          stepId,
+                          from: field,
+                          to: similarField,
+                          description: `Change field name from '${field}' to '${similarField}' to match data schema`
+                        },
+                        confidence: 0.95
+                      } : undefined,
+                      autoRepairAvailable: !!similarField,
+                      autoRepairProposal: similarField ? {
+                        action: 'fix_field_name',
+                        description: `Change filter field from '${field}' to '${similarField}'`,
+                        confidence: 0.95,
+                        targetStepId: stepId,
+                        risk: 'low' as const
+                      } : undefined,
+                      requiresUserInput: !similarField,
+                      estimatedImpact: 'high'
+                    });
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+
+      // Issue 3: Parameter reference using wrong field name
+      if (step.type === 'action') {
+        const config = (step as any).config || (step as any).params || {};
+
+        // Recursively check all parameter values for variable references
+        const checkParameterRefs = (obj: any, paramPath: string = '') => {
+          if (typeof obj === 'string') {
+            // Look for {{stepX.fieldName}} patterns
+            const varMatch = obj.match(/\{\{(step\w+)\.(\w+)\}\}/);
+            if (varMatch) {
+              const sourceStepId = varMatch[1];
+              const fieldName = varMatch[2];
+              const sourceOutput = allStepOutputs.get(sourceStepId);
+
+              if (sourceOutput && sourceOutput.data) {
+                // Check if field exists in source output
+                const data = sourceOutput.data;
+                const availableFields = typeof data === 'object' && data !== null ? Object.keys(data) : [];
+
+                // Check if field exists (case-sensitive)
+                const fieldExists = availableFields.includes(fieldName);
+                const similarField = availableFields.find(f => f.toLowerCase() === fieldName.toLowerCase());
+
+                if (!fieldExists && availableFields.length > 0) {
+                  const currentParamName = paramPath || 'parameter';
+
+                  issues.push({
+                    id: crypto.randomUUID(),
+                    category: 'logic_error',
+                    severity: 'critical',
+                    affectedSteps: [{
+                      stepId,
+                      stepName: step.name || 'Action step',
+                      friendlyName: this.getStepName(agent, stepId)
+                    }],
+                    title: `Parameter references non-existent field: ${fieldName}`,
+                    message: `The ${currentParamName} parameter references {{${sourceStepId}.${fieldName}}} but step ${sourceStepId} doesn't output that field. ${similarField ? `It outputs '${similarField}' instead (note the different naming convention).` : `Available fields: ${availableFields.join(', ')}`}`,
+                    technicalDetails: `Step ${stepId} ${currentParamName} uses {{${sourceStepId}.${fieldName}}} but source step outputs: ${availableFields.join(', ')}`,
+                    suggestedFix: similarField ? {
+                      type: 'workflow_structure' as const,
+                      action: {
+                        changeType: 'fix_parameter_reference',
+                        stepId,
+                        parameter: currentParamName,
+                        from: `{{${sourceStepId}.${fieldName}}}`,
+                        to: `{{${sourceStepId}.${similarField}}}`,
+                        description: `Change parameter reference from '${fieldName}' to '${similarField}'`
+                      },
+                      confidence: 0.95
+                    } : undefined,
+                    autoRepairAvailable: !!similarField,
+                    autoRepairProposal: similarField ? {
+                      action: 'fix_parameter_reference',
+                      description: `Change {{${sourceStepId}.${fieldName}}} to {{${sourceStepId}.${similarField}}}`,
+                      confidence: 0.95,
+                      targetStepId: stepId,
+                      risk: 'low' as const
+                    } : undefined,
+                    requiresUserInput: !similarField,
+                    estimatedImpact: 'high'
+                  });
+                }
+              }
+            }
+          } else if (typeof obj === 'object' && obj !== null) {
+            for (const [key, value] of Object.entries(obj)) {
+              checkParameterRefs(value, key);
+            }
+          } else if (Array.isArray(obj)) {
+            obj.forEach((item, idx) => checkParameterRefs(item, `${paramPath}[${idx}]`));
+          }
+        };
+
+        checkParameterRefs(config);
+      }
+    }
+
+    logger.info({
+      agentId: agent.id,
+      issuesFound: issues.length,
+      issueTypes: issues.map(i => i.title)
+    }, 'Workflow structure analysis completed');
+
+    return issues;
   }
 
   /**
@@ -941,6 +1240,60 @@ export class IssueCollector {
           };
         }
       }
+    }
+
+    return null;
+  }
+
+  /**
+   * Detect if error is due to missing workflow configuration values ({{config.key}})
+   * This detects when step parameters reference config values that are not populated
+   */
+  private detectMissingWorkflowConfig(
+    errorMessage: string,
+    stepParams: any,
+    context: ExecutionContext
+  ): { configKeys: string[], affectedParameters: string[] } | null {
+    if (!stepParams) {
+      return null;
+    }
+
+    const configKeys: Set<string> = new Set();
+    const affectedParameters: Set<string> = new Set();
+
+    // Recursively scan for {{config.X}} patterns in step parameters
+    const scanForConfigRefs = (obj: any, path: string = '') => {
+      if (typeof obj === 'string') {
+        // Look for {{config.key}} patterns
+        const configMatches = obj.matchAll(/\{\{config\.(\w+)\}\}/g);
+        for (const match of configMatches) {
+          const configKey = match[1];
+
+          // Check if this config key exists and has a value
+          const configValue = context.workflowConfig?.[configKey];
+
+          if (configValue === undefined || configValue === null || configValue === '') {
+            configKeys.add(configKey);
+            affectedParameters.add(path || 'value');
+          }
+        }
+      } else if (Array.isArray(obj)) {
+        obj.forEach((item, index) => scanForConfigRefs(item, `${path}[${index}]`));
+      } else if (obj && typeof obj === 'object') {
+        Object.entries(obj).forEach(([key, value]) => {
+          const newPath = path ? `${path}.${key}` : key;
+          scanForConfigRefs(value, newPath);
+        });
+      }
+    };
+
+    scanForConfigRefs(stepParams);
+
+    if (configKeys.size > 0) {
+      return {
+        configKeys: Array.from(configKeys),
+        affectedParameters: Array.from(affectedParameters)
+      };
     }
 
     return null;

@@ -95,13 +95,15 @@ export class RepairEngine {
    * @param failedStepId - The step that failed
    * @param upstreamStepId - The upstream step whose output may need fixing
    * @param upstreamOutput - The upstream step's StepOutput (in-memory)
+   * @param failedStep - Optional: The failed step definition for context (description, config, etc.)
    * @returns RepairProposal with action type and details, or action='none'
    */
   proposeRepair(
     classification: FailureClassification,
     failedStepId: string,
     upstreamStepId: string,
-    upstreamOutput: StepOutput | undefined
+    upstreamOutput: StepOutput | undefined,
+    failedStep?: any
   ): RepairProposal {
     const noRepair: RepairProposal = {
       action: 'none',
@@ -133,7 +135,7 @@ export class RepairEngine {
       };
     }
 
-    const analysis = this.analyzeUpstreamData(data);
+    const analysis = this.analyzeUpstreamData(data, failedStep);
 
     switch (analysis.shape) {
       case 'already_array':
@@ -297,8 +299,10 @@ export class RepairEngine {
   /**
    * Analyze upstream data to classify its shape and find the best array field.
    * Detects 10+ generic patterns that work for ANY plugin.
+   * @param data Upstream step output
+   * @param failedStep Optional: The failed step definition for context
    */
-  analyzeUpstreamData(data: any): DataShapeAnalysis {
+  analyzeUpstreamData(data: any, failedStep?: any): DataShapeAnalysis {
     // Already an array
     if (Array.isArray(data)) {
       // Check for sparse array (nulls/undefined)
@@ -339,7 +343,7 @@ export class RepairEngine {
     const hasPaginationIndicator = paginationIndicators.some(key => data[key] !== undefined);
 
     if (hasPaginationIndicator && arrayFields.length > 0) {
-      const bestMatch = arrayFields.length === 1 ? arrayFields[0].name : this.findBestArrayField(arrayFields, data);
+      const bestMatch = arrayFields.length === 1 ? arrayFields[0].name : this.findBestArrayField(arrayFields, data, failedStep);
       return {
         shape: 'paginated_response',
         arrayFields,
@@ -389,7 +393,7 @@ export class RepairEngine {
     // PATTERN 6: Multiple array fields (same entity type, different states)
     // Example: {files: [...], folders: [...]} or {active_items: [...], archived_items: [...]}
     if (arrayFields.length > 1) {
-      const bestMatch = this.findBestArrayField(arrayFields, data);
+      const bestMatch = this.findBestArrayField(arrayFields, data, failedStep);
       return {
         shape: 'multiple_array_fields',
         arrayFields,
@@ -417,12 +421,59 @@ export class RepairEngine {
 
   /**
    * Find the best array field from multiple candidates using priority patterns.
-   * Mirrors SchemaAwareDataExtractor's heuristic extraction logic.
+   * Uses context from the failed step (description, config) to make smarter decisions.
    */
   private findBestArrayField(
     arrayFields: Array<{ name: string; length: number }>,
-    _data: any
+    _data: any,
+    failedStep?: any
   ): string {
+    console.log('[RepairEngine] findBestArrayField called with:', {
+      arrayFields: arrayFields.map(f => f.name),
+      hasFailedStep: !!failedStep,
+      stepDescription: failedStep?.description,
+      stepCustomCode: failedStep?.config?.custom_code
+    });
+
+    // Priority 0: Context-aware matching from step description/config
+    if (failedStep) {
+      const contextText = [
+        failedStep.description || '',
+        failedStep.config?.custom_code || '',
+        failedStep.config?.field || '',
+        JSON.stringify(failedStep.config?.output_schema || {})
+      ].join(' ').toLowerCase();
+
+      console.log('[RepairEngine] Context text for matching:', contextText.substring(0, 200));
+
+      // Extract field name hints from context (e.g., "extract attachments", "flatten attachments")
+      for (const field of arrayFields) {
+        const fieldName = field.name.toLowerCase();
+        const includes = contextText.includes(fieldName);
+        console.log(`[RepairEngine] Checking field "${fieldName}": ${includes ? '✅ FOUND' : '❌ not found'}`);
+        // Check if the field name is mentioned in the context
+        if (includes) {
+          console.log(`[RepairEngine] 🎯 Selected field based on context match: "${field.name}"`);
+          return field.name;
+        }
+      }
+
+      // Check for semantic matches (e.g., "attachment" matches "attachments")
+      for (const field of arrayFields) {
+        const fieldBase = field.name.toLowerCase().replace(/s$/, ''); // Remove plural 's'
+        const includes = contextText.includes(fieldBase);
+        console.log(`[RepairEngine] Checking field base "${fieldBase}": ${includes ? '✅ FOUND' : '❌ not found'}`);
+        if (includes) {
+          console.log(`[RepairEngine] 🎯 Selected field based on semantic match: "${field.name}"`);
+          return field.name;
+        }
+      }
+
+      console.log('[RepairEngine] ⚠️  No context match found, falling back to heuristics');
+    } else {
+      console.log('[RepairEngine] ⚠️  No failedStep provided, using heuristics only');
+    }
+
     // Priority 1: Pattern-based matching
     for (const pattern of PRIMARY_ARRAY_PATTERNS) {
       const match = arrayFields.find(f => pattern.test(f.name));

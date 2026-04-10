@@ -1,0 +1,884 @@
+{
+  "plugin": {
+    "name": "onedrive",
+    "version": "1.0.0",
+    "description": "Access, search, upload, and manage files and folders in Microsoft OneDrive",
+    "context": "Use for accessing OneDrive files, searching documents, uploading files, creating folders, managing folder structures, and sharing files. Part of Microsoft 365 with same credentials as Outlook.",
+    "icon": "<Cloud className='w-5 h-5 text-blue-600'/>",
+    "category": "productivity",
+    "isPopular": true,
+    "auth_config": {
+      "auth_type": "oauth2_microsoft",
+      "client_id": "${MICROSOFT_CLIENT_ID}",
+      "client_secret": "${MICROSOFT_CLIENT_SECRET}",
+      "redirect_uri": "${NEXT_PUBLIC_APP_URL}/oauth/callback/onedrive",
+      "auth_url": "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
+      "token_url": "https://login.microsoftonline.com/common/oauth2/v2.0/token",
+      "refresh_url": "https://login.microsoftonline.com/common/oauth2/v2.0/token",
+      "profile_url": "https://graph.microsoft.com/v1.0/me",
+      "required_scopes": [
+        "openid",
+        "profile",
+        "email",
+        "offline_access",
+        "https://graph.microsoft.com/Files.ReadWrite.All"
+      ],
+      "token_expiry_seconds": 3600
+    },
+    "provider_family": "microsoft"
+  },
+  "actions": {
+    "list_files": {
+      "description": "List files and folders in OneDrive with optional filtering and sorting",
+      "usage_context": "When user wants to browse OneDrive contents, see files in a folder, or list files matching criteria",
+      "idempotent": true,
+      "domain": "storage",
+      "capability": "list",
+      "input_entity": "folder",
+      "output_entity": "file",
+      "input_cardinality": "single",
+      "output_cardinality": "collection",
+      "output_fields": ["id", "name", "size", "createdDateTime", "lastModifiedDateTime", "webUrl", "mimeType"],
+      "required_params": [],
+      "optional_params": ["folder_id", "max_results", "order_by", "file_types"],
+      "must_support": ["folder_browsing", "mime_type_filter", "date_filter"],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "folder_id": {
+            "type": "string",
+            "description": "ID of the folder to list files from. If not provided, lists from root",
+            "x-dynamic-options": {
+              "source": "list_folders",
+              "description": "Fetches available folders dynamically"
+            },
+            "x-variable-mapping": {
+              "from_type": "folder",
+              "field_path": "folder_id",
+              "description": "Extract folder ID from folder object"
+            }
+          },
+          "max_results": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 100,
+            "default": 20,
+            "description": "Maximum number of files to return"
+          },
+          "order_by": {
+            "type": "string",
+            "enum": ["lastModifiedDateTime", "name", "createdDateTime", "size"],
+            "default": "lastModifiedDateTime",
+            "description": "How to order the file results"
+          },
+          "file_types": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": ["document", "spreadsheet", "presentation", "pdf", "image", "video", "folder", "all"]
+            },
+            "description": "Filter by file types"
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "files": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": { "type": "string" },
+                "name": { "type": "string" },
+                "size": { "type": "integer" },
+                "mimeType": { "type": "string" },
+                "createdDateTime": { "type": "string" },
+                "lastModifiedDateTime": { "type": "string" },
+                "webUrl": { "type": "string" },
+                "isFolder": { "type": "boolean" }
+              }
+            }
+          },
+          "file_count": { "type": "integer", "x-guaranteed": true },
+          "retrieved_at": { "type": "string", "x-guaranteed": true }
+        }
+      },
+      "output_guidance": {
+        "success_description": "Retrieved files from OneDrive",
+        "sample_output": {
+          "files": [
+            {
+              "id": "01BYE5RZ6QN3ZWBTUFOFD3GSPGOHDJD36K",
+              "name": "invoice.pdf",
+              "size": 245760,
+              "mimeType": "application/pdf",
+              "createdDateTime": "2026-03-13T10:00:00Z",
+              "lastModifiedDateTime": "2026-03-13T15:00:00Z",
+              "webUrl": "https://onedrive.live.com/...",
+              "isFolder": false
+            }
+          ],
+          "file_count": 1,
+          "retrieved_at": "2026-03-13T16:00:00Z"
+        },
+        "common_errors": {
+          "auth_failed": "Your OneDrive connection has expired. Please reconnect in Settings → Connected Apps.",
+          "folder_not_found": "The specified folder was not found.",
+          "insufficient_permissions": "Files.Read permission is required to list files."
+        }
+      }
+    },
+    "search_files": {
+      "description": "Search for files and folders in OneDrive using query text",
+      "usage_context": "When user wants to find specific files by name, content, or metadata",
+      "idempotent": true,
+      "domain": "storage",
+      "capability": "search",
+      "input_entity": null,
+      "output_entity": "file",
+      "input_cardinality": null,
+      "output_cardinality": "collection",
+      "output_fields": ["id", "name", "size", "mimeType", "lastModifiedDateTime", "webUrl"],
+      "required_params": ["query"],
+      "optional_params": ["folder_id", "max_results"],
+      "must_support": ["full_text_search", "scoped_search"],
+      "parameters": {
+        "type": "object",
+        "required": ["query"],
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Search query text (searches file names and content)"
+          },
+          "folder_id": {
+            "type": "string",
+            "description": "Limit search to specific folder",
+            "x-variable-mapping": {
+              "from_type": "folder",
+              "field_path": "folder_id",
+              "description": "Extract folder ID from folder object"
+            }
+          },
+          "max_results": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 100,
+            "default": 20,
+            "description": "Maximum number of results"
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "files": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": { "type": "string" },
+                "name": { "type": "string" },
+                "size": { "type": "integer" },
+                "mimeType": { "type": "string" },
+                "lastModifiedDateTime": { "type": "string" },
+                "webUrl": { "type": "string" }
+              }
+            }
+          },
+          "file_count": { "type": "integer", "x-guaranteed": true },
+          "searched_at": { "type": "string", "x-guaranteed": true }
+        }
+      },
+      "output_guidance": {
+        "success_description": "Search results from OneDrive",
+        "sample_output": {
+          "files": [
+            {
+              "id": "01BYE5RZ6QN3ZWBTUFOFD3GSPGOHDJD36K",
+              "name": "invoice-march.pdf",
+              "size": 245760,
+              "mimeType": "application/pdf",
+              "lastModifiedDateTime": "2026-03-13T15:00:00Z",
+              "webUrl": "https://onedrive.live.com/..."
+            }
+          ],
+          "file_count": 1,
+          "searched_at": "2026-03-13T16:00:00Z"
+        },
+        "common_errors": {
+          "auth_failed": "Your OneDrive connection has expired. Please reconnect."
+        }
+      }
+    },
+    "get_file_metadata": {
+      "description": "Get detailed information about a specific file or folder",
+      "usage_context": "When user wants file details, permissions, or metadata",
+      "idempotent": true,
+      "domain": "storage",
+      "capability": "get",
+      "input_entity": "file",
+      "output_entity": "file",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "output_fields": ["id", "name", "size", "mimeType", "createdDateTime", "lastModifiedDateTime", "createdBy", "lastModifiedBy"],
+      "required_params": ["file_id"],
+      "optional_params": ["include_permissions"],
+      "must_support": ["metadata_retrieval", "permission_info"],
+      "parameters": {
+        "type": "object",
+        "required": ["file_id"],
+        "properties": {
+          "file_id": {
+            "type": "string",
+            "description": "ID of the file or folder",
+            "x-variable-mapping": {
+              "from_type": "file",
+              "field_path": "id",
+              "description": "Extract file ID from file object"
+            }
+          },
+          "include_permissions": {
+            "type": "boolean",
+            "default": false,
+            "description": "Include sharing permissions"
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "x-guaranteed": true },
+          "name": { "type": "string", "x-guaranteed": true },
+          "size": { "type": "integer" },
+          "mimeType": { "type": "string" },
+          "createdDateTime": { "type": "string" },
+          "lastModifiedDateTime": { "type": "string" },
+          "webUrl": { "type": "string" },
+          "createdBy": { "type": "object" },
+          "lastModifiedBy": { "type": "object" }
+        }
+      },
+      "output_guidance": {
+        "success_description": "Retrieved file metadata",
+        "sample_output": {
+          "id": "01BYE5RZ6QN3ZWBTUFOFD3GSPGOHDJD36K",
+          "name": "invoice.pdf",
+          "size": 245760,
+          "mimeType": "application/pdf",
+          "createdDateTime": "2026-03-13T10:00:00Z",
+          "lastModifiedDateTime": "2026-03-13T15:00:00Z",
+          "webUrl": "https://onedrive.live.com/..."
+        },
+        "common_errors": {
+          "auth_failed": "Your OneDrive connection has expired.",
+          "file_not_found": "The specified file was not found."
+        }
+      }
+    },
+    "download_file": {
+      "description": "Download file content from OneDrive",
+      "usage_context": "When user needs to download or access file content",
+      "idempotent": true,
+      "domain": "storage",
+      "capability": "fetch_content",
+      "input_entity": "file",
+      "output_entity": "file",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "output_fields": ["file_id", "file_name", "content", "mime_type", "size"],
+      "required_params": ["file_id"],
+      "optional_params": ["return_url_only"],
+      "must_support": ["binary_download", "url_generation"],
+      "parameters": {
+        "type": "object",
+        "required": ["file_id"],
+        "properties": {
+          "file_id": {
+            "type": "string",
+            "description": "ID of the file to download",
+            "x-variable-mapping": {
+              "from_type": "file",
+              "field_path": "id",
+              "description": "Extract file ID from file object"
+            }
+          },
+          "return_url_only": {
+            "type": "boolean",
+            "default": false,
+            "description": "Return download URL instead of file content"
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "file_id": { "type": "string", "x-guaranteed": true },
+          "file_name": { "type": "string", "x-guaranteed": true },
+          "mime_type": { "type": "string" },
+          "size": { "type": "integer" },
+          "content": { "type": "string", "description": "Base64 encoded content or download URL" },
+          "download_url": { "type": "string" },
+          "downloaded_at": { "type": "string", "x-guaranteed": true }
+        }
+      },
+      "output_guidance": {
+        "success_description": "File downloaded successfully",
+        "sample_output": {
+          "file_id": "01BYE5RZ6QN3ZWBTUFOFD3GSPGOHDJD36K",
+          "file_name": "invoice.pdf",
+          "mime_type": "application/pdf",
+          "size": 245760,
+          "download_url": "https://graph.microsoft.com/...",
+          "downloaded_at": "2026-03-13T16:00:00Z"
+        },
+        "common_errors": {
+          "auth_failed": "Your OneDrive connection has expired.",
+          "file_not_found": "The specified file was not found.",
+          "file_too_large": "File exceeds download size limit."
+        }
+      }
+    },
+    "upload_file": {
+      "description": "Upload a file to OneDrive",
+      "usage_context": "When user wants to save files to OneDrive",
+      "idempotent": false,
+      "domain": "storage",
+      "capability": "create",
+      "input_entity": "file",
+      "output_entity": "file",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "output_fields": ["file_id", "file_name", "web_url", "size"],
+      "required_params": ["file_content", "file_name"],
+      "optional_params": ["folder_id", "mime_type", "conflict_behavior"],
+      "must_support": ["binary_upload", "conflict_resolution"],
+      "parameters": {
+        "type": "object",
+        "required": ["file_content", "file_name"],
+        "properties": {
+          "file_content": {
+            "type": "string",
+            "description": "File content (base64 encoded for binary files, or plain text)",
+            "x-variable-mapping": {
+              "from_type": "file_attachment",
+              "field_path": "content",
+              "description": "Extract content from attachment object"
+            }
+          },
+          "file_name": {
+            "type": "string",
+            "description": "Name for the uploaded file",
+            "x-variable-mapping": {
+              "from_type": "file_attachment",
+              "field_path": "filename",
+              "description": "Extract filename from attachment object"
+            }
+          },
+          "folder_id": {
+            "type": "string",
+            "description": "ID of parent folder (default: root)",
+            "x-dynamic-options": {
+              "source": "list_folders",
+              "description": "Fetches available folders dynamically"
+            },
+            "x-variable-mapping": {
+              "from_type": "folder",
+              "field_path": "folder_id",
+              "description": "Extract folder ID from folder object"
+            }
+          },
+          "mime_type": {
+            "type": "string",
+            "description": "MIME type of the file"
+          },
+          "conflict_behavior": {
+            "type": "string",
+            "enum": ["rename", "replace", "fail"],
+            "default": "rename",
+            "description": "What to do if file already exists"
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "file_id": { "type": "string", "x-guaranteed": true },
+          "file_name": { "type": "string", "x-guaranteed": true },
+          "web_url": { "type": "string" },
+          "size": { "type": "integer" },
+          "uploaded_at": { "type": "string", "x-guaranteed": true }
+        }
+      },
+      "output_guidance": {
+        "success_description": "File uploaded successfully",
+        "sample_output": {
+          "file_id": "01BYE5RZ6QN3ZWBTUFOFD3GSPGOHDJD36K",
+          "file_name": "invoice.pdf",
+          "web_url": "https://onedrive.live.com/...",
+          "size": 245760,
+          "uploaded_at": "2026-03-13T16:00:00Z"
+        },
+        "common_errors": {
+          "auth_failed": "Your OneDrive connection has expired.",
+          "file_name_invalid": "The file name contains invalid characters.",
+          "quota_exceeded": "OneDrive storage quota exceeded."
+        }
+      }
+    },
+    "create_folder": {
+      "description": "Create a new folder in OneDrive",
+      "usage_context": "When user wants to create a new folder",
+      "idempotent": false,
+      "domain": "storage",
+      "capability": "create",
+      "input_entity": "folder",
+      "output_entity": "folder",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "output_fields": ["folder_id", "folder_name", "web_url"],
+      "required_params": ["folder_name"],
+      "optional_params": ["parent_folder_id", "conflict_behavior"],
+      "must_support": ["folder_creation", "conflict_resolution"],
+      "parameters": {
+        "type": "object",
+        "required": ["folder_name"],
+        "properties": {
+          "folder_name": {
+            "type": "string",
+            "description": "Name for the new folder"
+          },
+          "parent_folder_id": {
+            "type": "string",
+            "description": "ID of parent folder (default: root)",
+            "x-variable-mapping": {
+              "from_type": "folder",
+              "field_path": "folder_id",
+              "description": "Extract folder ID from folder object"
+            }
+          },
+          "conflict_behavior": {
+            "type": "string",
+            "enum": ["rename", "replace", "fail"],
+            "default": "rename",
+            "description": "What to do if folder already exists"
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "folder_id": { "type": "string", "x-guaranteed": true },
+          "folder_name": { "type": "string", "x-guaranteed": true },
+          "web_url": { "type": "string" },
+          "created_at": { "type": "string", "x-guaranteed": true }
+        }
+      },
+      "output_guidance": {
+        "success_description": "Folder created successfully",
+        "sample_output": {
+          "folder_id": "01BYE5RZ6QN3ZWBTUFOFD3GSPGOHDJD36K",
+          "folder_name": "Invoices 2024",
+          "web_url": "https://onedrive.live.com/...",
+          "created_at": "2026-03-13T16:00:00Z"
+        },
+        "common_errors": {
+          "auth_failed": "Your OneDrive connection has expired.",
+          "folder_name_invalid": "The folder name contains invalid characters.",
+          "parent_not_found": "The parent folder was not found."
+        }
+      }
+    },
+    "get_or_create_folder": {
+      "description": "Get existing folder by name or create if it doesn't exist (idempotent operation)",
+      "usage_context": "When user needs a specific folder to exist for organizing files, avoiding duplicates",
+      "idempotent": true,
+      "domain": "storage",
+      "capability": "create",
+      "input_entity": "folder",
+      "output_entity": "folder",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "output_fields": ["folder_id", "folder_name", "web_url", "created"],
+      "required_params": ["folder_name"],
+      "optional_params": ["parent_folder_id"],
+      "must_support": ["idempotent_creation", "folder_search"],
+      "parameters": {
+        "type": "object",
+        "required": ["folder_name"],
+        "properties": {
+          "folder_name": {
+            "type": "string",
+            "description": "Name of folder to find or create"
+          },
+          "parent_folder_id": {
+            "type": "string",
+            "description": "ID of parent folder (default: root)",
+            "x-variable-mapping": {
+              "from_type": "folder",
+              "field_path": "folder_id",
+              "description": "Extract folder ID from folder object"
+            }
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "folder_id": { "type": "string", "x-guaranteed": true },
+          "folder_name": { "type": "string", "x-guaranteed": true },
+          "web_url": { "type": "string" },
+          "created": { "type": "boolean", "x-guaranteed": true, "description": "true if newly created, false if existed" },
+          "created_at": { "type": "string", "x-guaranteed": true }
+        }
+      },
+      "output_guidance": {
+        "success_description": "Folder is ready",
+        "sample_output": {
+          "folder_id": "01BYE5RZ6QN3ZWBTUFOFD3GSPGOHDJD36K",
+          "folder_name": "Invoices 2024",
+          "web_url": "https://onedrive.live.com/...",
+          "created": false,
+          "created_at": "2026-03-13T16:00:00Z"
+        },
+        "common_errors": {
+          "auth_failed": "Your OneDrive connection has expired.",
+          "folder_name_invalid": "The folder name contains invalid characters."
+        }
+      }
+    },
+    "delete_file": {
+      "description": "Delete a file or folder from OneDrive (moves to recycle bin)",
+      "usage_context": "When user wants to remove files or folders",
+      "idempotent": true,
+      "domain": "storage",
+      "capability": "delete",
+      "input_entity": "file",
+      "output_entity": null,
+      "input_cardinality": "single",
+      "output_cardinality": null,
+      "output_fields": ["file_id", "deleted_at"],
+      "required_params": ["file_id"],
+      "optional_params": [],
+      "must_support": ["soft_delete"],
+      "parameters": {
+        "type": "object",
+        "required": ["file_id"],
+        "properties": {
+          "file_id": {
+            "type": "string",
+            "description": "ID of the file or folder to delete",
+            "x-variable-mapping": {
+              "from_type": "file",
+              "field_path": "id",
+              "description": "Extract file ID from file object"
+            }
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "file_id": { "type": "string", "x-guaranteed": true },
+          "file_name": { "type": "string" },
+          "deleted": { "type": "boolean", "x-guaranteed": true },
+          "deleted_at": { "type": "string", "x-guaranteed": true }
+        }
+      },
+      "output_guidance": {
+        "success_description": "File deleted successfully",
+        "sample_output": {
+          "file_id": "01BYE5RZ6QN3ZWBTUFOFD3GSPGOHDJD36K",
+          "file_name": "invoice.pdf",
+          "deleted": true,
+          "deleted_at": "2026-03-13T16:00:00Z"
+        },
+        "common_errors": {
+          "auth_failed": "Your OneDrive connection has expired.",
+          "file_not_found": "The specified file was not found."
+        }
+      }
+    },
+    "move_file": {
+      "description": "Move a file or folder to a different parent folder",
+      "usage_context": "When user wants to reorganize files or move items to different folders",
+      "idempotent": true,
+      "domain": "storage",
+      "capability": "update",
+      "input_entity": "file",
+      "output_entity": "file",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "output_fields": ["file_id", "file_name", "new_parent_id", "web_url"],
+      "required_params": ["file_id", "destination_folder_id"],
+      "optional_params": ["new_name"],
+      "must_support": ["folder_move", "rename_on_move"],
+      "parameters": {
+        "type": "object",
+        "required": ["file_id", "destination_folder_id"],
+        "properties": {
+          "file_id": {
+            "type": "string",
+            "description": "ID of the file to move",
+            "x-variable-mapping": {
+              "from_type": "file",
+              "field_path": "id",
+              "description": "Extract file ID from file object"
+            }
+          },
+          "destination_folder_id": {
+            "type": "string",
+            "description": "ID of the destination folder",
+            "x-variable-mapping": {
+              "from_type": "folder",
+              "field_path": "folder_id",
+              "description": "Extract folder ID from folder object"
+            }
+          },
+          "new_name": {
+            "type": "string",
+            "description": "Optionally rename during move"
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "file_id": { "type": "string", "x-guaranteed": true },
+          "file_name": { "type": "string", "x-guaranteed": true },
+          "new_parent_id": { "type": "string", "x-guaranteed": true },
+          "web_url": { "type": "string" },
+          "moved_at": { "type": "string", "x-guaranteed": true }
+        }
+      },
+      "output_guidance": {
+        "success_description": "File moved successfully",
+        "sample_output": {
+          "file_id": "01BYE5RZ6QN3ZWBTUFOFD3GSPGOHDJD36K",
+          "file_name": "invoice.pdf",
+          "new_parent_id": "01BYE5RZ789FOLDER123",
+          "web_url": "https://onedrive.live.com/...",
+          "moved_at": "2026-03-13T16:00:00Z"
+        },
+        "common_errors": {
+          "auth_failed": "Your OneDrive connection has expired.",
+          "file_not_found": "The specified file was not found.",
+          "destination_not_found": "The destination folder was not found."
+        }
+      }
+    },
+    "copy_file": {
+      "description": "Copy a file or folder to a new location",
+      "usage_context": "When user wants to duplicate files for backup or organization",
+      "idempotent": false,
+      "domain": "storage",
+      "capability": "create",
+      "input_entity": "file",
+      "output_entity": "file",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "output_fields": ["file_id", "file_name", "web_url"],
+      "required_params": ["file_id"],
+      "optional_params": ["destination_folder_id", "new_name"],
+      "must_support": ["file_copy", "async_operations"],
+      "parameters": {
+        "type": "object",
+        "required": ["file_id"],
+        "properties": {
+          "file_id": {
+            "type": "string",
+            "description": "ID of the file to copy",
+            "x-variable-mapping": {
+              "from_type": "file",
+              "field_path": "id",
+              "description": "Extract file ID from file object"
+            }
+          },
+          "destination_folder_id": {
+            "type": "string",
+            "description": "ID of destination folder (default: same folder)",
+            "x-variable-mapping": {
+              "from_type": "folder",
+              "field_path": "folder_id",
+              "description": "Extract folder ID from folder object"
+            }
+          },
+          "new_name": {
+            "type": "string",
+            "description": "Name for the copy (default: 'Copy of {original}')"
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "file_id": { "type": "string", "x-guaranteed": true },
+          "file_name": { "type": "string", "x-guaranteed": true },
+          "web_url": { "type": "string" },
+          "monitor_url": { "type": "string", "description": "URL to monitor long-running copy" },
+          "copied_at": { "type": "string", "x-guaranteed": true }
+        }
+      },
+      "output_guidance": {
+        "success_description": "File copied successfully",
+        "sample_output": {
+          "file_id": "01BYE5RZ6QN3ZWBTUFOFD3GSPGOHDJD36K",
+          "file_name": "Copy of invoice.pdf",
+          "web_url": "https://onedrive.live.com/...",
+          "copied_at": "2026-03-13T16:00:00Z"
+        },
+        "common_errors": {
+          "auth_failed": "Your OneDrive connection has expired.",
+          "file_not_found": "The specified file was not found.",
+          "quota_exceeded": "OneDrive storage quota exceeded."
+        }
+      }
+    },
+    "create_share_link": {
+      "description": "Create a shareable link for a file or folder with specific permissions",
+      "usage_context": "When user wants to share files with others via link",
+      "idempotent": false,
+      "domain": "storage",
+      "capability": "share",
+      "input_entity": "file",
+      "output_entity": "share_link",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "output_fields": ["file_id", "share_link", "link_type", "scope"],
+      "required_params": ["file_id"],
+      "optional_params": ["link_type", "scope", "expiration_date_time", "password"],
+      "must_support": ["public_sharing", "permission_control", "expiration", "password_protection"],
+      "parameters": {
+        "type": "object",
+        "required": ["file_id"],
+        "properties": {
+          "file_id": {
+            "type": "string",
+            "description": "ID of the file or folder to share",
+            "x-variable-mapping": {
+              "from_type": "file",
+              "field_path": "id",
+              "description": "Extract file ID from file object"
+            }
+          },
+          "link_type": {
+            "type": "string",
+            "enum": ["view", "edit", "embed"],
+            "default": "view",
+            "description": "Type of sharing link"
+          },
+          "scope": {
+            "type": "string",
+            "enum": ["anonymous", "organization"],
+            "default": "anonymous",
+            "description": "Who can access the link"
+          },
+          "expiration_date_time": {
+            "type": "string",
+            "description": "Optional expiration date (ISO 8601)"
+          },
+          "password": {
+            "type": "string",
+            "description": "Optional password protection"
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "file_id": { "type": "string", "x-guaranteed": true },
+          "file_name": { "type": "string" },
+          "share_link": { "type": "string", "x-guaranteed": true },
+          "link_type": { "type": "string", "x-guaranteed": true },
+          "scope": { "type": "string", "x-guaranteed": true },
+          "expires_at": { "type": "string" },
+          "created_at": { "type": "string", "x-guaranteed": true }
+        }
+      },
+      "output_guidance": {
+        "success_description": "Share link created successfully",
+        "sample_output": {
+          "file_id": "01BYE5RZ6QN3ZWBTUFOFD3GSPGOHDJD36K",
+          "file_name": "invoice.pdf",
+          "share_link": "https://1drv.ms/b/s!AmkSJ...",
+          "link_type": "view",
+          "scope": "anonymous",
+          "created_at": "2026-03-13T16:00:00Z"
+        },
+        "common_errors": {
+          "auth_failed": "Your OneDrive connection has expired.",
+          "file_not_found": "The specified file was not found.",
+          "sharing_disabled": "Sharing is disabled for this file or organization."
+        }
+      }
+    },
+    "get_thumbnails": {
+      "description": "Retrieve thumbnail images for a file (multiple sizes available)",
+      "usage_context": "When user wants to display preview images of files",
+      "idempotent": true,
+      "domain": "storage",
+      "capability": "fetch_content",
+      "input_entity": "file",
+      "output_entity": "thumbnail",
+      "input_cardinality": "single",
+      "output_cardinality": "collection",
+      "output_fields": ["file_id", "small", "medium", "large"],
+      "required_params": ["file_id"],
+      "optional_params": ["size"],
+      "must_support": ["multiple_sizes", "image_generation"],
+      "parameters": {
+        "type": "object",
+        "required": ["file_id"],
+        "properties": {
+          "file_id": {
+            "type": "string",
+            "description": "ID of the file",
+            "x-variable-mapping": {
+              "from_type": "file",
+              "field_path": "id",
+              "description": "Extract file ID from file object"
+            }
+          },
+          "size": {
+            "type": "string",
+            "enum": ["small", "medium", "large"],
+            "default": "medium",
+            "description": "Thumbnail size"
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "file_id": { "type": "string", "x-guaranteed": true },
+          "thumbnails": {
+            "type": "object",
+            "properties": {
+              "small": { "type": "string", "description": "Small thumbnail URL (96x96)" },
+              "medium": { "type": "string", "description": "Medium thumbnail URL (176x176)" },
+              "large": { "type": "string", "description": "Large thumbnail URL (800x800)" }
+            }
+          },
+          "retrieved_at": { "type": "string", "x-guaranteed": true }
+        }
+      },
+      "output_guidance": {
+        "success_description": "Retrieved thumbnails",
+        "sample_output": {
+          "file_id": "01BYE5RZ6QN3ZWBTUFOFD3GSPGOHDJD36K",
+          "thumbnails": {
+            "small": "https://graph.microsoft.com/v1.0/...",
+            "medium": "https://graph.microsoft.com/v1.0/...",
+            "large": "https://graph.microsoft.com/v1.0/..."
+          },
+          "retrieved_at": "2026-03-13T16:00:00Z"
+        },
+        "common_errors": {
+          "auth_failed": "Your OneDrive connection has expired.",
+          "file_not_found": "The specified file was not found.",
+          "thumbnails_not_available": "Thumbnails are not available for this file type."
+        }
+      }
+    }
+  }
+}
