@@ -8,6 +8,10 @@ export { SharedAgentRepository, sharedAgentRepository } from './SharedAgentRepos
 export { AgentMetricsRepository, agentMetricsRepository } from './AgentMetricsRepository';
 export { ConfigRepository, configRepository } from './ConfigRepository';
 export { MemoryRepository, memoryRepository } from './MemoryRepository';
+export { PluginConnectionRepository, pluginConnectionRepository } from './PluginConnectionRepository';
+export { SystemConfigRepository, systemConfigRepository } from './SystemConfigRepository';
+export { CalibrationSessionRepository, calibrationSessionRepository } from './CalibrationSessionRepository';
+export { InsightRepository, insightRepository } from './InsightRepository';
 
 // Types
 export type {
