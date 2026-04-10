@@ -259,14 +259,13 @@ export default function V2AgentDetailPage() {
   // Batched data fetching - IMPROVEMENT
   useEffect(() => {
     if (user && agentId) {
-      clientLogger.setContext({ component: 'V2AgentDetailPage', agentId, userId: user.id })
-      clientLogger.info('Agent detail page mounted', { agentId })
+      const logger = clientLogger.child({ component: 'V2AgentDetailPage', agentId, userId: user.id })
+      logger.info('Agent detail page mounted', { agentId })
 
       fetchAllData()
 
       return () => {
-        clientLogger.debug('Agent detail page unmounted')
-        clientLogger.clearContext()
+        logger.debug('Agent detail page unmounted')
       }
     }
   }, [user?.id, agentId])
