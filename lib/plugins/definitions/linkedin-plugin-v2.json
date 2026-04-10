@@ -22,39 +22,20 @@
         "email",
         "w_member_social"
       ]
-    },
-    "provider_family": "linkedin"
+    }
   },
   "actions": {
     "get_profile": {
       "description": "Retrieve authenticated user's LinkedIn profile information",
       "usage_context": "Use when you need to access the user's basic LinkedIn profile data including name, headline, profile picture, and unique identifier",
-      "idempotent": true,
-      "domain": "crm",
-      "capability": "get",
-      "input_entity": null,
-      "output_entity": "contact",
-      "input_cardinality": null,
-      "output_cardinality": "single",
-      "output_fields": [
-        "id",
-        "firstName",
-        "lastName",
-        "headline",
-        "profilePicture"
-      ],
-      "required_params": [],
-      "optional_params": [],
-      "must_support": [
-        "profile_data"
-      ],
       "parameters": {
         "type": "object",
         "required": [],
         "properties": {
           "projection": {
             "type": "string",
-            "description": "Optional projection fields (e.g., 'id,firstName,lastName,profilePicture'). If not specified, returns all available fields."
+            "description": "Optional projection fields (e.g., 'id,firstName,lastName,profilePicture'). If not specified, returns all available fields.",
+            "required": false
           }
         }
       },
@@ -62,50 +43,8 @@
         "limits": {},
         "confirmations": {}
       },
-      "output_schema": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string",
-            "description": "LinkedIn user ID",
-            "x-guaranteed": true
-          },
-          "first_name": {
-            "type": "string",
-            "description": "User's first name"
-          },
-          "last_name": {
-            "type": "string",
-            "description": "User's last name"
-          },
-          "profile_picture": {
-            "type": "string",
-            "description": "URL to profile picture"
-          },
-          "vanity_name": {
-            "type": "string",
-            "description": "LinkedIn vanity/custom URL name"
-          },
-          "raw_data": {
-            "type": "object",
-            "description": "Complete raw profile data from API"
-          }
-        },
-        "required": [
-          "id",
-          "firstName",
-          "lastName"
-        ]
-      },
       "output_guidance": {
-        "success_description": "Retrieved profile",
-        "sample_output": {
-          "id": "abc123xyz",
-          "first_name": "John",
-          "last_name": "Doe",
-          "profile_picture": "https://media.licdn.com/dms/image/...",
-          "vanity_name": "johndoe"
-        },
+        "success_message": "Retrieved LinkedIn profile successfully",
         "common_errors": {
           "auth_failed": "LinkedIn connection expired. Please reconnect in Settings.",
           "insufficient_permissions": "Missing required 'profile' scope. Please reconnect with full permissions.",
@@ -126,123 +65,53 @@
         "limits": {},
         "confirmations": {}
       },
-      "output_schema": {
-        "type": "object",
-        "properties": {
-          "sub": {
-            "type": "string",
-            "description": "OpenID Connect subject identifier"
-          },
-          "name": {
-            "type": "string",
-            "description": "Full name",
-            "x-guaranteed": true
-          },
-          "given_name": {
-            "type": "string",
-            "description": "First name"
-          },
-          "family_name": {
-            "type": "string",
-            "description": "Last name"
-          },
-          "picture": {
-            "type": "string",
-            "description": "Profile picture URL"
-          },
-          "email": {
-            "type": "string",
-            "description": "Email address"
-          },
-          "email_verified": {
-            "type": "boolean",
-            "description": "Whether email is verified"
-          },
-          "locale": {
-            "type": "string",
-            "description": "User's locale/language"
-          }
-        }
-      },
       "output_guidance": {
-        "success_description": "Retrieved user info",
-        "sample_output": {
-          "sub": "abc123xyz",
-          "name": "John Doe",
-          "given_name": "John",
-          "family_name": "Doe",
-          "picture": "https://media.licdn.com/dms/image/...",
-          "email": "john.doe@example.com",
-          "email_verified": true,
-          "locale": "en-US"
-        },
+        "success_message": "Retrieved user info successfully",
         "common_errors": {
           "auth_failed": "LinkedIn connection expired. Please reconnect in Settings.",
           "insufficient_permissions": "Missing required 'openid' scope. Please reconnect with OpenID Connect permissions.",
           "api_rate_limit": "LinkedIn API rate limit exceeded. Please wait and try again."
         }
-      },
-      "idempotent": true
+      }
     },
     "create_post": {
       "description": "Create and publish a post on LinkedIn with text and optional media",
       "usage_context": "Use when you want to share content, updates, articles, or media on the user's LinkedIn feed. Supports text posts up to 3000 characters with optional visibility settings.",
-      "idempotent": false,
-      "domain": "messaging",
-      "capability": "post_message",
-      "input_entity": null,
-      "output_entity": "message",
-      "input_cardinality": null,
-      "output_cardinality": "single",
-      "output_fields": [
-        "id",
-        "created_at",
-        "url"
-      ],
-      "required_params": [
-        "text"
-      ],
-      "optional_params": [
-        "visibility"
-      ],
-      "must_support": [
-        "visibility_control"
-      ],
       "parameters": {
         "type": "object",
-        "required": [
-          "text"
-        ],
+        "required": ["text"],
         "properties": {
           "text": {
             "type": "string",
             "minLength": 1,
             "maxLength": 3000,
-            "description": "The text content of the post. Maximum 3000 characters."
+            "description": "The text content of the post. Maximum 3000 characters.",
+            "required": true
           },
           "visibility": {
             "type": "string",
-            "enum": [
-              "PUBLIC",
-              "CONNECTIONS"
-            ],
+            "enum": ["PUBLIC", "CONNECTIONS"],
             "default": "PUBLIC",
-            "description": "Post visibility setting. 'PUBLIC' makes it visible to everyone, 'CONNECTIONS' limits it to 1st-degree connections."
+            "description": "Post visibility setting. 'PUBLIC' makes it visible to everyone, 'CONNECTIONS' limits it to 1st-degree connections.",
+            "required": false
           },
           "media_url": {
             "type": "string",
             "format": "url",
-            "description": "Optional URL to share as an article or link preview"
+            "description": "Optional URL to share as an article or link preview",
+            "required": false
           },
           "media_title": {
             "type": "string",
             "maxLength": 200,
-            "description": "Optional title for the shared media/article"
+            "description": "Optional title for the shared media/article",
+            "required": false
           },
           "media_description": {
             "type": "string",
             "maxLength": 500,
-            "description": "Optional description for the shared media/article"
+            "description": "Optional description for the shared media/article",
+            "required": false
           }
         }
       },
@@ -262,52 +131,8 @@
           }
         }
       },
-      "output_schema": {
-        "type": "object",
-        "properties": {
-          "post_id": {
-            "type": "string",
-            "description": "Unique post identifier",
-            "x-guaranteed": true
-          },
-          "post_urn": {
-            "type": "string",
-            "description": "LinkedIn URN for the post"
-          },
-          "text": {
-            "type": "string",
-            "description": "Text content of the post"
-          },
-          "visibility": {
-            "type": "string",
-            "description": "Post visibility (PUBLIC or CONNECTIONS)"
-          },
-          "created_at": {
-            "type": "string",
-            "description": "Timestamp when post was created (ISO 8601)",
-            "x-guaranteed": true
-          },
-          "has_media": {
-            "type": "boolean",
-            "description": "Whether the post includes media"
-          }
-        },
-        "required": [
-          "id",
-          "created_at",
-          "url"
-        ]
-      },
       "output_guidance": {
-        "success_description": "Posted update",
-        "sample_output": {
-          "post_id": "7123456789012345678",
-          "post_urn": "urn:li:ugcPost:7123456789012345678",
-          "text": "Excited to share our latest product update...",
-          "visibility": "PUBLIC",
-          "created_at": "2024-01-15T10:00:00Z",
-          "has_media": false
-        },
+        "success_message": "Post published successfully on LinkedIn",
         "common_errors": {
           "auth_failed": "LinkedIn connection expired. Please reconnect in Settings.",
           "insufficient_permissions": "Missing 'w_member_social' scope required to create posts. Please reconnect with posting permissions.",
@@ -329,16 +154,15 @@
             "minimum": 1,
             "maximum": 50,
             "default": 10,
-            "description": "Number of posts to retrieve (1-50). Default is 10."
+            "description": "Number of posts to retrieve (1-50). Default is 10.",
+            "required": false
           },
           "sort_by": {
             "type": "string",
-            "enum": [
-              "LAST_MODIFIED",
-              "CREATED"
-            ],
+            "enum": ["LAST_MODIFIED", "CREATED"],
             "default": "LAST_MODIFIED",
-            "description": "Sort order for posts. LAST_MODIFIED shows recently edited posts first."
+            "description": "Sort order for posts. LAST_MODIFIED shows recently edited posts first.",
+            "required": false
           }
         }
       },
@@ -352,88 +176,27 @@
         },
         "confirmations": {}
       },
-      "output_schema": {
-        "type": "object",
-        "properties": {
-          "posts": {
-            "type": "array",
-            "description": "List of user's posts",
-            "items": {
-              "type": "object",
-              "properties": {
-                "post_id": {
-                  "type": "string",
-                  "description": "Unique post identifier"
-                },
-                "post_urn": {
-                  "type": "string",
-                  "description": "LinkedIn URN for the post"
-                },
-                "text": {
-                  "type": "string",
-                  "description": "Post text content"
-                },
-                "created_at": {
-                  "type": "integer",
-                  "description": "Creation timestamp (Unix ms)"
-                },
-                "last_modified_at": {
-                  "type": "integer",
-                  "description": "Last modified timestamp (Unix ms)"
-                },
-                "visibility": {
-                  "type": "string",
-                  "description": "Post visibility setting"
-                }
-              }
-            }
-          },
-          "post_count": {
-            "type": "integer",
-            "description": "Number of posts returned"
-          },
-          "total_available": {
-            "type": "integer",
-            "description": "Total posts available"
-          }
-        }
-      },
       "output_guidance": {
-        "success_description": "Retrieved posts",
-        "sample_output": {
-          "posts": [
-            {
-              "post_id": "7123456789012345678",
-              "post_urn": "urn:li:ugcPost:7123456789012345678",
-              "text": "Excited to share our latest update...",
-              "created_at": 1705312800000,
-              "visibility": "PUBLIC"
-            }
-          ],
-          "post_count": 1,
-          "total_available": 25
-        },
+        "success_message": "Retrieved {post_count} LinkedIn posts",
         "common_errors": {
           "auth_failed": "LinkedIn connection expired. Please reconnect in Settings.",
           "insufficient_permissions": "Missing 'r_member_social' scope required to read posts. Please reconnect with read permissions.",
           "api_rate_limit": "LinkedIn API rate limit exceeded. Please wait and try again.",
           "no_posts_found": "No posts found for this user."
         }
-      },
-      "idempotent": true
+      }
     },
     "get_organization": {
       "description": "Get detailed information about a LinkedIn organization/company page",
       "usage_context": "Use when you need company information such as name, logo, location, industry, employee count, or other organization details",
       "parameters": {
         "type": "object",
-        "required": [
-          "organization_id"
-        ],
+        "required": ["organization_id"],
         "properties": {
           "organization_id": {
             "type": "string",
-            "description": "The LinkedIn organization ID (numeric) or vanity name"
+            "description": "The LinkedIn organization ID (numeric) or vanity name",
+            "required": true
           }
         }
       },
@@ -441,116 +204,47 @@
         "limits": {},
         "confirmations": {}
       },
-      "output_schema": {
-        "type": "object",
-        "properties": {
-          "organization_id": {
-            "type": "string",
-            "description": "LinkedIn organization ID",
-            "x-guaranteed": true
-          },
-          "organization_urn": {
-            "type": "string",
-            "description": "LinkedIn URN for the organization"
-          },
-          "name": {
-            "type": "string",
-            "description": "Organization name",
-            "x-guaranteed": true
-          },
-          "vanity_name": {
-            "type": "string",
-            "description": "LinkedIn vanity URL name"
-          },
-          "logo_url": {
-            "type": "string",
-            "description": "URL to organization logo"
-          },
-          "website": {
-            "type": "string",
-            "description": "Organization website URL"
-          },
-          "industry": {
-            "type": "array",
-            "description": "List of industry classifications"
-          },
-          "employee_count": {
-            "type": "integer",
-            "description": "Number of employees"
-          },
-          "description": {
-            "type": "string",
-            "description": "Organization description"
-          },
-          "locations": {
-            "type": "array",
-            "description": "List of office locations"
-          }
-        }
-      },
       "output_guidance": {
-        "success_description": "Retrieved organization",
-        "sample_output": {
-          "organization_id": "123456789",
-          "organization_urn": "urn:li:organization:123456789",
-          "name": "Acme Corporation",
-          "vanity_name": "acme-corp",
-          "logo_url": "https://media.licdn.com/dms/image/...",
-          "website": "https://www.acme.com",
-          "industry": [
-            "Technology"
-          ],
-          "employee_count": 5000,
-          "description": "Leading provider of innovative solutions..."
-        },
+        "success_message": "Retrieved organization '{organization_name}' details",
         "common_errors": {
           "auth_failed": "LinkedIn connection expired. Please reconnect in Settings.",
           "organization_not_found": "Organization not found. Check the organization ID or vanity name.",
           "insufficient_permissions": "Missing required permissions to access organization data.",
           "api_rate_limit": "LinkedIn API rate limit exceeded. Please wait and try again."
         }
-      },
-      "idempotent": true
+      }
     },
     "search_organizations": {
       "description": "Search for LinkedIn organizations by keywords, industry, or company size",
       "usage_context": "Use when you need to find companies matching specific criteria. Note: This endpoint requires LinkedIn Partner Program approval and may be restricted.",
       "parameters": {
         "type": "object",
-        "required": [
-          "keywords"
-        ],
+        "required": ["keywords"],
         "properties": {
           "keywords": {
             "type": "string",
             "minLength": 1,
-            "description": "Search keywords (company name or related terms)"
+            "description": "Search keywords (company name or related terms)",
+            "required": true
           },
           "industry": {
             "type": "string",
-            "description": "Optional industry filter (LinkedIn industry ID)"
+            "description": "Optional industry filter (LinkedIn industry ID)",
+            "required": false
           },
           "company_size": {
             "type": "string",
-            "enum": [
-              "A",
-              "B",
-              "C",
-              "D",
-              "E",
-              "F",
-              "G",
-              "H",
-              "I"
-            ],
-            "description": "Optional company size filter: A(1-10), B(11-50), C(51-200), D(201-500), E(501-1000), F(1001-5000), G(5001-10000), H(10001+)"
+            "enum": ["A", "B", "C", "D", "E", "F", "G", "H", "I"],
+            "description": "Optional company size filter: A(1-10), B(11-50), C(51-200), D(201-500), E(501-1000), F(1001-5000), G(5001-10000), H(10001+)",
+            "required": false
           },
           "max_results": {
             "type": "number",
             "minimum": 1,
             "maximum": 50,
             "default": 10,
-            "description": "Maximum number of results to return (1-50)"
+            "description": "Maximum number of results to return (1-50)",
+            "required": false
           }
         }
       },
@@ -564,72 +258,8 @@
         },
         "confirmations": {}
       },
-      "output_schema": {
-        "type": "object",
-        "properties": {
-          "organizations": {
-            "type": "array",
-            "description": "List of matching organizations",
-            "items": {
-              "type": "object",
-              "properties": {
-                "organization_id": {
-                  "type": "string",
-                  "description": "Organization ID"
-                },
-                "name": {
-                  "type": "string",
-                  "description": "Organization name"
-                },
-                "vanity_name": {
-                  "type": "string",
-                  "description": "LinkedIn vanity URL"
-                },
-                "logo_url": {
-                  "type": "string",
-                  "description": "Logo URL"
-                },
-                "industry": {
-                  "type": "string",
-                  "description": "Industry classification"
-                },
-                "employee_count": {
-                  "type": "integer",
-                  "description": "Number of employees"
-                }
-              }
-            }
-          },
-          "result_count": {
-            "type": "integer",
-            "description": "Number of results returned"
-          },
-          "total_available": {
-            "type": "integer",
-            "description": "Total matching organizations"
-          },
-          "search_query": {
-            "type": "string",
-            "description": "The search keywords used"
-          }
-        }
-      },
       "output_guidance": {
-        "success_description": "Found organizations",
-        "sample_output": {
-          "organizations": [
-            {
-              "organization_id": "123456",
-              "name": "Tech Solutions Inc",
-              "vanity_name": "tech-solutions",
-              "industry": "Technology",
-              "employee_count": 500
-            }
-          ],
-          "result_count": 1,
-          "total_available": 15,
-          "search_query": "tech solutions"
-        },
+        "success_message": "Found {result_count} organizations matching '{keywords}'",
         "common_errors": {
           "auth_failed": "LinkedIn connection expired. Please reconnect in Settings.",
           "insufficient_permissions": "This endpoint requires LinkedIn Partner Program approval. Your application may not have access.",
@@ -637,28 +267,27 @@
           "no_results": "No organizations found matching your search criteria.",
           "partner_access_required": "Organization search requires Partner Program approval from LinkedIn. Contact LinkedIn Developer Relations."
         }
-      },
-      "idempotent": true
+      }
     },
     "get_organization_posts": {
       "description": "Retrieve posts published by a LinkedIn organization/company page",
       "usage_context": "Use when you need to fetch posts from a company page. Requires admin access to the organization or appropriate permissions.",
       "parameters": {
         "type": "object",
-        "required": [
-          "organization_id"
-        ],
+        "required": ["organization_id"],
         "properties": {
           "organization_id": {
             "type": "string",
-            "description": "The LinkedIn organization ID (numeric)"
+            "description": "The LinkedIn organization ID (numeric)",
+            "required": true
           },
           "count": {
             "type": "number",
             "minimum": 1,
             "maximum": 100,
             "default": 10,
-            "description": "Number of posts to retrieve (1-100). Default is 10."
+            "description": "Number of posts to retrieve (1-100). Default is 10.",
+            "required": false
           }
         }
       },
@@ -672,73 +301,8 @@
         },
         "confirmations": {}
       },
-      "output_schema": {
-        "type": "object",
-        "properties": {
-          "organization_id": {
-            "type": "string",
-            "description": "Organization ID that was queried",
-            "x-guaranteed": true
-          },
-          "posts": {
-            "type": "array",
-            "description": "List of organization posts",
-            "items": {
-              "type": "object",
-              "properties": {
-                "post_id": {
-                  "type": "string",
-                  "description": "Unique post identifier"
-                },
-                "post_urn": {
-                  "type": "string",
-                  "description": "LinkedIn URN for the post"
-                },
-                "text": {
-                  "type": "string",
-                  "description": "Post text content"
-                },
-                "created_at": {
-                  "type": "integer",
-                  "description": "Creation timestamp (Unix ms)"
-                },
-                "last_modified_at": {
-                  "type": "integer",
-                  "description": "Last modified timestamp (Unix ms)"
-                },
-                "author_urn": {
-                  "type": "string",
-                  "description": "Author URN"
-                }
-              }
-            }
-          },
-          "post_count": {
-            "type": "integer",
-            "description": "Number of posts returned"
-          },
-          "total_available": {
-            "type": "integer",
-            "description": "Total posts available"
-          }
-        }
-      },
       "output_guidance": {
-        "success_description": "Retrieved organization posts",
-        "sample_output": {
-          "organization_id": "123456789",
-          "posts": [
-            {
-              "post_id": "7123456789012345678",
-              "post_urn": "urn:li:ugcPost:7123456789012345678",
-              "text": "We're excited to announce...",
-              "created_at": 1705312800000,
-              "author_urn": "urn:li:organization:123456789"
-            }
-          ],
-          "post_count": 1,
-          "total_available": 50
-        },
+        "success_message": "Retrieved {post_count} posts from organization",
         "common_errors": {
           "auth_failed": "LinkedIn connection expired. Please reconnect in Settings.",
           "insufficient_permissions": "Missing 'r_organization_social' scope or you must be an admin of this organization.",
@@ -747,8 +311,7 @@
           "api_rate_limit": "LinkedIn API rate limit exceeded. Please wait and try again.",
           "no_posts_found": "No posts found for this organization."
         }
-      },
-      "idempotent": true
+      }
     },
     "get_connections": {
       "description": "Get the authenticated user's 1st-degree LinkedIn connections",
@@ -761,14 +324,16 @@
             "type": "number",
             "minimum": 0,
             "default": 0,
-            "description": "Pagination start offset. Default is 0."
+            "description": "Pagination start offset. Default is 0.",
+            "required": false
           },
           "count": {
             "type": "number",
             "minimum": 1,
             "maximum": 50,
             "default": 50,
-            "description": "Number of connections to retrieve per page (1-50). Default and recommended maximum is 50."
+            "description": "Number of connections to retrieve per page (1-50). Default and recommended maximum is 50.",
+            "required": false
           }
         }
       },
@@ -782,58 +347,8 @@
         },
         "confirmations": {}
       },
-      "output_schema": {
-        "type": "object",
-        "properties": {
-          "connections": {
-            "type": "array",
-            "description": "List of 1st-degree connections",
-            "items": {
-              "type": "object",
-              "properties": {
-                "person_urn": {
-                  "type": "string",
-                  "description": "LinkedIn URN for the person"
-                },
-                "person_id": {
-                  "type": "string",
-                  "description": "LinkedIn person ID"
-                }
-              }
-            }
-          },
-          "connection_count": {
-            "type": "integer",
-            "description": "Number of connections returned"
-          },
-          "start": {
-            "type": "integer",
-            "description": "Pagination offset used"
-          },
-          "total_available": {
-            "type": "integer",
-            "description": "Total connections available"
-          },
-          "has_more": {
-            "type": "boolean",
-            "description": "Whether more connections are available"
-          }
-        }
-      },
       "output_guidance": {
-        "success_description": "Retrieved connections",
-        "sample_output": {
-          "connections": [
-            {
-              "person_urn": "urn:li:person:abc123",
-              "person_id": "abc123"
-            }
-          ],
-          "connection_count": 1,
-          "start": 0,
-          "total_available": 500,
-          "has_more": true
-        },
+        "success_message": "Retrieved {connection_count} connections",
         "common_errors": {
           "auth_failed": "LinkedIn connection expired. Please reconnect in Settings.",
           "insufficient_permissions": "This endpoint requires LinkedIn Partner Program approval. Your application may not have access to the Connections API.",
@@ -841,8 +356,7 @@
           "partner_access_required": "Connections API requires Partner Program approval from LinkedIn. Contact LinkedIn Developer Relations.",
           "no_connections": "No connections found or connection list is private."
         }
-      },
-      "idempotent": true
+      }
     }
   }
 }

@@ -1,0 +1,1845 @@
+{
+  "plugin": {
+    "name": "meta-ads",
+    "version": "1.0.0",
+    "description": "Create, manage, and optimize Facebook and Instagram advertising campaigns using Meta Marketing API",
+    "context": "Use for advertising operations across Facebook and Instagram: creating campaigns, managing ad sets and ads, uploading creatives, tracking performance metrics, optimizing budgets, and managing custom audiences. Meta Ads provides unified advertising across both platforms.",
+    "icon": "<TrendingUp className='w-5 h-5 text-blue-600'/>",
+    "category": "marketing",
+    "isPopular": true,
+    "auth_config": {
+      "auth_type": "oauth2",
+      "client_id": "${META_ADS_CLIENT_ID}",
+      "client_secret": "${META_ADS_CLIENT_SECRET}",
+      "redirect_uri": "${NEXT_PUBLIC_APP_URL}/oauth/callback/meta-ads",
+      "auth_url": "https://www.facebook.com/v19.0/dialog/oauth",
+      "token_url": "https://graph.facebook.com/v19.0/oauth/access_token",
+      "profile_url": "https://graph.facebook.com/v19.0/me?fields=id,name,email",
+      "required_scopes": [
+        "ads_management",
+        "ads_read",
+        "business_management"
+      ],
+      "token_expiry_seconds": 5184000
+    },
+    "provider_family": "meta"
+  },
+  "actions": {
+    "get_campaigns": {
+      "description": "List and filter advertising campaigns from your Meta ad account",
+      "usage_context": "Use when you need to retrieve campaigns, check campaign status, filter by active/paused state, or list all campaigns for reporting",
+      "idempotent": true,
+      "domain": "marketing",
+      "capability": "search",
+      "input_entity": null,
+      "output_entity": "campaign",
+      "input_cardinality": null,
+      "output_cardinality": "collection",
+      "output_fields": ["id", "name", "status", "objective", "daily_budget", "lifetime_budget", "created_time"],
+      "required_params": ["ad_account_id"],
+      "optional_params": ["status", "effective_status", "limit"],
+      "must_support": ["status_filtering", "pagination"],
+      "parameters": {
+        "type": "object",
+        "required": ["ad_account_id"],
+        "properties": {
+          "ad_account_id": {
+            "type": "string",
+            "description": "Your Meta ad account ID (format: act_123456789)",
+            "pattern": "^act_[0-9]+$"
+          },
+          "status": {
+            "type": "string",
+            "enum": ["ACTIVE", "PAUSED", "DELETED", "ARCHIVED"],
+            "description": "Filter by campaign status"
+          },
+          "effective_status": {
+            "type": "string",
+            "enum": ["ACTIVE", "PAUSED", "DELETED", "ARCHIVED", "CAMPAIGN_PAUSED", "ADSET_PAUSED"],
+            "description": "Filter by effective status (includes inherited status from parent)"
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 500,
+            "default": 100,
+            "description": "Maximum number of campaigns to return"
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "campaigns": {
+            "type": "array",
+            "description": "List of campaigns",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "description": "Campaign ID"
+                },
+                "name": {
+                  "type": "string",
+                  "description": "Campaign name"
+                },
+                "status": {
+                  "type": "string",
+                  "enum": ["ACTIVE", "PAUSED", "DELETED", "ARCHIVED"],
+                  "description": "Campaign status"
+                },
+                "objective": {
+                  "type": "string",
+                  "description": "Campaign objective (e.g., OUTCOME_SALES, OUTCOME_AWARENESS, OUTCOME_LEADS)"
+                },
+                "daily_budget": {
+                  "type": "number",
+                  "description": "Daily budget in cents (e.g., 5000 = $50.00)"
+                },
+                "lifetime_budget": {
+                  "type": "number",
+                  "description": "Total lifetime budget in cents"
+                },
+                "created_time": {
+                  "type": "string",
+                  "description": "Campaign creation timestamp (ISO 8601)"
+                }
+              }
+            }
+          },
+          "campaign_count": {
+            "type": "integer",
+            "description": "Number of campaigns returned",
+            "x-guaranteed": true
+          },
+          "retrieved_at": {
+            "type": "string",
+            "description": "Timestamp when data was retrieved (ISO 8601)",
+            "x-guaranteed": true
+          }
+        }
+      },
+      "output_guidance": {
+        "success_description": "Retrieved campaigns from Meta ad account",
+        "sample_output": {
+          "campaigns": [
+            {
+              "id": "23851234567890123",
+              "name": "Summer Sale 2026",
+              "status": "ACTIVE",
+              "objective": "OUTCOME_SALES",
+              "daily_budget": 10000,
+              "created_time": "2026-03-01T10:00:00+0000"
+            }
+          ],
+          "campaign_count": 1,
+          "retrieved_at": "2026-03-18T16:00:00Z"
+        },
+        "common_errors": {
+          "auth_failed": "Your Meta Ads connection has expired. Please reconnect in Settings.",
+          "invalid_account": "The ad account ID is invalid or you don't have access to it.",
+          "insufficient_permissions": "You need 'ads_read' permission to access campaigns."
+        }
+      }
+    },
+    "get_campaign_insights": {
+      "description": "Get performance metrics and insights for a specific campaign",
+      "usage_context": "Use to analyze campaign performance, track spend, impressions, clicks, conversions, CPA, ROAS, and other key metrics",
+      "idempotent": true,
+      "domain": "marketing",
+      "capability": "get",
+      "input_entity": "campaign",
+      "output_entity": "insights",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "output_fields": ["spend", "impressions", "clicks", "ctr", "cpc", "cpm", "conversions", "cost_per_conversion", "roas"],
+      "required_params": ["campaign_id"],
+      "optional_params": ["date_preset", "time_range_start", "time_range_end", "fields"],
+      "must_support": ["date_filtering", "custom_metrics"],
+      "parameters": {
+        "type": "object",
+        "required": ["campaign_id"],
+        "properties": {
+          "campaign_id": {
+            "type": "string",
+            "description": "Campaign ID to get insights for",
+            "x-variable-mapping": {
+              "from_type": "campaign",
+              "field_path": "id",
+              "description": "Extract campaign ID from campaign object"
+            }
+          },
+          "date_preset": {
+            "type": "string",
+            "enum": ["today", "yesterday", "this_week", "last_week", "this_month", "last_month", "last_7d", "last_14d", "last_30d", "last_90d", "lifetime"],
+            "default": "last_7d",
+            "description": "Predefined date range for insights"
+          },
+          "time_range_start": {
+            "type": "string",
+            "description": "Custom start date (ISO 8601 date, e.g., '2026-03-01'). Overrides date_preset if provided."
+          },
+          "time_range_end": {
+            "type": "string",
+            "description": "Custom end date (ISO 8601 date, e.g., '2026-03-18'). Required if time_range_start is provided."
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": ["spend", "impressions", "clicks", "ctr", "cpc", "cpm", "reach", "frequency", "actions", "conversions", "cost_per_action_type", "video_views", "video_play_actions"]
+            },
+            "description": "Specific metrics to retrieve (default: spend, impressions, clicks, ctr, cpc, cpm)"
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "campaign_id": {
+            "type": "string",
+            "x-guaranteed": true
+          },
+          "campaign_name": {
+            "type": "string",
+            "x-guaranteed": true
+          },
+          "date_start": {
+            "type": "string",
+            "description": "Start date of insights period",
+            "x-guaranteed": true
+          },
+          "date_end": {
+            "type": "string",
+            "description": "End date of insights period",
+            "x-guaranteed": true
+          },
+          "spend": {
+            "type": "number",
+            "description": "Total amount spent in account currency"
+          },
+          "impressions": {
+            "type": "integer",
+            "description": "Number of times ads were displayed"
+          },
+          "clicks": {
+            "type": "integer",
+            "description": "Number of clicks on ads"
+          },
+          "ctr": {
+            "type": "number",
+            "description": "Click-through rate (percentage)"
+          },
+          "cpc": {
+            "type": "number",
+            "description": "Cost per click"
+          },
+          "cpm": {
+            "type": "number",
+            "description": "Cost per 1000 impressions"
+          },
+          "reach": {
+            "type": "integer",
+            "description": "Number of unique people who saw ads"
+          },
+          "frequency": {
+            "type": "number",
+            "description": "Average number of times each person saw an ad"
+          },
+          "conversions": {
+            "type": "integer",
+            "description": "Total number of conversions"
+          },
+          "cost_per_conversion": {
+            "type": "number",
+            "description": "Average cost per conversion"
+          },
+          "roas": {
+            "type": "number",
+            "description": "Return on ad spend (revenue / spend)"
+          },
+          "retrieved_at": {
+            "type": "string",
+            "x-guaranteed": true
+          }
+        }
+      },
+      "output_guidance": {
+        "success_description": "Retrieved campaign performance insights",
+        "sample_output": {
+          "campaign_id": "23851234567890123",
+          "campaign_name": "Summer Sale 2026",
+          "date_start": "2026-03-11",
+          "date_end": "2026-03-18",
+          "spend": 450.75,
+          "impressions": 125000,
+          "clicks": 3250,
+          "ctr": 2.6,
+          "cpc": 0.14,
+          "cpm": 3.61,
+          "reach": 87500,
+          "frequency": 1.43,
+          "conversions": 145,
+          "cost_per_conversion": 3.11,
+          "roas": 4.2,
+          "retrieved_at": "2026-03-18T16:00:00Z"
+        },
+        "common_errors": {
+          "auth_failed": "Your Meta Ads connection has expired.",
+          "campaign_not_found": "The specified campaign was not found or you don't have access.",
+          "invalid_date_range": "The date range is invalid. Ensure time_range_end is after time_range_start."
+        }
+      }
+    },
+    "get_adsets": {
+      "description": "List ad sets within a campaign or ad account",
+      "usage_context": "Use to retrieve ad sets, check targeting settings, review budgets and schedules, or filter by status",
+      "idempotent": true,
+      "domain": "marketing",
+      "capability": "search",
+      "input_entity": null,
+      "output_entity": "adset",
+      "input_cardinality": null,
+      "output_cardinality": "collection",
+      "output_fields": ["id", "name", "status", "campaign_id", "daily_budget", "lifetime_budget", "bid_amount", "optimization_goal", "billing_event"],
+      "required_params": [],
+      "optional_params": ["ad_account_id", "campaign_id", "status", "limit"],
+      "must_support": ["campaign_filtering", "status_filtering"],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "ad_account_id": {
+            "type": "string",
+            "description": "Ad account ID to list ad sets from (format: act_123456789). Required if campaign_id not provided.",
+            "pattern": "^act_[0-9]+$"
+          },
+          "campaign_id": {
+            "type": "string",
+            "description": "Campaign ID to list ad sets from. If provided, overrides ad_account_id.",
+            "x-variable-mapping": {
+              "from_type": "campaign",
+              "field_path": "id",
+              "description": "Extract campaign ID from campaign object"
+            }
+          },
+          "status": {
+            "type": "string",
+            "enum": ["ACTIVE", "PAUSED", "DELETED", "ARCHIVED"],
+            "description": "Filter by ad set status"
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 500,
+            "default": 100,
+            "description": "Maximum number of ad sets to return"
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "adsets": {
+            "type": "array",
+            "description": "List of ad sets",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "description": "Ad set ID"
+                },
+                "name": {
+                  "type": "string",
+                  "description": "Ad set name"
+                },
+                "status": {
+                  "type": "string",
+                  "description": "Ad set status"
+                },
+                "campaign_id": {
+                  "type": "string",
+                  "description": "Parent campaign ID"
+                },
+                "daily_budget": {
+                  "type": "number",
+                  "description": "Daily budget in cents"
+                },
+                "lifetime_budget": {
+                  "type": "number",
+                  "description": "Lifetime budget in cents"
+                },
+                "bid_amount": {
+                  "type": "number",
+                  "description": "Bid amount in cents"
+                },
+                "optimization_goal": {
+                  "type": "string",
+                  "description": "Optimization goal (e.g., LINK_CLICKS, IMPRESSIONS, REACH, CONVERSIONS)"
+                },
+                "billing_event": {
+                  "type": "string",
+                  "description": "Billing event (e.g., IMPRESSIONS, LINK_CLICKS)"
+                }
+              }
+            }
+          },
+          "adset_count": {
+            "type": "integer",
+            "x-guaranteed": true
+          },
+          "retrieved_at": {
+            "type": "string",
+            "x-guaranteed": true
+          }
+        }
+      },
+      "output_guidance": {
+        "success_description": "Retrieved ad sets from Meta",
+        "sample_output": {
+          "adsets": [
+            {
+              "id": "23851234567890124",
+              "name": "US - 25-45 - Interests: Shopping",
+              "status": "ACTIVE",
+              "campaign_id": "23851234567890123",
+              "daily_budget": 5000,
+              "optimization_goal": "LINK_CLICKS",
+              "billing_event": "IMPRESSIONS"
+            }
+          ],
+          "adset_count": 1,
+          "retrieved_at": "2026-03-18T16:00:00Z"
+        },
+        "common_errors": {
+          "auth_failed": "Your Meta Ads connection has expired.",
+          "missing_params": "Either ad_account_id or campaign_id must be provided."
+        }
+      }
+    },
+    "get_adset_insights": {
+      "description": "Get performance metrics for a specific ad set",
+      "usage_context": "Use to analyze ad set performance, compare targeting effectiveness, track spend and conversions at the ad set level",
+      "idempotent": true,
+      "domain": "marketing",
+      "capability": "get",
+      "input_entity": "adset",
+      "output_entity": "insights",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "output_fields": ["spend", "impressions", "clicks", "ctr", "cpc", "cpm", "conversions", "cost_per_conversion"],
+      "required_params": ["adset_id"],
+      "optional_params": ["date_preset", "time_range_start", "time_range_end"],
+      "must_support": ["date_filtering"],
+      "parameters": {
+        "type": "object",
+        "required": ["adset_id"],
+        "properties": {
+          "adset_id": {
+            "type": "string",
+            "description": "Ad set ID to get insights for",
+            "x-variable-mapping": {
+              "from_type": "adset",
+              "field_path": "id",
+              "description": "Extract ad set ID from adset object"
+            }
+          },
+          "date_preset": {
+            "type": "string",
+            "enum": ["today", "yesterday", "this_week", "last_week", "this_month", "last_month", "last_7d", "last_14d", "last_30d", "last_90d", "lifetime"],
+            "default": "last_7d",
+            "description": "Predefined date range for insights"
+          },
+          "time_range_start": {
+            "type": "string",
+            "description": "Custom start date (ISO 8601 date)"
+          },
+          "time_range_end": {
+            "type": "string",
+            "description": "Custom end date (ISO 8601 date)"
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "adset_id": {
+            "type": "string",
+            "x-guaranteed": true
+          },
+          "adset_name": {
+            "type": "string",
+            "x-guaranteed": true
+          },
+          "date_start": {
+            "type": "string",
+            "x-guaranteed": true
+          },
+          "date_end": {
+            "type": "string",
+            "x-guaranteed": true
+          },
+          "spend": {
+            "type": "number"
+          },
+          "impressions": {
+            "type": "integer"
+          },
+          "clicks": {
+            "type": "integer"
+          },
+          "ctr": {
+            "type": "number"
+          },
+          "cpc": {
+            "type": "number"
+          },
+          "cpm": {
+            "type": "number"
+          },
+          "reach": {
+            "type": "integer"
+          },
+          "conversions": {
+            "type": "integer"
+          },
+          "cost_per_conversion": {
+            "type": "number"
+          },
+          "retrieved_at": {
+            "type": "string",
+            "x-guaranteed": true
+          }
+        }
+      },
+      "output_guidance": {
+        "success_description": "Retrieved ad set performance insights",
+        "sample_output": {
+          "adset_id": "23851234567890124",
+          "adset_name": "US - 25-45 - Interests: Shopping",
+          "date_start": "2026-03-11",
+          "date_end": "2026-03-18",
+          "spend": 225.50,
+          "impressions": 62500,
+          "clicks": 1625,
+          "ctr": 2.6,
+          "cpc": 0.14,
+          "cpm": 3.61,
+          "reach": 43750,
+          "conversions": 72,
+          "cost_per_conversion": 3.13,
+          "retrieved_at": "2026-03-18T16:00:00Z"
+        },
+        "common_errors": {
+          "auth_failed": "Your Meta Ads connection has expired.",
+          "adset_not_found": "The specified ad set was not found."
+        }
+      }
+    },
+    "get_ads": {
+      "description": "List individual ads within an ad set, campaign, or ad account",
+      "usage_context": "Use to retrieve ads, review creative performance, check ad status, or list all active ads",
+      "idempotent": true,
+      "domain": "marketing",
+      "capability": "search",
+      "input_entity": null,
+      "output_entity": "ad",
+      "input_cardinality": null,
+      "output_cardinality": "collection",
+      "output_fields": ["id", "name", "status", "adset_id", "campaign_id", "creative"],
+      "required_params": [],
+      "optional_params": ["ad_account_id", "adset_id", "campaign_id", "status", "limit"],
+      "must_support": ["filtering", "status_filtering"],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "ad_account_id": {
+            "type": "string",
+            "description": "Ad account ID (format: act_123456789)",
+            "pattern": "^act_[0-9]+$"
+          },
+          "adset_id": {
+            "type": "string",
+            "description": "Filter by ad set ID",
+            "x-variable-mapping": {
+              "from_type": "adset",
+              "field_path": "id",
+              "description": "Extract ad set ID from adset object"
+            }
+          },
+          "campaign_id": {
+            "type": "string",
+            "description": "Filter by campaign ID",
+            "x-variable-mapping": {
+              "from_type": "campaign",
+              "field_path": "id",
+              "description": "Extract campaign ID from campaign object"
+            }
+          },
+          "status": {
+            "type": "string",
+            "enum": ["ACTIVE", "PAUSED", "DELETED", "ARCHIVED"],
+            "description": "Filter by ad status"
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 500,
+            "default": 100,
+            "description": "Maximum number of ads to return"
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "ads": {
+            "type": "array",
+            "description": "List of ads",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "description": "Ad ID"
+                },
+                "name": {
+                  "type": "string",
+                  "description": "Ad name"
+                },
+                "status": {
+                  "type": "string",
+                  "description": "Ad status"
+                },
+                "adset_id": {
+                  "type": "string",
+                  "description": "Parent ad set ID"
+                },
+                "campaign_id": {
+                  "type": "string",
+                  "description": "Parent campaign ID"
+                },
+                "creative": {
+                  "type": "object",
+                  "description": "Ad creative details",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "body": {
+                      "type": "string"
+                    },
+                    "image_url": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "ad_count": {
+            "type": "integer",
+            "x-guaranteed": true
+          },
+          "retrieved_at": {
+            "type": "string",
+            "x-guaranteed": true
+          }
+        }
+      },
+      "output_guidance": {
+        "success_description": "Retrieved ads from Meta",
+        "sample_output": {
+          "ads": [
+            {
+              "id": "23851234567890125",
+              "name": "Summer Sale - Image Ad 1",
+              "status": "ACTIVE",
+              "adset_id": "23851234567890124",
+              "campaign_id": "23851234567890123",
+              "creative": {
+                "id": "23851234567890126",
+                "title": "50% Off Summer Sale!",
+                "body": "Shop now and save big on all summer items"
+              }
+            }
+          ],
+          "ad_count": 1,
+          "retrieved_at": "2026-03-18T16:00:00Z"
+        },
+        "common_errors": {
+          "auth_failed": "Your Meta Ads connection has expired.",
+          "missing_params": "At least one of ad_account_id, adset_id, or campaign_id must be provided."
+        }
+      }
+    },
+    "get_ad_insights": {
+      "description": "Get performance metrics for a specific ad",
+      "usage_context": "Use to analyze individual ad performance, compare creative effectiveness, identify best-performing ads",
+      "idempotent": true,
+      "domain": "marketing",
+      "capability": "get",
+      "input_entity": "ad",
+      "output_entity": "insights",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "output_fields": ["spend", "impressions", "clicks", "ctr", "cpc", "conversions"],
+      "required_params": ["ad_id"],
+      "optional_params": ["date_preset", "time_range_start", "time_range_end"],
+      "must_support": ["date_filtering"],
+      "parameters": {
+        "type": "object",
+        "required": ["ad_id"],
+        "properties": {
+          "ad_id": {
+            "type": "string",
+            "description": "Ad ID to get insights for",
+            "x-variable-mapping": {
+              "from_type": "ad",
+              "field_path": "id",
+              "description": "Extract ad ID from ad object"
+            }
+          },
+          "date_preset": {
+            "type": "string",
+            "enum": ["today", "yesterday", "this_week", "last_week", "this_month", "last_month", "last_7d", "last_14d", "last_30d", "lifetime"],
+            "default": "last_7d",
+            "description": "Predefined date range"
+          },
+          "time_range_start": {
+            "type": "string",
+            "description": "Custom start date (ISO 8601)"
+          },
+          "time_range_end": {
+            "type": "string",
+            "description": "Custom end date (ISO 8601)"
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "ad_id": {
+            "type": "string",
+            "x-guaranteed": true
+          },
+          "ad_name": {
+            "type": "string",
+            "x-guaranteed": true
+          },
+          "date_start": {
+            "type": "string",
+            "x-guaranteed": true
+          },
+          "date_end": {
+            "type": "string",
+            "x-guaranteed": true
+          },
+          "spend": {
+            "type": "number"
+          },
+          "impressions": {
+            "type": "integer"
+          },
+          "clicks": {
+            "type": "integer"
+          },
+          "ctr": {
+            "type": "number"
+          },
+          "cpc": {
+            "type": "number"
+          },
+          "cpm": {
+            "type": "number"
+          },
+          "conversions": {
+            "type": "integer"
+          },
+          "cost_per_conversion": {
+            "type": "number"
+          },
+          "retrieved_at": {
+            "type": "string",
+            "x-guaranteed": true
+          }
+        }
+      },
+      "output_guidance": {
+        "success_description": "Retrieved ad performance insights",
+        "sample_output": {
+          "ad_id": "23851234567890125",
+          "ad_name": "Summer Sale - Image Ad 1",
+          "date_start": "2026-03-11",
+          "date_end": "2026-03-18",
+          "spend": 112.75,
+          "impressions": 31250,
+          "clicks": 812,
+          "ctr": 2.6,
+          "cpc": 0.14,
+          "cpm": 3.61,
+          "conversions": 36,
+          "cost_per_conversion": 3.13,
+          "retrieved_at": "2026-03-18T16:00:00Z"
+        },
+        "common_errors": {
+          "auth_failed": "Your Meta Ads connection has expired.",
+          "ad_not_found": "The specified ad was not found."
+        }
+      }
+    },
+    "create_campaign": {
+      "description": "Create a new advertising campaign in Meta Ads",
+      "usage_context": "Use when launching new campaigns, setting campaign objectives, and defining high-level campaign settings",
+      "idempotent": false,
+      "domain": "marketing",
+      "capability": "create",
+      "input_entity": "campaign",
+      "output_entity": "campaign",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "output_fields": ["id", "name", "objective", "status", "created_time"],
+      "required_params": ["ad_account_id", "name", "objective"],
+      "optional_params": ["status", "special_ad_categories", "daily_budget", "lifetime_budget"],
+      "must_support": ["all_objectives", "budget_optimization"],
+      "parameters": {
+        "type": "object",
+        "required": ["ad_account_id", "name", "objective"],
+        "properties": {
+          "ad_account_id": {
+            "type": "string",
+            "description": "Ad account ID (format: act_123456789)",
+            "pattern": "^act_[0-9]+$"
+          },
+          "name": {
+            "type": "string",
+            "description": "Campaign name"
+          },
+          "objective": {
+            "type": "string",
+            "enum": ["OUTCOME_AWARENESS", "OUTCOME_ENGAGEMENT", "OUTCOME_LEADS", "OUTCOME_SALES", "OUTCOME_TRAFFIC", "OUTCOME_APP_PROMOTION"],
+            "description": "Campaign objective"
+          },
+          "status": {
+            "type": "string",
+            "enum": ["ACTIVE", "PAUSED"],
+            "default": "PAUSED",
+            "description": "Initial campaign status"
+          },
+          "special_ad_categories": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": ["CREDIT", "EMPLOYMENT", "HOUSING", "ISSUES_ELECTIONS_POLITICS", "NONE"]
+            },
+            "description": "Special ad categories (required for certain industries)"
+          },
+          "daily_budget": {
+            "type": "number",
+            "description": "Daily budget in cents (e.g., 5000 = $50.00). Mutually exclusive with lifetime_budget."
+          },
+          "lifetime_budget": {
+            "type": "number",
+            "description": "Total lifetime budget in cents. Mutually exclusive with daily_budget."
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Campaign ID",
+            "x-guaranteed": true
+          },
+          "name": {
+            "type": "string",
+            "x-guaranteed": true
+          },
+          "objective": {
+            "type": "string",
+            "x-guaranteed": true
+          },
+          "status": {
+            "type": "string",
+            "x-guaranteed": true
+          },
+          "created_time": {
+            "type": "string",
+            "description": "Campaign creation timestamp (ISO 8601)",
+            "x-guaranteed": true
+          }
+        }
+      },
+      "output_guidance": {
+        "success_description": "Campaign created successfully",
+        "sample_output": {
+          "id": "23851234567890127",
+          "name": "Fall Collection Launch",
+          "objective": "OUTCOME_SALES",
+          "status": "PAUSED",
+          "created_time": "2026-03-18T16:00:00+0000"
+        },
+        "common_errors": {
+          "auth_failed": "Your Meta Ads connection has expired.",
+          "insufficient_permissions": "You need 'ads_management' permission to create campaigns.",
+          "invalid_budget": "Cannot specify both daily_budget and lifetime_budget.",
+          "invalid_objective": "The specified objective is not valid or not available for your account."
+        }
+      }
+    },
+    "update_campaign": {
+      "description": "Update an existing campaign's settings, budget, or status",
+      "usage_context": "Use to pause/resume campaigns, adjust budgets, or modify campaign settings",
+      "idempotent": true,
+      "domain": "marketing",
+      "capability": "update",
+      "input_entity": "campaign",
+      "output_entity": "campaign",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "output_fields": ["id", "success", "updated_at"],
+      "required_params": ["campaign_id"],
+      "optional_params": ["name", "status", "daily_budget", "lifetime_budget"],
+      "must_support": ["status_changes", "budget_updates"],
+      "parameters": {
+        "type": "object",
+        "required": ["campaign_id"],
+        "properties": {
+          "campaign_id": {
+            "type": "string",
+            "description": "Campaign ID to update",
+            "x-variable-mapping": {
+              "from_type": "campaign",
+              "field_path": "id",
+              "description": "Extract campaign ID from campaign object"
+            }
+          },
+          "name": {
+            "type": "string",
+            "description": "Updated campaign name"
+          },
+          "status": {
+            "type": "string",
+            "enum": ["ACTIVE", "PAUSED", "DELETED", "ARCHIVED"],
+            "description": "Updated campaign status"
+          },
+          "daily_budget": {
+            "type": "number",
+            "description": "Updated daily budget in cents"
+          },
+          "lifetime_budget": {
+            "type": "number",
+            "description": "Updated lifetime budget in cents"
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "x-guaranteed": true
+          },
+          "success": {
+            "type": "boolean",
+            "x-guaranteed": true
+          },
+          "updated_at": {
+            "type": "string",
+            "description": "Timestamp when campaign was updated (ISO 8601)",
+            "x-guaranteed": true
+          }
+        }
+      },
+      "output_guidance": {
+        "success_description": "Campaign updated successfully",
+        "sample_output": {
+          "id": "23851234567890127",
+          "success": true,
+          "updated_at": "2026-03-18T16:00:00Z"
+        },
+        "common_errors": {
+          "auth_failed": "Your Meta Ads connection has expired.",
+          "campaign_not_found": "The specified campaign was not found.",
+          "insufficient_permissions": "You don't have permission to update this campaign."
+        }
+      }
+    },
+    "get_ad_account": {
+      "description": "Get information about your Meta ad account",
+      "usage_context": "Use to retrieve account details, check spending limits, verify account currency and timezone",
+      "idempotent": true,
+      "domain": "marketing",
+      "capability": "get",
+      "input_entity": null,
+      "output_entity": "account",
+      "input_cardinality": null,
+      "output_cardinality": "single",
+      "output_fields": ["id", "name", "account_status", "currency", "timezone", "amount_spent", "balance", "spend_cap"],
+      "required_params": ["ad_account_id"],
+      "optional_params": [],
+      "must_support": ["account_info"],
+      "parameters": {
+        "type": "object",
+        "required": ["ad_account_id"],
+        "properties": {
+          "ad_account_id": {
+            "type": "string",
+            "description": "Ad account ID (format: act_123456789)",
+            "pattern": "^act_[0-9]+$"
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "x-guaranteed": true
+          },
+          "name": {
+            "type": "string",
+            "x-guaranteed": true
+          },
+          "account_status": {
+            "type": "integer",
+            "description": "Account status (1=ACTIVE, 2=DISABLED, 3=UNSETTLED, 7=PENDING_RISK_REVIEW, 8=IN_GRACE_PERIOD, 9=PENDING_CLOSURE, 100=PENDING_RISK_REVIEW, 101=CLOSED)",
+            "x-guaranteed": true
+          },
+          "currency": {
+            "type": "string",
+            "description": "Account currency code (e.g., 'USD', 'EUR')",
+            "x-guaranteed": true
+          },
+          "timezone_name": {
+            "type": "string",
+            "description": "Account timezone",
+            "x-guaranteed": true
+          },
+          "amount_spent": {
+            "type": "number",
+            "description": "Total amount spent (in account currency)"
+          },
+          "balance": {
+            "type": "number",
+            "description": "Current account balance (in cents)"
+          },
+          "spend_cap": {
+            "type": "number",
+            "description": "Account spending cap (in cents)"
+          },
+          "retrieved_at": {
+            "type": "string",
+            "x-guaranteed": true
+          }
+        }
+      },
+      "output_guidance": {
+        "success_description": "Retrieved ad account information",
+        "sample_output": {
+          "id": "act_123456789",
+          "name": "My Business Ad Account",
+          "account_status": 1,
+          "currency": "USD",
+          "timezone_name": "America/Los_Angeles",
+          "amount_spent": 12500.50,
+          "balance": 50000,
+          "spend_cap": 100000,
+          "retrieved_at": "2026-03-18T16:00:00Z"
+        },
+        "common_errors": {
+          "auth_failed": "Your Meta Ads connection has expired.",
+          "account_not_found": "The specified ad account was not found or you don't have access."
+        }
+      }
+    },
+    "create_adset": {
+      "description": "Create a new ad set with targeting, budget, and schedule settings",
+      "usage_context": "Use to define audience targeting, set budgets, configure bid strategies, and schedule ad delivery",
+      "idempotent": false,
+      "domain": "marketing",
+      "capability": "create",
+      "input_entity": "adset",
+      "output_entity": "adset",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "output_fields": ["id", "name", "campaign_id", "status", "created_time"],
+      "required_params": ["campaign_id", "name", "optimization_goal", "billing_event", "bid_amount", "targeting"],
+      "optional_params": ["status", "daily_budget", "lifetime_budget", "start_time", "end_time"],
+      "must_support": ["targeting", "budget_optimization", "scheduling"],
+      "parameters": {
+        "type": "object",
+        "required": ["campaign_id", "name", "optimization_goal", "billing_event", "bid_amount", "targeting"],
+        "properties": {
+          "campaign_id": {
+            "type": "string",
+            "description": "Parent campaign ID",
+            "x-variable-mapping": {
+              "from_type": "campaign",
+              "field_path": "id",
+              "description": "Extract campaign ID from campaign object"
+            }
+          },
+          "name": {
+            "type": "string",
+            "description": "Ad set name"
+          },
+          "optimization_goal": {
+            "type": "string",
+            "enum": ["LINK_CLICKS", "IMPRESSIONS", "REACH", "LANDING_PAGE_VIEWS", "POST_ENGAGEMENT", "CONVERSIONS", "QUALITY_LEAD", "VALUE", "THRUPLAY"],
+            "description": "What to optimize for"
+          },
+          "billing_event": {
+            "type": "string",
+            "enum": ["IMPRESSIONS", "LINK_CLICKS", "POST_ENGAGEMENT", "THRUPLAY"],
+            "description": "What you're charged for"
+          },
+          "bid_amount": {
+            "type": "number",
+            "description": "Bid amount in cents (e.g., 500 = $5.00)"
+          },
+          "targeting": {
+            "type": "object",
+            "description": "Targeting specification",
+            "properties": {
+              "geo_locations": {
+                "type": "object",
+                "properties": {
+                  "countries": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Country codes (e.g., ['US', 'CA', 'GB'])"
+                  },
+                  "cities": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "key": {
+                          "type": "string"
+                        },
+                        "radius": {
+                          "type": "number"
+                        },
+                        "distance_unit": {
+                          "type": "string",
+                          "enum": ["mile", "kilometer"]
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              "age_min": {
+                "type": "integer",
+                "minimum": 18,
+                "maximum": 65,
+                "description": "Minimum age"
+              },
+              "age_max": {
+                "type": "integer",
+                "minimum": 18,
+                "maximum": 65,
+                "description": "Maximum age"
+              },
+              "genders": {
+                "type": "array",
+                "items": {
+                  "type": "integer",
+                  "enum": [1, 2]
+                },
+                "description": "Gender targeting (1=male, 2=female)"
+              },
+              "interests": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "description": "Interest targeting"
+              },
+              "publisher_platforms": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": ["facebook", "instagram", "audience_network", "messenger"]
+                },
+                "description": "Where to show ads (default: ['facebook', 'instagram'])"
+              }
+            }
+          },
+          "status": {
+            "type": "string",
+            "enum": ["ACTIVE", "PAUSED"],
+            "default": "PAUSED",
+            "description": "Initial ad set status"
+          },
+          "daily_budget": {
+            "type": "number",
+            "description": "Daily budget in cents"
+          },
+          "lifetime_budget": {
+            "type": "number",
+            "description": "Lifetime budget in cents"
+          },
+          "start_time": {
+            "type": "string",
+            "description": "Start time for ad delivery (ISO 8601 timestamp)"
+          },
+          "end_time": {
+            "type": "string",
+            "description": "End time for ad delivery (ISO 8601 timestamp)"
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Ad set ID",
+            "x-guaranteed": true
+          },
+          "name": {
+            "type": "string",
+            "x-guaranteed": true
+          },
+          "campaign_id": {
+            "type": "string",
+            "x-guaranteed": true
+          },
+          "status": {
+            "type": "string",
+            "x-guaranteed": true
+          },
+          "created_time": {
+            "type": "string",
+            "x-guaranteed": true
+          }
+        }
+      },
+      "output_guidance": {
+        "success_description": "Ad set created successfully",
+        "sample_output": {
+          "id": "23851234567890128",
+          "name": "US - 25-45 - Shopping Interests",
+          "campaign_id": "23851234567890127",
+          "status": "PAUSED",
+          "created_time": "2026-03-18T16:00:00+0000"
+        },
+        "common_errors": {
+          "auth_failed": "Your Meta Ads connection has expired.",
+          "campaign_not_found": "The specified campaign was not found.",
+          "invalid_targeting": "The targeting specification is invalid.",
+          "insufficient_permissions": "You need 'ads_management' permission to create ad sets."
+        }
+      }
+    },
+    "update_adset": {
+      "description": "Update an existing ad set's settings, budget, targeting, or status",
+      "usage_context": "Use to pause/resume ad sets, adjust budgets, modify targeting, or change bid amounts",
+      "idempotent": true,
+      "domain": "marketing",
+      "capability": "update",
+      "input_entity": "adset",
+      "output_entity": "adset",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "output_fields": ["id", "success", "updated_at"],
+      "required_params": ["adset_id"],
+      "optional_params": ["name", "status", "daily_budget", "lifetime_budget", "bid_amount", "targeting"],
+      "must_support": ["status_changes", "budget_updates", "targeting_updates"],
+      "parameters": {
+        "type": "object",
+        "required": ["adset_id"],
+        "properties": {
+          "adset_id": {
+            "type": "string",
+            "description": "Ad set ID to update",
+            "x-variable-mapping": {
+              "from_type": "adset",
+              "field_path": "id",
+              "description": "Extract ad set ID from adset object"
+            }
+          },
+          "name": {
+            "type": "string",
+            "description": "Updated ad set name"
+          },
+          "status": {
+            "type": "string",
+            "enum": ["ACTIVE", "PAUSED", "DELETED", "ARCHIVED"],
+            "description": "Updated status"
+          },
+          "daily_budget": {
+            "type": "number",
+            "description": "Updated daily budget in cents"
+          },
+          "lifetime_budget": {
+            "type": "number",
+            "description": "Updated lifetime budget in cents"
+          },
+          "bid_amount": {
+            "type": "number",
+            "description": "Updated bid amount in cents"
+          },
+          "targeting": {
+            "type": "object",
+            "description": "Updated targeting specification (see create_adset for format)"
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "x-guaranteed": true
+          },
+          "success": {
+            "type": "boolean",
+            "x-guaranteed": true
+          },
+          "updated_at": {
+            "type": "string",
+            "x-guaranteed": true
+          }
+        }
+      },
+      "output_guidance": {
+        "success_description": "Ad set updated successfully",
+        "sample_output": {
+          "id": "23851234567890128",
+          "success": true,
+          "updated_at": "2026-03-18T16:00:00Z"
+        },
+        "common_errors": {
+          "auth_failed": "Your Meta Ads connection has expired.",
+          "adset_not_found": "The specified ad set was not found.",
+          "insufficient_permissions": "You don't have permission to update this ad set."
+        }
+      }
+    },
+    "create_ad": {
+      "description": "Create a new ad using an existing ad creative",
+      "usage_context": "Use to launch new ads with specific creatives, headlines, and calls-to-action within an ad set",
+      "idempotent": false,
+      "domain": "marketing",
+      "capability": "create",
+      "input_entity": "ad",
+      "output_entity": "ad",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "output_fields": ["id", "name", "adset_id", "status", "created_time"],
+      "required_params": ["adset_id", "name", "creative_id"],
+      "optional_params": ["status"],
+      "must_support": ["creative_association"],
+      "parameters": {
+        "type": "object",
+        "required": ["adset_id", "name", "creative_id"],
+        "properties": {
+          "adset_id": {
+            "type": "string",
+            "description": "Parent ad set ID",
+            "x-variable-mapping": {
+              "from_type": "adset",
+              "field_path": "id",
+              "description": "Extract ad set ID from adset object"
+            }
+          },
+          "name": {
+            "type": "string",
+            "description": "Ad name"
+          },
+          "creative_id": {
+            "type": "string",
+            "description": "Ad creative ID to use for this ad",
+            "x-variable-mapping": {
+              "from_type": "ad_creative",
+              "field_path": "id",
+              "description": "Extract creative ID from ad_creative object"
+            }
+          },
+          "status": {
+            "type": "string",
+            "enum": ["ACTIVE", "PAUSED"],
+            "default": "PAUSED",
+            "description": "Initial ad status"
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Ad ID",
+            "x-guaranteed": true
+          },
+          "name": {
+            "type": "string",
+            "x-guaranteed": true
+          },
+          "adset_id": {
+            "type": "string",
+            "x-guaranteed": true
+          },
+          "status": {
+            "type": "string",
+            "x-guaranteed": true
+          },
+          "created_time": {
+            "type": "string",
+            "x-guaranteed": true
+          }
+        }
+      },
+      "output_guidance": {
+        "success_description": "Ad created successfully",
+        "sample_output": {
+          "id": "23851234567890129",
+          "name": "Summer Sale - Image Ad 1",
+          "adset_id": "23851234567890128",
+          "status": "PAUSED",
+          "created_time": "2026-03-18T16:00:00+0000"
+        },
+        "common_errors": {
+          "auth_failed": "Your Meta Ads connection has expired.",
+          "adset_not_found": "The specified ad set was not found.",
+          "creative_not_found": "The specified creative was not found.",
+          "insufficient_permissions": "You need 'ads_management' permission to create ads."
+        }
+      }
+    },
+    "upload_image": {
+      "description": "Upload an image to use in ad creatives",
+      "usage_context": "Use to upload product images, promotional graphics, or any visual content for use in ads",
+      "idempotent": false,
+      "domain": "marketing",
+      "capability": "create",
+      "input_entity": "image",
+      "output_entity": "image",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "output_fields": ["id", "hash", "url", "width", "height"],
+      "required_params": ["ad_account_id", "image_data"],
+      "optional_params": ["filename"],
+      "must_support": ["image_upload"],
+      "parameters": {
+        "type": "object",
+        "required": ["ad_account_id", "image_data"],
+        "properties": {
+          "ad_account_id": {
+            "type": "string",
+            "description": "Ad account ID (format: act_123456789)",
+            "pattern": "^act_[0-9]+$"
+          },
+          "image_data": {
+            "type": "string",
+            "description": "Base64-encoded image data or URL to image file"
+          },
+          "filename": {
+            "type": "string",
+            "description": "Optional filename for the image"
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Image ID",
+            "x-guaranteed": true
+          },
+          "hash": {
+            "type": "string",
+            "description": "Image hash (used for creating ad creatives)",
+            "x-guaranteed": true
+          },
+          "url": {
+            "type": "string",
+            "description": "URL to the uploaded image",
+            "x-guaranteed": true
+          },
+          "width": {
+            "type": "integer",
+            "description": "Image width in pixels"
+          },
+          "height": {
+            "type": "integer",
+            "description": "Image height in pixels"
+          },
+          "uploaded_at": {
+            "type": "string",
+            "x-guaranteed": true
+          }
+        }
+      },
+      "output_guidance": {
+        "success_description": "Image uploaded successfully",
+        "sample_output": {
+          "id": "23851234567890130",
+          "hash": "abcd1234efgh5678",
+          "url": "https://scontent.xx.fbcdn.net/v/...",
+          "width": 1200,
+          "height": 628,
+          "uploaded_at": "2026-03-18T16:00:00Z"
+        },
+        "common_errors": {
+          "auth_failed": "Your Meta Ads connection has expired.",
+          "invalid_image": "The image format is not supported or file size exceeds limit.",
+          "insufficient_permissions": "You need 'ads_management' permission to upload images."
+        }
+      }
+    },
+    "create_ad_creative": {
+      "description": "Create an ad creative with text, images, and call-to-action",
+      "usage_context": "Use to define ad content including headline, body text, image, link, and call-to-action button",
+      "idempotent": false,
+      "domain": "marketing",
+      "capability": "create",
+      "input_entity": "ad_creative",
+      "output_entity": "ad_creative",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "output_fields": ["id", "name", "object_story_spec"],
+      "required_params": ["ad_account_id", "name", "object_story_spec"],
+      "optional_params": [],
+      "must_support": ["link_ads", "image_ads", "video_ads"],
+      "parameters": {
+        "type": "object",
+        "required": ["ad_account_id", "name", "object_story_spec"],
+        "properties": {
+          "ad_account_id": {
+            "type": "string",
+            "description": "Ad account ID (format: act_123456789)",
+            "pattern": "^act_[0-9]+$"
+          },
+          "name": {
+            "type": "string",
+            "description": "Creative name"
+          },
+          "object_story_spec": {
+            "type": "object",
+            "description": "Creative specification",
+            "properties": {
+              "page_id": {
+                "type": "string",
+                "description": "Facebook Page ID"
+              },
+              "instagram_actor_id": {
+                "type": "string",
+                "description": "Instagram account ID (for Instagram ads)"
+              },
+              "link_data": {
+                "type": "object",
+                "properties": {
+                  "link": {
+                    "type": "string",
+                    "description": "Landing page URL"
+                  },
+                  "message": {
+                    "type": "string",
+                    "description": "Ad text/body"
+                  },
+                  "name": {
+                    "type": "string",
+                    "description": "Headline"
+                  },
+                  "description": {
+                    "type": "string",
+                    "description": "Link description"
+                  },
+                  "call_to_action": {
+                    "type": "object",
+                    "properties": {
+                      "type": {
+                        "type": "string",
+                        "enum": ["SHOP_NOW", "LEARN_MORE", "SIGN_UP", "DOWNLOAD", "BOOK_TRAVEL", "CONTACT_US", "APPLY_NOW", "GET_QUOTE", "SUBSCRIBE", "NO_BUTTON"],
+                        "description": "Call-to-action button type"
+                      },
+                      "value": {
+                        "type": "object",
+                        "properties": {
+                          "link": {
+                            "type": "string",
+                            "description": "CTA link (usually same as main link)"
+                          }
+                        }
+                      }
+                    }
+                  },
+                  "image_hash": {
+                    "type": "string",
+                    "description": "Image hash from upload_image action",
+                    "x-variable-mapping": {
+                      "from_type": "image",
+                      "field_path": "hash",
+                      "description": "Extract image hash from uploaded image object"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Ad creative ID",
+            "x-guaranteed": true
+          },
+          "name": {
+            "type": "string",
+            "x-guaranteed": true
+          },
+          "object_story_spec": {
+            "type": "object",
+            "description": "Creative specification"
+          },
+          "created_time": {
+            "type": "string",
+            "x-guaranteed": true
+          }
+        }
+      },
+      "output_guidance": {
+        "success_description": "Ad creative created successfully",
+        "sample_output": {
+          "id": "23851234567890131",
+          "name": "Summer Sale Creative 1",
+          "object_story_spec": {
+            "page_id": "123456789",
+            "link_data": {
+              "link": "https://example.com/sale",
+              "message": "Don't miss our biggest summer sale!",
+              "name": "50% Off Everything"
+            }
+          },
+          "created_time": "2026-03-18T16:00:00+0000"
+        },
+        "common_errors": {
+          "auth_failed": "Your Meta Ads connection has expired.",
+          "invalid_spec": "The object_story_spec is invalid or missing required fields.",
+          "page_not_found": "The specified Facebook Page was not found or you don't have access.",
+          "insufficient_permissions": "You need 'ads_management' permission to create ad creatives."
+        }
+      }
+    },
+    "create_custom_audience": {
+      "description": "Create a custom audience from a customer list",
+      "usage_context": "Use to upload customer emails/phones for targeting, create retargeting audiences, or build lookalike audiences",
+      "idempotent": false,
+      "domain": "marketing",
+      "capability": "create",
+      "input_entity": "audience",
+      "output_entity": "audience",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "output_fields": ["id", "name", "subtype", "approximate_count"],
+      "required_params": ["ad_account_id", "name", "subtype", "customer_file_source"],
+      "optional_params": ["description"],
+      "must_support": ["customer_list", "email_match", "phone_match"],
+      "parameters": {
+        "type": "object",
+        "required": ["ad_account_id", "name", "subtype", "customer_file_source"],
+        "properties": {
+          "ad_account_id": {
+            "type": "string",
+            "description": "Ad account ID (format: act_123456789)",
+            "pattern": "^act_[0-9]+$"
+          },
+          "name": {
+            "type": "string",
+            "description": "Audience name"
+          },
+          "subtype": {
+            "type": "string",
+            "enum": ["CUSTOM", "WEBSITE", "APP", "OFFLINE_CONVERSION", "CLAIM", "PARTNER", "MANAGED", "VIDEO", "LOOKALIKE", "ENGAGEMENT", "DATA_SET", "BAG_OF_ACCOUNTS", "STUDY_RULE_AUDIENCE", "FOX"],
+            "default": "CUSTOM",
+            "description": "Audience subtype"
+          },
+          "description": {
+            "type": "string",
+            "description": "Audience description"
+          },
+          "customer_file_source": {
+            "type": "string",
+            "enum": ["USER_PROVIDED_ONLY", "PARTNER_PROVIDED_ONLY", "BOTH_USER_AND_PARTNER_PROVIDED"],
+            "default": "USER_PROVIDED_ONLY",
+            "description": "Source of customer data"
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Custom audience ID",
+            "x-guaranteed": true
+          },
+          "name": {
+            "type": "string",
+            "x-guaranteed": true
+          },
+          "subtype": {
+            "type": "string",
+            "x-guaranteed": true
+          },
+          "approximate_count": {
+            "type": "integer",
+            "description": "Approximate audience size"
+          },
+          "created_time": {
+            "type": "string",
+            "x-guaranteed": true
+          }
+        }
+      },
+      "output_guidance": {
+        "success_description": "Custom audience created successfully",
+        "sample_output": {
+          "id": "23851234567890132",
+          "name": "Customer List - Q1 2026",
+          "subtype": "CUSTOM",
+          "approximate_count": 15000,
+          "created_time": "2026-03-18T16:00:00+0000"
+        },
+        "common_errors": {
+          "auth_failed": "Your Meta Ads connection has expired.",
+          "insufficient_permissions": "You need 'ads_management' permission to create custom audiences.",
+          "invalid_customer_data": "The customer data format is invalid or doesn't meet minimum size requirements."
+        }
+      }
+    },
+    "get_audiences": {
+      "description": "List custom and lookalike audiences from your ad account",
+      "usage_context": "Use to retrieve available audiences for targeting, check audience sizes, or list saved audiences",
+      "idempotent": true,
+      "domain": "marketing",
+      "capability": "search",
+      "input_entity": null,
+      "output_entity": "audience",
+      "input_cardinality": null,
+      "output_cardinality": "collection",
+      "output_fields": ["id", "name", "subtype", "approximate_count", "delivery_status"],
+      "required_params": ["ad_account_id"],
+      "optional_params": ["limit"],
+      "must_support": ["audience_listing"],
+      "parameters": {
+        "type": "object",
+        "required": ["ad_account_id"],
+        "properties": {
+          "ad_account_id": {
+            "type": "string",
+            "description": "Ad account ID (format: act_123456789)",
+            "pattern": "^act_[0-9]+$"
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 500,
+            "default": 100,
+            "description": "Maximum number of audiences to return"
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "audiences": {
+            "type": "array",
+            "description": "List of audiences",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "description": "Audience ID"
+                },
+                "name": {
+                  "type": "string",
+                  "description": "Audience name"
+                },
+                "subtype": {
+                  "type": "string",
+                  "description": "Audience type"
+                },
+                "approximate_count": {
+                  "type": "integer",
+                  "description": "Approximate audience size"
+                },
+                "delivery_status": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "integer",
+                      "description": "Status code"
+                    },
+                    "description": {
+                      "type": "string",
+                      "description": "Status description"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "audience_count": {
+            "type": "integer",
+            "x-guaranteed": true
+          },
+          "retrieved_at": {
+            "type": "string",
+            "x-guaranteed": true
+          }
+        }
+      },
+      "output_guidance": {
+        "success_description": "Retrieved audiences from Meta ad account",
+        "sample_output": {
+          "audiences": [
+            {
+              "id": "23851234567890132",
+              "name": "Customer List - Q1 2026",
+              "subtype": "CUSTOM",
+              "approximate_count": 15000,
+              "delivery_status": {
+                "code": 200,
+                "description": "Audience is ready"
+              }
+            }
+          ],
+          "audience_count": 1,
+          "retrieved_at": "2026-03-18T16:00:00Z"
+        },
+        "common_errors": {
+          "auth_failed": "Your Meta Ads connection has expired.",
+          "insufficient_permissions": "You need 'ads_read' permission to view audiences."
+        }
+      }
+    }
+  }
+}

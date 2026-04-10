@@ -1,0 +1,1094 @@
+{
+  "plugin": {
+    "name": "notion",
+    "version": "1.0.0",
+    "description": "Access, create, and manage pages, databases, and content in Notion workspaces",
+    "context": "Notion is an all-in-one workspace for notes, databases, wikis, and project management. Use this plugin to create pages, query databases, update content, manage properties, and integrate Notion data into your workflows.",
+    "icon": "<Database className='w-5 h-5 text-gray-800'/>",
+    "category": "productivity",
+    "isPopular": true,
+    "auth_config": {
+      "auth_type": "oauth2",
+      "client_id": "${NOTION_CLIENT_ID}",
+      "client_secret": "${NOTION_CLIENT_SECRET}",
+      "redirect_uri": "${NEXT_PUBLIC_APP_URL}/oauth/callback/notion",
+      "auth_url": "https://api.notion.com/v1/oauth/authorize",
+      "token_url": "https://api.notion.com/v1/oauth/token",
+      "refresh_url": "https://api.notion.com/v1/oauth/token",
+      "profile_url": "https://api.notion.com/v1/users/me",
+      "required_scopes": [],
+      "token_expiry_seconds": 31536000,
+      "requires_pkce": false,
+      "uses_basic_auth": true,
+      "token_format": "json",
+      "profile_headers": {
+        "Notion-Version": "2022-06-28"
+      }
+    },
+    "provider_family": "notion"
+  },
+  "actions": {
+    "search": {
+      "description": "Search for pages and databases across Notion workspace",
+      "usage_context": "Use this action to find pages, databases, or content by title or keywords. Essential for discovering workspace content and locating specific items.",
+      "idempotent": true,
+      "domain": "knowledge",
+      "capability": "search",
+      "input_entity": null,
+      "output_entity": "page",
+      "input_cardinality": null,
+      "output_cardinality": "collection",
+      "output_fields": [
+        "id",
+        "object",
+        "created_time",
+        "last_edited_time",
+        "title",
+        "url"
+      ],
+      "required_params": [],
+      "optional_params": [
+        "query",
+        "filter",
+        "sort"
+      ],
+      "must_support": [
+        "full_text_search",
+        "type_filter"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Text to search for in page titles and content"
+          },
+          "filter": {
+            "type": "object",
+            "description": "Filter results by object type",
+            "properties": {
+              "value": {
+                "type": "string",
+                "enum": [
+                  "page",
+                  "database"
+                ],
+                "description": "Type of object to filter by"
+              },
+              "property": {
+                "type": "string",
+                "enum": [
+                  "object"
+                ],
+                "description": "Property to filter on"
+              }
+            }
+          },
+          "sort": {
+            "type": "object",
+            "description": "Sort search results",
+            "properties": {
+              "direction": {
+                "type": "string",
+                "enum": [
+                  "ascending",
+                  "descending"
+                ],
+                "description": "Sort direction"
+              },
+              "timestamp": {
+                "type": "string",
+                "enum": [
+                  "last_edited_time"
+                ],
+                "description": "Property to sort by"
+              }
+            }
+          },
+          "page_size": {
+            "type": "integer",
+            "description": "Number of results per page (max: 100)",
+            "minimum": 1,
+            "maximum": 100,
+            "default": 50
+          }
+        }
+      },
+      "rules": {
+        "limits": {
+          "rate_limit": "3 requests per second",
+          "timeout_seconds": 10
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "description": "Search results with pages and databases",
+        "properties": {
+          "results": {
+            "type": "array",
+            "description": "Array of matching pages and databases",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "description": "Unique page or database ID"
+                },
+                "object": {
+                  "type": "string",
+                  "description": "Object type (page or database)"
+                },
+                "created_time": {
+                  "type": "string",
+                  "description": "ISO 8601 timestamp of creation"
+                },
+                "last_edited_time": {
+                  "type": "string",
+                  "description": "ISO 8601 timestamp of last edit"
+                },
+                "title": {
+                  "type": "string",
+                  "description": "Title of the page or database"
+                },
+                "url": {
+                  "type": "string",
+                  "description": "URL to view in Notion"
+                }
+              }
+            }
+          },
+          "has_more": {
+            "type": "boolean",
+            "description": "Whether more results are available"
+          },
+          "next_cursor": {
+            "type": "string",
+            "description": "Cursor for pagination"
+          },
+          "result_count": {
+            "type": "integer",
+            "description": "Number of results returned"
+          }
+        },
+        "required": [
+          "id",
+          "object"
+        ]
+      },
+      "output_guidance": {
+        "success_description": "Found matching items",
+        "sample_output": {
+          "results": [
+            {
+              "id": "abc123-def456-ghi789",
+              "object": "page",
+              "created_time": "2024-01-01T00:00:00.000Z",
+              "last_edited_time": "2024-01-15T10:00:00.000Z",
+              "title": "Project Plan",
+              "url": "https://notion.so/Project-Plan-abc123"
+            }
+          ],
+          "has_more": false,
+          "result_count": 1
+        },
+        "common_errors": {
+          "auth_failed": "Your Notion connection has expired. Please go to Settings → Connected Apps to reconnect Notion.",
+          "rate_limit": "Too many requests to Notion API. Please wait a moment and try again.",
+          "api_error": "Notion API error occurred. Please try again or contact support if the issue persists."
+        }
+      }
+    },
+    "get_page": {
+      "description": "Get a page's properties and metadata",
+      "usage_context": "Use this action to retrieve detailed information about a specific page when you know its ID. Returns page properties, metadata, and parent information.",
+      "idempotent": true,
+      "domain": "knowledge",
+      "capability": "get",
+      "input_entity": "page",
+      "output_entity": "page",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "output_fields": [
+        "id",
+        "created_time",
+        "last_edited_time",
+        "properties",
+        "url"
+      ],
+      "required_params": [
+        "page_id"
+      ],
+      "optional_params": [],
+      "must_support": [],
+      "parameters": {
+        "type": "object",
+        "required": [
+          "page_id"
+        ],
+        "properties": {
+          "page_id": {
+            "type": "string",
+            "description": "The ID of the page to retrieve (UUID format with or without hyphens)",
+            "x-dynamic-options": {
+              "source": "search",
+              "description": "Fetches available pages dynamically"
+            },
+            "x-variable-mapping": {
+              "from_type": "page",
+              "field_path": "id",
+              "description": "Extract page ID from page object"
+            }
+          }
+        }
+      },
+      "rules": {
+        "limits": {
+          "rate_limit": "3 requests per second",
+          "timeout_seconds": 10
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "description": "Page object with all properties and metadata",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Unique page ID",
+            "x-guaranteed": true
+          },
+          "created_time": {
+            "type": "string",
+            "description": "ISO 8601 timestamp of creation"
+          },
+          "last_edited_time": {
+            "type": "string",
+            "description": "ISO 8601 timestamp of last edit"
+          },
+          "properties": {
+            "type": "object",
+            "description": "Page properties as key-value pairs"
+          },
+          "url": {
+            "type": "string",
+            "description": "URL to view the page in Notion"
+          },
+          "parent": {
+            "type": "object",
+            "description": "Parent page or database information"
+          }
+        },
+        "required": [
+          "id",
+          "created_time",
+          "properties"
+        ]
+      },
+      "output_guidance": {
+        "success_description": "Retrieved page",
+        "sample_output": {
+          "id": "abc123-def456-ghi789",
+          "created_time": "2024-01-01T00:00:00.000Z",
+          "last_edited_time": "2024-01-15T10:00:00.000Z",
+          "properties": {
+            "title": {
+              "type": "title",
+              "title": [
+                {
+                  "text": {
+                    "content": "Project Plan"
+                  }
+                }
+              ]
+            }
+          },
+          "url": "https://notion.so/Project-Plan-abc123"
+        },
+        "common_errors": {
+          "auth_failed": "Your Notion connection has expired. Please go to Settings → Connected Apps to reconnect Notion.",
+          "not_found": "The specified page was not found. Please check the page ID and try again.",
+          "permission_denied": "You don't have permission to access this page. Please request access from the workspace owner.",
+          "rate_limit": "Too many requests to Notion API. Please wait a moment and try again.",
+          "api_error": "Notion API error occurred. Please try again or contact support if the issue persists."
+        }
+      }
+    },
+    "get_page_content": {
+      "description": "Get the block content of a page",
+      "usage_context": "Use this action to retrieve the actual content blocks (paragraphs, headings, lists, etc.) from a page. Essential for reading page contents.",
+      "idempotent": true,
+      "domain": "knowledge",
+      "capability": "fetch_content",
+      "input_entity": "page",
+      "output_entity": "page",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "output_fields": [
+        "blocks",
+        "text_content"
+      ],
+      "required_params": [
+        "page_id"
+      ],
+      "optional_params": [
+        "page_size"
+      ],
+      "must_support": [
+        "block_retrieval"
+      ],
+      "parameters": {
+        "type": "object",
+        "required": [
+          "page_id"
+        ],
+        "properties": {
+          "page_id": {
+            "type": "string",
+            "description": "The ID of the page to get content from",
+            "x-dynamic-options": {
+              "source": "search",
+              "description": "Fetches available pages dynamically"
+            },
+            "x-variable-mapping": {
+              "from_type": "page",
+              "field_path": "id",
+              "description": "Extract page ID from page object"
+            }
+          },
+          "page_size": {
+            "type": "integer",
+            "description": "Number of blocks per page (max: 100)",
+            "minimum": 1,
+            "maximum": 100,
+            "default": 100
+          }
+        }
+      },
+      "rules": {
+        "limits": {
+          "rate_limit": "3 requests per second",
+          "timeout_seconds": 30
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "description": "Page content blocks",
+        "properties": {
+          "blocks": {
+            "type": "array",
+            "description": "Array of block objects",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "description": "Block ID"
+                },
+                "type": {
+                  "type": "string",
+                  "description": "Block type (paragraph, heading_1, etc.)"
+                },
+                "content": {
+                  "type": "object",
+                  "description": "Block content"
+                }
+              }
+            }
+          },
+          "text_content": {
+            "type": "string",
+            "description": "Plain text content extracted from all blocks"
+          },
+          "has_more": {
+            "type": "boolean",
+            "description": "Whether more blocks are available"
+          },
+          "block_count": {
+            "type": "integer",
+            "description": "Number of blocks returned"
+          }
+        },
+        "required": [
+          "blocks"
+        ]
+      },
+      "output_guidance": {
+        "success_description": "Retrieved page content",
+        "sample_output": {
+          "blocks": [
+            {
+              "id": "block123",
+              "type": "paragraph",
+              "content": {
+                "text": [
+                  {
+                    "plain_text": "This is a paragraph."
+                  }
+                ]
+              }
+            }
+          ],
+          "text_content": "This is a paragraph.",
+          "has_more": false,
+          "block_count": 1
+        },
+        "common_errors": {
+          "auth_failed": "Your Notion connection has expired. Please go to Settings → Connected Apps to reconnect Notion.",
+          "not_found": "The specified page was not found. Please check the page ID and try again.",
+          "permission_denied": "You don't have permission to access this page. Please request access from the workspace owner.",
+          "rate_limit": "Too many requests to Notion API. Please wait a moment and try again.",
+          "api_error": "Notion API error occurred. Please try again or contact support if the issue persists."
+        }
+      }
+    },
+    "create_page": {
+      "description": "Create a new page in Notion",
+      "usage_context": "Use this action to create a new page in a database or as a child of another page. Can set properties and initial content.",
+      "idempotent": false,
+      "domain": "knowledge",
+      "capability": "create",
+      "input_entity": null,
+      "output_entity": "page",
+      "input_cardinality": null,
+      "output_cardinality": "single",
+      "output_fields": [
+        "id",
+        "url",
+        "created_time"
+      ],
+      "required_params": [
+        "parent"
+      ],
+      "optional_params": [
+        "properties",
+        "children"
+      ],
+      "must_support": [
+        "database_pages",
+        "child_pages"
+      ],
+      "parameters": {
+        "type": "object",
+        "required": [
+          "parent"
+        ],
+        "properties": {
+          "parent": {
+            "type": "object",
+            "description": "Parent database or page",
+            "oneOf": [
+              {
+                "properties": {
+                  "database_id": {
+                    "type": "string",
+                    "description": "ID of parent database"
+                  }
+                },
+                "required": [
+                  "database_id"
+                ]
+              },
+              {
+                "properties": {
+                  "page_id": {
+                    "type": "string",
+                    "description": "ID of parent page"
+                  }
+                },
+                "required": [
+                  "page_id"
+                ]
+              }
+            ]
+          },
+          "properties": {
+            "type": "object",
+            "description": "Page properties (title, dates, select fields, etc.)",
+            "additionalProperties": true
+          },
+          "children": {
+            "type": "array",
+            "description": "Initial content blocks for the page",
+            "items": {
+              "type": "object",
+              "description": "Block object"
+            }
+          }
+        }
+      },
+      "rules": {
+        "limits": {
+          "rate_limit": "3 requests per second",
+          "timeout_seconds": 30
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "description": "Newly created page",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "ID of the created page",
+            "x-guaranteed": true
+          },
+          "url": {
+            "type": "string",
+            "description": "URL to view the page in Notion",
+            "x-guaranteed": true
+          },
+          "created_time": {
+            "type": "string",
+            "description": "ISO 8601 timestamp of creation",
+            "x-guaranteed": true
+          },
+          "properties": {
+            "type": "object",
+            "description": "Page properties that were set"
+          }
+        },
+        "required": [
+          "id",
+          "url",
+          "created_time"
+        ]
+      },
+      "output_guidance": {
+        "success_description": "Created page",
+        "sample_output": {
+          "id": "abc123-def456-ghi789",
+          "url": "https://notion.so/New-Page-abc123",
+          "created_time": "2024-01-15T14:00:00.000Z",
+          "properties": {
+            "title": {
+              "type": "title",
+              "title": [
+                {
+                  "text": {
+                    "content": "New Page"
+                  }
+                }
+              ]
+            }
+          }
+        },
+        "common_errors": {
+          "auth_failed": "Your Notion connection has expired. Please go to Settings → Connected Apps to reconnect Notion.",
+          "not_found": "The specified parent database or page was not found. Please check the ID and try again.",
+          "permission_denied": "You don't have permission to create pages in this location. Please request access from the workspace owner.",
+          "invalid_data": "The provided properties are invalid. Please check property types and required fields.",
+          "rate_limit": "Too many requests to Notion API. Please wait a moment and try again.",
+          "api_error": "Notion API error occurred. Please try again or contact support if the issue persists."
+        }
+      }
+    },
+    "update_page": {
+      "description": "Update a page's properties",
+      "usage_context": "Use this action to modify properties of an existing page (title, status, dates, etc.). Does not update page content blocks.",
+      "idempotent": true,
+      "domain": "knowledge",
+      "capability": "update",
+      "input_entity": "page",
+      "output_entity": "page",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "output_fields": [
+        "id",
+        "last_edited_time",
+        "properties"
+      ],
+      "required_params": [
+        "page_id",
+        "properties"
+      ],
+      "optional_params": [],
+      "must_support": [
+        "property_updates"
+      ],
+      "parameters": {
+        "type": "object",
+        "required": [
+          "page_id",
+          "properties"
+        ],
+        "properties": {
+          "page_id": {
+            "type": "string",
+            "description": "The ID of the page to update",
+            "x-dynamic-options": {
+              "source": "search",
+              "description": "Fetches available pages dynamically"
+            },
+            "x-variable-mapping": {
+              "from_type": "page",
+              "field_path": "id",
+              "description": "Extract page ID from page object"
+            }
+          },
+          "properties": {
+            "type": "object",
+            "description": "Page properties to update",
+            "additionalProperties": true
+          }
+        }
+      },
+      "rules": {
+        "limits": {
+          "rate_limit": "3 requests per second",
+          "timeout_seconds": 10
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "description": "Updated page object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Page ID",
+            "x-guaranteed": true
+          },
+          "last_edited_time": {
+            "type": "string",
+            "description": "ISO 8601 timestamp of last edit",
+            "x-guaranteed": true
+          },
+          "properties": {
+            "type": "object",
+            "description": "Updated page properties"
+          }
+        },
+        "required": [
+          "id",
+          "last_edited_time"
+        ]
+      },
+      "output_guidance": {
+        "success_description": "Updated page",
+        "sample_output": {
+          "id": "abc123-def456-ghi789",
+          "last_edited_time": "2024-01-15T14:30:00.000Z",
+          "properties": {
+            "Status": {
+              "type": "select",
+              "select": {
+                "name": "In Progress"
+              }
+            }
+          }
+        },
+        "common_errors": {
+          "auth_failed": "Your Notion connection has expired. Please go to Settings → Connected Apps to reconnect Notion.",
+          "not_found": "The specified page was not found. Please check the page ID and try again.",
+          "permission_denied": "You don't have permission to update this page. Please request access from the workspace owner.",
+          "invalid_data": "The provided properties are invalid. Please check property types and values.",
+          "rate_limit": "Too many requests to Notion API. Please wait a moment and try again.",
+          "api_error": "Notion API error occurred. Please try again or contact support if the issue persists."
+        }
+      }
+    },
+    "query_database": {
+      "description": "Query a database with filtering, sorting, and pagination",
+      "usage_context": "Use this action to retrieve pages from a database. Supports filtering by property values, sorting, and pagination. Perfect for querying structured data.",
+      "idempotent": true,
+      "domain": "knowledge",
+      "capability": "list",
+      "input_entity": "database",
+      "output_entity": "page",
+      "input_cardinality": "single",
+      "output_cardinality": "collection",
+      "output_fields": [
+        "id",
+        "properties",
+        "created_time",
+        "last_edited_time"
+      ],
+      "required_params": [
+        "database_id"
+      ],
+      "optional_params": [
+        "filter",
+        "sorts",
+        "page_size"
+      ],
+      "must_support": [
+        "property_filter",
+        "multi_sort"
+      ],
+      "parameters": {
+        "type": "object",
+        "required": [
+          "database_id"
+        ],
+        "properties": {
+          "database_id": {
+            "type": "string",
+            "description": "The ID of the database to query",
+            "x-dynamic-options": {
+              "source": "search",
+              "description": "Fetches available databases dynamically"
+            },
+            "x-variable-mapping": {
+              "from_type": "database",
+              "field_path": "id",
+              "description": "Extract database ID from database object"
+            }
+          },
+          "filter": {
+            "type": "object",
+            "description": "Filter object to query specific pages (e.g., {property: 'Status', select: {equals: 'Active'}})"
+          },
+          "sorts": {
+            "type": "array",
+            "description": "Array of sort objects",
+            "items": {
+              "type": "object",
+              "properties": {
+                "property": {
+                  "type": "string",
+                  "description": "Property name to sort by"
+                },
+                "direction": {
+                  "type": "string",
+                  "enum": [
+                    "ascending",
+                    "descending"
+                  ],
+                  "description": "Sort direction"
+                }
+              }
+            }
+          },
+          "page_size": {
+            "type": "integer",
+            "description": "Number of pages to return (max: 100)",
+            "minimum": 1,
+            "maximum": 100,
+            "default": 50
+          }
+        }
+      },
+      "rules": {
+        "limits": {
+          "rate_limit": "3 requests per second",
+          "timeout_seconds": 30
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "description": "Database query results",
+        "properties": {
+          "results": {
+            "type": "array",
+            "description": "Array of pages matching the query",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "description": "Page ID"
+                },
+                "properties": {
+                  "type": "object",
+                  "description": "Page properties"
+                },
+                "created_time": {
+                  "type": "string",
+                  "description": "ISO 8601 timestamp of creation"
+                },
+                "last_edited_time": {
+                  "type": "string",
+                  "description": "ISO 8601 timestamp of last edit"
+                }
+              }
+            }
+          },
+          "has_more": {
+            "type": "boolean",
+            "description": "Whether more results are available"
+          },
+          "next_cursor": {
+            "type": "string",
+            "description": "Cursor for pagination"
+          },
+          "result_count": {
+            "type": "integer",
+            "description": "Number of results returned"
+          }
+        },
+        "required": [
+          "id",
+          "properties"
+        ]
+      },
+      "output_guidance": {
+        "success_description": "Retrieved database pages",
+        "sample_output": {
+          "results": [
+            {
+              "id": "page123",
+              "properties": {
+                "Name": {
+                  "type": "title",
+                  "title": [
+                    {
+                      "text": {
+                        "content": "Task 1"
+                      }
+                    }
+                  ]
+                },
+                "Status": {
+                  "type": "select",
+                  "select": {
+                    "name": "Active"
+                  }
+                }
+              },
+              "created_time": "2024-01-01T00:00:00.000Z",
+              "last_edited_time": "2024-01-15T10:00:00.000Z"
+            }
+          ],
+          "has_more": false,
+          "result_count": 1
+        },
+        "common_errors": {
+          "auth_failed": "Your Notion connection has expired. Please go to Settings → Connected Apps to reconnect Notion.",
+          "not_found": "The specified database was not found. Please check the database ID and try again.",
+          "permission_denied": "You don't have permission to access this database. Please request access from the workspace owner.",
+          "invalid_filter": "The provided filter is invalid. Please check the filter syntax.",
+          "rate_limit": "Too many requests to Notion API. Please wait a moment and try again.",
+          "api_error": "Notion API error occurred. Please try again or contact support if the issue persists."
+        }
+      }
+    },
+    "get_database": {
+      "description": "Get database schema and properties",
+      "usage_context": "Use this action to retrieve a database's structure, including all property definitions, types, and options. Essential for understanding database schema before querying or creating pages.",
+      "idempotent": true,
+      "domain": "knowledge",
+      "capability": "get",
+      "input_entity": "database",
+      "output_entity": "database",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "output_fields": [
+        "id",
+        "title",
+        "properties",
+        "created_time"
+      ],
+      "required_params": [
+        "database_id"
+      ],
+      "optional_params": [],
+      "must_support": [
+        "schema_discovery"
+      ],
+      "parameters": {
+        "type": "object",
+        "required": [
+          "database_id"
+        ],
+        "properties": {
+          "database_id": {
+            "type": "string",
+            "description": "The ID of the database to retrieve",
+            "x-dynamic-options": {
+              "source": "search",
+              "description": "Fetches available databases dynamically"
+            },
+            "x-variable-mapping": {
+              "from_type": "database",
+              "field_path": "id",
+              "description": "Extract database ID from database object"
+            }
+          }
+        }
+      },
+      "rules": {
+        "limits": {
+          "rate_limit": "3 requests per second",
+          "timeout_seconds": 10
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "description": "Database object with schema information",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Database ID",
+            "x-guaranteed": true
+          },
+          "title": {
+            "type": "array",
+            "description": "Database title"
+          },
+          "properties": {
+            "type": "object",
+            "description": "Database property definitions"
+          },
+          "created_time": {
+            "type": "string",
+            "description": "ISO 8601 timestamp of creation"
+          },
+          "url": {
+            "type": "string",
+            "description": "URL to view the database in Notion"
+          }
+        },
+        "required": [
+          "id",
+          "properties"
+        ]
+      },
+      "output_guidance": {
+        "success_description": "Retrieved database",
+        "sample_output": {
+          "id": "db123",
+          "title": [
+            {
+              "text": {
+                "content": "Tasks"
+              }
+            }
+          ],
+          "properties": {
+            "Name": {
+              "type": "title"
+            },
+            "Status": {
+              "type": "select",
+              "select": {
+                "options": [
+                  {
+                    "name": "Active"
+                  },
+                  {
+                    "name": "Complete"
+                  }
+                ]
+              }
+            }
+          },
+          "created_time": "2024-01-01T00:00:00.000Z",
+          "url": "https://notion.so/Tasks-db123"
+        },
+        "common_errors": {
+          "auth_failed": "Your Notion connection has expired. Please go to Settings → Connected Apps to reconnect Notion.",
+          "not_found": "The specified database was not found. Please check the database ID and try again.",
+          "permission_denied": "You don't have permission to access this database. Please request access from the workspace owner.",
+          "rate_limit": "Too many requests to Notion API. Please wait a moment and try again.",
+          "api_error": "Notion API error occurred. Please try again or contact support if the issue persists."
+        }
+      }
+    },
+    "append_block_children": {
+      "description": "Append content blocks to a page or block",
+      "usage_context": "Use this action to add new content (paragraphs, headings, lists, etc.) to the end of a page or existing block. Perfect for building page content dynamically.",
+      "idempotent": false,
+      "domain": "knowledge",
+      "capability": "create",
+      "input_entity": "page",
+      "output_entity": "page",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "output_fields": [
+        "results"
+      ],
+      "required_params": [
+        "block_id",
+        "children"
+      ],
+      "optional_params": [],
+      "must_support": [
+        "content_append"
+      ],
+      "parameters": {
+        "type": "object",
+        "required": [
+          "block_id",
+          "children"
+        ],
+        "properties": {
+          "block_id": {
+            "type": "string",
+            "description": "The ID of the page or block to append to (use page_id for appending to page)",
+            "x-dynamic-options": {
+              "source": "search",
+              "description": "Fetches available pages dynamically"
+            },
+            "x-variable-mapping": {
+              "from_type": "block",
+              "field_path": "id",
+              "description": "Extract block ID from block object"
+            }
+          },
+          "children": {
+            "type": "array",
+            "description": "Array of block objects to append",
+            "items": {
+              "type": "object",
+              "description": "Block object (paragraph, heading, list, etc.)"
+            }
+          }
+        }
+      },
+      "rules": {
+        "limits": {
+          "rate_limit": "3 requests per second",
+          "max_blocks_per_request": 100,
+          "timeout_seconds": 30
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "description": "Appended block results",
+        "properties": {
+          "results": {
+            "type": "array",
+            "description": "Array of created blocks",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "description": "Block ID"
+                },
+                "type": {
+                  "type": "string",
+                  "description": "Block type"
+                }
+              }
+            }
+          },
+          "block_count": {
+            "type": "integer",
+            "description": "Number of blocks appended"
+          }
+        },
+        "required": [
+          "results"
+        ]
+      },
+      "output_guidance": {
+        "success_description": "Appended blocks",
+        "sample_output": {
+          "results": [
+            {
+              "id": "block123",
+              "type": "paragraph"
+            }
+          ],
+          "block_count": 1
+        },
+        "common_errors": {
+          "auth_failed": "Your Notion connection has expired. Please go to Settings → Connected Apps to reconnect Notion.",
+          "not_found": "The specified page or block was not found. Please check the ID and try again.",
+          "permission_denied": "You don't have permission to edit this page. Please request access from the workspace owner.",
+          "invalid_data": "The provided blocks are invalid. Please check block types and content.",
+          "rate_limit": "Too many requests to Notion API. Please wait a moment and try again.",
+          "api_error": "Notion API error occurred. Please try again or contact support if the issue persists."
+        }
+      }
+    }
+  }
+}

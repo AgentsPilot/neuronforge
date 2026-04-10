@@ -43,7 +43,6 @@ export class HardcodeDetector {
     url: /^https?:\/\/.+/,
     time_range: /\d+\s*(day|hour|minute|week|month|year)s?/i,
     numeric_threshold: /^\d+$/,
-    mime_type: /^(application|text|image|audio|video|multipart|message)\/[a-z0-9\.\-\+]+$/i,
   }
 
   // User inputs from enhanced prompt (optional, for precise matching)
@@ -170,7 +169,7 @@ export class HardcodeDetector {
     // Create a map of stepId -> step name for labeling
     const stepNameMap = new Map<string, string>()
     pilotSteps.forEach((step, index) => {
-      const stepId = step.step_id || step.id
+      const stepId = step.id || step.step_id
       const stepName = step.name || step.label || `Step ${index + 1}`
       stepNameMap.set(stepId, stepName)
     })
@@ -222,8 +221,7 @@ export class HardcodeDetector {
     const occurrences: ValueOccurrence[] = []
 
     const processStep = (step: any) => {
-      const stepId = step.step_id || step.id
-      this.traverseObject(step, stepId, stepId, (value, path, context, paramName, parentPath) => {
+      this.traverseObject(step, step.id, step.id, (value, path, context, paramName, parentPath) => {
         // Skip null, undefined, booleans
         if (value == null || typeof value === 'boolean') return
 
@@ -237,7 +235,7 @@ export class HardcodeDetector {
         // This ensures complete independence between steps
         occurrences.push({
           value,
-          locations: [{ stepId, path, paramName, parentPath }],
+          locations: [{ stepId: step.id, path, paramName, parentPath }],
           context: context
         })
       })
@@ -252,45 +250,6 @@ export class HardcodeDetector {
       // Handle nested steps in scatter_gather blocks
       if (step.type === 'scatter_gather' && step.scatter?.steps) {
         step.scatter.steps.forEach((nestedStep: any) => {
-          processStep(nestedStep)
-        })
-      }
-
-      // Handle nested steps in conditional branches
-      if (step.type === 'conditional') {
-        if (step.then_steps && Array.isArray(step.then_steps)) {
-          step.then_steps.forEach((nestedStep: any) => {
-            processStep(nestedStep)
-          })
-        }
-        if (step.else_steps && Array.isArray(step.else_steps)) {
-          step.else_steps.forEach((nestedStep: any) => {
-            processStep(nestedStep)
-          })
-        }
-        // Also handle 'then'/'else' format (PILOT normalized)
-        if ((step as any).then && Array.isArray((step as any).then)) {
-          ((step as any).then as any[]).forEach((nestedStep: any) => {
-            processStep(nestedStep)
-          })
-        }
-        if ((step as any).else && Array.isArray((step as any).else)) {
-          ((step as any).else as any[]).forEach((nestedStep: any) => {
-            processStep(nestedStep)
-          })
-        }
-      }
-
-      // Handle nested steps in loop blocks
-      if (step.type === 'loop' && Array.isArray(step.loopSteps)) {
-        step.loopSteps.forEach((nestedStep: any) => {
-          processStep(nestedStep)
-        })
-      }
-
-      // Handle nested steps in sub_workflow blocks
-      if (step.type === 'sub_workflow' && Array.isArray(step.steps)) {
-        step.steps.forEach((nestedStep: any) => {
           processStep(nestedStep)
         })
       }
@@ -324,12 +283,10 @@ export class HardcodeDetector {
       // Collect context from parent keys
       context.push(key)
 
-      // CRITICAL: Skip nested step arrays in control flow blocks
-      // These arrays ('steps', 'then_steps', 'else_steps', 'loopSteps') contain nested WorkflowSteps
-      // that are processed separately by findAllValues() recursive logic via processStep()
+      // CRITICAL: Skip 'steps' array in parallel/scatter blocks
+      // These nested steps are processed separately by findAllValues() recursive logic
       // to ensure each nested step gets its own unique parameters (e.g., step8_X, step9_X)
-      if ((key === 'steps' || key === 'then_steps' || key === 'else_steps' ||
-           key === 'loopSteps' || key === 'then' || key === 'else') && Array.isArray(value)) {
+      if (key === 'steps' && Array.isArray(value)) {
         continue; // Skip this array entirely - will be processed recursively
       }
 
@@ -427,14 +384,6 @@ export class HardcodeDetector {
 
     // Values in .filter/.condition/.where are business logic
     if (path.includes('.filter') || path.includes('.condition') || path.includes('.where')) {
-      // Skip MIME type constants - these are workflow logic, not user-configurable
-      // Matches both full MIME types (image/png) and prefixes (image/, application/pdf)
-      if (this.patterns.mime_type.test(strValue) ||
-          /^(application\/pdf|image\/|audio\/|video\/|text\/)$/i.test(strValue)) {
-        console.log(`[HardcodeDetector] Skipping MIME type constant: ${strValue} at ${firstLocation.path}`)
-        return null
-      }
-
       // Create unique param name by including the value itself (sanitized)
       const baseParamName = this.extractParamName(firstLocation.path) || 'filter_value'
       const sanitizedValue = String(value)
@@ -567,81 +516,24 @@ export class HardcodeDetector {
   /**
    * Recursively find a step by ID, searching nested structures
    */
-  private findStepRecursive(steps: any[], stepId: string, depth = 0): any {
-    const indent = '  '.repeat(depth)
-
+  private findStepRecursive(steps: any[], stepId: string): any {
     for (const step of steps) {
-      console.log(`${indent}[findStepRecursive] Checking step: ${step.id}, type: ${step.type}, looking for: ${stepId}`)
-
       if (step.id === stepId) {
-        console.log(`${indent}  ✓ FOUND step ${stepId}!`)
         return step
       }
 
       // Search in nested parallel steps
       if (step.type === 'parallel' && Array.isArray(step.steps)) {
-        console.log(`${indent}  → Searching ${step.steps.length} parallel steps`)
-        const found = this.findStepRecursive(step.steps, stepId, depth + 1)
+        const found = this.findStepRecursive(step.steps, stepId)
         if (found) return found
       }
 
       // Search in nested scatter_gather steps
       if (step.type === 'scatter_gather' && step.scatter?.steps) {
-        console.log(`${indent}  → Searching ${step.scatter.steps.length} scatter_gather steps`)
-        const found = this.findStepRecursive(step.scatter.steps, stepId, depth + 1)
-        if (found) return found
-      }
-
-      // Search in nested conditional branches
-      if (step.type === 'conditional') {
-        console.log(`${indent}  → Conditional detected, checking branches...`)
-        console.log(`${indent}     - Has then_steps: ${!!(step.then_steps && Array.isArray(step.then_steps))}`)
-        console.log(`${indent}     - Has else_steps: ${!!(step.else_steps && Array.isArray(step.else_steps))}`)
-        console.log(`${indent}     - Has then: ${!!((step as any).then && Array.isArray((step as any).then))}`)
-        console.log(`${indent}     - Has else: ${!!((step as any).else && Array.isArray((step as any).else))}`)
-
-        // Check then_steps format (DSL)
-        if (step.then_steps && Array.isArray(step.then_steps)) {
-          console.log(`${indent}  → Searching ${step.then_steps.length} then_steps`)
-          const found = this.findStepRecursive(step.then_steps, stepId, depth + 1)
-          if (found) return found
-        }
-        // Check else_steps format (DSL)
-        if (step.else_steps && Array.isArray(step.else_steps)) {
-          console.log(`${indent}  → Searching ${step.else_steps.length} else_steps`)
-          const found = this.findStepRecursive(step.else_steps, stepId, depth + 1)
-          if (found) return found
-        }
-        // Check then format (PILOT)
-        if ((step as any).then && Array.isArray((step as any).then)) {
-          console.log(`${indent}  → Searching ${(step as any).then.length} then branch steps`)
-          const found = this.findStepRecursive((step as any).then, stepId, depth + 1)
-          if (found) return found
-        }
-        // Check else format (PILOT)
-        if ((step as any).else && Array.isArray((step as any).else)) {
-          console.log(`${indent}  → Searching ${(step as any).else.length} else branch steps`)
-          const found = this.findStepRecursive((step as any).else, stepId, depth + 1)
-          if (found) return found
-        }
-      }
-
-      // Search in nested loop steps
-      if (step.type === 'loop' && Array.isArray(step.loopSteps)) {
-        console.log(`${indent}  → Searching ${step.loopSteps.length} loop steps`)
-        const found = this.findStepRecursive(step.loopSteps, stepId, depth + 1)
-        if (found) return found
-      }
-
-      // Search in nested sub_workflow steps
-      if (step.type === 'sub_workflow' && Array.isArray(step.steps)) {
-        console.log(`${indent}  → Searching ${step.steps.length} sub_workflow steps`)
-        const found = this.findStepRecursive(step.steps, stepId, depth + 1)
+        const found = this.findStepRecursive(step.scatter.steps, stepId)
         if (found) return found
       }
     }
-
-    console.log(`${indent}[findStepRecursive] Step ${stepId} not found in current level`)
     return null
   }
 

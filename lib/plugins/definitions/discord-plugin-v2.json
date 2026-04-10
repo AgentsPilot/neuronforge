@@ -1,0 +1,406 @@
+{
+  "plugin": {
+    "name": "discord",
+    "version": "2.0.0",
+    "description": "Send messages, manage channels, and interact with Discord servers",
+    "context": "Use for Discord messaging and server management. Send messages to channels, manage Discord servers, create channels, and interact with Discord communities.",
+    "icon": "<MessageSquare className='w-5 h-5 text-purple-600'/>",
+    "category": "communication",
+    "isPopular": true,
+    "auth_config": {
+      "auth_type": "oauth2_discord",
+      "client_id": "${DISCORD_CLIENT_ID}",
+      "client_secret": "${DISCORD_CLIENT_SECRET}",
+      "redirect_uri": "${NEXT_PUBLIC_APP_URL}/oauth/callback/discord",
+      "auth_url": "https://discord.com/api/oauth2/authorize",
+      "token_url": "https://discord.com/api/oauth2/token",
+      "refresh_url": "https://discord.com/api/oauth2/token",
+      "profile_url": "https://discord.com/api/v10/users/@me",
+      "required_scopes": [
+        "identify",
+        "guilds",
+        "messages.read",
+        "bot"
+      ],
+      "token_expiry_seconds": 604800
+    }
+  },
+  "actions": {
+    "send_message": {
+      "description": "Send a message to a Discord channel",
+      "usage_context": "When user wants to send messages, post content, or communicate via Discord",
+      "idempotent": false,
+      "domain": "communication",
+      "capability": "send",
+      "input_entity": "message",
+      "output_entity": "message",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "output_fields": ["id", "channel_id", "content", "timestamp"],
+      "required_params": ["channel_id", "content"],
+      "optional_params": ["embed"],
+      "must_support": ["text_messages", "rich_embeds"],
+      "parameters": {
+        "type": "object",
+        "required": ["channel_id", "content"],
+        "properties": {
+          "channel_id": {
+            "type": "string",
+            "description": "The ID of the channel to send the message to",
+            "x-variable-mapping": {
+              "from_type": "channel",
+              "field_path": "id",
+              "description": "Extract channel ID from channel object"
+            }
+          },
+          "content": {
+            "type": "string",
+            "description": "The message content"
+          },
+          "embed": {
+            "type": "object",
+            "description": "Optional embed object for rich messages",
+            "properties": {
+              "title": { "type": "string" },
+              "description": { "type": "string" },
+              "color": { "type": "integer" },
+              "url": { "type": "string" }
+            }
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "description": "Message ID", "x-guaranteed": true },
+          "channel_id": { "type": "string", "x-guaranteed": true },
+          "content": { "type": "string" },
+          "timestamp": { "type": "string", "x-guaranteed": true }
+        }
+      },
+      "output_guidance": {
+        "success_description": "Message sent successfully",
+        "sample_output": {
+          "id": "1234567890123456789",
+          "channel_id": "9876543210987654321",
+          "content": "Hello from NeuronForge!",
+          "timestamp": "2026-03-17T16:00:00Z"
+        },
+        "common_errors": {
+          "auth_failed": "Your Discord connection has expired. Please reconnect in Settings → Connected Apps.",
+          "channel_not_found": "The specified channel was not found.",
+          "insufficient_permissions": "Bot doesn't have permission to send messages in this channel."
+        }
+      }
+    },
+    "get_channels": {
+      "description": "Get list of channels in a Discord guild/server",
+      "usage_context": "When user wants to list channels, browse server structure, or find channel IDs",
+      "idempotent": true,
+      "domain": "communication",
+      "capability": "list",
+      "input_entity": "guild",
+      "output_entity": "channel",
+      "input_cardinality": "single",
+      "output_cardinality": "collection",
+      "output_fields": ["id", "name", "type"],
+      "required_params": ["guild_id"],
+      "optional_params": [],
+      "must_support": ["channel_listing"],
+      "parameters": {
+        "type": "object",
+        "required": ["guild_id"],
+        "properties": {
+          "guild_id": {
+            "type": "string",
+            "description": "The ID of the guild (server)",
+            "x-variable-mapping": {
+              "from_type": "guild",
+              "field_path": "id",
+              "description": "Extract guild ID from guild object"
+            }
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "channels": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": { "type": "string" },
+                "name": { "type": "string" },
+                "type": { "type": "integer" }
+              }
+            }
+          }
+        }
+      },
+      "output_guidance": {
+        "success_description": "Retrieved channels from guild",
+        "sample_output": {
+          "channels": [
+            {
+              "id": "1234567890123456789",
+              "name": "general",
+              "type": 0
+            }
+          ]
+        },
+        "common_errors": {
+          "auth_failed": "Your Discord connection has expired.",
+          "guild_not_found": "The specified guild was not found."
+        }
+      }
+    },
+    "list_guilds": {
+      "description": "Get list of guilds (servers) the bot has access to",
+      "usage_context": "When user wants to see available Discord servers or find guild IDs",
+      "idempotent": true,
+      "domain": "communication",
+      "capability": "list",
+      "input_entity": null,
+      "output_entity": "guild",
+      "input_cardinality": null,
+      "output_cardinality": "collection",
+      "output_fields": ["id", "name", "icon"],
+      "required_params": [],
+      "optional_params": [],
+      "must_support": ["guild_listing"],
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "guilds": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": { "type": "string" },
+                "name": { "type": "string" },
+                "icon": { "type": "string" }
+              }
+            }
+          }
+        }
+      },
+      "output_guidance": {
+        "success_description": "Retrieved guilds",
+        "sample_output": {
+          "guilds": [
+            {
+              "id": "1234567890123456789",
+              "name": "My Discord Server",
+              "icon": "abc123def456"
+            }
+          ]
+        },
+        "common_errors": {
+          "auth_failed": "Your Discord connection has expired."
+        }
+      }
+    },
+    "get_messages": {
+      "description": "Get messages from a Discord channel",
+      "usage_context": "When user wants to retrieve message history or read channel content",
+      "idempotent": true,
+      "domain": "communication",
+      "capability": "fetch_content",
+      "input_entity": "channel",
+      "output_entity": "message",
+      "input_cardinality": "single",
+      "output_cardinality": "collection",
+      "output_fields": ["id", "content", "author", "timestamp"],
+      "required_params": ["channel_id"],
+      "optional_params": ["limit"],
+      "must_support": ["message_retrieval"],
+      "parameters": {
+        "type": "object",
+        "required": ["channel_id"],
+        "properties": {
+          "channel_id": {
+            "type": "string",
+            "description": "The ID of the channel",
+            "x-variable-mapping": {
+              "from_type": "channel",
+              "field_path": "id",
+              "description": "Extract channel ID from channel object"
+            }
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Number of messages to retrieve (1-100)",
+            "default": 50,
+            "minimum": 1,
+            "maximum": 100
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "messages": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": { "type": "string" },
+                "content": { "type": "string" },
+                "author": {
+                  "type": "object",
+                  "properties": {
+                    "id": { "type": "string" },
+                    "username": { "type": "string" }
+                  }
+                },
+                "timestamp": { "type": "string" }
+              }
+            }
+          }
+        }
+      },
+      "output_guidance": {
+        "success_description": "Retrieved messages from channel",
+        "sample_output": {
+          "messages": [
+            {
+              "id": "1234567890123456789",
+              "content": "Hello world!",
+              "author": {
+                "id": "9876543210987654321",
+                "username": "JohnDoe"
+              },
+              "timestamp": "2026-03-17T15:00:00Z"
+            }
+          ]
+        },
+        "common_errors": {
+          "auth_failed": "Your Discord connection has expired.",
+          "channel_not_found": "The specified channel was not found."
+        }
+      }
+    },
+    "create_channel": {
+      "description": "Create a new channel in a Discord guild",
+      "usage_context": "When user wants to create new text or voice channels",
+      "idempotent": false,
+      "domain": "communication",
+      "capability": "create",
+      "input_entity": "channel",
+      "output_entity": "channel",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "output_fields": ["id", "name", "type"],
+      "required_params": ["guild_id", "name"],
+      "optional_params": ["type"],
+      "must_support": ["channel_creation"],
+      "parameters": {
+        "type": "object",
+        "required": ["guild_id", "name"],
+        "properties": {
+          "guild_id": {
+            "type": "string",
+            "description": "The ID of the guild",
+            "x-variable-mapping": {
+              "from_type": "guild",
+              "field_path": "id",
+              "description": "Extract guild ID from guild object"
+            }
+          },
+          "name": {
+            "type": "string",
+            "description": "Channel name"
+          },
+          "type": {
+            "type": "integer",
+            "description": "Channel type (0=text, 2=voice)",
+            "default": 0,
+            "enum": [0, 2]
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "x-guaranteed": true },
+          "name": { "type": "string", "x-guaranteed": true },
+          "type": { "type": "integer", "x-guaranteed": true }
+        }
+      },
+      "output_guidance": {
+        "success_description": "Channel created successfully",
+        "sample_output": {
+          "id": "1234567890123456789",
+          "name": "new-channel",
+          "type": 0
+        },
+        "common_errors": {
+          "auth_failed": "Your Discord connection has expired.",
+          "guild_not_found": "The specified guild was not found.",
+          "insufficient_permissions": "Bot doesn't have permission to manage channels."
+        }
+      }
+    },
+    "delete_message": {
+      "description": "Delete a message from a Discord channel",
+      "usage_context": "When user wants to remove messages or moderate content",
+      "idempotent": true,
+      "domain": "communication",
+      "capability": "delete",
+      "input_entity": "message",
+      "output_entity": null,
+      "input_cardinality": "single",
+      "output_cardinality": null,
+      "output_fields": ["success"],
+      "required_params": ["channel_id", "message_id"],
+      "optional_params": [],
+      "must_support": ["message_deletion"],
+      "parameters": {
+        "type": "object",
+        "required": ["channel_id", "message_id"],
+        "properties": {
+          "channel_id": {
+            "type": "string",
+            "description": "The ID of the channel",
+            "x-variable-mapping": {
+              "from_type": "channel",
+              "field_path": "id",
+              "description": "Extract channel ID from channel object"
+            }
+          },
+          "message_id": {
+            "type": "string",
+            "description": "The ID of the message to delete",
+            "x-variable-mapping": {
+              "from_type": "message",
+              "field_path": "id",
+              "description": "Extract message ID from message object"
+            }
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "success": { "type": "boolean", "x-guaranteed": true }
+        }
+      },
+      "output_guidance": {
+        "success_description": "Message deleted successfully",
+        "sample_output": {
+          "success": true
+        },
+        "common_errors": {
+          "auth_failed": "Your Discord connection has expired.",
+          "message_not_found": "The specified message was not found.",
+          "insufficient_permissions": "Bot doesn't have permission to delete messages."
+        }
+      }
+    }
+  }
+}

@@ -165,9 +165,9 @@ export const agentApi = {
   },
 
   /**
-   * Update agent status (pause/activate)
+   * Update agent status (activate/deactivate)
    */
-  async updateStatus(agentId: string, userId: string, status: 'active' | 'paused'): Promise<ApiResponse<Agent>> {
+  async updateStatus(agentId: string, userId: string, status: 'active' | 'inactive'): Promise<ApiResponse<Agent>> {
     try {
       const token = getStoredToken();
       const response = await fetch(`/api/agents/${agentId}/status`, {

@@ -43,7 +43,7 @@ export class AirtablePluginExecutor extends BasePluginExecutor {
 
   // Action 0: List Bases
   private async listBases(connection: any, parameters: any): Promise<any> {
-    this.logger.debug('Listing Airtable bases');
+    if (this.debug) console.log('DEBUG: Listing Airtable bases');
 
     const url = `${this.metaApiUrl}/bases`;
 
@@ -56,24 +56,18 @@ export class AirtablePluginExecutor extends BasePluginExecutor {
     const bases = (data.bases || []).map((base: any) => ({
       id: base.id,
       name: base.name,
-      // Primary format (snake_case)
-      permission_level: base.permissionLevel,
-      // Legacy format (camelCase)
-      permissionLevel: base.permissionLevel
+      permission_level: base.permissionLevel
     }));
 
     return {
       bases: bases,
-      // Primary format (snake_case to match schema)
-      base_count: bases.length,
-      // Legacy format (camelCase for backward compatibility)
-      baseCount: bases.length
+      base_count: bases.length
     };
   }
 
   // Action 1: List Records
   private async listRecords(connection: any, parameters: any): Promise<any> {
-    this.logger.debug('Listing Airtable records');
+    if (this.debug) console.log('DEBUG: Listing Airtable records');
 
     const {
       base_id,
@@ -135,19 +129,15 @@ export class AirtablePluginExecutor extends BasePluginExecutor {
 
     return {
       records: data.records || [],
-      // Primary format (snake_case to match schema)
       record_count: data.records?.length || 0,
       offset: data.offset || null,
-      has_more: !!data.offset,
-      // Legacy format (camelCase for backward compatibility)
-      recordCount: data.records?.length || 0,
-      hasMore: !!data.offset
+      has_more: !!data.offset
     };
   }
 
   // Action 2: Get Record
   private async getRecord(connection: any, parameters: any): Promise<any> {
-    this.logger.debug('Getting Airtable record');
+    if (this.debug) console.log('DEBUG: Getting Airtable record');
 
     const { base_id, table_name, record_id } = parameters;
 
@@ -163,16 +153,13 @@ export class AirtablePluginExecutor extends BasePluginExecutor {
     return {
       id: data.id,
       fields: data.fields || {},
-      // Primary format (snake_case to match schema)
-      created_time: data.createdTime,
-      // Legacy format (camelCase for backward compatibility)
-      createdTime: data.createdTime
+      created_time: data.createdTime
     };
   }
 
   // Action 3: Create Records
   private async createRecords(connection: any, parameters: any): Promise<any> {
-    this.logger.debug('Creating Airtable records');
+    if (this.debug) console.log('DEBUG: Creating Airtable records');
 
     const { base_id, table_name, records, typecast = false } = parameters;
 
@@ -197,18 +184,14 @@ export class AirtablePluginExecutor extends BasePluginExecutor {
 
     return {
       records: data.records || [],
-      // Primary format (snake_case to match schema)
       record_count: data.records?.length || 0,
-      created_at: new Date().toISOString(),
-      // Legacy format (camelCase for backward compatibility)
-      recordCount: data.records?.length || 0,
-      createdAt: new Date().toISOString()
+      created_at: new Date().toISOString()
     };
   }
 
   // Action 4: Update Records
   private async updateRecords(connection: any, parameters: any): Promise<any> {
-    this.logger.debug('Updating Airtable records');
+    if (this.debug) console.log('DEBUG: Updating Airtable records');
 
     const { base_id, table_name, records, typecast = false, destructive = false } = parameters;
 
@@ -236,19 +219,15 @@ export class AirtablePluginExecutor extends BasePluginExecutor {
 
     return {
       records: data.records || [],
-      // Primary format (snake_case to match schema)
       record_count: data.records?.length || 0,
       updated_at: new Date().toISOString(),
-      destructive: destructive,
-      // Legacy format (camelCase for backward compatibility)
-      recordCount: data.records?.length || 0,
-      updatedAt: new Date().toISOString()
+      destructive: destructive
     };
   }
 
   // Action 8: List Tables
   private async listTables(connection: any, parameters: any): Promise<any> {
-    this.logger.debug('Listing Airtable tables');
+    if (this.debug) console.log('DEBUG: Listing Airtable tables');
 
     const { base_id } = parameters;
 
@@ -263,28 +242,20 @@ export class AirtablePluginExecutor extends BasePluginExecutor {
     const tables = (data.tables || []).map((table: any) => ({
       id: table.id,
       name: table.name,
-      // Primary format (snake_case)
       primary_field_id: table.primaryFieldId,
       field_count: table.fields?.length || 0,
-      view_count: table.views?.length || 0,
-      // Legacy format (camelCase)
-      primaryFieldId: table.primaryFieldId,
-      fieldCount: table.fields?.length || 0,
-      viewCount: table.views?.length || 0
+      view_count: table.views?.length || 0
     }));
 
     return {
       tables: tables,
-      // Primary format (snake_case to match schema)
-      table_count: tables.length,
-      // Legacy format (camelCase for backward compatibility)
-      tableCount: tables.length
+      table_count: tables.length
     };
   }
 
   // Action 9: Upload Attachment
   private async uploadAttachment(connection: any, parameters: any): Promise<any> {
-    this.logger.debug('Uploading attachment to Airtable record');
+    if (this.debug) console.log('DEBUG: Uploading attachment to Airtable record');
 
     const { base_id, table_name, record_id, field_name, attachment } = parameters;
 
@@ -337,7 +308,6 @@ export class AirtablePluginExecutor extends BasePluginExecutor {
     const attachments = updatedRecord.fields[field_name] || [];
 
     return {
-      // Primary format (snake_case to match schema)
       record_id: updatedRecord.id,
       field_name: field_name,
       attachments: attachments.map((att: any) => ({
@@ -347,17 +317,13 @@ export class AirtablePluginExecutor extends BasePluginExecutor {
         size: att.size,
         type: att.type
       })),
-      attachment_count: attachments.length,
-      // Legacy format (camelCase for backward compatibility)
-      recordId: updatedRecord.id,
-      fieldName: field_name,
-      attachmentCount: attachments.length
+      attachment_count: attachments.length
     };
   }
 
   // Action 10: Get Attachment URLs
   private async getAttachmentUrls(connection: any, parameters: any): Promise<any> {
-    this.logger.debug('Getting attachment URLs from Airtable record');
+    if (this.debug) console.log('DEBUG: Getting attachment URLs from Airtable record');
 
     const { base_id, table_name, record_id, field_name } = parameters;
 
@@ -381,17 +347,10 @@ export class AirtablePluginExecutor extends BasePluginExecutor {
         type: att.type,
         width: att.width || null,
         height: att.height || null,
-        // Primary format (snake_case)
-        expires_warning: 'URL expires in approximately 2 hours',
-        // Legacy format (camelCase)
-        expiresWarning: 'URL expires in approximately 2 hours'
+        expires_warning: 'URL expires in approximately 2 hours'
       })),
-      // Primary format (snake_case to match schema)
       attachment_count: attachments.length,
-      expiry_note: 'Download URLs expire after ~2 hours for security',
-      // Legacy format (camelCase for backward compatibility)
-      attachmentCount: attachments.length,
-      expiryNote: 'Download URLs expire after ~2 hours for security'
+      expiry_note: 'Download URLs expire after ~2 hours for security'
     };
   }
 
@@ -445,66 +404,5 @@ export class AirtablePluginExecutor extends BasePluginExecutor {
       email: data.email || null,
       scopes: data.scopes || []
     };
-  }
-
-  /**
-   * List all Airtable bases for dynamic dropdown options
-   * This method is called by the fetch-options API route
-   */
-  async list_bases(connection: any, options: { page?: number; limit?: number } = {}): Promise<Array<{value: string; label: string; description?: string; icon?: string; group?: string}>> {
-    try {
-      const result = await this.listBases(connection, {});
-
-      if (!result.bases || !Array.isArray(result.bases)) {
-        return [];
-      }
-
-      // Transform to option format
-      return result.bases.map((base: any) => ({
-        value: base.id,
-        label: base.name,
-        description: base.permission_level ? `Permission: ${base.permission_level}` : undefined,
-        icon: '📊',
-        group: 'My Bases',
-      }));
-
-    } catch (error: any) {
-      this.logger.error({ err: error }, 'Error listing Airtable bases for options');
-      throw error;
-    }
-  }
-
-  /**
-   * List all tables in an Airtable base for dynamic dropdown options
-   * This method is called by the fetch-options API route
-   * Note: Requires base_id parameter from dependent field
-   */
-  async list_tables_in_base(connection: any, options: { page?: number; limit?: number; base_id?: string } = {}): Promise<Array<{value: string; label: string; description?: string; icon?: string; group?: string}>> {
-    try {
-      const { base_id } = options;
-
-      if (!base_id) {
-        throw new Error('base_id is required to list tables');
-      }
-
-      const result = await this.listTables(connection, { base_id });
-
-      if (!result.tables || !Array.isArray(result.tables)) {
-        return [];
-      }
-
-      // Transform to option format
-      return result.tables.map((table: any) => ({
-        value: table.id,
-        label: table.name,
-        description: table.primary_field_id ? `Primary field: ${table.primary_field_id}` : undefined,
-        icon: '📋',
-        group: 'Tables',
-      }));
-
-    } catch (error: any) {
-      this.logger.error({ err: error }, 'Error listing Airtable tables for options');
-      throw error;
-    }
   }
 }

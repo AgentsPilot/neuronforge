@@ -180,7 +180,8 @@ export class ShadowAgent {
       classification,
       stepDef.id,
       upstreamStepId,
-      upstreamOutput
+      upstreamOutput,
+      stepDef  // Pass the failed step definition for context
     );
 
     if (proposal.action === 'none') {

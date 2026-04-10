@@ -38,7 +38,6 @@ export interface UpdateSessionInput {
   failed_steps?: number;
   skipped_steps?: number;
   completed_at?: string;
-  execution_summary?: any;
 }
 
 export interface RepositoryResult<T> {
