@@ -162,7 +162,10 @@ export function V2Footer({ accountFrozen: accountFrozenProp }: V2FooterProps) {
 
     fetchLastRun()
     fetchAccountStatus()
-    fetchAllAvailablePlugins()
+    // fetchAllAvailablePlugins is optional - don't block on it
+    fetchAllAvailablePlugins().catch(err => {
+      console.warn('Failed to load available plugins (non-blocking):', err)
+    })
   }, [user, connectedPluginsFromContext])
 
   // Debug log when displayPlugins changes
