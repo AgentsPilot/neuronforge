@@ -102,7 +102,14 @@ export async function GET(request: NextRequest) {
     logger.debug({ userId, authMethod }, 'Getting plugin status');
 
     // Get plugin manager instance
-    const pluginManager = await PluginManagerV2.getInstance();
+    let pluginManager;
+    try {
+      pluginManager = await PluginManagerV2.getInstance();
+      logger.debug('PluginManager instance created successfully');
+    } catch (err: any) {
+      logger.error({ err, message: err.message }, 'Failed to get PluginManager instance');
+      throw new Error(`PluginManager initialization failed: ${err.message}`);
+    }
 
     // Run independent plugin queries in parallel for performance
     // getConnectedPlugins and getActiveExpiredPluginKeys are independent
@@ -193,12 +200,18 @@ export async function GET(request: NextRequest) {
     });
 
   } catch (error: any) {
-    logger.error({ err: error }, 'Error getting user plugin status');
+    logger.error({
+      err: error,
+      message: error.message,
+      stack: error.stack,
+      name: error.name
+    }, 'Error getting user plugin status');
 
     return NextResponse.json({
       success: false,
       error: 'Failed to get user plugin status',
-      message: error.message
+      message: error.message,
+      details: process.env.NODE_ENV === 'development' ? error.stack : undefined
     }, { status: 500 });
   }
 }
