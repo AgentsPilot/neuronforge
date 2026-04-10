@@ -124,6 +124,14 @@ export const pluginList: PluginDefinition[] = [
     category: 'communication',
   },
   {
+    pluginKey: 'discord',
+    name: 'Discord',
+    description: 'Send messages to channels, manage servers, automate community interactions',
+    detailedDescription: 'Community platform for team communication and gaming communities. Send messages to channels, manage servers, create and update channels, handle roles and permissions, and automate community interactions.',
+    icon: <MessageCircle className="w-5 h-5 text-indigo-600" />,
+    category: 'communication',
+  },
+  {
     pluginKey: 'linkedin',
     name: 'LinkedIn',
     description: 'Access profile, create posts, manage connections, interact with professional network',
