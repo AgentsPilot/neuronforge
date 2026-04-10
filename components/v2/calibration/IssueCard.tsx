@@ -41,6 +41,10 @@ export function IssueCard({ issue, fixes, onFixChange, hasParameterIssues = fals
     return <ParameterErrorCard issue={issue} fixes={fixes} onFixChange={onFixChange} />
   }
 
+  if (issue.category === 'configuration_missing') {
+    return <ConfigurationMissingCard issue={issue} fixes={fixes} onFixChange={onFixChange} />
+  }
+
   if (issue.category === 'hardcode_detected') {
     return <HardcodeCard issue={issue} fixes={fixes} onFixChange={onFixChange} />
   }
@@ -294,6 +298,98 @@ function ParameterErrorCard({ issue, fixes, onFixChange }: IssueCardProps) {
       </CardContent>
     </Card>
   )
+}
+
+/**
+ * Configuration Missing Card - similar to parameter error but for workflow config
+ */
+function ConfigurationMissingCard({ issue, fixes, onFixChange }: IssueCardProps) {
+  const configKeys = issue.suggestedFix?.action?.configKeys || [];
+  const affectedParameters = issue.suggestedFix?.action?.affectedParameters || [];
+
+  // Store values for each config key
+  const [configValues, setConfigValues] = React.useState<Record<string, string>>(() => {
+    const initial: Record<string, string> = {};
+    configKeys.forEach((key: string) => {
+      initial[key] = fixes.parameters?.[`${issue.id}_${key}`] || '';
+    });
+    return initial;
+  });
+
+  const handleConfigChange = (key: string, value: string) => {
+    const updated = { ...configValues, [key]: value };
+    setConfigValues(updated);
+
+    // Store each config value with a unique key
+    onFixChange(`${issue.id}_${key}`, { value });
+  };
+
+  return (
+    <Card
+      className="!border-l-4 bg-[var(--v2-surface)]"
+      style={{ borderLeftColor: '#DC2626', borderLeftWidth: '4px', borderLeftStyle: 'solid' }}
+    >
+      <CardHeader>
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex items-start gap-3 flex-1">
+            <div className="w-10 h-10 rounded-full bg-[var(--v2-error-bg)] flex items-center justify-center flex-shrink-0">
+              <XCircle className="w-5 h-5 text-[var(--v2-error-icon)]" />
+            </div>
+            <div className="flex-1">
+              <div className="flex items-center gap-2 flex-wrap">
+                <CardTitle className="text-base text-[var(--v2-text-primary)]">{issue.title}</CardTitle>
+                {issue.affectedSteps.length > 0 && issue.affectedSteps.map(step => (
+                  <Badge key={step.stepId} variant="neutral">
+                    {step.friendlyName}
+                  </Badge>
+                ))}
+              </div>
+            </div>
+          </div>
+          <Badge variant="error">Critical</Badge>
+        </div>
+      </CardHeader>
+
+      <CardContent>
+        <p className="text-sm text-[var(--v2-text-secondary)] mb-4">
+          {issue.message}
+        </p>
+
+        <div className="mb-4 p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
+          <p className="text-sm font-medium text-blue-900 dark:text-blue-200 mb-1">
+            Missing workflow configuration
+          </p>
+          <p className="text-xs text-blue-700 dark:text-blue-300">
+            This workflow requires configuration values that haven't been set. Please provide values for the following configuration parameters:
+          </p>
+        </div>
+
+        {/* Input fields for each missing config key */}
+        <div className="space-y-3">
+          {configKeys.map((key: string) => (
+            <div key={key} className="space-y-2">
+              <label className="text-sm font-medium text-[var(--v2-text-primary)] block">
+                {key.replace(/_/g, ' ')}:
+              </label>
+              <input
+                type="text"
+                value={configValues[key] || ''}
+                onChange={(e) => handleConfigChange(key, e.target.value)}
+                placeholder={`Enter ${key.replace(/_/g, ' ')}`}
+                className="w-full px-4 py-2 rounded-lg border border-[var(--v2-border)] bg-[var(--v2-bg)] text-[var(--v2-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--v2-primary)]"
+              />
+            </div>
+          ))}
+        </div>
+
+        {affectedParameters.length > 0 && (
+          <div className="mt-3 text-xs text-[var(--v2-text-muted)]">
+            Affects parameters: {affectedParameters.join(', ')}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
 }
 
 /**

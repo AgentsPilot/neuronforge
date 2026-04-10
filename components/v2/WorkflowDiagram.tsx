@@ -170,7 +170,7 @@ function StepCard({ step, status, stepConfig, hasPluginIcon, Icon, stepOutput }:
           ) : status === 'failed' ? (
             <XCircle className="w-4 h-4 text-white dark:text-white" />
           ) : hasPluginIcon ? (
-            <PluginIcon pluginId={step.plugin!} className="w-4 h-4 text-[var(--v2-text-muted)]" />
+            <PluginIcon pluginId={step.plugin!} className="w-5 h-5 object-contain" />
           ) : (
             <Icon className="w-4 h-4" style={{ color: status === 'pending' ? 'var(--v2-text-muted)' : stepConfig.color }} />
           )}
