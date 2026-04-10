@@ -105,6 +105,7 @@ export default function V2AgentDetailPage() {
   const [selectedExecution, setSelectedExecution] = useState<Execution | null>(null)
   const [executionResults, setExecutionResults] = useState<any | null>(null) // Structured execution results
   const [loading, setLoading] = useState(true)
+  const [refreshingExecutions, setRefreshingExecutions] = useState(false)
   const [executing, setExecuting] = useState(false)
   const [insights, setInsights] = useState<any[]>([]) // Business + technical insights
 
@@ -137,7 +138,8 @@ export default function V2AgentDetailPage() {
   const [tokensPerPilotCredit, setTokensPerPilotCredit] = useState<number>(10)
 
   // Inline editing state (kept for compatibility)
-  const [isEditing, setIsEditing] = useState(false)
+  const [isEditingDetails, setIsEditingDetails] = useState(false)
+  const [isEditingSchedule, setIsEditingSchedule] = useState(false)
   const [editedName, setEditedName] = useState('')
   const [editedDescription, setEditedDescription] = useState('')
   const [editedScheduleCron, setEditedScheduleCron] = useState('')
@@ -155,7 +157,7 @@ export default function V2AgentDetailPage() {
   const [dailyOption, setDailyOption] = useState<'everyday' | 'weekdays' | 'weekends'>('everyday')
 
   const EXECUTIONS_PER_PAGE = 5
-  const [executionTimeFilter, setExecutionTimeFilter] = useState<'7days' | '30days' | 'all'>('7days')
+  const [executionTimeFilter, setExecutionTimeFilter] = useState<'7days' | '30days' | 'all'>('all')
   const [showTimeFilterDropdown, setShowTimeFilterDropdown] = useState(false)
 
   // IMPROVED: Batched data fetch wrapped in useCallback to prevent unnecessary re-fetches
@@ -165,10 +167,10 @@ export default function V2AgentDetailPage() {
     setLoading(true)
     try {
       // Parallel fetch all data
-      // PERFORMANCE: Limit to 10 executions and skip token enrichment for faster load
+      // PERFORMANCE: Limit to 50 executions and skip token enrichment for faster load
       const [agentResult, executionsResult, configResult, rewardStatus, insightsResult] = await Promise.all([
         agentApi.getById(agentId, user.id),
-        agentApi.getExecutions(agentId, user.id, { limit: 10, includeTokens: false }),
+        agentApi.getExecutions(agentId, user.id, { limit: 50, includeTokens: false }),
         systemConfigApi.getByKeys(['tokens_per_pilot_credit', 'agent_sharing_reward_amount']),
         fetch('/api/admin/reward-config').then(r => r.json()).catch(() => ({ success: false })),
         fetch(`/api/v6/insights?agentId=${agentId}&status=new,viewed`).then(r => r.json()).catch(() => ({ success: false, data: [] }))
@@ -181,11 +183,15 @@ export default function V2AgentDetailPage() {
       setAgent(agentResult.data.agent as Agent)
 
       // Process executions
+      console.log('[AgentPage] Executions result:', executionsResult)
       if (executionsResult.success && executionsResult.data) {
         const enrichedExecutions = executionsResult.data as Execution[]
+        console.log('[AgentPage] Setting executions:', enrichedExecutions.length, 'executions')
         setAllExecutions(enrichedExecutions)
         setExecutions(enrichedExecutions)
         // Don't set selectedExecution here - let the useEffect handle it based on time filter
+      } else {
+        console.log('[AgentPage] No executions found or error:', executionsResult.error)
       }
 
       // Process config
@@ -235,13 +241,13 @@ export default function V2AgentDetailPage() {
   const handleRefresh = useCallback(async () => {
     if (!user || !agentId) return
 
-    setLoading(true)
+    setRefreshingExecutions(true)
     try {
       // Clear cache for this agent's executions
-      requestDeduplicator.clear(`executions-${agentId}-false-10`)
+      requestDeduplicator.clear(`executions-${agentId}-false-50`)
 
       // Fetch only executions (not all data)
-      const executionsResult = await agentApi.getExecutions(agentId, user.id, { limit: 10, includeTokens: false })
+      const executionsResult = await agentApi.getExecutions(agentId, user.id, { limit: 50, includeTokens: false })
 
       if (executionsResult.success && executionsResult.data) {
         const enrichedExecutions = executionsResult.data as Execution[]
@@ -252,20 +258,20 @@ export default function V2AgentDetailPage() {
     } catch (error) {
       clientLogger.error('Error refreshing executions', error as Error)
     } finally {
-      setLoading(false)
+      setRefreshingExecutions(false)
     }
   }, [user?.id, agentId])
 
   // Batched data fetching - IMPROVEMENT
   useEffect(() => {
     if (user && agentId) {
-      const logger = clientLogger.child({ component: 'V2AgentDetailPage', agentId, userId: user.id })
-      logger.info('Agent detail page mounted', { agentId })
+      const pageLogger = clientLogger.child({ component: 'V2AgentDetailPage', agentId, userId: user.id })
+      pageLogger.info({ agentId }, 'Agent detail page mounted')
 
       fetchAllData()
 
       return () => {
-        logger.debug('Agent detail page unmounted')
+        pageLogger.debug('Agent detail page unmounted')
       }
     }
   }, [user?.id, agentId])
@@ -334,13 +340,24 @@ export default function V2AgentDetailPage() {
     }
   }, [executions, executionTimeFilter]) // Remove selectedExecution?.id from deps to avoid infinite loop
 
-  // Auto-refresh executions when page becomes visible (e.g., returning from run page)
+  // Auto-refresh executions when page becomes visible after being away for a while
   useEffect(() => {
+    let lastVisibleTime = Date.now()
+    const REFRESH_THRESHOLD = 60000 // Only refresh if away for more than 60 seconds
+
     const handleVisibilityChange = () => {
-      if (!document.hidden && agentId) {
-        // Clear execution cache and refetch when user returns to the page
-        requestDeduplicator.clear(`executions-${agentId}-false-10`)
-        fetchAllData()
+      if (document.hidden) {
+        // Page is being hidden, record the time
+        lastVisibleTime = Date.now()
+      } else if (agentId) {
+        // Page is becoming visible
+        const timeAway = Date.now() - lastVisibleTime
+
+        // Only refresh if user was away for more than the threshold
+        if (timeAway > REFRESH_THRESHOLD) {
+          requestDeduplicator.clear(`executions-${agentId}-false-50`)
+          fetchAllData()
+        }
       }
     }
 
@@ -434,21 +451,32 @@ export default function V2AgentDetailPage() {
     if (!agent || !user) return
 
     // Toggle logic:
-    // - active -> paused
+    // - active -> inactive
     // - draft -> active (activate draft agent)
-    // - paused -> active
-    const newStatus = agent.status === 'active' ? 'paused' : 'active'
-    clientLogger.info('Toggling agent status', { agentId: agent.id, currentStatus: agent.status, newStatus })
+    // - inactive -> active
+    const newStatus = agent.status === 'active' ? 'inactive' : 'active'
+    const pageLogger = clientLogger.child({ agentId: agent.id })
+    pageLogger.info({ currentStatus: agent.status, newStatus }, 'Toggling agent status')
+
+    // Optimistic update
+    const previousAgent = { ...agent }
+    setAgent({ ...agent, status: newStatus })
 
     try {
       const result = await agentApi.updateStatus(agent.id, user.id, newStatus)
 
       if (result.success && result.data) {
         setAgent(result.data as Agent)
-        clientLogger.info('Agent status toggled', { agentId: agent.id, newStatus: result.data.status })
+        pageLogger.info({ newStatus: result.data.status }, 'Agent status toggled')
+      } else {
+        // Revert on failure
+        setAgent(previousAgent)
+        pageLogger.error({ error: result.error }, 'Failed to toggle status')
       }
     } catch (error) {
-      clientLogger.error('Error toggling status', error as Error)
+      // Revert on error
+      setAgent(previousAgent)
+      pageLogger.error({ err: error }, 'Error toggling status')
     }
   }
 
@@ -608,6 +636,13 @@ export default function V2AgentDetailPage() {
 
     setEditedName(agent.agent_name)
     setEditedDescription(agent.description || '')
+
+    setIsEditingDetails(true)
+  }
+
+  const handleEditScheduleClick = () => {
+    if (!agent) return
+
     setEditedScheduleCron(agent.schedule_cron || '')
     setEditedMode(agent.mode || 'on_demand')
     setEditedTimezone(agent.timezone || '')
@@ -656,13 +691,17 @@ export default function V2AgentDetailPage() {
       setScheduleType('')
     }
 
-    setIsEditing(true)
+    setIsEditingSchedule(true)
   }
 
-  const handleCancelEdit = () => {
-    setIsEditing(false)
+  const handleCancelEditDetails = () => {
+    setIsEditingDetails(false)
     setEditedName('')
     setEditedDescription('')
+  }
+
+  const handleCancelEditSchedule = () => {
+    setIsEditingSchedule(false)
     setEditedScheduleCron('')
     setEditedMode('')
     setEditedTimezone('')
@@ -675,24 +714,18 @@ export default function V2AgentDetailPage() {
     setDailyOption('everyday')
   }
 
-  const handleSaveEdit = async () => {
+  const handleSaveEditDetails = async () => {
     if (!agent || !user) return
 
     setIsSaving(true)
     try {
-      const cronExpression = buildCronExpression()
-      const mode = scheduleMode === 'manual' ? 'on_demand' : 'scheduled'
-
       const result = await agentApi.update(agent.id, user.id, {
         agent_name: editedName,
-        description: editedDescription,
-        schedule_cron: cronExpression,
-        mode: mode,
-        timezone: editedTimezone || null
+        description: editedDescription
       })
 
       if (!result.success) {
-        clientLogger.error('Error updating agent', new Error(result.error))
+        clientLogger.error('Error updating agent details', new Error(result.error))
         return
       }
 
@@ -703,16 +736,52 @@ export default function V2AgentDetailPage() {
         setAgent({
           ...agent,
           agent_name: editedName,
-          description: editedDescription,
+          description: editedDescription
+        })
+      }
+
+      setIsEditingDetails(false)
+    } catch (error) {
+      clientLogger.error('Error saving agent details', error as Error)
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
+  const handleSaveEditSchedule = async () => {
+    if (!agent || !user) return
+
+    setIsSaving(true)
+    try {
+      const cronExpression = buildCronExpression()
+      const mode = scheduleMode === 'manual' ? 'on_demand' : 'scheduled'
+
+      const result = await agentApi.update(agent.id, user.id, {
+        schedule_cron: cronExpression,
+        mode: mode,
+        timezone: editedTimezone || null
+      })
+
+      if (!result.success) {
+        clientLogger.error('Error updating agent schedule', new Error(result.error))
+        return
+      }
+
+      if (result.data) {
+        setAgent(result.data as Agent)
+        clientLogger.info('Agent schedule saved', { agentId: agent.id })
+      } else {
+        setAgent({
+          ...agent,
           schedule_cron: cronExpression,
           mode: mode,
           timezone: editedTimezone || null
         })
       }
 
-      setIsEditing(false)
+      setIsEditingSchedule(false)
     } catch (error) {
-      clientLogger.error('Error saving agent', error as Error)
+      clientLogger.error('Error saving agent schedule', error as Error)
     } finally {
       setIsSaving(false)
     }
@@ -1119,7 +1188,7 @@ export default function V2AgentDetailPage() {
             <button
               data-tour="edit-button"
               onClick={() => setShowSettingsDrawer(true)}
-              className="inline-flex items-center gap-2 px-4 py-2 bg-[var(--v2-surface)] text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] border border-gray-200 dark:border-slate-700 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors font-medium text-sm"
+              className="inline-flex items-center gap-2 px-4 py-2 bg-[var(--v2-surface)] text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] border border-gray-200 dark:border-slate-700 hover:bg-gray-100 dark:hover:bg-slate-600/40 transition-colors font-medium text-sm"
               style={{ borderRadius: 'var(--v2-radius-button)' }}
             >
               <Settings className="w-4 h-4" />
@@ -1128,7 +1197,7 @@ export default function V2AgentDetailPage() {
             {!agent.production_ready && (
               <button
                 onClick={handleSandboxClick}
-                className="inline-flex items-center gap-2 px-4 py-2 bg-[var(--v2-surface)] text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] border border-gray-200 dark:border-slate-700 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors font-medium text-sm"
+                className="inline-flex items-center gap-2 px-4 py-2 bg-[var(--v2-surface)] text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] border border-gray-200 dark:border-slate-700 hover:bg-gray-100 dark:hover:bg-slate-600/40 transition-colors font-medium text-sm"
                 style={{ borderRadius: 'var(--v2-radius-button)' }}
               >
                 <Gauge className="w-4 h-4" />
@@ -1245,7 +1314,7 @@ export default function V2AgentDetailPage() {
                           className={`w-full text-left px-3 py-2 text-sm font-medium transition-colors ${
                             executionTimeFilter === '7days'
                               ? 'bg-[var(--v2-primary)] text-white'
-                              : 'text-[var(--v2-text-secondary)] hover:bg-[var(--v2-surface-hover)] hover:text-[var(--v2-text-primary)]'
+                              : 'text-[var(--v2-text-secondary)] hover:bg-gray-100 dark:hover:bg-slate-700/40 hover:text-[var(--v2-text-primary)]'
                           }`}
                         >
                           Last 7 days
@@ -1259,7 +1328,7 @@ export default function V2AgentDetailPage() {
                           className={`w-full text-left px-3 py-2 text-sm font-medium transition-colors ${
                             executionTimeFilter === '30days'
                               ? 'bg-[var(--v2-primary)] text-white'
-                              : 'text-[var(--v2-text-secondary)] hover:bg-[var(--v2-surface-hover)] hover:text-[var(--v2-text-primary)]'
+                              : 'text-[var(--v2-text-secondary)] hover:bg-gray-100 dark:hover:bg-slate-700/40 hover:text-[var(--v2-text-primary)]'
                           }`}
                         >
                           Last 30 days
@@ -1273,7 +1342,7 @@ export default function V2AgentDetailPage() {
                           className={`w-full text-left px-3 py-2 text-sm font-medium transition-colors ${
                             executionTimeFilter === 'all'
                               ? 'bg-[var(--v2-primary)] text-white'
-                              : 'text-[var(--v2-text-secondary)] hover:bg-[var(--v2-surface-hover)] hover:text-[var(--v2-text-primary)]'
+                              : 'text-[var(--v2-text-secondary)] hover:bg-gray-100 dark:hover:bg-slate-700/40 hover:text-[var(--v2-text-primary)]'
                           }`}
                         >
                           All time
@@ -1284,18 +1353,18 @@ export default function V2AgentDetailPage() {
 
                   <button
                     onClick={handleRefresh}
-                    disabled={loading}
-                    className="p-2 hover:bg-[var(--v2-surface-hover)] rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    disabled={refreshingExecutions}
+                    className="p-2 hover:bg-gray-100 dark:hover:bg-slate-700/40 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                     title="Refresh executions"
                   >
-                    <RefreshCw className={`w-4 h-4 text-[var(--v2-text-muted)] ${loading ? 'animate-spin' : ''}`} />
+                    <RefreshCw className={`w-4 h-4 text-[var(--v2-text-muted)] ${refreshingExecutions ? 'animate-spin' : ''}`} />
                   </button>
                   <TrendingUp className="w-5 h-5 text-[var(--v2-text-muted)]" />
                 </div>
               </div>
             </div>
 
-            <div className="space-y-2 flex-1">
+            <div className="space-y-2 flex-1 overflow-hidden">
               {(() => {
                 // Filter executions by time range
                 const now = new Date()
@@ -1339,7 +1408,7 @@ export default function V2AgentDetailPage() {
                         className={`w-full p-2 transition-all text-left border-2 ${
                           selectedExecution?.id === exec.id
                             ? 'border-[var(--v2-primary)]'
-                            : 'bg-[var(--v2-surface)] hover:bg-[var(--v2-surface-hover)] border-transparent'
+                            : 'bg-[var(--v2-surface)] hover:bg-gray-100 dark:hover:bg-slate-700/40 border-transparent'
                         }`}
                         style={{ borderRadius: 'var(--v2-radius-button)' }}
                       >
@@ -1371,50 +1440,95 @@ export default function V2AgentDetailPage() {
                     )}
 
                     {totalPages > 1 && (
-                      <div className="pt-3 border-t border-[var(--v2-border)] space-y-2">
-                        {/* Showing X-Y of Z text */}
+                      <div className="mt-3 pt-3 pb-2 border-t border-[var(--v2-border)] space-y-2">
+                        {/* Row 1: Showing X-Y of Z text */}
                         <div className="text-xs text-[var(--v2-text-muted)] text-center">
-                          Showing {startIndex + 1}-{Math.min(endIndex, filteredExecutions.length)} of {filteredExecutions.length} executions
+                          Showing {startIndex + 1}-{Math.min(endIndex, filteredExecutions.length)} of {filteredExecutions.length}
                         </div>
 
-                        {/* Pagination controls */}
-                        <div className="flex items-center justify-center gap-1">
+                        {/* Row 2: Pagination controls */}
+                        <div className="flex items-center justify-center gap-0.5 scale-90">
                           <button
                             onClick={() => setExecutionPage(prev => Math.max(1, prev - 1))}
                             disabled={executionPage === 1}
-                            className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] disabled:opacity-50 disabled:cursor-not-allowed transition-all bg-[var(--v2-surface)] border border-gray-200 dark:border-slate-700"
+                            className="flex items-center justify-center p-1.5 text-xs font-medium text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] disabled:opacity-50 disabled:cursor-not-allowed transition-all bg-[var(--v2-surface)] border border-gray-200 dark:border-slate-700"
                             style={{ borderRadius: 'var(--v2-radius-button)' }}
+                            title="Previous"
                           >
-                            <ChevronLeft className="w-3 h-3" />
-                            Previous
+                            <ChevronLeft className="w-3.5 h-3.5" />
                           </button>
 
-                          {/* Page number buttons */}
-                          <div className="flex items-center gap-1">
-                            {Array.from({ length: totalPages }, (_, i) => i + 1).map((page) => (
-                              <button
-                                key={page}
-                                onClick={() => setExecutionPage(page)}
-                                className={`px-2.5 py-1.5 text-xs font-medium transition-all ${
-                                  executionPage === page
-                                    ? 'bg-[var(--v2-primary)] text-white'
-                                    : 'bg-[var(--v2-surface)] text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] border border-gray-200 dark:border-slate-700'
-                                }`}
-                                style={{ borderRadius: 'var(--v2-radius-button)' }}
-                              >
-                                {page}
-                              </button>
-                            ))}
-                          </div>
+                          {/* Page number buttons with smart pagination */}
+                          {(() => {
+                            const maxVisible = 9;
+                            const pages = [];
+
+                            if (totalPages <= maxVisible) {
+                              // Show all pages if total is small
+                              for (let i = 1; i <= totalPages; i++) {
+                                pages.push(i);
+                              }
+                            } else {
+                              // Smart pagination: always show first, last, and pages around current
+                              pages.push(1);
+
+                              let start = Math.max(2, executionPage - 2);
+                              let end = Math.min(totalPages - 1, executionPage + 2);
+
+                              // Adjust range if we're near the start or end
+                              if (executionPage <= 4) {
+                                end = Math.min(totalPages - 1, 7);
+                              } else if (executionPage >= totalPages - 3) {
+                                start = Math.max(2, totalPages - 6);
+                              }
+
+                              if (start > 2) pages.push('...');
+
+                              for (let i = start; i <= end; i++) {
+                                pages.push(i);
+                              }
+
+                              if (end < totalPages - 1) pages.push('...');
+                              pages.push(totalPages);
+                            }
+
+                            return pages.map((page, idx) => {
+                              if (page === '...') {
+                                return (
+                                  <span
+                                    key={`ellipsis-${idx}`}
+                                    className="px-2.5 py-1.5 text-xs text-[var(--v2-text-muted)]"
+                                  >
+                                    ...
+                                  </span>
+                                );
+                              }
+
+                              return (
+                                <button
+                                  key={page}
+                                  onClick={() => setExecutionPage(page as number)}
+                                  className={`min-w-[28px] px-2 py-1.5 text-xs font-medium transition-all ${
+                                    executionPage === page
+                                      ? 'bg-[var(--v2-primary)] text-white'
+                                      : 'bg-[var(--v2-surface)] text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] border border-gray-200 dark:border-slate-700'
+                                  }`}
+                                  style={{ borderRadius: 'var(--v2-radius-button)' }}
+                                >
+                                  {page}
+                                </button>
+                              );
+                            });
+                          })()}
 
                           <button
                             onClick={() => setExecutionPage(prev => Math.min(totalPages, prev + 1))}
                             disabled={executionPage === totalPages}
-                            className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] disabled:opacity-50 disabled:cursor-not-allowed transition-all bg-[var(--v2-surface)] border border-gray-200 dark:border-slate-700"
+                            className="flex items-center justify-center p-1.5 text-xs font-medium text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] disabled:opacity-50 disabled:cursor-not-allowed transition-all bg-[var(--v2-surface)] border border-gray-200 dark:border-slate-700"
                             style={{ borderRadius: 'var(--v2-radius-button)' }}
+                            title="Next"
                           >
-                            Next
-                            <ChevronRight className="w-3 h-3" />
+                            <ChevronRight className="w-3.5 h-3.5" />
                           </button>
                         </div>
                       </div>
@@ -1832,53 +1946,12 @@ export default function V2AgentDetailPage() {
             />
           </div>
 
-          {/* Agent ID */}
-          <div>
-            <label className="text-xs font-medium text-[var(--v2-text-muted)] mb-2 block">
-              Agent ID
-            </label>
-            <div className="flex items-center gap-2 p-2 bg-[var(--v2-surface)] rounded-lg border border-[var(--v2-border)]" style={{ borderRadius: 'var(--v2-radius-button)' }}>
-              <code className="text-xs text-[var(--v2-text-primary)] flex-1 truncate font-mono">
-                {agent.id}
-              </code>
-              <button
-                onClick={copyAgentId}
-                className="p-1.5 hover:bg-[var(--v2-surface-hover)] transition-colors"
-                style={{ borderRadius: 'var(--v2-radius-button)' }}
-              >
-                {copiedId ? (
-                  <Check className="w-3.5 h-3.5 text-green-600 dark:text-green-400" />
-                ) : (
-                  <Copy className="w-3.5 h-3.5 text-[var(--v2-text-muted)]" />
-                )}
-              </button>
-            </div>
-          </div>
-
-          {/* Created Date */}
-          {agent.created_at && (
-            <div>
-              <label className="text-xs font-medium text-[var(--v2-text-muted)] mb-2 block">
-                Created
-              </label>
-              <p className="text-sm text-[var(--v2-text-primary)] p-2 bg-[var(--v2-surface)] rounded-lg border border-[var(--v2-border)]" style={{ borderRadius: 'var(--v2-radius-button)' }}>
-                {new Date(agent.created_at).toLocaleString('en-US', {
-                  month: 'long',
-                  day: 'numeric',
-                  year: 'numeric',
-                  hour: '2-digit',
-                  minute: '2-digit'
-                })}
-              </p>
-            </div>
-          )}
-
-          {/* Agent Name & Description */}
+          {/* Agent Details Section */}
           <div>
             <h3 className="text-xs font-semibold text-[var(--v2-text-muted)] uppercase tracking-wide mb-4">
               Agent Details
             </h3>
-            {!isEditing ? (
+            {!isEditingDetails ? (
               <div className="space-y-3">
                 <div>
                   <label className="text-xs font-medium text-[var(--v2-text-muted)] mb-2 block">
@@ -1896,9 +1969,46 @@ export default function V2AgentDetailPage() {
                     {agent.description || 'No description'}
                   </p>
                 </div>
+                <div>
+                  <label className="text-xs font-medium text-[var(--v2-text-muted)] mb-2 block">
+                    Agent ID
+                  </label>
+                  <div className="flex items-center gap-2 p-2 bg-[var(--v2-surface)] rounded-lg border border-[var(--v2-border)]" style={{ borderRadius: 'var(--v2-radius-button)' }}>
+                    <code className="text-xs text-[var(--v2-text-primary)] flex-1 truncate font-mono">
+                      {agent.id}
+                    </code>
+                    <button
+                      onClick={copyAgentId}
+                      className="p-1.5 hover:bg-gray-100 dark:hover:bg-slate-700/40 transition-colors"
+                      style={{ borderRadius: 'var(--v2-radius-button)' }}
+                    >
+                      {copiedId ? (
+                        <Check className="w-3.5 h-3.5 text-green-600 dark:text-green-400" />
+                      ) : (
+                        <Copy className="w-3.5 h-3.5 text-[var(--v2-text-muted)]" />
+                      )}
+                    </button>
+                  </div>
+                </div>
+                {agent.created_at && (
+                  <div>
+                    <label className="text-xs font-medium text-[var(--v2-text-muted)] mb-2 block">
+                      Created
+                    </label>
+                    <p className="text-sm text-[var(--v2-text-primary)] p-2 bg-[var(--v2-surface)] rounded-lg border border-[var(--v2-border)]" style={{ borderRadius: 'var(--v2-radius-button)' }}>
+                      {new Date(agent.created_at).toLocaleString('en-US', {
+                        month: 'long',
+                        day: 'numeric',
+                        year: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit'
+                      })}
+                    </p>
+                  </div>
+                )}
                 <button
                   onClick={handleEditClick}
-                  className="inline-flex items-center gap-2 px-3 py-2 text-xs font-medium text-[var(--v2-primary)] hover:bg-[var(--v2-surface-hover)] rounded-lg transition-colors border border-[var(--v2-border)]"
+                  className="inline-flex items-center gap-2 px-3 py-2 text-xs font-medium text-[var(--v2-primary)] hover:bg-gray-100 dark:hover:bg-slate-700/40 rounded-lg transition-colors border border-[var(--v2-border)]"
                   style={{ borderRadius: 'var(--v2-radius-button)' }}
                 >
                   <Edit className="w-3.5 h-3.5" />
@@ -1934,7 +2044,7 @@ export default function V2AgentDetailPage() {
                 </div>
                 <div className="flex items-center gap-2">
                   <button
-                    onClick={handleSaveEdit}
+                    onClick={handleSaveEditDetails}
                     disabled={isSaving || !editedName.trim()}
                     className="inline-flex items-center gap-2 px-4 py-2 text-xs font-medium bg-gradient-to-r from-[var(--v2-primary)] to-[var(--v2-secondary)] text-white hover:opacity-90 transition-opacity rounded-lg disabled:opacity-50 disabled:cursor-not-allowed"
                     style={{ borderRadius: 'var(--v2-radius-button)' }}
@@ -1952,9 +2062,9 @@ export default function V2AgentDetailPage() {
                     )}
                   </button>
                   <button
-                    onClick={handleCancelEdit}
+                    onClick={handleCancelEditDetails}
                     disabled={isSaving}
-                    className="inline-flex items-center gap-2 px-4 py-2 text-xs font-medium text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] hover:bg-[var(--v2-surface-hover)] rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed border border-[var(--v2-border)]"
+                    className="inline-flex items-center gap-2 px-4 py-2 text-xs font-medium text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] hover:bg-gray-100 dark:hover:bg-slate-700/40 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed border border-[var(--v2-border)]"
                     style={{ borderRadius: 'var(--v2-radius-button)' }}
                   >
                     <X className="w-3.5 h-3.5" />
@@ -2012,14 +2122,14 @@ export default function V2AgentDetailPage() {
               <div className="flex items-center justify-between p-4 bg-[var(--v2-surface-hover)] rounded-lg">
                 <div>
                   <h4 className="text-sm font-semibold text-[var(--v2-text-primary)] mb-1">
-                    {agent.status === 'active' ? 'Active' : agent.status === 'draft' ? 'Not Active (Draft)' : 'Paused'}
+                    {agent.status === 'active' ? 'Active' : agent.status === 'draft' ? 'Not Active (Draft)' : 'Inactive'}
                   </h4>
                   <p className="text-xs text-[var(--v2-text-muted)]">
                     {agent.status === 'active'
                       ? 'Agent is running and will execute on schedule'
                       : agent.status === 'draft'
                       ? 'Agent is in draft mode. Activate to start running.'
-                      : 'Agent is paused and will not execute'}
+                      : 'Agent is inactive and will not execute'}
                   </p>
                 </div>
                 <button
@@ -2031,7 +2141,7 @@ export default function V2AgentDetailPage() {
                   style={{ borderRadius: 'var(--v2-radius-button)' }}
                 >
                   <div
-                    className={`w-4 h-4 bg-white rounded-full absolute top-1 transition-transform ${
+                    className={`w-4 h-4 bg-white dark:bg-slate-200 rounded-full absolute top-1 transition-transform ${
                       agent.status === 'active' ? 'translate-x-7' : 'translate-x-1'
                     }`}
                     style={{ boxShadow: '0 1px 3px rgba(0, 0, 0, 0.1)' }}
@@ -2047,7 +2157,7 @@ export default function V2AgentDetailPage() {
               Schedule
             </h3>
             <div className="space-y-3">
-              {!isEditing ? (
+              {!isEditingSchedule ? (
                 <div className="p-4 bg-[var(--v2-surface-hover)] rounded-lg">
                   <div className="flex items-center justify-between mb-3">
                     <div className="flex-1">
@@ -2061,7 +2171,7 @@ export default function V2AgentDetailPage() {
                       </p>
                     </div>
                     <button
-                      onClick={handleEditClick}
+                      onClick={handleEditScheduleClick}
                       className="px-3 py-1.5 text-xs font-medium bg-gradient-to-r from-[var(--v2-primary)] to-[var(--v2-secondary)] text-white hover:opacity-90 transition-opacity rounded-lg flex items-center gap-1"
                     >
                       <Edit className="w-3.5 h-3.5" />
@@ -2088,7 +2198,7 @@ export default function V2AgentDetailPage() {
                         className={`p-3 border transition-all ${
                           scheduleMode === 'manual'
                             ? 'border-[var(--v2-primary)] bg-[var(--v2-primary)]/10'
-                            : 'border-[var(--v2-border)] hover:border-[var(--v2-primary)] hover:bg-[var(--v2-surface-hover)]'
+                            : 'border-[var(--v2-border)] hover:border-[var(--v2-primary)] hover:bg-gray-100 dark:hover:bg-slate-700/40'
                         }`}
                         style={{ borderRadius: 'var(--v2-radius-button)' }}
                       >
@@ -2106,7 +2216,7 @@ export default function V2AgentDetailPage() {
                         className={`p-3 border transition-all ${
                           scheduleMode === 'scheduled'
                             ? 'border-[var(--v2-primary)] bg-[var(--v2-primary)]/10'
-                            : 'border-[var(--v2-border)] hover:border-[var(--v2-primary)] hover:bg-[var(--v2-surface-hover)]'
+                            : 'border-[var(--v2-border)] hover:border-[var(--v2-primary)] hover:bg-gray-100 dark:hover:bg-slate-700/40'
                         }`}
                         style={{ borderRadius: 'var(--v2-radius-button)' }}
                       >
@@ -2264,7 +2374,7 @@ export default function V2AgentDetailPage() {
                   {/* Save/Cancel Buttons */}
                   <div className="flex gap-2 pt-3 border-t border-[var(--v2-border)]">
                     <button
-                      onClick={handleSaveEdit}
+                      onClick={handleSaveEditSchedule}
                       disabled={isSaving}
                       className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-gradient-to-r from-[var(--v2-primary)] to-[var(--v2-secondary)] text-white hover:opacity-90 transition-opacity font-medium text-sm disabled:opacity-50 disabled:cursor-not-allowed"
                       style={{ borderRadius: 'var(--v2-radius-button)' }}
@@ -2282,9 +2392,9 @@ export default function V2AgentDetailPage() {
                       )}
                     </button>
                     <button
-                      onClick={handleCancelEdit}
+                      onClick={handleCancelEditSchedule}
                       disabled={isSaving}
-                      className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-[var(--v2-surface)] text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] border border-gray-200 dark:border-slate-700 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors font-medium text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-[var(--v2-surface)] text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] border border-gray-200 dark:border-slate-700 hover:bg-gray-100 dark:hover:bg-slate-700/40 transition-colors font-medium text-sm disabled:opacity-50 disabled:cursor-not-allowed"
                       style={{ borderRadius: 'var(--v2-radius-button)' }}
                     >
                       <X className="w-4 h-4" />
@@ -2315,7 +2425,7 @@ export default function V2AgentDetailPage() {
                   style={{ borderRadius: 'var(--v2-radius-button)' }}
                 >
                   <div
-                    className={`w-4 h-4 bg-white rounded-full absolute top-1 transition-transform ${
+                    className={`w-4 h-4 bg-white dark:bg-slate-200 rounded-full absolute top-1 transition-transform ${
                       (agent.insights_enabled ?? false) ? 'translate-x-7' : 'translate-x-1'
                     }`}
                     style={{ boxShadow: '0 1px 3px rgba(0, 0, 0, 0.1)' }}
@@ -2334,7 +2444,7 @@ export default function V2AgentDetailPage() {
               <button
                 onClick={handleDuplicateAgent}
                 disabled={actionLoading === 'duplicate'}
-                className="w-full flex items-center gap-3 p-4 bg-white dark:bg-slate-800 border border-[var(--v2-border)] rounded-lg hover:bg-[var(--v2-surface-hover)] transition-all disabled:opacity-50"
+                className="w-full flex items-center gap-3 p-4 bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg hover:bg-gray-100 dark:hover:bg-slate-600/50 transition-all disabled:opacity-50"
               >
                 {actionLoading === 'duplicate' ? <Loader2 className="w-5 h-5 animate-spin text-[var(--v2-text-secondary)]" /> : <Copy className="w-5 h-5 text-[var(--v2-text-secondary)]" />}
                 <div className="text-left flex-1">
@@ -2346,7 +2456,7 @@ export default function V2AgentDetailPage() {
               <button
                 onClick={handleShareAgentClick}
                 disabled={agent.status !== 'active' || actionLoading === 'share'}
-                className="w-full flex items-center gap-3 p-4 bg-white dark:bg-slate-800 border border-[var(--v2-border)] rounded-lg hover:bg-[var(--v2-surface-hover)] transition-all disabled:opacity-50"
+                className="w-full flex items-center gap-3 p-4 bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg hover:bg-gray-100 dark:hover:bg-slate-600/50 transition-all disabled:opacity-50"
               >
                 {actionLoading === 'share' ? <Loader2 className="w-5 h-5 animate-spin text-[var(--v2-text-secondary)]" /> : <Share2 className="w-5 h-5 text-[var(--v2-text-secondary)]" />}
                 <div className="text-left flex-1">
@@ -2357,7 +2467,7 @@ export default function V2AgentDetailPage() {
 
               <button
                 onClick={handleExportConfiguration}
-                className="w-full flex items-center gap-3 p-4 bg-white dark:bg-slate-800 border border-[var(--v2-border)] rounded-lg hover:bg-[var(--v2-surface-hover)] transition-all"
+                className="w-full flex items-center gap-3 p-4 bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg hover:bg-gray-100 dark:hover:bg-slate-600/50 transition-all"
               >
                 <Download className="w-5 h-5 text-[var(--v2-text-secondary)]" />
                 <div className="text-left flex-1">
@@ -2376,12 +2486,12 @@ export default function V2AgentDetailPage() {
             </h3>
             <button
               onClick={() => setShowDeleteConfirm(true)}
-              className="w-full flex items-center gap-3 p-4 bg-white dark:bg-slate-800 border border-red-200 dark:border-red-900 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20 transition-all text-red-600 dark:text-red-400"
+              className="w-full flex items-center gap-3 p-4 bg-[var(--v2-surface)] border border-red-200 dark:border-red-700 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/40 transition-all"
             >
-              <Trash2 className="w-5 h-5 text-red-600 dark:text-red-400" />
+              <Trash2 className="w-5 h-5 text-red-600 dark:text-red-300" />
               <div className="text-left flex-1">
-                <h5 className="text-sm font-semibold">Delete Agent</h5>
-                <p className="text-xs">Permanently remove this agent</p>
+                <h5 className="text-sm font-semibold text-red-600 dark:text-red-300">Delete Agent</h5>
+                <p className="text-xs text-red-600 dark:text-red-400">Permanently remove this agent</p>
               </div>
             </button>
           </div>
@@ -2409,7 +2519,7 @@ export default function V2AgentDetailPage() {
             <div className="flex gap-3">
               <button
                 onClick={() => setShowDeleteConfirm(false)}
-                className="flex-1 px-4 py-2.5 bg-[var(--v2-surface)] text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] border border-gray-200 dark:border-slate-700 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors font-medium text-sm"
+                className="flex-1 px-4 py-2.5 bg-[var(--v2-surface)] text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] border border-gray-200 dark:border-slate-700 hover:bg-gray-100 dark:hover:bg-slate-700/40 transition-colors font-medium text-sm"
                 style={{ borderRadius: 'var(--v2-radius-button)' }}
               >
                 Cancel
@@ -2508,7 +2618,7 @@ export default function V2AgentDetailPage() {
             <div className="flex gap-3">
               <button
                 onClick={() => setShowShareConfirm(false)}
-                className="flex-1 px-4 py-2.5 bg-[var(--v2-surface)] text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] border border-gray-200 dark:border-slate-700 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors font-medium text-sm"
+                className="flex-1 px-4 py-2.5 bg-[var(--v2-surface)] text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] border border-gray-200 dark:border-slate-700 hover:bg-gray-100 dark:hover:bg-slate-700/40 transition-colors font-medium text-sm"
                 style={{ borderRadius: 'var(--v2-radius-button)' }}
               >
                 {(hasBeenShared || sharingValidation?.details?.alreadyShared) ? 'Close' : 'Cancel'}
@@ -2581,7 +2691,7 @@ export default function V2AgentDetailPage() {
               </div>
               <button
                 onClick={() => setShowInsightsModal(false)}
-                className="text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)] transition-colors p-2 rounded-lg hover:bg-[var(--v2-surface-hover)]"
+                className="text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)] transition-colors p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-700/40"
               >
                 <X className="w-5 h-5" />
               </button>
