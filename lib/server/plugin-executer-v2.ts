@@ -13,12 +13,19 @@ import { GoogleSheetsPluginExecutor } from './google-sheets-plugin-executor';
 import { GoogleDocsPluginExecutor } from './google-docs-plugin-executor';
 import { GoogleCalendarPluginExecutor } from './google-calendar-plugin-executor';
 import { SlackPluginExecutor } from './slack-plugin-executor';
-import { WhatsAppPluginExecutor } from './whatsapp-business-plugin-executor';
+import { WhatsAppPluginExecutor } from './whatsapp-plugin-executor';
 import { HubSpotPluginExecutor } from './hubspot-plugin-executor';
 import { ChatGPTResearchPluginExecutor } from './chatgpt-research-plugin-executor';
 import { LinkedInPluginExecutor } from './linkedin-plugin-executor';
 import { AirtablePluginExecutor } from './airtable-plugin-executor';
 import { DocumentExtractorPluginExecutor } from './document-extractor-plugin-executor';
+import { NotionPluginExecutor } from './notion-plugin-executor';
+import { OutlookPluginExecutor } from './outlook-plugin-executor';
+import { OneDrivePluginExecutor } from './onedrive-plugin-executor';
+import { DiscordPluginExecutor } from './discord-plugin-executor';
+import { SalesforcePluginExecutor } from './salesforce-plugin-executor';
+import { MetaAdsPluginExecutor } from './meta-ads-plugin-executor';
+import { DropboxPluginExecutor } from './dropbox-plugin-executor';
 
 const logger = createLogger({ module: 'PluginExecuter', service: 'plugin-system' });
 let pluginExecuterInstance: PluginExecuterV2 | null = null;
@@ -38,12 +45,19 @@ export class PluginExecuterV2 {
     'google-docs': GoogleDocsPluginExecutor,
     'google-calendar': GoogleCalendarPluginExecutor,
     'slack': SlackPluginExecutor,
-    'whatsapp-business': WhatsAppPluginExecutor,
+    'whatsapp': WhatsAppPluginExecutor,
     'hubspot': HubSpotPluginExecutor,
     'chatgpt-research': ChatGPTResearchPluginExecutor,
     'linkedin': LinkedInPluginExecutor,
     'airtable': AirtablePluginExecutor,
     'document-extractor': DocumentExtractorPluginExecutor,
+    'notion': NotionPluginExecutor,
+    'outlook': OutlookPluginExecutor,
+    'onedrive': OneDrivePluginExecutor,
+    'discord': DiscordPluginExecutor,
+    'salesforce': SalesforcePluginExecutor,
+    'meta-ads': MetaAdsPluginExecutor,
+    'dropbox': DropboxPluginExecutor,
     // Add new plugin executors here
   };
 
