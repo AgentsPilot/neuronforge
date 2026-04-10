@@ -32,11 +32,13 @@ export const UserProvider = ({ children }: { children: React.ReactNode }) => {
   // Fetch user plugins from the V2 API
   const fetchUserPlugins = async (currentUser: User) => {
     try {
+      console.log('UserProvider: Fetching plugins for user', currentUser.id)
       const apiClient = getPluginAPIClient()
 
       // Pass userId explicitly to avoid race condition with cookie-based auth
       // Cookie auth may not be ready immediately after session is established
       const status = await apiClient.getUserPluginStatus(currentUser.id)
+      console.log('UserProvider: Plugin status response =', status)
 
       // Transform array format to object format for backward compatibility
       // connected: [{ key: "google-mail", ... }] -> { "google-mail": { ... } }
@@ -87,6 +89,8 @@ export const UserProvider = ({ children }: { children: React.ReactNode }) => {
         })
       }
 
+      console.log('UserProvider: Setting connectedPlugins =', connectedPluginsMap)
+      console.log('UserProvider: Plugin count =', Object.keys(connectedPluginsMap).length)
       setConnectedPlugins(connectedPluginsMap)
 
     } catch (error) {

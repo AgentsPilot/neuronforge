@@ -142,6 +142,7 @@ export function V2Footer({ accountFrozen: accountFrozenProp }: V2FooterProps) {
 
     // Transform connected plugins from UserProvider context
     if (connectedPluginsFromContext) {
+      console.log('Footer: connectedPluginsFromContext =', connectedPluginsFromContext)
       const plugins: ConnectedPlugin[] = Object.values(connectedPluginsFromContext).map((plugin: any) => ({
         plugin_key: plugin.key,
         plugin_name: plugin.name || plugin.displayName,
@@ -153,13 +154,21 @@ export function V2Footer({ accountFrozen: accountFrozenProp }: V2FooterProps) {
         last_used: plugin.last_used,
         last_refreshed: plugin.last_refreshed
       }))
+      console.log('Footer: transformed plugins =', plugins)
       setDisplayPlugins(plugins)
+    } else {
+      console.log('Footer: connectedPluginsFromContext is null/undefined')
     }
 
     fetchLastRun()
     fetchAccountStatus()
     fetchAllAvailablePlugins()
   }, [user, connectedPluginsFromContext])
+
+  // Debug log when displayPlugins changes
+  useEffect(() => {
+    console.log('Footer: displayPlugins updated =', displayPlugins)
+  }, [displayPlugins])
 
   // Fetch all available plugins dynamically from API
   const fetchAllAvailablePlugins = async () => {
