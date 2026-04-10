@@ -3,10 +3,14 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createLogger } from '@/lib/logger';
-import { agentRepository, executionRepository } from '@/lib/repositories';
+import { AgentRepository, ExecutionRepository } from '@/lib/repositories';
 import { supabaseServer } from '@/lib/supabaseServer';
 
 const logger = createLogger({ module: 'API', route: '/api/agents/[id]/executions' });
+
+// Create repository instances with supabaseServer for server-side operations
+const agentRepository = new AgentRepository(supabaseServer);
+const executionRepository = new ExecutionRepository(supabaseServer);
 
 function getUserIdFromRequest(request: NextRequest): string | null {
   const userIdHeader = request.headers.get('x-user-id');

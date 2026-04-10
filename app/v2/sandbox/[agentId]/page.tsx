@@ -39,6 +39,7 @@ interface Agent {
   input_parameters?: any[]
   input_schema?: any[]
   user_id: string
+  enhanced_prompt?: string | any
 }
 
 type FlowState = 'setup' | 'running' | 'dashboard' | 'fixes-applied' | 'testing' | 'success'
@@ -81,7 +82,7 @@ export default function BatchCalibrationPage() {
   // Track if agent has been loaded to prevent re-loading on tab switches
   const hasLoadedAgent = useRef(false)
 
-  // Fetch plugin schema metadata on mount
+  // Fetch plugin schema metadata on mount (global plugin parameter metadata)
   useEffect(() => {
     const fetchSchemaMetadata = async () => {
       try {
@@ -91,8 +92,8 @@ export default function BatchCalibrationPage() {
           return
         }
         const data = await response.json()
-        console.log('[Sandbox Page] Schema metadata loaded:', data.data?.metadata)
-        setSchemaMetadata(data.data?.metadata)
+        console.log('[Sandbox Page] Global schema metadata loaded:', data.metadata)
+        setSchemaMetadata(data.metadata)
       } catch (error) {
         console.error('[Sandbox Page] Error fetching schema metadata:', error)
       }
@@ -100,6 +101,68 @@ export default function BatchCalibrationPage() {
 
     fetchSchemaMetadata()
   }, [])
+
+  // Debug: Log when agent changes
+  useEffect(() => {
+    console.log('[Sandbox Page] Agent state changed:', agent?.id ? `ID=${agent.id}` : 'null/undefined')
+  }, [agent])
+
+  // Initialize inputValues from agent.input_schema when agent loads
+  useEffect(() => {
+    if (agent?.input_schema && typeof agent.input_schema === 'object' && !Array.isArray(agent.input_schema)) {
+      console.log('[Sandbox Page] Initializing inputValues from agent.input_schema:', agent.input_schema)
+      setInputValues(agent.input_schema as Record<string, any>)
+    }
+  }, [agent])
+
+  // Fetch agent-specific form field metadata when agent loads
+  useEffect(() => {
+    console.log('[Sandbox Page] Form metadata useEffect triggered, agent?.id:', agent?.id)
+
+    const fetchFormFieldMetadata = async () => {
+      if (!agent?.id) {
+        console.log('[Sandbox Page] Skipping form metadata fetch - no agent ID')
+        return
+      }
+
+      try {
+        console.log('[Sandbox Page] Fetching form field metadata for agent:', agent.id)
+        const response = await fetch(`/api/v2/agents/${agent.id}/form-metadata`)
+        if (!response.ok) {
+          console.error('[Sandbox Page] Failed to fetch form field metadata:', response.statusText)
+          return
+        }
+        const data = await response.json()
+        console.log('[Sandbox Page] Form field metadata loaded:', data.metadata)
+
+        // Merge form field metadata with global schema metadata
+        // Form field metadata takes precedence (exact matches from input schema)
+        setSchemaMetadata(prevMetadata => {
+          const merged = { ...(prevMetadata || {}) }
+
+          // Add form field metadata entries
+          for (const field of data.metadata) {
+            // Create the same structure as global schema metadata
+            merged[field.name] = [{
+              plugin: field.plugin,
+              action: field.action,
+              parameter: field.parameter,
+              depends_on: field.depends_on,
+              description: field.description
+            }]
+
+            console.log('[Sandbox Page] Mapped input schema field:', field.name, '→', field.parameter, field.description ? `(${field.description})` : '')
+          }
+
+          return merged
+        })
+      } catch (error) {
+        console.error('[Sandbox Page] Error fetching form field metadata:', error)
+      }
+    }
+
+    fetchFormFieldMetadata()
+  }, [agent?.id])
 
   // Load agent
   useEffect(() => {
@@ -306,15 +369,117 @@ export default function BatchCalibrationPage() {
       setFlowState('running')
       setError(null)
 
-      // Call batch calibration API
+      // Extract config values (prefixed with __config_)
+      const configValues: Record<string, any> = {}
+      const actualInputValues: Record<string, any> = {}
+
+      Object.entries(inputValues).forEach(([key, value]) => {
+        if (key.startsWith('__config_')) {
+          // Remove __config_ prefix and store as config
+          const configKey = key.substring(9)  // Remove '__config_'
+          configValues[configKey] = value
+        } else {
+          // Regular input parameter
+          actualInputValues[key] = value
+        }
+      })
+
+      // If config values provided, save to agent.input_schema (store as default_value for config fields)
+      if (Object.keys(configValues).length > 0) {
+        console.log('[Sandbox] Saving config values to input_schema:', configValues)
+
+        // Get current input_schema and ensure it's in array format
+        let currentInputSchema = agent.input_schema || []
+        console.log('[Sandbox] Current input_schema:', currentInputSchema, 'Type:', typeof currentInputSchema, 'IsArray:', Array.isArray(currentInputSchema))
+
+        // Convert to array format if it's an object
+        if (!Array.isArray(currentInputSchema) && typeof currentInputSchema === 'object') {
+          console.log('[Sandbox] Converting input_schema from object to array format')
+          currentInputSchema = Object.entries(currentInputSchema).map(([key, value]) => ({
+            name: key,
+            type: typeof value === 'number' ? 'number' : typeof value === 'boolean' ? 'boolean' : 'string',
+            required: false,
+            default_value: value,
+            description: `Configuration value for {{config.${key}}}`
+          }))
+          console.log('[Sandbox] Converted input_schema:', currentInputSchema)
+        }
+
+        // Update input_schema with config values as default_value
+        const updatedInputSchema = currentInputSchema.map((field: any) => {
+          // Check if this field is a config field and we have a value for it
+          if (configValues.hasOwnProperty(field.name)) {
+            return {
+              ...field,
+              default_value: configValues[field.name]
+            }
+          }
+          return field
+        })
+
+        // Add any config fields that don't exist in input_schema yet
+        Object.entries(configValues).forEach(([key, value]) => {
+          const existsInSchema = currentInputSchema.some((f: any) => f.name === key)
+          if (!existsInSchema) {
+            updatedInputSchema.push({
+              name: key,
+              type: 'string',
+              required: false,
+              default_value: value,
+              description: `Configuration value for {{config.${key}}}`
+            })
+          }
+        })
+
+        console.log('[Sandbox] Updated input_schema:', updatedInputSchema)
+
+        const { data: updateData, error: updateError } = await supabase
+          .from('agents')
+          .update({
+            input_schema: updatedInputSchema
+          })
+          .eq('id', agent.id)
+          .select()
+
+        console.log('[Sandbox] Supabase update result:', {
+          success: !updateError,
+          error: updateError,
+          data: updateData
+        })
+
+        if (updateError) {
+          console.error('[Sandbox] Failed to save config to input_schema:', updateError)
+          throw new Error(`Failed to save configuration: ${updateError.message}`)
+        }
+
+        // Update local agent state
+        setAgent({
+          ...agent,
+          input_schema: updatedInputSchema
+        })
+
+        console.log('[Sandbox] Local agent state updated with config in input_schema')
+      } else {
+        console.log('[Sandbox] No config values to save, proceeding with calibration')
+      }
+
+      // Call batch calibration API (use actualInputValues without config prefixes)
+      console.log('[Sandbox] Calling batch calibration API with:', {
+        agentId: agent.id,
+        inputValues: actualInputValues,
+        configValues: configValues  // For debugging - not sent to API
+      })
+
       const response = await fetch('/api/v2/calibrate/batch', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           agentId: agent.id,
-          inputValues
+          inputValues: actualInputValues
         })
       })
+
+      console.log('[Sandbox] Batch calibration API response status:', response.status)
 
       const result = await response.json()
 
@@ -337,7 +502,7 @@ export default function BatchCalibrationPage() {
         sessionKeys: sessionData ? Object.keys(sessionData) : []
       });
 
-      // Store session with full data including execution_summary
+      // Store session with full data including execution_summary and autoCalibration
       // Map snake_case from database to camelCase for React
       setSession(sessionData ? {
         id: sessionData.id,
@@ -348,7 +513,8 @@ export default function BatchCalibrationPage() {
         completedSteps: sessionData.completed_steps,
         failedSteps: sessionData.failed_steps,
         skippedSteps: sessionData.skipped_steps,
-        execution_summary: sessionData.execution_summary
+        execution_summary: sessionData.execution_summary,
+        autoCalibration: result.autoCalibration // Add autoCalibration data from API response
       } : {
         id: result.sessionId,
         agentId: agent.id,
@@ -357,7 +523,8 @@ export default function BatchCalibrationPage() {
         totalSteps: result.summary.totalSteps,
         completedSteps: result.summary.completedSteps,
         failedSteps: result.summary.failedSteps,
-        skippedSteps: result.summary.skippedSteps
+        skippedSteps: result.summary.skippedSteps,
+        autoCalibration: result.autoCalibration // Add autoCalibration data from API response
       })
 
       setIssues(result.issues)
@@ -655,7 +822,7 @@ export default function BatchCalibrationPage() {
           .eq('id', result.sessionId)
           .single()
 
-        // Update session with full data including execution_summary
+        // Update session with full data including execution_summary and autoCalibration
         // Map snake_case from database to camelCase for React
         setSession(sessionData ? {
           id: sessionData.id,
@@ -666,7 +833,8 @@ export default function BatchCalibrationPage() {
           completedSteps: sessionData.completed_steps,
           failedSteps: sessionData.failed_steps,
           skippedSteps: sessionData.skipped_steps,
-          execution_summary: sessionData.execution_summary
+          execution_summary: sessionData.execution_summary,
+          autoCalibration: result.autoCalibration
         } : {
           id: result.sessionId,
           agentId: agent.id,
@@ -675,7 +843,8 @@ export default function BatchCalibrationPage() {
           totalSteps: result.summary.totalSteps,
           completedSteps: result.summary.completedSteps,
           failedSteps: result.summary.failedSteps,
-          skippedSteps: result.summary.skippedSteps
+          skippedSteps: result.summary.skippedSteps,
+          autoCalibration: result.autoCalibration
         })
         // DON'T change flow state - stay on dashboard to show "All Set!" in right column
         // setFlowState('success')
@@ -699,7 +868,8 @@ export default function BatchCalibrationPage() {
           completedSteps: sessionData.completed_steps,
           failedSteps: sessionData.failed_steps,
           skippedSteps: sessionData.skipped_steps,
-          execution_summary: sessionData.execution_summary
+          execution_summary: sessionData.execution_summary,
+          autoCalibration: result.autoCalibration
         } : {
           id: result.sessionId,
           agentId: agent.id,
@@ -708,7 +878,8 @@ export default function BatchCalibrationPage() {
           totalSteps: result.summary.totalSteps,
           completedSteps: result.summary.completedSteps,
           failedSteps: result.summary.failedSteps,
-          skippedSteps: result.summary.skippedSteps
+          skippedSteps: result.summary.skippedSteps,
+          autoCalibration: result.autoCalibration
         })
         setIssues(result.issues)
         setFlowState('dashboard')
