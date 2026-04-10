@@ -5,7 +5,6 @@ import { useRouter } from 'next/navigation'
 import { useAuth } from '@/components/UserProvider'
 import { supabase } from '@/lib/supabaseClient'
 import { Card } from '@/components/v2/ui/card'
-import { PageLoading } from '@/components/v2/ui/loading'
 import { V2Logo, V2Controls } from '@/components/v2/V2Header'
 import { getPricingConfig } from '@/lib/utils/pricingConfig'
 import { PieChart, Pie, Cell, ResponsiveContainer } from 'recharts'
@@ -20,14 +19,9 @@ import {
   CheckCircle2,
   XCircle,
   Bot,
-  BarChart3,
-  Sparkles,
-  MessageCircle,
-  Database,
-  Clock,
-  ArrowRight,
   Mic,
-  MicOff
+  MicOff,
+  ArrowRight
 } from 'lucide-react'
 
 interface AgentStat {
@@ -44,13 +38,6 @@ interface RecentRun {
   created_at: string
 }
 
-interface SystemAlert {
-  type: 'critical' | 'warning' | 'caution' | 'info'
-  icon: string
-  message: string
-  severity: number // Higher = more critical
-}
-
 interface DashboardStats {
   creditBalance: number
   totalSpent: number
@@ -61,22 +48,11 @@ interface DashboardStats {
   recentRuns: RecentRun[]
   tokensPerCredit: number
   maxCredits: number
-  systemAlerts: SystemAlert[]
 }
 
 export default function V2DashboardPage() {
   const router = useRouter()
-  const { user, loading: authLoading } = useAuth()
-
-  //console.log('🔍 V2Dashboard - Auth State:', { user: !!user, authLoading })
-
-  // Redirect to login if not authenticated
-  useEffect(() => {
-    if (!authLoading && !user) {
-      router.push('/login?redirect=/v2/dashboard')
-    }
-  }, [user, authLoading, router])
-
+  const { user } = useAuth()
   const [stats, setStats] = useState<DashboardStats>({
     creditBalance: 0,
     totalSpent: 0,
@@ -86,10 +62,8 @@ export default function V2DashboardPage() {
     agentStats: [],
     recentRuns: [],
     tokensPerCredit: 10,
-    maxCredits: 100000,
-    systemAlerts: []
+    maxCredits: 100000
   })
-
   // Voice input state
   const [isListening, setIsListening] = useState(false)
   const [isVoiceSupported, setIsVoiceSupported] = useState(false)
@@ -103,133 +77,6 @@ export default function V2DashboardPage() {
   const [showIdeas, setShowIdeas] = useState(false)
   const [accountFrozen, setAccountFrozen] = useState(false)
   const textareaRef = React.useRef<HTMLTextAreaElement>(null)
-
-  // Calculate system alerts based on quota usage and failures
-  const calculateSystemAlerts = (
-    failedCount: number,
-    storageUsedMB: number,
-    storageQuotaMB: number,
-    executionsUsed: number,
-    executionsQuota: number | null,
-    pilotCredits: number
-  ): SystemAlert[] => {
-    const alerts: SystemAlert[] = []
-
-    // 1. Agent Failures (last 24h)
-    if (failedCount > 0) {
-      alerts.push({
-        type: failedCount >= 10 ? 'critical' : failedCount >= 5 ? 'warning' : 'caution',
-        icon: failedCount >= 10 ? '🔴' : failedCount >= 5 ? '🟠' : '🟡',
-        message: `${failedCount} agent failure${failedCount > 1 ? 's' : ''} in last 24h`,
-        severity: failedCount >= 10 ? 100 : failedCount >= 5 ? 80 : 60
-      })
-    }
-
-    // 2. Storage Quota Warnings
-    const storagePercent = storageQuotaMB > 0 ? (storageUsedMB / storageQuotaMB) * 100 : 0
-    if (storagePercent >= 95) {
-      alerts.push({
-        type: 'critical',
-        icon: '🔴',
-        message: `Storage ${storagePercent.toFixed(0)}% full (${storageUsedMB} / ${storageQuotaMB} MB)`,
-        severity: 95
-      })
-    } else if (storagePercent >= 80) {
-      alerts.push({
-        type: 'warning',
-        icon: '🟠',
-        message: `Storage ${storagePercent.toFixed(0)}% full (${storageUsedMB} / ${storageQuotaMB} MB)`,
-        severity: 85
-      })
-    }
-
-    // 3. Execution Quota Warnings (only if quota is not unlimited)
-    if (executionsQuota !== null && executionsQuota > 0) {
-      const executionPercent = (executionsUsed / executionsQuota) * 100
-      if (executionPercent >= 95) {
-        alerts.push({
-          type: 'critical',
-          icon: '🔴',
-          message: `Executions ${executionPercent.toFixed(0)}% used (${executionsUsed} / ${executionsQuota})`,
-          severity: 90
-        })
-      } else if (executionPercent >= 80) {
-        alerts.push({
-          type: 'warning',
-          icon: '🟠',
-          message: `Executions ${executionPercent.toFixed(0)}% used (${executionsUsed} / ${executionsQuota})`,
-          severity: 82
-        })
-      }
-    }
-
-    // 4. Low Credit Balance Warnings
-    if (pilotCredits < 100) {
-      alerts.push({
-        type: 'critical',
-        icon: '🔴',
-        message: `Low credits: ${pilotCredits} remaining`,
-        severity: 98
-      })
-    } else if (pilotCredits <= 10000) {
-      alerts.push({
-        type: 'warning',
-        icon: '🟠',
-        message: `Low credits: ${pilotCredits.toLocaleString()} remaining`,
-        severity: 75
-      })
-    }
-
-    // Sort by severity (highest first) and return top 3
-    return alerts.sort((a, b) => b.severity - a.severity).slice(0, 3)
-  }
-
-  const calculateFreeTierAlerts = (
-    freeTierExpiresAt: string | null,
-    accountFrozen: boolean,
-    hasSubscription: boolean
-  ): SystemAlert[] => {
-    const alerts: SystemAlert[] = []
-
-    // Only show free tier alerts if user doesn't have a paid subscription
-    if (!hasSubscription && freeTierExpiresAt) {
-      const expiresAt = new Date(freeTierExpiresAt)
-      const now = new Date()
-      const daysRemaining = Math.ceil((expiresAt.getTime() - now.getTime()) / (1000 * 60 * 60 * 24))
-
-      if (accountFrozen || daysRemaining <= 0) {
-        alerts.push({
-          type: 'critical',
-          icon: '🔴',
-          message: 'Free tier expired - Purchase tokens to continue',
-          severity: 999
-        })
-      } else if (daysRemaining <= 3) {
-        alerts.push({
-          type: 'critical',
-          icon: '🔴',
-          message: `Free tier expires in ${daysRemaining} ${daysRemaining === 1 ? 'day' : 'days'}!`,
-          severity: 150
-        })
-      } else if (daysRemaining <= 7) {
-        alerts.push({
-          type: 'warning',
-          icon: '🟠',
-          message: `Free tier expires in ${daysRemaining} days`,
-          severity: 120
-        })
-      } else if (daysRemaining <= 14) {
-        alerts.push({
-          type: 'caution',
-          icon: '🟡',
-          message: `Free tier expires in ${daysRemaining} days`,
-          severity: 70
-        })
-      }
-    }
-
-    return alerts
-  }
 
   const fetchDashboardData = async () => {
     if (!user) return
@@ -279,7 +126,7 @@ export default function V2DashboardPage() {
           .eq('user_id', user.id),
         supabase
           .from('user_subscriptions')
-          .select('balance, total_spent, storage_quota_mb, storage_used_mb, executions_quota, executions_used, free_tier_expires_at, account_frozen, stripe_subscription_id')
+          .select('balance, total_spent')
           .eq('user_id', user.id)
           .single(),
         supabase
@@ -306,9 +153,7 @@ export default function V2DashboardPage() {
           .from('onboarding_prompt_ideas')
           .select('ideas')
           .eq('user_id', user.id)
-          .order('created_at', { ascending: false })
-          .limit(1)
-          .maybeSingle()
+          .single()
       ])
 
       // Set user name from profile
@@ -370,28 +215,6 @@ export default function V2DashboardPage() {
       const totalSpentTokens = subscriptionData?.total_spent || 0
       const totalSpentCredits = Math.floor(totalSpentTokens / tokensPerCredit)
 
-      // Calculate system alerts
-      const regularAlerts = calculateSystemAlerts(
-        failedCount || 0,
-        subscriptionData?.storage_used_mb || 0,
-        subscriptionData?.storage_quota_mb || 1000,
-        subscriptionData?.executions_used || 0,
-        subscriptionData?.executions_quota ?? null,
-        pilotCredits
-      )
-
-      // Calculate free tier alerts
-      const freeTierAlerts = calculateFreeTierAlerts(
-        subscriptionData?.free_tier_expires_at || null,
-        subscriptionData?.account_frozen || false,
-        !!subscriptionData?.stripe_subscription_id
-      )
-
-      // Merge alerts: free tier alerts first (higher priority), then regular alerts
-      const systemAlerts = [...freeTierAlerts, ...regularAlerts]
-        .sort((a, b) => b.severity - a.severity)
-        .slice(0, 3)
-
       // Update all stats at once
       setStats({
         creditBalance: pilotCredits,
@@ -402,12 +225,8 @@ export default function V2DashboardPage() {
         agentStats: parsedStats,
         recentRuns: parsedRecentRuns,
         tokensPerCredit,
-        maxCredits,
-        systemAlerts
+        maxCredits
       })
-
-      // Set account frozen status
-      setAccountFrozen(subscriptionData?.account_frozen || false)
 
       setLastUpdated(new Date())
     } catch (error) {
@@ -499,6 +318,17 @@ export default function V2DashboardPage() {
     return 'Just now'
   }
 
+  // Auto-resize textarea when searchQuery changes
+  React.useEffect(() => {
+    if (textareaRef.current) {
+      // Reset height to auto first to get accurate scrollHeight
+      textareaRef.current.style.height = 'auto'
+      // Set height based on content, capped at 128px
+      const newHeight = textareaRef.current.scrollHeight
+      textareaRef.current.style.height = Math.min(newHeight, 128) + 'px'
+    }
+  }, [searchQuery])
+
   // Initialize textarea height on mount
   React.useEffect(() => {
     if (textareaRef.current) {
@@ -528,7 +358,14 @@ export default function V2DashboardPage() {
   }
 
   if (loading) {
-    return <PageLoading message="Loading dashboard..." />
+    return (
+      <div className="flex items-center justify-center min-h-[600px]">
+        <div className="text-center space-y-4">
+          <div className="w-16 h-16 border-4 border-[var(--v2-primary)] border-t-transparent rounded-full animate-spin mx-auto"></div>
+          <p className="text-[var(--v2-text-secondary)] font-medium">Loading dashboard...</p>
+        </div>
+      </div>
+    )
   }
 
   // Use full name from profile if available, otherwise fallback to email
@@ -539,14 +376,15 @@ export default function V2DashboardPage() {
 
   return (
     <div className="space-y-2 sm:space-y-3 lg:space-y-4">
-      {/* Logo - First Line */}
+      {/* Logo */}
       <div className="mb-3">
         <V2Logo />
       </div>
 
-      {/* Top Bar: Greeting + Controls on same line */}
-      <div className="flex items-start justify-between mb-4 sm:mb-5 lg:mb-6">
-        <div className="flex-1">
+      {/* Top Bar: Header + Token Display + User Menu */}
+      <div className="flex items-start justify-between gap-4">
+        {/* Header */}
+        <div className="flex-1 min-w-0">
           <h1 className="text-2xl sm:text-3xl lg:text-4xl font-semibold text-[var(--v2-text-primary)] mb-1 leading-tight">
             Hi {capitalizedName},
           </h1>
@@ -554,7 +392,10 @@ export default function V2DashboardPage() {
             what do you want to automate today?
           </p>
         </div>
-        <V2Controls />
+        {/* Token Display + User Menu */}
+        <div className="flex-shrink-0">
+          <V2Controls />
+        </div>
       </div>
 
       {/* Search Box */}
@@ -572,15 +413,15 @@ export default function V2DashboardPage() {
                   // Auto-grow textarea up to max height
                   const target = e.target as HTMLTextAreaElement
                   target.style.height = 'auto'
-                  const newHeight = Math.min(target.scrollHeight, 128)
+                  const newHeight = Math.min(target.scrollHeight, 256)
                   target.style.height = newHeight + 'px'
                 }
               }}
               placeholder={accountFrozen ? "Account frozen - Purchase tokens to continue" : stats.creditBalance < 2000 ? "Insufficient balance - Need 2000 tokens to create agent" : "Describe what you want to automate..."}
-              className="flex-1 bg-transparent border-none outline-none text-sm sm:text-base text-[var(--v2-text-secondary)] placeholder:text-[var(--v2-text-muted)] resize-none max-h-32 overflow-y-auto scroll-smooth scrollbar-thin"
+              className="flex-1 bg-transparent border-none outline-none text-sm sm:text-base text-[var(--v2-text-secondary)] placeholder:text-[var(--v2-text-muted)] resize-none max-h-64 overflow-y-auto scroll-smooth scrollbar-thin"
               style={{
-                height: 'auto',
-                minHeight: '24px',
+                height: '48px',
+                minHeight: '48px',
                 scrollbarWidth: 'thin',
                 scrollbarColor: 'rgba(209, 213, 219, 0.5) transparent'
               }}
@@ -670,160 +511,6 @@ export default function V2DashboardPage() {
         </div>
       </div>
 
-      {/* Prompt Ideas Suggestions */}
-      {showIdeas && promptIdeas.length > 0 && (
-        <div className="bg-[var(--v2-surface)] p-3 sm:p-4 shadow-[var(--v2-shadow-card)] space-y-2" style={{ borderRadius: 'var(--v2-radius-card)' }}>
-          <div className="flex items-center justify-between mb-2">
-            <h3 className="text-sm font-semibold text-[var(--v2-text-primary)]">Your Personalized Agent Ideas</h3>
-            <button
-              onClick={() => setShowIdeas(false)}
-              className="text-xs text-[var(--v2-text-muted)] hover:text-[var(--v2-text-secondary)]"
-            >
-              ×
-            </button>
-          </div>
-          <p className="text-xs text-[var(--v2-text-muted)] mb-3">
-            Click any idea to fill the search box above, then press Enter to create your agent
-          </p>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            {promptIdeas.slice(0, 6).map((idea: any, index: number) => {
-              // Get category icon
-              const getCategoryIcon = () => {
-                switch (idea.category) {
-                  case 'analytics':
-                    return <BarChart3 className="w-4 h-4" />
-                  case 'automation':
-                    return <Sparkles className="w-4 h-4" />
-                  case 'communication':
-                    return <MessageCircle className="w-4 h-4" />
-                  case 'data':
-                    return <Database className="w-4 h-4" />
-                  case 'scheduling':
-                    return <Clock className="w-4 h-4" />
-                  default:
-                    return <Sparkles className="w-4 h-4" />
-                }
-              }
-
-              // Get category icon color - using V2 design system colors
-              const getCategoryColor = () => {
-                switch (idea.category) {
-                  case 'analytics':
-                    return '#06B6D4' // Cyan (like System Alerts card)
-                  case 'automation':
-                    return '#8B5CF6' // Purple (like Activity card)
-                  case 'communication':
-                    return '#10B981' // Green (like Active Agents card)
-                  case 'data':
-                    return '#F59E0B' // Orange/Amber (like Credits card)
-                  case 'scheduling':
-                    return '#6366F1' // Indigo
-                  default:
-                    return '#64748B' // Slate
-                }
-              }
-
-              // Get complexity badge
-              const getComplexityBadge = () => {
-                switch (idea.complexity) {
-                  case 'simple':
-                    return (
-                      <span className="text-[10px] px-1.5 py-0.5 bg-green-500/20 rounded-full text-green-500 font-medium">
-                        Simple
-                      </span>
-                    )
-                  case 'moderate':
-                    return (
-                      <span className="text-[10px] px-1.5 py-0.5 bg-yellow-500/20 rounded-full text-yellow-500 font-medium">
-                        Moderate
-                      </span>
-                    )
-                  case 'advanced':
-                    return (
-                      <span className="text-[10px] px-1.5 py-0.5 bg-red-500/20 rounded-full text-red-500 font-medium">
-                        Advanced
-                      </span>
-                    )
-                  default:
-                    return null
-                }
-              }
-
-              const categoryColor = getCategoryColor()
-
-              return (
-                <button
-                  key={index}
-                  onClick={() => {
-                    setSearchQuery(idea.prompt)
-                    setShowIdeas(false)
-                    // Focus the search input after a brief delay
-                    setTimeout(() => {
-                      const searchInput = document.querySelector('input[type="text"]') as HTMLInputElement
-                      if (searchInput) {
-                        searchInput.focus()
-                        searchInput.scrollIntoView({ behavior: 'smooth', block: 'center' })
-                      }
-                    }, 100)
-                  }}
-                  className="text-left p-3 bg-[var(--v2-surface-secondary)] hover:bg-[var(--v2-surface-hover)] border border-[var(--v2-border)] rounded-lg transition-all duration-200 group relative"
-                >
-                  {/* Header with icon and title */}
-                  <div className="flex items-start gap-2 mb-2">
-                    <div
-                      className="flex-shrink-0 w-8 h-8 rounded-lg flex items-center justify-center"
-                      style={{ backgroundColor: `${categoryColor}20`, color: categoryColor }}
-                    >
-                      {getCategoryIcon()}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <h4 className="text-sm font-semibold text-[var(--v2-text-primary)] line-clamp-1">
-                        {idea.title}
-                      </h4>
-                      <p className="text-xs text-[var(--v2-text-muted)] capitalize mt-0.5">
-                        {idea.category}
-                      </p>
-                    </div>
-                  </div>
-
-                  {/* Description */}
-                  <p className="text-xs text-[var(--v2-text-secondary)] line-clamp-3 mb-3">
-                    {idea.description}
-                  </p>
-
-                  {/* Metadata footer */}
-                  <div className="flex items-center justify-between pt-2 border-t border-[var(--v2-border)]">
-                    <div className="flex items-center gap-2">
-                      {getComplexityBadge()}
-                      <div className="flex items-center gap-1">
-                        <TrendingUp className="w-3 h-3 text-[var(--v2-text-muted)]" />
-                        <span className="text-[10px] text-[var(--v2-text-muted)]">
-                          ~{(idea.estimatedTokens / 1000).toFixed(1)}k
-                        </span>
-                      </div>
-                    </div>
-                    <span
-                      className="text-[10px] opacity-0 group-hover:opacity-100 transition-opacity font-medium"
-                      style={{ color: categoryColor }}
-                    >
-                      Use this →
-                    </span>
-                  </div>
-
-                  {/* Number badge */}
-                  <div
-                    className="absolute -top-2 -left-2 w-6 h-6 rounded-full flex items-center justify-center text-white text-xs font-bold shadow-lg border-2 border-[var(--v2-surface)]"
-                    style={{ backgroundColor: categoryColor }}
-                  >
-                    {index + 1}
-                  </div>
-                </button>
-              )
-            })}
-          </div>
-        </div>
-      )}
-
       {/* Cards Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-4 items-start">
           {/* Active Agents Card */}
@@ -853,12 +540,9 @@ export default function V2DashboardPage() {
                     </div>
                   </div>
 
-                  {/* Agent List - Top 3 by execution count */}
+                  {/* Agent List */}
                   <div className="space-y-2">
-                    {stats.agentStats
-                      .sort((a, b) => b.count - a.count)
-                      .slice(0, 3)
-                      .map((agent, index) => (
+                    {stats.agentStats.slice(0, 3).map((agent, index) => (
                       <div
                         key={index}
                         onClick={(e) => {
@@ -900,77 +584,35 @@ export default function V2DashboardPage() {
               </div>
             </Card>
 
-          {/* System Alerts Card */}
+          {/* Client Risk Alerts Card */}
           <Card
             hoverable
-            className="!p-3 sm:!p-4 !h-[280px] overflow-hidden !box-border"
+            onClick={() => router.push('/v2/analytics')}
+            className="cursor-pointer !p-3 sm:!p-4 !h-[280px] overflow-hidden !box-border active:scale-[0.98] transition-transform"
           >
-              <div className="space-y-2 h-full flex flex-col">
+              <div className="space-y-2">
               <div className="flex items-center gap-2">
                 <AlertCircle className="w-6 h-6 sm:w-7 sm:h-7 text-[#06B6D4]" />
                 <h3 className="text-lg sm:text-xl font-semibold text-[var(--v2-text-primary)]">
-                  Client Risk Alert
+                  System Alerts
                 </h3>
               </div>
               <p className="text-sm text-[var(--v2-text-secondary)]">
                 Monitor potential issues and failures
               </p>
-
-              {/* Alert List */}
-              <div className="flex-1 overflow-y-auto pt-1">
-                {stats.systemAlerts.length > 0 ? (
-                  <div className="space-y-2.5">
-                    {stats.systemAlerts.map((alert, index) => (
-                      <div
-                        key={index}
-                        className={`flex items-start gap-3 p-3 transition-all duration-200 ${
-                          alert.type === 'critical'
-                            ? 'bg-gradient-to-r from-red-50 to-red-50/50 dark:from-red-950/30 dark:to-red-950/10 border-l-4 border-red-500'
-                            : alert.type === 'warning'
-                            ? 'bg-gradient-to-r from-orange-50 to-orange-50/50 dark:from-orange-950/30 dark:to-orange-950/10 border-l-4 border-orange-500'
-                            : 'bg-gradient-to-r from-yellow-50 to-yellow-50/50 dark:from-yellow-950/30 dark:to-yellow-950/10 border-l-4 border-yellow-500'
-                        }`}
-                        style={{ borderRadius: 'var(--v2-radius-button)' }}
-                      >
-                        <div className={`flex-shrink-0 w-8 h-8 flex items-center justify-center rounded-full ${
-                          alert.type === 'critical'
-                            ? 'bg-red-100 dark:bg-red-900/40'
-                            : alert.type === 'warning'
-                            ? 'bg-orange-100 dark:bg-orange-900/40'
-                            : 'bg-yellow-100 dark:bg-yellow-900/40'
-                        }`}>
-                          <span className="text-base">{alert.icon}</span>
-                        </div>
-                        <div className="flex-1 min-w-0 pt-1">
-                          <p className={`text-xs font-medium leading-relaxed ${
-                            alert.type === 'critical'
-                              ? 'text-red-800 dark:text-red-200'
-                              : alert.type === 'warning'
-                              ? 'text-orange-800 dark:text-orange-200'
-                              : 'text-yellow-800 dark:text-yellow-200'
-                          }`}>
-                            {alert.message}
-                          </p>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="flex flex-col items-center justify-center h-full text-center py-6">
-                    <div className="w-16 h-16 rounded-full bg-green-50 dark:bg-green-950/30 flex items-center justify-center mb-3">
-                      <CheckCircle2 className="w-8 h-8 text-green-500" />
-                    </div>
-                    <p className="text-sm font-semibold text-green-600 dark:text-green-400">All systems operational</p>
-                    <p className="text-xs text-[var(--v2-text-muted)] mt-1">No issues detected</p>
-                  </div>
-                )}
+              <div className="pt-0">
+                <div className={`text-2xl sm:text-3xl font-bold ${stats.alertsCount > 0 ? 'text-red-500' : 'text-green-500'}`}>
+                  {stats.alertsCount}
+                </div>
+                <div className="text-xs text-[var(--v2-text-muted)] mt-0.5">
+                  {stats.alertsCount > 0 ? 'failures in last 24h' : 'all systems operational'}
+                </div>
               </div>
               </div>
             </Card>
 
           {/* Recent Activity Card - Horizontal Bar List */}
           <Card
-            hoverable
             className="!p-3 sm:!p-4 !h-[280px] overflow-hidden !box-border"
           >
               <div className="space-y-2">

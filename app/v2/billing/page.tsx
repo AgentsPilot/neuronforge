@@ -11,12 +11,12 @@ export default function V2BillingPage() {
 
   return (
     <div className="space-y-4 sm:space-y-5 lg:space-y-6">
-      {/* Logo - First Line */}
+      {/* Logo */}
       <div className="mb-3">
         <V2Logo />
       </div>
 
-      {/* Back Button + Controls */}
+      {/* Top Bar: Back Button + Token Display + User Menu */}
       <div className="flex items-center justify-between">
         <button
           onClick={() => router.push('/v2/dashboard')}

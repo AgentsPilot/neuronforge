@@ -13,7 +13,6 @@ import { V2Logo, V2Controls } from '@/components/v2/V2Header'
 import ProfileTabV2 from '@/components/v2/settings/ProfileTabV2'
 import SecurityTabV2 from '@/components/v2/settings/SecurityTabV2'
 import { UserProfile, NotificationSettings, PluginConnection } from '@/types/settings'
-import { PageLoading } from '@/components/v2/ui/loading'
 
 export default function V2SettingsPage() {
   const { user } = useAuth()
@@ -112,17 +111,24 @@ export default function V2SettingsPage() {
 
 
   if (loading) {
-    return <PageLoading message="Loading settings..." />
+    return (
+      <div className="flex items-center justify-center min-h-[600px]">
+        <div className="text-center space-y-4">
+          <div className="w-16 h-16 border-4 border-[var(--v2-primary)] border-t-transparent rounded-full animate-spin mx-auto"></div>
+          <p className="text-[var(--v2-text-secondary)] font-medium">Loading settings...</p>
+        </div>
+      </div>
+    )
   }
 
   return (
     <div className="space-y-4 sm:space-y-5 lg:space-y-6">
-      {/* Logo - First Line */}
+      {/* Logo */}
       <div className="mb-3">
         <V2Logo />
       </div>
 
-      {/* Back Button + Controls */}
+      {/* Top Bar: Back Button + Token Display + User Menu */}
       <div className="flex items-center justify-between">
         <button
           onClick={() => router.push('/v2/dashboard')}

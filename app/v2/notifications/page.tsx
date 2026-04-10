@@ -8,7 +8,6 @@ import { ArrowLeft } from 'lucide-react'
 import { V2Logo, V2Controls } from '@/components/v2/V2Header'
 import NotificationsTabV2 from '@/components/v2/settings/NotificationsTabV2'
 import { NotificationSettings } from '@/types/settings'
-import { PageLoading } from '@/components/v2/ui/loading'
 
 export default function V2NotificationsPage() {
   const router = useRouter()
@@ -85,21 +84,28 @@ export default function V2NotificationsPage() {
   }
 
   if (loading) {
-    return <PageLoading message="Loading notifications..." />
+    return (
+      <div className="flex items-center justify-center min-h-[600px]">
+        <div className="text-center space-y-4">
+          <div className="w-16 h-16 border-4 border-[var(--v2-primary)] border-t-transparent rounded-full animate-spin mx-auto"></div>
+          <p className="text-[var(--v2-text-secondary)] font-medium">Loading notifications...</p>
+        </div>
+      </div>
+    )
   }
 
   return (
     <div className="space-y-4 sm:space-y-5 lg:space-y-6">
-      {/* Logo - First Line */}
+      {/* Logo */}
       <div className="mb-3">
         <V2Logo />
       </div>
 
-      {/* Back Button + Controls */}
+      {/* Top Bar: Back Button + Token Display + User Menu */}
       <div className="flex items-center justify-between">
         <button
           onClick={() => router.push('/v2/dashboard')}
-          className="inline-flex items-center gap-2 px-4 py-2.5 bg-[var(--v2-surface)] text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] hover:scale-105 transition-all duration-200 text-sm font-medium shadow-[var(--v2-shadow-card)]"
+          className="inline-flex items-center gap-2 px-4 py-2.5 bg-[var(--v2-surface)] text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] hover:scale-105 transition-all duration-200 text-sm font-medium shadow-[var(--v2-text-primary)] shadow-[var(--v2-shadow-card)]"
           style={{ borderRadius: 'var(--v2-radius-button)' }}
         >
           <ArrowLeft className="w-4 h-4" />

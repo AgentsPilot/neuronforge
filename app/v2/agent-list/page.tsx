@@ -6,6 +6,7 @@
 import React, { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@/components/UserProvider'
+import { supabase } from '@/lib/supabaseClient'
 import { Card } from '@/components/v2/ui/card'
 import { V2Logo, V2Controls } from '@/components/v2/V2Header'
 import {
@@ -24,7 +25,8 @@ import {
   Loader2,
   X,
   ArrowUpDown,
-  ChevronDown
+  ChevronDown,
+  Database
 } from 'lucide-react'
 import { formatScheduleDisplay } from '@/lib/utils/scheduleFormatter'
 
@@ -39,6 +41,7 @@ type Agent = {
   next_run?: string
   created_at?: string
   memory_count?: number
+  total_runs?: number
 }
 
 type FilterType = 'all' | 'active' | 'inactive' | 'draft'
@@ -148,28 +151,20 @@ export default function V2AgentListPage() {
 
     setLoading(true)
     try {
-      const params = new URLSearchParams()
+      let query = supabase
+        .from('agents')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false })
+
       if (filterType !== 'all') {
-        params.set('status', filterType)
-      }
-      params.set('includeInactive', 'true')
-
-      const response = await fetch(`/api/agents?${params.toString()}`, {
-        headers: {
-          'x-user-id': user.id,
-        },
-      })
-
-      if (!response.ok) {
-        throw new Error('Failed to fetch agents')
+        query = query.eq('status', filterType)
       }
 
-      const result = await response.json()
-      if (!result.success) {
-        throw new Error(result.error || 'Failed to fetch agents')
-      }
+      const { data, error } = await query
 
-      setAgents(result.agents || [])
+      if (error) throw error
+      setAgents(data || [])
     } catch (error) {
       console.error('Error fetching agents:', error)
       addToast('Failed to load agents', 'error')
@@ -273,26 +268,19 @@ export default function V2AgentListPage() {
   const handleToggleAgentStatus = async (e: React.MouseEvent, agentId: string, currentStatus: string, agentName: string) => {
     e.stopPropagation()
 
-    if (pausingAgents.has(agentId) || !user) return
+    if (pausingAgents.has(agentId)) return
 
     setPausingAgents(prev => new Set(prev).add(agentId))
 
     const newStatus = currentStatus === 'active' ? 'inactive' : 'active'
 
     try {
-      const response = await fetch(`/api/agents/${agentId}/status`, {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-user-id': user.id,
-        },
-        body: JSON.stringify({ status: newStatus }),
-      })
+      const { error } = await supabase
+        .from('agents')
+        .update({ status: newStatus })
+        .eq('id', agentId)
 
-      if (!response.ok) {
-        const result = await response.json()
-        throw new Error(result.error || 'Failed to update status')
-      }
+      if (error) throw error
 
       setAgents(prev => prev.map(agent =>
         agent.id === agentId ? { ...agent, status: newStatus } : agent
@@ -414,12 +402,12 @@ export default function V2AgentListPage() {
         ))}
       </div>
 
-      {/* Logo - First Line */}
+      {/* Logo */}
       <div className="mb-3">
         <V2Logo />
       </div>
 
-      {/* Back Button + Controls */}
+      {/* Top Bar: Back Button + Token Display + User Menu */}
       <div className="flex items-center justify-between">
         <button
           onClick={() => router.push('/v2/dashboard')}
@@ -591,97 +579,128 @@ export default function V2AgentListPage() {
                   setHoveredAgent(null)
                   setTooltipPosition(null)
                 }}
-                className="!p-3 relative"
+                className="!p-4 relative"
               >
-                <div className="flex items-center justify-between gap-3">
-                  {/* Left side - Agent info */}
-                  <div className="flex items-center gap-2 flex-1 min-w-0">
-                    <div className={`w-1.5 h-1.5 rounded-full ${getStatusColor(agent.status)} flex-shrink-0`} />
+                {/* Main Grid Layout */}
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-center">
 
+                  {/* Column 1: Status Indicator + Agent Name (4 cols) */}
+                  <div className="lg:col-span-4 flex items-center gap-3 min-w-0">
+                    <div className={`w-2 h-2 rounded-full ${getStatusColor(agent.status)} flex-shrink-0`} />
                     <div className="flex-1 min-w-0">
                       <h3 className="text-sm font-semibold text-[var(--v2-text-primary)] truncate">
                         {agent.agent_name}
                       </h3>
-
-                      {/* Metadata */}
-                      <div className="flex items-center gap-2 mt-0.5 text-xs text-[var(--v2-text-muted)]">
-                        {/* Mode */}
-                        {agent.mode && (
-                          <div className="flex items-center gap-1">
-                            {agent.mode === 'scheduled' ? (
-                              <Calendar className="w-3 h-3" />
-                            ) : (
-                              <Activity className="w-3 h-3" />
-                            )}
-                            <span className="capitalize">{agent.mode}</span>
-                          </div>
-                        )}
-
-                        {/* Next Run */}
-                        {agent.mode === 'scheduled' && agent.next_run && (
-                          <>
-                            <span>•</span>
-                            <span>{formatNextRun(agent.next_run)}</span>
-                          </>
-                        )}
-
-                        {/* Memory Count */}
-                        {agent.memory_count !== undefined && agent.memory_count > 0 && (
-                          <>
-                            <span>•</span>
-                            <span>{agent.memory_count} memories</span>
-                          </>
-                        )}
+                      <div className="flex items-center gap-1 mt-0.5">
+                        {getStatusIcon(agent.status)}
+                        <span className="text-xs text-[var(--v2-text-muted)] capitalize">
+                          {agent.status}
+                        </span>
                       </div>
                     </div>
                   </div>
 
-                  {/* Right side - Status icon and action buttons */}
-                  <div className="flex items-center gap-2 flex-shrink-0">
-                    {getStatusIcon(agent.status)}
+                  {/* Column 2: Stats Grid (5 cols) */}
+                  <div className="lg:col-span-5 grid grid-cols-2 sm:grid-cols-3 gap-3">
+                    {/* Total Runs */}
+                    <div className="flex flex-col">
+                      <div className="flex items-center gap-1 text-[var(--v2-text-muted)] mb-0.5">
+                        <Activity className="w-3 h-3" />
+                        <span className="text-[10px] uppercase tracking-wide">Runs</span>
+                      </div>
+                      <span className="text-sm font-semibold text-[var(--v2-text-primary)]">
+                        {agent.total_runs !== undefined ? agent.total_runs.toLocaleString() : '0'}
+                      </span>
+                    </div>
 
-                    <div className="flex gap-1.5">
-                      <button
-                        onClick={(e) => handleExecuteAgent(e, agent.id, agent.agent_name)}
-                        disabled={executingAgents.has(agent.id) || agent.status !== 'active'}
-                        className="flex items-center gap-1 px-2.5 py-1.5 bg-gradient-to-r from-[var(--v2-primary)] to-[var(--v2-secondary)] text-white text-xs font-medium hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
-                        style={{ borderRadius: 'var(--v2-radius-button)' }}
-                      >
-                        {executingAgents.has(agent.id) ? (
-                          <>
-                            <Loader2 className="w-3 h-3 animate-spin" />
-                            <span className="hidden sm:inline">Running...</span>
-                          </>
+                    {/* Mode */}
+                    <div className="flex flex-col">
+                      <div className="flex items-center gap-1 text-[var(--v2-text-muted)] mb-0.5">
+                        {agent.mode === 'scheduled' ? (
+                          <Calendar className="w-3 h-3" />
                         ) : (
-                          <>
-                            <Play className="w-3 h-3" />
-                            <span className="hidden sm:inline">Run</span>
-                          </>
+                          <Clock className="w-3 h-3" />
                         )}
-                      </button>
+                        <span className="text-[10px] uppercase tracking-wide">Mode</span>
+                      </div>
+                      <span className="text-sm font-medium text-[var(--v2-text-primary)] capitalize">
+                        {agent.mode || 'Manual'}
+                      </span>
+                    </div>
 
-                      <button
-                        onClick={(e) => handleToggleAgentStatus(e, agent.id, agent.status, agent.agent_name)}
-                        disabled={pausingAgents.has(agent.id)}
-                        className="flex items-center gap-1 px-2.5 py-1.5 bg-[var(--v2-surface)] text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] text-xs font-medium border border-gray-200 dark:border-slate-700 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                        style={{ borderRadius: 'var(--v2-radius-button)' }}
-                      >
-                        {pausingAgents.has(agent.id) ? (
-                          <Loader2 className="w-3 h-3 animate-spin" />
-                        ) : agent.status === 'active' ? (
-                          <>
-                            <Pause className="w-3 h-3" />
-                            <span className="hidden sm:inline">Pause</span>
-                          </>
-                        ) : (
-                          <>
-                            <Play className="w-3 h-3" />
-                            <span className="hidden sm:inline">Activate</span>
-                          </>
-                        )}
-                      </button>
+                    {/* Next Run / Memory */}
+                    <div className="flex flex-col">
+                      {agent.mode === 'scheduled' && agent.next_run ? (
+                        <>
+                          <div className="flex items-center gap-1 text-[var(--v2-text-muted)] mb-0.5">
+                            <Clock className="w-3 h-3" />
+                            <span className="text-[10px] uppercase tracking-wide">Next Run</span>
+                          </div>
+                          <span className="text-sm font-medium text-[var(--v2-text-primary)]">
+                            {formatNextRun(agent.next_run)}
+                          </span>
+                        </>
+                      ) : agent.memory_count !== undefined && agent.memory_count > 0 ? (
+                        <>
+                          <div className="flex items-center gap-1 text-[var(--v2-text-muted)] mb-0.5">
+                            <Database className="w-3 h-3" />
+                            <span className="text-[10px] uppercase tracking-wide">Memory</span>
+                          </div>
+                          <span className="text-sm font-medium text-[var(--v2-text-primary)]">
+                            {agent.memory_count}
+                          </span>
+                        </>
+                      ) : (
+                        <div className="opacity-0">
+                          <span className="text-[10px]">-</span>
+                        </div>
+                      )}
                     </div>
                   </div>
+
+                  {/* Column 3: Action Buttons (3 cols) */}
+                  <div className="lg:col-span-3 flex items-center justify-end gap-2">
+                    <button
+                      onClick={(e) => handleExecuteAgent(e, agent.id, agent.agent_name)}
+                      disabled={executingAgents.has(agent.id) || agent.status !== 'active'}
+                      className="flex items-center justify-center gap-1.5 px-4 py-2 bg-gradient-to-r from-[var(--v2-primary)] to-[var(--v2-secondary)] text-white text-xs font-medium hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed w-[90px]"
+                      style={{ borderRadius: 'var(--v2-radius-button)' }}
+                    >
+                      {executingAgents.has(agent.id) ? (
+                        <>
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          <span>Running</span>
+                        </>
+                      ) : (
+                        <>
+                          <Play className="w-3.5 h-3.5" />
+                          <span>Run</span>
+                        </>
+                      )}
+                    </button>
+
+                    <button
+                      onClick={(e) => handleToggleAgentStatus(e, agent.id, agent.status, agent.agent_name)}
+                      disabled={pausingAgents.has(agent.id)}
+                      className="flex items-center justify-center gap-1.5 px-4 py-2 bg-[var(--v2-surface)] text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] text-xs font-medium border border-gray-200 dark:border-slate-700 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed w-[90px]"
+                      style={{ borderRadius: 'var(--v2-radius-button)' }}
+                    >
+                      {pausingAgents.has(agent.id) ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : agent.status === 'active' ? (
+                        <>
+                          <Pause className="w-3.5 h-3.5" />
+                          <span>Pause</span>
+                        </>
+                      ) : (
+                        <>
+                          <Play className="w-3.5 h-3.5" />
+                          <span>Activate</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+
                 </div>
               </Card>
             ))}
