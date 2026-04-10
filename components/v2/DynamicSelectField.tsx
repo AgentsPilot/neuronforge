@@ -154,12 +154,32 @@ export function DynamicSelectField({
     return result
   }, [options])
 
-  console.log('[DynamicSelectField] Render - value:', value, 'query:', query, 'options:', options.length)
+  console.log('[DynamicSelectField] Render - value:', value, 'query:', query, 'options:', options.length, 'error:', error)
 
   // Log when value prop changes
   useEffect(() => {
     console.log('[DynamicSelectField] value prop changed to:', value)
   }, [value])
+
+  // If there's an error fetching options, fall back to regular text input
+  if (error && options.length === 0) {
+    return (
+      <div className="relative">
+        <input
+          type="text"
+          value={value || ''}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={placeholder}
+          required={required}
+          className={`w-full px-3 py-2 pr-10 border text-sm focus:outline-none focus:ring-1 bg-[var(--v2-surface)] border-[var(--v2-border)] focus:ring-[var(--v2-primary)] focus:border-[var(--v2-primary)] text-[var(--v2-text-primary)] placeholder-[var(--v2-text-muted)] ${className}`}
+          style={style}
+        />
+        <div className="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">
+          <AlertCircle className="w-4 h-4 text-amber-500" title={error} />
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="relative">

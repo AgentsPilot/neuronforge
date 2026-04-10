@@ -30,6 +30,7 @@ interface AgentInputFieldsProps {
     action: string
     parameter: string
     depends_on?: string[]
+    paramToFieldMap?: Record<string, string>
   } | null
   // Optional: Custom wrapper className (e.g., for grid layout)
   wrapperClassName?: string
@@ -54,7 +55,7 @@ const renderFieldInput = (
   field: InputFieldSchema,
   values: Record<string, any>,
   onChange: (name: string, value: any) => void,
-  getDynamicOptions?: (fieldName: string) => { plugin: string; action: string; parameter: string; depends_on?: string[] } | null,
+  getDynamicOptions?: (fieldName: string) => { plugin: string; action: string; parameter: string; depends_on?: string[]; paramToFieldMap?: Record<string, string> } | null,
   errors: Record<string, string> = {}
 ) => {
   // Check if this field should use dynamic dropdown
@@ -68,13 +69,17 @@ const renderFieldInput = (
       const stepPrefixMatch = field.name.match(/^(step\d+_)/)
       const stepPrefix = stepPrefixMatch ? stepPrefixMatch[1] : ''
 
-      dynamicOptions.depends_on.forEach((depField: string) => {
+      dynamicOptions.depends_on.forEach((paramName: string) => {
+        // Map parameter name to field name using paramToFieldMap
+        const fieldName = dynamicOptions.paramToFieldMap?.[paramName] || paramName
+
         // Try both the base field name and the prefixed version
-        const prefixedDepField = stepPrefix + depField
-        const depValue = values[prefixedDepField] || values[depField]
+        const prefixedFieldName = stepPrefix + fieldName
+        const depValue = values[prefixedFieldName] || values[fieldName]
 
         if (depValue) {
-          dependentValues[depField] = depValue
+          // Use parameter name as key (for API), but lookup value using field name
+          dependentValues[paramName] = depValue
         }
       })
     }
@@ -158,6 +163,19 @@ export function AgentInputFields({
   getDynamicOptions,
   wrapperClassName = 'space-y-3'
 }: AgentInputFieldsProps) {
+  console.log('[AgentInputFields] Received props:', {
+    schemaFields: schema.map(s => s.name),
+    values,
+    valuesKeys: Object.keys(values),
+    valuesCount: Object.keys(values).length,
+    fieldValueMapping: schema.map(s => ({
+      field: s.name,
+      hasValue: !!values[s.name],
+      value: values[s.name],
+      placeholder: s.placeholder
+    }))
+  })
+
   if (!schema || schema.length === 0) {
     return null
   }
@@ -179,6 +197,49 @@ export function AgentInputFields({
     }
   })
 
+  // Sort ungrouped fields (config fields) to put dependent fields after their dependencies
+  console.log('[AgentInputFields] Sorting ungrouped fields:', ungroupedFields.map(f => f.name))
+  ungroupedFields.sort((a, b) => {
+    // Get dynamic options to check for dependencies
+    const aDynamicOptions = getDynamicOptions?.(a.name)
+    const bDynamicOptions = getDynamicOptions?.(b.name)
+
+    console.log('[AgentInputFields] Comparing:', a.name, 'vs', b.name)
+    console.log('[AgentInputFields] a depends_on:', aDynamicOptions?.depends_on, 'paramToFieldMap:', aDynamicOptions?.paramToFieldMap)
+    console.log('[AgentInputFields] b depends_on:', bDynamicOptions?.depends_on, 'paramToFieldMap:', bDynamicOptions?.paramToFieldMap)
+
+    // If a depends on b, b should come first
+    if (aDynamicOptions?.depends_on && aDynamicOptions?.paramToFieldMap) {
+      // Check if any of a's dependencies map to b's field name
+      const dependentFieldNames = aDynamicOptions.depends_on.map(
+        (paramName: string) => aDynamicOptions.paramToFieldMap![paramName] || paramName
+      )
+      console.log('[AgentInputFields] a dependentFieldNames:', dependentFieldNames, 'includes b.name?', dependentFieldNames.includes(b.name))
+      if (dependentFieldNames.includes(b.name)) {
+        console.log('[AgentInputFields] → a comes AFTER b')
+        return 1 // a comes after b
+      }
+    }
+
+    // If b depends on a, a should come first
+    if (bDynamicOptions?.depends_on && bDynamicOptions?.paramToFieldMap) {
+      // Check if any of b's dependencies map to a's field name
+      const dependentFieldNames = bDynamicOptions.depends_on.map(
+        (paramName: string) => bDynamicOptions.paramToFieldMap![paramName] || paramName
+      )
+      console.log('[AgentInputFields] b dependentFieldNames:', dependentFieldNames, 'includes a.name?', dependentFieldNames.includes(a.name))
+      if (dependentFieldNames.includes(a.name)) {
+        console.log('[AgentInputFields] → a comes BEFORE b')
+        return -1 // a comes before b
+      }
+    }
+
+    console.log('[AgentInputFields] → no change')
+    // No dependency relationship, maintain original order
+    return 0
+  })
+  console.log('[AgentInputFields] After sorting:', ungroupedFields.map(f => f.name))
+
   // Sort fields within each group to put dependent fields after their dependencies
   Object.keys(groupedFields).forEach((stepId) => {
     const fields = groupedFields[stepId]
@@ -188,18 +249,27 @@ export function AgentInputFields({
       const aDynamicOptions = getDynamicOptions?.(a.name)
       const bDynamicOptions = getDynamicOptions?.(b.name)
 
+      const baseNameA = a.name.replace(/^step\d+_/, '')
+      const baseNameB = b.name.replace(/^step\d+_/, '')
+
       // If a depends on b, b should come first
-      if (aDynamicOptions?.depends_on) {
-        const baseNameB = b.name.replace(/^step\d+_/, '')
-        if (aDynamicOptions.depends_on.includes(baseNameB)) {
+      if (aDynamicOptions?.depends_on && aDynamicOptions?.paramToFieldMap) {
+        // Check if any of a's dependencies map to b's field name
+        const dependentFieldNames = aDynamicOptions.depends_on.map(
+          (paramName: string) => aDynamicOptions.paramToFieldMap![paramName] || paramName
+        )
+        if (dependentFieldNames.includes(baseNameB)) {
           return 1 // a comes after b
         }
       }
 
       // If b depends on a, a should come first
-      if (bDynamicOptions?.depends_on) {
-        const baseNameA = a.name.replace(/^step\d+_/, '')
-        if (bDynamicOptions.depends_on.includes(baseNameA)) {
+      if (bDynamicOptions?.depends_on && bDynamicOptions?.paramToFieldMap) {
+        // Check if any of b's dependencies map to a's field name
+        const dependentFieldNames = bDynamicOptions.depends_on.map(
+          (paramName: string) => bDynamicOptions.paramToFieldMap![paramName] || paramName
+        )
+        if (dependentFieldNames.includes(baseNameA)) {
           return -1 // a comes before b
         }
       }

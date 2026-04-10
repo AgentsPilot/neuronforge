@@ -67,6 +67,11 @@ export interface CalibrationSession {
     items_filtered?: number
     items_delivered?: number
   }
+  autoCalibration?: {
+    iterations: number
+    autoFixesApplied: number
+    message: string
+  }
 }
 
 interface CalibrationDashboardProps {
@@ -136,6 +141,21 @@ export function CalibrationDashboard({
         isFixed
       })
       return isFixed
+    }
+    if (issue.category === 'configuration_missing') {
+      // Check if all required config keys have values
+      const configKeys = issue.suggestedFix?.action?.configKeys || []
+      const allConfigProvided = configKeys.every((key: string) => {
+        const configValue = fixes.parameters?.[`${issue.id}_${key}`]
+        return configValue !== undefined && configValue !== ''
+      })
+      console.log('[CalibrationDashboard] Configuration missing check:', {
+        issueId: issue.id,
+        configKeys,
+        allConfigProvided,
+        allParams: fixes.parameters
+      })
+      return allConfigProvided
     }
     console.log('[CalibrationDashboard] Issue not handled, returning false:', issue.id, issue.category)
     return false
@@ -353,6 +373,17 @@ export function CalibrationDashboard({
                           [issueId]: fix
                         }
                       })
+                    } else if (issueCategory === 'configuration_missing') {
+                      console.log('[CalibrationDashboard] Configuration missing fix:', { issueId, fix })
+                      // Config values are stored with keys like: ${issueId}_${configKey}
+                      // The IssueCard component sends them this way
+                      onFixesChange({
+                        ...fixes,
+                        parameters: {
+                          ...fixes.parameters,
+                          [issueId]: fix.value
+                        }
+                      })
                     }
                   }}
                 />
@@ -490,6 +521,17 @@ export function CalibrationDashboard({
                           logicFixes: {
                             ...fixes.logicFixes,
                             [issueId]: fix
+                          }
+                        })
+                      } else if (issueCategory === 'configuration_missing') {
+                        console.log('[CalibrationDashboard] Configuration missing fix:', { issueId, fix })
+                        // Config values are stored with keys like: ${issueId}_${configKey}
+                        // The IssueCard component sends them this way
+                        onFixesChange({
+                          ...fixes,
+                          parameters: {
+                            ...fixes.parameters,
+                            [issueId]: fix.value
                           }
                         })
                       }

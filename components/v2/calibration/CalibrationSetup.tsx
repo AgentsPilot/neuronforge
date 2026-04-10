@@ -40,7 +40,9 @@ interface Agent {
     description?: string
     required?: boolean
     placeholder?: any
-  }>
+    default_value?: any
+    default?: any
+  }> | Record<string, any>
 }
 
 interface CalibrationSession {
@@ -69,6 +71,11 @@ interface CalibrationSession {
     items_filtered?: number
     items_delivered?: number
   }
+  autoCalibration?: {
+    iterations: number
+    autoFixesApplied: number
+    message: string
+  }
 }
 
 interface CalibrationSetupProps {
@@ -88,13 +95,15 @@ interface CalibrationSetupProps {
 
 interface ChatMessage {
   id: string
-  type: 'bot' | 'user' | 'system'
+  type: 'bot' | 'user' | 'system' | 'welcome'
   content: string
   timestamp: Date
   progress?: number
   issue?: CollectedIssue
   isFixing?: boolean
   showInputForm?: boolean
+  showConfigForm?: boolean
+  configFields?: Array<{key: string, description?: string, default?: any, type?: string, plugin?: string, action?: string, parameter?: string}>
 }
 
 export function CalibrationSetup({
@@ -111,11 +120,27 @@ export function CalibrationSetup({
   onApproveForProduction,
   session
 }: CalibrationSetupProps) {
-  const [inputValues, setInputValues] = useState<Record<string, any>>(initialInputValues)
+  // Initialize inputValues with values from input_schema if it's an object
+  const [inputValues, setInputValues] = useState<Record<string, any>>(() => {
+    // If input_schema is an object, use those values as initial values
+    if (agent.input_schema && typeof agent.input_schema === 'object' && !Array.isArray(agent.input_schema)) {
+      const merged = { ...(agent.input_schema as Record<string, any>), ...initialInputValues }
+      console.log('[CalibrationSetup] Initializing inputValues:', {
+        fromInputSchema: agent.input_schema,
+        fromInitialInputValues: initialInputValues,
+        merged
+      })
+      return merged
+    }
+    console.log('[CalibrationSetup] Initializing inputValues from initialInputValues only:', initialInputValues)
+    return initialInputValues
+  })
+  const [configValues, setConfigValues] = useState<Record<string, any>>({})
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [progress, setProgress] = useState(0)
   const [currentStep, setCurrentStep] = useState('')
   const [hasStarted, setHasStarted] = useState(false)
+  const [isWaitingForConfig, setIsWaitingForConfig] = useState(false)
   const [currentIssueIndex, setCurrentIssueIndex] = useState(0)
   const [isFixingMode, setIsFixingMode] = useState(false)
   const [fixesHaveBeenApplied, setFixesHaveBeenApplied] = useState(false)
@@ -126,6 +151,71 @@ export function CalibrationSetup({
     logicFixes: {}
   })
   const chatScrollRef = React.useRef<HTMLDivElement>(null)
+
+  // Convert input_schema to array format if it's an object
+  // Also enrich with descriptions from schemaMetadata (from form-metadata API)
+  const inputSchemaArray = React.useMemo(() => {
+    console.log('[CalibrationSetup] Converting input_schema:', {
+      exists: !!agent.input_schema,
+      type: typeof agent.input_schema,
+      isArray: Array.isArray(agent.input_schema),
+      keys: agent.input_schema && typeof agent.input_schema === 'object' && !Array.isArray(agent.input_schema)
+        ? Object.keys(agent.input_schema)
+        : [],
+      schemaMetadataAvailable: !!schemaMetadata,
+      schemaMetadataKeys: schemaMetadata ? Object.keys(schemaMetadata) : []
+    })
+
+    if (!agent.input_schema) return []
+
+    let baseSchema: any[] = []
+
+    if (Array.isArray(agent.input_schema)) {
+      console.log('[CalibrationSetup] Input schema is already array format, length:', agent.input_schema.length)
+      baseSchema = agent.input_schema
+    } else if (typeof agent.input_schema === 'object') {
+      // Convert object format {key: value} to array format [{name, type, ...}]
+      baseSchema = Object.keys(agent.input_schema).map(key => {
+        const value = (agent.input_schema as any)[key]
+        return {
+          name: key,
+          type: typeof value === 'number' ? 'number' :
+                typeof value === 'boolean' ? 'boolean' :
+                'string',
+          required: false,
+          description: `Configuration parameter`,
+          default_value: value // Set as default_value, not placeholder
+        }
+      })
+      console.log('[CalibrationSetup] Converted object to array format, fields:', baseSchema.map((f: any) => f.name))
+    }
+
+    // Enrich with descriptions from schemaMetadata (from form-metadata API)
+    if (schemaMetadata && Object.keys(schemaMetadata).length > 0) {
+      baseSchema = baseSchema.map(field => {
+        const metadata = schemaMetadata[field.name]
+        if (metadata && metadata.length > 0 && metadata[0].description) {
+          console.log('[CalibrationSetup] Enriching', field.name, 'with description:', metadata[0].description)
+          return {
+            ...field,
+            description: metadata[0].description
+          }
+        }
+        return field
+      })
+    }
+
+    console.log('[CalibrationSetup] Final inputSchemaArray:', baseSchema)
+    return baseSchema
+  }, [agent.input_schema, schemaMetadata])
+
+  // Debug: Log schemaMetadata on every render
+  React.useEffect(() => {
+    console.log('[CalibrationSetup] RENDER - schemaMetadata:', schemaMetadata)
+    if (schemaMetadata) {
+      console.log('[CalibrationSetup] RENDER - schemaMetadata keys:', Object.keys(schemaMetadata))
+    }
+  }, [schemaMetadata])
 
   // Use external fixes if provided, otherwise use internal state
   const fixes = externalFixes || internalFixes
@@ -143,7 +233,7 @@ export function CalibrationSetup({
   }
 
   // Dynamic options provider for dropdown fields
-  const getDynamicOptions = (fieldName: string): { plugin: string; action: string; parameter: string; depends_on?: string[] } | null => {
+  const getDynamicOptions = (fieldName: string): { plugin: string; action: string; parameter: string; depends_on?: string[]; paramToFieldMap?: Record<string, string> } | null => {
     console.log('[CalibrationSetup] getDynamicOptions called for field:', fieldName)
     console.log('[CalibrationSetup] schemaMetadata available:', !!schemaMetadata)
     if (schemaMetadata) {
@@ -190,13 +280,86 @@ export function CalibrationSetup({
       }
     }
 
+    // If still no match, try fuzzy matching based on token overlap
+    // Example: google_sheet_id ↔ spreadsheet_id (common tokens: sheet, id)
+    if (!matchingParams || matchingParams.length === 0) {
+      console.log('[CalibrationSetup] Trying fuzzy matching for:', fieldName)
+
+      // Tokenize the field name
+      const tokenizeKey = (key: string): string[] => {
+        return key
+          .replace(/([a-z])([A-Z])/g, '$1_$2') // camelCase → snake_case
+          .toLowerCase()
+          .split(/[_-]/) // split on underscore or hyphen
+          .filter((t) => t.length > 0)
+      }
+
+      // Calculate token overlap score
+      const calculateOverlap = (key1: string, key2: string): number => {
+        const tokens1 = new Set(tokenizeKey(key1))
+        const tokens2 = new Set(tokenizeKey(key2))
+        const commonTokens = [...tokens1].filter((t) => tokens2.has(t))
+        const allTokens = new Set([...tokens1, ...tokens2])
+        if (allTokens.size === 0) return 0
+        return commonTokens.length / allTokens.size
+      }
+
+      // Find best fuzzy match
+      let bestMatch: { key: string; score: number; params: any } | null = null
+      for (const [metadataKey, params] of Object.entries(schemaMetadata)) {
+        const score = calculateOverlap(fieldName, metadataKey)
+        console.log('[CalibrationSetup] Fuzzy match score:', fieldName, '↔', metadataKey, '=', score.toFixed(2))
+        if (score >= 0.4 && (!bestMatch || score > bestMatch.score)) {
+          bestMatch = { key: metadataKey, score, params }
+        }
+      }
+
+      if (bestMatch && bestMatch.params.length > 0) {
+        console.log('[CalibrationSetup] Fuzzy matched:', fieldName, '->', bestMatch.key, 'score:', bestMatch.score.toFixed(2))
+        matchingParams = bestMatch.params
+      }
+    }
+
     if (matchingParams && matchingParams.length > 0) {
       const match = matchingParams[0]
+
+      // Build paramToFieldMap - maps API parameter names to form field names
+      // In CalibrationSetup, field names come from input_schema keys
+      const paramToFieldMap: Record<string, string> = {}
+      if (match.depends_on && Array.isArray(match.depends_on)) {
+        // For each dependency, map the parameter name to the corresponding field name in our schema
+        match.depends_on.forEach((paramName: string) => {
+          // Try to find a matching field in inputSchemaArray
+          const matchingField = inputSchemaArray.find(field => {
+            // Exact match
+            if (field.name === paramName) return true
+            // Try without step prefix
+            const baseFieldName = field.name.replace(/^step\d+_/, '')
+            if (baseFieldName === paramName) return true
+            // Try fuzzy match on tokens
+            const tokens1 = paramName.toLowerCase().split(/[_-]/)
+            const tokens2 = baseFieldName.toLowerCase().split(/[_-]/)
+            const commonTokens = tokens1.filter(t => tokens2.includes(t))
+            return commonTokens.length >= 1 && commonTokens.length / Math.max(tokens1.length, tokens2.length) >= 0.5
+          })
+
+          if (matchingField) {
+            paramToFieldMap[paramName] = matchingField.name
+            console.log('[CalibrationSetup] Mapped dependency:', paramName, '→', matchingField.name)
+          } else {
+            // Fallback: assume field name matches parameter name
+            paramToFieldMap[paramName] = paramName
+            console.log('[CalibrationSetup] No field found for dependency, using direct mapping:', paramName)
+          }
+        })
+      }
+
       const result = {
         plugin: match.plugin,
         action: match.action,
         parameter: match.parameter,
-        depends_on: match.depends_on
+        depends_on: match.depends_on,
+        paramToFieldMap: Object.keys(paramToFieldMap).length > 0 ? paramToFieldMap : undefined
       }
       console.log('[CalibrationSetup] Returning dynamic options for', fieldName, ':', result)
       return result
@@ -204,6 +367,187 @@ export function CalibrationSetup({
 
     console.log('[CalibrationSetup] No match found for', fieldName, ', returning null')
     return null
+  }
+
+  // Check if workflow needs configuration (pre-flight check)
+  const checkMissingConfig = (): Array<{
+    key: string
+    description?: string
+    default?: any
+    type?: string
+    plugin?: string
+    action?: string
+    parameter?: string
+  }> => {
+    const workflowSteps = agent.pilot_steps || []
+    const workflowConfig = (agent as any).workflow_config || {}
+
+    console.log('[CalibrationSetup] Checking missing config:', {
+      stepsCount: workflowSteps.length,
+      currentConfig: workflowConfig,
+      firstStepStructure: workflowSteps[0],
+      schemaMetadataAvailable: !!schemaMetadata,
+      schemaMetadataKeys: schemaMetadata ? Object.keys(schemaMetadata) : []
+    })
+
+    // Scan all steps for {{config.X}} patterns and track which step/parameter uses each config
+    const configReferences = new Map<string, Array<{stepId: string, plugin?: string, action?: string, parameter?: string}>>()
+
+    const scanForConfigRefs = (obj: any, stepId?: string, plugin?: string, action?: string, currentKey?: string) => {
+      if (typeof obj === 'string') {
+        const matches = obj.matchAll(/\{\{config\.(\w+)\}\}/g)
+        for (const match of matches) {
+          const configKey = match[1]
+          if (!configReferences.has(configKey)) {
+            configReferences.set(configKey, [])
+          }
+          // Always add usage info if we have step context
+          // Include plugin/action/parameter when available (for dynamic dropdowns)
+          if (stepId) {
+            console.log('[CalibrationSetup] Found config reference:', {
+              configKey,
+              stepId,
+              plugin: plugin || 'none',
+              action: action || 'none',
+              parameter: currentKey || 'none',
+              matchedString: match[0]
+            })
+            configReferences.get(configKey)!.push({
+              stepId,
+              plugin,
+              action,
+              parameter: currentKey
+            })
+          }
+        }
+      } else if (Array.isArray(obj)) {
+        obj.forEach(item => scanForConfigRefs(item, stepId, plugin, action, currentKey))
+      } else if (obj && typeof obj === 'object') {
+        Object.entries(obj).forEach(([key, value]) => {
+          // Pass the key as the current parameter name for the recursive call
+          scanForConfigRefs(value, stepId, plugin, action, key)
+        })
+      }
+    }
+
+    // Scan each step with context
+    workflowSteps.forEach((step: any) => {
+      const stepId = step.id || step.step_id
+      const plugin = step.plugin || step.plugin_key
+      const action = step.action
+
+      console.log('[CalibrationSetup] Scanning step:', {
+        stepId,
+        plugin,
+        action,
+        type: step.type
+      })
+
+      scanForConfigRefs(step, stepId, plugin, action)
+    })
+
+    console.log('[CalibrationSetup] Found config references:', Array.from(configReferences.entries()))
+
+    // Check which config keys are missing
+    const missingKeys = Array.from(configReferences.keys()).filter(key => {
+      const value = workflowConfig[key]
+      return value === undefined || value === null || value === ''
+    })
+
+    console.log('[CalibrationSetup] Missing config keys:', missingKeys)
+
+    // Try to get descriptions from IntentContract (enhanced_prompt)
+    let configSchema: any[] = []
+    if ((agent as any).enhanced_prompt) {
+      try {
+        const intentContract = typeof (agent as any).enhanced_prompt === 'string'
+          ? JSON.parse((agent as any).enhanced_prompt)
+          : (agent as any).enhanced_prompt
+        configSchema = intentContract?.config || []
+        console.log('[CalibrationSetup] Extracted config schema:', configSchema)
+      } catch (e) {
+        console.log('[CalibrationSetup] Failed to parse enhanced_prompt:', e)
+      }
+    }
+
+    // Map to full config objects with descriptions and plugin metadata
+    const missingConfig = missingKeys.map(key => {
+      const schemaItem = configSchema.find((item: any) => item.key === key)
+      const usages = configReferences.get(key) || []
+
+      // Try to find a usage that has plugin/action/parameter info
+      const usageWithMetadata = usages.find(u => u.plugin && u.action && u.parameter)
+
+      // If no usage metadata found, try to get from schemaMetadata (from form-field-metadata API)
+      let plugin = usageWithMetadata?.plugin
+      let action = usageWithMetadata?.action
+      let parameter = usageWithMetadata?.parameter
+
+      console.log('[CalibrationSetup] Processing config key:', key, {
+        hasUsageMetadata: !!usageWithMetadata,
+        plugin,
+        action,
+        parameter,
+        schemaMetadataAvailable: !!schemaMetadata,
+        hasSchemaMetadataForKey: schemaMetadata && !!schemaMetadata[key]
+      })
+
+      // Enrich with metadata and get description
+      let parameterDescription: string | undefined = undefined
+      if (!plugin && schemaMetadata && schemaMetadata[key]) {
+        const metadata = schemaMetadata[key][0]
+        plugin = metadata.plugin
+        action = metadata.action
+        parameter = metadata.parameter
+        parameterDescription = metadata.description // Get description from plugin parameter schema
+        console.log('[CalibrationSetup] Enriched config field from schemaMetadata:', {
+          key,
+          plugin,
+          action,
+          parameter,
+          parameterDescription
+        })
+      }
+
+      // Get default value from input_schema
+      let defaultValue = (schemaItem as any)?.default || (schemaItem as any)?.default_value
+      if (!defaultValue) {
+        if (agent.input_schema && typeof agent.input_schema === 'object') {
+          if (Array.isArray(agent.input_schema)) {
+            // Array format: find the field and get its default_value
+            const field = (agent.input_schema as any[]).find((f: any) => f.name === key)
+            defaultValue = field?.default_value || field?.default
+          } else {
+            // Object format: key-value pairs
+            defaultValue = (agent.input_schema as Record<string, any>)[key]
+          }
+        }
+      }
+
+      // Prioritize parameter description, then schema description, then step description
+      let stepDescription = parameterDescription || schemaItem?.description
+      if (!stepDescription && usages.length > 0) {
+        // Find the step that uses this config reference
+        const firstUsage = usages[0]
+        const step = workflowSteps.find((s: any) => (s.id || s.step_id) === firstUsage.stepId)
+        if (step && step.description) {
+          stepDescription = step.description
+        }
+      }
+
+      return {
+        key,
+        description: stepDescription || `Configuration value for ${key}`,
+        default: defaultValue,
+        type: schemaItem?.type || 'string',
+        plugin,
+        action,
+        parameter
+      }
+    })
+
+    console.log('[CalibrationSetup] Missing config with details:', missingConfig)
+    return missingConfig
   }
 
   // Auto-scroll chat to bottom when messages change
@@ -303,10 +647,54 @@ export function CalibrationSetup({
   }, [isRunning, hasStarted, issues])
 
   const handleRun = () => {
-    console.log('[CalibrationSetup] Running calibration with input values:', inputValues)
-    console.log('[CalibrationSetup] Input values count:', Object.keys(inputValues).length)
-    setHasStarted(true)
-    onRun(inputValues)
+    console.log('[CalibrationSetup] Start test clicked')
+
+    // Pre-flight check: Look for missing configuration
+    const missingConfig = checkMissingConfig()
+
+    if (missingConfig.length > 0) {
+      console.log('[CalibrationSetup] Missing config detected, showing form:', missingConfig)
+
+      // Show config form (DON'T set hasStarted yet - keep showing welcome screen)
+      setIsWaitingForConfig(true)
+      setMessages([
+        // Config messages
+        {
+          id: 'config-needed',
+          type: 'bot',
+          content: `Before I can test your workflow, I need ${missingConfig.length} configuration ${missingConfig.length === 1 ? 'value' : 'values'} from you.`,
+          timestamp: new Date()
+        },
+        {
+          id: 'config-explanation',
+          type: 'bot',
+          content: 'These settings tell your workflow where to send data, what values to use, and other important details.',
+          timestamp: new Date()
+        },
+        {
+          id: 'config-form',
+          type: 'bot',
+          content: '',
+          timestamp: new Date(),
+          showConfigForm: true,
+          configFields: missingConfig
+        }
+      ])
+
+      // Pre-fill config values with defaults
+      const defaultValues: Record<string, any> = {}
+      missingConfig.forEach(field => {
+        if (field.default) {
+          defaultValues[field.key] = field.default
+        }
+      })
+      setConfigValues(defaultValues)
+    } else {
+      // No config needed, run calibration immediately
+      console.log('[CalibrationSetup] No missing config, running calibration')
+      setHasStarted(true)
+      onRun(inputValues)
+    }
   }
 
   // Separate critical issues from improvements
@@ -316,8 +704,8 @@ export function CalibrationSetup({
       // NEVER show data_shape_mismatch - it's auto-fixed silently
       if (issue.category === 'data_shape_mismatch') return false
       if (!issue.requiresUserInput) return false
-      // Critical: parameter errors and logic errors
-      return ['parameter_error', 'logic_error'].includes(issue.category)
+      // Critical: parameter errors, logic errors, and configuration missing
+      return ['parameter_error', 'logic_error', 'configuration_missing'].includes(issue.category)
     })
   }, [issues])
 
@@ -403,6 +791,71 @@ export function CalibrationSetup({
       ])
       setIsFixingMode(false)
     }, 1000)
+  }
+
+  // Save configuration and continue with calibration
+  const saveConfigAndContinue = async () => {
+    try {
+      console.log('[CalibrationSetup] Saving config values:', configValues)
+
+      // Show saving message
+      setMessages(prev => [
+        ...prev,
+        {
+          id: 'saving-config',
+          type: 'bot',
+          content: 'Saving configuration...',
+          timestamp: new Date()
+        }
+      ])
+
+      // Save to database via parent component
+      // We need access to supabase, so we'll pass this up through a callback
+      // For now, we'll assume the parent (sandbox page) handles the save
+      // and we just trigger the calibration run
+
+      // The actual save will happen in the sandbox page's handleRunCalibration
+      // We'll pass config values through inputValues with a special prefix
+
+      // Show success message
+      setTimeout(() => {
+        setMessages(prev => [
+          ...prev.filter(m => m.id !== 'saving-config'),
+          {
+            id: 'config-saved',
+            type: 'bot',
+            content: '✓ Configuration saved! Now let\'s test your workflow.',
+            timestamp: new Date()
+          }
+        ])
+
+        // Run calibration with config values
+        setTimeout(() => {
+          console.log('[CalibrationSetup] Running calibration with config:', configValues)
+          setIsWaitingForConfig(false)
+          setHasStarted(true) // NOW set hasStarted to show test progress
+          // Pass config values with special prefix so parent can extract them
+          const allValues = {
+            ...inputValues,
+            ...Object.fromEntries(
+              Object.entries(configValues).map(([key, value]) => [`__config_${key}`, value])
+            )
+          }
+          onRun(allValues)
+        }, 800)
+      }, 500)
+    } catch (error: any) {
+      console.error('[CalibrationSetup] Failed to save config:', error)
+      setMessages(prev => [
+        ...prev.filter(m => m.id !== 'saving-config'),
+        {
+          id: 'config-error',
+          type: 'bot',
+          content: `✗ Failed to save configuration: ${error.message}`,
+          timestamp: new Date()
+        }
+      ])
+    }
   }
 
   // Handle skipping improvements
@@ -781,7 +1234,7 @@ export function CalibrationSetup({
 
             <div ref={chatScrollRef} className="flex-1 p-6 overflow-y-auto" style={{ scrollbarGutter: 'stable' }}>
               {!hasStarted ? (
-                // Initial Welcome Message
+                // Initial Welcome Message (and config form if waiting for config)
                 <div className="space-y-6">
                   <div className="flex items-start gap-3">
                     <div className="w-8 h-8 rounded-full bg-[var(--v2-primary)]/10 flex items-center justify-center flex-shrink-0">
@@ -789,20 +1242,20 @@ export function CalibrationSetup({
                     </div>
                     <div className="px-4 py-3 rounded-2xl bg-[var(--v2-surface)] border border-[var(--v2-border)] shadow-sm">
                       <p className="text-sm text-[var(--v2-text-primary)] mb-3">
-                        Hi! I'll help you test your workflow. Here's what I'll check:
+                        Hi! I'll help you test your workflow. Here's what I'll do:
                       </p>
                       <div className="space-y-2 mb-4">
                         <div className="flex items-center gap-2 text-xs text-[var(--v2-text-secondary)]">
-                          <CheckCircle2 className="w-4 h-4 text-[var(--v2-primary)]" />
-                          <span>All integrations are connected</span>
+                          <Settings className="w-4 h-4 text-[var(--v2-primary)]" />
+                          <span>Check if your workflow needs any configuration</span>
                         </div>
                         <div className="flex items-center gap-2 text-xs text-[var(--v2-text-secondary)]">
-                          <Settings className="w-4 h-4 text-[var(--v2-primary)]" />
-                          <span>Settings are configured correctly</span>
+                          <CheckCircle2 className="w-4 h-4 text-[var(--v2-primary)]" />
+                          <span>Test all integrations and connections</span>
                         </div>
                         <div className="flex items-center gap-2 text-xs text-[var(--v2-text-secondary)]">
                           <Zap className="w-4 h-4 text-[var(--v2-success)]" />
-                          <span>Auto-fix issues I can handle</span>
+                          <span>Find and help fix any issues</span>
                         </div>
                       </div>
                       <div className="flex items-start gap-2 p-3 bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 rounded-lg">
@@ -814,25 +1267,273 @@ export function CalibrationSetup({
                     </div>
                   </div>
 
-                  {/* Input Parameters - REMOVED: Don't show at startup, only after fixes applied */}
-                  {/* The inline form (line 855) will handle input collection after parameterization */}
-
                   <div className="flex items-start gap-3">
                     <div className="w-8 h-8 rounded-full bg-[var(--v2-primary)]/10 flex items-center justify-center flex-shrink-0">
                       <Bot className="w-4 h-4 text-[var(--v2-primary)]" />
                     </div>
                     <div className="px-4 py-3 rounded-2xl bg-[var(--v2-surface)] border border-[var(--v2-border)]">
                       <p className="text-sm text-[var(--v2-text-primary)]">
-                        Ready to start? Click the "Start Test Run" button above. This will take about 30 seconds.
+                        Ready to start? Click the "Start Test" button below. {inputSchemaArray.length > 0 ? "I'll ask you to fill in some required values, then " : "I'll first check if your workflow needs any configuration, then "}run a complete test.
                       </p>
                     </div>
                   </div>
+
+                  {/* Input Form - Show before test if workflow has input schema */}
+                  {(() => {
+                    console.log('[CalibrationSetup WELCOME] Form visibility check:', {
+                      hasStarted,
+                      isWaitingForConfig,
+                      inputSchemaArrayLength: inputSchemaArray.length,
+                      inputSchemaArray,
+                      agentInputSchema: agent.input_schema,
+                      willShowForm: hasStarted && !isWaitingForConfig && inputSchemaArray.length > 0
+                    });
+                    return null;
+                  })()}
+                  {hasStarted && !isWaitingForConfig && inputSchemaArray.length > 0 && (
+                    <div className="flex items-start gap-3">
+                      <div className="w-8 h-8 rounded-full bg-[var(--v2-primary)]/10 flex items-center justify-center flex-shrink-0">
+                        <Bot className="w-4 h-4 text-[var(--v2-primary)]" />
+                      </div>
+                      <div className="flex-1">
+                        <Card className="border-[var(--v2-border)] bg-[var(--v2-surface)] !p-6">
+                          <div className="space-y-4">
+                            <div className="flex items-center gap-2 pb-2 border-b border-[var(--v2-border)]">
+                              <Settings className="w-4 h-4 text-[var(--v2-primary)]" />
+                              <h3 className="text-sm font-semibold text-[var(--v2-text-primary)]">
+                                Workflow Inputs
+                              </h3>
+                            </div>
+
+                            {(() => {
+                              console.log('[CalibrationSetup] Rendering AgentInputFields:', {
+                                schema: inputSchemaArray,
+                                values: inputValues
+                              })
+                              return null
+                            })()}
+                            <AgentInputFields
+                              schema={inputSchemaArray}
+                              values={inputValues}
+                              onChange={(name, value) => {
+                                setInputValues(prev => ({
+                                  ...prev,
+                                  [name]: value
+                                }))
+                              }}
+                              getDynamicOptions={getDynamicOptions}
+                            />
+                          </div>
+                        </Card>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Config messages when waiting for config */}
+                  {isWaitingForConfig && messages.map((msg) => (
+                    <div key={msg.id}>
+                      {msg.type === 'bot' && !msg.isFixing && msg.content && (
+                        <div className="flex items-start gap-3">
+                          <div className="w-8 h-8 rounded-full bg-[var(--v2-primary)]/10 flex items-center justify-center flex-shrink-0">
+                            <Bot className="w-4 h-4 text-[var(--v2-primary)]" />
+                          </div>
+                          <div className="px-4 py-3 rounded-2xl bg-[var(--v2-surface)] border border-[var(--v2-border)] max-w-[85%] shadow-sm">
+                            <p className="text-sm text-[var(--v2-text-primary)]">{msg.content}</p>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Config Form */}
+                      {msg.showConfigForm && msg.configFields && Array.isArray(msg.configFields) && (() => {
+                        // Transform config fields to AgentInputFields schema format
+                        const configSchema = msg.configFields.map((field: any) => {
+                          const baseSchema: any = {
+                            name: field.key,
+                            label: field.key.replace(/_/g, ' ').replace(/\b\w/g, (l: string) => l.toUpperCase()),
+                            type: field.type || 'string',
+                            description: field.description,
+                            required: true,
+                            default_value: field.default,
+                            placeholder: `Enter ${field.key.replace(/_/g, ' ')}`
+                          }
+
+                          // If field has plugin/action/parameter metadata, add it for dropdown support
+                          if (field.plugin && field.action && field.parameter) {
+                            baseSchema.plugin = field.plugin
+                            baseSchema.action = field.action
+                            baseSchema.parameter = field.parameter
+                            // Store the parameter name for dependent values API calls
+                            baseSchema.parameterName = field.parameter
+
+                            console.log('[CalibrationSetup] Config field with metadata:', {
+                              configKey: field.key,
+                              plugin: field.plugin,
+                              action: field.action,
+                              parameter: field.parameter
+                            })
+                          }
+
+                          return baseSchema
+                        })
+
+                        console.log('[CalibrationSetup] Config schema for form:', configSchema)
+
+                        // Create a custom getDynamicOptions that includes depends_on from schema metadata
+                        const getConfigDynamicOptions = (fieldName: string): {
+                          plugin: string
+                          action: string
+                          parameter: string
+                          depends_on?: string[]
+                          paramToFieldMap?: Record<string, string>
+                        } | null => {
+                          const field = configSchema.find((f: any) => f.name === fieldName)
+                          if (field && field.plugin && field.action && field.parameter) {
+                            // Get depends_on from schema metadata if available
+                            let depends_on: string[] | undefined
+                            let paramToFieldMap: Record<string, string> | undefined
+
+                            console.log('[CalibrationSetup] CONFIG FORM - Looking up metadata for field:', fieldName, 'parameter:', field.parameter)
+                            console.log('[CalibrationSetup] CONFIG FORM - schemaMetadata:', schemaMetadata)
+
+                            if (schemaMetadata && Object.keys(schemaMetadata).length > 0) {
+                              console.log('[CalibrationSetup] CONFIG FORM - schemaMetadata keys:', Object.keys(schemaMetadata))
+
+                              // Try looking up by field name first, then parameter name
+                              let paramMetadata = schemaMetadata[fieldName] || schemaMetadata[field.parameter]
+                              console.log('[CalibrationSetup] CONFIG FORM - paramMetadata for', fieldName, '/', field.parameter, ':', paramMetadata)
+
+                              if (paramMetadata && paramMetadata.length > 0) {
+                                const rawDependsOn = paramMetadata[0]?.depends_on
+                                console.log('[CalibrationSetup] rawDependsOn:', rawDependsOn)
+
+                                // Keep depends_on as parameter names (for API calls)
+                                // But create a mapping from parameter names to field names (for value lookup)
+                                if (rawDependsOn && rawDependsOn.length > 0) {
+                                  depends_on = rawDependsOn
+                                  paramToFieldMap = {}
+
+                                  rawDependsOn.forEach((paramName: string) => {
+                                    // Find the config field that uses this parameter
+                                    const dependentField = configSchema.find((f: any) => f.parameter === paramName)
+                                    if (dependentField) {
+                                      paramToFieldMap![paramName] = dependentField.name
+                                      console.log('[CalibrationSetup] Mapping param', paramName, 'to field:', dependentField.name)
+                                    }
+                                  })
+                                  console.log('[CalibrationSetup] paramToFieldMap:', paramToFieldMap)
+                                }
+                              }
+                            }
+
+                            console.log('[CalibrationSetup] getConfigDynamicOptions for', fieldName, 'returning:', {
+                              plugin: field.plugin,
+                              action: field.action,
+                              parameter: field.parameter,
+                              depends_on,
+                              paramToFieldMap
+                            })
+                            return {
+                              plugin: field.plugin,
+                              action: field.action,
+                              parameter: field.parameter,
+                              depends_on,
+                              paramToFieldMap
+                            }
+                          }
+                          console.log('[CalibrationSetup] getConfigDynamicOptions for', fieldName, 'no metadata found')
+                          return null
+                        }
+
+                        return (
+                          <div className="flex items-start gap-3 mt-4">
+                            <div className="w-8 h-8 rounded-full bg-[var(--v2-primary)]/10 flex items-center justify-center flex-shrink-0">
+                              <Bot className="w-4 h-4 text-[var(--v2-primary)]" />
+                            </div>
+                            <div className="flex-1">
+                              <Card className="border-[var(--v2-border)] bg-[var(--v2-surface)] !p-6">
+                                <div className="space-y-4">
+                                  <div className="flex items-center gap-2 pb-2 border-b border-[var(--v2-border)]">
+                                    <Settings className="w-4 h-4 text-[var(--v2-primary)]" />
+                                    <h3 className="text-sm font-semibold text-[var(--v2-text-primary)]">
+                                      Workflow Configuration
+                                    </h3>
+                                  </div>
+
+                                  <AgentInputFields
+                                    schema={configSchema}
+                                    values={configValues}
+                                    onChange={(name, value) => {
+                                      setConfigValues(prev => ({
+                                        ...prev,
+                                        [name]: value
+                                      }))
+                                    }}
+                                    getDynamicOptions={getConfigDynamicOptions}
+                                  />
+
+                                  <button
+                                    onClick={saveConfigAndContinue}
+                                    disabled={(() => {
+                                      return msg.configFields.some((field: any) => {
+                                        const value = configValues[field.key]
+                                        return !value || value === ''
+                                      })
+                                    })()}
+                                    className="w-full flex items-center justify-center gap-2 px-6 py-3 bg-[var(--v2-primary)] text-white hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed transition-opacity font-medium rounded-lg"
+                                  >
+                                    <CheckCircle2 className="w-4 h-4" />
+                                    Save & Continue
+                                  </button>
+                                </div>
+                              </Card>
+                            </div>
+                          </div>
+                        )
+                      })()}
+                    </div>
+                  ))}
                 </div>
               ) : (
                 // Chat messages during/after test
                 <div className="space-y-4">
                   {messages.map((msg, index) => (
                     <div key={msg.id}>
+                      {/* Welcome message with full formatting */}
+                      {msg.type === 'welcome' && (
+                        <div className="space-y-6 mb-6">
+                          <div className="flex items-start gap-3">
+                            <div className="w-8 h-8 rounded-full bg-[var(--v2-primary)]/10 flex items-center justify-center flex-shrink-0">
+                              <Bot className="w-4 h-4 text-[var(--v2-primary)]" />
+                            </div>
+                            <div className="px-4 py-3 rounded-2xl bg-[var(--v2-surface)] border border-[var(--v2-border)] shadow-sm">
+                              <p className="text-sm text-[var(--v2-text-primary)] mb-3">
+                                Hi! I'll help you test your workflow. Here's what I'll do:
+                              </p>
+                              <div className="space-y-2 mb-4">
+                                <div className="flex items-center gap-2 text-xs text-[var(--v2-text-secondary)]">
+                                  <Settings className="w-4 h-4 text-[var(--v2-primary)]" />
+                                  <span>Check if your workflow needs any configuration</span>
+                                </div>
+                                <div className="flex items-center gap-2 text-xs text-[var(--v2-text-secondary)]">
+                                  <CheckCircle2 className="w-4 h-4 text-[var(--v2-primary)]" />
+                                  <span>Test all integrations and connections</span>
+                                </div>
+                                <div className="flex items-center gap-2 text-xs text-[var(--v2-text-secondary)]">
+                                  <Zap className="w-4 h-4 text-[var(--v2-success)]" />
+                                  <span>Find and help fix any issues</span>
+                                </div>
+                              </div>
+                              <div className="flex items-start gap-2 p-3 bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 rounded-lg">
+                                <AlertCircle className="w-4 h-4 text-blue-600 dark:text-blue-400 flex-shrink-0 mt-0.5" />
+                                <p className="text-xs text-blue-900 dark:text-blue-100 leading-relaxed">
+                                  Make sure you have test data ready (e.g., emails in your inbox, data in your spreadsheets) before starting.
+                                </p>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
                       {msg.type === 'bot' && !msg.isFixing && msg.content && (
                         <div className="flex items-start gap-3">
                           <div className="w-8 h-8 rounded-full bg-[var(--v2-primary)]/10 flex items-center justify-center flex-shrink-0">
@@ -976,14 +1677,16 @@ export function CalibrationSetup({
                       {/* Input Form - Show inline after fixes applied */}
                       {/* Only show if fixes have been applied AND agent has input_schema */}
                       {msg.showInputForm && (() => {
+                        const shouldShow = fixesHaveBeenApplied && agent.input_schema && inputSchemaArray.length > 0
                         console.log('[CalibrationSetup] Form visibility check:', {
                           showInputForm: msg.showInputForm,
                           fixesHaveBeenApplied,
                           hasInputSchema: !!agent.input_schema,
-                          schemaLength: agent.input_schema?.length
+                          schemaLength: inputSchemaArray.length,
+                          WILL_SHOW: shouldShow
                         })
                         return true
-                      })() && fixesHaveBeenApplied && agent.input_schema && agent.input_schema.length > 0 && (
+                      })() && fixesHaveBeenApplied && agent.input_schema && inputSchemaArray.length > 0 && (
                         <div className="flex items-start gap-3 mt-4">
                           <div className="w-8 h-8 rounded-full bg-[var(--v2-primary)]/10 flex items-center justify-center flex-shrink-0">
                             <Bot className="w-4 h-4 text-[var(--v2-primary)]" />
@@ -993,7 +1696,7 @@ export function CalibrationSetup({
                               <div className="space-y-4">
                                 {/* Input fields */}
                                 <AgentInputFields
-                                  schema={agent.input_schema || []}
+                                  schema={inputSchemaArray}
                                   values={inputValues}
                                   onChange={(name, value) => {
                                     setInputValues(prev => ({
@@ -1012,7 +1715,7 @@ export function CalibrationSetup({
                                   }}
                                   disabled={(() => {
                                     // Check if all required parameters have values
-                                    const requiredParams = (agent.input_schema || []).filter((p: any) => p.required)
+                                    const requiredParams = inputSchemaArray.filter((p: any) => p.required)
                                     return requiredParams.some((p: any) => {
                                       const value = inputValues[p.name]
                                       return value === undefined || value === '' || value === null
@@ -1028,6 +1731,110 @@ export function CalibrationSetup({
                           </div>
                         </div>
                       )}
+
+                      {/* Config Form - Show when configuration is needed */}
+                      {msg.showConfigForm && msg.configFields && Array.isArray(msg.configFields) && (() => {
+                        // Transform config fields to AgentInputFields schema format
+                        const configSchema = msg.configFields.map((field: any) => {
+                          const baseSchema: any = {
+                            name: field.key,
+                            label: field.key.replace(/_/g, ' ').replace(/\b\w/g, (l: string) => l.toUpperCase()),
+                            type: field.type || 'string',
+                            description: field.description,
+                            required: true,
+                            default_value: field.default,
+                            placeholder: `Enter ${field.key.replace(/_/g, ' ')}`
+                          }
+
+                          // If field has plugin/action/parameter metadata, add it for dropdown support
+                          // The parameter field contains the actual parameter name used in the workflow step config
+                          if (field.plugin && field.action && field.parameter) {
+                            baseSchema.plugin = field.plugin
+                            baseSchema.action = field.action
+                            baseSchema.parameter = field.parameter
+
+                            console.log('[CalibrationSetup] Config field with metadata:', {
+                              configKey: field.key,
+                              plugin: field.plugin,
+                              action: field.action,
+                              parameter: field.parameter
+                            })
+                          }
+
+                          return baseSchema
+                        })
+
+                        console.log('[CalibrationSetup] Config schema for form:', configSchema)
+
+                        // Create a custom getDynamicOptions that looks up by plugin/action/parameter
+                        // instead of by field name, since config fields use different names than parameters
+                        const getConfigDynamicOptions = (fieldName: string) => {
+                          const field = configSchema.find((f: any) => f.name === fieldName)
+                          if (field && field.plugin && field.action && field.parameter) {
+                            console.log('[CalibrationSetup] getConfigDynamicOptions for', fieldName, 'returning:', {
+                              plugin: field.plugin,
+                              action: field.action,
+                              parameter: field.parameter
+                            })
+                            return {
+                              plugin: field.plugin,
+                              action: field.action,
+                              parameter: field.parameter
+                            }
+                          }
+                          console.log('[CalibrationSetup] getConfigDynamicOptions for', fieldName, 'no metadata found')
+                          return null
+                        }
+
+                        return (
+                          <div className="flex items-start gap-3 mt-4">
+                            <div className="w-8 h-8 rounded-full bg-[var(--v2-primary)]/10 flex items-center justify-center flex-shrink-0">
+                              <Bot className="w-4 h-4 text-[var(--v2-primary)]" />
+                            </div>
+                            <div className="flex-1">
+                              <Card className="border-[var(--v2-border)] bg-[var(--v2-surface)] !p-6">
+                                <div className="space-y-4">
+                                  <div className="flex items-center gap-2 pb-2 border-b border-[var(--v2-border)]">
+                                    <Settings className="w-4 h-4 text-[var(--v2-primary)]" />
+                                    <h3 className="text-sm font-semibold text-[var(--v2-text-primary)]">
+                                      Workflow Configuration
+                                    </h3>
+                                  </div>
+
+                                  {/* Use AgentInputFields for config form */}
+                                  <AgentInputFields
+                                    schema={configSchema}
+                                    values={configValues}
+                                    onChange={(name, value) => {
+                                      setConfigValues(prev => ({
+                                        ...prev,
+                                        [name]: value
+                                      }))
+                                    }}
+                                    getDynamicOptions={getConfigDynamicOptions}
+                                  />
+
+                                  {/* Save & Continue button */}
+                                  <button
+                                    onClick={saveConfigAndContinue}
+                                    disabled={(() => {
+                                      // Check if all config fields have values
+                                      return msg.configFields.some((field: any) => {
+                                        const value = configValues[field.key]
+                                        return !value || value === ''
+                                      })
+                                    })()}
+                                    className="w-full flex items-center justify-center gap-2 px-6 py-3 bg-[var(--v2-primary)] text-white hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed transition-opacity font-medium rounded-lg"
+                                  >
+                                    <CheckCircle2 className="w-4 h-4" />
+                                    Save & Continue
+                                  </button>
+                                </div>
+                              </Card>
+                            </div>
+                          </div>
+                        )
+                      })()}
 
                       {/* Apply Fixes Button - Show when all fixing is done */}
                       {(msg.id === 'all-fixed' || msg.id === 'fixes-applied') && (
@@ -1133,8 +1940,8 @@ export function CalibrationSetup({
               )}
             </div>
 
-            {/* Action footer */}
-            {!hasStarted && (
+            {/* Action footer - hide when started or waiting for config */}
+            {!hasStarted && !isWaitingForConfig && (
               <div className="p-6 border-t border-[var(--v2-border)] flex-shrink-0">
                 <button
                   onClick={handleRun}
@@ -1159,14 +1966,14 @@ export function CalibrationSetup({
             </div>
 
             <div className="flex-1 p-6 overflow-y-auto" style={{ scrollbarGutter: 'stable' }}>
-              {!hasStarted ? (
-                // Before test
+              {!hasStarted || isWaitingForConfig ? (
+                // Before test or waiting for config
                 <div className="flex flex-col items-center justify-center h-full text-center">
                   <div className="w-16 h-16 rounded-full bg-[var(--v2-surface-hover)] flex items-center justify-center mb-4">
                     <AlertCircle className="w-8 h-8 text-[var(--v2-text-tertiary)]" />
                   </div>
                   <p className="text-sm text-[var(--v2-text-secondary)]">
-                    Start the test to see issues
+                    {isWaitingForConfig ? 'Complete configuration to start test' : 'Start the test to see issues'}
                   </p>
                 </div>
               ) : !hasIssues && !isRunning ? (
@@ -1194,6 +2001,37 @@ export function CalibrationSetup({
 
                   return (
                     <div className="flex flex-col h-full px-6 py-6 overflow-y-auto">
+                      {/* Auto-Calibration Summary */}
+                      {session?.autoCalibration && session.autoCalibration.autoFixesApplied > 0 && (
+                        <div className="mb-4 p-4 bg-green-50 dark:bg-green-950/20 border border-green-200 dark:border-green-800 rounded-lg">
+                          <div className="flex items-start gap-3">
+                            <CheckCircle2 className="w-5 h-5 text-green-600 dark:text-green-400 flex-shrink-0 mt-0.5" />
+                            <div className="flex-1">
+                              <h3 className="text-sm font-semibold text-green-900 dark:text-green-100 mb-1">
+                                Auto-Calibration Complete
+                              </h3>
+                              <p className="text-sm text-green-800 dark:text-green-200 mb-3">
+                                {session.autoCalibration.message}
+                              </p>
+                              <div className="grid grid-cols-2 gap-3">
+                                <div className="flex flex-col">
+                                  <span className="text-xs text-green-700 dark:text-green-300">Issues Fixed</span>
+                                  <span className="text-lg font-bold text-green-900 dark:text-green-100">
+                                    {session.autoCalibration.autoFixesApplied}
+                                  </span>
+                                </div>
+                                <div className="flex flex-col">
+                                  <span className="text-xs text-green-700 dark:text-green-300">Rounds</span>
+                                  <span className="text-lg font-bold text-green-900 dark:text-green-100">
+                                    {session.autoCalibration.iterations}
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
                       {/* Test Results */}
                       <div className="mb-4 p-4 bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg">
                         <div className="flex items-center gap-2 mb-3">
@@ -1204,7 +2042,7 @@ export function CalibrationSetup({
                         </div>
 
                         {/* Execution Summary */}
-                        {session?.execution_summary && (session.execution_summary.data_sources_accessed?.length > 0 || session.execution_summary.data_written?.length > 0) && (
+                        {session?.execution_summary && ((session.execution_summary.data_sources_accessed?.length ?? 0) > 0 || (session.execution_summary.data_written?.length ?? 0) > 0) && (
                           <div className="space-y-1.5">
                             {session.execution_summary.data_sources_accessed?.map((source: any, idx: number) => (
                               <div key={idx} className="flex items-baseline gap-2 text-sm">
@@ -1294,11 +2132,14 @@ export function CalibrationSetup({
                   )
                 })()
               ) : isRunning ? (
-                // During test
-                <div className="flex flex-col items-center justify-center h-full text-center">
+                // During test - show auto-calibration progress
+                <div className="flex flex-col items-center justify-center h-full text-center px-6">
                   <div className="w-12 h-12 border-4 border-[var(--v2-primary)] border-t-transparent rounded-full animate-spin mb-4"></div>
+                  <p className="text-base font-medium text-[var(--v2-text-primary)] mb-2">
+                    Analyzing workflow...
+                  </p>
                   <p className="text-sm text-[var(--v2-text-secondary)]">
-                    Looking for issues...
+                    Detecting and fixing issues automatically
                   </p>
                 </div>
               ) : (
