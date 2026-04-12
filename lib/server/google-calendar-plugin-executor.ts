@@ -82,7 +82,7 @@ export class GoogleCalendarPluginExecutor extends GoogleBasePluginExecutor {
 
     if (!response.ok) {
       const errorData = await response.text();
-      this.logger.error({ err: error }, 'DEBUG: Calendar list failed:', errorData);
+      this.logger.error({ err: errorData, status: response.status }, 'Calendar list failed');
       throw new Error(`Calendar API error: ${response.status} - ${errorData}`);
     }
 
@@ -214,7 +214,7 @@ export class GoogleCalendarPluginExecutor extends GoogleBasePluginExecutor {
 
     if (!response.ok) {
       const errorData = await response.text();
-      this.logger.error({ err: error }, 'DEBUG: Event creation failed:', errorData);
+      this.logger.error({ err: errorData, status: response.status }, 'Event creation failed');
       throw new Error(`Calendar API error: ${response.status} - ${errorData}`);
     }
 
@@ -271,7 +271,7 @@ export class GoogleCalendarPluginExecutor extends GoogleBasePluginExecutor {
 
     if (!getResponse.ok) {
       const errorData = await getResponse.text();
-      this.logger.error({ err: error }, 'DEBUG: Get event failed:', errorData);
+      this.logger.error({ err: errorData, status: getResponse.status }, 'Get event failed');
       throw new Error(`Calendar API error: ${getResponse.status} - ${errorData}`);
     }
 
@@ -321,7 +321,7 @@ export class GoogleCalendarPluginExecutor extends GoogleBasePluginExecutor {
 
     if (!response.ok) {
       const errorData = await response.text();
-      this.logger.error({ err: error }, 'DEBUG: Event update failed:', errorData);
+      this.logger.error({ err: errorData, status: response.status }, 'Event update failed');
       throw new Error(`Calendar API error: ${response.status} - ${errorData}`);
     }
 
@@ -371,7 +371,7 @@ export class GoogleCalendarPluginExecutor extends GoogleBasePluginExecutor {
 
     if (!response.ok) {
       const errorData = await response.text();
-      this.logger.error({ err: error }, 'DEBUG: Event deletion failed:', errorData);
+      this.logger.error({ err: errorData, status: response.status }, 'Event deletion failed');
       throw new Error(`Calendar API error: ${response.status} - ${errorData}`);
     }
 
@@ -407,7 +407,7 @@ export class GoogleCalendarPluginExecutor extends GoogleBasePluginExecutor {
 
     if (!response.ok) {
       const errorData = await response.text();
-      this.logger.error({ err: error }, 'DEBUG: Get event details failed:', errorData);
+      this.logger.error({ err: errorData, status: response.status }, 'Get event details failed');
       throw new Error(`Calendar API error: ${response.status} - ${errorData}`);
     }
 

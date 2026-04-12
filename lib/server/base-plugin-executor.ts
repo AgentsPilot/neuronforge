@@ -280,7 +280,27 @@ export abstract class BasePluginExecutor {
       throw new Error(`${operationName} failed: ${response.status} - ${errorData}`);
     }
 
-    return await response.json();
+    // 204 No Content — nothing to parse
+    if (response.status === 204) {
+      return {};
+    }
+
+    // Read body as text first, then parse as JSON.
+    // This avoids double body stream consumption (response.json() then response.text()
+    // would fail in production since the body stream can only be read once).
+    const bodyText = await response.text();
+    try {
+      return JSON.parse(bodyText);
+    } catch (parseError) {
+      this.logger.error({
+        operationName,
+        status: response.status,
+        bodyPreview: bodyText.substring(0, 200),
+      }, 'Failed to parse response as JSON');
+      throw new Error(
+        `${operationName} failed: expected JSON response but received unparseable body (status ${response.status})`
+      );
+    }
   }
 
   // Common utility: Validate required parameters
