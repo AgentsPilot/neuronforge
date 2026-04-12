@@ -69,7 +69,7 @@ export class GoogleDocsPluginExecutor extends GoogleBasePluginExecutor {
 
     if (!response.ok) {
       const errorData = await response.text();
-      this.logger.error({ err: error }, 'DEBUG: Docs read failed:', errorData);
+      this.logger.error({ err: errorData, status: response.status }, 'Docs read failed');
       throw new Error(`Docs API error: ${response.status} - ${errorData}`);
     }
 
@@ -178,7 +178,7 @@ export class GoogleDocsPluginExecutor extends GoogleBasePluginExecutor {
 
     if (!response.ok) {
       const errorData = await response.text();
-      this.logger.error({ err: error }, 'DEBUG: Docs insert failed:', errorData);
+      this.logger.error({ err: errorData, status: response.status }, 'Docs insert failed');
       throw new Error(`Docs API error: ${response.status} - ${errorData}`);
     }
 
@@ -214,7 +214,7 @@ export class GoogleDocsPluginExecutor extends GoogleBasePluginExecutor {
 
     if (!docResponse.ok) {
       const errorData = await docResponse.text();
-      this.logger.error({ err: error }, 'DEBUG: Docs get failed:', errorData);
+      this.logger.error({ err: errorData, status: docResponse.status }, 'Docs get failed');
       throw new Error(`Docs API error: ${docResponse.status} - ${errorData}`);
     }
 
@@ -250,7 +250,7 @@ export class GoogleDocsPluginExecutor extends GoogleBasePluginExecutor {
 
     if (!response.ok) {
       const errorData = await response.text();
-      this.logger.error({ err: error }, 'DEBUG: Docs append failed:', errorData);
+      this.logger.error({ err: errorData, status: response.status }, 'Docs append failed');
       throw new Error(`Docs API error: ${response.status} - ${errorData}`);
     }
 
@@ -293,7 +293,7 @@ export class GoogleDocsPluginExecutor extends GoogleBasePluginExecutor {
 
     if (!response.ok) {
       const errorData = await response.text();
-      this.logger.error({ err: error }, 'DEBUG: Document creation failed:', errorData);
+      this.logger.error({ err: errorData, status: response.status }, 'Document creation failed');
       throw new Error(`Docs API error: ${response.status} - ${errorData}`);
     }
 
@@ -344,7 +344,7 @@ export class GoogleDocsPluginExecutor extends GoogleBasePluginExecutor {
 
     if (!response.ok) {
       const errorData = await response.text();
-      this.logger.error({ err: error }, 'DEBUG: Get document info failed:', errorData);
+      this.logger.error({ err: errorData, status: response.status }, 'Get document info failed');
       throw new Error(`Docs API error: ${response.status} - ${errorData}`);
     }
 

@@ -76,6 +76,17 @@ export function mockFetchSequence(
 }
 
 /**
+ * Mock fetch to reject with the given error (simulates network failures).
+ * Use this for DNS failures, timeouts, connection resets, etc.
+ */
+export function mockFetchThrow(error: Error): void {
+  installMock((url, opts) => {
+    fetchCalls.push({ url: url as string, options: opts as RequestInit });
+    return Promise.reject(error);
+  });
+}
+
+/**
  * Get the most recent fetch invocation.
  */
 export function getLastFetchCall(): { url: string; options?: RequestInit } | undefined {

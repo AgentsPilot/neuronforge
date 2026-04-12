@@ -887,7 +887,97 @@ Log: `✅ Generated: docs/plugins/{pluginName}-plugin.md`
 
 ---
 
-### **STEP 14: Summary & Next Steps**
+### **STEP 14: Generate Unit Tests**
+
+Create a unit test file at `tests/plugins/unit-tests/{pluginName}.test.ts`.
+
+**Pattern to follow**: Use existing test files (e.g., `tests/plugins/unit-tests/slack.test.ts`) as a template.
+
+**Requirements:**
+1. Import the executor and test helpers from `tests/plugins/common/`
+2. Use `createTestExecutor`, `mockFetchSuccess`, `mockFetchError`, `mockFetchSequence`, `expectSuccessResult`, `expectErrorResult`, `expectFetchCalledWith`, `expectAllFetchCallsAuthorized`
+3. Wrap happy-path tests in `describe('[smoke]', ...)` and error/edge-case tests in `describe('[full]', ...)`
+4. **SA-1 Rule**: The literal strings `[smoke]` and `[full]` must appear ONLY in `describe()` block names, NEVER in `it()` descriptions
+5. Cover every action with minimum 3 tests: happy-path (smoke), error-path (full), edge-case (full)
+6. If the plugin uses an external SDK (not raw `fetch`), mock the SDK module with `jest.mock()`
+7. If the plugin needs non-standard connection fields (e.g., `instance_url`), add defaults to `PLUGIN_DEFAULTS` in `tests/plugins/common/mock-connection.ts`
+8. Ensure the plugin JSON definition is listed in `corePluginFiles` in `lib/server/plugin-manager-v2.ts`
+
+**Verify tests pass:**
+```bash
+npx jest tests/plugins/unit-tests/{pluginName}.test.ts --forceExit
+```
+
+Log: `Generated: tests/plugins/unit-tests/{pluginName}.test.ts ({testCount} tests)`
+
+---
+
+### **STEP 14b: Generate Integration Test Scaffold**
+
+Create a credential-gated integration test placeholder at `tests/plugins/integration-tests/{pluginName}.integration.test.ts`.
+
+**Pattern to follow**: Use `tests/plugins/integration-tests/google-mail.integration.test.ts` as a template.
+
+**Requirements:**
+1. Import `describeIfCredentials`, `getTestConnection`, `getCredentials`, `generateTestId` from `./integration-config`
+2. Use `describeIfCredentials(pluginKey)` so the test skips when credentials are not set
+3. Include at least one `[smoke]` test for the most common action (create + verify + delete if applicable)
+4. Include cleanup in `afterAll` to remove any test artifacts created during tests
+5. All test data must be prefixed with `agentpilot-test-` for easy identification
+
+**Add credential mapping** to `tests/plugins/integration-tests/integration-config.ts`:
+```typescript
+'{pluginName}': {
+  tokenEnv: '{PLUGIN_NAME}_TEST_TOKEN',
+  extras: {
+    // Add any plugin-specific config env vars here
+  },
+},
+```
+
+**Template:**
+```typescript
+import { {ExecutorClass} } from '@/lib/server/{pluginName}-plugin-executor';
+import { PluginManagerV2 } from '@/lib/server/plugin-manager-v2';
+import { createTestPluginManager } from '../common/mock-plugin-manager';
+import {
+  describeIfCredentials,
+  getTestConnection,
+  generateTestId,
+} from './integration-config';
+
+const PLUGIN_KEY = '{pluginName}';
+const USER_ID = 'integration-test-user';
+
+const conditionalDescribe = describeIfCredentials(PLUGIN_KEY);
+
+conditionalDescribe('{ExecutorClass} [integration]', () => {
+  let executor: {ExecutorClass};
+  let pluginManager: PluginManagerV2;
+
+  beforeAll(async () => {
+    pluginManager = await createTestPluginManager();
+    const connection = getTestConnection(PLUGIN_KEY);
+    const userConnections = {
+      getConnection: jest.fn().mockResolvedValue(connection),
+      // ... (see integration-config.ts for full mock shape)
+    } as any;
+    executor = new {ExecutorClass}(userConnections, pluginManager);
+  });
+
+  describe('[smoke]', () => {
+    it('should perform the primary action successfully', async () => {
+      // TODO: Implement with real API call + cleanup
+    });
+  });
+});
+```
+
+Log: `Generated: tests/plugins/integration-tests/{pluginName}.integration.test.ts (scaffold)`
+
+---
+
+### **STEP 15: Summary & Next Steps**
 
 Present final summary:
 
@@ -901,6 +991,8 @@ Generated Files:
 ✅ app/test-plugins-v2/{pluginName}-test.ts
 ✅ .env.example (updated)
 ✅ docs/plugins/{pluginName}-plugin.md
+✅ tests/plugins/unit-tests/{pluginName}.test.ts
+✅ tests/plugins/integration-tests/{pluginName}.integration.test.ts (scaffold)
 
 Plugin: {pluginName}
 Actions: {selectedActions.length}

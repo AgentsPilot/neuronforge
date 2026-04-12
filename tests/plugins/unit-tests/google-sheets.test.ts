@@ -5,6 +5,7 @@
 import { GoogleSheetsPluginExecutor } from '@/lib/server/google-sheets-plugin-executor';
 import { createTestExecutor, expectSuccessResult, expectErrorResult, expectFetchCalledWith } from '../common/test-helpers';
 import { mockFetchSuccess, mockFetchError, mockFetchSequence, restoreFetch, getAllFetchCalls } from '../common/mock-fetch';
+import { runStandardErrorScenarios } from '../common/error-scenarios';
 
 const PLUGIN_KEY = 'google-sheets';
 const USER_ID = 'test-user-id';
@@ -21,243 +22,314 @@ describe('GoogleSheetsPluginExecutor', () => {
     restoreFetch();
   });
 
-  // ---- read_range ----
-  describe('read_range', () => {
-    it('should fetch range values with FORMATTED_VALUE render option', async () => {
-      mockFetchSuccess({
-        range: 'Sheet1!A1:B2',
-        majorDimension: 'ROWS',
-        values: [['Name', 'Age'], ['Alice', '30']],
-      });
+  describe('[smoke]', () => {
+    // ---- read_range ----
+    describe('read_range', () => {
+      it('should fetch range values with FORMATTED_VALUE render option', async () => {
+        mockFetchSuccess({
+          range: 'Sheet1!A1:B2',
+          majorDimension: 'ROWS',
+          values: [['Name', 'Age'], ['Alice', '30']],
+        });
 
-      const result = await executor.executeAction(USER_ID, 'read_range', {
-        spreadsheet_id: 'spreadsheet-123',
-        range: 'Sheet1!A1:B2',
-      });
+        const result = await executor.executeAction(USER_ID, 'read_range', {
+          spreadsheet_id: 'spreadsheet-123',
+          range: 'Sheet1!A1:B2',
+        });
 
-      expectSuccessResult(result);
-      expect(result.data.values).toHaveLength(2);
-      expect(result.data.row_count).toBe(2);
-      expect(result.data.column_count).toBe(2);
-      expectFetchCalledWith('sheets.googleapis.com/v4/spreadsheets/spreadsheet-123/values/');
+        expectSuccessResult(result);
+        expect(result.data.values).toHaveLength(2);
+        expect(result.data.row_count).toBe(2);
+        expect(result.data.column_count).toBe(2);
+        expectFetchCalledWith('sheets.googleapis.com/v4/spreadsheets/spreadsheet-123/values/');
+      });
     });
 
-    it('should set FORMULA render option when include_formula_values is true', async () => {
-      mockFetchSuccess({ range: 'Sheet1!A1', values: [['=SUM(A2:A10)']] });
+    // ---- write_range ----
+    describe('write_range', () => {
+      it('should PUT values to Sheets API', async () => {
+        mockFetchSuccess({
+          updatedRange: 'Sheet1!A1:B1',
+          updatedRows: 1,
+          updatedColumns: 2,
+          updatedCells: 2,
+        });
 
-      await executor.executeAction(USER_ID, 'read_range', {
-        spreadsheet_id: 'ss-1',
-        range: 'Sheet1!A1',
-        include_formula_values: true,
+        const result = await executor.executeAction(USER_ID, 'write_range', {
+          spreadsheet_id: 'ss-1',
+          range: 'Sheet1!A1:B1',
+          values: [['Hello', 'World']],
+        });
+
+        expectSuccessResult(result);
+        expect(result.data.updated_rows).toBe(1);
+        expectFetchCalledWith('sheets.googleapis.com/v4/spreadsheets/ss-1/values/', 'PUT');
       });
-
-      const lastCall = getAllFetchCalls().pop();
-      expect(lastCall?.url).toContain('valueRenderOption=FORMULA');
     });
 
-    // SA review item #3: Google JSON error body
-    it('should parse Google JSON error body for invalid range', async () => {
-      mockFetchError(400, JSON.stringify({
-        error: { code: 400, message: 'Unable to parse range: BadRange', status: 'INVALID_ARGUMENT' },
-      }));
+    // ---- append_rows ----
+    describe('append_rows', () => {
+      it('should POST rows to the append endpoint', async () => {
+        mockFetchSuccess({
+          updates: { updatedRange: 'Sheet1!A3:B3', updatedRows: 1, updatedColumns: 2, updatedCells: 2 },
+          tableRange: 'Sheet1!A1:B2',
+        });
 
-      const result = await executor.executeAction(USER_ID, 'read_range', {
-        spreadsheet_id: 'ss-1',
-        range: 'BadRange',
+        const result = await executor.executeAction(USER_ID, 'append_rows', {
+          spreadsheet_id: 'ss-1',
+          range: 'Sheet1',
+          values: [['New', 'Row']],
+        });
+
+        expectSuccessResult(result);
+        expect(result.data.appended_rows).toBe(1);
+        expectFetchCalledWith(':append', 'POST');
       });
-
-      expectErrorResult(result);
-      expect(result.message).toContain('Unable to parse range');
     });
-  });
 
-  // ---- write_range ----
-  describe('write_range', () => {
-    it('should PUT values to Sheets API', async () => {
-      mockFetchSuccess({
-        updatedRange: 'Sheet1!A1:B1',
-        updatedRows: 1,
-        updatedColumns: 2,
-        updatedCells: 2,
+    // ---- create_spreadsheet ----
+    describe('create_spreadsheet', () => {
+      it('should create a new spreadsheet and return metadata', async () => {
+        mockFetchSuccess({
+          spreadsheetId: 'new-ss-id',
+          spreadsheetUrl: 'https://docs.google.com/spreadsheets/d/new-ss-id',
+          properties: { title: 'My Spreadsheet' },
+          sheets: [{ properties: { sheetId: 0, title: 'Sheet1', index: 0 } }],
+        });
+
+        const result = await executor.executeAction(USER_ID, 'create_spreadsheet', {
+          title: 'My Spreadsheet',
+        });
+
+        expectSuccessResult(result);
+        expect(result.data.spreadsheet_id).toBe('new-ss-id');
+        expect(result.data.title).toBe('My Spreadsheet');
+        expectFetchCalledWith('sheets.googleapis.com/v4/spreadsheets', 'POST');
       });
-
-      const result = await executor.executeAction(USER_ID, 'write_range', {
-        spreadsheet_id: 'ss-1',
-        range: 'Sheet1!A1:B1',
-        values: [['Hello', 'World']],
-      });
-
-      expectSuccessResult(result);
-      expect(result.data.updated_rows).toBe(1);
-      expectFetchCalledWith('sheets.googleapis.com/v4/spreadsheets/ss-1/values/', 'PUT');
     });
-  });
 
-  // ---- append_rows ----
-  describe('append_rows', () => {
-    it('should POST rows to the append endpoint', async () => {
-      mockFetchSuccess({
-        updates: { updatedRange: 'Sheet1!A3:B3', updatedRows: 1, updatedColumns: 2, updatedCells: 2 },
-        tableRange: 'Sheet1!A1:B2',
-      });
-
-      const result = await executor.executeAction(USER_ID, 'append_rows', {
-        spreadsheet_id: 'ss-1',
-        range: 'Sheet1',
-        values: [['New', 'Row']],
-      });
-
-      expectSuccessResult(result);
-      expect(result.data.appended_rows).toBe(1);
-      expectFetchCalledWith(':append', 'POST');
-    });
-  });
-
-  // ---- create_spreadsheet ----
-  describe('create_spreadsheet', () => {
-    it('should create a new spreadsheet and return metadata', async () => {
-      mockFetchSuccess({
-        spreadsheetId: 'new-ss-id',
-        spreadsheetUrl: 'https://docs.google.com/spreadsheets/d/new-ss-id',
-        properties: { title: 'My Spreadsheet' },
-        sheets: [{ properties: { sheetId: 0, title: 'Sheet1', index: 0 } }],
-      });
-
-      const result = await executor.executeAction(USER_ID, 'create_spreadsheet', {
-        title: 'My Spreadsheet',
-      });
-
-      expectSuccessResult(result);
-      expect(result.data.spreadsheet_id).toBe('new-ss-id');
-      expect(result.data.title).toBe('My Spreadsheet');
-      expectFetchCalledWith('sheets.googleapis.com/v4/spreadsheets', 'POST');
-    });
-  });
-
-  // ---- get_or_create_spreadsheet ----
-  describe('get_or_create_spreadsheet', () => {
-    it('should return existing spreadsheet when found via Drive search', async () => {
-      mockFetchSequence([
-        // Drive search returns existing file
-        { body: { files: [{ id: 'existing-ss', name: 'My Sheet', webViewLink: 'https://link' }] } },
-        // getSpreadsheetInfo call
-        {
-          body: {
-            spreadsheetId: 'existing-ss',
-            spreadsheetUrl: 'https://link',
-            properties: { title: 'My Sheet', locale: 'en', timeZone: 'UTC' },
-            sheets: [{ properties: { sheetId: 0, title: 'Sheet1', index: 0, sheetType: 'GRID' } }],
+    // ---- get_or_create_spreadsheet ----
+    describe('get_or_create_spreadsheet', () => {
+      it('should return existing spreadsheet when found via Drive search', async () => {
+        mockFetchSequence([
+          // Drive search returns existing file
+          { body: { files: [{ id: 'existing-ss', name: 'My Sheet', webViewLink: 'https://link' }] } },
+          // getSpreadsheetInfo call
+          {
+            body: {
+              spreadsheetId: 'existing-ss',
+              spreadsheetUrl: 'https://link',
+              properties: { title: 'My Sheet', locale: 'en', timeZone: 'UTC' },
+              sheets: [{ properties: { sheetId: 0, title: 'Sheet1', index: 0, sheetType: 'GRID' } }],
+            },
           },
-        },
-      ]);
+        ]);
 
-      const result = await executor.executeAction(USER_ID, 'get_or_create_spreadsheet', {
-        title: 'My Sheet',
+        const result = await executor.executeAction(USER_ID, 'get_or_create_spreadsheet', {
+          title: 'My Sheet',
+        });
+
+        expectSuccessResult(result);
+        expect(result.data.created).toBe(false);
+        expect(result.data.spreadsheet_id).toBe('existing-ss');
       });
-
-      expectSuccessResult(result);
-      expect(result.data.created).toBe(false);
-      expect(result.data.spreadsheet_id).toBe('existing-ss');
     });
 
-    it('should create new spreadsheet when not found', async () => {
-      mockFetchSequence([
-        // Drive search returns no files
-        { body: { files: [] } },
-        // createSpreadsheet POST
-        {
-          body: {
-            spreadsheetId: 'new-ss',
-            spreadsheetUrl: 'https://new-link',
-            properties: { title: 'New Sheet' },
-            sheets: [{ properties: { sheetId: 0, title: 'Sheet1', index: 0 } }],
-          },
-        },
-      ]);
+    // ---- get_spreadsheet_info ----
+    describe('get_spreadsheet_info', () => {
+      it('should return spreadsheet metadata', async () => {
+        mockFetchSuccess({
+          spreadsheetId: 'ss-info',
+          spreadsheetUrl: 'https://link',
+          properties: { title: 'Info Sheet', locale: 'en', timeZone: 'America/New_York' },
+          sheets: [
+            { properties: { sheetId: 0, title: 'Sheet1', index: 0, sheetType: 'GRID' } },
+            { properties: { sheetId: 1, title: 'Sheet2', index: 1, sheetType: 'GRID' } },
+          ],
+        });
 
-      const result = await executor.executeAction(USER_ID, 'get_or_create_spreadsheet', {
-        title: 'New Sheet',
+        const result = await executor.executeAction(USER_ID, 'get_spreadsheet_info', {
+          spreadsheet_id: 'ss-info',
+        });
+
+        expectSuccessResult(result);
+        expect(result.data.sheet_count).toBe(2);
+        expect(result.data.title).toBe('Info Sheet');
       });
+    });
 
-      expectSuccessResult(result);
-      expect(result.data.created).toBe(true);
+    // ---- get_or_create_sheet_tab ----
+    describe('get_or_create_sheet_tab', () => {
+      it('should return existing tab when found', async () => {
+        // getSpreadsheetInfo returns sheet with matching name
+        mockFetchSuccess({
+          spreadsheetId: 'ss-tab',
+          spreadsheetUrl: 'https://link',
+          properties: { title: 'Tab Sheet', locale: 'en', timeZone: 'UTC' },
+          sheets: [
+            { properties: { sheetId: 0, title: 'Sheet1', index: 0, sheetType: 'GRID' } },
+            { properties: { sheetId: 1, title: 'DataTab', index: 1, sheetType: 'GRID' } },
+          ],
+        });
+
+        const result = await executor.executeAction(USER_ID, 'get_or_create_sheet_tab', {
+          spreadsheet_id: 'ss-tab',
+          tab_name: 'DataTab',
+        });
+
+        expectSuccessResult(result);
+        expect(result.data.existed).toBe(true);
+        expect(result.data.sheet_id).toBe(1);
+      });
     });
   });
 
-  // ---- get_spreadsheet_info ----
-  describe('get_spreadsheet_info', () => {
-    it('should return spreadsheet metadata', async () => {
-      mockFetchSuccess({
-        spreadsheetId: 'ss-info',
-        spreadsheetUrl: 'https://link',
-        properties: { title: 'Info Sheet', locale: 'en', timeZone: 'America/New_York' },
-        sheets: [
-          { properties: { sheetId: 0, title: 'Sheet1', index: 0, sheetType: 'GRID' } },
-          { properties: { sheetId: 1, title: 'Sheet2', index: 1, sheetType: 'GRID' } },
-        ],
+  describe('[full]', () => {
+    // ---- read_range formula option ----
+    describe('read_range', () => {
+      it('should set FORMULA render option when include_formula_values is true', async () => {
+        mockFetchSuccess({ range: 'Sheet1!A1', values: [['=SUM(A2:A10)']] });
+
+        await executor.executeAction(USER_ID, 'read_range', {
+          spreadsheet_id: 'ss-1',
+          range: 'Sheet1!A1',
+          include_formula_values: true,
+        });
+
+        const lastCall = getAllFetchCalls().pop();
+        expect(lastCall?.url).toContain('valueRenderOption=FORMULA');
       });
 
-      const result = await executor.executeAction(USER_ID, 'get_spreadsheet_info', {
-        spreadsheet_id: 'ss-info',
+      // SA review item #3: Google JSON error body
+      it('should parse Google JSON error body for invalid range', async () => {
+        mockFetchError(400, JSON.stringify({
+          error: { code: 400, message: 'Unable to parse range: BadRange', status: 'INVALID_ARGUMENT' },
+        }));
+
+        const result = await executor.executeAction(USER_ID, 'read_range', {
+          spreadsheet_id: 'ss-1',
+          range: 'BadRange',
+        });
+
+        expectErrorResult(result);
+        expect(result.message).toContain('Unable to parse range');
       });
-
-      expectSuccessResult(result);
-      expect(result.data.sheet_count).toBe(2);
-      expect(result.data.title).toBe('Info Sheet');
-    });
-  });
-
-  // ---- get_or_create_sheet_tab ----
-  describe('get_or_create_sheet_tab', () => {
-    it('should return existing tab when found', async () => {
-      // getSpreadsheetInfo returns sheet with matching name
-      mockFetchSuccess({
-        spreadsheetId: 'ss-tab',
-        spreadsheetUrl: 'https://link',
-        properties: { title: 'Tab Sheet', locale: 'en', timeZone: 'UTC' },
-        sheets: [
-          { properties: { sheetId: 0, title: 'Sheet1', index: 0, sheetType: 'GRID' } },
-          { properties: { sheetId: 1, title: 'DataTab', index: 1, sheetType: 'GRID' } },
-        ],
-      });
-
-      const result = await executor.executeAction(USER_ID, 'get_or_create_sheet_tab', {
-        spreadsheet_id: 'ss-tab',
-        tab_name: 'DataTab',
-      });
-
-      expectSuccessResult(result);
-      expect(result.data.existed).toBe(true);
-      expect(result.data.sheet_id).toBe(1);
     });
 
-    it('should create new tab when not found', async () => {
-      mockFetchSequence([
-        // getSpreadsheetInfo - no matching tab
-        {
-          body: {
-            spreadsheetId: 'ss-tab2',
-            spreadsheetUrl: 'https://link',
-            properties: { title: 'Sheet', locale: 'en', timeZone: 'UTC' },
-            sheets: [{ properties: { sheetId: 0, title: 'Sheet1', index: 0, sheetType: 'GRID' } }],
+    // ---- get_or_create_spreadsheet create path ----
+    describe('get_or_create_spreadsheet', () => {
+      it('should create new spreadsheet when not found', async () => {
+        mockFetchSequence([
+          // Drive search returns no files
+          { body: { files: [] } },
+          // createSpreadsheet POST
+          {
+            body: {
+              spreadsheetId: 'new-ss',
+              spreadsheetUrl: 'https://new-link',
+              properties: { title: 'New Sheet' },
+              sheets: [{ properties: { sheetId: 0, title: 'Sheet1', index: 0 } }],
+            },
           },
-        },
-        // batchUpdate to create tab
-        {
-          body: {
-            replies: [{ addSheet: { properties: { sheetId: 99, title: 'NewTab' } } }],
-          },
-        },
-      ]);
+        ]);
 
-      const result = await executor.executeAction(USER_ID, 'get_or_create_sheet_tab', {
-        spreadsheet_id: 'ss-tab2',
-        tab_name: 'NewTab',
+        const result = await executor.executeAction(USER_ID, 'get_or_create_spreadsheet', {
+          title: 'New Sheet',
+        });
+
+        expectSuccessResult(result);
+        expect(result.data.created).toBe(true);
+      });
+    });
+
+    // ---- get_or_create_sheet_tab create path ----
+    describe('get_or_create_sheet_tab', () => {
+      it('should create new tab when not found', async () => {
+        mockFetchSequence([
+          // getSpreadsheetInfo - no matching tab
+          {
+            body: {
+              spreadsheetId: 'ss-tab2',
+              spreadsheetUrl: 'https://link',
+              properties: { title: 'Sheet', locale: 'en', timeZone: 'UTC' },
+              sheets: [{ properties: { sheetId: 0, title: 'Sheet1', index: 0, sheetType: 'GRID' } }],
+            },
+          },
+          // batchUpdate to create tab
+          {
+            body: {
+              replies: [{ addSheet: { properties: { sheetId: 99, title: 'NewTab' } } }],
+            },
+          },
+        ]);
+
+        const result = await executor.executeAction(USER_ID, 'get_or_create_sheet_tab', {
+          spreadsheet_id: 'ss-tab2',
+          tab_name: 'NewTab',
+        });
+
+        expectSuccessResult(result);
+        expect(result.data.existed).toBe(false);
+        expect(result.data.sheet_id).toBe(99);
+      });
+    });
+
+    // ---- P3-T2: Standard error scenarios ----
+    runStandardErrorScenarios(
+      () => executor,
+      GoogleSheetsPluginExecutor,
+      PLUGIN_KEY,
+      'read_range',
+      { spreadsheet_id: 'ss-1', range: 'Sheet1!A1:B2' }
+    );
+
+    // ---- P3-T3: Malformed response tests ----
+    describe('malformed responses', () => {
+      it('handles response missing values field', async () => {
+        mockFetchSuccess({ range: 'Sheet1!A1:B2' });
+        const result = await executor.executeAction(USER_ID, 'read_range', {
+          spreadsheet_id: 'ss-1',
+          range: 'Sheet1!A1:B2',
+        });
+        expect(result).toBeDefined();
       });
 
-      expectSuccessResult(result);
-      expect(result.data.existed).toBe(false);
-      expect(result.data.sheet_id).toBe(99);
+      it('handles null response body', async () => {
+        mockFetchSuccess(null);
+        const result = await executor.executeAction(USER_ID, 'read_range', {
+          spreadsheet_id: 'ss-1',
+          range: 'Sheet1!A1:B2',
+        });
+        expect(result).toBeDefined();
+      });
+    });
+
+    // ---- P3-T4: Authentication edge cases ----
+    describe('authentication edge cases', () => {
+      it('handles empty access_token', async () => {
+        const ctx = await createTestExecutor(GoogleSheetsPluginExecutor, PLUGIN_KEY, {
+          access_token: '',
+        });
+        mockFetchError(401, { error: { code: 401, message: 'Invalid credentials' } });
+        const result = await ctx.executor.executeAction(USER_ID, 'read_range', {
+          spreadsheet_id: 'ss-1',
+          range: 'Sheet1!A1:B2',
+        });
+        expectErrorResult(result);
+      });
+    });
+
+    // ---- P3-T5: Pagination edge cases ----
+    describe('pagination edge cases', () => {
+      it('handles empty values in range response', async () => {
+        mockFetchSuccess({ range: 'Sheet1!A1:Z1000', values: [] });
+        const result = await executor.executeAction(USER_ID, 'read_range', {
+          spreadsheet_id: 'ss-1',
+          range: 'Sheet1!A1:Z1000',
+        });
+        expectSuccessResult(result);
+        expect(result.data.row_count).toBe(0);
+      });
     });
   });
 });

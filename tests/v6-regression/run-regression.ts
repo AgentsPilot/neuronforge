@@ -532,6 +532,46 @@ async function main() {
   printHeader(scenarios)
   logger.log(`V6 Regression Test Suite — ${scenarios.length} scenarios`)
 
+  // 2.5. Plugin smoke test gate — abort if plugin executors have failing smoke tests (P4-T9)
+  {
+    console.log('Running plugin smoke tests as prerequisite...')
+    logger.log('Running plugin smoke tests (60s timeout)...')
+
+    const jestBin = isWindows
+      ? path.join(PROJECT_ROOT, 'node_modules', '.bin', 'jest.cmd')
+      : path.join(PROJECT_ROOT, 'node_modules', '.bin', 'jest')
+    const smokeCmd = `"${jestBin}" --config jest.config.js tests/plugins/ --testNamePattern="\\[smoke\\]" --verbose --forceExit`
+
+    const { output: smokeOutput, exitCode: smokeExit } = execWithFileRedirect(smokeCmd, 60_000)
+    logger.logSubProcess('Plugin Smoke Tests', smokeOutput)
+
+    if (smokeExit !== 0) {
+      const failMsg = 'REGRESSION ABORTED -- Plugin smoke tests failed.\nFix plugin executor issues before running V6 regression.'
+      console.log('')
+      console.log('\u2550'.repeat(66))
+      console.log(failMsg)
+      console.log('\u2550'.repeat(66))
+      // Extract failing test names from output for diagnostic context
+      const failLines = smokeOutput
+        .split('\n')
+        .filter((line: string) => line.includes('FAIL') || line.includes('\u2717') || line.includes('failed'))
+        .slice(0, 10)
+      if (failLines.length > 0) {
+        console.log('\nFailing tests:')
+        for (const line of failLines) {
+          console.log(`  ${line.trim()}`)
+        }
+      }
+      console.log('')
+      logger.log(failMsg)
+      await logger.close()
+      process.exit(1)
+    }
+
+    console.log('Plugin smoke tests passed.\n')
+    logger.log('Plugin smoke tests passed.')
+  }
+
   const results: ScenarioResult[] = []
   const suiteStartTime = Date.now()
 
