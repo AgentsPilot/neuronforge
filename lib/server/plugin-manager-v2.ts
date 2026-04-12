@@ -23,7 +23,13 @@ const corePluginFiles = [
       'document-extractor-plugin-v2.json',
       'linkedin-plugin-v2.json',
       'airtable-plugin-v2.json',
-      // Add other plugin files here as you create them
+      'discord-plugin-v2.json',
+      'dropbox-plugin-v2.json',
+      'meta-ads-plugin-v2.json',
+      'notion-plugin-v2.json',
+      'onedrive-plugin-v2.json',
+      'outlook-plugin-v2.json',
+      'salesforce-plugin-v2.json',
     ];
 
 // Use globalThis to ensure singleton persists across module reloads (important for Next.js dev mode)

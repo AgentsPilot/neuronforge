@@ -21,7 +21,9 @@
     "test:plugins": "jest --config jest.config.js tests/plugins/ --verbose",
     "test:plugins:unit": "jest --config jest.config.js tests/plugins/unit-tests/ --verbose",
     "test:plugins:integration": "jest --config jest.config.js tests/plugins/integration-tests/ --verbose",
-    "test:plugins:ci": "jest --config jest.config.js tests/plugins/ --ci --forceExit --verbose"
+    "test:plugins:smoke": "jest --config jest.config.js tests/plugins/ --testNamePattern=\"\\[smoke\\]\" --verbose",
+    "test:plugins:ci": "jest --config jest.config.js tests/plugins/ --ci --forceExit --verbose",
+    "test:plugins:all": "jest --config jest.config.js tests/plugins/ --verbose"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.68.0",
