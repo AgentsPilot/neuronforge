@@ -10,8 +10,12 @@ export { ConfigRepository, configRepository } from './ConfigRepository';
 export { MemoryRepository, memoryRepository } from './MemoryRepository';
 export { PluginConnectionRepository, pluginConnectionRepository } from './PluginConnectionRepository';
 export { SystemConfigRepository, systemConfigRepository } from './SystemConfigRepository';
-export { CalibrationSessionRepository, calibrationSessionRepository } from './CalibrationSessionRepository';
-export { InsightRepository, insightRepository } from './InsightRepository';
+export { AgentConfigurationRepository, agentConfigurationRepository } from './AgentConfigurationRepository';
+export { AgentStatsRepository, agentStatsRepository } from './AgentStatsRepository';
+export { AgentLogsRepository, agentLogsRepository } from './AgentLogsRepository';
+export { ExecutionLogRepository, executionLogRepository } from './ExecutionLogRepository';
+export { CalibrationSessionRepository } from './CalibrationSessionRepository';
+export { InsightRepository } from './InsightRepository';
 
 // Types
 export type {
