@@ -1,0 +1,144 @@
+# Plugin Test Suite CI/CD
+#
+# Three modes:
+# 1. On push/PR to main: run unit tests + smoke tests (fast, no credentials needed)
+# 2. Nightly schedule: run full suite including integration tests (with secrets)
+# 3. Manual dispatch: run full suite on demand
+
+name: Plugin Tests
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'lib/server/**'
+      - 'lib/plugins/**'
+      - 'tests/plugins/**'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'lib/server/**'
+      - 'lib/plugins/**'
+      - 'tests/plugins/**'
+  schedule:
+    # Run nightly at 03:00 UTC
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+    inputs:
+      run_integration:
+        description: 'Run integration tests (requires secrets)'
+        required: false
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+
+env:
+  NODE_VERSION: '18'
+
+jobs:
+  unit-and-smoke:
+    name: Unit + Smoke Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run plugin unit tests
+        run: npm run test:plugins:unit
+
+      - name: Run plugin smoke tests
+        run: npm run test:plugins:smoke
+
+  integration:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    # Only run on nightly schedule or manual dispatch with integration enabled
+    if: >
+      github.event_name == 'schedule' ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.run_integration == 'true')
+    needs: unit-and-smoke
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run integration tests
+        env:
+          # Google Mail
+          GOOGLE_MAIL_TEST_TOKEN: ${{ secrets.GOOGLE_MAIL_TEST_TOKEN }}
+          GOOGLE_MAIL_TEST_REFRESH_TOKEN: ${{ secrets.GOOGLE_MAIL_TEST_REFRESH_TOKEN }}
+          # Google Sheets
+          GOOGLE_SHEETS_TEST_TOKEN: ${{ secrets.GOOGLE_SHEETS_TEST_TOKEN }}
+          GOOGLE_SHEETS_TEST_REFRESH_TOKEN: ${{ secrets.GOOGLE_SHEETS_TEST_REFRESH_TOKEN }}
+          GOOGLE_SHEETS_TEST_SPREADSHEET_ID: ${{ secrets.GOOGLE_SHEETS_TEST_SPREADSHEET_ID }}
+          # Slack
+          SLACK_TEST_TOKEN: ${{ secrets.SLACK_TEST_TOKEN }}
+          SLACK_TEST_CHANNEL_ID: ${{ secrets.SLACK_TEST_CHANNEL_ID }}
+          # Notion
+          NOTION_TEST_TOKEN: ${{ secrets.NOTION_TEST_TOKEN }}
+          NOTION_TEST_PARENT_PAGE_ID: ${{ secrets.NOTION_TEST_PARENT_PAGE_ID }}
+          # Google Drive
+          GOOGLE_DRIVE_TEST_TOKEN: ${{ secrets.GOOGLE_DRIVE_TEST_TOKEN }}
+          GOOGLE_DRIVE_TEST_REFRESH_TOKEN: ${{ secrets.GOOGLE_DRIVE_TEST_REFRESH_TOKEN }}
+          GOOGLE_DRIVE_TEST_FOLDER_ID: ${{ secrets.GOOGLE_DRIVE_TEST_FOLDER_ID }}
+          # Supabase (required for module initialization, not for actual DB calls)
+          NEXT_PUBLIC_SUPABASE_URL: 'https://test.supabase.co'
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: 'test-anon-key'
+          SUPABASE_SERVICE_ROLE_KEY: 'test-service-role-key'
+        run: npm run test:plugins:integration
+
+  full-suite:
+    name: Full Plugin Test Suite
+    runs-on: ubuntu-latest
+    # Only run on nightly schedule or manual dispatch with integration enabled
+    if: >
+      github.event_name == 'schedule' ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.run_integration == 'true')
+    needs: integration
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run full plugin test suite
+        env:
+          GOOGLE_MAIL_TEST_TOKEN: ${{ secrets.GOOGLE_MAIL_TEST_TOKEN }}
+          GOOGLE_MAIL_TEST_REFRESH_TOKEN: ${{ secrets.GOOGLE_MAIL_TEST_REFRESH_TOKEN }}
+          GOOGLE_SHEETS_TEST_TOKEN: ${{ secrets.GOOGLE_SHEETS_TEST_TOKEN }}
+          GOOGLE_SHEETS_TEST_REFRESH_TOKEN: ${{ secrets.GOOGLE_SHEETS_TEST_REFRESH_TOKEN }}
+          GOOGLE_SHEETS_TEST_SPREADSHEET_ID: ${{ secrets.GOOGLE_SHEETS_TEST_SPREADSHEET_ID }}
+          SLACK_TEST_TOKEN: ${{ secrets.SLACK_TEST_TOKEN }}
+          SLACK_TEST_CHANNEL_ID: ${{ secrets.SLACK_TEST_CHANNEL_ID }}
+          NOTION_TEST_TOKEN: ${{ secrets.NOTION_TEST_TOKEN }}
+          NOTION_TEST_PARENT_PAGE_ID: ${{ secrets.NOTION_TEST_PARENT_PAGE_ID }}
+          GOOGLE_DRIVE_TEST_TOKEN: ${{ secrets.GOOGLE_DRIVE_TEST_TOKEN }}
+          GOOGLE_DRIVE_TEST_REFRESH_TOKEN: ${{ secrets.GOOGLE_DRIVE_TEST_REFRESH_TOKEN }}
+          GOOGLE_DRIVE_TEST_FOLDER_ID: ${{ secrets.GOOGLE_DRIVE_TEST_FOLDER_ID }}
+          NEXT_PUBLIC_SUPABASE_URL: 'https://test.supabase.co'
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: 'test-anon-key'
+          SUPABASE_SERVICE_ROLE_KEY: 'test-service-role-key'
+        run: npm run test:plugins:all
