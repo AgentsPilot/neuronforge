@@ -17,4 +17,10 @@ export class ExecutionOutputCache {
   clear(): void {
     this.cache.clear();
   }
+
+  async setStepOutput(_executionId: string, stepId: string, value: any, _meta?: any): Promise<void> {
+    this.cache.set(stepId, value);
+  }
 }
+
+export const executionOutputCache = new ExecutionOutputCache();

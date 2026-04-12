@@ -1,15 +1,15 @@
-// TODO: Implement failure classifier
+import type { FailureClassification, StepFailureContext } from './types';
+
 export class FailureClassifier {
-  classify(error: Error): {
-    type: 'transient' | 'permanent' | 'configuration';
-    retryable: boolean;
-    suggestions: string[];
-  } {
-    // Stub implementation
+  classify(
+    _error: { message: string; code?: string } | Error,
+    _context?: StepFailureContext
+  ): FailureClassification {
     return {
-      type: 'permanent',
-      retryable: false,
-      suggestions: []
+      category: 'execution_error',
+      sub_type: undefined,
+      is_auto_retryable: false,
+      severity: 'medium',
     };
   }
 }
