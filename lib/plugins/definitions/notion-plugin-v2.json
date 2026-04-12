@@ -129,6 +129,7 @@
             "description": "Array of matching pages and databases",
             "items": {
               "type": "object",
+              "x-semantic-type": "record",
               "properties": {
                 "id": {
                   "type": "string",
@@ -780,6 +781,7 @@
             "description": "Array of pages matching the query",
             "items": {
               "type": "object",
+              "x-semantic-type": "record",
               "properties": {
                 "id": {
                   "type": "string",

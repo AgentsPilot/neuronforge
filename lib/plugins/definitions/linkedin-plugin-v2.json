@@ -43,6 +43,17 @@
         "limits": {},
         "confirmations": {}
       },
+      "output_schema": {
+        "type": "object",
+        "x-semantic-type": "identifier",
+        "properties": {
+          "id": { "type": "string", "description": "LinkedIn member URN" },
+          "firstName": { "type": "string", "description": "First name" },
+          "lastName": { "type": "string", "description": "Last name" },
+          "profilePicture": { "type": "string", "description": "Profile picture URL" },
+          "headline": { "type": "string", "description": "Profile headline" }
+        }
+      },
       "output_guidance": {
         "success_message": "Retrieved LinkedIn profile successfully",
         "common_errors": {
@@ -64,6 +75,18 @@
       "rules": {
         "limits": {},
         "confirmations": {}
+      },
+      "output_schema": {
+        "type": "object",
+        "x-semantic-type": "identifier",
+        "properties": {
+          "sub": { "type": "string", "description": "OpenID Connect subject identifier" },
+          "name": { "type": "string", "description": "Full name" },
+          "email": { "type": "string", "description": "Email address" },
+          "email_verified": { "type": "boolean", "description": "Whether email is verified" },
+          "picture": { "type": "string", "description": "Profile picture URL" },
+          "locale": { "type": "string", "description": "User locale (e.g., en_US)" }
+        }
       },
       "output_guidance": {
         "success_message": "Retrieved user info successfully",
@@ -131,6 +154,17 @@
           }
         }
       },
+      "output_schema": {
+        "type": "object",
+        "x-semantic-type": "message",
+        "properties": {
+          "id": { "type": "string", "description": "Post URN identifier" },
+          "text": { "type": "string", "description": "Post text content" },
+          "visibility": { "type": "string", "description": "Post visibility (PUBLIC or CONNECTIONS)" },
+          "created_at": { "type": "string", "description": "Post creation timestamp (ISO 8601)" },
+          "author": { "type": "string", "description": "Author URN" }
+        }
+      },
       "output_guidance": {
         "success_message": "Post published successfully on LinkedIn",
         "common_errors": {
@@ -176,6 +210,28 @@
         },
         "confirmations": {}
       },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "posts": {
+            "type": "array",
+            "description": "List of user's LinkedIn posts",
+            "items": {
+              "type": "object",
+              "x-semantic-type": "message",
+              "properties": {
+                "id": { "type": "string", "description": "Post URN identifier" },
+                "text": { "type": "string", "description": "Post text content" },
+                "visibility": { "type": "string", "description": "Post visibility" },
+                "created_at": { "type": "string", "description": "Post creation timestamp (ISO 8601)" },
+                "likes_count": { "type": "integer", "description": "Number of likes" },
+                "comments_count": { "type": "integer", "description": "Number of comments" }
+              }
+            }
+          },
+          "total_count": { "type": "integer", "description": "Total number of posts returned" }
+        }
+      },
       "output_guidance": {
         "success_message": "Retrieved {post_count} LinkedIn posts",
         "common_errors": {
@@ -203,6 +259,20 @@
       "rules": {
         "limits": {},
         "confirmations": {}
+      },
+      "output_schema": {
+        "type": "object",
+        "x-semantic-type": "record",
+        "properties": {
+          "id": { "type": "string", "description": "Organization ID" },
+          "name": { "type": "string", "description": "Organization name" },
+          "vanity_name": { "type": "string", "description": "URL-friendly name" },
+          "description": { "type": "string", "description": "Organization description" },
+          "industry": { "type": "string", "description": "Industry category" },
+          "employee_count": { "type": "integer", "description": "Approximate employee count" },
+          "website": { "type": "string", "description": "Organization website URL" },
+          "logo_url": { "type": "string", "description": "Organization logo URL" }
+        }
       },
       "output_guidance": {
         "success_message": "Retrieved organization '{organization_name}' details",
@@ -258,6 +328,27 @@
         },
         "confirmations": {}
       },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "organizations": {
+            "type": "array",
+            "description": "List of matching organizations",
+            "items": {
+              "type": "object",
+              "x-semantic-type": "record",
+              "properties": {
+                "id": { "type": "string", "description": "Organization ID" },
+                "name": { "type": "string", "description": "Organization name" },
+                "industry": { "type": "string", "description": "Industry category" },
+                "employee_count": { "type": "integer", "description": "Approximate employee count" },
+                "website": { "type": "string", "description": "Organization website URL" }
+              }
+            }
+          },
+          "total_count": { "type": "integer", "description": "Total number of results" }
+        }
+      },
       "output_guidance": {
         "success_message": "Found {result_count} organizations matching '{keywords}'",
         "common_errors": {
@@ -300,6 +391,28 @@
           }
         },
         "confirmations": {}
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "posts": {
+            "type": "array",
+            "description": "List of organization posts",
+            "items": {
+              "type": "object",
+              "x-semantic-type": "message",
+              "properties": {
+                "id": { "type": "string", "description": "Post URN identifier" },
+                "text": { "type": "string", "description": "Post text content" },
+                "visibility": { "type": "string", "description": "Post visibility" },
+                "created_at": { "type": "string", "description": "Post creation timestamp (ISO 8601)" },
+                "likes_count": { "type": "integer", "description": "Number of likes" },
+                "comments_count": { "type": "integer", "description": "Number of comments" }
+              }
+            }
+          },
+          "total_count": { "type": "integer", "description": "Total number of posts returned" }
+        }
       },
       "output_guidance": {
         "success_message": "Retrieved {post_count} posts from organization",
@@ -346,6 +459,27 @@
           }
         },
         "confirmations": {}
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "connections": {
+            "type": "array",
+            "description": "List of 1st-degree connections",
+            "items": {
+              "type": "object",
+              "x-semantic-type": "identifier",
+              "properties": {
+                "id": { "type": "string", "description": "Connection member URN" },
+                "firstName": { "type": "string", "description": "First name" },
+                "lastName": { "type": "string", "description": "Last name" },
+                "headline": { "type": "string", "description": "Profile headline" },
+                "profilePicture": { "type": "string", "description": "Profile picture URL" }
+              }
+            }
+          },
+          "total_count": { "type": "integer", "description": "Total number of connections returned" }
+        }
       },
       "output_guidance": {
         "success_message": "Retrieved {connection_count} connections",

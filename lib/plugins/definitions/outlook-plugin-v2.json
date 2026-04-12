@@ -170,6 +170,7 @@
             "description": "List of matching emails",
             "items": {
               "type": "object",
+              "x-semantic-type": "email_message",
               "properties": {
                 "id": { "type": "string", "description": "Unique message ID" },
                 "subject": { "type": "string", "description": "Email subject" },
@@ -411,6 +412,7 @@
             "description": "List of attachments",
             "items": {
               "type": "object",
+              "x-semantic-type": "file_attachment",
               "properties": {
                 "attachment_id": { "type": "string", "description": "Unique attachment ID" },
                 "filename": { "type": "string", "description": "Attachment filename" },
@@ -496,6 +498,7 @@
             "description": "List of calendar events",
             "items": {
               "type": "object",
+              "x-semantic-type": "identifier",
               "properties": {
                 "id": { "type": "string", "description": "Unique event ID" },
                 "subject": { "type": "string", "description": "Event title/subject" },
@@ -653,7 +656,14 @@
           "invalid_attendees": "One or more attendee email addresses are invalid.",
           "insufficient_permissions": "Calendars.ReadWrite permission is required to create events."
         }
-      }
+      },
+      "output_dependencies": [
+        {
+          "when_param": { "is_online_meeting": false },
+          "unpopulated_fields": ["online_meeting_url"],
+          "message": "online_meeting_url is only populated when is_online_meeting=true"
+        }
+      ]
     },
     "update_event": {
       "description": "Update an existing calendar event in Outlook Calendar",

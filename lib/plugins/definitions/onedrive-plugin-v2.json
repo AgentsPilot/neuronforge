@@ -88,6 +88,7 @@
             "type": "array",
             "items": {
               "type": "object",
+              "x-semantic-type": "file_attachment",
               "properties": {
                 "id": { "type": "string" },
                 "name": { "type": "string" },
@@ -176,6 +177,7 @@
             "type": "array",
             "items": {
               "type": "object",
+              "x-semantic-type": "file_attachment",
               "properties": {
                 "id": { "type": "string" },
                 "name": { "type": "string" },
@@ -312,6 +314,7 @@
       },
       "output_schema": {
         "type": "object",
+        "x-semantic-type": "file_attachment",
         "properties": {
           "file_id": { "type": "string", "x-guaranteed": true },
           "file_name": { "type": "string", "x-guaranteed": true },
@@ -337,7 +340,14 @@
           "file_not_found": "The specified file was not found.",
           "file_too_large": "File exceeds download size limit."
         }
-      }
+      },
+      "output_dependencies": [
+        {
+          "when_param": { "return_url_only": true },
+          "unpopulated_fields": ["content", "size"],
+          "message": "content and size are not populated when return_url_only=true — only download_url is returned"
+        }
+      ]
     },
     "upload_file": {
       "description": "Upload a file to OneDrive",
@@ -467,6 +477,7 @@
       },
       "output_schema": {
         "type": "object",
+        "x-semantic-type": "folder",
         "properties": {
           "folder_id": { "type": "string", "x-guaranteed": true },
           "folder_name": { "type": "string", "x-guaranteed": true },
@@ -524,6 +535,7 @@
       },
       "output_schema": {
         "type": "object",
+        "x-semantic-type": "folder",
         "properties": {
           "folder_id": { "type": "string", "x-guaranteed": true },
           "folder_name": { "type": "string", "x-guaranteed": true },
@@ -785,6 +797,7 @@
       },
       "output_schema": {
         "type": "object",
+        "x-semantic-type": "url",
         "properties": {
           "file_id": { "type": "string", "x-guaranteed": true },
           "file_name": { "type": "string" },

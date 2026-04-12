@@ -40,6 +40,24 @@
           "timeout_seconds": 10
         }
       },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "bases": {
+            "type": "array",
+            "description": "List of accessible Airtable bases",
+            "items": {
+              "type": "object",
+              "x-semantic-type": "record",
+              "properties": {
+                "id": { "type": "string", "description": "Base ID (starts with 'app')" },
+                "name": { "type": "string", "description": "Base name" },
+                "permission_level": { "type": "string", "description": "User's permission level (owner, editor, commenter, read)" }
+              }
+            }
+          }
+        }
+      },
       "output_guidance": {
         "success_description": "Returns array of bases with IDs, names, and permission details",
         "sample_output": {
@@ -124,6 +142,25 @@
           "timeout_seconds": 30
         }
       },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "records": {
+            "type": "array",
+            "description": "Array of matching records",
+            "items": {
+              "type": "object",
+              "x-semantic-type": "row",
+              "properties": {
+                "id": { "type": "string", "description": "Airtable record ID (starts with 'rec')" },
+                "fields": { "type": "object", "description": "Record field values (keys are field names)" },
+                "createdTime": { "type": "string", "description": "Record creation time (ISO 8601)" }
+              }
+            }
+          },
+          "offset": { "type": "string", "description": "Pagination cursor for next page (absent if no more records)" }
+        }
+      },
       "output_guidance": {
         "success_description": "Returns an array of records with their IDs, fields, and metadata",
         "sample_output": {
@@ -169,6 +206,15 @@
         "limits": {
           "rate_limit": "5 requests per second per base",
           "timeout_seconds": 10
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "x-semantic-type": "row",
+        "properties": {
+          "id": { "type": "string", "description": "Airtable record ID (starts with 'rec')" },
+          "fields": { "type": "object", "description": "Record field values (keys are field names)" },
+          "createdTime": { "type": "string", "description": "Record creation time (ISO 8601)" }
         }
       },
       "output_guidance": {
@@ -235,6 +281,24 @@
           "bulk_create": {
             "threshold": 5,
             "message": "You are about to create {count} records in {table_name}. Continue?"
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "records": {
+            "type": "array",
+            "description": "Array of created records",
+            "items": {
+              "type": "object",
+              "x-semantic-type": "row",
+              "properties": {
+                "id": { "type": "string", "description": "Airtable record ID (starts with 'rec')" },
+                "fields": { "type": "object", "description": "Record field values" },
+                "createdTime": { "type": "string", "description": "Record creation time (ISO 8601)" }
+              }
+            }
           }
         }
       },
@@ -322,6 +386,24 @@
           }
         }
       },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "records": {
+            "type": "array",
+            "description": "Array of updated records",
+            "items": {
+              "type": "object",
+              "x-semantic-type": "row",
+              "properties": {
+                "id": { "type": "string", "description": "Airtable record ID (starts with 'rec')" },
+                "fields": { "type": "object", "description": "Updated record field values" },
+                "createdTime": { "type": "string", "description": "Record creation time (ISO 8601)" }
+              }
+            }
+          }
+        }
+      },
       "output_guidance": {
         "success_description": "Returns array of updated records with their IDs and new field values",
         "sample_output": {
@@ -356,6 +438,26 @@
         "limits": {
           "rate_limit": "5 requests per second per base",
           "timeout_seconds": 10
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "tables": {
+            "type": "array",
+            "description": "List of tables in the base",
+            "items": {
+              "type": "object",
+              "x-semantic-type": "record",
+              "properties": {
+                "id": { "type": "string", "description": "Table ID (starts with 'tbl')" },
+                "name": { "type": "string", "description": "Table name" },
+                "primaryFieldId": { "type": "string", "description": "ID of the primary field" },
+                "fields": { "type": "array", "description": "Array of field definitions", "items": { "type": "object" } },
+                "views": { "type": "array", "description": "Array of view definitions", "items": { "type": "object" } }
+              }
+            }
+          }
         }
       },
       "output_guidance": {
@@ -424,6 +526,17 @@
           "timeout_seconds": 60
         }
       },
+      "output_schema": {
+        "type": "object",
+        "x-semantic-type": "row",
+        "properties": {
+          "id": { "type": "string", "description": "Airtable record ID" },
+          "fields": {
+            "type": "object",
+            "description": "Record fields including attachment field with uploaded file"
+          }
+        }
+      },
       "output_guidance": {
         "success_description": "Returns the updated record with the new attachment added to the specified field",
         "sample_output": {
@@ -475,6 +588,26 @@
         "limits": {
           "rate_limit": "5 requests per second per base",
           "timeout_seconds": 10
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "attachments": {
+            "type": "array",
+            "description": "Array of attachment objects with temporary download URLs",
+            "items": {
+              "type": "object",
+              "x-semantic-type": "file_attachment",
+              "properties": {
+                "id": { "type": "string", "description": "Attachment ID (starts with 'att')" },
+                "url": { "type": "string", "description": "Temporary download URL (expires in ~2 hours)" },
+                "filename": { "type": "string", "description": "Attachment filename" },
+                "size": { "type": "integer", "description": "File size in bytes" },
+                "type": { "type": "string", "description": "MIME type" }
+              }
+            }
+          }
         }
       },
       "output_guidance": {
