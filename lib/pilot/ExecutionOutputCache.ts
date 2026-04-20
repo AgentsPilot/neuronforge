@@ -21,6 +21,14 @@ export class ExecutionOutputCache {
   async setStepOutput(_executionId: string, stepId: string, value: any, _meta?: any): Promise<void> {
     this.cache.set(stepId, value);
   }
+
+  async clearExecution(_executionId: string): Promise<void> {
+    this.cache.clear();
+  }
+
+  async getAllOutputs(_executionId: string): Promise<Map<string, { data: any; metadata: any }>> {
+    return new Map();
+  }
 }
 
 export const executionOutputCache = new ExecutionOutputCache();

@@ -398,6 +398,37 @@ export class ParallelExecutor {
       // Without this merge, transform steps can't access both original and AI-extracted fields
       let mergedResult: any;
 
+      // WP-14 shared detection: an extraction-like step is one whose output_schema
+      // carries structured extracted data that should stand alone (no merge with
+      // intermediate fetch outputs or the original iteration item). Merging those
+      // large source objects back in is what blows past downstream token budgets.
+      //
+      // Legacy flatten is preserved for:
+      //   - classify steps (downstream filters need item.classification + item fields)
+      //   - single-field output_schema (adds one label to each item)
+      //   - no output_schema at all
+      //
+      // Trigger "extract mode" when:
+      //   - ai_type === 'llm_extract' / 'extract' / 'deterministic_extract'
+      //   - OR output_schema declares ≥ 2 fields
+      const isStepExtractLike = (stepId: string): { extractLike: boolean; aiType: any; fieldCount: number } => {
+        const step = steps.find(s => s.id === stepId);
+        const nestedStepConfig = (step as any)?.config;
+        const nestedAiType = nestedStepConfig?.ai_type || nestedStepConfig?.type;
+        const nestedStepOutputSchema = nestedStepConfig?.output_schema || (step as any)?.output_schema;
+        const schemaFieldCount = Array.isArray(nestedStepOutputSchema?.fields)
+          ? nestedStepOutputSchema.fields.length
+          : nestedStepOutputSchema?.properties
+            ? Object.keys(nestedStepOutputSchema.properties).length
+            : 0;
+        const extractLike =
+          nestedAiType === 'llm_extract' ||
+          nestedAiType === 'extract' ||
+          nestedAiType === 'deterministic_extract' ||
+          schemaFieldCount >= 2;
+        return { extractLike, aiType: nestedAiType, fieldCount: schemaFieldCount };
+      };
+
       // Check if we have step results to merge
       const stepResultKeys = Object.keys(itemResults);
       if (stepResultKeys.length === 1) {
@@ -409,32 +440,7 @@ export class ParallelExecutor {
         const step = steps.find(s => s.id === stepKey);
         const outputVariable = (step as any)?.output_variable;
 
-        // WP-14: Extraction steps with multi-field output_schema should NOT
-        // merge the original item back in. Merging inflates each gathered
-        // entry with large source-object fields (e.g. full email bodies)
-        // and blows past downstream token budgets.
-        //
-        // Legacy flatten is preserved for:
-        //   - classify steps (downstream filters need item.classification + item fields)
-        //   - single-field output_schema (adds one label to each item)
-        //   - no output_schema at all
-        //
-        // Trigger "extract mode" (step result only) when:
-        //   - ai_type === 'llm_extract' / 'extract' / 'deterministic_extract'
-        //   - OR output_schema declares ≥ 2 fields
-        const nestedStepConfig = (step as any)?.config;
-        const nestedAiType = nestedStepConfig?.ai_type || nestedStepConfig?.type;
-        const nestedStepOutputSchema = nestedStepConfig?.output_schema || (step as any)?.output_schema;
-        const schemaFieldCount = Array.isArray(nestedStepOutputSchema?.fields)
-          ? nestedStepOutputSchema.fields.length
-          : nestedStepOutputSchema?.properties
-            ? Object.keys(nestedStepOutputSchema.properties).length
-            : 0;
-        const isExtractLike =
-          nestedAiType === 'llm_extract' ||
-          nestedAiType === 'extract' ||
-          nestedAiType === 'deterministic_extract' ||
-          schemaFieldCount >= 2;
+        const { extractLike: isExtractLike, aiType: nestedAiType, fieldCount: schemaFieldCount } = isStepExtractLike(stepKey);
 
         if (isExtractLike && typeof stepData === 'object' && stepData !== null && !Array.isArray(stepData)) {
           mergedResult = stepData;
@@ -468,15 +474,38 @@ export class ParallelExecutor {
           mergedResult = itemResults;
         }
       } else if (stepResultKeys.length > 1) {
-        // Multiple steps: Flatten all step results into original item
-        mergedResult = { ...item };
-        for (const stepKey of stepResultKeys) {
-          const stepData = itemResults[stepKey];
-          if (typeof stepData === 'object' && stepData !== null && !Array.isArray(stepData)) {
-            mergedResult = { ...mergedResult, ...stepData };
+        // Multiple steps: apply WP-14 extract-like detection to the LAST step.
+        // The last nested step is the canonical output of the scatter iteration;
+        // earlier steps (read_file_content, search_emails, etc.) are intermediate
+        // data-fetching whose large payloads must not survive the gather.
+        // D-B25 (2026-04-14): contract-enddate-summary scenario had step5
+        // (read_file_content, ~165KB content per doc) + step6 (extract-like) —
+        // the original multi-step branch spread both into the merged result and
+        // pushed step7 to ~1M tokens.
+        const lastStepKey = stepResultKeys[stepResultKeys.length - 1];
+        const lastStepData = itemResults[lastStepKey];
+        const { extractLike: lastIsExtractLike, aiType: lastAiType, fieldCount: lastFieldCount } = isStepExtractLike(lastStepKey);
+
+        if (lastIsExtractLike && typeof lastStepData === 'object' && lastStepData !== null && !Array.isArray(lastStepData)) {
+          mergedResult = lastStepData;
+          logger.debug({
+            lastStepKey,
+            aiType: lastAiType,
+            fieldCount: lastFieldCount,
+            stepFields: Object.keys(lastStepData).slice(0, 10),
+          }, '[WP-14] Multi-step scatter — last step is extract-like, returning its output only (D-B25)');
+        } else {
+          // Legacy multi-step flatten: preserved for multi-classify bodies and
+          // any scatter body whose last step is not extract-like.
+          mergedResult = { ...item };
+          for (const stepKey of stepResultKeys) {
+            const stepData = itemResults[stepKey];
+            if (typeof stepData === 'object' && stepData !== null && !Array.isArray(stepData)) {
+              mergedResult = { ...mergedResult, ...stepData };
+            }
           }
+          logger.debug({ stepCount: stepResultKeys.length, mergedFields: Object.keys(mergedResult).slice(0, 10) }, 'Merged original item with multiple step results');
         }
-        logger.debug({ stepCount: stepResultKeys.length, mergedFields: Object.keys(mergedResult).slice(0, 10) }, 'Merged original item with multiple step results');
       } else {
         // No step results, return original item
         mergedResult = item;

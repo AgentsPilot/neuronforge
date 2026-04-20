@@ -1362,8 +1362,11 @@ export class IntentToIRConverter {
         return `{{config.${valueRef.key}}}`
 
       case 'computed':
-        // O21: Basic computed expression support — handles concat and falls back gracefully
-        if (valueRef.op === 'concat' && Array.isArray(valueRef.args)) {
+        // O21 + D-B24: handle concat and format (same semantics — sequential arg join).
+        // The IntentContract prompt (intent-system-prompt-v2.ts:130) advertises both ops,
+        // so the LLM legitimately emits either. Treating them as aliases avoids the
+        // silent fallback below discarding literal args.
+        if ((valueRef.op === 'concat' || valueRef.op === 'format') && Array.isArray(valueRef.args)) {
           const resolvedArgs = valueRef.args.map((arg: any) => {
             const resolved = this.resolveValueRef(arg, ctx)
             return resolved !== undefined ? String(resolved) : ''
@@ -1371,7 +1374,7 @@ export class IntentToIRConverter {
           // If all args resolved, concatenate them
           const result = resolvedArgs.join('')
           if (result) {
-            logger.debug(`[IntentToIRConverter] O21: Resolved computed concat: ${JSON.stringify(valueRef.args)} → ${result}`)
+            logger.debug(`[IntentToIRConverter] O21: Resolved computed ${valueRef.op}: ${JSON.stringify(valueRef.args)} → ${result}`)
             return result
           }
         }
@@ -1713,6 +1716,17 @@ export class IntentToIRConverter {
     }
 
     // Convention-based mapping using from_type in x-variable-mapping
+    // D-B19b: Copy explicit payload/mapping values FIRST so they take precedence
+    // over x-variable-mapping heuristics. E.g., IC payload has folder_id: "{{results.files[0].id}}"
+    // but x-variable-mapping would overwrite it with "results.folder_id" (wrong field).
+    for (const [key, value] of Object.entries(genericParams)) {
+      if (key !== 'data' && key !== 'destination' && key !== 'input_ref' && !mappedParams[key]) {
+        if (paramSchema[key]) {
+          mappedParams[key] = value
+        }
+      }
+    }
+
     // Convention:
     // - from_type='folder' → maps from 'destination' generic param
     // - from_type='file_attachment' → maps from 'data' generic param
@@ -1749,17 +1763,6 @@ export class IntentToIRConverter {
         mappedParams[paramName] = `${genericVar}.${mapping.field_path}`
         logger.debug(`  → Mapped ${genericVar} → ${paramName} (extract: ${mapping.field_path}${mapping.from_type ? `, from_type: ${mapping.from_type}` : ''})`)
         break
-      }
-    }
-
-    // D-B19b: Copy deliver.mapping values to mappedParams BEFORE the data fallback.
-    // deliver.mapping sets params like message_id, add_labels directly in genericParams.
-    // Without this, the fallback overwrites message_id with the whole data ref.
-    for (const [key, value] of Object.entries(genericParams)) {
-      if (key !== 'data' && key !== 'destination' && key !== 'input_ref' && !mappedParams[key]) {
-        if (paramSchema[key]) {
-          mappedParams[key] = value
-        }
       }
     }
 

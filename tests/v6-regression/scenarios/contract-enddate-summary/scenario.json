@@ -8,5 +8,49 @@
     "step_types": ["action", "transform", "ai_processing", "scatter_gather"],
     "phase_a_checks": 14,
     "phase_d_success": true
+  },
+  "verification_status": {
+    "last_verified": "2026-04-19",
+    "compile": "pass",
+    "phase_a": "pass_with_known_false_positives",
+    "phase_d": "pass",
+    "phase_e": "pass_pipeline_partial_content",
+    "phase_a_known_false_positives": [
+      "Phase A array-index syntax not supported: {{contracts_folder_results.files[0].id}} reports unresolved_ref + cross_step_field_ref errors. Documented 2026-04-10 in WORKPLAN_EXECUTION.md. Runtime resolves correctly."
+    ],
+    "phase_e_pipeline_validated": [
+      "step1 google-drive.search_files — folder lookup with computed Drive query (D-B24)",
+      "step2 google-drive.list_files — MIME-filter narrows to native Google Docs (D-B26)",
+      "step3 ai_processing/generate keyword filter — 3/3 docs kept",
+      "step4 scatter_gather over 3 candidate docs (D-B14 unwrap, D-B25 multi-step extract guard)",
+      "step5 google-drive.read_file_content — text export from native Google Docs",
+      "step6 ai_processing/generate extraction — 3/3 contracts extracted with end_date + counterparty",
+      "step8 ai_processing/generate HTML email body",
+      "step9 google-mail.send_email — delivered"
+    ],
+    "phase_e_known_open_issues": [
+      {
+        "ref": "D-B27",
+        "summary": "step7 ai_processing/generate filtered out a contract that was within the 30-day window (LLM date-arithmetic error). Pipeline correct, LLM stochastic.",
+        "follow_up": "F12 — compile deterministic logic to transform pipeline instead of ai_processing/generate"
+      },
+      {
+        "ref": "F11",
+        "summary": ".docx files in Drive folder are silently excluded by Google-Docs-only MIME filter. Test data was converted to native Google Docs to validate end-to-end. Real users with .docx contracts need .docx text extraction support."
+      }
+    ],
+    "session_bug_fixes": [
+      "D-B14 regression — unwrapObjectToArray bailout for ai_processing sources removed (compiler)",
+      "D-B22 — ExecutionOutputCache stub: clearExecution + getAllOutputs added",
+      "D-B23 — CheckpointManager stub: clear + createStepCheckpoint + createBatchCheckpoint added",
+      "D-B24 — IntentToIRConverter: computed.op format treated as alias for concat",
+      "D-B25 — ParallelExecutor multi-step scatter: isExtractLike applied to last nested step (WP-14 partial fix)",
+      "D-B26 — google-drive-plugin-executor: file_types now accepts raw MIME types alongside friendly names"
+    ],
+    "test_data_notes": [
+      "Drive folder name is 'contracts' (lowercase). IC search query 'Contracts' matches via Drive case-insensitive name= operator.",
+      "Folder originally contained .docx Word files. For Phase E content validation, files were opened via 'Open with Google Docs' to create native Google Doc copies (mimeType: application/vnd.google-apps.document).",
+      "Test contracts: C1001 (Alpha Tech, 2023-12-15, past), C1002 (Beta Solutions, 2026-06-01), C1004 (Delta Enterprises, 2026-04-25)."
+    ]
   }
 }
