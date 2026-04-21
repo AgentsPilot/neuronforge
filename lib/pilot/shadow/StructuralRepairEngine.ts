@@ -25,6 +25,7 @@
 
 import type { Agent } from '../types';
 import { createLogger } from '@/lib/logger';
+import { PluginManagerV2 } from '@/lib/server/plugin-manager-v2';
 
 const logger = createLogger({ module: 'StructuralRepairEngine', service: 'shadow-agent' });
 
@@ -40,7 +41,10 @@ export type StructuralIssueType =
   | 'missing_attachment_flag'      // Searches for attachments but doesn't request attachment data
   | 'missing_output_declaration'   // Step produces output not in outputs array
   | 'type_mismatch'                // Step output type incompatible with consumer input type
-  | 'orphaned_step';               // Step unreachable from workflow start
+  | 'orphaned_step'                // Step unreachable from workflow start
+  | 'missing_action'               // Action step missing action field
+  | 'invalid_config_reference'     // Uses {{config.X}} instead of {{input.X}}
+  | 'missing_required_parameter';  // Action missing required parameter
 
 export type StructuralFixAction =
   | 'add_output_variable'          // Add missing output_variable field
@@ -54,6 +58,11 @@ export type StructuralFixAction =
   | 'infer_outputs'                // Infer outputs from output_variable/outputKey
   | 'add_type_conversion'          // Insert type conversion step
   | 'remove_orphaned_step'         // Remove unreachable step
+  | 'add_attachment_flag'          // Add include_attachments parameter
+  | 'infer_action'                 // Infer missing action from step context
+  | 'normalize_legacy_fields'      // Normalize operation → action, config → params
+  | 'rewrite_config_to_input'      // Rewrite {{config.X}} to {{input.X}}
+  | 'add_missing_parameter'        // Add missing required parameter with smart default
   | 'none';                        // No fix possible
 
 export interface StructuralIssue {
@@ -86,17 +95,39 @@ export interface StructuralFixResult {
  * This is a safety net for compiler bugs - not for user errors.
  */
 export class StructuralRepairEngine {
+  private pluginManager: PluginManagerV2 | null = null;
+
+  /**
+   * Initialize with PluginManager for action inference
+   */
+  async initialize(): Promise<void> {
+    if (!this.pluginManager) {
+      this.pluginManager = await PluginManagerV2.getInstance();
+      logger.debug('StructuralRepairEngine initialized with PluginManager');
+    }
+  }
 
   /**
    * Scan workflow for all structural issues (including nested steps)
    */
   async scanWorkflow(agent: Agent): Promise<StructuralIssue[]> {
+    console.log('🔍 [StructuralRepairEngine] scanWorkflow() called');
+    console.log('🔍 [StructuralRepairEngine] agent.pilot_steps type:', typeof agent.pilot_steps);
+    console.log('🔍 [StructuralRepairEngine] agent.pilot_steps length:', Array.isArray(agent.pilot_steps) ? agent.pilot_steps.length : 'N/A');
+
+    // Ensure plugin manager is available for action inference
+    await this.initialize();
     const issues: StructuralIssue[] = [];
     const steps: any[] = agent.pilot_steps || [];
 
+    console.log('🔍 [StructuralRepairEngine] steps.length after assignment:', steps.length);
+
     if (steps.length === 0) {
+      console.log('⚠️  [StructuralRepairEngine] No steps found, returning empty issues array');
       return issues;
     }
+
+    console.log('🔍 [StructuralRepairEngine] Starting to scan', steps.length, 'steps...');
 
     // Build step ID map for reference checking (including nested steps)
     const stepIds = new Set<string>();
@@ -212,8 +243,32 @@ export class StructuralRepairEngine {
         }
       }
 
-      // Check action steps for broken references
+      // Check action steps for broken references and missing action
       if (step.type === 'action') {
+        // Issue: Field normalization needed (operation → action, config → params)
+        const needsFieldNormalization = (!step.action && step.operation) || (!step.params && step.config);
+
+        if (needsFieldNormalization) {
+          issues.push({
+            type: 'missing_action', // Reuse this type for normalization
+            stepId,
+            description: `Step uses legacy field names (operation/config) - needs normalization to action/params`,
+            severity: 'critical',
+            autoFixable: true
+          });
+        }
+
+        // Issue 6: Missing action field (critical - blocks execution)
+        if (!step.action) {
+          issues.push({
+            type: 'missing_action',
+            stepId,
+            description: `Action step missing 'action' field (plugin: ${step.plugin || 'unknown'})`,
+            severity: 'critical',
+            autoFixable: step.plugin ? true : false // Can only fix if plugin is known
+          });
+        }
+
         const paramsStr = JSON.stringify(step.params || {});
         const brokenRefs = this.findBrokenVariableReferences(paramsStr, stepIds, stepId);
         for (const ref of brokenRefs) {
@@ -226,7 +281,50 @@ export class StructuralRepairEngine {
           });
         }
 
-        // Issue 6: Missing attachment flag on Gmail search
+        // Issue 7: Invalid {{config.X}} references (should be {{input.X}})
+        const configRefs = this.findConfigReferences(paramsStr);
+        if (configRefs.length > 0) {
+          logger.info({
+            stepId,
+            stepName: step.name,
+            configRefs,
+            paramsStr: paramsStr.substring(0, 200) // First 200 chars for debugging
+          }, '[StructuralRepair] Detected {{config.X}} references');
+
+          issues.push({
+            type: 'invalid_config_reference',
+            stepId,
+            description: `Uses {{config.X}} instead of {{input.X}}: ${configRefs.join(', ')}`,
+            severity: 'critical', // Blocks execution
+            autoFixable: true
+          });
+        }
+
+        // Issue 8: Missing required parameters
+        if (step.plugin && step.action) {
+          const missingParams = await this.findMissingRequiredParams(step);
+          if (missingParams.length > 0) {
+            logger.info({
+              stepId,
+              stepName: step.name,
+              plugin: step.plugin,
+              action: step.action,
+              missingParams: missingParams.map(p => ({ name: p.name, hasSmartDefault: p.hasSmartDefault }))
+            }, '[StructuralRepair] Detected missing required parameters');
+          }
+
+          for (const param of missingParams) {
+            issues.push({
+              type: 'missing_required_parameter',
+              stepId,
+              description: `Missing required parameter: ${param.name}`,
+              severity: 'critical', // Blocks execution
+              autoFixable: param.hasSmartDefault
+            });
+          }
+        }
+
+        // Issue 7: Missing attachment flag on Gmail search
         if (step.plugin === 'google-mail' && step.action === 'search_emails') {
           const query = step.params?.query || '';
           const includeAttachments = step.params?.include_attachments;
@@ -303,7 +401,7 @@ export class StructuralRepairEngine {
   /**
    * Propose a fix for a structural issue
    */
-  proposeStructuralFix(issue: StructuralIssue, agent: Agent): StructuralFixProposal {
+  async proposeStructuralFix(issue: StructuralIssue, agent: Agent): Promise<StructuralFixProposal> {
     const noFix: StructuralFixProposal = {
       action: 'none',
       description: 'No fix available',
@@ -429,9 +527,245 @@ export class StructuralRepairEngine {
         };
       }
 
+      case 'missing_action': {
+        // Check if this is a field normalization issue (legacy format)
+        if (issue.description.includes('legacy field names')) {
+          return {
+            action: 'normalize_legacy_fields',
+            description: `Normalize legacy fields: operation → action, config → params`,
+            targetStepId: issue.stepId,
+            confidence: 1.0, // This is a known transformation
+            risk: 'low',
+            fix: {
+              normalizeOperation: !step.action && step.operation,
+              normalizeConfig: !step.params && step.config
+            }
+          };
+        }
+
+        // Otherwise, infer action from step context (name, description, plugin)
+        const inferredAction = await this.inferActionFromContext(step);
+
+        if (!inferredAction) {
+          return { ...noFix, description: `Cannot infer action for step (plugin: ${step.plugin || 'unknown'})` };
+        }
+
+        return {
+          action: 'infer_action',
+          description: `Infer action "${inferredAction.action}" from step context (confidence: ${Math.round(inferredAction.confidence * 100)}%)`,
+          targetStepId: issue.stepId,
+          confidence: inferredAction.confidence,
+          risk: inferredAction.confidence >= 0.8 ? 'low' : 'medium',
+          fix: {
+            action: inferredAction.action,
+            reasoning: inferredAction.reasoning
+          }
+        };
+      }
+
+      case 'invalid_config_reference': {
+        // Extract all {{config.X}} references from the issue description
+        const match = issue.description.match(/Uses \{\{config\.X\}\} instead of \{\{input\.X\}\}: (.+)/);
+        const configRefs = match ? match[1].split(', ') : [];
+
+        return {
+          action: 'rewrite_config_to_input',
+          description: `Rewrite ${configRefs.length} {{config.X}} reference(s) to {{input.X}}`,
+          targetStepId: issue.stepId,
+          confidence: 1.0, // This is a known fix
+          risk: 'low',
+          fix: {
+            configRefs
+          }
+        };
+      }
+
+      case 'missing_required_parameter': {
+        // Extract parameter name from description
+        const match = issue.description.match(/Missing required parameter: (\w+)/);
+        if (!match) return noFix;
+
+        const paramName = match[1];
+        const missingParams = await this.findMissingRequiredParams(step);
+        const paramInfo = missingParams.find(p => p.name === paramName);
+
+        if (!paramInfo || !paramInfo.hasSmartDefault) {
+          return { ...noFix, description: `Cannot generate smart default for parameter: ${paramName}` };
+        }
+
+        const defaultValue = this.generateSmartDefault(paramInfo.schema, paramName, step, agent);
+
+        return {
+          action: 'add_missing_parameter',
+          description: `Add missing parameter "${paramName}" with smart default: ${JSON.stringify(defaultValue)}`,
+          targetStepId: issue.stepId,
+          confidence: 0.7,
+          risk: 'medium',
+          fix: {
+            paramName,
+            paramValue: defaultValue
+          }
+        };
+      }
+
       default:
         return noFix;
     }
+  }
+
+  /**
+   * Infer missing action from step context
+   * Uses step name, description, and plugin to match against available actions
+   */
+  private async inferActionFromContext(step: any): Promise<{
+    action: string;
+    confidence: number;
+    reasoning: string;
+  } | null> {
+    if (!this.pluginManager || !step.plugin) {
+      return null;
+    }
+
+    // Get plugin definition
+    const pluginDef = this.pluginManager.getPluginDefinition(step.plugin);
+    if (!pluginDef) {
+      logger.warn({ plugin: step.plugin }, 'Plugin not found for action inference');
+      return null;
+    }
+
+    const availableActions = Object.keys(pluginDef.actions);
+    if (availableActions.length === 0) {
+      return null;
+    }
+
+    // If there's only one action, use it with high confidence
+    if (availableActions.length === 1) {
+      return {
+        action: availableActions[0],
+        confidence: 0.95,
+        reasoning: `Only one action available for plugin ${step.plugin}`
+      };
+    }
+
+    // Analyze step context
+    const stepName = (step.name || '').toLowerCase();
+    const stepDescription = (step.description || '').toLowerCase();
+    const stepContext = `${stepName} ${stepDescription}`.trim();
+
+    if (!stepContext) {
+      // No context to infer from - return most common action with low confidence
+      return {
+        action: availableActions[0],
+        confidence: 0.3,
+        reasoning: 'No step context available, using first action'
+      };
+    }
+
+    // Score each action based on context match
+    const scores: Array<{ action: string; score: number; matches: string[] }> = [];
+
+    for (const actionName of availableActions) {
+      const actionDef = pluginDef.actions[actionName];
+      const actionDesc = actionDef.description.toLowerCase();
+      const matches: string[] = [];
+      let score = 0;
+
+      // Exact action name match in step name
+      if (stepName.includes(actionName.replace(/_/g, ' '))) {
+        score += 50;
+        matches.push('exact name match');
+      }
+
+      // Partial action name match
+      const actionWords = actionName.split('_');
+      for (const word of actionWords) {
+        if (stepContext.includes(word)) {
+          score += 10;
+          matches.push(`word: ${word}`);
+        }
+      }
+
+      // Keywords from action description
+      const keywords = this.extractKeywords(actionDesc);
+      for (const keyword of keywords) {
+        if (stepContext.includes(keyword)) {
+          score += 5;
+          matches.push(`keyword: ${keyword}`);
+        }
+      }
+
+      // Semantic similarity (common action verbs)
+      const actionVerbs = {
+        search: ['search', 'find', 'query', 'lookup', 'get'],
+        create: ['create', 'add', 'new', 'insert', 'make'],
+        update: ['update', 'edit', 'modify', 'change'],
+        delete: ['delete', 'remove', 'trash'],
+        send: ['send', 'deliver', 'forward'],
+        list: ['list', 'get', 'fetch', 'retrieve']
+      };
+
+      for (const [verb, synonyms] of Object.entries(actionVerbs)) {
+        if (actionName.includes(verb)) {
+          for (const syn of synonyms) {
+            if (stepContext.includes(syn)) {
+              score += 15;
+              matches.push(`verb: ${verb}→${syn}`);
+              break;
+            }
+          }
+        }
+      }
+
+      scores.push({ action: actionName, score, matches });
+    }
+
+    // Sort by score
+    scores.sort((a, b) => b.score - a.score);
+
+    const best = scores[0];
+    if (best.score === 0) {
+      // No matches - return first action with very low confidence
+      return {
+        action: availableActions[0],
+        confidence: 0.2,
+        reasoning: 'No context matches, using default action'
+      };
+    }
+
+    // Calculate confidence based on score
+    const maxScore = 100; // Theoretical max
+    const confidence = Math.min(best.score / maxScore, 0.95);
+
+    logger.info({
+      stepId: step.id || step.step_id,
+      stepName,
+      plugin: step.plugin,
+      inferredAction: best.action,
+      confidence,
+      score: best.score,
+      matches: best.matches
+    }, '[StructuralRepair] Inferred missing action');
+
+    return {
+      action: best.action,
+      confidence,
+      reasoning: `Matched: ${best.matches.join(', ')}`
+    };
+  }
+
+  /**
+   * Extract keywords from action description
+   */
+  private extractKeywords(description: string): string[] {
+    // Remove common words and extract meaningful keywords
+    const commonWords = new Set(['the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'from']);
+    const words = description
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, '')
+      .split(/\s+/)
+      .filter(w => w.length > 3 && !commonWords.has(w));
+
+    return Array.from(new Set(words)).slice(0, 5);
   }
 
   /**
@@ -581,6 +915,78 @@ export class StructuralRepairEngine {
           return { fixed: true, fixApplied: proposal };
         }
 
+        case 'normalize_legacy_fields': {
+          // Normalize operation → action
+          if (proposal.fix.normalizeOperation && step.operation) {
+            step.action = step.operation;
+            logger.debug({
+              stepId: proposal.targetStepId,
+              operation: step.operation
+            }, '[StructuralRepair] Normalized operation → action');
+          }
+
+          // Normalize config → params
+          if (proposal.fix.normalizeConfig && step.config) {
+            step.params = step.config;
+            logger.debug({
+              stepId: proposal.targetStepId
+            }, '[StructuralRepair] Normalized config → params');
+          }
+
+          logger.info({
+            stepId: proposal.targetStepId,
+            normalizedOperation: proposal.fix.normalizeOperation,
+            normalizedConfig: proposal.fix.normalizeConfig
+          }, '[StructuralRepair] Normalized legacy field names to modern format');
+
+          return { fixed: true, fixApplied: proposal };
+        }
+
+        case 'infer_action': {
+          step.action = proposal.fix.action;
+
+          logger.info({
+            stepId: proposal.targetStepId,
+            plugin: step.plugin,
+            inferredAction: proposal.fix.action,
+            confidence: proposal.confidence,
+            reasoning: proposal.fix.reasoning
+          }, '[StructuralRepair] Added inferred action to step');
+
+          return { fixed: true, fixApplied: proposal };
+        }
+
+        case 'rewrite_config_to_input': {
+          // Rewrite all {{config.X}} to {{input.X}} in step params
+          const paramsStr = JSON.stringify(step.params || {});
+          const updatedParamsStr = paramsStr.replace(/\{\{config\./g, '{{input.');
+          step.params = JSON.parse(updatedParamsStr);
+
+          logger.info({
+            stepId: proposal.targetStepId,
+            configRefs: proposal.fix.configRefs
+          }, '[StructuralRepair] Rewrote {{config.X}} to {{input.X}}');
+
+          return { fixed: true, fixApplied: proposal };
+        }
+
+        case 'add_missing_parameter': {
+          // Ensure params object exists
+          if (!step.params) {
+            step.params = {};
+          }
+
+          step.params[proposal.fix.paramName] = proposal.fix.paramValue;
+
+          logger.info({
+            stepId: proposal.targetStepId,
+            paramName: proposal.fix.paramName,
+            paramValue: proposal.fix.paramValue
+          }, '[StructuralRepair] Added missing required parameter with smart default');
+
+          return { fixed: true, fixApplied: proposal };
+        }
+
         default:
           return { fixed: false, error: `Fix action '${proposal.action}' not implemented` };
       }
@@ -613,7 +1019,7 @@ export class StructuralRepairEngine {
         continue;
       }
 
-      const proposal = this.proposeStructuralFix(issue, agent);
+      const proposal = await this.proposeStructuralFix(issue, agent);
       const result = await this.applyStructuralFix(proposal, agent);
       results.push(result);
 
@@ -728,6 +1134,161 @@ export class StructuralRepairEngine {
     }
 
     return matrix[b.length][a.length];
+  }
+
+  /**
+   * Find {{config.X}} references that should be {{input.X}}
+   */
+  private findConfigReferences(text: string): string[] {
+    const configRefs: string[] = [];
+    const regex = /\{\{config\.([^}]+)\}\}/g;
+    let match;
+
+    while ((match = regex.exec(text)) !== null) {
+      configRefs.push(match[0]); // Full reference like {{config.email}}
+      logger.debug({ match: match[0], fullText: text.substring(0, 100) }, '[StructuralRepair] Found config reference');
+    }
+
+    if (configRefs.length > 0) {
+      logger.debug({ configRefs, textLength: text.length }, '[StructuralRepair] findConfigReferences result');
+    }
+
+    return configRefs;
+  }
+
+  /**
+   * Find missing required parameters for an action step
+   */
+  private async findMissingRequiredParams(step: any): Promise<Array<{
+    name: string;
+    hasSmartDefault: boolean;
+    schema?: any;
+  }>> {
+    if (!this.pluginManager || !step.plugin || !step.action) {
+      return [];
+    }
+
+    const pluginDef = this.pluginManager.getPluginDefinition(step.plugin);
+    if (!pluginDef) return [];
+
+    const actionDef = pluginDef.actions[step.action];
+    if (!actionDef) return [];
+
+    const schema = actionDef.parameters;
+    if (!schema || !schema.required) return [];
+
+    const missingParams: Array<{ name: string; hasSmartDefault: boolean; schema?: any }> = [];
+
+    for (const paramName of schema.required) {
+      // Check if parameter is missing or empty
+      const paramValue = step.params?.[paramName];
+
+      if (paramValue === undefined || paramValue === null || paramValue === '') {
+        const paramSchema = schema.properties?.[paramName];
+
+        // Check if we can generate a smart default
+        const hasSmartDefault = this.canGenerateSmartDefault(paramSchema, paramName, step);
+
+        missingParams.push({
+          name: paramName,
+          hasSmartDefault,
+          schema: paramSchema
+        });
+      }
+    }
+
+    return missingParams;
+  }
+
+  /**
+   * Check if we can generate a smart default for a parameter
+   */
+  private canGenerateSmartDefault(schema: any, paramName: string, _step: any): boolean {
+    if (!schema) return false;
+
+    // Can generate defaults for:
+    // 1. Parameters with default values in schema
+    if (schema.default !== undefined) return true;
+
+    // 2. Boolean parameters (default to false)
+    if (schema.type === 'boolean') return true;
+
+    // 3. Number parameters with minimum value
+    if (schema.type === 'number' && schema.minimum !== undefined) return true;
+
+    // 4. String parameters with enum (use first option)
+    if (schema.type === 'string' && schema.enum && schema.enum.length > 0) return true;
+
+    // 5. Common parameter patterns we can infer from agent context
+    const inferableParams = new Set([
+      'spreadsheet_id',
+      'folder_id',
+      'channel_id',
+      'project_id',
+      'board_id'
+    ]);
+    if (inferableParams.has(paramName)) return true;
+
+    return false;
+  }
+
+  /**
+   * Generate a smart default value for a parameter
+   */
+  private generateSmartDefault(schema: any, paramName: string, step: any, agent: Agent): any {
+    if (!schema) return null;
+
+    // 1. Use schema default if available
+    if (schema.default !== undefined) return schema.default;
+
+    // 2. Boolean parameters default to false
+    if (schema.type === 'boolean') return false;
+
+    // 3. Number parameters use minimum or 0
+    if (schema.type === 'number') {
+      return schema.minimum !== undefined ? schema.minimum : 0;
+    }
+
+    // 4. String parameters with enum use first option
+    if (schema.type === 'string' && schema.enum && schema.enum.length > 0) {
+      return schema.enum[0];
+    }
+
+    // 5. Try to infer from agent inputs or workflow config
+    // For email parameters, try to extract from agent inputs
+    if (paramName === 'to' || paramName === 'recipient' || paramName === 'email') {
+      // Check if agent has email input
+      const emailInput = agent.input_schema?.properties?.email;
+      if (emailInput) {
+        return '{{input.email}}';
+      }
+
+      // Check if agent has user_email in config
+      const userEmail = agent.agent_workflow?.config?.user_email;
+      if (userEmail) {
+        return userEmail;
+      }
+
+      // Fallback: use placeholder
+      return '{{input.recipient_email}}';
+    }
+
+    // For ID parameters (spreadsheet_id, folder_id, etc.), use input reference
+    const idParams = new Set(['spreadsheet_id', 'folder_id', 'channel_id', 'project_id', 'board_id']);
+    if (idParams.has(paramName)) {
+      return `{{input.${paramName}}}`;
+    }
+
+    // 6. Array default
+    if (schema.type === 'array') return [];
+
+    // 7. Object default
+    if (schema.type === 'object') return {};
+
+    // 8. String default
+    if (schema.type === 'string') return '';
+
+    return null;
   }
 
   /**

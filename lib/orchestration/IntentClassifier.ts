@@ -180,7 +180,7 @@ Respond with ONLY valid JSON, no additional text.`;
 
       const completion = await provider.chatCompletion(
         {
-          model: 'claude-3-haiku-20240307',
+          model: 'claude-3-5-haiku-20241022',  // Updated to current stable model
           messages: [{ role: 'user', content: classificationPrompt }],
           temperature: 0.1,
           max_tokens: 150,
@@ -699,7 +699,7 @@ Respond with ONLY valid JSON, no additional text.`;
 
       const completion = await provider.chatCompletion(
         {
-          model: 'claude-3-5-sonnet-20241022', // Use Sonnet for better reasoning with context
+          model: 'claude-3-sonnet-20240229', // Use Sonnet for better reasoning with context
           messages: [{ role: 'user', content: enhancedPrompt }],
           temperature: 0.1,
           max_tokens: 200,

@@ -141,7 +141,8 @@ export class WorkflowValidator {
       'human_in_loop',
       'delay',
       'webhook',
-      'custom'
+      'custom',
+      'ai_processing'
     ]
 
     workflow.forEach(step => {

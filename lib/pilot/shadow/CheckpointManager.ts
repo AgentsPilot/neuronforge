@@ -13,4 +13,14 @@ export class CheckpointManager {
     // Stub implementation
     return [];
   }
+
+  clear(): void {
+    // Stub implementation - clear in-memory checkpoints
+    // This will be implemented when checkpoint persistence is added
+  }
+
+  createStepCheckpoint(context: any, stepId: string): void {
+    // Stub implementation - create checkpoint for a specific step
+    // This will be implemented when checkpoint persistence is added
+  }
 }
