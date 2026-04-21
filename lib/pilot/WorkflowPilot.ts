@@ -154,7 +154,22 @@ export class WorkflowPilot {
   }
 
   /**
-   * Execute workflow
+   * Execute workflow with optional calibration/debug modes
+   *
+   * @param agent - The agent configuration with pilot_steps
+   * @param userId - User ID for authentication and logging
+   * @param userInput - Original user prompt/query
+   * @param inputValues - Runtime input values matching agent.input_schema
+   * @param sessionId - Optional session ID for tracking
+   * @param stepEmitter - Optional callbacks for step lifecycle events
+   * @param debugMode - Enable debug logging
+   * @param providedDebugRunId - Optional debug run ID
+   * @param providedExecutionId - Optional execution ID (for resume)
+   * @param runMode - Execution mode affecting error handling behavior:
+   *   - 'production': Stop on first error, throw exceptions (default)
+   *   - 'calibration': Collect issues, attempt auto-repairs, continue on recoverable errors
+   *   - 'batch_calibration': Same as calibration but optimized for bulk testing
+   *   Note: Separate from execution_type (manual/scheduled) which tracks how execution was triggered
    */
   async execute(
     agent: Agent,
@@ -170,7 +185,7 @@ export class WorkflowPilot {
     debugMode?: boolean,
     providedDebugRunId?: string,
     providedExecutionId?: string,
-    runMode?: 'calibration' | 'production' | 'batch_calibration'  // Separate from execution_type (manual/scheduled)
+    runMode?: 'calibration' | 'production' | 'batch_calibration'
   ): Promise<WorkflowExecutionResult> {
     console.log(`🚀 [WorkflowPilot] Starting execution for agent ${agent.id}: ${agent.agent_name}`);
 

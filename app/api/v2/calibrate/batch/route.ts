@@ -1034,14 +1034,14 @@ export async function POST(req: NextRequest) {
       const autoFixableIssues = iterationIssues.filter(issue =>
         issue.autoRepairAvailable &&
         issue.autoRepairProposal &&
-        issue.autoRepairProposal.confidence >= 0.85 && // High confidence only
+        issue.autoRepairProposal.confidence >= 0.80 && // Lowered from 0.85 to include more valid fixes
         !issue.requiresUserInput
       );
 
       const requiresUserInputIssues = iterationIssues.filter(issue =>
         issue.requiresUserInput ||
         !issue.autoRepairAvailable ||
-        (issue.autoRepairProposal && issue.autoRepairProposal.confidence < 0.85)
+        (issue.autoRepairProposal && issue.autoRepairProposal.confidence < 0.80)
       );
 
       logger.info({
