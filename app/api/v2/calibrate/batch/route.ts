@@ -20,6 +20,7 @@ import { CalibrationSessionRepository } from '@/lib/repositories/CalibrationSess
 import { acquireLock, releaseLock } from '@/lib/utils/distributedLock';
 import { createLogger } from '@/lib/logger';
 import type { CollectedIssue } from '@/lib/pilot/types';
+import type { Agent } from '@/types/agent';
 
 const logger = createLogger({ module: 'BatchCalibrationAPI', service: 'api' });
 
@@ -55,11 +56,13 @@ export async function POST(req: NextRequest) {
     logger.info({ agentId, userId: user.id }, 'Starting batch calibration');
 
     // 3. Fetch agent
-    const { data: agent, error: agentError } = await supabase
+    let agent: Agent | null = null;
+    const { data: fetchedAgent, error: agentError } = await supabase
       .from('agents')
       .select('*')
       .eq('id', agentId)
       .single();
+    agent = fetchedAgent as Agent;
 
     if (agentError || !agent) {
       logger.error({ agentId, error: agentError }, 'Agent not found');
@@ -186,6 +189,20 @@ export async function POST(req: NextRequest) {
             agentId,
             fixedCount: structuralFixes.length
           }, 'Successfully persisted structural fixes to database');
+
+          // CRITICAL: Reload agent from database to get the fixed pilot_steps
+          const { data: updatedAgent, error: reloadError } = await supabase
+            .from('agents')
+            .select('*')
+            .eq('id', agentId)
+            .single();
+
+          if (reloadError) {
+            logger.error({ error: reloadError, sessionId, agentId }, 'Failed to reload agent after fixes');
+          } else if (updatedAgent) {
+            agent = updatedAgent as Agent;
+            logger.info({ sessionId, agentId }, 'Reloaded agent with fixed pilot_steps from database');
+          }
         }
       }
 

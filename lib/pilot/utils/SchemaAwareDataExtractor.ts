@@ -1,23 +1,19 @@
 export class SchemaAwareDataExtractor {
-  extract(data: any, schema: any): any { return {}; }
+  extract(data: any, schema: any): any {
+    return {};
+  }
 }
 
-export const schemaExtractor = {
-  async extractArray(data: any, _plugin?: string, _action?: string): Promise<any[]> {
-    if (Array.isArray(data)) return data;
-    if (data && typeof data === 'object') {
-      const firstArray = Object.values(data).find(v => Array.isArray(v));
-      return (firstArray as any[]) ?? [];
-    }
-    return [];
-  },
-};
+// Export singleton instance for convenience
+export const schemaExtractor = new SchemaAwareDataExtractor();
 
-export function analyzeOutputSchema(_schema: any): {
-  primaryArrayField: string | null;
-  is2DArray: boolean;
-  nestedWrapper: 'fields' | 'properties' | 'data' | null;
-  itemType: 'object' | 'array' | 'primitive' | 'unknown';
-} {
-  return { primaryArrayField: null, is2DArray: false, nestedWrapper: null, itemType: 'unknown' };
+// Export utility function for analyzing output schemas
+export function analyzeOutputSchema(data: any, schema?: any): any {
+  // Stub implementation - analyze data structure against schema
+  // This will be implemented when schema-aware extraction is needed
+  return {
+    matchesSchema: true,
+    detectedType: typeof data,
+    fields: data && typeof data === 'object' ? Object.keys(data) : []
+  };
 }

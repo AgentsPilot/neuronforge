@@ -48,6 +48,7 @@ import { SystemConfigService } from '@/lib/services/SystemConfigService';
 import { ExecutionEventEmitter } from '@/lib/execution/ExecutionEventEmitter';
 import { WorkflowOrchestrator } from '@/lib/orchestration';
 import { PilotConfigService } from './PilotConfigService';
+import { StructuralRepairEngine } from './shadow/StructuralRepairEngine';
 import { StepCache } from './StepCache';
 import { DebugSessionManager } from '@/lib/debug/DebugSessionManager';
 import { WorkflowValidator } from './WorkflowValidator';
@@ -243,7 +244,48 @@ export class WorkflowPilot {
 
     console.log('✅ [WorkflowPilot] Pilot is enabled, proceeding with execution');
 
-    // 1. Parse workflow
+    // PHASE 0.5: Structural auto-repair (BEFORE parsing - modifies agent.pilot_steps in place)
+    console.log('🔧 [WorkflowPilot] CRITICAL: About to run structural auto-repair...');
+    console.log('🔧 [WorkflowPilot] Agent pilot_steps type:', typeof agent.pilot_steps, 'length:', Array.isArray(agent.pilot_steps) ? agent.pilot_steps.length : 'N/A');
+
+    const repairEngine = new StructuralRepairEngine();
+    console.log('🔧 [WorkflowPilot] StructuralRepairEngine created, calling scanWorkflow...');
+
+    const structuralIssues = await repairEngine.scanWorkflow(agent);
+
+    console.log('🔧 [WorkflowPilot] scanWorkflow returned:', structuralIssues.length, 'issues');
+
+    if (structuralIssues.length > 0) {
+      console.log(`🔧 [WorkflowPilot] Found ${structuralIssues.length} structural issue(s), attempting auto-repair...`);
+      const repairResults = await repairEngine.autoFixWorkflow(agent);
+
+      const fixedCount = repairResults.filter(r => r.fixed).length;
+      const failedCount = repairResults.filter(r => !r.fixed).length;
+
+      if (fixedCount > 0) {
+        console.log(`✅ [WorkflowPilot] Auto-repaired ${fixedCount} structural issue(s) silently`);
+
+        // Persist fixed workflow to database
+        const { error: updateError } = await this.supabase
+          .from('agents')
+          .update({ pilot_steps: agent.pilot_steps })
+          .eq('id', agent.id);
+
+        if (updateError) {
+          console.error(`⚠️  [WorkflowPilot] Failed to persist auto-repairs to database:`, updateError);
+        } else {
+          console.log(`💾 [WorkflowPilot] Persisted ${fixedCount} auto-repair(s) to database`);
+        }
+      }
+
+      if (failedCount > 0) {
+        console.warn(`⚠️  [WorkflowPilot] ${failedCount} structural issue(s) could not be auto-repaired`);
+      }
+    } else {
+      console.log('✅ [WorkflowPilot] No structural issues found');
+    }
+
+    // 1. Parse workflow (AFTER auto-repair - uses fixed agent.pilot_steps)
     // Pilot orchestration system prefers pilot_steps (normalized format)
     // Falls back to workflow_steps for backward compatibility with old agents
     const workflowSteps = (agent.pilot_steps as WorkflowStep[]) ||
