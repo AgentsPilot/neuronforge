@@ -38,6 +38,7 @@ export interface Agent {
   workflow_steps?: unknown[] | null;
   // Additional fields used in agent execution
   pilot_steps?: unknown[] | null;
+  pilot_steps_original?: unknown[] | null; // Original workflow before calibration - never modified after first set
   system_prompt?: string | null;
   enhanced_prompt?: string | null;
   trigger_condintion?: Record<string, unknown> | null;

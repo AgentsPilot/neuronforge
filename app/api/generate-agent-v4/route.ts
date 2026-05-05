@@ -467,6 +467,7 @@ export async function POST(req: NextRequest) {
         ai_generated_at: new Date().toISOString(),
         workflow_steps: workflow.workflow_steps,
         pilot_steps: workflow.workflow_steps,
+        pilot_steps_original: workflow.workflow_steps, // Original workflow before any calibration
         trigger_conditions: {
           error_handling: {
             on_failure: 'stop',
