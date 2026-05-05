@@ -95,6 +95,7 @@ export interface PluginAuthConfig {
   refresh_url: string;
   required_scopes: string[];
   profile_url?: string;
+  profile_method?: 'GET' | 'POST'; // HTTP method for profile endpoint (default: GET)
   user_scopes?: string[]; // For providers like Slack that separate bot and user scopes
   requires_pkce?: boolean; // Indicates if plugin requires PKCE for OAuth
   token_expiry_seconds?: number; // Token expiration time in seconds

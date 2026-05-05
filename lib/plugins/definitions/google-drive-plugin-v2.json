@@ -1397,13 +1397,13 @@
           "permission_type": {
             "type": "string",
             "enum": [
-              "anyone_with_link",
-              "anyone_can_view",
-              "anyone_can_edit",
-              "specific_users"
+              "anyone",
+              "user",
+              "group",
+              "domain"
             ],
-            "default": "anyone_with_link",
-            "description": "Type of sharing permission"
+            "default": "anyone",
+            "description": "Type of sharing permission (anyone = anyone with the link, user/group = specific people, domain = everyone in organization)"
           },
           "role": {
             "type": "string",

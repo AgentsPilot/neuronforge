@@ -206,14 +206,62 @@ export class DocumentExtractorPluginExecutor extends BasePluginExecutor {
   /**
    * Fetch file content from URL (generic fallback)
    * This is a fallback method - workflows should pass file_content directly for efficiency
+   *
+   * IMPORTANT: This handles a common workflow pattern where file_url actually contains
+   * base64-encoded content from a previous step (e.g., Gmail attachment download returns
+   * base64 in the 'data' field, and workflows may pass it as file_url)
    */
-  private async fetchFileContent(_fileUrl: string): Promise<{
+  private async fetchFileContent(fileUrl: string): Promise<{
     content: string;
     mimeType: string;
     filename: string;
   }> {
-    // TODO: Implement generic file fetching if needed
-    // For now, we expect workflows to pass file_content directly
-    throw new Error('Fetching from file_url not implemented. Please pass file_content parameter directly for better performance and plugin-agnosticism.');
+    // Check if "file_url" is actually base64-encoded content (common workflow mistake)
+    // Base64 strings are typically long and don't start with http/https
+    const isLikelyBase64 = fileUrl.length > 100 &&
+                          !fileUrl.startsWith('http://') &&
+                          !fileUrl.startsWith('https://') &&
+                          !fileUrl.startsWith('/') &&
+                          /^[A-Za-z0-9+/=_-]+$/.test(fileUrl);
+
+    if (isLikelyBase64) {
+      this.logger.info({
+        contentLength: fileUrl.length
+      }, 'file_url appears to be base64 content, treating as file_content');
+
+      // Treat it as file_content
+      const mimeType = this.detectMimeTypeFromBase64(fileUrl);
+
+      return {
+        content: fileUrl,
+        mimeType,
+        filename: 'document' + this.getExtensionForMimeType(mimeType)
+      };
+    }
+
+    // If it's an actual URL, we could implement fetching here
+    // For now, throw an error for actual URLs
+    throw new Error('Fetching from HTTP/HTTPS file_url not implemented. Please pass file_content parameter directly for better performance and plugin-agnosticism.');
+  }
+
+  /**
+   * Get file extension for a given MIME type
+   */
+  private getExtensionForMimeType(mimeType: string): string {
+    const mimeToExt: Record<string, string> = {
+      'application/pdf': '.pdf',
+      'image/png': '.png',
+      'image/jpeg': '.jpg',
+      'image/gif': '.gif',
+      'text/plain': '.txt',
+      'text/csv': '.csv',
+      'application/json': '.json',
+      'application/msword': '.doc',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document': '.docx',
+      'application/vnd.ms-excel': '.xls',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': '.xlsx',
+    };
+
+    return mimeToExt[mimeType] || '';
   }
 }

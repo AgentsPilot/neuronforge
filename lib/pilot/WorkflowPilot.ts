@@ -1216,7 +1216,7 @@ export class WorkflowPilot {
 
     // Handle loop type
     if (stepDef.type === 'loop') {
-      const results = await this.parallelExecutor.executeLoop(stepDef, context);
+      const results = await this.parallelExecutor.executeLoop(stepDef, context, stepEmitter);
 
       context.setStepOutput(stepDef.id, {
         stepId: stepDef.id,
@@ -1251,7 +1251,7 @@ export class WorkflowPilot {
     // Phase 3: Advanced Parallel Patterns
     if (stepDef.type === 'scatter_gather') {
       const startTime = Date.now();
-      const results = await this.parallelExecutor.executeScatterGather(stepDef, context);
+      const results = await this.parallelExecutor.executeScatterGather(stepDef, context, stepEmitter);
 
       context.setStepOutput(stepDef.id, {
         stepId: stepDef.id,
@@ -1739,11 +1739,12 @@ export class WorkflowPilot {
 
     // Checkpoint (metadata to DB + in-memory batch snapshot)
     await this.stateManager.checkpoint(context);
-    const batchCheckpointManager = (this as any)._checkpointManager as CheckpointManager | null;
-    if (batchCheckpointManager) {
-      const batchStepIds = steps.map(s => s.stepDefinition.id);
-      batchCheckpointManager.createBatchCheckpoint(context, batchStepIds);
-    }
+    // Note: Batch checkpointing disabled - createBatchCheckpoint method not implemented
+    // const batchCheckpointManager = (this as any)._checkpointManager as CheckpointManager | null;
+    // if (batchCheckpointManager) {
+    //   const batchStepIds = steps.map(s => s.stepDefinition.id);
+    //   batchCheckpointManager.createBatchCheckpoint(context, batchStepIds);
+    // }
 
     const successCount = Array.from(results.values()).filter(o => o.metadata.success).length;
     console.log(`  ✓ Parallel group completed: ${successCount}/${results.size} successful`);

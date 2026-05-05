@@ -6,6 +6,8 @@
 
 import React from 'react'
 import { DynamicSelectField } from '@/components/v2/DynamicSelectField'
+import { QueryComponentsField } from '@/components/v2/QueryComponentsField'
+import type { QueryComponentsConfig } from '@/lib/plugins/query-components-config'
 
 export interface InputFieldSchema {
   name: string
@@ -31,6 +33,7 @@ interface AgentInputFieldsProps {
     parameter: string
     depends_on?: string[]
     paramToFieldMap?: Record<string, string>
+    queryComponents?: QueryComponentsConfig
   } | null
   // Optional: Custom wrapper className (e.g., for grid layout)
   wrapperClassName?: string
@@ -55,11 +58,24 @@ const renderFieldInput = (
   field: InputFieldSchema,
   values: Record<string, any>,
   onChange: (name: string, value: any) => void,
-  getDynamicOptions?: (fieldName: string) => { plugin: string; action: string; parameter: string; depends_on?: string[]; paramToFieldMap?: Record<string, string> } | null,
+  getDynamicOptions?: (fieldName: string) => { plugin: string; action: string; parameter: string; depends_on?: string[]; paramToFieldMap?: Record<string, string>; queryComponents?: QueryComponentsConfig } | null,
   errors: Record<string, string> = {}
 ) => {
-  // Check if this field should use dynamic dropdown
+  // Check if this field should use dynamic dropdown or query components
   const dynamicOptions = getDynamicOptions?.(field.name)
+
+  // Check if this field has query components configuration (for Gmail query, Drive query, etc.)
+  if (dynamicOptions?.queryComponents) {
+    return (
+      <QueryComponentsField
+        value={values[field.name] || ''}
+        onChange={(value) => onChange(field.name, value)}
+        config={dynamicOptions.queryComponents}
+        label={field.label || formatFieldName(field.name)}
+        description={field.description}
+      />
+    )
+  }
 
   if (dynamicOptions) {
     // Build dependent values object if this field has dependencies
@@ -69,17 +85,44 @@ const renderFieldInput = (
       const stepPrefixMatch = field.name.match(/^(step\d+_)/)
       const stepPrefix = stepPrefixMatch ? stepPrefixMatch[1] : ''
 
+      console.log('[AgentInputFields] Building dependentValues for', field.name, {
+        depends_on: dynamicOptions.depends_on,
+        paramToFieldMap: dynamicOptions.paramToFieldMap,
+        stepPrefix,
+        availableValues: Object.keys(values)
+      })
+
       dynamicOptions.depends_on.forEach((paramName: string) => {
         // Map parameter name to field name using paramToFieldMap
         const fieldName = dynamicOptions.paramToFieldMap?.[paramName] || paramName
 
-        // Try both the base field name and the prefixed version
+        // Try multiple lookup strategies:
+        // 1. Exact match with paramToFieldMap
+        // 2. Prefixed version (same step)
+        // 3. Base field name (no prefix)
+        // 4. Search all values for a field containing the param name
         const prefixedFieldName = stepPrefix + fieldName
-        const depValue = values[prefixedFieldName] || values[fieldName]
+        let depValue = values[prefixedFieldName] || values[fieldName] || values[paramName]
+
+        // If still not found, search for any field that ends with the param name
+        if (!depValue) {
+          const matchingKey = Object.keys(values).find(key =>
+            key === paramName ||
+            key.endsWith(`_${paramName}`) ||
+            key.replace(/^step\d+_/, '') === paramName
+          )
+          if (matchingKey) {
+            depValue = values[matchingKey]
+            console.log('[AgentInputFields] Found dependent value via search:', paramName, '→', matchingKey, '=', depValue)
+          }
+        }
 
         if (depValue) {
           // Use parameter name as key (for API), but lookup value using field name
           dependentValues[paramName] = depValue
+          console.log('[AgentInputFields] Mapped dependency:', paramName, '=', depValue)
+        } else {
+          console.log('[AgentInputFields] Could not find value for dependency:', paramName, 'tried:', [prefixedFieldName, fieldName, paramName])
         }
       })
     }
@@ -204,33 +247,45 @@ export function AgentInputFields({
     const aDynamicOptions = getDynamicOptions?.(a.name)
     const bDynamicOptions = getDynamicOptions?.(b.name)
 
+    const baseNameA = a.name.replace(/^step\d+_/, '')
+    const baseNameB = b.name.replace(/^step\d+_/, '')
+
     console.log('[AgentInputFields] Comparing:', a.name, 'vs', b.name)
     console.log('[AgentInputFields] a depends_on:', aDynamicOptions?.depends_on, 'paramToFieldMap:', aDynamicOptions?.paramToFieldMap)
     console.log('[AgentInputFields] b depends_on:', bDynamicOptions?.depends_on, 'paramToFieldMap:', bDynamicOptions?.paramToFieldMap)
 
     // If a depends on b, b should come first
-    if (aDynamicOptions?.depends_on && aDynamicOptions?.paramToFieldMap) {
-      // Check if any of a's dependencies map to b's field name
-      const dependentFieldNames = aDynamicOptions.depends_on.map(
-        (paramName: string) => aDynamicOptions.paramToFieldMap![paramName] || paramName
-      )
-      console.log('[AgentInputFields] a dependentFieldNames:', dependentFieldNames, 'includes b.name?', dependentFieldNames.includes(b.name))
-      if (dependentFieldNames.includes(b.name)) {
+    if (aDynamicOptions?.depends_on) {
+      // Check if any of a's dependencies match b's field name (full or base)
+      // depends_on contains parameter names like "spreadsheet_id"
+      const dependsOnMatches = aDynamicOptions.depends_on.some((paramName: string) => {
+        const mappedFieldName = aDynamicOptions.paramToFieldMap?.[paramName] || paramName
+        return mappedFieldName === b.name ||
+               mappedFieldName === baseNameB ||
+               paramName === b.name ||
+               paramName === baseNameB
+      })
+      console.log('[AgentInputFields] a depends on b?', dependsOnMatches, 'checking:', aDynamicOptions.depends_on, 'against', b.name, '/', baseNameB)
+      if (dependsOnMatches) {
         console.log('[AgentInputFields] → a comes AFTER b')
-        return 1 // a comes after b
+        return 1 // a comes after b (b is the dependency)
       }
     }
 
     // If b depends on a, a should come first
-    if (bDynamicOptions?.depends_on && bDynamicOptions?.paramToFieldMap) {
-      // Check if any of b's dependencies map to a's field name
-      const dependentFieldNames = bDynamicOptions.depends_on.map(
-        (paramName: string) => bDynamicOptions.paramToFieldMap![paramName] || paramName
-      )
-      console.log('[AgentInputFields] b dependentFieldNames:', dependentFieldNames, 'includes a.name?', dependentFieldNames.includes(a.name))
-      if (dependentFieldNames.includes(a.name)) {
+    if (bDynamicOptions?.depends_on) {
+      // Check if any of b's dependencies match a's field name (full or base)
+      const dependsOnMatches = bDynamicOptions.depends_on.some((paramName: string) => {
+        const mappedFieldName = bDynamicOptions.paramToFieldMap?.[paramName] || paramName
+        return mappedFieldName === a.name ||
+               mappedFieldName === baseNameA ||
+               paramName === a.name ||
+               paramName === baseNameA
+      })
+      console.log('[AgentInputFields] b depends on a?', dependsOnMatches, 'checking:', bDynamicOptions.depends_on, 'against', a.name, '/', baseNameA)
+      if (dependsOnMatches) {
         console.log('[AgentInputFields] → a comes BEFORE b')
-        return -1 // a comes before b
+        return -1 // a comes before b (a is the dependency)
       }
     }
 
@@ -253,24 +308,36 @@ export function AgentInputFields({
       const baseNameB = b.name.replace(/^step\d+_/, '')
 
       // If a depends on b, b should come first
-      if (aDynamicOptions?.depends_on && aDynamicOptions?.paramToFieldMap) {
-        // Check if any of a's dependencies map to b's field name
-        const dependentFieldNames = aDynamicOptions.depends_on.map(
-          (paramName: string) => aDynamicOptions.paramToFieldMap![paramName] || paramName
-        )
-        if (dependentFieldNames.includes(baseNameB)) {
-          return 1 // a comes after b
+      if (aDynamicOptions?.depends_on) {
+        // Check if any of a's dependencies match b's field name (full or base)
+        // depends_on contains parameter names like "spreadsheet_id"
+        // We need to check both full field name and base name
+        const dependsOnMatches = aDynamicOptions.depends_on.some((paramName: string) => {
+          // Get mapped field name from paramToFieldMap if available
+          const mappedFieldName = aDynamicOptions.paramToFieldMap?.[paramName] || paramName
+          // Check against both full name and base name
+          return mappedFieldName === b.name ||
+                 mappedFieldName === baseNameB ||
+                 paramName === b.name ||
+                 paramName === baseNameB
+        })
+        if (dependsOnMatches) {
+          return 1 // a comes after b (b is the dependency)
         }
       }
 
       // If b depends on a, a should come first
-      if (bDynamicOptions?.depends_on && bDynamicOptions?.paramToFieldMap) {
-        // Check if any of b's dependencies map to a's field name
-        const dependentFieldNames = bDynamicOptions.depends_on.map(
-          (paramName: string) => bDynamicOptions.paramToFieldMap![paramName] || paramName
-        )
-        if (dependentFieldNames.includes(baseNameA)) {
-          return -1 // a comes before b
+      if (bDynamicOptions?.depends_on) {
+        // Check if any of b's dependencies match a's field name (full or base)
+        const dependsOnMatches = bDynamicOptions.depends_on.some((paramName: string) => {
+          const mappedFieldName = bDynamicOptions.paramToFieldMap?.[paramName] || paramName
+          return mappedFieldName === a.name ||
+                 mappedFieldName === baseNameA ||
+                 paramName === a.name ||
+                 paramName === baseNameA
+        })
+        if (dependsOnMatches) {
+          return -1 // a comes before b (a is the dependency)
         }
       }
 

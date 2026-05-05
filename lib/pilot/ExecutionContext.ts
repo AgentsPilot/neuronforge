@@ -448,6 +448,14 @@ export class ExecutionContext implements IExecutionContext {
 
     const root = parts[0];
 
+    // CRITICAL FIX: Check variables FIRST before step outputs
+    // This fixes the bug where variables like "step14_transformed_data" are treated as step IDs
+    // because they start with "step". Variables registered via output_variable take precedence.
+    if (this.variables.hasOwnProperty(root)) {
+      const itemValue = this.variables[root];
+      return parts.length > 1 ? this.getNestedValue(itemValue, parts.slice(1)) : itemValue;
+    }
+
     // Check if it's a step output reference
     if (root.startsWith('step')) {
       const stepId = root;
@@ -519,12 +527,6 @@ export class ExecutionContext implements IExecutionContext {
     // Check if it's a loop variable reference
     if (root === 'loop') {
       return this.getNestedValue(this.variables, parts);
-    }
-
-    // Check if root is a custom scatter/loop variable (e.g., 'email', 'customer', etc.)
-    if (this.variables.hasOwnProperty(root)) {
-      const itemValue = this.variables[root];
-      return parts.length > 1 ? this.getNestedValue(itemValue, parts.slice(1)) : itemValue;
     }
 
     throw new VariableResolutionError(

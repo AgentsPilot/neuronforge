@@ -21,10 +21,11 @@ export class ExecutionRepository {
 
   /**
    * Find all executions for an agent
+   * By default, excludes calibration runs (run_mode = 'calibration')
    */
   async findByAgentId(
     agentId: string,
-    options?: { limit?: number; offset?: number; orderBy?: 'started_at' | 'completed_at'; ascending?: boolean }
+    options?: { limit?: number; offset?: number; orderBy?: 'started_at' | 'completed_at'; ascending?: boolean; includeCalibration?: boolean }
   ): Promise<AgentRepositoryResult<Execution[]>> {
     const methodLogger = this.logger.child({ method: 'findByAgentId', agentId });
     const startTime = Date.now();
@@ -35,6 +36,11 @@ export class ExecutionRepository {
         .select('*')
         .eq('agent_id', agentId)
         .order(options?.orderBy || 'started_at', { ascending: options?.ascending ?? false });
+
+      // Exclude calibration runs by default (only show production runs)
+      if (!options?.includeCalibration) {
+        query = query.neq('run_mode', 'calibration');
+      }
 
       if (options?.limit) {
         query = query.limit(options.limit);

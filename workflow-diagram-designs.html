@@ -1,0 +1,1023 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Workflow Progress Designs - Professional</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    :root {
+      --primary: #6366f1;
+      --primary-soft: rgba(99, 102, 241, 0.15);
+      --secondary: #8b5cf6;
+      --success: #22c55e;
+      --success-soft: rgba(34, 197, 94, 0.12);
+      --error: #ef4444;
+      --warning: #f59e0b;
+      --bg: #09090b;
+      --surface: #18181b;
+      --surface-elevated: #27272a;
+      --border: rgba(255, 255, 255, 0.08);
+      --border-strong: rgba(255, 255, 255, 0.12);
+      --text-primary: #fafafa;
+      --text-secondary: #a1a1aa;
+      --text-muted: #71717a;
+    }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--bg);
+      color: var(--text-primary);
+      padding: 48px;
+      min-height: 100vh;
+      line-height: 1.5;
+    }
+
+    .page-header {
+      max-width: 800px;
+      margin: 0 auto 48px;
+      text-align: center;
+    }
+
+    h1 {
+      font-size: 32px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      margin-bottom: 12px;
+    }
+
+    .subtitle {
+      color: var(--text-secondary);
+      font-size: 16px;
+    }
+
+    .options-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 32px;
+      max-width: 1400px;
+      margin: 0 auto;
+    }
+
+    .option-card {
+      background: var(--surface);
+      border-radius: 16px;
+      border: 1px solid var(--border);
+      overflow: hidden;
+    }
+
+    .option-header {
+      padding: 20px 24px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .option-number {
+      width: 28px;
+      height: 28px;
+      background: var(--primary);
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 600;
+      font-size: 13px;
+    }
+
+    .option-title {
+      font-size: 16px;
+      font-weight: 600;
+    }
+
+    .option-badge {
+      margin-left: auto;
+      padding: 5px 12px;
+      border-radius: 100px;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      background: var(--success-soft);
+      color: var(--success);
+    }
+
+    .diagram-area {
+      padding: 32px;
+      min-height: 420px;
+      background: linear-gradient(180deg, transparent 0%, rgba(0,0,0,0.2) 100%);
+    }
+
+    /* ============================== */
+    /* OPTION 1: Minimal Stepper      */
+    /* ============================== */
+    .stepper {
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+    }
+
+    .stepper-item {
+      display: flex;
+      gap: 16px;
+      position: relative;
+    }
+
+    .stepper-line {
+      width: 2px;
+      position: absolute;
+      left: 15px;
+      top: 36px;
+      bottom: 0;
+      background: var(--border-strong);
+    }
+
+    .stepper-item:last-child .stepper-line {
+      display: none;
+    }
+
+    .stepper-item.completed .stepper-line {
+      background: var(--success);
+    }
+
+    .stepper-item.executing .stepper-line {
+      background: linear-gradient(180deg, var(--primary) 0%, var(--border-strong) 100%);
+    }
+
+    .stepper-indicator {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      z-index: 1;
+      font-size: 14px;
+      transition: all 0.3s ease;
+    }
+
+    .stepper-item.completed .stepper-indicator {
+      background: var(--success);
+      color: white;
+    }
+
+    .stepper-item.executing .stepper-indicator {
+      background: var(--primary);
+      color: white;
+      box-shadow: 0 0 0 4px var(--primary-soft);
+    }
+
+    .stepper-item.pending .stepper-indicator {
+      background: var(--surface-elevated);
+      border: 2px solid var(--border-strong);
+      color: var(--text-muted);
+    }
+
+    .stepper-content {
+      flex: 1;
+      padding-bottom: 32px;
+    }
+
+    .stepper-item:last-child .stepper-content {
+      padding-bottom: 0;
+    }
+
+    .stepper-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 6px;
+    }
+
+    .stepper-title {
+      font-weight: 600;
+      font-size: 14px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .stepper-plugin {
+      padding: 2px 8px;
+      background: var(--surface-elevated);
+      border-radius: 4px;
+      font-size: 11px;
+      color: var(--text-muted);
+      font-weight: 500;
+    }
+
+    .stepper-description {
+      font-size: 13px;
+      color: var(--text-secondary);
+    }
+
+    .stepper-badge {
+      padding: 4px 10px;
+      border-radius: 100px;
+      font-size: 11px;
+      font-weight: 600;
+    }
+
+    .stepper-badge.success {
+      background: var(--success-soft);
+      color: var(--success);
+    }
+
+    .stepper-badge.running {
+      background: var(--primary-soft);
+      color: var(--primary);
+      animation: pulse-badge 2s ease-in-out infinite;
+    }
+
+    @keyframes pulse-badge {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.6; }
+    }
+
+    .stepper-output {
+      margin-top: 12px;
+      padding: 12px 14px;
+      background: var(--surface-elevated);
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      font-size: 12px;
+      color: var(--text-secondary);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .stepper-output-count {
+      color: var(--text-primary);
+      font-weight: 600;
+    }
+
+    /* ============================== */
+    /* OPTION 2: Card Stack           */
+    /* ============================== */
+    .card-stack {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .stack-card {
+      background: var(--surface-elevated);
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      padding: 16px 20px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      transition: all 0.3s ease;
+    }
+
+    .stack-card.completed {
+      border-color: rgba(34, 197, 94, 0.3);
+    }
+
+    .stack-card.executing {
+      border-color: var(--primary);
+      background: linear-gradient(135deg, var(--surface-elevated) 0%, rgba(99, 102, 241, 0.05) 100%);
+      box-shadow: 0 0 0 1px var(--primary), 0 4px 24px rgba(99, 102, 241, 0.15);
+    }
+
+    .stack-icon {
+      width: 44px;
+      height: 44px;
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 20px;
+      flex-shrink: 0;
+    }
+
+    .stack-card.completed .stack-icon {
+      background: var(--success-soft);
+    }
+
+    .stack-card.executing .stack-icon {
+      background: var(--primary-soft);
+    }
+
+    .stack-card.pending .stack-icon {
+      background: rgba(113, 113, 122, 0.1);
+    }
+
+    .stack-body {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .stack-title {
+      font-weight: 600;
+      font-size: 14px;
+      margin-bottom: 3px;
+    }
+
+    .stack-meta {
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    .stack-right {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 4px;
+    }
+
+    .stack-status {
+      padding: 4px 10px;
+      border-radius: 6px;
+      font-size: 11px;
+      font-weight: 600;
+    }
+
+    .stack-status.success {
+      background: var(--success-soft);
+      color: var(--success);
+    }
+
+    .stack-status.running {
+      background: var(--primary-soft);
+      color: var(--primary);
+    }
+
+    .stack-time {
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    .stack-progress {
+      width: 100%;
+      height: 3px;
+      background: var(--border-strong);
+      border-radius: 2px;
+      margin-top: 12px;
+      overflow: hidden;
+    }
+
+    .stack-progress-bar {
+      height: 100%;
+      background: linear-gradient(90deg, var(--primary), var(--secondary));
+      border-radius: 2px;
+      animation: progress-flow 2s ease-in-out infinite;
+    }
+
+    @keyframes progress-flow {
+      0% { width: 20%; }
+      50% { width: 80%; }
+      100% { width: 20%; }
+    }
+
+    /* ============================== */
+    /* OPTION 3: Timeline Pro         */
+    /* ============================== */
+    .timeline-pro {
+      position: relative;
+      padding-left: 32px;
+    }
+
+    .timeline-track {
+      position: absolute;
+      left: 7px;
+      top: 0;
+      bottom: 0;
+      width: 2px;
+      background: var(--border-strong);
+    }
+
+    .timeline-progress {
+      position: absolute;
+      left: 7px;
+      top: 0;
+      width: 2px;
+      height: 70%;
+      background: linear-gradient(180deg, var(--success) 0%, var(--primary) 100%);
+      border-radius: 1px;
+    }
+
+    .timeline-glow {
+      position: absolute;
+      left: 3px;
+      top: 70%;
+      width: 10px;
+      height: 10px;
+      background: var(--primary);
+      border-radius: 50%;
+      box-shadow: 0 0 12px var(--primary), 0 0 24px rgba(99, 102, 241, 0.4);
+      animation: glow-pulse 1.5s ease-in-out infinite;
+      transform: translateY(-50%);
+    }
+
+    @keyframes glow-pulse {
+      0%, 100% { opacity: 1; transform: translateY(-50%) scale(1); }
+      50% { opacity: 0.7; transform: translateY(-50%) scale(1.3); }
+    }
+
+    .timeline-item {
+      position: relative;
+      margin-bottom: 24px;
+    }
+
+    .timeline-item:last-child {
+      margin-bottom: 0;
+    }
+
+    .timeline-dot {
+      position: absolute;
+      left: -32px;
+      top: 2px;
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      border: 2px solid var(--border-strong);
+      background: var(--surface);
+    }
+
+    .timeline-item.completed .timeline-dot {
+      background: var(--success);
+      border-color: var(--success);
+    }
+
+    .timeline-item.executing .timeline-dot {
+      background: var(--primary);
+      border-color: var(--primary);
+      box-shadow: 0 0 0 4px var(--primary-soft);
+    }
+
+    .timeline-card {
+      background: var(--surface-elevated);
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      padding: 14px 16px;
+      transition: all 0.2s ease;
+    }
+
+    .timeline-item.executing .timeline-card {
+      border-color: rgba(99, 102, 241, 0.4);
+      background: linear-gradient(135deg, var(--surface-elevated) 0%, rgba(99, 102, 241, 0.03) 100%);
+    }
+
+    .timeline-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 4px;
+    }
+
+    .timeline-name {
+      font-weight: 600;
+      font-size: 13px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .timeline-icon {
+      width: 24px;
+      height: 24px;
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 12px;
+      background: var(--primary-soft);
+    }
+
+    .timeline-detail {
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    .timeline-result {
+      margin-top: 10px;
+      padding: 10px 12px;
+      background: rgba(0,0,0,0.25);
+      border-radius: 6px;
+      font-size: 12px;
+      color: var(--text-secondary);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .timeline-result-icon {
+      color: var(--success);
+      font-size: 14px;
+    }
+
+    /* ============================== */
+    /* OPTION 4: Compact Flow         */
+    /* ============================== */
+    .compact-flow {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .flow-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 14px 16px;
+      background: var(--surface-elevated);
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      transition: all 0.2s ease;
+    }
+
+    .flow-row.executing {
+      border-color: var(--primary);
+      box-shadow: inset 0 0 0 1px var(--primary);
+    }
+
+    .flow-num {
+      width: 24px;
+      height: 24px;
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 12px;
+      font-weight: 600;
+      flex-shrink: 0;
+    }
+
+    .flow-row.completed .flow-num {
+      background: var(--success);
+      color: white;
+    }
+
+    .flow-row.executing .flow-num {
+      background: var(--primary);
+      color: white;
+    }
+
+    .flow-row.pending .flow-num {
+      background: var(--surface);
+      border: 1px solid var(--border-strong);
+      color: var(--text-muted);
+    }
+
+    .flow-icon {
+      width: 32px;
+      height: 32px;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 16px;
+      background: rgba(255,255,255,0.03);
+      flex-shrink: 0;
+    }
+
+    .flow-info {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .flow-title {
+      font-weight: 500;
+      font-size: 13px;
+      margin-bottom: 2px;
+    }
+
+    .flow-sub {
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    .flow-end {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .flow-count {
+      padding: 4px 8px;
+      background: var(--success-soft);
+      color: var(--success);
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 600;
+    }
+
+    .flow-spinner {
+      width: 18px;
+      height: 18px;
+      border: 2px solid var(--primary-soft);
+      border-top-color: var(--primary);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    .flow-check {
+      width: 18px;
+      height: 18px;
+      background: var(--success);
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: white;
+      font-size: 11px;
+    }
+
+    /* Connecting arrows */
+    .flow-arrow {
+      display: flex;
+      justify-content: center;
+      padding: 2px 0;
+    }
+
+    .flow-arrow svg {
+      width: 16px;
+      height: 16px;
+      color: var(--text-muted);
+      opacity: 0.4;
+    }
+
+    .flow-arrow.completed svg {
+      color: var(--success);
+      opacity: 0.7;
+    }
+
+    /* Description footer */
+    .option-footer {
+      padding: 16px 24px;
+      border-top: 1px solid var(--border);
+      font-size: 13px;
+      color: var(--text-secondary);
+    }
+
+    .option-features {
+      display: flex;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+
+    .feature-tag {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      background: var(--surface-elevated);
+      border-radius: 6px;
+      font-size: 11px;
+      color: var(--text-secondary);
+    }
+
+    .feature-tag svg {
+      width: 12px;
+      height: 12px;
+      color: var(--primary);
+    }
+  </style>
+</head>
+<body>
+  <div class="page-header">
+    <h1>Workflow Progress Designs</h1>
+    <p class="subtitle">Professional, clean designs for the Live Progress visualization</p>
+  </div>
+
+  <div class="options-grid">
+    <!-- Option 1: Minimal Stepper -->
+    <div class="option-card">
+      <div class="option-header">
+        <div class="option-number">1</div>
+        <div class="option-title">Minimal Stepper</div>
+      </div>
+      <div class="diagram-area">
+        <div class="stepper">
+          <div class="stepper-item completed">
+            <div class="stepper-line"></div>
+            <div class="stepper-indicator">&#10003;</div>
+            <div class="stepper-content">
+              <div class="stepper-header">
+                <div class="stepper-title">
+                  Search Emails
+                  <span class="stepper-plugin">Gmail</span>
+                </div>
+                <span class="stepper-badge success">Done</span>
+              </div>
+              <div class="stepper-description">Searching inbox for matching emails</div>
+              <div class="stepper-output">
+                <span>&#8594;</span>
+                <span class="stepper-output-count">24 emails</span>
+                <span>found in 1.2s</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="stepper-item completed">
+            <div class="stepper-line"></div>
+            <div class="stepper-indicator">&#10003;</div>
+            <div class="stepper-content">
+              <div class="stepper-header">
+                <div class="stepper-title">
+                  Filter Results
+                  <span class="stepper-plugin">Transform</span>
+                </div>
+                <span class="stepper-badge success">Done</span>
+              </div>
+              <div class="stepper-description">Filtering emails by invoice criteria</div>
+              <div class="stepper-output">
+                <span>&#8594;</span>
+                <span class="stepper-output-count">8 invoices</span>
+                <span>matched</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="stepper-item executing">
+            <div class="stepper-line"></div>
+            <div class="stepper-indicator">&#9679;</div>
+            <div class="stepper-content">
+              <div class="stepper-header">
+                <div class="stepper-title">
+                  Extract Data
+                  <span class="stepper-plugin">AI</span>
+                </div>
+                <span class="stepper-badge running">Running</span>
+              </div>
+              <div class="stepper-description">Extracting invoice details with AI</div>
+            </div>
+          </div>
+
+          <div class="stepper-item pending">
+            <div class="stepper-line"></div>
+            <div class="stepper-indicator">4</div>
+            <div class="stepper-content">
+              <div class="stepper-header">
+                <div class="stepper-title">
+                  Save to Sheets
+                  <span class="stepper-plugin">Google Sheets</span>
+                </div>
+              </div>
+              <div class="stepper-description">Append extracted data to spreadsheet</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="option-footer">
+        <div class="option-features">
+          <span class="feature-tag"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20,6 9,17 4,12"/></svg> Clean vertical flow</span>
+          <span class="feature-tag"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/></svg> Output previews</span>
+          <span class="feature-tag"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12,2 L12,22"/></svg> Connected line</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Option 2: Card Stack -->
+    <div class="option-card">
+      <div class="option-header">
+        <div class="option-number">2</div>
+        <div class="option-title">Card Stack</div>
+        <span class="option-badge">Recommended</span>
+      </div>
+      <div class="diagram-area">
+        <div class="card-stack">
+          <div class="stack-card completed">
+            <div class="stack-icon">&#128231;</div>
+            <div class="stack-body">
+              <div class="stack-title">Search Emails</div>
+              <div class="stack-meta">Gmail &middot; Inbox search</div>
+            </div>
+            <div class="stack-right">
+              <span class="stack-status success">&#10003; Done</span>
+              <span class="stack-time">1.2s &middot; 24 items</span>
+            </div>
+          </div>
+
+          <div class="stack-card completed">
+            <div class="stack-icon">&#128270;</div>
+            <div class="stack-body">
+              <div class="stack-title">Filter Results</div>
+              <div class="stack-meta">Transform &middot; Invoice filter</div>
+            </div>
+            <div class="stack-right">
+              <span class="stack-status success">&#10003; Done</span>
+              <span class="stack-time">0.3s &middot; 8 items</span>
+            </div>
+          </div>
+
+          <div class="stack-card executing">
+            <div class="stack-icon">&#129302;</div>
+            <div class="stack-body">
+              <div class="stack-title">Extract Invoice Data</div>
+              <div class="stack-meta">AI Processing &middot; GPT-4</div>
+              <div class="stack-progress">
+                <div class="stack-progress-bar"></div>
+              </div>
+            </div>
+            <div class="stack-right">
+              <span class="stack-status running">Running</span>
+            </div>
+          </div>
+
+          <div class="stack-card pending">
+            <div class="stack-icon">&#128202;</div>
+            <div class="stack-body">
+              <div class="stack-title">Save to Google Sheets</div>
+              <div class="stack-meta">Google Sheets &middot; Append rows</div>
+            </div>
+            <div class="stack-right">
+              <span class="stack-time">Waiting</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="option-footer">
+        <div class="option-features">
+          <span class="feature-tag"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/></svg> Card-based layout</span>
+          <span class="feature-tag"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12,2 v20 M2,12 h20"/></svg> Progress indicator</span>
+          <span class="feature-tag"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12,1 v4 M12,19 v4"/></svg> Glow effects</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Option 3: Timeline Pro -->
+    <div class="option-card">
+      <div class="option-header">
+        <div class="option-number">3</div>
+        <div class="option-title">Timeline Pro</div>
+      </div>
+      <div class="diagram-area">
+        <div class="timeline-pro">
+          <div class="timeline-track"></div>
+          <div class="timeline-progress"></div>
+          <div class="timeline-glow"></div>
+
+          <div class="timeline-item completed">
+            <div class="timeline-dot"></div>
+            <div class="timeline-card">
+              <div class="timeline-top">
+                <div class="timeline-name">
+                  <span class="timeline-icon">&#128231;</span>
+                  Search Emails
+                </div>
+                <span class="stepper-badge success">Done</span>
+              </div>
+              <div class="timeline-detail">Gmail &middot; 1.2s</div>
+              <div class="timeline-result">
+                <span class="timeline-result-icon">&#10003;</span>
+                Found 24 emails matching criteria
+              </div>
+            </div>
+          </div>
+
+          <div class="timeline-item completed">
+            <div class="timeline-dot"></div>
+            <div class="timeline-card">
+              <div class="timeline-top">
+                <div class="timeline-name">
+                  <span class="timeline-icon">&#128270;</span>
+                  Filter Results
+                </div>
+                <span class="stepper-badge success">Done</span>
+              </div>
+              <div class="timeline-detail">Transform &middot; 0.3s</div>
+              <div class="timeline-result">
+                <span class="timeline-result-icon">&#10003;</span>
+                Filtered to 8 invoice emails
+              </div>
+            </div>
+          </div>
+
+          <div class="timeline-item executing">
+            <div class="timeline-dot"></div>
+            <div class="timeline-card">
+              <div class="timeline-top">
+                <div class="timeline-name">
+                  <span class="timeline-icon">&#129302;</span>
+                  Extract Data
+                </div>
+                <span class="stepper-badge running">Running</span>
+              </div>
+              <div class="timeline-detail">AI Processing &middot; GPT-4</div>
+            </div>
+          </div>
+
+          <div class="timeline-item pending">
+            <div class="timeline-dot"></div>
+            <div class="timeline-card">
+              <div class="timeline-top">
+                <div class="timeline-name">
+                  <span class="timeline-icon">&#128202;</span>
+                  Save Results
+                </div>
+              </div>
+              <div class="timeline-detail">Google Sheets</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="option-footer">
+        <div class="option-features">
+          <span class="feature-tag"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/></svg> Glowing progress</span>
+          <span class="feature-tag"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12,2 L12,22"/></svg> Gradient track</span>
+          <span class="feature-tag"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/></svg> Result cards</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Option 4: Compact Flow -->
+    <div class="option-card">
+      <div class="option-header">
+        <div class="option-number">4</div>
+        <div class="option-title">Compact Flow</div>
+      </div>
+      <div class="diagram-area">
+        <div class="compact-flow">
+          <div class="flow-row completed">
+            <div class="flow-num">&#10003;</div>
+            <div class="flow-icon">&#128231;</div>
+            <div class="flow-info">
+              <div class="flow-title">Search Emails</div>
+              <div class="flow-sub">Gmail &middot; Inbox</div>
+            </div>
+            <div class="flow-end">
+              <span class="flow-count">24</span>
+              <div class="flow-check">&#10003;</div>
+            </div>
+          </div>
+
+          <div class="flow-arrow completed">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M12 5v14M19 12l-7 7-7-7"/>
+            </svg>
+          </div>
+
+          <div class="flow-row completed">
+            <div class="flow-num">&#10003;</div>
+            <div class="flow-icon">&#128270;</div>
+            <div class="flow-info">
+              <div class="flow-title">Filter Results</div>
+              <div class="flow-sub">Transform &middot; Invoice filter</div>
+            </div>
+            <div class="flow-end">
+              <span class="flow-count">8</span>
+              <div class="flow-check">&#10003;</div>
+            </div>
+          </div>
+
+          <div class="flow-arrow completed">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M12 5v14M19 12l-7 7-7-7"/>
+            </svg>
+          </div>
+
+          <div class="flow-row executing">
+            <div class="flow-num">3</div>
+            <div class="flow-icon">&#129302;</div>
+            <div class="flow-info">
+              <div class="flow-title">Extract Data</div>
+              <div class="flow-sub">AI Processing</div>
+            </div>
+            <div class="flow-end">
+              <div class="flow-spinner"></div>
+            </div>
+          </div>
+
+          <div class="flow-arrow">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M12 5v14M19 12l-7 7-7-7"/>
+            </svg>
+          </div>
+
+          <div class="flow-row pending">
+            <div class="flow-num">4</div>
+            <div class="flow-icon">&#128202;</div>
+            <div class="flow-info">
+              <div class="flow-title">Save to Sheets</div>
+              <div class="flow-sub">Google Sheets</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="option-footer">
+        <div class="option-features">
+          <span class="feature-tag"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4,6 h16 M4,12 h16 M4,18 h16"/></svg> Dense layout</span>
+          <span class="feature-tag"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M19 12l-7 7-7-7"/></svg> Arrow connectors</span>
+          <span class="feature-tag"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12,6 v6 l4,2"/></svg> Spinner states</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

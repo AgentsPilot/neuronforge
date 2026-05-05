@@ -137,14 +137,16 @@ export async function refreshAccessToken(
  * @param accessToken - The access token to use for the profile request
  * @param authType - The authentication type (determines fallback profile URL)
  * @param profileUrl - Optional explicit profile URL (overrides authType-based defaults)
+ * @param profileMethod - HTTP method for the profile request (default: GET, some APIs like Dropbox require POST)
  * @returns The raw profile data from the provider
  */
 export async function fetchUserProfile(
   accessToken: string,
   authType: string,
-  profileUrl?: string
+  profileUrl?: string,
+  profileMethod: 'GET' | 'POST' = 'GET'
 ): Promise<Record<string, any>> {
-  logger.debug({ authType, profileUrl }, 'Fetching user profile');
+  logger.debug({ authType, profileUrl, profileMethod }, 'Fetching user profile');
 
   // Use provided profile_url if available, otherwise fall back to known defaults
   if (!profileUrl) {
@@ -165,14 +167,25 @@ export async function fetchUserProfile(
     }
   }
 
-  const response = await fetch(profileUrl, {
+  const fetchOptions: RequestInit = {
+    method: profileMethod,
     headers: {
       'Authorization': `Bearer ${accessToken}`,
       'Accept': 'application/json',
     },
-  });
+  };
+
+  // Dropbox API requires Content-Type header even for empty POST body
+  if (profileMethod === 'POST') {
+    (fetchOptions.headers as Record<string, string>)['Content-Type'] = 'application/json';
+    fetchOptions.body = 'null'; // Dropbox requires a body, even if null
+  }
+
+  const response = await fetch(profileUrl, fetchOptions);
 
   if (!response.ok) {
+    const errorText = await response.text();
+    logger.error({ status: response.status, errorText, profileUrl }, 'Failed to fetch profile');
     throw new Error(`Failed to fetch profile: ${response.status}`);
   }
 

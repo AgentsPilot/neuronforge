@@ -44,7 +44,10 @@ export type StructuralIssueType =
   | 'orphaned_step'                // Step unreachable from workflow start
   | 'missing_action'               // Action step missing action field
   | 'invalid_config_reference'     // Uses {{config.X}} instead of {{input.X}}
-  | 'missing_required_parameter';  // Action missing required parameter
+  | 'missing_required_parameter'   // Action missing required parameter
+  | 'invalid_flatten_field'        // Flatten field doesn't exist in source schema
+  | 'itemVariable_shadows_stepId'  // Scatter-gather itemVariable conflicts with step ID
+  | 'gather_operation_mismatch';   // Gather operation doesn't match data type
 
 export type StructuralFixAction =
   | 'add_output_variable'          // Add missing output_variable field
@@ -63,6 +66,8 @@ export type StructuralFixAction =
   | 'normalize_legacy_fields'      // Normalize operation → action, config → params
   | 'rewrite_config_to_input'      // Rewrite {{config.X}} to {{input.X}}
   | 'add_missing_parameter'        // Add missing required parameter with smart default
+  | 'add_missing_input_fields'     // Add missing fields to agent.input_schema
+  | 'fix_flatten_field'            // Fix flatten field to match source schema
   | 'none';                        // No fix possible
 
 export interface StructuralIssue {
@@ -201,6 +206,40 @@ export class StructuralRepairEngine {
             });
           }
         }
+
+        // Issue 4: gather.itemVariable shadows step ID
+        if (step.gather?.itemVariable) {
+          const itemVar = step.gather.itemVariable;
+          const conflictingStepId = Array.from(stepIds).find(id => id === itemVar);
+
+          if (conflictingStepId) {
+            issues.push({
+              type: 'itemVariable_shadows_stepId',
+              stepId,
+              description: `Scatter-gather gather.itemVariable "${itemVar}" conflicts with step ID "${conflictingStepId}". This causes variable shadowing and breaks variable resolution.`,
+              severity: 'high',
+              autoFixable: true
+            });
+          }
+        }
+
+        // Issue 5: gather.operation type mismatch
+        if (step.gather?.operation === 'flatten') {
+          // For flatten operation, we need nested arrays
+          // This is a basic check - EnhancedSchemaValidator does deeper validation
+          const scatterSteps = step.scatter?.steps || [];
+          const hasOutputVariable = scatterSteps.some((s: any) => s.output_variable);
+
+          if (!hasOutputVariable) {
+            issues.push({
+              type: 'gather_operation_mismatch',
+              stepId,
+              description: `Scatter-gather uses gather.operation='flatten' but scatter steps don't produce output variables. Flatten requires nested array structure.`,
+              severity: 'medium',
+              autoFixable: false
+            });
+          }
+        }
       }
 
       // Check conditional steps
@@ -257,9 +296,9 @@ export class StructuralRepairEngine {
             autoFixable: true
           });
         }
-
         // Issue 6: Missing action field (critical - blocks execution)
-        if (!step.action) {
+        // FIXED: Only create this issue if NOT a normalization case (prevents duplicate issues)
+        else if (!step.action) {
           issues.push({
             type: 'missing_action',
             stepId,
@@ -268,14 +307,47 @@ export class StructuralRepairEngine {
             autoFixable: step.plugin ? true : false // Can only fix if plugin is known
           });
         }
+      }
 
-        const paramsStr = JSON.stringify(step.params || {});
+      // Check transform steps for missing operation field
+      if (step.type === 'transform') {
+        // Transform steps require 'operation' field (e.g., map, filter, flatten)
+        // Common issue: operation is in config.type instead of operation field
+        if (!step.operation && step.config?.type) {
+          logger.info({
+            stepId,
+            stepName: step.name,
+            configType: step.config.type
+          }, '[StructuralRepair] Transform step has config.type but missing operation field');
+
+          issues.push({
+            type: 'missing_action', // Reuse for normalization
+            stepId,
+            description: `Transform step uses legacy field name (config.type="${step.config.type}") - needs normalization to operation="${step.config.type}"`,
+            severity: 'critical',
+            autoFixable: true
+          });
+        } else if (!step.operation) {
+          issues.push({
+            type: 'missing_action', // Generic missing operation
+            stepId,
+            description: `Transform step missing 'operation' field (transform type: ${step.config?.type || 'unknown'})`,
+            severity: 'critical',
+            autoFixable: false
+          });
+        }
+      }
+
+      // Shared broken reference checks for both action and transform steps
+      if (step.type === 'action' || step.type === 'transform') {
+
+        const paramsStr = JSON.stringify(step.params || step.config || {});
         const brokenRefs = this.findBrokenVariableReferences(paramsStr, stepIds, stepId);
         for (const ref of brokenRefs) {
           issues.push({
             type: 'broken_variable_reference',
             stepId,
-            description: `Action params reference non-existent variable: ${ref.variable}`,
+            description: `Step params reference non-existent variable: ${ref.variable}`,
             severity: 'medium',
             autoFixable: ref.suggestion ? true : false
           });
@@ -303,6 +375,19 @@ export class StructuralRepairEngine {
         // Issue 8: Missing required parameters
         if (step.plugin && step.action) {
           const missingParams = await this.findMissingRequiredParams(step);
+
+          // DEBUG: Log step14 details
+          if (stepId === 'step14') {
+            logger.info({
+              stepId,
+              hasParams: !!step.params,
+              hasConfig: !!step.config,
+              paramsKeys: step.params ? Object.keys(step.params) : [],
+              configKeys: step.config ? Object.keys(step.config) : [],
+              missingParamsCount: missingParams.length
+            }, '[StructuralRepair] DEBUG step14 structure during scanWorkflow');
+          }
+
           if (missingParams.length > 0) {
             logger.info({
               stepId,
@@ -311,16 +396,47 @@ export class StructuralRepairEngine {
               action: step.action,
               missingParams: missingParams.map(p => ({ name: p.name, hasSmartDefault: p.hasSmartDefault }))
             }, '[StructuralRepair] Detected missing required parameters');
-          }
 
-          for (const param of missingParams) {
-            issues.push({
-              type: 'missing_required_parameter',
-              stepId,
-              description: `Missing required parameter: ${param.name}`,
-              severity: 'critical', // Blocks execution
-              autoFixable: param.hasSmartDefault
-            });
+            // CRITICAL: Check if this is a data transformation case
+            // (missing array parameter but alternative object format exists)
+            const stepConfig = step.params || step.config || {};
+            const providedParams = Object.keys(stepConfig);
+
+            for (const param of missingParams) {
+              // Check if missing param is an array type and we have a fields/mapping object
+              const isArrayParam = param.schema?.type === 'array' &&
+                (param.schema?.items?.type === 'array' || param.schema?.description?.toLowerCase().includes('2d array'));
+
+              const hasFieldsMapping = providedParams.includes('fields') &&
+                stepConfig.fields && typeof stepConfig.fields === 'object';
+
+              if (isArrayParam && hasFieldsMapping) {
+                // This is a data transformation issue - create auto-repair proposal
+                logger.info({
+                  stepId,
+                  missingParam: param.name,
+                  providedParam: 'fields',
+                  message: 'Detected fields-to-array transformation needed'
+                }, '[StructuralRepair] Creating auto-repair proposal for data transformation');
+
+                issues.push({
+                  type: 'missing_required_parameter',
+                  stepId,
+                  description: `Missing required parameter: ${param.name} (fields object provided, needs transformation to array)`,
+                  severity: 'critical',
+                  autoFixable: true  // ✅ Now auto-fixable with transformation
+                });
+              } else {
+                // Standard missing parameter issue
+                issues.push({
+                  type: 'missing_required_parameter',
+                  stepId,
+                  description: `Missing required parameter: ${param.name}`,
+                  severity: 'critical',
+                  autoFixable: param.hasSmartDefault
+                });
+              }
+            }
           }
         }
 
@@ -342,6 +458,50 @@ export class StructuralRepairEngine {
         }
       }
 
+      // Check ALL steps for invalid {{config.X}} references (not just transform steps)
+      // Serialize the entire step (condition, params, config, etc.) to check for config refs
+      const stepStr = JSON.stringify(step);
+      const configRefs = this.findConfigReferences(stepStr);
+
+      if (configRefs.length > 0) {
+        logger.info({
+          stepId,
+          stepName: step.name,
+          stepType: step.type,
+          configRefs,
+          stepStr: stepStr.substring(0, 200) // First 200 chars for debugging
+        }, '[StructuralRepair] Detected {{config.X}} references');
+
+        issues.push({
+          type: 'invalid_config_reference',
+          stepId,
+          description: `Uses {{config.X}} instead of {{input.X}}: ${configRefs.join(', ')}`,
+          severity: 'critical', // Blocks execution
+          autoFixable: true
+        });
+      }
+
+      // Check ALL steps for invalid {{input.X}} references that don't exist in agent.input_schema
+      const invalidInputRefs = this.findInvalidInputReferences(stepStr, agent);
+
+      if (invalidInputRefs.length > 0) {
+        logger.info({
+          stepId,
+          stepName: step.name,
+          stepType: step.type,
+          invalidInputRefs,
+          stepStr: stepStr.substring(0, 200) // First 200 chars for debugging
+        }, '[StructuralRepair] Detected invalid {{input.X}} references');
+
+        issues.push({
+          type: 'broken_variable_reference',
+          stepId,
+          description: `References non-existent input fields: ${invalidInputRefs.join(', ')}`,
+          severity: 'critical', // Blocks execution
+          autoFixable: true
+        });
+      }
+
       // Check for broken dependency chains
       if (step.dependencies) {
         for (const depId of step.dependencies) {
@@ -353,6 +513,90 @@ export class StructuralRepairEngine {
               severity: 'high',
               autoFixable: true  // Can rebuild from variable references
             });
+          }
+        }
+      }
+
+      // Check transform steps with flatten operation
+      if (step.type === 'transform') {
+        const operation = step.operation || step.config?.type || step.config?.operation;
+
+        if (operation === 'flatten') {
+          const field = step.config?.field;
+          const input = step.input || step.config?.input;
+
+          // Validate flatten field exists in source step's output schema
+          if (field && input) {
+            const inputStr = typeof input === 'string' ? input : JSON.stringify(input);
+            const varMatch = inputStr.match(/\{\{(\w+)(?:\.data)?(?:\.(\w+))?\}\}/);
+
+            if (varMatch) {
+              const varName = varMatch[1];
+              // Find the step that produces this variable
+              const sourceStep = allSteps.find(s =>
+                (s.output_variable === varName || s.outputKey === varName)
+              );
+
+              if (sourceStep?.output_schema) {
+                // CRITICAL: Check nesting level based on source schema type
+                // If source returns {emails: [...]}, we should flatten "emails" (root level)
+                // NOT "attachments" (nested inside emails[])
+
+                if (sourceStep.output_schema.type === 'object' && sourceStep.output_schema.properties) {
+                  // Source returns an object - flatten field must be at ROOT level
+                  const rootArrayFields = Object.keys(sourceStep.output_schema.properties).filter(
+                    key => sourceStep.output_schema.properties[key].type === 'array'
+                  );
+
+                  // Check if the flatten field is a root-level array
+                  if (!rootArrayFields.includes(field)) {
+                    logger.warn({
+                      stepId,
+                      field,
+                      rootArrayFields,
+                      sourceStep: sourceStep.step_id || sourceStep.id,
+                      schemaType: 'object'
+                    }, '[StructuralRepair] Flatten field is not a root-level array in source schema');
+
+                    issues.push({
+                      type: 'invalid_flatten_field',
+                      stepId,
+                      description: `Flatten field "${field}" is not a root-level array in source step output. Available root-level array fields in ${sourceStep.step_id || sourceStep.id}: ${rootArrayFields.join(', ')}. This will cause empty results.`,
+                      severity: 'critical',
+                      autoFixable: rootArrayFields.length > 0 // Can fix if there are alternative fields
+                    });
+                  }
+                } else if (sourceStep.output_schema.type === 'array') {
+                  // Source returns an array directly - flatten field must be in array items
+                  const arraySchema = this.findArraySchemaInOutput(sourceStep.output_schema, varMatch[2]);
+
+                  if (arraySchema?.items?.properties) {
+                    const availableFields = Object.keys(arraySchema.items.properties).filter(
+                      key => arraySchema.items.properties[key].type === 'array'
+                    );
+
+                    // Check if the flatten field exists in the array item schema
+                    if (!availableFields.includes(field)) {
+                      logger.warn({
+                        stepId,
+                        field,
+                        availableFields,
+                        sourceStep: sourceStep.step_id || sourceStep.id,
+                        schemaType: 'array'
+                      }, '[StructuralRepair] Flatten field does not exist in array items schema');
+
+                      issues.push({
+                        type: 'invalid_flatten_field',
+                        stepId,
+                        description: `Flatten field "${field}" does not exist in array items. Available array fields in ${sourceStep.step_id || sourceStep.id}: ${availableFields.join(', ')}. This will cause empty results.`,
+                        severity: 'critical',
+                        autoFixable: availableFields.length > 0 // Can fix if there are alternative fields
+                      });
+                    }
+                  }
+                }
+              }
+            }
           }
         }
       }
@@ -378,6 +622,7 @@ export class StructuralRepairEngine {
 
         // Recursively scan conditional branches
         if (step.type === 'conditional') {
+          // Support both old format (then/else) and new format (then_steps/else_steps)
           if (step.then && Array.isArray(step.then)) {
             traverse(step.then);
           }
@@ -389,6 +634,11 @@ export class StructuralRepairEngine {
           }
           if (step.else_steps && Array.isArray(step.else_steps)) {
             traverse(step.else_steps);
+          }
+          // CRITICAL FIX: Support generic 'steps' array (used by some conditional formats)
+          // This catches nested steps that aren't in then/else branches
+          if (step.steps && Array.isArray(step.steps)) {
+            traverse(step.steps);
           }
         }
       }
@@ -486,12 +736,41 @@ export class StructuralRepairEngine {
       }
 
       case 'broken_variable_reference': {
-        // Try to find a suggestion
-        const stepIds = new Set(steps.map(s => s.step_id));
+        // Check if it's an invalid {{input.X}} reference
+        const inputMatch = issue.description.match(/References non-existent input fields: (.+)/);
+        if (inputMatch) {
+          // Parse the invalid input references (e.g., "{{input.digest_recipient}}")
+          const invalidRefs = inputMatch[1].split(', ');
+
+          // For each invalid reference, add the field to input_schema
+          const fieldsToAdd: string[] = [];
+          for (const ref of invalidRefs) {
+            const fieldMatch = ref.match(/\{\{input\.([^}]+)\}\}/);
+            if (fieldMatch) {
+              fieldsToAdd.push(fieldMatch[1]);
+            }
+          }
+
+          if (fieldsToAdd.length > 0) {
+            return {
+              action: 'add_missing_input_fields',
+              description: `Add missing input fields to schema: ${fieldsToAdd.join(', ')}`,
+              targetStepId: issue.stepId,
+              confidence: 0.9,
+              risk: 'low',
+              fix: {
+                fieldsToAdd
+              }
+            };
+          }
+        }
+
+        // Original logic for step ID references
         const match = issue.description.match(/references non-existent variable: (\S+)/);
         if (!match) return noFix;
 
         const brokenVar = match[1];
+        const stepIds = new Set(steps.map(s => s.step_id));
         const suggestion = this.suggestVariableCorrection(brokenVar, stepIds);
 
         if (!suggestion) {
@@ -529,17 +808,43 @@ export class StructuralRepairEngine {
 
       case 'missing_action': {
         // Check if this is a field normalization issue (legacy format)
-        if (issue.description.includes('legacy field names')) {
+        if (issue.description.includes('legacy field name')) {
+          // Different normalization rules for action vs transform steps
+          if (step.type === 'transform') {
+            // Transform steps: config.type → operation
+            return {
+              action: 'normalize_legacy_fields',
+              description: `Normalize transform step: config.type="${step.config?.type}" → operation="${step.config?.type}"`,
+              targetStepId: issue.stepId,
+              confidence: 1.0,
+              risk: 'low',
+              fix: {
+                normalizeTransformOperation: !step.operation && step.config?.type,
+                transformOperationType: step.config?.type
+              }
+            };
+          } else {
+            // Action steps: operation → action, config → params
+            return {
+              action: 'normalize_legacy_fields',
+              description: `Normalize legacy fields: operation → action, config → params`,
+              targetStepId: issue.stepId,
+              confidence: 1.0, // This is a known transformation
+              risk: 'low',
+              fix: {
+                normalizeOperation: !step.action && step.operation,
+                normalizeConfig: !step.params && step.config
+              }
+            };
+          }
+        }
+
+        // CRITICAL: If step has 'operation' field (legacy), don't infer - it will be normalized
+        // Prevents overwriting correct actions from operation field (e.g. upload_file)
+        if (step.operation) {
           return {
-            action: 'normalize_legacy_fields',
-            description: `Normalize legacy fields: operation → action, config → params`,
-            targetStepId: issue.stepId,
-            confidence: 1.0, // This is a known transformation
-            risk: 'low',
-            fix: {
-              normalizeOperation: !step.action && step.operation,
-              normalizeConfig: !step.params && step.config
-            }
+            ...noFix,
+            description: `Step has legacy 'operation' field which will be normalized to 'action'`
           };
         }
 
@@ -589,7 +894,42 @@ export class StructuralRepairEngine {
         const missingParams = await this.findMissingRequiredParams(step);
         const paramInfo = missingParams.find(p => p.name === paramName);
 
-        if (!paramInfo || !paramInfo.hasSmartDefault) {
+        if (!paramInfo) {
+          return { ...noFix, description: `Cannot find parameter info for: ${paramName}` };
+        }
+
+        // CRITICAL: Check if this is a data transformation case
+        // (fields object exists when array parameter is missing)
+        const stepConfig = step.params || step.config || {};
+        const providedParams = Object.keys(stepConfig);
+
+        const isArrayParam = paramInfo.schema?.type === 'array' &&
+          (paramInfo.schema?.items?.type === 'array' || paramInfo.schema?.description?.toLowerCase().includes('2d array'));
+
+        const hasFieldsMapping = providedParams.includes('fields') &&
+          stepConfig.fields && typeof stepConfig.fields === 'object';
+
+        if (isArrayParam && hasFieldsMapping) {
+          // This is a data transformation issue - propose transformation fix
+          const fieldNames = Object.keys(stepConfig.fields);
+
+          return {
+            action: 'add_missing_parameter',
+            description: `Transform fields object to ${paramName} array (fields: ${fieldNames.join(', ')})`,
+            targetStepId: issue.stepId,
+            confidence: 0.92,
+            risk: 'low',
+            fix: {
+              paramName,
+              transformationType: 'fields_to_array',
+              sourceParam: 'fields',
+              fieldMapping: stepConfig.fields
+            }
+          };
+        }
+
+        // Standard case: generate smart default
+        if (!paramInfo.hasSmartDefault) {
           return { ...noFix, description: `Cannot generate smart default for parameter: ${paramName}` };
         }
 
@@ -605,6 +945,86 @@ export class StructuralRepairEngine {
             paramName,
             paramValue: defaultValue
           }
+        };
+      }
+
+      case 'invalid_flatten_field': {
+        // Extract available fields from description
+        const match = issue.description.match(/Available (?:root-level )?array fields in \S+: (.+)\. This will cause empty results/);
+        if (!match) return noFix;
+
+        const availableFields = match[1].split(', ');
+        if (availableFields.length === 0) {
+          return { ...noFix, description: 'No array fields available to flatten' };
+        }
+
+        // Choose the best field to flatten with root-level priority:
+        // For root-level arrays (from object schema):
+        //   1. Prefer "emails" (common for Gmail/email plugins)
+        //   2. Then "items" (common generic pattern)
+        //   3. Then "files", "results", "data", "records", "rows"
+        // For nested arrays (from array items):
+        //   1. Prefer "attachments" (common pattern)
+        //   2. Then other array fields
+
+        let bestField = availableFields[0];
+        const rootPriority = ['emails', 'items', 'files', 'results', 'data', 'records', 'rows'];
+        const nestedPriority = ['attachments', 'items', 'files', 'results', 'data'];
+
+        // Check if this is root-level (from description pattern)
+        const isRootLevel = issue.description.includes('root-level');
+        const priorityList = isRootLevel ? rootPriority : nestedPriority;
+
+        for (const priority of priorityList) {
+          if (availableFields.includes(priority)) {
+            bestField = priority;
+            break;
+          }
+        }
+
+        return {
+          action: 'fix_flatten_field',
+          description: `Fix flatten field to "${bestField}" (available: ${availableFields.join(', ')})`,
+          targetStepId: issue.stepId,
+          confidence: priorityList.includes(bestField) ? 0.9 : 0.7,
+          risk: 'low',
+          fix: {
+            newField: bestField,
+            availableFields
+          }
+        };
+      }
+
+      case 'itemVariable_shadows_stepId': {
+        // Extract itemVariable name from description
+        const match = issue.description.match(/gather\.itemVariable "([^"]+)" conflicts/);
+        if (!match) return noFix;
+
+        const itemVar = match[1];
+        const newItemVar = `${itemVar}_item`;
+
+        return {
+          action: 'add_output_variable', // Reuse this action type for simplicity
+          description: `Rename gather.itemVariable from "${itemVar}" to "${newItemVar}" to avoid shadowing`,
+          targetStepId: issue.stepId,
+          confidence: 1.0,
+          risk: 'low',
+          fix: {
+            itemVariable: newItemVar,
+            oldItemVariable: itemVar
+          }
+        };
+      }
+
+      case 'gather_operation_mismatch': {
+        // This is typically a workflow logic error that requires regeneration
+        // But we can suggest changing to 'collect' as a safe default
+        return {
+          action: 'none',
+          description: `gather.operation='flatten' may not match data structure. Consider regenerating workflow or changing to 'collect'.`,
+          targetStepId: issue.stepId,
+          confidence: 0,
+          risk: 'high'
         };
       }
 
@@ -802,6 +1222,11 @@ export class StructuralRepairEngine {
           const found = this.findStepRecursive(step.else_steps, targetStepId);
           if (found) return found;
         }
+        // CRITICAL FIX: Support generic 'steps' array (used by some conditional formats)
+        if (step.steps && Array.isArray(step.steps)) {
+          const found = this.findStepRecursive(step.steps, targetStepId);
+          if (found) return found;
+        }
       }
     }
 
@@ -829,12 +1254,29 @@ export class StructuralRepairEngine {
     try {
       switch (proposal.action) {
         case 'add_output_variable': {
-          step.output_variable = proposal.fix.output_variable;
+          // Handle output_variable fix
+          if (proposal.fix.output_variable) {
+            step.output_variable = proposal.fix.output_variable;
 
-          logger.info({
-            stepId: proposal.targetStepId,
-            outputVariable: proposal.fix.output_variable
-          }, '[StructuralRepair] Added output_variable to scatter-gather step');
+            logger.info({
+              stepId: proposal.targetStepId,
+              outputVariable: proposal.fix.output_variable
+            }, '[StructuralRepair] Added output_variable to scatter-gather step');
+          }
+
+          // Handle itemVariable rename fix
+          if (proposal.fix.itemVariable) {
+            if (!step.gather) {
+              step.gather = {};
+            }
+            step.gather.itemVariable = proposal.fix.itemVariable;
+
+            logger.info({
+              stepId: proposal.targetStepId,
+              oldItemVariable: proposal.fix.oldItemVariable,
+              newItemVariable: proposal.fix.itemVariable
+            }, '[StructuralRepair] Renamed gather.itemVariable to avoid shadowing');
+          }
 
           return { fixed: true, fixApplied: proposal };
         }
@@ -916,21 +1358,39 @@ export class StructuralRepairEngine {
         }
 
         case 'normalize_legacy_fields': {
-          // Normalize operation → action
+          // Transform step normalization: config.type → operation
+          if (proposal.fix.normalizeTransformOperation && step.type === 'transform') {
+            const operationType = proposal.fix.transformOperationType || step.config?.type;
+            if (operationType) {
+              step.operation = operationType;
+              // Don't delete config.type - just add operation field
+              logger.info({
+                stepId: proposal.targetStepId,
+                operation: step.operation,
+                configType: step.config?.type
+              }, '[StructuralRepair] Normalized transform: config.type → operation');
+
+              return { fixed: true, fixApplied: proposal };
+            }
+          }
+
+          // Action step normalization: operation → action
           if (proposal.fix.normalizeOperation && step.operation) {
             step.action = step.operation;
+            delete step.operation; // Remove legacy field after copying
             logger.debug({
               stepId: proposal.targetStepId,
-              operation: step.operation
-            }, '[StructuralRepair] Normalized operation → action');
+              action: step.action
+            }, '[StructuralRepair] Normalized operation → action (removed operation field)');
           }
 
           // Normalize config → params
           if (proposal.fix.normalizeConfig && step.config) {
             step.params = step.config;
+            delete step.config; // Remove legacy field after copying
             logger.debug({
               stepId: proposal.targetStepId
-            }, '[StructuralRepair] Normalized config → params');
+            }, '[StructuralRepair] Normalized config → params (removed config field)');
           }
 
           logger.info({
@@ -957,15 +1417,20 @@ export class StructuralRepairEngine {
         }
 
         case 'rewrite_config_to_input': {
-          // Rewrite all {{config.X}} to {{input.X}} in step params
-          const paramsStr = JSON.stringify(step.params || {});
-          const updatedParamsStr = paramsStr.replace(/\{\{config\./g, '{{input.');
-          step.params = JSON.parse(updatedParamsStr);
+          // Rewrite all {{config.X}} to {{input.X}} in the entire step object
+          // (not just params - transform steps have config refs in condition, etc.)
+          const stepStr = JSON.stringify(step);
+          const updatedStepStr = stepStr.replace(/\{\{config\./g, '{{input.');
+          const updatedStep = JSON.parse(updatedStepStr);
+
+          // Copy all properties from updated step back to original step
+          Object.assign(step, updatedStep);
 
           logger.info({
             stepId: proposal.targetStepId,
+            stepType: step.type,
             configRefs: proposal.fix.configRefs
-          }, '[StructuralRepair] Rewrote {{config.X}} to {{input.X}}');
+          }, '[StructuralRepair] Rewrote {{config.X}} to {{input.X}} in entire step');
 
           return { fixed: true, fixApplied: proposal };
         }
@@ -976,6 +1441,29 @@ export class StructuralRepairEngine {
             step.params = {};
           }
 
+          // CRITICAL: Check if this is a data transformation fix
+          if (proposal.fix.transformationType === 'fields_to_array') {
+            // This is a fields-to-array transformation
+            // Mark this issue for the calibration system to handle via AI transform step
+            // (StructuralRepairEngine doesn't insert new steps, only modifies existing ones)
+
+            logger.info({
+              stepId: proposal.targetStepId,
+              paramName: proposal.fix.paramName,
+              sourceParam: proposal.fix.sourceParam,
+              fieldMapping: proposal.fix.fieldMapping,
+              message: 'Data transformation needed - will be handled by calibration auto-fix'
+            }, '[StructuralRepair] Detected fields-to-array transformation (requires AI transform step insertion)');
+
+            // Return false - this fix needs to be handled by the calibration system
+            // which can insert new steps (AI transform)
+            return {
+              fixed: false,
+              error: 'Data transformation requires AI transform step insertion (handled by calibration auto-fix)'
+            };
+          }
+
+          // Standard case: add parameter with smart default value
           step.params[proposal.fix.paramName] = proposal.fix.paramValue;
 
           logger.info({
@@ -983,6 +1471,65 @@ export class StructuralRepairEngine {
             paramName: proposal.fix.paramName,
             paramValue: proposal.fix.paramValue
           }, '[StructuralRepair] Added missing required parameter with smart default');
+
+          return { fixed: true, fixApplied: proposal };
+        }
+
+        case 'add_missing_input_fields': {
+          // Add missing fields to agent.input_schema (which is an array)
+          if (!agent.input_schema) {
+            agent.input_schema = [];
+          }
+
+          const fieldsToAdd = proposal.fix.fieldsToAdd || [];
+          for (const fieldName of fieldsToAdd) {
+            // Check if field already exists
+            const exists = agent.input_schema.some(field => field.name === fieldName);
+            if (exists) continue;
+
+            // Infer field type from usage context
+            const fieldType = this.inferInputFieldType(fieldName);
+
+            // Add new input field
+            agent.input_schema.push({
+              name: fieldName,
+              type: fieldType,
+              required: false, // Auto-generated fields are optional by default
+              description: `Auto-generated field for ${fieldName}`
+            });
+
+            logger.info({
+              fieldName,
+              fieldType,
+              stepId: proposal.targetStepId
+            }, '[StructuralRepair] Added missing input field to schema');
+          }
+
+          logger.info({
+            stepId: proposal.targetStepId,
+            fieldsAdded: fieldsToAdd
+          }, '[StructuralRepair] Added missing input fields to agent.input_schema');
+
+          return { fixed: true, fixApplied: proposal };
+        }
+
+        case 'fix_flatten_field': {
+          // Update the flatten field in config
+          const oldField = step.config?.field;
+          const newField = proposal.fix.newField;
+
+          if (!step.config) {
+            step.config = {};
+          }
+
+          step.config.field = newField;
+
+          logger.info({
+            stepId: proposal.targetStepId,
+            oldField,
+            newField,
+            availableFields: proposal.fix.availableFields
+          }, '[StructuralRepair] Fixed flatten field to match source schema');
 
           return { fixed: true, fixApplied: proposal };
         }
@@ -1157,6 +1704,85 @@ export class StructuralRepairEngine {
   }
 
   /**
+   * Find {{input.X}} references that don't exist in agent.input_schema
+   */
+  private findInvalidInputReferences(text: string, agent: Agent): string[] {
+    const invalidRefs: string[] = [];
+    const regex = /\{\{input\.([^}]+)\}\}/g;
+    let match;
+
+    // Get valid input fields from agent.input_schema (which is an array)
+    const validInputFields = new Set<string>();
+    if (agent.input_schema && Array.isArray(agent.input_schema)) {
+      for (const field of agent.input_schema) {
+        validInputFields.add(field.name);
+      }
+    }
+
+    // Check each {{input.X}} reference
+    while ((match = regex.exec(text)) !== null) {
+      const fieldName = match[1]; // e.g., "digest_recipient" from {{input.digest_recipient}}
+
+      // If this field doesn't exist in input_schema, it's invalid
+      if (!validInputFields.has(fieldName)) {
+        invalidRefs.push(match[0]); // Full reference like {{input.digest_recipient}}
+        logger.debug({
+          match: match[0],
+          fieldName,
+          validInputFields: Array.from(validInputFields)
+        }, '[StructuralRepair] Found invalid input reference');
+      }
+    }
+
+    if (invalidRefs.length > 0) {
+      logger.debug({
+        invalidRefs,
+        validInputFields: Array.from(validInputFields)
+      }, '[StructuralRepair] findInvalidInputReferences result');
+    }
+
+    return invalidRefs;
+  }
+
+  /**
+   * Find array schema in output schema
+   * Handles both direct array schemas and nested object properties
+   *
+   * @param outputSchema - The output schema from a step
+   * @param specificField - Optional specific field name to look for (e.g., "emails")
+   * @returns The array schema with items definition, or null if not found
+   */
+  private findArraySchemaInOutput(outputSchema: any, specificField?: string): any | null {
+    if (!outputSchema) return null;
+
+    // Case 1: Output schema is directly an array
+    if (outputSchema.type === 'array' && outputSchema.items) {
+      return outputSchema;
+    }
+
+    // Case 2: Output schema is an object with properties
+    if (outputSchema.type === 'object' && outputSchema.properties) {
+      // If specific field requested, return that field's schema
+      if (specificField && outputSchema.properties[specificField]) {
+        const fieldSchema = outputSchema.properties[specificField];
+        if (fieldSchema.type === 'array' && fieldSchema.items) {
+          return fieldSchema;
+        }
+      }
+
+      // Otherwise, find the first array field (common pattern for plugin responses)
+      for (const [fieldName, fieldSchema] of Object.entries(outputSchema.properties)) {
+        const schema = fieldSchema as any;
+        if (schema.type === 'array' && schema.items) {
+          return schema;
+        }
+      }
+    }
+
+    return null;
+  }
+
+  /**
    * Find missing required parameters for an action step
    */
   private async findMissingRequiredParams(step: any): Promise<Array<{
@@ -1181,7 +1807,8 @@ export class StructuralRepairEngine {
 
     for (const paramName of schema.required) {
       // Check if parameter is missing or empty
-      const paramValue = step.params?.[paramName];
+      // CRITICAL: Check both params and config (for legacy steps not yet normalized)
+      const paramValue = step.params?.[paramName] || step.config?.[paramName];
 
       if (paramValue === undefined || paramValue === null || paramValue === '') {
         const paramSchema = schema.properties?.[paramName];
@@ -1254,28 +1881,9 @@ export class StructuralRepairEngine {
       return schema.enum[0];
     }
 
-    // 5. Try to infer from agent inputs or workflow config
-    // For email parameters, try to extract from agent inputs
-    if (paramName === 'to' || paramName === 'recipient' || paramName === 'email') {
-      // Check if agent has email input
-      const emailInput = agent.input_schema?.properties?.email;
-      if (emailInput) {
-        return '{{input.email}}';
-      }
-
-      // Check if agent has user_email in config
-      const userEmail = agent.agent_workflow?.config?.user_email;
-      if (userEmail) {
-        return userEmail;
-      }
-
-      // Fallback: use placeholder
-      return '{{input.recipient_email}}';
-    }
-
-    // For ID parameters (spreadsheet_id, folder_id, etc.), use input reference
-    const idParams = new Set(['spreadsheet_id', 'folder_id', 'channel_id', 'project_id', 'board_id']);
-    if (idParams.has(paramName)) {
+    // 5. For parameter names that match input field names, use input reference
+    // This covers email, recipient, IDs, etc. without hardcoding
+    if (agent.input_schema?.some(field => field.name === paramName)) {
       return `{{input.${paramName}}}`;
     }
 
@@ -1440,5 +2048,36 @@ export class StructuralRepairEngine {
     }
 
     return newId;
+  }
+
+  /**
+   * Infer input field type from field name
+   */
+  private inferInputFieldType(fieldName: string): string {
+    // Common patterns to infer type
+    const lowerName = fieldName.toLowerCase();
+
+    if (lowerName.includes('email') || lowerName.includes('recipient')) {
+      return 'string'; // Email addresses
+    }
+
+    if (lowerName.includes('count') || lowerName.includes('number') || lowerName.includes('amount') || lowerName.includes('threshold')) {
+      return 'number';
+    }
+
+    if (lowerName.includes('enabled') || lowerName.includes('active') || lowerName.startsWith('is_') || lowerName.startsWith('has_')) {
+      return 'boolean';
+    }
+
+    if (lowerName.includes('date') || lowerName.includes('time')) {
+      return 'string'; // Dates as ISO strings
+    }
+
+    if (lowerName.includes('list') || lowerName.includes('items') || lowerName.endsWith('s')) {
+      return 'array';
+    }
+
+    // Default to string for unknown types
+    return 'string';
   }
 }

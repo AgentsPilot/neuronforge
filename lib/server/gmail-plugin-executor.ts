@@ -246,11 +246,16 @@ export class GmailPluginExecutor extends GoogleBasePluginExecutor {
         mimeType = ext ? (mimeMap[ext] || 'application/octet-stream') : mimeType;
       }
 
+      // ✅ FIX: Convert Gmail's base64url format to standard base64
+      // Gmail API returns base64url (uses - and _ instead of + and /)
+      // Other services (Google Drive, document-extractor) expect standard base64
+      const standardBase64 = this.convertBase64UrlToBase64(attachmentData.data);
+
       const result: any = {
         filename: filename || 'attachment',
         mimeType,
         size: attachmentData.size || 0,
-        data: attachmentData.data, // Base64-encoded content from Gmail API
+        data: standardBase64, // Standard base64-encoded content
         // PDFs can be processed visually by vision models (GPT-4o, etc.)
         is_image: mimeType.startsWith('image/') || mimeType === 'application/pdf'
       };
@@ -681,14 +686,24 @@ export class GmailPluginExecutor extends GoogleBasePluginExecutor {
     return attachments;
   }
 
-  // Decode base64url (Gmail's encoding)
+  /**
+   * Convert Gmail's base64url format to standard base64 format
+   * Gmail uses base64url (- instead of +, _ instead of /) which is URL-safe
+   * but incompatible with most other services that expect standard base64
+   */
+  private convertBase64UrlToBase64(base64url: string): string {
+    // Replace URL-safe characters with standard base64 characters
+    let base64 = base64url.replace(/-/g, '+').replace(/_/g, '/');
+    // Add padding if necessary (base64 must be multiple of 4)
+    const padding = '='.repeat((4 - base64.length % 4) % 4);
+    return base64 + padding;
+  }
+
+  // Decode base64url (Gmail's encoding) to text string
   private decodeBase64Url(data: string): string {
     try {
-      // Convert base64url to base64
-      const base64 = data.replace(/-/g, '+').replace(/_/g, '/');
-      // Add padding if necessary
-      const padding = '='.repeat((4 - base64.length % 4) % 4);
-      return atob(base64 + padding);
+      const base64 = this.convertBase64UrlToBase64(data);
+      return atob(base64);
     } catch (error) {
       this.logger.warn({ err: error }, 'Failed to decode base64url');
       return '';

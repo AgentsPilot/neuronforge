@@ -32,6 +32,7 @@ import type {
 import { ExecutionError, SchemaViolationError } from './types';
 import { validateAIOutput, buildRepairPrompt, type AIOutputValidationResult } from './AIOutputValidator';
 import { ExecutionContext } from './ExecutionContext';
+import { ExecutionTracer } from './ExecutionTracer';
 import { PluginExecuterV2 } from '@/lib/server/plugin-executer-v2';
 import { runAgentKit } from '@/lib/agentkit/runAgentKit';
 import { AuditTrailService } from '@/lib/services/AuditTrailService';
@@ -288,6 +289,7 @@ export class StepExecutor {
         if ('operation' in stepAny) fieldsToResolve.operation = stepAny.operation;
         if ('input' in stepAny) fieldsToResolve.input = stepAny.input;
         if ('config' in stepAny) fieldsToResolve.config = stepAny.config;
+        if ('expression' in stepAny) fieldsToResolve.expression = stepAny.expression;
         if ('condition' in stepAny) fieldsToResolve.condition = stepAny.condition;
         if ('iterateOver' in stepAny) fieldsToResolve.iterateOver = stepAny.iterateOver;
         if ('maxIterations' in stepAny) fieldsToResolve.maxIterations = stepAny.maxIterations;
@@ -548,6 +550,14 @@ export class StepExecutor {
         const stepParams = (step as any).params || {};
         this.stepCache.set(step.id, step.type, stepParams, output);
         logger.debug({ stepId: step.id }, 'Cached step result');
+      }
+
+      // === EXECUTION TRACING ===
+      // Record step execution for post-mortem analysis
+      const tracer = ExecutionTracer.getInstance();
+      if (tracer.isEnabled()) {
+        const inputData = (step as any).params || (step as any).config || {};
+        tracer.recordStepExecution(step, inputData, output);
       }
 
       return output;
@@ -906,9 +916,31 @@ export class StepExecutor {
         const fieldValues = Object.values(transformed.fields)
         const allBareRefs = fieldValues.every(v => typeof v === 'string' && v.includes('.') && !v.includes('{{'))
         if (allBareRefs) {
-          // O27b: This is x-variable-mapping metadata from the compiler — don't flatten
-          // The top-level params already have the correctly resolved {{}} references
-          logger.debug({ fieldKeys: Object.keys(transformed.fields) }, 'Skipping fields flattening — detected x-variable-mapping metadata (bare refs without {{}})');
+          // O27b: This is x-variable-mapping metadata from the compiler
+          // We need to transform it to a values array for Google Sheets append_rows
+          logger.debug({ fieldKeys: Object.keys(transformed.fields), pluginName, actionName },
+            'Detected x-variable-mapping metadata — transforming fields to values array');
+
+          // Check if this action expects a 2D values array (like Google Sheets append_rows)
+          const valuesParam = paramSchema?.properties?.values;
+          const is2DValuesArray = valuesParam?.type === 'array' &&
+                                  valuesParam?.items?.type === 'array';
+
+          if (is2DValuesArray && !transformed.values) {
+            // Transform fields mapping to values array
+            try {
+              transformed.values = this.transformFieldsToValuesArray(transformed.fields, context);
+              logger.debug({
+                fieldKeys: Object.keys(transformed.fields),
+                rowCount: transformed.values.length,
+                columnCount: transformed.values[0]?.length || 0
+              }, 'Transformed fields mapping to values array');
+            } catch (error) {
+              logger.warn({ err: error, fieldKeys: Object.keys(transformed.fields) },
+                'Failed to transform fields to values array - will rely on default value');
+            }
+          }
+
           delete transformed.fields;
         } else {
           for (const [fieldKey, fieldValue] of Object.entries(transformed.fields)) {
@@ -1100,6 +1132,69 @@ export class StepExecutor {
     }
 
     return lines.join('\n');
+  }
+
+  /**
+   * Transform fields mapping to 2D values array for Google Sheets
+   *
+   * Converts: { "Date": "items.date", "Amount": "items.amount" }
+   * To: [["2026-01-15", 100], ["2026-01-16", 200]]
+   *
+   * @param fieldsMapping - Object mapping column names to variable paths
+   * @param context - Execution context to resolve variable references
+   * @returns 2D array of values
+   */
+  private transformFieldsToValuesArray(fieldsMapping: Record<string, string>, context: ExecutionContext): any[][] {
+    // Extract the source variable name from the first field reference
+    // e.g., "high_value_items.date" -> "high_value_items"
+    const firstFieldRef = Object.values(fieldsMapping)[0];
+    const sourceVarName = firstFieldRef?.split('.')[0];
+
+    if (!sourceVarName) {
+      logger.warn({ fieldsMapping }, 'Cannot determine source variable from fields mapping');
+      return [];
+    }
+
+    // Get the source data from context
+    const sourceData = context.getVariable(sourceVarName);
+
+    if (!sourceData) {
+      logger.warn({ sourceVarName }, 'Source variable not found in context');
+      return [];
+    }
+
+    // Ensure sourceData is an array
+    const dataArray = Array.isArray(sourceData) ? sourceData : [sourceData];
+
+    // Map each item in the array to a row of values
+    const rows: any[][] = dataArray.map(item => {
+      const row: any[] = [];
+
+      for (const [_columnName, fieldPath] of Object.entries(fieldsMapping)) {
+        // Extract the field name from the path (e.g., "high_value_items.date" -> "date")
+        const fieldName = fieldPath.split('.').slice(1).join('.');
+
+        // Get the value from the item
+        let value = item;
+        for (const part of fieldName.split('.')) {
+          value = value?.[part];
+        }
+
+        // Convert null/undefined to empty string, keep other values as-is
+        row.push(value ?? '');
+      }
+
+      return row;
+    });
+
+    logger.debug({
+      sourceVarName,
+      itemCount: dataArray.length,
+      columnCount: Object.keys(fieldsMapping).length,
+      rowCount: rows.length
+    }, 'Transformed fields mapping to 2D values array');
+
+    return rows;
   }
 
   /**
@@ -2146,7 +2241,7 @@ Respond ONLY with the JSON array. No markdown, no explanation, no code blocks.`;
     params: any,
     context: ExecutionContext
   ): Promise<any> {
-    const { operation, input, config } = params;
+    const { operation, input, config, expression } = params;
 
     if (!operation) {
       throw new ExecutionError(
@@ -2158,6 +2253,18 @@ Respond ONLY with the JSON array. No markdown, no explanation, no code blocks.`;
 
     logger.info({ stepId: step.id, operation }, 'Executing transform');
     logger.debug({ stepId: step.id, params }, 'Transform params');
+
+    // ✅ CRITICAL FIX: If expression is at root level (not in config), wrap it in config object
+    // This handles the case where calibration creates transform steps with operation + expression at root level
+    let effectiveConfig = config;
+    if (expression && !config) {
+      effectiveConfig = { expression };
+      logger.debug({ stepId: step.id, expression }, 'Wrapped root-level expression in config object');
+    } else if (expression && config && !config.expression) {
+      // Expression at root level AND config exists - merge them
+      effectiveConfig = { ...config, expression };
+      logger.debug({ stepId: step.id, expression }, 'Merged root-level expression into config object');
+    }
 
     // ✅ FIX: Input has already been resolved by resolveAllVariables (line 175-188)
     // Don't try to resolve again, just use it directly
@@ -2277,80 +2384,80 @@ Respond ONLY with the JSON array. No markdown, no explanation, no code blocks.`;
         break;
 
       case 'map':
-        result = this.transformMap(data, config, context);
+        result = this.transformMap(data, effectiveConfig, context);
         break;
 
       case 'filter':
-        result = this.transformFilter(data, config, context);
+        result = this.transformFilter(data, effectiveConfig, context);
         break;
 
       case 'reduce':
-        result = this.transformReduce(data, config);
+        result = this.transformReduce(data, effectiveConfig);
         break;
 
       case 'sort':
-        result = this.transformSort(data, config);
+        result = this.transformSort(data, effectiveConfig);
         break;
 
       case 'group':
-        result = this.transformGroup(data, config);
+        result = this.transformGroup(data, effectiveConfig);
         break;
 
       case 'aggregate':
-        result = this.transformAggregate(data, config);
+        result = this.transformAggregate(data, effectiveConfig);
         break;
 
       case 'deduplicate':
-        result = this.transformDeduplicate(data, config);
+        result = this.transformDeduplicate(data, effectiveConfig);
         break;
 
       case 'flatten':
-        result = this.transformFlatten(data, config);
+        result = this.transformFlatten(data, effectiveConfig);
         break;
 
       case 'join':
-        result = this.transformJoin(data, config);
+        result = this.transformJoin(data, effectiveConfig);
         break;
 
       case 'pivot':
-        result = this.transformPivot(data, config);
+        result = this.transformPivot(data, effectiveConfig);
         break;
 
       case 'split':
-        result = this.transformSplit(data, config);
+        result = this.transformSplit(data, effectiveConfig);
         break;
 
       case 'expand':
-        result = this.transformExpand(data, config);
+        result = this.transformExpand(data, effectiveConfig);
         break;
 
       case 'rows_to_objects':
-        result = this.transformRowsToObjects(data, config);
+        result = this.transformRowsToObjects(data, effectiveConfig);
         break;
 
       case 'map_headers':
-        result = this.transformMapHeaders(data, config);
+        result = this.transformMapHeaders(data, effectiveConfig);
         break;
 
       case 'partition':
-        result = this.transformPartition(data, config);
+        result = this.transformPartition(data, effectiveConfig);
         break;
 
       case 'group_by':
         // Alias for 'group' operation
-        result = this.transformGroup(data, config);
+        result = this.transformGroup(data, effectiveConfig);
         break;
 
       case 'dedupe':
-        result = this.transformDedupe(data, config);
+        result = this.transformDedupe(data, effectiveConfig);
         break;
 
       case 'render_table':
-        result = this.transformRenderTable(data, config);
+        result = this.transformRenderTable(data, effectiveConfig);
         break;
 
       case 'fetch_content':
-        result = await this.transformFetchContent(data, config, context);
+        result = await this.transformFetchContent(data, effectiveConfig, context);
         break;
 
       default:
@@ -2645,6 +2752,37 @@ Respond ONLY with the JSON array. No markdown, no explanation, no code blocks.`;
         // 🔍 DEBUG: Log the resolved expression before evaluation
         console.log(`🔍 [transformMap] Final expression:`, resolvedExpression.slice(0, 200));
 
+        // ✅ FIX: Replace variable references with 'item' in map expressions
+        // Map expressions should use 'item' to reference each element during iteration,
+        // but sometimes they incorrectly reference other variable names
+        // (e.g., 'high_value_items.date' instead of 'item.date')
+        // This detects patterns like 'variable_name.field' and replaces with 'item.field'
+
+        // Match any identifier followed by a dot (e.g., 'high_value_items.' or 'data.')
+        // but NOT 'item.' since that's already correct
+        const incorrectVarPattern = /\b(?!item\b)([a-zA-Z_][a-zA-Z0-9_]*)\./g;
+        const incorrectVarMatches = resolvedExpression.match(incorrectVarPattern);
+
+        if (incorrectVarMatches && incorrectVarMatches.length > 0) {
+          // Extract unique variable names that need fixing
+          const varsToFix = [...new Set(incorrectVarMatches.map(m => m.slice(0, -1)))]; // Remove trailing dot
+          const beforeFix = resolvedExpression;
+
+          // Replace all occurrences of each variable with 'item'
+          varsToFix.forEach(varName => {
+            const varPattern = new RegExp(`\\b${varName}\\.`, 'g');
+            resolvedExpression = resolvedExpression.replace(varPattern, 'item.');
+          });
+
+          console.log(`✅ [transformMap] Auto-fixed expression: replaced ${varsToFix.join(', ')} with 'item'`);
+          logger.info({
+            stepId: (step as any).id,
+            varsReplaced: varsToFix,
+            beforeFix: beforeFix.slice(0, 100),
+            afterFix: resolvedExpression.slice(0, 100)
+          }, 'Auto-fixed map expression: replaced variable references with item');
+        }
+
         // ✅ SMART TUPLE EXTRACTION DETECTION
         // If the expression is trying to extract `row[0]` from each item (tuple unwrap pattern),
         // but the data is already unwrapped (items are objects, not arrays), skip the expression
@@ -2665,10 +2803,10 @@ Respond ONLY with the JSON array. No markdown, no explanation, no code blocks.`;
           }
         }
 
-        // ✅ CRITICAL FIX: Detect per-item object literal expressions
-        // Expressions like { "Date": item[0], "Name": item[1] } are meant to be applied
-        // to EACH row, not the entire array. Detect this pattern and handle correctly.
-        // Pattern: object literal with item[n] references, NOT containing .map()
+        // ✅ CRITICAL FIX: Detect per-item literal expressions (object or array)
+        // Expressions like { "Date": item[0], "Name": item[1] } or [item.date, item.type, item.amount]
+        // are meant to be applied to EACH row, not the entire array.
+        // Pattern: literal with item[n] or item.field references, NOT containing .map()
         const isPerItemObjectLiteral =
           /^\s*\{/.test(resolvedExpression) &&           // Starts with {
           /item\[\d+\]/.test(resolvedExpression) &&      // Contains item[n] references
@@ -2676,13 +2814,22 @@ Respond ONLY with the JSON array. No markdown, no explanation, no code blocks.`;
           !resolvedExpression.includes('.filter(') &&    // Doesn't use other array methods
           !resolvedExpression.includes('.reduce(');
 
-        if (isPerItemObjectLiteral) {
+        const isPerItemArrayLiteral =
+          /^\s*\[/.test(resolvedExpression) &&           // Starts with [
+          /item\.[\w.]+/.test(resolvedExpression) &&     // Contains item.field references
+          !resolvedExpression.includes('.map(') &&       // Doesn't already use .map()
+          !resolvedExpression.includes('.filter(') &&    // Doesn't use other array methods
+          !resolvedExpression.includes('.reduce(');
+
+        if (isPerItemObjectLiteral || isPerItemArrayLiteral) {
           // Apply expression to each item individually
-          console.log('🔍 [transformMap] Detected per-item object literal - applying to each row');
+          const literalType = isPerItemArrayLiteral ? 'array' : 'object';
+          console.log(`🔍 [transformMap] Detected per-item ${literalType} literal - applying to each row`);
           logger.info({
             expression: resolvedExpression.slice(0, 100),
-            itemCount: data.length
-          }, 'Applying per-item object literal expression to each row');
+            itemCount: data.length,
+            literalType
+          }, `Applying per-item ${literalType} literal expression to each row`);
 
           return data.map(row => {
             const evalFn = new Function('item', `return ${resolvedExpression}`);
@@ -4330,19 +4477,52 @@ Respond ONLY with the JSON array. No markdown, no explanation, no code blocks.`;
    * Config: {depth: number} (default: 1)
    */
   private transformFlatten(data: any, config: any): any {
-    const unwrappedData = this.unwrapStructuredOutput(data);
-
-    if (!Array.isArray(unwrappedData)) {
-      throw new ExecutionError('Flatten operation requires array input', 'INVALID_INPUT_TYPE');
-    }
-
     const depth = config?.depth || 1;
     const field = config?.field; // Optional: extract this field from each item before flattening
 
-    // If field is specified, extract that field from each item first
-    // This is used for patterns like: emails -> extract attachments -> flatten into single list
-    let dataToFlatten = unwrappedData;
+    // Track whether we already extracted the field at the top level
+    // This prevents double-extraction when field exists at root
+    let fieldAlreadyExtracted = false;
+
+    // CRITICAL FIX: Handle two distinct use cases for field parameter:
+    // 1. Top-level extraction: {emails: [...]} with field="emails" → extract emails array directly
+    // 2. Per-item extraction: [{attachments: [...]}] with field="attachments" → extract from each item
+    let unwrappedData: any;
     if (field) {
+      // When field is specified, check if it exists at top level first
+      if (Array.isArray(data)) {
+        // Data is already an array - will need per-item extraction
+        unwrappedData = data;
+      } else if (data && typeof data === 'object') {
+        // Check if the field exists at the top level (e.g., {emails: [...]})
+        if (field in data && Array.isArray(data[field])) {
+          // TOP-LEVEL EXTRACTION: Use the field array directly (already extracted)
+          unwrappedData = data[field];
+          fieldAlreadyExtracted = true; // Skip per-item extraction later
+          logger.debug({ field, itemCount: unwrappedData.length }, 'Extracted field at top level');
+        } else {
+          // Field doesn't exist at top level, try unwrapping first
+          unwrappedData = this.unwrapStructuredOutput(data);
+          if (!Array.isArray(unwrappedData)) {
+            throw new ExecutionError(`Flatten operation with field="${field}" requires array input, got ${typeof unwrappedData}`, 'INVALID_INPUT_TYPE');
+          }
+        }
+      } else {
+        throw new ExecutionError('Flatten operation requires array or object input', 'INVALID_INPUT_TYPE');
+      }
+    } else {
+      // No field specified - use standard unwrap logic
+      unwrappedData = this.unwrapStructuredOutput(data);
+      if (!Array.isArray(unwrappedData)) {
+        throw new ExecutionError('Flatten operation requires array input', 'INVALID_INPUT_TYPE');
+      }
+    }
+
+    // If field is specified AND not already extracted, extract that field from each item
+    // This is used for patterns like: emails -> extract attachments from each -> flatten into single list
+    let dataToFlatten = unwrappedData;
+    if (field && !fieldAlreadyExtracted) {
+      // PER-ITEM EXTRACTION: Extract field from each item in the array
       dataToFlatten = unwrappedData.reduce((acc: any[], item: any) => {
         const fieldValue = item?.[field];
         if (Array.isArray(fieldValue)) {
@@ -4373,7 +4553,7 @@ Respond ONLY with the JSON array. No markdown, no explanation, no code blocks.`;
         }
         return acc;
       }, []);
-      logger.debug({ field, originalItems: unwrappedData.length, extractedItems: dataToFlatten.length }, 'Extracted field before flattening');
+      logger.debug({ field, originalItems: unwrappedData.length, extractedItems: dataToFlatten.length }, 'Extracted field from each item before flattening');
     }
 
     const flattenArray = (arr: any[], currentDepth: number): any[] => {
@@ -5678,19 +5858,13 @@ Respond with a JSON object containing the extracted field values.`;
       // Extract count from output schema
       const itemCount = this.extractItemCount(output.data, actionDef.output_schema);
 
-      // Determine operation type from usage_context
-      const usageContext = actionDef.usage_context || '';
-      const isWriteOperation = usageContext.toLowerCase().includes('add') ||
-                               usageContext.toLowerCase().includes('create') ||
-                               usageContext.toLowerCase().includes('send');
+      // Record plugin operation with its capability (unified tracking)
+      // This captures every plugin operation with its actual capability from the plugin definition
+      logger.debug({ pluginName, actionName, itemCount }, 'Recording plugin operation');
+      await collector.recordPluginOperation(pluginName, actionName, itemCount);
 
-      // Record the data access
-      if (isWriteOperation) {
-        logger.debug({ pluginName, actionName, itemCount }, 'Recording data write');
-        await collector.recordDataWrite(pluginName, actionName, itemCount);
-      } else {
-        logger.debug({ pluginName, actionName, itemCount }, 'Recording data read');
-        await collector.recordDataRead(pluginName, actionName, itemCount);
+      // Track items processed for overall metrics
+      if (itemCount > 0) {
         collector.recordItemsProcessed(itemCount);
       }
     } catch (error) {

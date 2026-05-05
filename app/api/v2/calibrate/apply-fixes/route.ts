@@ -1275,8 +1275,20 @@ export async function POST(req: NextRequest) {
       ).join(' ');
 
       // Build description with step context - this shows WHICH step this parameter is for
-      // Example: "For step: Update Invoices spreadsheet"
-      const description = param.stepContext ? `For step: ${param.stepContext}` : undefined;
+      // The description will be enriched later with plugin parameter descriptions from form-metadata API
+      // For now, only include step context if it's meaningful (not technical references)
+      let description: string | undefined;
+      if (param.stepContext) {
+        // Only use stepContext if it doesn't contain technical references
+        const hasTechnicalRef = param.stepContext.includes('{{config.') ||
+                                param.stepContext.includes('{{input.') ||
+                                param.stepContext.includes('Configuration value for');
+        if (!hasTechnicalRef) {
+          description = `For step: ${param.stepContext}`;
+        }
+        // If stepContext is technical, leave description undefined
+        // The form-metadata API will provide the plugin parameter description instead
+      }
 
       newInputSchema.push({
         name: param.name, // Backend name with step prefix for uniqueness (e.g., step8_spreadsheet_id)
@@ -1295,11 +1307,14 @@ export async function POST(req: NextRequest) {
     }
 
     // 11. Update agent with fixed workflow AND updated input_schema
+    // Also set production_ready=true since fixes have been applied - no manual approval needed
     const { error: updateError } = await supabase
       .from('agents')
       .update({
         pilot_steps: updatedSteps,
         input_schema: newInputSchema,
+        production_ready: true,
+        is_calibrated: true,
         updated_at: new Date().toISOString()
       })
       .eq('id', agent.id);

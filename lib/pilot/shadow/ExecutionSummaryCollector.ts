@@ -7,12 +7,13 @@
  * IMPORTANT: This collects aggregated counts ONLY - no actual client data or PII.
  */
 
-import type { CalibrationExecutionSummary, DataSourceAccess, DataWritten } from '../types';
+import type { CalibrationExecutionSummary, DataSourceAccess, DataWritten, PluginOperation } from '../types';
 import * as fs from 'fs';
 import * as path from 'path';
 
 interface PluginActionMetadata {
   description: string;
+  capability?: string;
   output_guidance?: {
     success_description?: string;
   };
@@ -39,6 +40,7 @@ async function loadPluginDefinition(pluginName: string): Promise<any> {
 export class ExecutionSummaryCollector {
   private dataSourcesAccessed: Map<string, DataSourceAccess> = new Map();
   private dataWritten: Map<string, DataWritten> = new Map();
+  private pluginsUsed: Map<string, PluginOperation> = new Map(); // NEW: Unified tracking
   private itemsProcessed: number = 0;
   private itemsFiltered: number = 0;
   private itemsDelivered: number = 0;
@@ -115,6 +117,39 @@ export class ExecutionSummaryCollector {
   }
 
   /**
+   * Record any plugin operation with its capability (unified tracking)
+   * This ensures ALL plugin operations are captured, regardless of read/write categorization
+   */
+  async recordPluginOperation(
+    pluginName: string,
+    actionName: string,
+    count: number
+  ): Promise<void> {
+    const key = `${pluginName}:${actionName}`;
+
+    // Get existing or create new entry
+    const existing = this.pluginsUsed.get(key);
+    if (existing) {
+      existing.count += count;
+    } else {
+      // Load plugin definition to get capability and description
+      const pluginDef = await loadPluginDefinition(pluginName);
+      const actionMetadata = pluginDef?.actions?.[actionName] as PluginActionMetadata | undefined;
+
+      const capability = actionMetadata?.capability || 'unknown';
+      const description = await this.generateDescription(pluginName, actionName, count);
+
+      this.pluginsUsed.set(key, {
+        plugin: pluginName,
+        action: actionName,
+        capability,
+        count,
+        description
+      });
+    }
+  }
+
+  /**
    * Generate user-friendly description from plugin metadata
    * Uses the plugin definition's output_guidance.success_description field
    */
@@ -176,6 +211,7 @@ export class ExecutionSummaryCollector {
     return {
       data_sources_accessed: Array.from(this.dataSourcesAccessed.values()),
       data_written: Array.from(this.dataWritten.values()),
+      plugins_used: Array.from(this.pluginsUsed.values()), // NEW: Include all plugin operations
       items_processed: this.itemsProcessed,
       items_filtered: this.itemsFiltered > 0 ? this.itemsFiltered : undefined,
       items_delivered: this.itemsDelivered > 0 ? this.itemsDelivered : undefined
@@ -188,6 +224,7 @@ export class ExecutionSummaryCollector {
   reset(): void {
     this.dataSourcesAccessed.clear();
     this.dataWritten.clear();
+    this.pluginsUsed.clear(); // Clear unified tracking
     this.itemsProcessed = 0;
     this.itemsFiltered = 0;
     this.itemsDelivered = 0;

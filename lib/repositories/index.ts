@@ -15,6 +15,7 @@ export { AgentStatsRepository, agentStatsRepository } from './AgentStatsReposito
 export { AgentLogsRepository, agentLogsRepository } from './AgentLogsRepository';
 export { ExecutionLogRepository, executionLogRepository } from './ExecutionLogRepository';
 export { CalibrationSessionRepository } from './CalibrationSessionRepository';
+export { CalibrationHistoryRepository } from './CalibrationHistoryRepository';
 export { InsightRepository } from './InsightRepository';
 
 // Types

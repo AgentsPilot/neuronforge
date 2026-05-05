@@ -19,12 +19,15 @@ import {
   Zap,
   Bot,
   User,
-  AlertCircle
+  AlertCircle,
+  Activity
 } from 'lucide-react'
 import { AgentInputFields } from '@/components/v2/AgentInputFields'
 import { DynamicSelectField } from '@/components/v2/DynamicSelectField'
 import type { IssueGroups, UserFixes } from './CalibrationDashboard'
 import type { CollectedIssue } from '@/lib/pilot/types'
+import { CalibrationStory } from './CalibrationStory'
+import { calculateCalibrationQualityScore } from '@/lib/utils/calibrationMetrics'
 
 interface Agent {
   id: string
@@ -89,7 +92,7 @@ interface CalibrationSetupProps {
   onComplete?: () => void
   onApplyFixes?: () => Promise<void>
   schemaMetadata?: Record<string, any[]> | null
-  onApproveForProduction?: () => void
+  onRunAgent?: () => void // Navigate to agent page after successful calibration
   session?: CalibrationSession | null
 }
 
@@ -117,23 +120,39 @@ export function CalibrationSetup({
   onComplete,
   onApplyFixes,
   schemaMetadata,
-  onApproveForProduction,
+  onRunAgent,
   session
 }: CalibrationSetupProps) {
-  // Initialize inputValues with values from input_schema if it's an object
+  // Initialize inputValues with default values from input_schema
   const [inputValues, setInputValues] = useState<Record<string, any>>(() => {
-    // If input_schema is an object, use those values as initial values
-    if (agent.input_schema && typeof agent.input_schema === 'object' && !Array.isArray(agent.input_schema)) {
-      const merged = { ...(agent.input_schema as Record<string, any>), ...initialInputValues }
-      console.log('[CalibrationSetup] Initializing inputValues:', {
-        fromInputSchema: agent.input_schema,
-        fromInitialInputValues: initialInputValues,
-        merged
-      })
-      return merged
+    const values: Record<string, any> = { ...initialInputValues };
+
+    // Handle both array format (new) and object format (legacy)
+    if (agent.input_schema) {
+      if (Array.isArray(agent.input_schema)) {
+        // Array format: [{name, type, default_value, ...}]
+        for (const field of agent.input_schema) {
+          // Only use default_value if no value provided in initialInputValues
+          if (field.default_value !== undefined && values[field.name] === undefined) {
+            values[field.name] = field.default_value;
+          }
+        }
+        console.log('[CalibrationSetup] Initialized inputValues from array input_schema:', values);
+      } else if (typeof agent.input_schema === 'object') {
+        // Object format (legacy): {key: value}
+        const schemaValues = agent.input_schema as Record<string, any>;
+        for (const [key, value] of Object.entries(schemaValues)) {
+          if (values[key] === undefined) {
+            values[key] = value;
+          }
+        }
+        console.log('[CalibrationSetup] Initialized inputValues from object input_schema:', values);
+      }
+    } else {
+      console.log('[CalibrationSetup] No input_schema, using initialInputValues only:', initialInputValues);
     }
-    console.log('[CalibrationSetup] Initializing inputValues from initialInputValues only:', initialInputValues)
-    return initialInputValues
+
+    return values;
   })
   const [configValues, setConfigValues] = useState<Record<string, any>>({})
   const [messages, setMessages] = useState<ChatMessage[]>([])
@@ -151,6 +170,18 @@ export function CalibrationSetup({
     logicFixes: {}
   })
   const chatScrollRef = React.useRef<HTMLDivElement>(null)
+
+  // CRITICAL FIX: Update inputValues when initialInputValues prop changes
+  // This handles the timing issue where parent's useEffect runs after initial render
+  React.useEffect(() => {
+    if (initialInputValues && Object.keys(initialInputValues).length > 0) {
+      console.log('[CalibrationSetup] Prop initialInputValues changed, updating state:', initialInputValues);
+      setInputValues(prev => ({
+        ...prev,
+        ...initialInputValues
+      }));
+    }
+  }, [initialInputValues])
 
   // Convert input_schema to array format if it's an object
   // Also enrich with descriptions from schemaMetadata (from form-metadata API)
@@ -191,19 +222,40 @@ export function CalibrationSetup({
     }
 
     // Enrich with descriptions from schemaMetadata (from form-metadata API)
-    if (schemaMetadata && Object.keys(schemaMetadata).length > 0) {
-      baseSchema = baseSchema.map(field => {
+    // Also clean up legacy technical descriptions like "Configuration value for {{config.X}}"
+    baseSchema = baseSchema.map(field => {
+      let description = field.description
+
+      // Check if current description is a legacy technical description that should be replaced
+      const isLegacyTechnicalDesc = description && (
+        description.includes('{{config.') ||
+        description.includes('{{input.') ||
+        description.includes('Configuration value for')
+      )
+
+      // Try to get better description from schemaMetadata
+      if (schemaMetadata && Object.keys(schemaMetadata).length > 0) {
         const metadata = schemaMetadata[field.name]
         if (metadata && metadata.length > 0 && metadata[0].description) {
           console.log('[CalibrationSetup] Enriching', field.name, 'with description:', metadata[0].description)
-          return {
-            ...field,
-            description: metadata[0].description
-          }
+          description = metadata[0].description
         }
-        return field
-      })
-    }
+      }
+
+      // If we still have a legacy technical description, clean it up or remove it
+      if (isLegacyTechnicalDesc && description === field.description) {
+        // Extract step context if present (e.g., "For step: Send email" -> keep meaningful part)
+        const stepMatch = description.match(/For step:\s*(.+?)(?:\s*Configuration value for|\s*$)/i)
+        if (stepMatch && stepMatch[1] && !stepMatch[1].includes('{{')) {
+          description = `For step: ${stepMatch[1].trim()}`
+        } else {
+          // Remove the technical description entirely
+          description = undefined
+        }
+      }
+
+      return description !== field.description ? { ...field, description } : field
+    })
 
     console.log('[CalibrationSetup] Final inputSchemaArray:', baseSchema)
     return baseSchema
@@ -233,7 +285,7 @@ export function CalibrationSetup({
   }
 
   // Dynamic options provider for dropdown fields
-  const getDynamicOptions = (fieldName: string): { plugin: string; action: string; parameter: string; depends_on?: string[]; paramToFieldMap?: Record<string, string> } | null => {
+  const getDynamicOptions = (fieldName: string): { plugin: string; action: string; parameter: string; depends_on?: string[]; paramToFieldMap?: Record<string, string>; queryComponents?: any } | null => {
     console.log('[CalibrationSetup] getDynamicOptions called for field:', fieldName)
     console.log('[CalibrationSetup] schemaMetadata available:', !!schemaMetadata)
     if (schemaMetadata) {
@@ -359,7 +411,8 @@ export function CalibrationSetup({
         action: match.action,
         parameter: match.parameter,
         depends_on: match.depends_on,
-        paramToFieldMap: Object.keys(paramToFieldMap).length > 0 ? paramToFieldMap : undefined
+        paramToFieldMap: Object.keys(paramToFieldMap).length > 0 ? paramToFieldMap : undefined,
+        queryComponents: match.queryComponents
       }
       console.log('[CalibrationSetup] Returning dynamic options for', fieldName, ':', result)
       return result
@@ -690,10 +743,29 @@ export function CalibrationSetup({
       })
       setConfigValues(defaultValues)
     } else {
-      // No config needed, run calibration immediately
-      console.log('[CalibrationSetup] No missing config, running calibration')
-      setHasStarted(true)
-      onRun(inputValues)
+      // No config needed, but still show input form if agent has input_schema
+      console.log('[CalibrationSetup] No missing config, checking for input schema')
+
+      if (agent.input_schema && inputSchemaArray.length > 0) {
+        // Show input form before running calibration
+        console.log('[CalibrationSetup] Has input schema, showing input form')
+        setMessages(prev => [
+          ...prev,
+          {
+            id: 'prompt-input',
+            type: 'bot',
+            content: 'Great! Now please provide the input values to test your workflow.',
+            timestamp: new Date(),
+            showInputForm: true
+          }
+        ])
+        setHasStarted(true)
+      } else {
+        // No input schema either, run calibration immediately
+        console.log('[CalibrationSetup] No input schema, running calibration immediately')
+        setHasStarted(true)
+        onRun(inputValues)
+      }
     }
   }
 
@@ -738,7 +810,6 @@ export function CalibrationSetup({
     criticalCount: criticalIssues.length,
     improvementsCount: improvements.length,
     issuesObject: issues,
-    hasCallback: !!onApproveForProduction,
     productionReady: agent.production_ready
   })
 
@@ -1674,19 +1745,17 @@ export function CalibrationSetup({
                         </div>
                       )}
 
-                      {/* Input Form - Show inline after fixes applied */}
-                      {/* Only show if fixes have been applied AND agent has input_schema */}
+                      {/* Input Form - Show whenever showInputForm is true */}
                       {msg.showInputForm && (() => {
-                        const shouldShow = fixesHaveBeenApplied && agent.input_schema && inputSchemaArray.length > 0
+                        const shouldShow = agent.input_schema && inputSchemaArray.length > 0
                         console.log('[CalibrationSetup] Form visibility check:', {
                           showInputForm: msg.showInputForm,
-                          fixesHaveBeenApplied,
                           hasInputSchema: !!agent.input_schema,
                           schemaLength: inputSchemaArray.length,
                           WILL_SHOW: shouldShow
                         })
                         return true
-                      })() && fixesHaveBeenApplied && agent.input_schema && inputSchemaArray.length > 0 && (
+                      })() && agent.input_schema && inputSchemaArray.length > 0 && (
                         <div className="flex items-start gap-3 mt-4">
                           <div className="w-8 h-8 rounded-full bg-[var(--v2-primary)]/10 flex items-center justify-center flex-shrink-0">
                             <Bot className="w-4 h-4 text-[var(--v2-primary)]" />
@@ -1955,13 +2024,13 @@ export function CalibrationSetup({
           </Card>
         </div>
 
-        {/* RIGHT COLUMN - Issues */}
+        {/* RIGHT COLUMN - Test Results */}
         <div className="flex flex-col h-[680px]">
           <Card className="border-[var(--v2-border)] bg-[var(--v2-surface)] h-full flex flex-col">
             <div className="p-6 border-b border-[var(--v2-border)] flex-shrink-0">
               <h2 className="text-lg font-semibold text-[var(--v2-text-primary)] flex items-center gap-2">
-                <AlertCircle className="w-5 h-5 text-[var(--v2-primary)]" />
-                Issues {hasIssues && `(${totalIssues})`}
+                <Activity className="w-5 h-5 text-[var(--v2-primary)]" />
+                Test Results {hasIssues && `(${totalIssues} need attention)`}
               </h2>
             </div>
 
@@ -1983,9 +2052,7 @@ export function CalibrationSetup({
                     hasIssues,
                     isRunning,
                     hasStarted,
-                    hasCallback: !!onApproveForProduction,
-                    productionReady: agent.production_ready,
-                    shouldShowButton: !!onApproveForProduction && !agent.production_ready
+                    productionReady: agent.production_ready
                   })
                   // Calculate summary data
                   const completedSteps = session?.completedSteps || 0
@@ -1999,84 +2066,39 @@ export function CalibrationSetup({
                   const hasProcessedData = completedSteps > 0 && (itemsProcessed > 0 || itemsDelivered > 0)
                   const hadNoDataToProcess = completedSteps > 0 && itemsProcessed === 0 && itemsDelivered === 0 && failedSteps === 0
 
+                  // Calculate calibration quality score
+                  const workflowSteps = agent.pilot_steps || agent.workflow_steps || []
+                  const qualityScore = calculateCalibrationQualityScore({
+                    status: session?.status || 'success',
+                    issues_found: [],  // Issues were already resolved during calibration
+                    issues_remaining: [],
+                    steps_failed: failedSteps
+                  })
+
                   return (
-                    <div className="flex flex-col h-full px-6 py-6 overflow-y-auto">
-                      {/* Auto-Calibration Summary */}
-                      {session?.autoCalibration && session.autoCalibration.autoFixesApplied > 0 && (
-                        <div className="mb-4 p-4 bg-green-50 dark:bg-green-950/20 border border-green-200 dark:border-green-800 rounded-lg">
-                          <div className="flex items-start gap-3">
-                            <CheckCircle2 className="w-5 h-5 text-green-600 dark:text-green-400 flex-shrink-0 mt-0.5" />
-                            <div className="flex-1">
-                              <h3 className="text-sm font-semibold text-green-900 dark:text-green-100 mb-1">
-                                Auto-Calibration Complete
-                              </h3>
-                              <p className="text-sm text-green-800 dark:text-green-200 mb-3">
-                                {session.autoCalibration.message}
-                              </p>
-                              <div className="grid grid-cols-2 gap-3">
-                                <div className="flex flex-col">
-                                  <span className="text-xs text-green-700 dark:text-green-300">Issues Fixed</span>
-                                  <span className="text-lg font-bold text-green-900 dark:text-green-100">
-                                    {session.autoCalibration.autoFixesApplied}
-                                  </span>
-                                </div>
-                                <div className="flex flex-col">
-                                  <span className="text-xs text-green-700 dark:text-green-300">Rounds</span>
-                                  <span className="text-lg font-bold text-green-900 dark:text-green-100">
-                                    {session.autoCalibration.iterations}
-                                  </span>
-                                </div>
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                      )}
+                    <div className="flex flex-col h-full px-6 py-6 overflow-y-auto space-y-4">
+                      {/* Unified Calibration Story - tells the complete narrative */}
+                      <CalibrationStory
+                        qualityScore={qualityScore}
+                        issuesFound={session?.autoCalibration?.autoFixesApplied || 0}
+                        issuesRemaining={0}
+                        stepsFailed={failedSteps}
+                        autoFixesApplied={session?.autoCalibration?.autoFixesApplied}
+                        executionSummary={session?.execution_summary}
+                        workflowSteps={workflowSteps}
+                        autoCalibration={session?.autoCalibration}
+                        isCalibrated={agent.production_ready}
+                      />
 
-                      {/* Test Results */}
-                      <div className="mb-4 p-4 bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg">
-                        <div className="flex items-center gap-2 mb-3">
-                          <CheckCircle2 className="w-5 h-5 text-green-600 dark:text-green-400" />
-                          <h3 className="text-base font-semibold text-[var(--v2-text-primary)]">
-                            Test Complete
-                          </h3>
-                        </div>
-
-                        {/* Execution Summary */}
-                        {session?.execution_summary && ((session.execution_summary.data_sources_accessed?.length ?? 0) > 0 || (session.execution_summary.data_written?.length ?? 0) > 0) && (
-                          <div className="space-y-1.5">
-                            {session.execution_summary.data_sources_accessed?.map((source: any, idx: number) => (
-                              <div key={idx} className="flex items-baseline gap-2 text-sm">
-                                <span className="text-blue-600 dark:text-blue-400 font-semibold min-w-[24px]">{source.count}</span>
-                                <span className="text-[var(--v2-text-secondary)]">{source.description}</span>
-                              </div>
-                            ))}
-                            {session.execution_summary.data_written?.map((written: any, idx: number) => (
-                              <div key={idx} className="flex items-baseline gap-2 text-sm">
-                                <span className="text-green-600 dark:text-green-400 font-semibold min-w-[24px]">{written.count}</span>
-                                <span className="text-[var(--v2-text-secondary)]">{written.description}</span>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-
-                      {/* Status Messages */}
-                      {hasProcessedData && (
+                      {/* Warning if some data wasn't processed */}
+                      {hasProcessedData && session?.execution_summary?.data_sources_accessed?.some((s: any) => s.count > 0) &&
+                       itemsDelivered > 0 && itemsDelivered < itemsProcessed && (
                         <div className="mb-4">
-                          <div className="p-3 bg-green-50 dark:bg-green-950/20 border border-green-200 dark:border-green-800 rounded-lg">
-                            <p className="text-sm text-green-900 dark:text-green-100">
-                              ✓ Ready for production
+                          <div className="flex items-start gap-2 p-3 bg-yellow-50 dark:bg-yellow-950/30 border border-yellow-200 dark:border-yellow-800 rounded-lg">
+                            <AlertCircle className="w-4 h-4 text-yellow-600 dark:text-yellow-400 flex-shrink-0 mt-0.5" />
+                            <p className="text-sm text-yellow-900 dark:text-yellow-100">
+                              Found {itemsProcessed} items but only processed {itemsDelivered}. Some items may be empty (like emails with no attachments). Test with complete data.
                             </p>
-                            {/* Show warning if some data wasn't processed */}
-                            {session?.execution_summary?.data_sources_accessed?.some((s: any) => s.count > 0) &&
-                             itemsDelivered > 0 && itemsDelivered < itemsProcessed && (
-                              <div className="flex items-start gap-2 mt-2 p-2 bg-yellow-50 dark:bg-yellow-950/30 border border-yellow-200 dark:border-yellow-800 rounded">
-                                <AlertCircle className="w-4 h-4 text-yellow-600 dark:text-yellow-400 flex-shrink-0 mt-0.5" />
-                                <p className="text-sm text-yellow-900 dark:text-yellow-100">
-                                  Found {itemsProcessed} items but only processed {itemsDelivered}. Some items may be empty (like emails with no attachments). Test with complete data.
-                                </p>
-                              </div>
-                            )}
                           </div>
                         </div>
                       )}
@@ -2108,25 +2130,15 @@ export function CalibrationSetup({
                         </div>
                       )}
 
-                      {/* Approve for Production Button - Compact */}
-                      {onApproveForProduction && !agent.production_ready && (
+                      {/* Go to Agent Button - Calibration auto-sets production_ready */}
+                      {onRunAgent && (
                         <button
-                          onClick={onApproveForProduction}
-                          className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-[var(--v2-success)] text-white hover:opacity-90 transition-opacity font-semibold text-sm shadow-sm rounded-lg"
+                          onClick={onRunAgent}
+                          className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-[var(--v2-primary)] text-white hover:opacity-90 transition-opacity font-semibold text-sm shadow-sm rounded-lg"
                         >
                           <CheckCircle2 className="w-4 h-4" />
-                          Approve for Production
+                          Go to Agent Page
                         </button>
-                      )}
-
-                      {/* Production Ready Badge - Compact */}
-                      {agent.production_ready && (
-                        <div className="flex items-center justify-center gap-2 px-3 py-2 bg-[var(--v2-success)]/10 border border-[var(--v2-success)]/20 rounded-lg">
-                          <CheckCircle2 className="w-4 h-4 text-[var(--v2-success)]" />
-                          <span className="text-xs font-semibold text-[var(--v2-text-primary)]">
-                            Production Ready
-                          </span>
-                        </div>
                       )}
                     </div>
                   )

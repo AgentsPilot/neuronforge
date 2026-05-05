@@ -31,7 +31,6 @@ interface CalibrationSuccessProps {
   }
   onRunAgent: () => void
   onParameterizeWorkflow?: () => void // Optional callback to open parameterization wizard
-  onApproveForProduction?: () => void // Callback to mark agent as production-ready
   hasHardcodedValues?: boolean // Whether workflow has hardcoded values
   userDeclinedParameterization?: boolean // User said NO to parameterization
   onDeclineParameterization?: () => void // User clicks NO to parameterization
@@ -46,7 +45,6 @@ export function CalibrationSuccess({
   fixesSummary = {},
   onRunAgent,
   onParameterizeWorkflow,
-  onApproveForProduction,
   hasHardcodedValues = false,
   userDeclinedParameterization = false,
   onDeclineParameterization,
@@ -233,41 +231,14 @@ export function CalibrationSuccess({
         </Card>
       )}
 
-      {/* Step 2: Show Approve button (after user declined parameterization OR no hardcoded values OR after parameterization complete) */}
-      {!agent.production_ready && onApproveForProduction && (userDeclinedParameterization || !hasHardcodedValues) && (
+      {/* Step 2: Show Go to Agent button (after user declined parameterization OR no hardcoded values OR after parameterization complete) */}
+      {(userDeclinedParameterization || !hasHardcodedValues) && (
         <Card className="border-[var(--v2-border)] bg-[var(--v2-surface)] !p-4 sm:!p-6">
           <h3 className="text-base font-semibold text-[var(--v2-text-primary)] mb-2">
-            Ready to Go Live?
+            Ready to Go!
           </h3>
           <p className="text-sm text-[var(--v2-text-secondary)] mb-4">
-            Your workflow has been tested and is ready for production. Click below to approve this agent and make it available for live use.
-          </p>
-
-          <button
-            onClick={onApproveForProduction}
-            className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-[var(--v2-primary)] text-white hover:opacity-90 transition-opacity font-medium text-sm shadow-sm"
-            style={{ borderRadius: 'var(--v2-radius-button)' }}
-          >
-            <CheckCircle2 className="w-4 h-4" />
-            Approve for Production
-          </button>
-
-          <div className="mt-4 pt-4 border-t border-[var(--v2-border)]">
-            <p className="text-xs text-[var(--v2-text-secondary)]">
-              <span className="font-medium text-[var(--v2-text-primary)]">What happens next:</span> The agent will be marked as production-ready and you'll be guided through activating it.
-            </p>
-          </div>
-        </Card>
-      )}
-
-      {/* Already production ready - just show go to agent */}
-      {agent.production_ready && (
-        <Card className="border-[var(--v2-border)] bg-[var(--v2-surface)] !p-4 sm:!p-6">
-          <h3 className="text-base font-semibold text-[var(--v2-text-primary)] mb-2">
-            Agent Approved!
-          </h3>
-          <p className="text-sm text-[var(--v2-text-secondary)] mb-4">
-            This agent is production-ready. Return to your agent page to activate it.
+            Your workflow has been calibrated and is ready for production. Return to your agent page to activate it.
           </p>
 
           <button
@@ -276,7 +247,7 @@ export function CalibrationSuccess({
             style={{ borderRadius: 'var(--v2-radius-button)' }}
           >
             <CheckCircle2 className="w-4 h-4" />
-            Go to Agent
+            Go to Agent Page
           </button>
         </Card>
       )}

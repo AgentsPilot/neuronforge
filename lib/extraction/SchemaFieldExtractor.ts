@@ -605,10 +605,21 @@ export class SchemaFieldExtractor {
     // Pick best candidate (highest confidence)
     if (candidates.length > 0) {
       const best = candidates.sort((a, b) => b.confidence - a.confidence)[0];
+
+      // Check for competing matches (same pattern as extractFromKeyValuePairs lines 426-432)
+      // When multiple candidates have similar confidence, this indicates ambiguity
+      // and we should use LLM to semantically determine the correct value
+      const hasCompetingMatches = candidates.length > 1 &&
+        Math.abs(candidates[0].confidence - candidates[1].confidence) < 0.01;
+
+      // Apply 0.4 multiplier if ambiguous (triggers LLM fallback at < 0.5 threshold)
+      // Example: 0.7 (universal pattern) × 0.4 = 0.28 → triggers LLM validation
+      const finalConfidence = hasCompetingMatches ? best.confidence * 0.4 : best.confidence;
+
       return {
         name: schemaField.name,
         value: best.value,
-        confidence: best.confidence,
+        confidence: finalConfidence,
         source: best.source as any,
         rawMatch: best.rawMatch,
       };
@@ -816,12 +827,21 @@ export class SchemaFieldExtractor {
     }
 
     // For number fields, reject values that aren't numeric
-    if (field.type === 'number' || field.type === 'currency') {
+    if (field.type === 'number') {
       // Must contain at least one digit
       if (!/\d/.test(trimmedValue)) return false;
+
       // Reject if it looks like a date (contains month names or date separators with year)
       if (/\d{4}/.test(trimmedValue) && (/jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec/i.test(trimmedValue) || /\d{1,2}[-\/]\d{1,2}[-\/]\d{2,4}/.test(trimmedValue))) {
         return false;
+      }
+
+      // NEW: Reject alphanumeric codes (e.g., "1BC5S1", "ABC123")
+      // Number fields should only contain digits and standard separators (,.-$€£¥₹)
+      // Product codes that mix letters and numbers are not valid number values
+      const hasLetters = /[a-zA-Z]/.test(trimmedValue);
+      if (hasLetters) {
+        return false; // Likely a product code, part number, or identifier - not a numeric value
       }
     }
 

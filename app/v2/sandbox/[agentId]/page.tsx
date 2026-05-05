@@ -92,8 +92,12 @@ export default function BatchCalibrationPage() {
           return
         }
         const data = await response.json()
-        console.log('[Sandbox Page] Global schema metadata loaded:', data.metadata)
-        setSchemaMetadata(data.metadata)
+        // API returns { success: true, data: { metadata, timestamp } }
+        const metadata = data.data?.metadata || data.metadata
+        console.log('[Sandbox Page] Global schema metadata loaded:', metadata ? Object.keys(metadata).length : 0, 'parameters')
+        if (metadata) {
+          setSchemaMetadata(metadata)
+        }
       } catch (error) {
         console.error('[Sandbox Page] Error fetching schema metadata:', error)
       }
@@ -109,9 +113,32 @@ export default function BatchCalibrationPage() {
 
   // Initialize inputValues from agent.input_schema when agent loads
   useEffect(() => {
-    if (agent?.input_schema && typeof agent.input_schema === 'object' && !Array.isArray(agent.input_schema)) {
-      console.log('[Sandbox Page] Initializing inputValues from agent.input_schema:', agent.input_schema)
-      setInputValues(agent.input_schema as Record<string, any>)
+    console.log('[Sandbox Page] input_schema useEffect triggered, agent exists:', !!agent, 'has input_schema:', !!agent?.input_schema);
+
+    if (!agent?.input_schema) {
+      console.log('[Sandbox Page] Skipping input_schema initialization - no agent or no input_schema');
+      return;
+    }
+
+    console.log('[Sandbox Page] Agent input_schema type:', typeof agent.input_schema, 'isArray:', Array.isArray(agent.input_schema));
+
+    // Handle both array format (new) and object format (legacy)
+    if (Array.isArray(agent.input_schema)) {
+      // Array format: [{name, type, default_value, ...}]
+      console.log('[Sandbox Page] Processing array input_schema, length:', agent.input_schema.length);
+      const values: Record<string, any> = {};
+      for (const field of agent.input_schema) {
+        console.log('[Sandbox Page] Field:', field.name, 'has default_value:', field.default_value !== undefined, 'value:', field.default_value);
+        if (field.default_value !== undefined) {
+          values[field.name] = field.default_value;
+        }
+      }
+      console.log('[Sandbox Page] Initializing inputValues from array input_schema:', values);
+      setInputValues(values);
+    } else if (typeof agent.input_schema === 'object') {
+      // Object format (legacy): {key: value}
+      console.log('[Sandbox Page] Initializing inputValues from object input_schema:', agent.input_schema);
+      setInputValues(agent.input_schema as Record<string, any>);
     }
   }, [agent])
 
@@ -148,10 +175,11 @@ export default function BatchCalibrationPage() {
               action: field.action,
               parameter: field.parameter,
               depends_on: field.depends_on,
-              description: field.description
+              description: field.description,
+              queryComponents: field.queryComponents
             }]
 
-            console.log('[Sandbox Page] Mapped input schema field:', field.name, '→', field.parameter, field.description ? `(${field.description})` : '')
+            console.log('[Sandbox Page] Mapped input schema field:', field.name, '→', field.parameter, field.description ? `(${field.description})` : '', field.queryComponents ? '(has queryComponents)' : '')
           }
 
           return merged
@@ -194,17 +222,22 @@ export default function BatchCalibrationPage() {
       console.log('[Sandbox] Loading saved configuration for agent:', agentId)
       const response = await fetch(`/api/v2/calibrate/load-configuration?agentId=${agentId}`)
 
+      console.log('[Sandbox] Load configuration response status:', response.status, response.statusText);
+
       if (!response.ok) {
-        console.warn('[Sandbox] No saved configuration found (or error loading)')
+        console.warn('[Sandbox] No saved configuration found (or error loading)', response.status, response.statusText)
         return
       }
 
       const result = await response.json()
+      console.log('[Sandbox] Load configuration result:', result);
 
       if (result.inputValues && Object.keys(result.inputValues).length > 0) {
         console.log('[Sandbox] Loaded saved configuration:', result.inputValues)
         setInputValues(result.inputValues)
         setConfigurationSaved(true) // Mark as already saved
+      } else {
+        console.log('[Sandbox] No inputValues in response or empty object:', result.inputValues);
       }
     } catch (error: any) {
       console.error('[Sandbox] Failed to load saved configuration:', error)
@@ -529,6 +562,27 @@ export default function BatchCalibrationPage() {
 
       setIssues(result.issues)
 
+      // ✅ CRITICAL: Refetch agent to get updated is_calibrated and production_ready status
+      // The backend sets these flags after successful calibration
+      console.log('[Calibration] Refetching agent to get updated calibration flags...')
+      const { data: updatedAgent, error: agentRefetchError } = await supabase
+        .from('agents')
+        .select('is_calibrated, production_ready')
+        .eq('id', agent.id)
+        .single()
+
+      if (!agentRefetchError && updatedAgent) {
+        console.log('[Calibration] Agent flags refetched - is_calibrated:', updatedAgent.is_calibrated, 'production_ready:', updatedAgent.production_ready)
+        // Merge updated flags into existing agent object to preserve all other data
+        setAgent(prev => prev ? {
+          ...prev,
+          is_calibrated: updatedAgent.is_calibrated,
+          production_ready: updatedAgent.production_ready
+        } : null)
+      } else {
+        console.warn('[Calibration] Failed to refetch agent flags:', agentRefetchError)
+      }
+
       // If no issues found, go straight to success (user will approve for production later)
       if (result.summary.total === 0) {
         console.log('[Calibration] No issues found - ready for user approval')
@@ -846,6 +900,28 @@ export default function BatchCalibrationPage() {
           skippedSteps: result.summary.skippedSteps,
           autoCalibration: result.autoCalibration
         })
+
+        // ✅ CRITICAL: Refetch agent to get updated is_calibrated and production_ready status
+        // The backend sets these flags after successful calibration
+        console.log('[Test] Refetching agent to get updated calibration flags...')
+        const { data: updatedAgent, error: agentRefetchError } = await supabase
+          .from('agents')
+          .select('is_calibrated, production_ready')
+          .eq('id', agent.id)
+          .single()
+
+        if (!agentRefetchError && updatedAgent) {
+          console.log('[Test] Agent flags refetched - is_calibrated:', updatedAgent.is_calibrated, 'production_ready:', updatedAgent.production_ready)
+          // Merge updated flags into existing agent object to preserve all other data
+          setAgent(prev => prev ? {
+            ...prev,
+            is_calibrated: updatedAgent.is_calibrated,
+            production_ready: updatedAgent.production_ready
+          } : null)
+        } else {
+          console.warn('[Test] Failed to refetch agent flags:', agentRefetchError)
+        }
+
         // DON'T change flow state - stay on dashboard to show "All Set!" in right column
         // setFlowState('success')
         setFlowState('dashboard')
@@ -944,57 +1020,6 @@ export default function BatchCalibrationPage() {
   const handleParameterizeWorkflow = () => {
     console.log('[Calibration] Opening parameterization wizard')
     setShowParameterizationWizard(true)
-  }
-
-  // Approve agent for production
-  const handleApproveForProduction = async () => {
-    if (!agent) return
-
-    try {
-      console.log('[Calibration] Approving agent for production')
-
-      // Set production_ready=true
-      const { data: updateData, error: updateError } = await supabase
-        .from('agents')
-        .update({ production_ready: true })
-        .eq('id', agent.id)
-        .eq('user_id', agent.user_id)
-        .select()
-
-      if (updateError) {
-        console.error('[Calibration] Failed to update production_ready:', updateError)
-        alert('Failed to approve agent for production')
-        return
-      }
-
-      console.log('[Calibration] Successfully approved agent:', updateData)
-
-      // Update local agent state to reflect production_ready change
-      if (updateData && updateData.length > 0) {
-        setAgent(prev => prev ? { ...prev, production_ready: true } : null)
-      }
-
-      // Set flag to show tour on agent page
-      if (typeof window !== 'undefined') {
-        console.log('[Calibration] Setting calibration-completed flag for agent:', agentId)
-        localStorage.setItem(`calibration-completed-${agentId}`, 'true')
-
-        // CRITICAL: Clear any previous tour dismissal so the tour can show again
-        localStorage.removeItem(`tour-dismissed-${agentId}`)
-        console.log('[Calibration] Cleared tour-dismissed flag to allow tour to show')
-
-        // Verify it was set
-        const verifyFlag = localStorage.getItem(`calibration-completed-${agentId}`)
-        console.log('[Calibration] Verified localStorage flag:', verifyFlag)
-      }
-
-      // Navigate to agent details page
-      console.log('[Calibration] Agent approved for production - navigating to agent details')
-      router.push(`/v2/agents/${agentId}`)
-    } catch (err) {
-      console.error('[Calibration] Error approving agent:', err)
-      alert('Failed to approve agent for production')
-    }
   }
 
   // Handle wizard completion
@@ -1186,7 +1211,7 @@ export default function BatchCalibrationPage() {
               onFixesChange={setFixes}
               onApplyFixes={handleApplyFixesInChat}
               schemaMetadata={schemaMetadata}
-              onApproveForProduction={handleApproveForProduction}
+              onRunAgent={handleRunAgent}
               session={session}
             />
           )}
@@ -1228,7 +1253,6 @@ export default function BatchCalibrationPage() {
               fixesSummary={fixesSummary}
               onRunAgent={handleRunAgent}
               onParameterizeWorkflow={hasHardcodedValues ? handleParameterizeWorkflow : undefined}
-              onApproveForProduction={handleApproveForProduction}
               hasHardcodedValues={hasHardcodedValues}
               userDeclinedParameterization={userDeclinedParameterization}
               onDeclineParameterization={handleDeclineParameterization}

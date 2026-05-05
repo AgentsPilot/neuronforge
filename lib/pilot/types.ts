@@ -1506,6 +1506,7 @@ export function isComplexCondition(condition: Condition): condition is ComplexCo
 export interface CalibrationExecutionSummary {
   data_sources_accessed: DataSourceAccess[];
   data_written: DataWritten[];
+  plugins_used?: PluginOperation[];  // NEW: All plugin operations with capabilities (unified tracking)
   items_processed: number;    // Total items that went through the workflow
   items_filtered?: number;    // Items that didn't match filters
   items_delivered?: number;   // Items that made it to the final output
@@ -1524,3 +1525,12 @@ export interface DataWritten {
   count: number;              // How many items were written/updated/created
   description: string;        // User-friendly description (e.g., "Added 3 rows to spreadsheet")
 }
+
+export interface PluginOperation {
+  plugin: string;
+  action: string;
+  capability: string;         // The actual capability from plugin definition (e.g., "upload", "search", "upsert")
+  count: number;
+  description: string;
+}
+

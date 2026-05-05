@@ -51,6 +51,12 @@ export interface ExecutionErrorData {
 class ExecutionEventEmitterService extends EventEmitter {
   private static instance: ExecutionEventEmitterService
 
+  // Event buffer for replay - stores events until a listener connects
+  // This prevents event loss when SSE stream connects after execution starts
+  private eventBuffer: Map<string, ExecutionEvent[]> = new Map()
+  private readonly MAX_BUFFER_SIZE = 100 // Max events per execution
+  private readonly BUFFER_TTL_MS = 60000 // 60 seconds TTL
+
   private constructor() {
     super()
     // Increase max listeners to handle multiple concurrent executions
@@ -66,21 +72,142 @@ class ExecutionEventEmitterService extends EventEmitter {
 
   /**
    * Emit an execution event
+   * Events are buffered for replay if no listener is registered yet
    */
   public emitExecutionEvent(event: ExecutionEvent): void {
     const eventKey = `execution:${event.execution_id}`
-    this.emit(eventKey, event)
-    console.log(`[ExecutionEventEmitter] Emitted ${event.type} for execution ${event.execution_id}`)
+
+    // Check if there are active listeners
+    const hasListeners = this.listenerCount(eventKey) > 0
+
+    if (hasListeners) {
+      // Emit directly to listeners
+      this.emit(eventKey, event)
+    } else {
+      // Buffer the event for later replay
+      this.bufferEvent(event.execution_id, event)
+    }
+
+    console.log(`[ExecutionEventEmitter] Emitted ${event.type} for execution ${event.execution_id} (buffered: ${!hasListeners})`)
+  }
+
+  /**
+   * Buffer an event for later replay
+   */
+  private bufferEvent(execution_id: string, event: ExecutionEvent): void {
+    if (!this.eventBuffer.has(execution_id)) {
+      this.eventBuffer.set(execution_id, [])
+
+      // Auto-cleanup buffer after TTL
+      setTimeout(() => {
+        this.eventBuffer.delete(execution_id)
+      }, this.BUFFER_TTL_MS)
+    }
+
+    const buffer = this.eventBuffer.get(execution_id)!
+    if (buffer.length < this.MAX_BUFFER_SIZE) {
+      buffer.push(event)
+    }
   }
 
   /**
    * Listen to execution events for a specific execution
+   * Replays any buffered events with staggered timing to simulate real-time progression
+   * Terminal events (execution_complete, execution_error) are sent last after all step events
    */
   public onExecutionEvent(
     execution_id: string,
     callback: (event: ExecutionEvent) => void
   ): () => void {
     const eventKey = `execution:${execution_id}`
+
+    // Replay buffered events with staggered delays
+    const bufferedEvents = this.eventBuffer.get(execution_id) || []
+    if (bufferedEvents.length > 0) {
+      console.log(`[ExecutionEventEmitter] Replaying ${bufferedEvents.length} buffered events for execution ${execution_id}`)
+
+      // Clear buffer immediately to prevent duplicate replay
+      this.eventBuffer.delete(execution_id)
+
+      // Separate step events from terminal events
+      // Terminal events (execution_complete, execution_error) should be sent LAST
+      const stepEvents: ExecutionEvent[] = []
+      const terminalEvents: ExecutionEvent[] = []
+
+      for (const event of bufferedEvents) {
+        if (event.type === 'execution_complete' || event.type === 'execution_error') {
+          terminalEvents.push(event)
+        } else {
+          stepEvents.push(event)
+        }
+      }
+
+      // Replay events with delays based on original timestamps
+      // Use a minimum delay between events for visual progression
+      const MIN_DELAY_MS = 150 // Minimum delay between events for UI feedback
+      const MAX_REPLAY_TIME_MS = 3000 // Cap total replay time at 3 seconds
+
+      let maxStepDelay = 0 // Track when all step events will be sent
+
+      if (stepEvents.length === 0) {
+        // No step events - just send terminal events immediately
+        for (const event of terminalEvents) {
+          callback(event)
+        }
+      } else if (stepEvents.length === 1) {
+        // Single step event - replay immediately, then terminal events
+        callback(stepEvents[0])
+        // Send terminal events after a small delay
+        setTimeout(() => {
+          for (const event of terminalEvents) {
+            callback(event)
+          }
+        }, MIN_DELAY_MS)
+      } else {
+        // Multiple step events - calculate delays based on original timing
+        const firstTimestamp = new Date(stepEvents[0].timestamp).getTime()
+        const lastStepTimestamp = new Date(stepEvents[stepEvents.length - 1].timestamp).getTime()
+        const originalDuration = lastStepTimestamp - firstTimestamp
+
+        // Calculate time scale factor to compress/expand replay
+        // If original took 10s but we want max 3s, scale = 0.3
+        const timeScale = originalDuration > MAX_REPLAY_TIME_MS
+          ? MAX_REPLAY_TIME_MS / originalDuration
+          : 1
+
+        stepEvents.forEach((event, index) => {
+          if (index === 0) {
+            // First event - replay immediately
+            callback(event)
+          } else {
+            // Calculate delay from first event, scaled appropriately
+            const eventTime = new Date(event.timestamp).getTime()
+            const offsetFromFirst = eventTime - firstTimestamp
+            const scaledDelay = Math.max(MIN_DELAY_MS * index, offsetFromFirst * timeScale)
+
+            // Track the maximum delay for scheduling terminal events
+            if (scaledDelay > maxStepDelay) {
+              maxStepDelay = scaledDelay
+            }
+
+            setTimeout(() => {
+              callback(event)
+            }, scaledDelay)
+          }
+        })
+
+        // Send terminal events AFTER all step events have been replayed
+        // Add an extra delay to ensure visual completion of all steps
+        const terminalDelay = maxStepDelay + MIN_DELAY_MS
+        setTimeout(() => {
+          for (const event of terminalEvents) {
+            callback(event)
+          }
+        }, terminalDelay)
+      }
+    }
+
+    // Register for future events
     this.on(eventKey, callback)
 
     // Return cleanup function
@@ -180,7 +307,9 @@ class ExecutionEventEmitterService extends EventEmitter {
   public cleanupExecution(execution_id: string): void {
     const eventKey = `execution:${execution_id}`
     this.removeAllListeners(eventKey)
-    console.log(`[ExecutionEventEmitter] Cleaned up listeners for execution ${execution_id}`)
+    // Also clear any buffered events
+    this.eventBuffer.delete(execution_id)
+    console.log(`[ExecutionEventEmitter] Cleaned up listeners and buffer for execution ${execution_id}`)
   }
 }
 

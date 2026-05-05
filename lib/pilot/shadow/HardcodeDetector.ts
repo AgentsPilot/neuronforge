@@ -59,6 +59,32 @@ export class HardcodeDetector {
     const paramName = path.split('.').pop() || ''
     const lowerParamName = paramName.toLowerCase()
 
+    // Skip workflow constants - these are hardcoded by design, not user inputs
+    const workflowConstants = [
+      'application/pdf',      // MIME type for PDFs (workflow processes PDFs specifically)
+      'image/png',            // MIME type for images
+      'image/jpeg',           // MIME type for images
+      'text/plain',           // MIME type for text
+      'anyone_with_link',     // Google Drive sharing permission (public sharing workflow)
+      'reader',               // Google Drive role (read-only access workflow)
+      'writer',               // Google Drive role (write access workflow)
+      'owner',                // Google Drive role (ownership workflow)
+      'commenter',            // Google Drive role (comment-only workflow)
+      'collect',              // Scatter-gather operation (standard gather type)
+      'flatten',              // Transform operation (standard transform type)
+      'filter',               // Transform operation (standard transform type)
+      'map',                  // Transform operation (standard transform type)
+      'reduce',               // Transform operation (standard transform type)
+      'true',                 // Boolean constants
+      'false',                // Boolean constants
+    ]
+
+    // Check if value is a workflow constant
+    if (typeof value === 'string' && workflowConstants.includes(value)) {
+      console.log(`[HardcodeDetector] Skipping workflow constant: ${value}`)
+      return false
+    }
+
     // Skip technical parameters that should never be parameterized
     const technicalParams = [
       'major_dimension',      // Google Sheets - technical format parameter
@@ -67,6 +93,9 @@ export class HardcodeDetector {
       'response_value_render_option', // Google Sheets - technical parameter
       'query',                // Gmail - complex search syntax
       'q',                    // Gmail - search query shorthand
+      'mime_type',            // MIME type fields (always workflow constants)
+      'role',                 // Permission roles (always workflow constants for sharing)
+      'permission_type',      // Permission types (always workflow constants)
     ]
 
     if (technicalParams.includes(lowerParamName)) {

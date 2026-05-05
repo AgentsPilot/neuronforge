@@ -275,7 +275,7 @@ export class UserPluginConnections {
       const profileAccessToken = tokens.authed_user?.access_token || tokens.access_token;
 
       // Fetch user profile (provider-specific)
-      const profile = await fetchUserProfile(profileAccessToken, authConfig.auth_type, authConfig.profile_url);
+      const profile = await fetchUserProfile(profileAccessToken, authConfig.auth_type, authConfig.profile_url, authConfig.profile_method);
 
       // Calculate expiration
       const expiresAt = calculateExpiresAt(tokens.expires_in);

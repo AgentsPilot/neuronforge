@@ -63,6 +63,7 @@ import { InlineLoading } from '@/components/v2/ui/loading'
 import { clientLogger } from '@/lib/logger/client'
 import { MiniInsightCard, HealthStatus, NoIssuesState } from '@/components/v2/execution/MiniInsightCard'
 import { InsightsList } from '@/components/v2/insights/InsightsList'
+import { AgentInputFields } from '@/components/v2/AgentInputFields'
 
 // PERFORMANCE: Lazy load heavy components that may not be used immediately
 const DraftAgentTour = lazy(() => import('@/components/agents/DraftAgentTour'))
@@ -156,6 +157,14 @@ export default function V2AgentDetailPage() {
   const [hourlyInterval, setHourlyInterval] = useState<string>('1')
   const [dailyOption, setDailyOption] = useState<'everyday' | 'weekdays' | 'weekends'>('everyday')
 
+  // Input configuration state
+  const [inputConfigExpanded, setInputConfigExpanded] = useState(false)
+  const [inputConfigValues, setInputConfigValues] = useState<Record<string, any>>({})
+  const [inputConfigSaving, setInputConfigSaving] = useState(false)
+  const [inputConfigDirty, setInputConfigDirty] = useState(false)
+  const [inputConfigMetadata, setInputConfigMetadata] = useState<Record<string, any[]> | null>(null)
+  const [inputConfigLoading, setInputConfigLoading] = useState(false)
+
   const EXECUTIONS_PER_PAGE = 5
   const [executionTimeFilter, setExecutionTimeFilter] = useState<'7days' | '30days' | 'all'>('all')
   const [showTimeFilterDropdown, setShowTimeFilterDropdown] = useState(false)
@@ -168,12 +177,15 @@ export default function V2AgentDetailPage() {
     try {
       // Parallel fetch all data
       // PERFORMANCE: Limit to 50 executions and skip token enrichment for faster load
-      const [agentResult, executionsResult, configResult, rewardStatus, insightsResult] = await Promise.all([
+      // Also pre-fetch form metadata and global schema metadata for input config drawer
+      const [agentResult, executionsResult, configResult, rewardStatus, insightsResult, formMetadataResult, globalSchemaResult] = await Promise.all([
         agentApi.getById(agentId, user.id),
         agentApi.getExecutions(agentId, user.id, { limit: 50, includeTokens: false }),
         systemConfigApi.getByKeys(['tokens_per_pilot_credit', 'agent_sharing_reward_amount']),
         fetch('/api/admin/reward-config').then(r => r.json()).catch(() => ({ success: false })),
-        fetch(`/api/v6/insights?agentId=${agentId}&status=new,viewed`).then(r => r.json()).catch(() => ({ success: false, data: [] }))
+        fetch(`/api/v6/insights?agentId=${agentId}&status=new,viewed`).then(r => r.json()).catch(() => ({ success: false, data: [] })),
+        fetch(`/api/v2/agents/${agentId}/form-metadata`).then(r => r.json()).catch(() => ({ metadata: [] })),
+        fetch('/api/plugins/schema-metadata').then(r => r.json()).catch(() => ({ data: { metadata: {} } }))
       ])
 
       // Process agent
@@ -221,6 +233,38 @@ export default function V2AgentDetailPage() {
         setInsights(insightsResult.data)
       } else {
         console.log('[AgentPage] No insights found or error:', insightsResult.error)
+      }
+
+      // Process pre-fetched form metadata and global schema metadata for input config drawer
+      // This ensures the drawer opens instantly when clicked
+      let metadataMap: Record<string, any[]> = {}
+
+      // Load global schema metadata first (as base)
+      const globalMetadata = globalSchemaResult.data?.metadata || globalSchemaResult.metadata
+      if (globalMetadata) {
+        metadataMap = { ...globalMetadata }
+        console.log('[AgentPage] Pre-loaded global schema metadata:', Object.keys(metadataMap).length, 'parameters')
+      }
+
+      // Merge form field metadata (takes precedence)
+      if (formMetadataResult.metadata && Array.isArray(formMetadataResult.metadata)) {
+        for (const field of formMetadataResult.metadata) {
+          if (field.name) {
+            metadataMap[field.name] = [{
+              plugin: field.plugin,
+              action: field.action,
+              parameter: field.parameter,
+              depends_on: field.depends_on,
+              description: field.description,
+              queryComponents: field.queryComponents
+            }]
+          }
+        }
+        console.log('[AgentPage] Pre-loaded form field metadata:', formMetadataResult.metadata.length, 'fields')
+      }
+
+      if (Object.keys(metadataMap).length > 0) {
+        setInputConfigMetadata(metadataMap)
       }
 
       // PERFORMANCE: Defer non-critical data until after initial render
@@ -446,6 +490,291 @@ export default function V2AgentDetailPage() {
       clientLogger.error('Error checking sharing eligibility', error as Error)
     }
   }
+
+  // Load input configuration from saved agent_configuration
+  // Note: Metadata is pre-loaded in fetchAllData, so we only need to fetch saved config values
+  const loadInputConfiguration = useCallback(async () => {
+    if (!agent?.id) return
+
+    setInputConfigLoading(true)
+    try {
+      // Only fetch saved configuration values - metadata is already pre-loaded
+      const configResponse = await fetch(`/api/v2/calibrate/load-configuration?agentId=${agent.id}`)
+
+      // Load saved configuration values
+      if (configResponse.ok) {
+        const result = await configResponse.json()
+        if (result.inputValues && Object.keys(result.inputValues).length > 0) {
+          console.log('[AgentPage] Loaded saved input configuration:', result.inputValues)
+          setInputConfigValues(result.inputValues)
+          setInputConfigLoading(false)
+          return
+        }
+      }
+
+      // Fallback: Initialize from input_schema default values if no saved config
+      if (agent.input_schema && Array.isArray(agent.input_schema)) {
+        const defaultValues: Record<string, any> = {}
+        for (const field of agent.input_schema as any[]) {
+          const fieldName = field.name || field.key
+          if (field.default_value !== undefined) {
+            defaultValues[fieldName] = field.default_value
+          }
+        }
+        if (Object.keys(defaultValues).length > 0) {
+          console.log('[AgentPage] Initialized from input_schema defaults:', defaultValues)
+          setInputConfigValues(defaultValues)
+        }
+      }
+    } catch (error) {
+      clientLogger.error('Error loading input configuration', error as Error)
+    } finally {
+      setInputConfigLoading(false)
+    }
+  }, [agent?.id, agent?.input_schema])
+
+  // Load input configuration when the input config drawer opens
+  useEffect(() => {
+    if (inputConfigExpanded && agent?.id) {
+      loadInputConfiguration()
+    }
+  }, [inputConfigExpanded, agent?.id, loadInputConfiguration])
+
+  // Save input configuration
+  const saveInputConfiguration = async () => {
+    if (!agent?.id || !user?.id) return
+
+    setInputConfigSaving(true)
+    try {
+      const response = await fetch('/api/v2/calibrate/save-configuration', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          agentId: agent.id,
+          inputValues: inputConfigValues
+        })
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json()
+        throw new Error(errorData.message || 'Failed to save configuration')
+      }
+
+      setInputConfigDirty(false)
+      console.log('[AgentPage] Input configuration saved successfully')
+    } catch (error) {
+      clientLogger.error('Error saving input configuration', error as Error)
+    } finally {
+      setInputConfigSaving(false)
+    }
+  }
+
+  // Handle input configuration field change
+  const handleInputConfigChange = (name: string, value: any) => {
+    setInputConfigValues(prev => ({ ...prev, [name]: value }))
+    setInputConfigDirty(true)
+  }
+
+  // Get dynamic options for dropdown fields (for AgentInputFields component)
+  // Uses same matching logic as CalibrationSetup for consistency
+  const getInputConfigDynamicOptions = useCallback((fieldName: string): { plugin: string; action: string; parameter: string; depends_on?: string[]; paramToFieldMap?: Record<string, string>; queryComponents?: any } | null => {
+    console.log('[AgentPage] getInputConfigDynamicOptions called for:', fieldName)
+    console.log('[AgentPage] inputConfigMetadata available:', !!inputConfigMetadata, 'keys:', inputConfigMetadata ? Object.keys(inputConfigMetadata) : [])
+
+    if (!inputConfigMetadata) {
+      console.log('[AgentPage] No inputConfigMetadata, returning null')
+      return null
+    }
+
+    // Try exact match first
+    let matchingParams = inputConfigMetadata[fieldName]
+    console.log('[AgentPage] Exact match for', fieldName, ':', matchingParams, '| All keys:', Object.keys(inputConfigMetadata))
+
+    // If no exact match, try stripping common prefixes (including step ID prefixes)
+    if (!matchingParams || matchingParams.length === 0) {
+      const prefixes = [/^step\d+_/, 'source_', 'target_', 'input_', 'output_', 'from_', 'to_']
+      for (const prefix of prefixes) {
+        let baseFieldName: string
+        if (prefix instanceof RegExp) {
+          const match = fieldName.match(prefix)
+          if (match) {
+            baseFieldName = fieldName.substring(match[0].length)
+          } else {
+            continue
+          }
+        } else {
+          if (fieldName.startsWith(prefix)) {
+            baseFieldName = fieldName.substring(prefix.length)
+          } else {
+            continue
+          }
+        }
+        matchingParams = inputConfigMetadata[baseFieldName]
+        if (matchingParams && matchingParams.length > 0) {
+          console.log('[AgentPage] Matched prefixed field:', fieldName, '->', baseFieldName)
+          break
+        }
+      }
+    }
+
+    // If still no match, try fuzzy matching based on token overlap
+    if (!matchingParams || matchingParams.length === 0) {
+      const tokenizeKey = (key: string): string[] => {
+        return key
+          .replace(/([a-z])([A-Z])/g, '$1_$2')
+          .toLowerCase()
+          .split(/[_-]/)
+          .filter((t) => t.length > 0)
+      }
+
+      const calculateOverlap = (key1: string, key2: string): number => {
+        const tokens1 = new Set(tokenizeKey(key1))
+        const tokens2 = new Set(tokenizeKey(key2))
+        const commonTokens = [...tokens1].filter((t) => tokens2.has(t))
+        const allTokens = new Set([...tokens1, ...tokens2])
+        if (allTokens.size === 0) return 0
+        return commonTokens.length / allTokens.size
+      }
+
+      let bestMatch: { key: string; score: number; params: any } | null = null
+      for (const [metadataKey, params] of Object.entries(inputConfigMetadata)) {
+        const score = calculateOverlap(fieldName, metadataKey)
+        if (score >= 0.4 && (!bestMatch || score > bestMatch.score)) {
+          bestMatch = { key: metadataKey, score, params }
+        }
+      }
+
+      if (bestMatch && bestMatch.params.length > 0) {
+        console.log('[AgentPage] Fuzzy matched:', fieldName, '->', bestMatch.key, 'score:', bestMatch.score.toFixed(2))
+        matchingParams = bestMatch.params
+      }
+    }
+
+    if (!matchingParams || matchingParams.length === 0) {
+      console.log('[AgentPage] No match found for', fieldName)
+      return null
+    }
+
+    const param = matchingParams[0]
+    if (!param.plugin || !param.action || !param.parameter) {
+      console.log('[AgentPage] Missing plugin/action/parameter in match:', param)
+      return null
+    }
+
+    // Build depends_on and paramToFieldMap if available
+    let depends_on: string[] | undefined
+    let paramToFieldMap: Record<string, string> | undefined
+
+    if (param.depends_on && Array.isArray(param.depends_on)) {
+      depends_on = param.depends_on
+      paramToFieldMap = {}
+
+      // For each dependency, find the corresponding field in input_schema
+      // Handle both array and object format input_schema
+      let inputSchemaArray: any[] = []
+      if (agent?.input_schema) {
+        if (Array.isArray(agent.input_schema)) {
+          inputSchemaArray = agent.input_schema as any[]
+        } else if (typeof agent.input_schema === 'object') {
+          // Convert object format to array format for lookup
+          inputSchemaArray = Object.keys(agent.input_schema).map(key => ({
+            name: key,
+            type: typeof (agent.input_schema as any)[key] === 'number' ? 'number' : 'string'
+          }))
+        }
+      }
+
+      for (const depParam of param.depends_on) {
+        const matchingField = inputSchemaArray.find(field => {
+          const fName = field.name || field.key
+          // Exact match
+          if (fName === depParam) return true
+          // Try without step prefix
+          const baseFieldName = fName.replace(/^step\d+_/, '')
+          if (baseFieldName === depParam) return true
+          // Try fuzzy match
+          const tokens1 = depParam.toLowerCase().split(/[_-]/)
+          const tokens2 = baseFieldName.toLowerCase().split(/[_-]/)
+          const commonTokens = tokens1.filter((t: string) => tokens2.includes(t))
+          return commonTokens.length >= 1 && commonTokens.length / Math.max(tokens1.length, tokens2.length) >= 0.5
+        })
+
+        if (matchingField) {
+          paramToFieldMap[depParam] = matchingField.name || matchingField.key
+          console.log('[AgentPage] Mapped dependency:', depParam, '→', matchingField.name || matchingField.key)
+        } else {
+          paramToFieldMap[depParam] = depParam
+        }
+      }
+    }
+
+    const result = {
+      plugin: param.plugin,
+      action: param.action,
+      parameter: param.parameter,
+      depends_on,
+      paramToFieldMap,
+      queryComponents: param.queryComponents
+    }
+    console.log('[AgentPage] Returning dynamic options for', fieldName, ':', result)
+    return result
+  }, [inputConfigMetadata, agent?.input_schema])
+
+  // Enrich input_schema with descriptions from metadata
+  // Also clean up legacy technical descriptions like "Configuration value for {{config.X}}"
+  const enrichedInputSchema = useMemo(() => {
+    if (!agent?.input_schema) {
+      return []
+    }
+
+    // Handle both array and object format input_schema
+    let schemaArray: any[]
+    if (Array.isArray(agent.input_schema)) {
+      schemaArray = agent.input_schema as any[]
+    } else if (typeof agent.input_schema === 'object') {
+      // Convert object format to array format
+      schemaArray = Object.keys(agent.input_schema).map(key => ({
+        name: key,
+        type: typeof (agent.input_schema as any)[key] === 'number' ? 'number' : 'string',
+        default_value: (agent.input_schema as any)[key]
+      }))
+    } else {
+      return []
+    }
+
+    return schemaArray.map(field => {
+      let description = field.description
+
+      // Check if current description is a legacy technical description that should be replaced
+      const isLegacyTechnicalDesc = description && (
+        description.includes('{{config.') ||
+        description.includes('{{input.') ||
+        description.includes('Configuration value for')
+      )
+
+      // Try to get better description from inputConfigMetadata
+      if (inputConfigMetadata) {
+        const metadata = inputConfigMetadata[field.name]
+        if (metadata && metadata.length > 0 && metadata[0].description) {
+          description = metadata[0].description
+        }
+      }
+
+      // If we still have a legacy technical description, clean it up or remove it
+      if (isLegacyTechnicalDesc && description === field.description) {
+        // Extract step context if present (e.g., "For step: Send email" -> keep meaningful part)
+        const stepMatch = description.match(/For step:\s*(.+?)(?:\s*Configuration value for|\s*$)/i)
+        if (stepMatch && stepMatch[1] && !stepMatch[1].includes('{{')) {
+          description = `For step: ${stepMatch[1].trim()}`
+        } else {
+          // Remove the technical description entirely
+          description = undefined
+        }
+      }
+
+      return description !== field.description ? { ...field, description } : field
+    })
+  }, [agent?.input_schema, inputConfigMetadata])
 
   const handleToggleStatus = async () => {
     if (!agent || !user) return
@@ -1134,6 +1463,24 @@ export default function V2AgentDetailPage() {
                   {agent.status === 'active' ? 'Active' : agent.status === 'draft' ? 'Draft' : 'Inactive'}
                 </span>
               </div>
+              <div className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border shadow-sm ${
+                agent.mode === 'scheduled'
+                  ? 'bg-gradient-to-r from-indigo-50 to-violet-50 dark:from-indigo-900/20 dark:to-violet-900/20 border-indigo-200 dark:border-indigo-700'
+                  : 'bg-gradient-to-r from-slate-50 to-gray-50 dark:from-slate-900/20 dark:to-gray-900/20 border-slate-200 dark:border-slate-700'
+              }`}>
+                {agent.mode === 'scheduled' ? (
+                  <Calendar className="h-4 w-4 text-indigo-600 dark:text-indigo-400" />
+                ) : (
+                  <Zap className="h-4 w-4 text-slate-600 dark:text-slate-400" />
+                )}
+                <span className={`font-semibold text-sm ${
+                  agent.mode === 'scheduled'
+                    ? 'text-indigo-700 dark:text-indigo-300'
+                    : 'text-slate-700 dark:text-slate-300'
+                }`}>
+                  {agent.mode === 'scheduled' ? 'Scheduled' : 'On Demand'}
+                </span>
+              </div>
               {memoryCount > 0 && (
                 <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-gradient-to-r from-purple-50 to-indigo-50 dark:from-purple-900/20 dark:to-indigo-900/20 border border-purple-200 dark:border-purple-700 shadow-sm">
                   <Brain className="h-4 w-4 text-purple-600 dark:text-purple-400" />
@@ -1187,7 +1534,10 @@ export default function V2AgentDetailPage() {
             </button>
             <button
               data-tour="edit-button"
-              onClick={() => setShowSettingsDrawer(true)}
+              onClick={() => {
+                setInputConfigExpanded(false)
+                setShowSettingsDrawer(true)
+              }}
               className="inline-flex items-center gap-2 px-4 py-2 bg-[var(--v2-surface)] text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] border border-gray-200 dark:border-slate-700 hover:bg-gray-100 dark:hover:bg-slate-600/40 transition-colors font-medium text-sm"
               style={{ borderRadius: 'var(--v2-radius-button)' }}
             >
@@ -1864,38 +2214,62 @@ export default function V2AgentDetailPage() {
                       })()}
                     </div>
                   ) : (
-                    // Fallback to showing logs for non-Pilot or old executions
-                    <div className="bg-slate-900 dark:bg-black rounded-lg p-3 max-h-96 overflow-y-auto font-mono text-xs">
+                    // Fallback: show user-friendly summary from logs
+                    <div className="p-3 bg-[var(--v2-surface-hover)] border border-[var(--v2-border)] rounded-lg">
                       {(() => {
-                        const hasOutput = selectedExecution.output
-                        const hasLogs = selectedExecution.logs
-                        const hasError = selectedExecution.error_message
+                        const logs = selectedExecution.logs as any
+                        const hasError = selectedExecution.error_message || selectedExecution.status === 'failed'
+                        const stepsCompleted = logs?.stepsCompleted || 0
+                        const stepsFailed = logs?.stepsFailed || 0
+                        const executionTime = logs?.executionTime
 
-                        if (hasOutput) {
-                          return (
-                            <pre className="text-gray-300 whitespace-pre-wrap break-words">
-                              {JSON.stringify(selectedExecution.output, null, 2)}
-                            </pre>
-                          )
-                        }
-
-                        if (hasLogs) {
-                          return (
-                            <pre className="text-gray-300 whitespace-pre-wrap break-words">
-                              {JSON.stringify(selectedExecution.logs, null, 2)}
-                            </pre>
-                          )
-                        }
-
+                        // Error state
                         if (hasError) {
                           return (
-                            <div className="text-red-400">
-                              Error: {String(selectedExecution.error_message)}
+                            <div className="flex items-start gap-2">
+                              <AlertCircle className="w-4 h-4 text-red-500 flex-shrink-0 mt-0.5" />
+                              <div>
+                                <p className="text-sm font-medium text-red-600 dark:text-red-400">
+                                  Workflow failed
+                                </p>
+                                <p className="text-xs text-[var(--v2-text-secondary)] mt-1">
+                                  {selectedExecution.error_message || `${stepsFailed} step${stepsFailed !== 1 ? 's' : ''} failed`}
+                                </p>
+                              </div>
                             </div>
                           )
                         }
 
-                        return <div className="text-gray-500">No execution results available</div>
+                        // Success state
+                        if (logs?.success || selectedExecution.status === 'completed') {
+                          return (
+                            <div className="space-y-2">
+                              <div className="flex items-center gap-2">
+                                <CheckCircle2 className="w-4 h-4 text-green-600" />
+                                <p className="text-sm text-[var(--v2-text-primary)]">
+                                  Workflow completed successfully
+                                </p>
+                              </div>
+                              {(stepsCompleted > 0 || executionTime) && (
+                                <div className="flex items-center gap-4 text-xs text-[var(--v2-text-secondary)]">
+                                  {stepsCompleted > 0 && (
+                                    <span>{stepsCompleted} step{stepsCompleted !== 1 ? 's' : ''} completed</span>
+                                  )}
+                                  {executionTime && (
+                                    <span>{(executionTime / 1000).toFixed(1)}s</span>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          )
+                        }
+
+                        // No data
+                        return (
+                          <p className="text-sm text-[var(--v2-text-secondary)]">
+                            No execution details available
+                          </p>
+                        )
                       })()}
                     </div>
                   )}
@@ -1917,7 +2291,10 @@ export default function V2AgentDetailPage() {
       {showSettingsDrawer && (
         <div
           className="fixed inset-0 bg-black/50 z-40 transition-opacity"
-          onClick={() => setShowSettingsDrawer(false)}
+          onClick={() => {
+            setInputConfigExpanded(false)
+            setShowSettingsDrawer(false)
+          }}
         />
       )}
 
@@ -1930,7 +2307,10 @@ export default function V2AgentDetailPage() {
         <div className="sticky top-0 bg-[var(--v2-surface)] border-b border-[var(--v2-border)] px-6 py-4 flex items-center justify-between z-10">
           <h2 className="text-xl font-semibold text-[var(--v2-text-primary)]">Agent Settings</h2>
           <button
-            onClick={() => setShowSettingsDrawer(false)}
+            onClick={() => {
+              setInputConfigExpanded(false)
+              setShowSettingsDrawer(false)
+            }}
             className="text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)] transition-colors"
           >
             <X className="w-6 h-6" />
@@ -2074,6 +2454,35 @@ export default function V2AgentDetailPage() {
               </div>
             )}
           </div>
+
+          {/* Input Configuration Section - Opens nested drawer */}
+          {agent?.input_schema && Array.isArray(agent.input_schema) && agent.input_schema.length > 0 && (
+            <div>
+              <h3 className="text-xs font-semibold text-[var(--v2-text-muted)] uppercase tracking-wide mb-4">
+                Input Configuration
+              </h3>
+              <button
+                onClick={() => setInputConfigExpanded(true)}
+                className="w-full flex items-center justify-between p-4 bg-[var(--v2-surface-hover)] rounded-lg border border-[var(--v2-border)] hover:border-[var(--v2-primary)] transition-colors group"
+                style={{ borderRadius: 'var(--v2-radius-button)' }}
+              >
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-lg bg-[var(--v2-primary)]/10 flex items-center justify-center">
+                    <Settings className="w-4 h-4 text-[var(--v2-primary)]" />
+                  </div>
+                  <div className="text-left">
+                    <p className="text-sm font-medium text-[var(--v2-text-primary)]">
+                      {(agent.input_schema as any[]).length} Input {(agent.input_schema as any[]).length === 1 ? 'Field' : 'Fields'}
+                    </p>
+                    <p className="text-xs text-[var(--v2-text-muted)]">
+                      {inputConfigDirty ? 'Unsaved changes' : 'Configure values for next run'}
+                    </p>
+                  </div>
+                </div>
+                <ChevronLeft className="w-4 h-4 text-[var(--v2-text-muted)] group-hover:text-[var(--v2-primary)] transition-colors" />
+              </button>
+            </div>
+          )}
 
           {/* Integrations */}
           <div>
@@ -2497,6 +2906,95 @@ export default function V2AgentDetailPage() {
           </div>
         </div>
       </div>
+
+      {/* Input Configuration Drawer - Side panel that slides in from the left of settings drawer */}
+      {/* Only render when expanded to prevent stuck state after refresh */}
+      {showSettingsDrawer && inputConfigExpanded && (
+        <div
+          className="fixed top-0 right-[500px] h-screen w-[500px] bg-[var(--v2-surface)] shadow-2xl z-[55] overflow-visible flex flex-col border-r border-[var(--v2-border)]"
+        >
+          {/* Header */}
+          <div className="sticky top-0 bg-[var(--v2-surface)] border-b border-[var(--v2-border)] px-5 py-4 flex items-center justify-between z-10">
+            <div>
+              <h2 className="text-base font-semibold text-[var(--v2-text-primary)]">Input Configuration</h2>
+              <p className="text-xs text-[var(--v2-text-muted)]">
+                {agent?.input_schema && Array.isArray(agent.input_schema)
+                  ? `${agent.input_schema.length} ${agent.input_schema.length === 1 ? 'field' : 'fields'}`
+                  : 'Configure input values'
+                }
+              </p>
+            </div>
+            <button
+              onClick={(e) => {
+                e.stopPropagation()
+                setInputConfigExpanded(false)
+              }}
+              className="p-1.5 text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)] hover:bg-gray-100 dark:hover:bg-slate-700/40 rounded-lg transition-colors"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+
+          {/* Scrollable Content */}
+          <div className="flex-1 overflow-y-auto p-5">
+            {inputConfigLoading || !inputConfigMetadata ? (
+              <div className="flex items-center justify-center py-8">
+                <Loader2 className="w-6 h-6 animate-spin text-[var(--v2-primary)]" />
+                <span className="ml-2 text-sm text-[var(--v2-text-muted)]">Loading configuration...</span>
+              </div>
+            ) : enrichedInputSchema.length > 0 ? (
+              <AgentInputFields
+                schema={enrichedInputSchema}
+                values={inputConfigValues}
+                onChange={handleInputConfigChange}
+                getDynamicOptions={getInputConfigDynamicOptions}
+                wrapperClassName="space-y-4"
+              />
+            ) : (
+              <div className="text-center py-8 text-sm text-[var(--v2-text-muted)]">
+                No input parameters configured for this agent
+              </div>
+            )}
+          </div>
+
+          {/* Footer with Save Button */}
+          <div className="sticky bottom-0 bg-[var(--v2-surface)] border-t border-[var(--v2-border)] px-5 py-4">
+            <div className="flex items-center gap-3">
+              <button
+                onClick={saveInputConfiguration}
+                disabled={inputConfigSaving || !inputConfigDirty}
+                className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-medium bg-gradient-to-r from-[var(--v2-primary)] to-[var(--v2-secondary)] text-white hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
+                style={{ borderRadius: 'var(--v2-radius-button)' }}
+              >
+                {inputConfigSaving ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Saving...
+                  </>
+                ) : (
+                  <>
+                    <Check className="w-4 h-4" />
+                    {inputConfigDirty ? 'Save Changes' : 'Saved'}
+                  </>
+                )}
+              </button>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation()
+                  setInputConfigExpanded(false)
+                }}
+                className="px-4 py-2.5 text-sm font-medium text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] hover:bg-gray-100 dark:hover:bg-slate-700/40 transition-colors border border-[var(--v2-border)]"
+                style={{ borderRadius: 'var(--v2-radius-button)' }}
+              >
+                Close
+              </button>
+            </div>
+            <p className="text-xs text-[var(--v2-text-muted)] mt-3 text-center">
+              These values will be used when running the agent
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Delete Confirmation Modal */}
       {showDeleteConfirm && (

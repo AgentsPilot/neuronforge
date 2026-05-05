@@ -702,7 +702,21 @@ export class GoogleDrivePluginExecutor extends GoogleBasePluginExecutor {
     }
 
     // Default permission: anyone with link can view
-    const permissionType = parameters.permission_type || 'anyone';
+    // Map legacy permission_type values to Google Drive API values
+    let permissionType = parameters.permission_type || 'anyone';
+
+    // Handle legacy values from old workflows
+    const permissionTypeMap: Record<string, string> = {
+      'anyone_with_link': 'anyone',
+      'anyone_can_view': 'anyone',
+      'anyone_can_edit': 'anyone',
+      'specific_users': 'user'
+    };
+
+    if (permissionTypeMap[permissionType]) {
+      permissionType = permissionTypeMap[permissionType];
+    }
+
     const role = parameters.role || 'reader';
 
     // Build permission request

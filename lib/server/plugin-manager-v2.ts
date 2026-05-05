@@ -724,7 +724,12 @@ export class PluginManagerV2 {
     return Array.from(this.plugins.keys());
   }
 
-    // Get action definition
+  // Get all plugin definitions
+  getAllPluginDefinitions(): Map<string, PluginDefinition> {
+    return this.plugins;
+  }
+
+  // Get action definition
   getActionDefinition(pluginName: string, actionName: string): ActionDefinition | undefined {
     logger.debug({ pluginName, actionName }, 'Getting action definition');
 
@@ -1081,3 +1086,6 @@ export class PluginManagerV2 {
     return metadata;
   }
 }
+
+// Default export for dynamic imports
+export default PluginManagerV2;
