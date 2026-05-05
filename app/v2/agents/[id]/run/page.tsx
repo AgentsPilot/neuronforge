@@ -5,47 +5,19 @@ import { useParams, useRouter } from 'next/navigation'
 import { useAuth } from '@/components/UserProvider'
 import { supabase } from '@/lib/supabaseClient'
 import { V2Logo, V2Controls } from '@/components/v2/V2Header'
-import { Card } from '@/components/v2/ui/card'
-import InputHelpButton from '@/components/v2/InputHelpButton'
 import { HelpBot } from '@/components/v2/HelpBot'
 import { PilotDiagram } from '@/components/v2/WorkflowDiagram'
-import { DynamicSelectField } from '@/components/v2/DynamicSelectField'
 import {
   ArrowLeft,
-  ArrowRight,
   Loader2,
   Play,
-  AlertTriangle,
   CheckCircle,
   XCircle,
   Clock,
-  Sparkles,
-  Settings,
   Bot,
-  GitBranch,
   CreditCard,
-  RefreshCw,
-  Zap,
-  Filter,
-  Search,
-  FileText,
-  Send,
-  CheckSquare,
-  Layers,
-  GitMerge,
-  UserCheck,
-  ChevronRight,
   Copy,
   Check,
-  Type,
-  Hash,
-  Mail,
-  Calendar,
-  ToggleLeft,
-  List,
-  ChevronDown,
-  ChevronUp,
-  AlignLeft,
   TrendingUp
 } from 'lucide-react'
 
@@ -198,26 +170,6 @@ export default function V2RunAgentPage() {
   const [agent, setAgent] = useState<Agent | null>(null)
   const [loading, setLoading] = useState(true)
   const [executing, setExecuting] = useState(false)
-  const [schemaMetadata, setSchemaMetadata] = useState<Record<string, any[]> | null>(null)
-  const [inputsExpanded, setInputsExpanded] = useState(false) // Collapsed by default for cleaner UI
-
-  // Track if config has been loaded - initialize based on whether we loaded from sessionStorage
-  const [configLoaded, setConfigLoaded] = useState(() => {
-    if (typeof window !== 'undefined' && agentId) {
-      const isPageActive = sessionStorage.getItem(`runPage_active_${agentId}`)
-      if (isPageActive === 'true') {
-        const saved = sessionStorage.getItem(`runPage_formData_${agentId}`)
-        if (saved) {
-          const parsed = JSON.parse(saved)
-          // Check if there's actual data (non-empty values)
-          const hasData = Object.values(parsed).some(val => val !== '' && val !== null && val !== undefined)
-          // If we loaded data from sessionStorage, mark config as loaded
-          return hasData
-        }
-      }
-    }
-    return false
-  })
 
   // Persist formData across page refreshes only (clear on navigation to reload from DB)
   const [formData, setFormData] = useState<Record<string, any>>(() => {
@@ -317,8 +269,6 @@ export default function V2RunAgentPage() {
     return null
   })
 
-  const [saving, setSaving] = useState(false)
-  const [saveMessage, setSaveMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null)
   const [copiedExecutionId, setCopiedExecutionId] = useState(false)
 
   // HelpBot state - persist across page refreshes
@@ -549,7 +499,6 @@ export default function V2RunAgentPage() {
             console.log('[Run Page] Loading input values from configuration:',
               `${Object.keys(filtered).length} valid fields (filtered from ${Object.keys(configData.input_values).length})`,
               filtered)
-            setConfigLoaded(true) // Mark as loaded
             return filtered
           } else {
             console.log('[Run Page] NOT loading config because formData already has', currentKeys, 'fields')
@@ -576,68 +525,6 @@ export default function V2RunAgentPage() {
     }
   }, [user, agentId, fetchAgentData])
 
-  // Fetch plugin schema metadata on mount
-  useEffect(() => {
-    const fetchSchemaMetadata = async () => {
-      try {
-        const response = await fetch('/api/plugins/schema-metadata')
-        if (!response.ok) {
-          console.error('Failed to fetch schema metadata:', response.statusText)
-          return
-        }
-        const data = await response.json()
-        console.log('[Run Page] Schema metadata loaded:', data.metadata)
-        setSchemaMetadata(data.metadata)
-      } catch (error) {
-        console.error('[Run Page] Error fetching schema metadata:', error)
-      }
-    }
-
-    fetchSchemaMetadata()
-  }, [])
-
-  const handleInputChange = (name: string, value: any) => {
-    console.log('[handleInputChange]', { name, value, type: typeof value })
-    setFormData(prev => ({ ...prev, [name]: value }))
-  }
-
-  const handleSaveInputs = async () => {
-    if (!agent || !user) return
-
-    setSaving(true)
-    setSaveMessage(null)
-
-    try {
-      const response = await fetch('/api/agent-configurations/save-inputs', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          agent_id: agent.id,
-          input_values: formData,
-          input_schema: agent.input_schema
-        }),
-      })
-
-      const data = await response.json()
-
-      if (!response.ok) {
-        throw new Error(data.error || 'Failed to save input values')
-      }
-
-      setSaveMessage({ type: 'success', text: 'Input values saved successfully!' })
-
-      // Clear success message after 3 seconds
-      setTimeout(() => setSaveMessage(null), 3000)
-    } catch (err: any) {
-      console.error('Error saving input values:', err)
-      setSaveMessage({ type: 'error', text: err.message || 'Failed to save input values' })
-
-      // Clear error message after 5 seconds
-      setTimeout(() => setSaveMessage(null), 5000)
-    } finally {
-      setSaving(false)
-    }
-  }
 
   // Open chatbot for field help OR general help
   const openChatbot = (context?: any) => {
@@ -664,135 +551,12 @@ export default function V2RunAgentPage() {
     }
   }
 
-  // Handle chatbot filling a field
+  // Handle chatbot filling a field (kept for HelpBot compatibility)
   const handleChatbotFill = (value: string) => {
     if (helpBotContext?.fieldName) {
-      handleInputChange(helpBotContext.fieldName, value)
+      setFormData(prev => ({ ...prev, [helpBotContext.fieldName]: value }))
     }
   }
-
-  // Infer plugin from field name
-  const inferPluginFromFieldName = (fieldName: string): string | undefined => {
-    const fieldLower = fieldName.toLowerCase()
-
-    // Special case: "range" field is for manual text input (e.g., "A1:B10"), not URL extraction
-    // So we still detect it as Sheets but with special handling in the parser
-
-    // Google Sheets patterns (includes fields that need URL extraction)
-    if (
-      fieldLower.includes('sheet') ||
-      fieldLower.includes('spreadsheet') ||
-      fieldLower.includes('range') ||       // Cell range field (manual input, but Sheets-related)
-      fieldLower.includes('cell') ||
-      fieldLower.includes('row') ||
-      fieldLower.includes('column') ||
-      fieldLower.includes('tab') ||
-      fieldLower.includes('worksheet')
-    ) {
-      return 'google-sheets'
-    }
-
-    // Gmail patterns
-    if (
-      fieldLower.includes('email') ||
-      fieldLower.includes('gmail') ||
-      fieldLower.includes('message') ||
-      fieldLower.includes('inbox') ||
-      fieldLower.includes('subject') ||
-      fieldLower.includes('recipient')
-    ) {
-      return 'google-mail'
-    }
-
-    // Google Drive patterns
-    if (
-      fieldLower.includes('drive') ||
-      fieldLower.includes('file') ||
-      fieldLower.includes('folder') ||
-      fieldLower.includes('document') ||
-      fieldLower.includes('doc')
-    ) {
-      return 'google-drive'
-    }
-
-    // Notion patterns
-    if (
-      fieldLower.includes('notion') ||
-      fieldLower.includes('database') ||
-      fieldLower.includes('page') ||
-      fieldLower.includes('block')
-    ) {
-      return 'notion'
-    }
-
-    // Slack patterns
-    if (
-      fieldLower.includes('slack') ||
-      fieldLower.includes('channel') ||
-      fieldLower.includes('workspace')
-    ) {
-      return 'slack'
-    }
-
-    // Fallback to first plugin in agent's requirements
-    return agent?.plugins_required?.[0]
-  }
-
-  // Use schema metadata to determine which inputs should use dynamic dropdowns
-  const getDynamicOptionsForInput = useCallback((fieldName: string): { plugin: string; action: string; parameter: string; depends_on?: string[] } | null => {
-    // Wait for schema metadata to load
-    if (!schemaMetadata) {
-      console.log('[getDynamicOptions] Schema metadata not loaded yet')
-      return null
-    }
-
-    // First try exact match
-    let matchingParams = schemaMetadata[fieldName]
-
-    // If no exact match, try stripping common prefixes (including step ID prefixes)
-    if (!matchingParams || matchingParams.length === 0) {
-      const prefixes = [/^step\d+_/, 'source_', 'target_', 'input_', 'output_', 'from_', 'to_']
-      for (const prefix of prefixes) {
-        let baseFieldName: string
-        if (prefix instanceof RegExp) {
-          // Handle regex for step ID prefix (step8_, step9_, etc.)
-          const match = fieldName.match(prefix)
-          if (match) {
-            baseFieldName = fieldName.substring(match[0].length)
-          } else {
-            continue
-          }
-        } else {
-          // Handle string prefix
-          if (fieldName.startsWith(prefix)) {
-            baseFieldName = fieldName.substring(prefix.length)
-          } else {
-            continue
-          }
-        }
-        matchingParams = schemaMetadata[baseFieldName]
-        if (matchingParams && matchingParams.length > 0) {
-          console.log('[getDynamicOptions] Matched prefixed field:', fieldName, '->', baseFieldName)
-          break
-        }
-      }
-    }
-
-    if (matchingParams && matchingParams.length > 0) {
-      // Found a match! Use the first one (most plugins will have unique parameter names)
-      const match = matchingParams[0]
-      console.log('[getDynamicOptions] Found match for', fieldName, '→', match)
-      return {
-        plugin: match.plugin,
-        action: match.action,
-        parameter: match.parameter,
-        depends_on: match.depends_on
-      }
-    }
-
-    console.log('[getDynamicOptions] No match found for', fieldName)
-    return null
-  }, [schemaMetadata])
 
   const handleRun = async () => {
     if (!agent || !user) return
@@ -832,15 +596,18 @@ export default function V2RunAgentPage() {
       if (hasWorkflowSteps) {
         // Start SSE connection immediately (runs in parallel with execution)
         // SSE will poll the database to find the execution once it's created
+        console.log('[SSE] Starting stream connection for agent:', agent.id, 'session:', sessionId)
         fetch('/api/run-agent-stream', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
+          credentials: 'include', // Ensure cookies are sent for auth
           body: JSON.stringify({
             agent_id: agent.id,
             session_id: sessionId, // Backend will use this to find the right execution
           }),
         })
           .then(async (response) => {
+            console.log('[SSE] Response received:', response.status, response.statusText)
             if (!response.ok) {
               console.warn('SSE visualization unavailable:', response.status, response.statusText)
               return
@@ -883,12 +650,32 @@ export default function V2RunAgentPage() {
                   })
                   setCompletedStepsLive(prev => new Set(prev).add(data.stepId))
                   // Store step output if available
+                  // For scatter-gather, the same step runs multiple times - aggregate the results
                   if (data.output !== undefined) {
                     console.log('[SSE] Storing output for', data.stepId, ':', data.output)
-                    setLiveStepOutputs(prev => ({
-                      ...prev,
-                      [data.stepId]: data.output
-                    }))
+                    setLiveStepOutputs(prev => {
+                      const existing = prev[data.stepId]
+                      // If we already have output for this step, aggregate into an array
+                      if (existing !== undefined) {
+                        // If existing is already an array of aggregated results, append
+                        if (Array.isArray(existing) && existing._aggregated) {
+                          return {
+                            ...prev,
+                            [data.stepId]: Object.assign([...existing, data.output], { _aggregated: true })
+                          }
+                        }
+                        // First duplicate - convert to aggregated array
+                        return {
+                          ...prev,
+                          [data.stepId]: Object.assign([existing, data.output], { _aggregated: true })
+                        }
+                      }
+                      // First time seeing this step
+                      return {
+                        ...prev,
+                        [data.stepId]: data.output
+                      }
+                    })
                   } else {
                     console.warn('[SSE] No output provided for step', data.stepId)
                   }
@@ -1009,15 +796,9 @@ export default function V2RunAgentPage() {
     }
   }
 
-  const isFormValid = () => {
-    if (!agent?.input_schema) return true
-
-    const requiredFields = agent.input_schema.filter(field => field.required)
-    return requiredFields.every(field => {
-      const value = formData[field.name]
-      return value !== undefined && value !== null && value !== ''
-    })
-  }
+  // Input configuration is done in the agent page drawer
+  // The run page loads saved config from DB, so we always allow running
+  const isFormValid = () => true
 
   if (loading) {
     return (
@@ -1029,52 +810,6 @@ export default function V2RunAgentPage() {
 
   if (!agent) {
     return null
-  }
-
-  const safeInputSchema = Array.isArray(agent.input_schema) ? agent.input_schema : []
-
-  // Sort fields to ensure proper hierarchy (dependencies come after their dependents)
-  // For example, spreadsheet_id should come before range (which depends on it)
-  const sortedInputSchema = [...safeInputSchema].sort((a, b) => {
-    const aDynamicOptions = getDynamicOptionsForInput(a.name)
-    const bDynamicOptions = getDynamicOptionsForInput(b.name)
-
-    // If a depends on b, b should come first
-    if (aDynamicOptions?.depends_on) {
-      const baseNameB = b.name.replace(/^step\d+_/, '')
-      if (aDynamicOptions.depends_on.includes(baseNameB)) {
-        return 1 // a comes after b
-      }
-    }
-
-    // If b depends on a, a should come first
-    if (bDynamicOptions?.depends_on) {
-      const baseNameA = a.name.replace(/^step\d+_/, '')
-      if (bDynamicOptions.depends_on.includes(baseNameA)) {
-        return -1 // a comes before b
-      }
-    }
-
-    // No dependency relationship, maintain original order
-    return 0
-  })
-
-  // Debug: log the full input schema from the agent
-  console.log('[Agent Run Page] Full input_schema from agent:', {
-    count: sortedInputSchema.length,
-    fields: sortedInputSchema.map((f: any) => f.name),
-    full: agent.input_schema
-  })
-
-  // Transform field name to Title Case
-  const formatFieldName = (name: string): string => {
-    return name
-      .replace(/[_-]/g, ' ')
-      .replace(/([A-Z])/g, ' $1')
-      .trim()
-      .split(' ')
-      .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
-      .join(' ')
   }
 
 
@@ -1114,279 +849,49 @@ export default function V2RunAgentPage() {
           </div>
         </div>
 
-        {/* Split-Screen Container */}
-        <div className="grid grid-cols-[400px_1fr] gap-4">
-
-          {/* LEFT PANEL - Input Form with Button Below */}
-          <div className="bg-[var(--v2-surface)] shadow-[var(--v2-shadow-card)] flex flex-col h-[700px]" style={{ borderRadius: 'var(--v2-radius-panel)' }}>
-            {/* Panel Header - Fixed */}
-            <div className="px-6 py-6 border-b border-[var(--v2-border)] flex-shrink-0">
-                <h2 className="text-lg font-semibold text-[var(--v2-text-primary)] mb-1">
-                  Setup Your Workflow
-                </h2>
-                <p className="text-[13px] text-[var(--v2-text-muted)]">
-                  Provide the information needed to run
-                </p>
-              </div>
-
-              {/* Form Content - Scrollable */}
-              <div className="px-5 py-5 flex-1 overflow-y-auto">
-              {/* Agent Status Warning */}
-              {agent.status !== 'active' && (
-                <div className="mb-5 p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700" style={{ borderRadius: 'var(--v2-radius-button)' }}>
-                  <div className="flex items-center gap-2">
-                    <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400" />
-                    <p className="text-sm text-amber-700 dark:text-amber-300">
-                      This agent is not active. Activate it from the agent details page.
-                    </p>
-                  </div>
-                </div>
-              )}
-
-              {/* Input Form */}
-              {sortedInputSchema.length === 0 ? (
-                <div className="text-center py-12">
-                  <Sparkles className="w-12 h-12 text-[var(--v2-primary)] opacity-20 mx-auto mb-3" />
-                  <p className="text-sm text-[var(--v2-text-muted)]">
-                    No inputs required. Just click Run!
-                  </p>
-                </div>
-              ) : (
-                <div className="space-y-5">
-                {sortedInputSchema.map((field) => (
-                  <div key={field.name} className="mb-5">
-                    <label className="block text-[13px] font-medium text-[var(--v2-text-secondary)] mb-1.5">
-                      {field.label || formatFieldName(field.name)}
-                      {field.required && <span className="text-red-500 ml-1">*</span>}
-                    </label>
-                    {field.description && (
-                      <p className="text-xs text-[var(--v2-text-muted)] mb-2">
-                        {field.description}
-                      </p>
-                    )}
-                    {/* Input Field with Help Button */}
-                    <div className="flex items-start gap-2">
-                        <div className="flex-1">
-                          {(() => {
-                            // Check if this field should use dynamic dropdown
-                            const dynamicOptions = getDynamicOptionsForInput(field.name)
-
-                            if (dynamicOptions) {
-                              // Build dependent values object from formData if this field has dependencies
-                              const dependentValues: Record<string, any> = {}
-                              if (dynamicOptions.depends_on && Array.isArray(dynamicOptions.depends_on)) {
-                                // Extract step prefix from current field (e.g., "step2_" from "step2_range")
-                                const stepPrefixMatch = field.name.match(/^(step\d+_)/)
-                                const stepPrefix = stepPrefixMatch ? stepPrefixMatch[1] : ''
-
-                                dynamicOptions.depends_on.forEach((depField: string) => {
-                                  // First try with same step prefix (e.g., "step2_spreadsheet_id" for "step2_range")
-                                  const prefixedDepField = stepPrefix + depField
-                                  if (formData[prefixedDepField]) {
-                                    dependentValues[depField] = formData[prefixedDepField]
-                                    console.log('[Agent Run Page] Found step-prefixed dependency:', prefixedDepField, '->', depField)
-                                  } else if (formData[depField]) {
-                                    // Try exact match
-                                    dependentValues[depField] = formData[depField]
-                                    console.log('[Agent Run Page] Found exact dependency match:', depField)
-                                  } else {
-                                    // If no match, try finding other prefixed versions
-                                    // e.g., if looking for "spreadsheet_id", check "source_spreadsheet_id", "target_spreadsheet_id", etc.
-                                    const prefixes = ['source_', 'target_', 'input_', 'output_', 'from_', 'to_']
-                                    for (const prefix of prefixes) {
-                                      const prefixedFieldName = `${prefix}${depField}`
-                                      if (formData[prefixedFieldName]) {
-                                        dependentValues[depField] = formData[prefixedFieldName]
-                                        console.log('[Agent Run Page] Found prefixed dependency:', prefixedFieldName, '->', depField)
-                                        break
-                                      }
-                                    }
-                                  }
-                                })
-                              }
-
-                              console.log('[Agent Run Page] Rendering DynamicSelectField:', {
-                                field: field.name,
-                                dynamicOptions,
-                                dependentValues,
-                                formData
-                              })
-
-                              // Use DynamicSelectField for fields with dynamic options
-                              return (
-                                <DynamicSelectField
-                                  plugin={dynamicOptions.plugin}
-                                  action={dynamicOptions.action}
-                                  parameter={dynamicOptions.parameter}
-                                  value={formData[field.name] || ''}
-                                  onChange={(value) => handleInputChange(field.name, value)}
-                                  required={field.required}
-                                  placeholder={field.placeholder || `Select ${formatFieldName(field.name).toLowerCase()}...`}
-                                  className="w-full px-3 py-2 border text-sm focus:outline-none focus:ring-1"
-                                  style={{ borderRadius: 'var(--v2-radius-button)' }}
-                                  dependentValues={dependentValues}
-                                />
-                              )
-                            } else if (field.type === 'select' || field.type === 'enum') {
-                              // Use regular select for static options
-                              return (
-                                <select
-                                  value={formData[field.name] || ''}
-                                  onChange={(e) => handleInputChange(field.name, e.target.value)}
-                                  className="w-full px-3 py-2.5 border border-[var(--v2-border)] text-sm focus:outline-none focus:border-[var(--v2-primary)] focus:ring-2 focus:ring-[var(--v2-primary)]/10 bg-[var(--v2-surface)] text-[var(--v2-text-primary)] transition-all"
-                                  style={{ borderRadius: 'var(--v2-radius-button)' }}
-                                  required={field.required}
-                                >
-                                  <option value="">
-                                    {field.placeholder || 'Select an option...'}
-                                  </option>
-                                  {(field.options || field.enum || []).map((option) => (
-                                    <option key={option} value={option}>
-                                      {option}
-                                    </option>
-                                  ))}
-                                </select>
-                              )
-                            } else {
-                              // Use regular input for text/number/date/etc.
-                              return (
-                                <input
-                                  type={
-                                    field.type === 'number' ? 'number' :
-                                    field.type === 'date' ? 'date' :
-                                    field.type === 'email' ? 'email' :
-                                    field.type === 'time' ? 'time' :
-                                    'text'
-                                  }
-                                  value={formData[field.name] || ''}
-                                  onChange={(e) => handleInputChange(field.name, e.target.value)}
-                                  placeholder={field.placeholder || `Enter ${formatFieldName(field.name).toLowerCase()}...`}
-                                  required={field.required}
-                                  className="w-full px-3 py-2.5 border border-[var(--v2-border)] text-sm focus:outline-none focus:border-[var(--v2-primary)] focus:ring-2 focus:ring-[var(--v2-primary)]/10 bg-[var(--v2-surface)] text-[var(--v2-text-primary)] placeholder-[var(--v2-text-muted)] transition-all"
-                                  style={{ borderRadius: 'var(--v2-radius-button)' }}
-                                />
-                              )
-                            }
-                          })()}
-                        </div>
-
-                        {/* InputHelpButton */}
-                        <div className="flex-shrink-0">
-                          <InputHelpButton
-                            agentId={agent.id}
-                            fieldName={field.name}
-                            plugin={inferPluginFromFieldName(field.name)}
-                            expectedType={field.type}
-                            onClick={() => openChatbot({
-                              mode: 'input_help',
-                              agentId: agent.id,
-                              fieldName: field.name,
-                              fieldLabel: field.label || formatFieldName(field.name),
-                              plugin: inferPluginFromFieldName(field.name),
-                              expectedType: field.type
-                            })}
-                          />
-                        </div>
-                      </div>
-                  </div>
-                ))}
-                </div>
-              )}
-
-              {/* Save Inputs Button */}
-              {safeInputSchema.length > 0 && (
-                <div className="mt-5">
-                  <button
-                    onClick={handleSaveInputs}
-                    disabled={saving || !isFormValid()}
-                    className="w-full px-4 py-2.5 bg-[var(--v2-surface)] border border-[var(--v2-border)] text-[var(--v2-text-secondary)] hover:text-[var(--v2-primary)] hover:border-[var(--v2-primary)] transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 text-sm font-semibold"
-                    style={{ borderRadius: 'var(--v2-radius-button)' }}
-                  >
-                    {saving ? (
-                      <>
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                        Saving...
-                      </>
-                    ) : (
-                      <>
-                        <Settings className="w-4 h-4" />
-                        Save Inputs
-                      </>
-                    )}
-                  </button>
-                </div>
-              )}
-
-              {/* Save Message */}
-              {saveMessage && (
-                <div className={`mt-5 p-3 border ${
-                  saveMessage.type === 'success'
-                    ? 'bg-[var(--v2-status-success-bg)] border-[var(--v2-status-success-border)]'
-                    : 'bg-[var(--v2-status-error-bg)] border-[var(--v2-status-error-border)]'
-                }`} style={{ borderRadius: 'var(--v2-radius-button)' }}>
-                  <div className="flex items-center gap-2">
-                    {saveMessage.type === 'success' ? (
-                      <CheckCircle className="w-4 h-4 text-[var(--v2-status-success-text)]" />
-                    ) : (
-                      <XCircle className="w-4 h-4 text-[var(--v2-status-error-text)]" />
-                    )}
-                    <p className={`text-sm ${
-                      saveMessage.type === 'success'
-                        ? 'text-[var(--v2-status-success-text)]'
-                        : 'text-[var(--v2-status-error-text)]'
-                    }`}>
-                      {saveMessage.text}
-                    </p>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Run Button - Static at Bottom (Inside Card) */}
-            <div className="p-5 border-t border-[var(--v2-border)] flex-shrink-0">
-              <button
-                onClick={handleRun}
-                disabled={executing || agent.status !== 'active' || !isFormValid()}
-                className="w-full py-3.5 bg-gradient-to-r from-[var(--v2-primary)] to-[var(--v2-secondary)] text-white font-semibold hover:opacity-90 hover:shadow-[var(--v2-shadow-button)] transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 text-[15px]"
-                style={{ borderRadius: 'var(--v2-radius-button)' }}
-              >
-                {executing ? (
-                  <>
-                    <Loader2 className="w-5 h-5 animate-spin" />
-                    <span>Running...</span>
-                  </>
-                ) : (
-                  <>
-                    <Play className="w-5 h-5" />
-                    <span>Run Workflow</span>
-                  </>
-                )}
-              </button>
-            </div>
-          </div>
-
-          {/* RIGHT COLUMN - Stacked Execution Progress and Result */}
-          <div className="flex flex-col gap-4 h-[700px]">
-            {/* RIGHT PANEL - Live Execution View */}
-            <div className="bg-[var(--v2-surface)] shadow-[var(--v2-shadow-card)] flex flex-col flex-1 overflow-hidden" style={{ borderRadius: 'var(--v2-radius-panel)' }}>
+        {/* Single Column Layout */}
+        <div className="flex flex-col gap-4">
+          {/* Live Execution View */}
+          <div className="bg-[var(--v2-surface)] shadow-[var(--v2-shadow-card)] flex flex-col h-[500px] overflow-hidden" style={{ borderRadius: 'var(--v2-radius-panel)' }}>
             {/* Execution Header - Fixed */}
-            <div className="px-6 py-6 border-b border-[var(--v2-border)] flex-shrink-0">
+            <div className="px-6 py-4 border-b border-[var(--v2-border)] flex-shrink-0">
               <div className="flex items-center justify-between mb-4">
-                <h2 className="text-lg font-semibold text-[var(--v2-text-primary)]">
-                  Live Progress
-                </h2>
-                {executing && (
-                  <div className="px-3 py-1.5 bg-[var(--v2-status-executing-bg)] text-[var(--v2-status-executing-text)] font-semibold text-xs flex items-center gap-1.5 rounded-full animate-pulse">
-                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                    <span>Executing</span>
-                  </div>
-                )}
-                {result && !executing && (
-                  <div className="px-3 py-1.5 bg-[var(--v2-status-success-bg)] text-[var(--v2-status-success-text)] font-semibold text-xs flex items-center gap-1.5 rounded-full">
-                    <CheckCircle className="w-3.5 h-3.5" />
-                    <span>Completed</span>
-                  </div>
-                )}
+                <div className="flex items-center gap-3">
+                  <h2 className="text-lg font-semibold text-[var(--v2-text-primary)]">
+                    Live Progress
+                  </h2>
+                  {executing && (
+                    <div className="px-3 py-1.5 bg-[var(--v2-status-executing-bg)] text-[var(--v2-status-executing-text)] font-semibold text-xs flex items-center gap-1.5 rounded-full animate-pulse">
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      <span>Executing</span>
+                    </div>
+                  )}
+                  {result && !executing && (
+                    <div className="px-3 py-1.5 bg-[var(--v2-status-success-bg)] text-[var(--v2-status-success-text)] font-semibold text-xs flex items-center gap-1.5 rounded-full">
+                      <CheckCircle className="w-3.5 h-3.5" />
+                      <span>Completed</span>
+                    </div>
+                  )}
+                </div>
+                {/* Run Button */}
+                <button
+                  onClick={handleRun}
+                  disabled={executing || agent.status !== 'active' || !isFormValid()}
+                  className="px-5 py-2.5 bg-gradient-to-r from-[var(--v2-primary)] to-[var(--v2-secondary)] text-white font-semibold hover:opacity-90 hover:shadow-[var(--v2-shadow-button)] transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 text-sm"
+                  style={{ borderRadius: 'var(--v2-radius-button)' }}
+                >
+                  {executing ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span>Running...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Play className="w-4 h-4" />
+                      <span>Run Workflow</span>
+                    </>
+                  )}
+                </button>
               </div>
 
               {/* Progress Bar */}
@@ -1504,8 +1009,8 @@ export default function V2RunAgentPage() {
             </div>
           </div>
 
-          {/* Execution Result Card - Below Execution Progress in Right Column */}
-          <div className="bg-[var(--v2-surface-hover)] border border-[var(--v2-border)] p-4 flex-shrink-0" style={{ borderRadius: 'var(--v2-radius-card)' }}>
+          {/* Execution Result Card */}
+          <div className="bg-[var(--v2-surface)] shadow-[var(--v2-shadow-card)] p-5" style={{ borderRadius: 'var(--v2-radius-card)' }}>
             {error ? (
                 <>
                   {/* Header */}
@@ -1715,8 +1220,6 @@ export default function V2RunAgentPage() {
                 </>
               )}
             </div>
-          </div>
-
         </div>
 
         {/* HelpBot - handles both floating button and window */}

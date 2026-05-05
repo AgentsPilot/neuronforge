@@ -24,6 +24,7 @@ import { ExecutionEventEmitter } from '@/lib/execution/ExecutionEventEmitter';
  * - error: If execution fails
  */
 export async function POST(request: NextRequest) {
+  console.log('[SSE Route] POST request received');
   const cookieStore = await cookies();
 
   const supabase = createServerClient(
@@ -40,6 +41,7 @@ export async function POST(request: NextRequest) {
 
   // Authenticate user
   const { data: { user }, error: userError } = await supabase.auth.getUser();
+  console.log('[SSE Route] Auth check:', { hasUser: !!user, error: userError?.message });
   if (userError || !user) {
     return new Response(
       JSON.stringify({ error: 'Unauthorized' }),
@@ -66,12 +68,13 @@ export async function POST(request: NextRequest) {
 
   // If we have session_id but not execution_id, query database to find it
   if (!finalExecutionId && agent_id && session_id) {
-    console.log(`📡 [SSE] Waiting for execution to be created for agent ${agent_id}, session ${session_id}...`);
+    console.log(`[SSE Route] Waiting for execution to be created for agent ${agent_id}, session ${session_id}...`);
 
     // Poll database for up to 10 seconds to find the execution
     // Query workflow_executions table (used by WorkflowPilot/StateManager)
     for (let i = 0; i < 20; i++) {
-      const { data: execution } = await supabase
+      console.log(`[SSE Route] Poll attempt ${i + 1}/20 for session ${session_id}`);
+      const { data: execution, error: queryError } = await supabase
         .from('workflow_executions')
         .select('id')
         .eq('agent_id', agent_id)
@@ -80,9 +83,13 @@ export async function POST(request: NextRequest) {
         .limit(1)
         .single();
 
+      if (queryError) {
+        console.log(`[SSE Route] Query error on attempt ${i + 1}:`, queryError.message);
+      }
+
       if (execution?.id) {
         finalExecutionId = execution.id;
-        console.log(`📡 [SSE] Found execution_id: ${finalExecutionId}`);
+        console.log(`[SSE Route] Found execution_id: ${finalExecutionId}`);
         break;
       }
 
@@ -91,6 +98,7 @@ export async function POST(request: NextRequest) {
     }
 
     if (!finalExecutionId) {
+      console.log(`[SSE Route] Timed out waiting for execution with session ${session_id}`);
       return new Response(
         JSON.stringify({ error: 'Execution not found - timed out waiting for execution to start' }),
         { status: 404, headers: { 'Content-Type': 'application/json' } }

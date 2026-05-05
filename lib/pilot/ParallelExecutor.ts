@@ -20,9 +20,21 @@ import { ExecutionError } from './types';
 import { ExecutionContext } from './ExecutionContext';
 import { StepExecutor } from './StepExecutor';
 import { schemaExtractor } from './utils/SchemaAwareDataExtractor';
+import { ExecutionTracer } from './ExecutionTracer';
+import { ExecutionEventEmitter } from '@/lib/execution/ExecutionEventEmitter';
 import { createLogger } from '@/lib/logger';
 
 const logger = createLogger({ module: 'ParallelExecutor', service: 'workflow-pilot' });
+
+/**
+ * Step lifecycle event emitter interface
+ * Used to emit real-time progress events for inner loop/scatter steps
+ */
+export interface StepEmitter {
+  onStepStarted?: (stepId: string, stepName?: string) => void;
+  onStepCompleted?: (stepId: string, stepName?: string) => void;
+  onStepFailed?: (stepId: string, stepName: string | undefined, error: string) => void;
+}
 
 export class ParallelExecutor {
   private stepExecutor: StepExecutor;
@@ -55,7 +67,17 @@ export class ParallelExecutor {
       const chunkResults = await Promise.all(promises);
 
       chunkResults.forEach((result, index) => {
-        results.set(chunk[index].id, result);
+        const step = chunk[index];
+        results.set(step.id, result);
+
+        // CRITICAL FIX: Register output_variable for parallel steps
+        // Without this, variables like digest_content from ai_processing steps
+        // executed in parallel are not available to subsequent steps
+        const outputVariable = (step as any).output_variable;
+        if (outputVariable && result.metadata.success) {
+          context.setVariable(outputVariable, result.data);
+          logger.debug({ stepId: step.id, outputVariable }, 'Registered output variable for parallel step');
+        }
       });
     }
 
@@ -69,7 +91,8 @@ export class ParallelExecutor {
    */
   async executeLoop(
     step: LoopStep,
-    context: ExecutionContext
+    context: ExecutionContext,
+    stepEmitter?: StepEmitter
   ): Promise<any[]> {
     const { iterateOver, maxIterations = 100, loopSteps, parallel = false } = step;
 
@@ -123,10 +146,10 @@ export class ParallelExecutor {
 
     if (parallel) {
       // Parallel execution with concurrency limit
-      return await this.executeLoopParallel(limitedItems, loopSteps, step, context);
+      return await this.executeLoopParallel(limitedItems, loopSteps, step, context, stepEmitter);
     } else {
       // Sequential execution
-      return await this.executeLoopSequential(limitedItems, loopSteps, step, context);
+      return await this.executeLoopSequential(limitedItems, loopSteps, step, context, stepEmitter);
     }
   }
 
@@ -136,7 +159,8 @@ export class ParallelExecutor {
    */
   async executeScatterGather(
     step: ScatterGatherStep,
-    context: ExecutionContext
+    context: ExecutionContext,
+    stepEmitter?: StepEmitter
   ): Promise<any> {
     logger.info({ stepName: step.name }, 'Executing scatter-gather');
 
@@ -227,7 +251,8 @@ export class ParallelExecutor {
       scatter.maxConcurrency || this.maxConcurrency,
       scatter.itemVariable || 'item',
       step,
-      context
+      context,
+      stepEmitter
     );
 
     // WP-10: Separate successful results from error objects before gathering.
@@ -288,6 +313,20 @@ export class ParallelExecutor {
     const resultStr = JSON.stringify(gatheredResult || {});
     logger.info({ stepId: step.id, resultPreview: resultStr.substring(0, 300) }, 'Scatter-gather complete');
 
+    // Execution tracing: Record scatter-gather flow
+    const tracer = ExecutionTracer.getInstance();
+    if (tracer.isEnabled()) {
+      const variableFlow = tracer.captureScatterVariableFlow(step);
+      variableFlow.gatheredType = Array.isArray(gatheredResult) ? 'array' : typeof gatheredResult;
+
+      tracer.recordScatterGather(
+        step,
+        items,
+        gatheredResult,
+        variableFlow
+      );
+    }
+
     return gatheredResult;
   }
 
@@ -302,7 +341,8 @@ export class ParallelExecutor {
     maxConcurrency: number,
     itemVariable: string,
     scatterStep: ScatterGatherStep,
-    parentContext: ExecutionContext
+    parentContext: ExecutionContext,
+    stepEmitter?: StepEmitter
   ): Promise<any[]> {
     const results: any[] = [];
     let totalTokensFromScatter = 0;
@@ -314,16 +354,26 @@ export class ParallelExecutor {
     for (const chunk of chunks) {
       const chunkPromises = chunk.map((item, localIndex) => {
         const globalIndex = results.length + localIndex;
-        return this.executeScatterItem(item, globalIndex, steps, itemVariable, scatterStep, parentContext);
+        return this.executeScatterItem(item, globalIndex, steps, itemVariable, scatterStep, parentContext, stepEmitter);
       });
 
       const chunkResults = await Promise.all(chunkPromises);
 
       // Extract results and accumulate metrics
-      for (const { result, tokensUsed, executionTime } of chunkResults) {
+      for (const { result, tokensUsed, executionTime, completedSteps } of chunkResults) {
         results.push(result);
         totalTokensFromScatter += tokensUsed;
         totalTimeFromScatter += executionTime;
+
+        // Merge completed steps from scatter item context to parent context
+        // This ensures nested step completion is tracked in the final result
+        if (completedSteps && completedSteps.length > 0) {
+          for (const stepId of completedSteps) {
+            if (!parentContext.completedSteps.includes(stepId)) {
+              parentContext.completedSteps.push(stepId);
+            }
+          }
+        }
       }
     }
 
@@ -336,7 +386,7 @@ export class ParallelExecutor {
       parentContext.totalExecutionTime += totalTimeFromScatter;
     }
 
-    logger.debug({ totalTokens: totalTokensFromScatter, totalTimeMs: totalTimeFromScatter, itemCount: items.length }, 'Scatter metrics');
+    logger.debug({ totalTokens: totalTokensFromScatter, totalTimeMs: totalTimeFromScatter, itemCount: items.length, completedSteps: parentContext.completedSteps.length }, 'Scatter metrics');
 
     return results;
   }
@@ -350,8 +400,9 @@ export class ParallelExecutor {
     steps: WorkflowStep[],
     itemVariable: string,
     scatterStep: ScatterGatherStep,
-    parentContext: ExecutionContext
-  ): Promise<{ result: any; tokensUsed: number; executionTime: number }> {
+    parentContext: ExecutionContext,
+    stepEmitter?: StepEmitter
+  ): Promise<{ result: any; tokensUsed: number; executionTime: number; completedSteps: string[] }> {
     logger.debug({ itemIndex: index + 1 }, 'Processing scatter item');
 
     // Create temporary context for this item with reset metrics
@@ -366,6 +417,20 @@ export class ParallelExecutor {
     try {
       // Execute steps for this item
       for (const step of steps) {
+        // Emit step started event for inner scatter step
+        if (stepEmitter?.onStepStarted) {
+          stepEmitter.onStepStarted(step.id, step.name);
+        }
+        // Also emit via ExecutionEventEmitter for SSE streaming
+        ExecutionEventEmitter.emitStepStarted(parentContext.executionId, parentContext.agentId, {
+          step_index: parentContext.completedSteps.length,
+          step_id: step.id,
+          step_name: step.name || step.id,
+          operation: step.type,
+          plugin: (step as any).plugin,
+          action: (step as any).action,
+        });
+
         const output = await this.stepExecutor.execute(step, itemContext);
 
         // Store output in item context
@@ -384,11 +449,66 @@ export class ParallelExecutor {
 
         // If step failed, propagate error
         if (!output.metadata.success) {
+          // Emit step failed event
+          if (stepEmitter?.onStepFailed) {
+            stepEmitter.onStepFailed(step.id, step.name, output.metadata.error || 'Unknown error');
+          }
+          ExecutionEventEmitter.emitStepFailed(parentContext.executionId, parentContext.agentId, {
+            step_index: parentContext.completedSteps.length,
+            step_id: step.id,
+            step_name: step.name || step.id,
+            error: output.metadata.error || 'Unknown error',
+            duration_ms: output.metadata.executionTime || 0,
+          });
           throw new ExecutionError(
             `Scatter item ${index} failed at step ${step.id}: ${output.metadata.error}`,
             scatterStep.id,
             { item: index, failedStep: step.id, error: output.metadata.error, errorCode: 'SCATTER_ITEM_FAILED' }
           );
+        }
+
+        // Emit step completed event for inner scatter step
+        if (stepEmitter?.onStepCompleted) {
+          stepEmitter.onStepCompleted(step.id, step.name);
+        }
+        ExecutionEventEmitter.emitStepCompleted(parentContext.executionId, parentContext.agentId, {
+          step_index: parentContext.completedSteps.length,
+          step_id: step.id,
+          step_name: step.name || step.id,
+          result: output.data,
+          duration_ms: output.metadata.executionTime || 0,
+        });
+      }
+
+      // CRITICAL FIX: Check if gather.from is specified
+      // If gather.from points to a specific output_variable, return ONLY that variable
+      // instead of the merged result. This ensures the gathered array contains
+      // the correct data type (e.g., item_record, not merged attachment + all step results)
+      const gatherFrom = (scatterStep as any).gather?.from;
+      if (gatherFrom) {
+        // Remove {{ }} if present
+        const varName = gatherFrom.replace(/\{\{|\}\}/g, '');
+
+        // Check if this variable exists in the item context
+        const gatherValue = itemContext.getVariable?.(varName);
+        if (gatherValue !== undefined) {
+          logger.debug({
+            gatherFrom: varName,
+            valueType: Array.isArray(gatherValue) ? 'array' : typeof gatherValue,
+            valuePreview: JSON.stringify(gatherValue).substring(0, 100)
+          }, '[GATHER.FROM] Returning specific variable instead of merged result');
+
+          return {
+            result: gatherValue,
+            tokensUsed: itemContext.totalTokensUsed ?? 0,
+            executionTime: itemContext.totalExecutionTime ?? 0,
+            completedSteps: itemContext.completedSteps ?? [],
+          };
+        } else {
+          logger.warn({
+            gatherFrom: varName,
+            availableVars: Object.keys(itemContext.variables || {})
+          }, '[GATHER.FROM] Variable not found in item context, falling back to merge logic');
         }
       }
 
@@ -486,6 +606,7 @@ export class ParallelExecutor {
         result: mergedResult,
         tokensUsed: itemContext.totalTokensUsed ?? 0,
         executionTime: itemContext.totalExecutionTime ?? 0,
+        completedSteps: itemContext.completedSteps ?? [],
       };
     } catch (error: any) {
       logger.warn({ itemIndex: index, error: error.message }, 'Scatter item failed');
@@ -496,6 +617,7 @@ export class ParallelExecutor {
         },
         tokensUsed: itemContext.totalTokensUsed ?? 0,
         executionTime: itemContext.totalExecutionTime ?? 0,
+        completedSteps: itemContext.completedSteps ?? [],
       };
     }
   }
@@ -574,7 +696,8 @@ export class ParallelExecutor {
     items: any[],
     loopSteps: WorkflowStep[],
     loopStep: LoopStep,
-    context: ExecutionContext
+    context: ExecutionContext,
+    stepEmitter?: StepEmitter
   ): Promise<any[]> {
     const results: any[] = [];
     let totalTokensFromLoop = 0;
@@ -586,16 +709,25 @@ export class ParallelExecutor {
     for (const chunk of chunks) {
       const chunkPromises = chunk.map((item, localIndex) => {
         const globalIndex = results.length + localIndex;
-        return this.executeLoopIteration(item, globalIndex, loopSteps, loopStep, context);
+        return this.executeLoopIteration(item, globalIndex, loopSteps, loopStep, context, stepEmitter);
       });
 
       const chunkResults = await Promise.all(chunkPromises);
 
       // Extract results and accumulate metrics
-      for (const { result, tokensUsed, executionTime } of chunkResults) {
+      for (const { result, tokensUsed, executionTime, completedSteps } of chunkResults) {
         results.push(result);
         totalTokensFromLoop += tokensUsed;
         totalTimeFromLoop += executionTime;
+
+        // Merge completed steps from loop iteration context to parent context
+        if (completedSteps && completedSteps.length > 0) {
+          for (const stepId of completedSteps) {
+            if (!context.completedSteps.includes(stepId)) {
+              context.completedSteps.push(stepId);
+            }
+          }
+        }
       }
     }
 
@@ -621,7 +753,8 @@ export class ParallelExecutor {
     items: any[],
     loopSteps: WorkflowStep[],
     loopStep: LoopStep,
-    context: ExecutionContext
+    context: ExecutionContext,
+    stepEmitter?: StepEmitter
   ): Promise<any[]> {
     const results: any[] = [];
     let totalTokensFromLoop = 0;
@@ -629,10 +762,19 @@ export class ParallelExecutor {
 
     for (let i = 0; i < items.length; i++) {
       const item = items[i];
-      const { result, tokensUsed, executionTime } = await this.executeLoopIteration(item, i, loopSteps, loopStep, context);
+      const { result, tokensUsed, executionTime, completedSteps } = await this.executeLoopIteration(item, i, loopSteps, loopStep, context, stepEmitter);
       results.push(result);
       totalTokensFromLoop += tokensUsed;
       totalTimeFromLoop += executionTime;
+
+      // Merge completed steps from loop iteration context to parent context
+      if (completedSteps && completedSteps.length > 0) {
+        for (const stepId of completedSteps) {
+          if (!context.completedSteps.includes(stepId)) {
+            context.completedSteps.push(stepId);
+          }
+        }
+      }
     }
 
     // Merge accumulated metrics back to parent context
@@ -658,8 +800,9 @@ export class ParallelExecutor {
     index: number,
     loopSteps: WorkflowStep[],
     loopStep: LoopStep,
-    parentContext: ExecutionContext
-  ): Promise<{ result: any; tokensUsed: number; executionTime: number }> {
+    parentContext: ExecutionContext,
+    stepEmitter?: StepEmitter
+  ): Promise<{ result: any; tokensUsed: number; executionTime: number; completedSteps: string[] }> {
     logger.debug({ iteration: index + 1 }, 'Processing loop iteration');
 
     // Create temporary context for this iteration with reset metrics
@@ -683,6 +826,20 @@ export class ParallelExecutor {
     try {
       // Execute loop body steps
       for (const step of loopSteps) {
+        // Emit step started event for inner loop step
+        if (stepEmitter?.onStepStarted) {
+          stepEmitter.onStepStarted(step.id, step.name);
+        }
+        // Also emit via ExecutionEventEmitter for SSE streaming
+        ExecutionEventEmitter.emitStepStarted(parentContext.executionId, parentContext.agentId, {
+          step_index: parentContext.completedSteps.length,
+          step_id: step.id,
+          step_name: step.name || step.id,
+          operation: step.type,
+          plugin: (step as any).plugin,
+          action: (step as any).action,
+        });
+
         const output = await this.stepExecutor.execute(step, loopContext);
 
         // Store output in iteration context
@@ -699,12 +856,35 @@ export class ParallelExecutor {
 
         // If step failed and continueOnError is false, break
         if (!output.metadata.success && !loopStep.continueOnError) {
+          // Emit step failed event
+          if (stepEmitter?.onStepFailed) {
+            stepEmitter.onStepFailed(step.id, step.name, output.metadata.error || 'Unknown error');
+          }
+          ExecutionEventEmitter.emitStepFailed(parentContext.executionId, parentContext.agentId, {
+            step_index: parentContext.completedSteps.length,
+            step_id: step.id,
+            step_name: step.name || step.id,
+            error: output.metadata.error || 'Unknown error',
+            duration_ms: output.metadata.executionTime || 0,
+          });
           throw new ExecutionError(
             `Loop iteration ${index} failed at step ${step.id}: ${output.metadata.error}`,
             loopStep.id,
             { iteration: index, failedStep: step.id, error: output.metadata.error, errorCode: 'LOOP_ITERATION_FAILED' }
           );
         }
+
+        // Emit step completed event for inner loop step
+        if (stepEmitter?.onStepCompleted) {
+          stepEmitter.onStepCompleted(step.id, step.name);
+        }
+        ExecutionEventEmitter.emitStepCompleted(parentContext.executionId, parentContext.agentId, {
+          step_index: parentContext.completedSteps.length,
+          step_id: step.id,
+          step_name: step.name || step.id,
+          result: output.data,
+          duration_ms: output.metadata.executionTime || 0,
+        });
       }
 
       // Merge loop context back to parent (only variables, not step outputs)
@@ -720,6 +900,7 @@ export class ParallelExecutor {
         result: iterationResults,
         tokensUsed: loopContext.totalTokensUsed ?? 0,
         executionTime: loopContext.totalExecutionTime ?? 0,
+        completedSteps: loopContext.completedSteps ?? [],
       };
     } catch (error: any) {
       if (loopStep.continueOnError) {
@@ -731,6 +912,7 @@ export class ParallelExecutor {
           },
           tokensUsed: loopContext.totalTokensUsed ?? 0,
           executionTime: loopContext.totalExecutionTime ?? 0,
+          completedSteps: loopContext.completedSteps ?? [],
         };
       } else {
         throw error;
