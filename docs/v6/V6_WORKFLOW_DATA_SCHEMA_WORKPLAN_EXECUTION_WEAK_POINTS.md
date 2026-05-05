@@ -29,7 +29,7 @@ The weak points are ordered by likelihood of causing failures as new scenarios a
 | [WP-11](#wp-11-search_emails-missing-content_level-full-when-body-is-needed-downstream) | `search_emails` compiled without `content_level=full` — body empty, downstream extraction silently fails | P0 | ✅ Fixed — schema-driven auto-fix in IR converter |
 | [WP-12](#wp-12-document-extractor-bound-to-free-text-email-body-instead-of-ai_processing) | `document-extractor` bound to free-text email body — produces "Unknown" placeholders | P0 | ✅ Fixed — binder reroutes non-file inputs to AI extraction |
 | [WP-13](#wp-13-ai_processing-hallucinates-on-empty-input) | `ai_processing` fabricates plausible-looking data when input array is empty | P0 | ✅ Fixed — empty-input guard + prompt guardrail |
-| [WP-14](#wp-14-scatter-gather-token-bloat--extract-step-output-shape) | Scatter-gather merges full item with extract output → token bloat; I3 doesn't parse `fields` schema; runtime safety misroutes already-text content | P0 | ✅ Fixed — 3 surgical changes |
+| [WP-14](#wp-14-scatter-gather-token-bloat--extract-step-output-shape) | Scatter-gather merges full item with extract output → token bloat; I3 doesn't parse `fields` schema; runtime safety misroutes already-text content | P0 | ⚠️ Partial fix (multi-step scatter body case reopened 2026-04-14) |
 
 ---
 
@@ -613,7 +613,7 @@ This catches the case where the compile-time guard misses a variable shape (e.g.
 
 **Severity:** Critical
 **Encountered as:** AliExpress Delivery Tracker scenario — Phase E run, step4 hit OpenAI 429 (39,250 tokens requested, 30,000 TPM limit).
-**Status:** ✅ Fixed — 3 surgical changes
+**Status:** ⚠️ Partial fix — original single-nested-step case fixed 2026-04-05. Multi-nested-step scatter body case reopened 2026-04-14 (see "Known gap" below).
 
 **Problem (cascade of 3 bugs):**
 
@@ -634,6 +634,77 @@ This catches the case where the compile-time guard misses a variable shape (e.g.
 **Verified:** All 10 regression scenarios pass Phase D after fixes. AliExpress step4 token count drops from ~39K to <4K.
 
 **Files:** `lib/pilot/StepExecutor.ts`, `lib/pilot/ParallelExecutor.ts`
+
+#### Known gap — multi-nested-step scatter body (reopened 2026-04-14)
+
+**Severity:** Critical
+**Encountered as:** Contract End-Date Summary scenario — Phase E run, step7 hit Anthropic 400 (`prompt is too long: 1,004,169 tokens > 1,000,000 maximum`).
+**Status:** ⬜ Open
+
+**Problem:**
+
+The WP-14 fix `isExtractLike`-aware merge ([ParallelExecutor.ts:425-437](../../lib/pilot/ParallelExecutor.ts#L425-L437)) lives inside the **single-nested-step branch** of `processScatterItem()` — the `stepResultKeys.length === 1` path at [line 403](../../lib/pilot/ParallelExecutor.ts#L403). When a scatter body has **two or more** nested steps, control flows into the **multi-step branch** at [line 470](../../lib/pilot/ParallelExecutor.ts#L470), which has no `isExtractLike` guard and unconditionally spreads every step's output into the item:
+
+```typescript
+} else if (stepResultKeys.length > 1) {
+  mergedResult = { ...item };
+  for (const stepKey of stepResultKeys) {
+    const stepData = itemResults[stepKey];
+    if (typeof stepData === 'object' && stepData !== null && !Array.isArray(stepData)) {
+      mergedResult = { ...mergedResult, ...stepData };
+    }
+  }
+}
+```
+
+**Failure anatomy in contract-enddate-summary:**
+
+Scatter body has two nested steps:
+- `step5` — `google-drive.read_file_content` → `doc_content: { file_id, file_name, content (full document text, ~165KB), ... }`
+- `step6` — `ai_processing/generate` (extract-like, 5-field `output_schema`) → `extracted_contract_info: { end_date, counterparty, notes, document_title, document_link }`
+
+Each iteration's `mergedResult` becomes `{ ...item (Drive metadata), ...doc_content (full text), ...extracted_contract_info (small) }` — dominated by step5's `content` field. The extract-like guard never runs because it sits in the single-step branch.
+
+For 4 contract documents of ~165KB each, the gathered `contract_extraction_results` array feeds ~1,004,169 tokens to step7 (`ai_processing/generate` computing days remaining), which blows past Anthropic's 1M-token context limit and fails non-retryably.
+
+**Why the original fix didn't cover this:**
+
+- The AliExpress scenario that motivated WP-14 had a single nested `extract` step over each email — cleanly triggered the single-step branch. The multi-step branch was never exercised during verification.
+- "All 10 regression scenarios pass Phase D after fixes" (original Verified note) is true, but Phase D uses stub plugin payloads (~20 bytes per field), so even unguarded multi-step merges stay tiny. The bug is invisible in Phase D and only surfaces with realistic Phase E payloads — exactly the [PD-1 Realistic plugin mock payloads](#pd-1-realistic-plugin-mock-payloads-high-value) gap.
+- The WP-14 narrative uses singular "the nested step" throughout, reflecting the single-step assumption.
+
+**Proposed fix (runtime):**
+
+Extend the `isExtractLike` detection to the multi-step branch, applied to the **last nested step** in the scatter body:
+
+```typescript
+} else if (stepResultKeys.length > 1) {
+  const lastStepKey = stepResultKeys[stepResultKeys.length - 1];
+  const lastStepData = itemResults[lastStepKey];
+  const lastStep = steps.find(s => s.id === lastStepKey);
+  const lastIsExtractLike = /* same detection as single-step branch, applied to lastStep */;
+
+  if (lastIsExtractLike && typeof lastStepData === 'object' && lastStepData !== null && !Array.isArray(lastStepData)) {
+    mergedResult = lastStepData;
+  } else {
+    // Preserve existing multi-step spread-merge for non-extract bodies (e.g., multi-classify).
+    mergedResult = { ...item };
+    for (const stepKey of stepResultKeys) { /* ...unchanged... */ }
+  }
+}
+```
+
+**Rationale for "last step":**
+
+- Semantically, the last nested step is the canonical output of the scatter iteration. Earlier steps (read_file_content, search_emails, etc.) are intermediate data-fetching — they shouldn't survive the gather.
+- Matches how the IntentContract LLM reasons about the workflow: scatter *produces* the extraction result, not the intermediate reads.
+- Preserves backward compatibility for multi-classify bodies (last step is classify → 1-field schema → not extract-like → fall through to existing spread-merge).
+
+**Stronger long-term fix (compiler + runtime — deferred):**
+
+Rather than continuing to grow runtime heuristics, the compiler should emit an explicit `gather.output_source: "<last_step_output_variable>"` field when the IR indicates the scatter body's purpose is extraction. The runtime would respect the declared contract deterministically when present, falling back to the heuristic only when absent. Aligns with DESIGN_REBASE §P3 — replace runtime heuristics with schema-declared contracts. Filed as follow-up; not required for this scenario to pass.
+
+**Cross-references:** D-B25 in `V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION.md` Change History; PD-1 "Realistic plugin mock payloads" (this doc) — realistic mocks would have caught this class in Phase D.
 
 ---
 
@@ -710,7 +781,7 @@ Already documented as WP-9 / F7 — deferred due to ~$0.10-0.15 per run token co
 | **P0** | WP-11: search_emails content_level | User receives fabricated data on any email-extraction workflow | ✅ Fixed |
 | **P0** | WP-12: document-extractor misrouted to email text | User receives "Unknown" placeholder rows for every extracted field | ✅ Fixed |
 | **P0** | WP-13: AI hallucination on empty input | User receives fabricated data as if it were real | ✅ Fixed |
-| **P0** | WP-14: scatter token bloat + extract output shape | User hits 429 rate limit on real data; contract scenario misroutes | ✅ Fixed |
+| **P0** | WP-14: scatter token bloat + extract output shape | User hits 429 rate limit on real data; contract scenario misroutes | ⚠️ Partial fix — multi-nested-step scatter body case reopened 2026-04-14 |
 | **P1** | PD-1: Realistic plugin mocks | Phase D can't catch plugin-default quirks, empty results, token bloat | ⬜ Open |
 | **P2** | PD-3: Token-budget warnings | Token bloat only visible in Phase E | ⬜ Open |
 
@@ -720,6 +791,7 @@ Already documented as WP-9 / F7 — deferred due to ~$0.10-0.15 per run token co
 
 | Date | Change | Details |
 |------|--------|---------|
+| 2026-04-14 | WP-14 reopened — multi-nested-step scatter body gap | Contract End-Date Summary Phase E: step7 (`ai_processing/generate`) failed with Anthropic 400 `"prompt is too long: 1,004,169 tokens > 1,000,000 maximum"`. Root cause: WP-14 original fix's `isExtractLike` guard is gated inside the **single-nested-step branch** of `processScatterItem()` at [ParallelExecutor.ts:403](../../lib/pilot/ParallelExecutor.ts#L403). The contract scenario's scatter body has **two** nested steps (step5 `read_file_content` fetching full document text ~165KB/doc, step6 `ai_processing/generate` extracting 5 small fields), which flows into the **multi-step branch** at [line 470](../../lib/pilot/ParallelExecutor.ts#L470) — no `isExtractLike` guard there, unconditionally spreads `{...item, ...step5.output, ...step6.output}`, preserving the full `content` string per iteration. 4 docs × ~165KB ≈ 1M tokens at step7. WP-14's original Verified note ("All 10 regression scenarios pass Phase D after fixes") held because Phase D uses stub plugin payloads ~20 bytes per field — invisible in mocks, only surfaces with realistic Phase E payloads. Exactly the [PD-1](#pd-1-realistic-plugin-mock-payloads-high-value) gap. Proposed fix: extend `isExtractLike` detection to the last nested step in the multi-step branch. Stronger long-term fix (deferred): compiler emits explicit `gather.output_source: "<last_step_output_variable>"` as a schema-declared contract per DESIGN_REBASE §P3. See D-B25 in `V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION.md` for the per-scenario discovery timeline. |
 | 2026-04-05 | WP-11 & WP-12 documented | AliExpress Delivery Tracker scenario live run: user received email with fabricated "Unknown X" rows. Two root causes: (1) search_emails compiled without content_level=full — bodies empty; (2) document-extractor selected for free-text email body extraction instead of ai_processing. Both open. |
 | 2026-04-05 | WP-13 documented | AliExpress Delivery Tracker scenario live run (after WP-11/12 patches): search_emails returned 0 results due to stale query, but downstream AI generate step fabricated a two-row HTML table with fake package numbers (12345, 67890) and fake products, which was sent to the user as if real. Distinct from WP-12: WP-13 fires whenever an AI step downstream of an empty collection has no guardrail against hallucination. |
 | 2026-04-05 | WP-13 implemented | Two-layer guard in StepExecutor.executeLLMDecision: Layer 1 `detectEmptyAIProcessingInput` short-circuits with deterministic no-data payload (zero tokens); Layer 2 prepends "respond exactly 'No data available.' do NOT fabricate" guardrail to all ai_processing prompts. |

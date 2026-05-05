@@ -66,6 +66,14 @@ export class ExecutionOutputCache {
       this.cache.delete(key);
     }
   }
+
+  async clearExecution(_executionId: string): Promise<void> {
+    this.cache.clear();
+  }
+
+  async getAllOutputs(_executionId: string): Promise<Map<string, { data: any; metadata: any }>> {
+    return new Map();
+  }
 }
 
 // Export singleton instance

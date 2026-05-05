@@ -842,10 +842,18 @@ export class GoogleDrivePluginExecutor extends GoogleBasePluginExecutor {
       'video': 'video/',
       'folder': 'application/vnd.google-apps.folder'
     };
-    
+
     return fileTypes
-      .filter(ft => mimeTypeMap[ft])
-      .map(ft => mimeTypeMap[ft]);
+      .map(ft => {
+        if (mimeTypeMap[ft]) return mimeTypeMap[ft];
+        if (ft.includes('/')) {
+          this.logger.warn({ fileType: ft }, 'D-B26: file_types value is a raw MIME type — accepted but should use friendly name from plugin schema enum');
+          return ft;
+        }
+        this.logger.warn({ fileType: ft }, 'D-B26: Unknown file_types value — not in friendly-name map and not a MIME type, skipping');
+        return null;
+      })
+      .filter((mt): mt is string => mt !== null);
   }
 
   // Convert MIME type to friendly file type

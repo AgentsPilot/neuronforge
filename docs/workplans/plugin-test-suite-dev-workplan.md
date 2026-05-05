@@ -530,3 +530,4 @@ test:plugins:ci: jest --config jest.config.js tests/plugins/ --ci --forceExit --
 | Date | Change | Details |
 |------|--------|---------|
 | 2026-03-27 | Initial workplan | 19 tasks across 5 phases, covering 11 plugins (68 actions), 3+2 shared utilities, 4 npm scripts, 1 integration test |
+| 2026-04-12 | SA Phase 2 review fixes | Must-Fix 1: Added Dropbox `download_file` and `upload_file` smoke tests. Must-Fix 2: Added OneDrive `download_file` and `upload_file` smoke tests. Recommended: Moved 5 Meta-Ads happy-path tests (`create_adset`, `update_adset`, `create_ad`, `create_ad_creative`, `create_custom_audience`) from `[full]` to `[smoke]` block. All 55 tests pass across 3 modified files. |

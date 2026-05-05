@@ -1,79 +1,52 @@
 {
   "version": "intent.v1",
-  "goal": "Scan Google Docs in Drive folder 'Contracts', extract contract end dates, and email HTML summary of contracts ending within next 30 days",
+  "goal": "Scan Google Docs in the Drive folder 'Contracts', extract contract end/expiration dates and counterparty names, and email an HTML summary table of contracts ending within the next 30 days (including documents where an end date could not be found).",
   "unit_of_work": {
     "entity": "contract_document",
-    "parent_entity": "contracts_folder"
+    "parent_entity": "drive_folder"
   },
   "config": [
     {
       "key": "drive_folder_name",
       "type": "string",
-      "description": "Name of the Google Drive folder containing contracts",
+      "description": "Name of the Google Drive folder containing contract documents",
       "default": "Contracts"
     },
     {
       "key": "contract_title_keywords",
-      "type": "json",
-      "description": "Keywords that must appear in contract document titles",
-      "default": [
-        "Contract",
-        "Agreement",
-        "MSA",
-        "SOW",
-        "Order Form",
-        "Statement of Work"
-      ]
+      "type": "string",
+      "description": "Comma-separated keywords to match in document titles",
+      "default": "Contract, Agreement, MSA, SOW, Order Form, Statement of Work"
     },
     {
-      "key": "email_recipient",
+      "key": "recipients",
       "type": "string",
-      "description": "Email address to send the contract summary report",
+      "description": "Email recipient for the contract summary report",
       "default": "meiribarak@gmail.com"
     },
     {
       "key": "days_ahead",
       "type": "number",
-      "description": "Number of days ahead to check for contract end dates",
+      "description": "Number of days ahead to check for expiring contracts",
       "default": 30
-    },
-    {
-      "key": "today_date",
-      "type": "string",
-      "description": "Reference date for calculations (ISO format YYYY-MM-DD)",
-      "default": "{{current_date}}"
     }
   ],
+  "invariants": [
+    "Only Google Docs whose titles contain at least one of the configured keywords are considered",
+    "Documents where no end date is found are still included in the report with a note",
+    "Days remaining is computed as (end_date - today) in calendar days",
+    "Results are sorted by end date ascending; missing end-date rows appear at the bottom"
+  ],
   "required_outcomes": [
-    "Email sent with HTML table of contracts ending within 30 days",
-    "Documents without extractable end dates are included with notes"
+    "An HTML email is sent to the configured recipient containing a table of contracts ending within the next 30 days",
+    "Contracts with missing end dates are included with appropriate notes",
+    "If no contracts are ending soon, an email is still sent indicating no upcoming expirations"
   ],
   "steps": [
     {
-      "id": "get_contracts_folder",
-      "kind": "artifact",
-      "summary": "Get the Contracts folder from Google Drive",
-      "uses": [
-        {
-          "capability": "upsert",
-          "domain": "storage",
-          "preferences": {
-            "provider_family": "google"
-          }
-        }
-      ],
-      "output": "contracts_folder",
-      "artifact": {
-        "domain": "storage",
-        "type": "folder",
-        "strategy": "use_existing",
-        "name_hint": "Contracts"
-      }
-    },
-    {
-      "id": "search_contract_docs",
+      "id": "find_contracts_folder",
       "kind": "data_source",
-      "summary": "Search for Google Docs in Contracts folder with contract-related keywords in title",
+      "summary": "Search Google Drive for the folder named 'Contracts'",
       "uses": [
         {
           "capability": "search",
@@ -83,24 +56,10 @@
           }
         }
       ],
-      "inputs": [
-        "contracts_folder"
-      ],
-      "output": "candidate_docs",
+      "output": "contracts_folder_results",
       "source": {
         "domain": "storage",
         "intent": "search"
-      },
-      "payload": {
-        "folder_id": {
-          "kind": "ref",
-          "ref": "contracts_folder",
-          "field": "id"
-        },
-        "mime_type": {
-          "kind": "literal",
-          "value": "application/vnd.google-apps.document"
-        }
       },
       "query": {
         "kind": "computed",
@@ -108,28 +67,94 @@
         "args": [
           {
             "kind": "literal",
-            "value": "name contains '{}'"
+            "value": "name = '"
           },
           {
             "kind": "config",
-            "key": "contract_title_keywords"
+            "key": "drive_folder_name"
+          },
+          {
+            "kind": "literal",
+            "value": "' and mimeType = 'application/vnd.google-apps.folder'"
           }
         ]
       },
       "retrieval": {
-        "max_results": 100,
-        "include_content": "none",
-        "include_metadata": true
+        "max_results": 1
       }
     },
     {
-      "id": "process_each_document",
+      "id": "list_docs_in_folder",
+      "kind": "data_source",
+      "summary": "List all Google Docs in the Contracts folder",
+      "uses": [
+        {
+          "capability": "list",
+          "domain": "storage",
+          "preferences": {
+            "provider_family": "google"
+          }
+        }
+      ],
+      "inputs": [
+        "contracts_folder_results"
+      ],
+      "output": "all_folder_docs",
+      "source": {
+        "domain": "storage",
+        "intent": "list"
+      },
+      "payload": {
+        "folder_id": {
+          "kind": "ref",
+          "ref": "contracts_folder_results",
+          "field": "files[0].id"
+        },
+        "file_types": {
+          "kind": "literal",
+          "value": [
+            "application/vnd.google-apps.document"
+          ]
+        }
+      },
+      "retrieval": {
+        "max_results": 200
+      }
+    },
+    {
+      "id": "filter_by_keywords",
+      "kind": "generate",
+      "summary": "Filter documents whose titles contain at least one of the configured contract keywords (Contract, Agreement, MSA, SOW, Order Form, Statement of Work). Return the filtered array of file objects.",
+      "uses": [
+        {
+          "capability": "generate",
+          "domain": "internal"
+        }
+      ],
+      "inputs": [
+        "all_folder_docs"
+      ],
+      "output": "candidate_docs",
+      "generate": {
+        "input": "all_folder_docs",
+        "instruction": "You are given a list of Google Drive file objects (each with id, name, mimeType, webViewLink, etc.). Filter this list to include ONLY files whose 'name' field contains at least one of these keywords (case-insensitive): Contract, Agreement, MSA, SOW, Order Form, Statement of Work. Return the filtered list as a JSON array of the original file objects, preserving all fields. If no files match, return an empty array.",
+        "outputs": [
+          {
+            "name": "filtered_docs",
+            "type": "array",
+            "description": "Array of file objects whose titles match at least one contract keyword"
+          }
+        ]
+      }
+    },
+    {
+      "id": "process_each_contract",
       "kind": "loop",
-      "summary": "Process each candidate contract document to extract end dates and counterparty",
+      "summary": "For each candidate contract document, read its text content, extract end date and counterparty, and compute days remaining",
       "inputs": [
         "candidate_docs"
       ],
-      "output": "processed_contracts",
+      "output": "contract_extraction_results",
       "loop": {
         "over": "candidate_docs",
         "item_ref": "doc",
@@ -138,14 +163,14 @@
         },
         "collect": {
           "enabled": true,
-          "collect_as": "processed_contracts",
-          "from_step_output": "contract_data"
+          "collect_as": "contract_extraction_results",
+          "from_step_output": "extracted_contract_info"
         },
         "do": [
           {
-            "id": "fetch_doc_content",
+            "id": "read_doc_content",
             "kind": "data_source",
-            "summary": "Retrieve full text content of the Google Doc",
+            "summary": "Read the full text content of the Google Doc",
             "uses": [
               {
                 "capability": "fetch_content",
@@ -177,117 +202,58 @@
           },
           {
             "id": "extract_contract_fields",
-            "kind": "extract",
-            "summary": "Extract contract end date, counterparty name, and notes from document text",
+            "kind": "generate",
+            "summary": "Extract contract end/expiration date and counterparty name from the document text using AI analysis. Handle multiple date patterns and choose the most likely end date.",
             "uses": [
               {
-                "capability": "extract_structured_data",
-                "domain": "document"
+                "capability": "generate",
+                "domain": "internal"
               }
             ],
             "inputs": [
-              "doc_content"
+              "doc_content",
+              "doc"
             ],
-            "output": "extracted_fields",
-            "extract": {
+            "output": "extracted_contract_info",
+            "generate": {
               "input": "doc_content",
-              "fields": [
+              "instruction": "You are given the full text of a contract document. Your task is to extract the following information and return it as a JSON object.\n\n1. **end_date**: The contract end or expiration date. Check for:\n   - Explicit labels like 'End Date:', 'Expiration Date:', 'Termination Date:'\n   - Term sentences like 'This Agreement ends on...', 'shall expire on...', 'effective until...'\n   - Renewal/auto-renewal clauses that mention an end date\n   - If multiple plausible end dates are found, choose the most likely contract end date.\n   Format the date as YYYY-MM-DD if found, or null if not found.\n\n2. **counterparty**: The counterparty or other party name. Look for:\n   - Party name blocks near the top of the document\n   - Lines containing 'between ... and ...'\n   - 'Client:', 'Customer:', 'Vendor:', 'Provider:' labels\n   If not found, set to null.\n\n3. **notes**: Any relevant notes, such as:\n   - 'Multiple end dates detected; chose the one from the term clause'\n   - 'End date not found in document'\n   - 'Counterparty name not found'\n   - Any other useful context about ambiguity\n\n4. **document_title**: Extract from the input doc metadata field 'file_name'.\n5. **document_link**: Extract from the input doc metadata field 'webViewLink' (from the doc variable, not the content).\n\nReturn ONLY a JSON object with these fields: end_date (string YYYY-MM-DD or null), counterparty (string or null), notes (string or null), document_title (string), document_link (string).",
+              "outputs": [
                 {
                   "name": "end_date",
-                  "type": "date",
-                  "required": false,
-                  "description": "Contract end/expiration date. Check for explicit labels like 'End Date:', 'Expiration Date:', term sentences like 'This Agreement ends on...', or renewal clauses. If multiple dates found, choose the most likely contract end date."
+                  "type": "string",
+                  "description": "Contract end/expiration date in YYYY-MM-DD format, or null if not found"
                 },
                 {
                   "name": "counterparty",
                   "type": "string",
-                  "required": false,
-                  "description": "Counterparty name from the document (e.g., first party name block near top, or from 'between ... and ...' clause)"
+                  "description": "Counterparty or other party name, or null if not found"
                 },
                 {
-                  "name": "extraction_notes",
+                  "name": "notes",
                   "type": "string",
-                  "required": false,
-                  "description": "Notes about extraction: multiple dates detected, end date not found, counterparty not found, or other relevant observations"
+                  "description": "Any relevant notes about the extraction"
+                },
+                {
+                  "name": "document_title",
+                  "type": "string",
+                  "description": "Title of the contract document"
+                },
+                {
+                  "name": "document_link",
+                  "type": "string",
+                  "description": "Web view link to the document"
                 }
-              ],
-              "deterministic": false,
-              "content_hints": {
-                "file_types": [
-                  "text/plain"
-                ],
-                "language": "en"
-              }
-            }
-          },
-          {
-            "id": "merge_doc_metadata",
-            "kind": "transform",
-            "summary": "Merge extracted fields with document metadata (title, link)",
-            "inputs": [
-              "extracted_fields",
-              "doc"
-            ],
-            "output": "contract_data",
-            "transform": {
-              "op": "map",
-              "input": "extracted_fields",
-              "description": "Combine extracted contract fields with document title and web link from metadata",
-              "mapping": [
-                {
-                  "to": "title",
-                  "from": "name"
-                },
-                {
-                  "to": "link",
-                  "from": "webViewLink"
-                },
-                {
-                  "to": "end_date",
-                  "from": "end_date"
-                },
-                {
-                  "to": "counterparty",
-                  "from": "counterparty"
-                },
-                {
-                  "to": "notes",
-                  "from": "extraction_notes"
-                }
-              ],
-              "output_schema": {
-                "type": "object",
-                "properties": {
-                  "title": {
-                    "type": "string"
-                  },
-                  "link": {
-                    "type": "string"
-                  },
-                  "end_date": {
-                    "type": "string"
-                  },
-                  "counterparty": {
-                    "type": "string"
-                  },
-                  "notes": {
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "title",
-                  "link"
-                ]
-              }
+              ]
             }
           }
         ]
       }
     },
     {
-      "id": "compute_days_remaining",
+      "id": "compute_days_and_filter",
       "kind": "generate",
-      "summary": "Compute days remaining for each contract (end_date - today) and add to contract data",
+      "summary": "Compute days remaining for each contract (end_date - today), filter to include contracts ending within the next 30 days plus contracts with missing end dates. Sort by end date ascending with missing dates at the bottom.",
       "uses": [
         {
           "capability": "generate",
@@ -295,117 +261,54 @@
         }
       ],
       "inputs": [
-        "processed_contracts"
+        "contract_extraction_results"
       ],
-      "output": "contracts_with_days",
+      "output": "filtered_contracts",
       "generate": {
-        "input": "processed_contracts",
-        "format": "json",
-        "instruction": "For each contract in the input array, compute 'days_remaining' as the difference in days between end_date and today's date (use config today_date). If end_date is missing or invalid, set days_remaining to null. Return the array with the new days_remaining field added to each contract object.",
+        "input": "contract_extraction_results",
+        "instruction": "You are given an array of contract extraction results. Each item has: end_date (YYYY-MM-DD or null), counterparty (string or null), notes (string or null), document_title (string), document_link (string).\n\nPerform these steps:\n1. Use today's actual date as the reference date.\n2. For each contract with a non-null end_date, compute days_remaining = (end_date - today) in calendar days.\n3. Create two groups:\n   a. **expiring_soon**: Contracts where end_date is not null AND days_remaining is between 0 and 30 (inclusive). Sort these by end_date ascending.\n   b. **missing_date**: Contracts where end_date is null. Update their notes to include 'End date not found in document' if not already noted.\n4. Combine the two groups: expiring_soon first, then missing_date at the bottom.\n5. Also determine: has_expiring (boolean - true if expiring_soon is non-empty), total_expiring (count of expiring_soon), total_missing (count of missing_date).\n\nReturn a JSON object with fields:\n- contracts: array of objects, each with {document_title, document_link, counterparty, end_date, days_remaining (number or null), notes}\n- has_expiring: boolean\n- total_expiring: number\n- total_missing: number",
         "outputs": [
           {
-            "name": "contracts_array",
+            "name": "contracts",
             "type": "array",
-            "description": "Array of contract objects with days_remaining field added"
+            "description": "Filtered and sorted array of contract objects for the report"
+          },
+          {
+            "name": "has_expiring",
+            "type": "boolean",
+            "description": "Whether any contracts are expiring within the next 30 days"
+          },
+          {
+            "name": "total_expiring",
+            "type": "number",
+            "description": "Count of contracts expiring within 30 days"
+          },
+          {
+            "name": "total_missing",
+            "type": "number",
+            "description": "Count of contracts with missing end dates"
           }
         ]
       }
     },
     {
-      "id": "filter_next_30_days",
-      "kind": "transform",
-      "summary": "Filter contracts to include only those ending within next 30 days or with missing end dates",
-      "inputs": [
-        "contracts_with_days"
-      ],
-      "output": "filtered_contracts",
-      "transform": {
-        "op": "filter",
-        "input": "contracts_with_days",
-        "description": "Keep contracts where days_remaining is between 0 and 30 (inclusive), or where end_date is missing/null",
-        "where": {
-          "op": "or",
-          "conditions": [
-            {
-              "op": "and",
-              "conditions": [
-                {
-                  "op": "test",
-                  "left": {
-                    "kind": "ref",
-                    "ref": "contracts_with_days",
-                    "field": "days_remaining"
-                  },
-                  "comparator": "gte",
-                  "right": {
-                    "kind": "literal",
-                    "value": 0
-                  }
-                },
-                {
-                  "op": "test",
-                  "left": {
-                    "kind": "ref",
-                    "ref": "contracts_with_days",
-                    "field": "days_remaining"
-                  },
-                  "comparator": "lte",
-                  "right": {
-                    "kind": "config",
-                    "key": "days_ahead"
-                  }
-                }
-              ]
-            },
-            {
-              "op": "test",
-              "left": {
-                "kind": "ref",
-                "ref": "contracts_with_days",
-                "field": "end_date"
-              },
-              "comparator": "exists",
-              "right": {
-                "kind": "literal",
-                "value": false
-              }
-            }
-          ]
+      "id": "generate_email_content",
+      "kind": "generate",
+      "summary": "Generate the HTML email body with a summary table of contracts ending within the next 30 days, including those with missing end dates. Handle the case where no contracts are expiring.",
+      "uses": [
+        {
+          "capability": "generate",
+          "domain": "internal"
         }
-      }
-    },
-    {
-      "id": "sort_contracts",
-      "kind": "transform",
-      "summary": "Sort contracts by end date ascending, with missing end dates at bottom",
+      ],
       "inputs": [
         "filtered_contracts"
       ],
-      "output": "sorted_contracts",
-      "transform": {
-        "op": "sort",
-        "input": "filtered_contracts",
-        "description": "Sort by end_date ascending (nulls last)"
-      }
-    },
-    {
-      "id": "generate_html_table",
-      "kind": "generate",
-      "summary": "Generate HTML table with contract summary for email body",
-      "uses": [
-        {
-          "capability": "generate",
-          "domain": "internal"
-        }
-      ],
-      "inputs": [
-        "sorted_contracts"
-      ],
       "output": "email_content",
       "generate": {
-        "input": "sorted_contracts",
+        "input": "filtered_contracts",
         "format": "html",
-        "instruction": "Create a professional HTML email body with:\n1. A heading 'Contract End-Date Summary (Next 30 Days)'\n2. If sorted_contracts is empty or has no items with valid end dates, display a message: 'No contracts ending within the next 30 days were found.' and list any documents where end dates could not be extracted.\n3. Otherwise, create an HTML table with these columns: Document Title (linked), Counterparty, End Date, Days Remaining, Notes.\n4. Use proper HTML table structure with <thead> and <tbody>.\n5. Apply professional styling: borders, header background color, padding.\n6. Make the Document Title column a clickable link using the 'link' field.\n7. For rows with missing end dates, display 'Not found' in End Date and Days Remaining columns.",
+        "instruction": "You are given a filtered_contracts object with: contracts (array), has_expiring (boolean), total_expiring (number), total_missing (number).\n\nGenerate an HTML email with these rules:\n\n**Subject line**: 'Contract End-Date Summary — Next 30 Days' (return as a separate field)\n\n**If has_expiring is true OR total_missing > 0:**\n- Start with a brief intro paragraph: 'The following contracts are ending within the next 30 days or have unresolved end dates.'\n- Include summary counts: X contracts expiring soon, Y contracts with missing end dates.\n- Create a professional HTML table with these columns: Document Title, Document Link, Counterparty, End Date, Days Remaining, Notes.\n- For Document Link, make it a clickable hyperlink with text 'Open in Drive'.\n- For missing end dates, show '—' in the End Date and Days Remaining columns.\n- For missing counterparty, show '—'.\n- Style the table with: border-collapse, 1px solid #ddd borders, padding 8px, header row with #4472C4 background and white text, alternating row colors (#f9f9f9), font-family Arial/sans-serif.\n- Rows with missing end dates should have a light yellow background (#fff3cd) to draw attention.\n\n**If has_expiring is false AND total_missing is 0:**\n- Write a short message: 'No contracts were found ending within the next 30 days. No documents with missing end dates were detected.'\n\n**If has_expiring is false AND total_missing > 0:**\n- Write: 'No contracts were found ending within the next 30 days. However, the following documents had end dates that could not be determined:'\n- Include a smaller table with just: Document Title, Document Link, Notes.\n\nReturn a JSON object with: subject (string), body (string containing the full HTML).",
         "outputs": [
           {
             "name": "subject",
@@ -415,7 +318,7 @@
           {
             "name": "body",
             "type": "string",
-            "description": "HTML email body with table"
+            "description": "Full HTML email body"
           }
         ]
       }
@@ -423,7 +326,7 @@
     {
       "id": "send_summary_email",
       "kind": "notify",
-      "summary": "Send contract summary email to recipient",
+      "summary": "Send the contract end-date summary email to the configured recipient",
       "uses": [
         {
           "capability": "send_message",
@@ -442,7 +345,7 @@
           "to": [
             {
               "kind": "config",
-              "key": "email_recipient"
+              "key": "recipients"
             }
           ]
         },
@@ -462,5 +365,14 @@
       }
     }
   ],
-  "confidence": 0.95
+  "confidence": 0.85,
+  "meta": {
+    "notes": [
+      "The workflow searches for a folder named 'Contracts' in Google Drive, then lists Google Docs within it.",
+      "Keyword filtering is done via AI generate step since Drive search API does not support OR-based title substring matching across multiple keywords natively.",
+      "Contract field extraction (end date, counterparty) uses AI analysis to handle diverse contract formats and date patterns.",
+      "Days remaining computation and 30-day filtering is done in a single AI step to handle date arithmetic and sorting.",
+      "The email handles three scenarios: contracts expiring soon, no expirations but missing dates, and no results at all."
+    ]
+  }
 }
