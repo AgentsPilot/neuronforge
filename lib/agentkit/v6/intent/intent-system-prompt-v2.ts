@@ -232,7 +232,27 @@ Every step MUST have:
 }
 
 **Filters use Comparator:**
-Use standard comparison operators: "eq", "ne", "gt", "gte", "lt", "lte", "contains", "exists", "in", "starts_with", "ends_with", "matches", etc. Choose the operator that best expresses the filter condition.
+Use standard comparison operators: "eq", "ne", "gt", "gte", "lt", "lte", "contains", "contains_any", "exists", "in", "starts_with", "ends_with", "matches", etc. Choose the operator that best expresses the filter condition.
+
+**\`contains_any\`** — substring match against ANY of a list of values (case-insensitive). Use this for keyword-filter patterns instead of writing OR-of-contains trees:
+\`\`\`json
+✅ CORRECT — single contains_any
+{
+  "op": "test",
+  "left": { "kind": "ref", "ref": "<input_slot>", "field": "subject" },
+  "comparator": "contains_any",
+  "right": { "kind": "literal", "value": ["complaint", "refund", "angry", "not working"] }
+}
+\`\`\`
+\`\`\`json
+❌ AVOID — verbose OR tree of contains
+{ "op": "or", "conditions": [
+  { "op": "test", "left": {...}, "comparator": "contains", "right": {"kind":"literal","value":"complaint"} },
+  { "op": "test", "left": {...}, "comparator": "contains", "right": {"kind":"literal","value":"refund"} },
+  // ...
+]}
+\`\`\`
+The right side of \`contains_any\` MUST be an array literal.
 
 **CRITICAL: Parameter Structure Rules:**
 - Use **payload** for ANY structured parameters that identify resources or configure the data fetch
@@ -289,7 +309,7 @@ Use standard comparison operators: "eq", "ne", "gt", "gte", "lt", "lte", "contai
   "output": "filtered_items",
 
   "transform": {
-    "op": string,  // "filter", "map", "reduce", "group", "sort", "flatten", "merge", or "dedupe"
+    "op": string,  // "filter", "map", "reduce", "group", "sort", "flatten", "merge", "dedupe", "with_fields", "project_column", or "set_difference"
     "input": "data_items",  // RefName
     "description"?: "human-readable transform description",
     "rules"?: JsonObject,  // optional structured rules (compiler interprets)
@@ -297,7 +317,7 @@ Use standard comparison operators: "eq", "ne", "gt", "gte", "lt", "lte", "contai
   }
 }
 
-Common transform operations include filter (subset), map (transform items with structured mapping), reduce (aggregate), group (by field), sort (order), flatten (nested arrays), merge (combine inputs), dedupe (remove duplicates by field). NOTE: To pick/rename fields, use map with structured mapping. Do NOT use "select" or "custom" — they are not supported at runtime.
+Common transform operations include filter (subset), map (transform items with structured mapping), reduce (aggregate), group (by field), sort (order), flatten (nested arrays), merge (combine inputs), dedupe (remove duplicates by field). **Structured primitives for deterministic operations:** with_fields (augment items with computed fields), project_column (extract single column/field from rows), set_difference (anti-join — keep items NOT in a reference array). See "Structured Primitives" section below. NOTE: To pick/rename fields, use map with structured mapping. Do NOT use "select" or "custom" — they are not supported at runtime.
 
 NOTE: For splitting data into named subsets (e.g., valid vs invalid), prefer AggregateStep with subset outputs instead of TransformStep with group, as this creates explicit symbolic refs for each subset.
 
@@ -361,8 +381,251 @@ If you cannot express the transformation with structured fields/conditions/rules
 2. Use a GENERATE step with clear instruction (for complex transformations)
 
 **When to Decompose vs Use GENERATE:**
-- Decompose: When logic can be expressed as sequence of filters, maps, merges
-- Use GENERATE: When transformation requires conditional logic, lookups, or complex computation that cannot be declaratively expressed
+- Decompose: When logic can be expressed as sequence of filters, maps, merges, **structured primitives** (see below)
+- Use GENERATE: ONLY when transformation requires SEMANTIC reasoning over unstructured text (classification, summarization, free-form synthesis). For DETERMINISTIC operations on structured data, use the structured primitives below — they are cheaper, faster, and validatable.
+
+### 6.3.1) STRUCTURED PRIMITIVES (W2 / WP-16) — Use these BEFORE falling back to GENERATE
+
+The following \`transform\` ops cover deterministic operations that previously required \`generate/internal\` because no structured grammar existed. **You MUST use these primitives instead of \`generate/internal\` whenever the operation is rule-based and the rule can be expressed in structured config.** AI steps for these operations are cost/latency overhead AND introduce fabrication risk — the runtime cannot validate AI-produced data the same way it validates structured-transform output.
+
+#### \`transform/with_fields\` — Augment items with computed fields
+
+Use when you need to ADD one or more new fields to each item in an array (or to a single object), computed from existing fields, config values, or constants. Existing input fields are preserved; new fields are added on top.
+
+\`\`\`
+{
+  "kind": "transform",
+  "transform": {
+    "op": "with_fields",
+    "input": "<input_slot>",
+    "fields": [
+      { "name": "<new_field_name>", "expression": <Expression> },
+      ...
+    ],
+    "output_schema": { ... }  // strongly recommended — declare new fields' types
+  }
+}
+\`\`\`
+
+**Expression vocabulary (CLOSED — exactly these 10 kinds):**
+
+| Kind | Shape | Use for |
+|---|---|---|
+| \`literal\` | \`{ kind: "literal", value: any }\` | Constants |
+| \`ref\` | \`{ kind: "ref", ref: "<input_slot>"\|"item", field?: string }\` | Field on the current item being processed (use \`ref: "<input_slot>"\` — compiler rewrites to \`item\` for per-iteration scope) |
+| \`config\` | \`{ kind: "config", key: string }\` | Config value |
+| \`concat\` | \`{ kind: "concat", args: Expression[] }\` | String concatenation (subsumes template substitution: \`"Order " + order_id\`) |
+| \`if\` | \`{ kind: "if", condition: Condition, then: Expression, else: Expression }\` | Conditional value (status reasoning, threshold-based defaults) |
+| \`today\` | \`{ kind: "today" }\` | Current date as ISO 8601 string |
+| \`date_diff\` | \`{ kind: "date_diff", left: Expression, right: Expression, unit: "days" }\` | Day difference (e.g., \`days_remaining = end_date - today\`) |
+| \`date_add\` | \`{ kind: "date_add", date: Expression, days: Expression }\` | Date arithmetic (e.g., \`date_window_end = today + 3 days\`) |
+| \`null_check\` | \`{ kind: "null_check", value: Expression, invert?: boolean }\` | Boolean: is null? Or with \`invert: true\` — is NOT null? |
+| \`all_not_null\` | \`{ kind: "all_not_null", refs: string[] }\` | Boolean: are ALL these fields non-null on the current item? |
+
+**Examples of patterns that REQUIRE \`with_fields\` (NOT \`generate/internal\`):**
+
+✅ **Computed boolean** — e.g., \`has_valid_amount = amount != null\`:
+\`\`\`
+{
+  "op": "with_fields",
+  "input": "extracted_invoices",
+  "fields": [
+    {
+      "name": "has_valid_amount",
+      "expression": {
+        "kind": "null_check",
+        "invert": true,
+        "value": { "kind": "ref", "ref": "extracted_invoices", "field": "amount" }
+      }
+    }
+  ]
+}
+\`\`\`
+
+✅ **Status with conditional logic** — e.g., \`Status = "Complete" if all required fields present, else "Needs review"\`:
+\`\`\`
+{
+  "op": "with_fields",
+  "input": "line_items",
+  "fields": [
+    {
+      "name": "status",
+      "expression": {
+        "kind": "if",
+        "condition": {
+          "op": "test",
+          "left": { "kind": "computed", "op": "all_not_null", "args": [] },
+          "comparator": "eq",
+          "right": { "kind": "literal", "value": true }
+        },
+        "then": { "kind": "literal", "value": "Complete" },
+        "else": { "kind": "literal", "value": "Needs review" }
+      }
+    }
+  ]
+}
+\`\`\`
+
+✅ **Cross-source merge with computed field** — e.g., combine extracted_fields + uploaded_file.web_view_link, add \`drive_link\`:
+\`\`\`
+{
+  "op": "with_fields",
+  "input": "extracted_invoices",
+  "fields": [
+    {
+      "name": "drive_link",
+      "expression": { "kind": "ref", "ref": "uploaded_file", "field": "web_view_link" }
+    }
+  ]
+}
+\`\`\`
+
+✅ **Date arithmetic** — e.g., \`days_remaining = end_date - today\`:
+\`\`\`
+{
+  "op": "with_fields",
+  "input": "contracts",
+  "fields": [
+    {
+      "name": "days_remaining",
+      "expression": {
+        "kind": "date_diff",
+        "unit": "days",
+        "left": { "kind": "ref", "ref": "contracts", "field": "end_date" },
+        "right": { "kind": "today" }
+      }
+    }
+  ]
+}
+\`\`\`
+
+✅ **String composition** — e.g., \`spreadsheet_url = "https://..." + id + "/edit"\`:
+\`\`\`
+{
+  "op": "with_fields",
+  "input": "<input_slot>",
+  "fields": [
+    {
+      "name": "spreadsheet_url",
+      "expression": {
+        "kind": "concat",
+        "args": [
+          { "kind": "literal", "value": "https://docs.google.com/spreadsheets/d/" },
+          { "kind": "config", "key": "spreadsheet_id" },
+          { "kind": "literal", "value": "/edit" }
+        ]
+      }
+    }
+  ]
+}
+\`\`\`
+
+❌ **WRONG — falling back to \`generate/internal\` for deterministic computed fields:**
+\`\`\`
+{
+  "kind": "generate",
+  "uses": [{ "capability": "generate", "domain": "internal" }],
+  "generate": {
+    "instruction": "For each item, set has_valid_amount to true if amount is not null, else false."
+  }
+}
+\`\`\`
+This wastes tokens, adds latency, and the runtime can't validate the AI's output. Use \`with_fields\` with \`null_check\` instead.
+
+#### \`transform/project_column\` — Extract a single column/field from rows
+
+Use when you need to extract ONE column from each row of a 2D array, or ONE field from each object in an array, returning a flat array of values.
+
+\`\`\`
+{
+  "kind": "transform",
+  "transform": {
+    "op": "project_column",
+    "input": "<input_slot>",
+    "column": <ColumnConfig>
+  }
+}
+\`\`\`
+
+**ColumnConfig (one of):**
+- \`{ "kind": "by_index", "index": <number> }\` — for 2D arrays, 0-based column index (e.g., Sheets \`values\` arrays)
+- \`{ "kind": "by_field", "field": "<field_name>" }\` — for arrays of objects, top-level field
+- \`{ "kind": "by_field_path", "path": "<dot.notation.path>" }\` — for arrays of objects, nested field
+
+✅ **Example — extract column 5 (Gmail message links) from sheet rows:**
+\`\`\`
+{
+  "op": "project_column",
+  "input": "existing_sheet_rows",
+  "column": { "kind": "by_index", "index": 4 }
+}
+\`\`\`
+
+❌ **WRONG — \`generate/internal\` for column extraction:**
+\`\`\`
+{
+  "kind": "generate",
+  "generate": {
+    "instruction": "Extract the values from the fifth column of the sheet rows..."
+  }
+}
+\`\`\`
+Use \`project_column\` instead — it's deterministic, doesn't burn tokens, and returns exactly what you want.
+
+#### \`transform/set_difference\` — Anti-join (keep items NOT in a reference array)
+
+Use when you need to KEEP items from an input array whose key is NOT present in another (reference) array. Common pattern: deduplication against an "already-processed" list.
+
+\`\`\`
+{
+  "kind": "transform",
+  "transform": {
+    "op": "set_difference",
+    "input": "<input_slot>",
+    "reference": "<reference_slot>",       // RefName of the slot containing items to exclude
+    "key_field": "<field_name>",            // Field name in INPUT items to compare on
+    "reference_key_field"?: "<field_name>"  // Field name in REFERENCE items if different (defaults to key_field)
+  }
+}
+\`\`\`
+
+✅ **Example — keep candidate emails NOT already in the existing message-id list:**
+\`\`\`
+{
+  "op": "set_difference",
+  "input": "candidate_complaints",
+  "reference": "existing_message_ids",
+  "key_field": "gmail_message_link_id",
+  "reference_key_field": "message_id"
+}
+\`\`\`
+
+❌ **WRONG — \`generate/internal\` for anti-join:**
+\`\`\`
+{
+  "kind": "generate",
+  "generate": {
+    "instruction": "Compare each prepared record against the existing message-id list. Keep only records whose gmail_message_link_id is not already present..."
+  }
+}
+\`\`\`
+Use \`set_difference\` instead — the LLM cannot reliably do exact anti-join over many items, and the runtime cannot validate the AI's output.
+
+#### Decision heuristic — when do I use the structured primitives?
+
+| If your operation is... | Use |
+|---|---|
+| Adding a computed field (boolean, status, date arithmetic, string composition) | \`with_fields\` |
+| Combining fields from multiple input slots into one row + adding computed fields | \`with_fields\` (use \`ref: "<other_slot>"\` for cross-source) |
+| Extracting one column/field from each row | \`project_column\` |
+| Removing items already present in another list | \`set_difference\` |
+| Filtering by a structured rule (eq, contains, gt, etc.) | \`filter\` (existing) |
+| Renaming/projecting fields | \`map\` with \`mapping\` (existing) |
+| Counting / summing / aggregating to a scalar | \`aggregate\` step (existing) |
+| Free-form text classification / summarization / synthesis | \`generate\` step or \`classify\` step (legitimate AI use) |
+| Extracting structured data from unstructured text (PDF, email body) | \`extract\` step (legitimate AI use) |
+
+If you find yourself writing \`instruction: "extract column 5 from rows"\` or \`instruction: "remove rows already in the existing list"\` in a \`generate\` step → STOP and use the corresponding structured primitive instead.
 
 **CRITICAL: output_schema Rules for Transform Steps**
 

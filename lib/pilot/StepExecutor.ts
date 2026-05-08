@@ -40,6 +40,15 @@ import { AUDIT_EVENTS } from '@/lib/audit/events';
 import { ConditionalEvaluator } from './ConditionalEvaluator';
 import { DataOperations } from './DataOperations';
 import { StepCache } from './StepCache';
+// W2 / WP-16: structured transform primitives. Pure functions, deliberately
+// extracted into their own module so they can be unit-tested without dragging
+// in StepExecutor's heavy import chain (OpenAI/uuid/runAgentKit).
+import {
+  transformWithFields as runWithFields,
+  transformProjectColumn as runProjectColumn,
+  transformSetDifference as runSetDifference,
+  StructuredTransformError,
+} from './transforms/StructuredTransforms';
 import { AISConfigService } from '@/lib/services/AISConfigService';
 import { createLogger } from '@/lib/logger';
 import { schemaExtractor, analyzeOutputSchema } from './utils/SchemaAwareDataExtractor';
@@ -2452,6 +2461,41 @@ Respond ONLY with the JSON array. No markdown, no explanation, no code blocks.`;
         result = this.transformDedupe(data, effectiveConfig);
         break;
 
+      // W2 / WP-16: structured primitives delegating to StructuredTransforms.
+      // Wrap typed errors in ExecutionError to keep the existing error contract.
+      case 'with_fields':
+        try {
+          result = runWithFields(data, effectiveConfig, context as any, this.conditionalEvaluator);
+        } catch (e: any) {
+          if (e instanceof StructuredTransformError) {
+            throw new ExecutionError(e.message, e.code, step.id);
+          }
+          throw e;
+        }
+        break;
+
+      case 'project_column':
+        try {
+          result = runProjectColumn(data, effectiveConfig);
+        } catch (e: any) {
+          if (e instanceof StructuredTransformError) {
+            throw new ExecutionError(e.message, e.code, step.id);
+          }
+          throw e;
+        }
+        break;
+
+      case 'set_difference':
+        try {
+          result = runSetDifference(data, effectiveConfig, context as any, logger);
+        } catch (e: any) {
+          if (e instanceof StructuredTransformError) {
+            throw new ExecutionError(e.message, e.code, step.id);
+          }
+          throw e;
+        }
+        break;
+
       case 'render_table':
         result = this.transformRenderTable(data, effectiveConfig);
         break;
@@ -2765,7 +2809,7 @@ Respond ONLY with the JSON array. No markdown, no explanation, no code blocks.`;
 
         if (incorrectVarMatches && incorrectVarMatches.length > 0) {
           // Extract unique variable names that need fixing
-          const varsToFix = [...new Set(incorrectVarMatches.map(m => m.slice(0, -1)))]; // Remove trailing dot
+          const varsToFix = [...new Set(incorrectVarMatches.map((m: string) => m.slice(0, -1)))]; // Remove trailing dot
           const beforeFix = resolvedExpression;
 
           // Replace all occurrences of each variable with 'item'
@@ -2776,7 +2820,6 @@ Respond ONLY with the JSON array. No markdown, no explanation, no code blocks.`;
 
           console.log(`✅ [transformMap] Auto-fixed expression: replaced ${varsToFix.join(', ')} with 'item'`);
           logger.info({
-            stepId: (step as any).id,
             varsReplaced: varsToFix,
             beforeFix: beforeFix.slice(0, 100),
             afterFix: resolvedExpression.slice(0, 100)
@@ -3545,6 +3588,19 @@ Respond ONLY with the JSON array. No markdown, no explanation, no code blocks.`;
       unassigned
     };
   }
+
+  // ============================================================
+  // W2 / WP-16 — Structured primitives for deterministic operations.
+  // Implementation lives in `./transforms/StructuredTransforms.ts` for testability.
+  // The switch cases above delegate to those pure functions and re-wrap
+  // `StructuredTransformError` as `ExecutionError`.
+  // See: docs/v6/V6_WP16_INVENTORY.md.
+  // ============================================================
+
+  // (No inline implementations here — the switch cases above delegate to
+  // pure functions in transforms/StructuredTransforms.ts. That module is
+  // import-light and unit-tested directly.)
+
 
   /**
    * Render table transformation

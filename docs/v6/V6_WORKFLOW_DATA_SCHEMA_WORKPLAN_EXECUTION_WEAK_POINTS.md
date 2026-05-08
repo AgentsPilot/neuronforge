@@ -1,6 +1,6 @@
 # V6 Pipeline — Execution Weak Points & Hardening Plan
 
-> **Last Updated**: 2026-03-31
+> **Last Updated**: 2026-05-08
 > **Branch**: `feature/v6-intent-contract-data-schema`
 > **Parent workplan**: [V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION.md](./V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION.md)
 
@@ -30,6 +30,10 @@ The weak points are ordered by likelihood of causing failures as new scenarios a
 | [WP-12](#wp-12-document-extractor-bound-to-free-text-email-body-instead-of-ai_processing) | `document-extractor` bound to free-text email body — produces "Unknown" placeholders | P0 | ✅ Fixed — binder reroutes non-file inputs to AI extraction |
 | [WP-13](#wp-13-ai_processing-hallucinates-on-empty-input) | `ai_processing` fabricates plausible-looking data when input array is empty | P0 | ✅ Fixed — empty-input guard + prompt guardrail |
 | [WP-14](#wp-14-scatter-gather-token-bloat--extract-step-output-shape) | Scatter-gather merges full item with extract output → token bloat; I3 doesn't parse `fields` schema; runtime safety misroutes already-text content | P0 | ⚠️ Partial fix (multi-step scatter body case reopened 2026-04-14) |
+| [WP-15](#wp-15-ai-declared-output-slots-lose-item-level-shape) | AI-declared output slots lose item-level shape — `generate.outputs[]` / `extract.fields[]` grammar can't express array `items` or object `properties`, so AI slots in `data_schema` are depth-1 (`{type:"array"}` with no item structure). Compiler auto-repairs to `items:{type:"any"}`, masking the gap. Same fabrication-risk class as AliExpress (WP-13) — no schema → no validator can catch downstream silent fabrication. | P0 | ⬜ Not started — see [WORKPLAN_INTENT_CONTRACT.md](./V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_INTENT_CONTRACT.md) tasks 0.4–0.6 + 2.11 |
+| [WP-16](#wp-16-deterministic-data-operations-routed-to-ai-step) | Deterministic data operations (filter, column projection, anti-join, dedup) routed to `ai_processing` because Phase 1 vocabulary doesn't expose workflow primitives — the LLM defaults to `generate/internal` for any internal data op. Each unnecessary AI step adds cost, latency, and fabrication risk; compounds WP-13/WP-15 by inserting LLM boundaries where none were needed. | P1 | 🟡 In progress — task 0.7 ✅ done (see [V6_WP16_INVENTORY.md](./V6_WP16_INVENTORY.md)); tasks 0.8–0.12 ⬜ pending |
+| [WP-17](#wp-17-loop-item-slot-misderived-from-nested-array-and-overwritten-across-loops) | Loop `item_ref` slot has the wrong schema (full wrapper object instead of unwrapped per-element shape) when the iterated array is nested under a field, AND the slot is overwritten when multiple loops share an `item_ref` name. Two bugs in `DataSchemaBuilder.buildLoopSlots()` — declared schema doesn't match the runtime iteration value. Cross-step type validator can't catch downstream errors because the source schema lies. | P1 | ⬜ Not started — see [WORKPLAN_INTENT_CONTRACT.md](./V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_INTENT_CONTRACT.md) tasks 2.12 + 2.13 |
+| [WP-18](#wp-18-shape-preserving-transform-inherits-schema-from-wrong-slot-when-compiler-auto-unwraps-input) | Shape-preserving transforms (`filter`, `sort`, `dedupe`, `flatten`) inherit schema from the input slot per design — but when the input is a plugin wrapper (e.g., Sheets `{values, row_count, ...}`) the compiler auto-injects a `rows_to_objects` transform that unwraps to an object array. `DataSchemaBuilder` doesn't anticipate this and inherits the wrapper schema instead of the post-unwrap shape. The LLM's explicit `transform.output_schema` declaration — which would have caught the discrepancy — is ignored. Same "schema lies about reality" failure class as WP-13/15/17. | P1 | ⬜ Not started — see [WORKPLAN_INTENT_CONTRACT.md](./V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_INTENT_CONTRACT.md) tasks 2.14 + 2.15 |
 
 ---
 
@@ -708,6 +712,415 @@ Rather than continuing to grow runtime heuristics, the compiler should emit an e
 
 ---
 
+### WP-15: AI-declared output slots lose item-level shape
+
+**Severity:** Critical (P0 — same fabrication-risk class as WP-13 AliExpress)
+**Discovered as:** Regression scenario review of `tests/v6-regression/scenarios/complaint-email-logger/` (2026-05-06)
+**Status:** ⬜ Not started
+**Solution (build tasks):** [WORKPLAN_INTENT_CONTRACT.md](./V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_INTENT_CONTRACT.md) tasks **0.4** (grammar), **0.5–0.6** (Phase 1 prompt), **2.11** (DataSchemaBuilder recursive copy) — then retire [WORKPLAN.md](./V6_WORKFLOW_DATA_SCHEMA_WORKPLAN.md) task **7.3** safety net once regression shows 0 firings. Full layered solution sketch in the *Proposed solution* subsection below.
+
+**Problem:** AI-declared slots in `data_schema` (those produced by `generate` / `extract` / shape-changing `transform` steps) consistently come out depth-1 — array fields have no `items`, object fields have no nested `properties` — even when the user prompt and the LLM's free-text `instruction` enumerate every field name. This is the same pattern the design doc Section 2 explicitly calls out as **"Rejected (too shallow)"**.
+
+**Canonical reproducer:** `complaint-email-logger`. The Enhanced Prompt asks for rows with columns `sender email, subject, date, full email text, Gmail message link/id`. Phase 1's `prepare_candidate_emails` step emits an `instruction` mentioning every one of those fields, but the structured `outputs[]` it can produce is:
+
+```json
+"outputs": [
+  { "name": "rows", "type": "array", "description": "Prepared complaint email records..." }
+]
+```
+
+Phase 2's `DataSchemaBuilder.inferSchemaForGenerateStep()` (task 2.5) faithfully copies this and emits:
+
+```json
+"candidate_rows": {
+  "schema": {
+    "type": "object",
+    "properties": {
+      "rows": { "type": "array", "description": "..." }
+    },
+    "source": "ai_declared"
+  }
+}
+```
+
+No `items`. No per-item `properties`. All five field names live only in the prose `instruction` — they never reach `data_schema`.
+
+**Root cause:** Structural — the IntentContract `generate.outputs[]` and `extract.fields[]` grammar today only allows `{name, type, description}`. There is no slot for `items` (when `type: "array"`) or `properties` (when `type: "object"`). The LLM physically cannot declare element shape with the current grammar; the builder can only emit what the grammar carries.
+
+**Why it survived regression so far:** The compiler's depth-enforcement validator was added in `WORKPLAN.md` task 3.8 to reject shallow schemas. It immediately caused non-deterministic pipeline kills because the LLM produced shallow schemas on a fraction of runs. Task 7.3 then weakened the validator to **warn-and-auto-repair** (`type:"array"` → `items:{type:"any"}`, `type:"object"` → `properties:{}`). The auto-repair keeps the pipeline alive but neuters the contract — every AI slot silently degrades to "any" and downstream validators can't catch field misuse.
+
+**Why it matters (the AliExpress analogy):** Direction #2's runtime AI output validator (`AIOutputValidator` / `SchemaViolationError`) only enforces what the slot schema declares. When the slot is `{type:"array", items:{type:"any"}}`, every per-row object passes — even fabricated `"Unknown package_number / Unknown products"` placeholders. **The same class of silent fabrication that motivated the entire DESIGN_REBASE remains uncaught at the AI-step boundary because the schema can't describe what's expected.** This is Direction #2's enforcement gate failing open at exactly the boundary V6 was designed to tame.
+
+**Trigger scenarios:** Every scenario with an AI step that returns an array of objects or a structured object. Confirmed in `complaint-email-logger` (slots `existing_message_ids`, `candidate_rows`, `new_rows_to_append`). Likely present in `aliexpress-delivery-tracker`, `expense-invoice-email-scanner`, `gmail-urgency-flagging`, `leads-per-salesperson-email`, `orders-po-extractor-xlsx`, `po-monitor-supplier-confirmation`, `contract-enddate-summary`, `gantt-urgent-tasks`, `leads-email-summary` — to be confirmed by sweeping each scenario's `phase2-data-schema.json`.
+
+**Cross-references:**
+- DESIGN_REBASE.md §P2 — "Structured data decays into natural language, then is reconstructed downstream"
+- DESIGN_REBASE.md §P4 — "The IntentContract LLM lacks the context it needs to be correct"
+- DESIGN.md §2 — "AI output schema depth requirement (CRITICAL)"
+- WP-4 (closest analog — same pattern, fix already proven by promoting prose `custom_code` to structured `mapping[]`)
+- WP-13 (the silent-fabrication risk this gap permits)
+- `WORKPLAN.md` task 7.3 (the safety net being masked) and `WORKPLAN_INTENT_CONTRACT.md` task 4.6 (its port)
+
+**Proposed solution (layered — see WORKPLAN_INTENT_CONTRACT.md for task-level detail):**
+
+1. **Grammar (task 0.4):** Make `outputs[]` / `fields[]` recursive. `FieldSpec.items?: FieldSpec` for arrays, `FieldSpec.properties?: Record<string, FieldSpec>` for objects.
+2. **Phase 1 prompt (tasks 0.5, 0.6):** Teach the LLM the new grammar with a positive complaint-logger example and a negative shallow example. Reinforce: field names mentioned in `instruction` MUST also appear in structured `properties`. Prefer upstream slot field names (from Direction #1's vocabulary injection) over invented ones.
+3. **Phase 2 builder (task 2.11):** Update `inferSchemaForGenerateStep()` and `inferSchemaForExtractStep()` to recursively walk nested `items` / `properties` into the SchemaField tree.
+4. **Retire the safety net:** Once tasks 1–3 land, instrument `validateSchemaDepth` and run the 10 regression scenarios. When firings drop to 0, change task 7.3 from warn-and-repair back to error-and-throw. Removing it before tasks 1–3 will re-introduce hard pipeline failures — order matters.
+
+**Sequencing rationale:** Removing the safety net before fixing the grammar = pipeline breakage on every shallow LLM run (the original failure mode 7.3 was added to prevent). Fixing the grammar without retiring the safety net = the gap stays masked; retire-after-measuring is the only safe order.
+
+**Files (expected fix surface):**
+- `lib/agentkit/v6/intent/intent-contract-types.ts`, `lib/agentkit/v6/intent/intent-contract-schema.ts` (Zod) — grammar
+- `lib/agentkit/v6/intent/intent-system-prompt-v2.ts` — prompt rules + examples
+- `lib/agentkit/v6/capability-binding/DataSchemaBuilder.ts` — recursive copy
+- `lib/agentkit/v6/semantic-plan/IRFormalizer.ts` — retire auto-repair after measurement
+
+**Test cases:**
+- After fix: `complaint-email-logger`'s `phase2-data-schema.json` slot `candidate_rows` contains `properties.rows.items.properties` with all five expected fields.
+- After fix: depth-enforcement firings = 0 across all 10 regression scenarios.
+- After fix: Direction #2 `AIOutputValidator` catches fabricated rows (e.g., manually inject `"Unknown package_number"` in an AI step output → `SchemaViolationError` raised because the slot now has typed item properties).
+
+---
+
+### WP-16: Deterministic data operations routed to AI step
+
+**Severity:** High (P1 — not data-corrupting on its own; compounds WP-13 / WP-15 by inserting unnecessary LLM boundaries that introduce fabrication risk)
+**Discovered as:** Regression scenario review of `tests/v6-regression/scenarios/complaint-email-logger/` (2026-05-06 — same review that surfaced WP-15)
+**Status:** ⬜ Not started
+**Solution (build tasks):** [WORKPLAN_INTENT_CONTRACT.md](./V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_INTENT_CONTRACT.md) tasks **0.7** (grammar inventory), **0.8** (add missing primitives `project_column`, `set_difference`), **0.9** (vocabulary injection), **0.10** (Phase 1 prompt rules), **0.11** (defensive `reason` field on `generate/internal`), **0.12** (regression measurement). Compiler-side rewrite (Solution D) is **deferred and gated** on 0.12 — only added if Phase 1 tuning leaves residue.
+
+**Problem:** Pure deterministic data operations (column projection, keyword filtering, anti-join, deduplication) compile to `ai_processing` steps because the IntentContract LLM defaults to `kind: "generate", domain: "internal"` for any internal data manipulation. Each unnecessary AI step adds latency, token cost, and — critically — a new untyped LLM boundary where fabrication can leak in (compounding WP-13 and WP-15).
+
+**Canonical reproducer:** `complaint-email-logger`. Three of seven DSL steps are unnecessary AI:
+
+| DSL Step | What it does | What it should be |
+|---|---|---|
+| step4 `extract_existing_message_ids` | Returns column 5 of a 2D string array | `transform/project_column` (deterministic — `row[4]`) |
+| step5 `prepare_candidate_emails` | Case-insensitive keyword filter on `subject\|snippet\|body` against fixed config keywords + field projection | `transform/filter` + `transform/map` |
+| step6 `filter_new_rows` | Anti-join: keep rows where `gmail_message_link_id NOT IN existing_message_ids` | `transform/set_difference` |
+
+The Phase 1 IntentContract declared all three as:
+
+```json
+{ "kind": "generate", "uses": [{ "capability": "generate", "domain": "internal" }] }
+```
+
+The IR converter then faithfully translates `generate` → `ai_processing` because that's what the contract says.
+
+**Root cause:** Two structural gaps in Phase 1:
+
+1. **Vocabulary gap.** The `PluginVocabularyExtractor` injects plugin actions into the Phase 1 prompt with full input/output schema detail (Direction #1). It does **not** inject *workflow primitives* — the deterministic `transform` step kinds the grammar already supports. So when the LLM has an internal data operation, `generate/internal` is the path of least resistance — it's the only "internal" capability the prompt explicitly mentions.
+
+2. **Grammar gap.** Today's `transform` step grammar (in [intent-schema-types.ts:143](../../lib/agentkit/v6/intent/intent-schema-types.ts#L143)) supports `filter | map | group | dedupe | flatten | sort` with a free-text `rule: string` field. Two operations the complaint-logger needed have no first-class kind: **`project_column`** (extract column N from a 2D array, or field X from each object in an array) and **`set_difference`** (anti-join — keep items whose key is NOT in a reference list). When the grammar lacks the structured form, the LLM falls back to `generate/internal`. Same root pattern as WP-4 (free-text `custom_code` filled the gap until structured `mapping[]` was added).
+
+**Why the compiler doesn't catch it:** No pass fingerprints `ai_processing` steps as "this is a pure projection/filter" and rewrites them to deterministic transforms. The compiler *can* synthesize transforms (it auto-injects `rows_to_objects` for Sheets reads — see WORKPLAN.md task 7.6), but it doesn't reach back and replace AI steps that should have been transforms. Adding such a pass would violate DESIGN_REBASE §P3 ("compiler heuristic soup") unless it's gated on measurement showing Phase 1 tuning isn't enough.
+
+**Why fabrication-risk:** Each unnecessary AI step is a new boundary where the LLM can hallucinate. In the complaint-logger case:
+- step4 could fabricate plausible-looking message IDs that don't exist in the sheet → step6 produces wrong dedup result
+- step5 could fabricate emails that don't match the keyword rule → "complaints" logged that aren't complaints
+- step6 could fabricate rows that already exist → duplicate sheet entries
+
+WP-15's shallow schemas make this worse: with no `items.properties` declared on the AI slot, Direction #2's runtime validator can't catch the fabrication. WP-16 + WP-15 + WP-13 form a chain — fix one alone and the others still leave silent-fabrication paths open.
+
+**Trigger scenarios:** Any workflow with internal data manipulation. Confirmed in `complaint-email-logger` (3 instances: `extract_existing_message_ids`, `prepare_candidate_emails`, `filter_new_rows`). Sweep status:
+- `aliexpress-delivery-tracker` (sweep 2026-05-08) — **0 instances**. Phase 1 correctly used `loop`+`extract` for AI extraction and `generate/internal` only for HTML synthesis (legitimate).
+- `leads-per-salesperson-email` (sweep 2026-05-08) — **0 instances**. Phase 1 correctly used `transform/filter` and `transform/group` for the deterministic ops, `generate/internal` only for HTML synthesis. Strong evidence that **the LLM chooses primitives correctly when they exist in the grammar** — primary lever is grammar (task 0.8), not vocabulary visibility (task 0.9).
+- `expense-invoice-email-scanner` (sweep 2026-05-08) — **1 instance** (`build_attachment_row`). The Phase 1 LLM used `transform/flatten`, `transform/filter`, `aggregate` correctly, but routed a **structured cross-source merge with one derived field** (combining `extracted_fields.*` + `uploaded_file.web_view_link` + computed `has_valid_amount = amount != null`) to `generate/internal` because (a) the grammar's `transform.operation` enum lacks `merge` even though the design table lists it (design/code drift), and (b) no primitive exists for derived/computed fields. **This expands WP-16 task 0.7's scope** — the inventory must reconcile design/code drift on `merge`/`reduce`/`select` and consider a new `derive` / `with_fields` primitive.
+- `gmail-urgency-flagging`, `orders-po-extractor-xlsx`, `po-monitor-supplier-confirmation`, `contract-enddate-summary`, `gantt-urgent-tasks`, `leads-email-summary` — regression sweep needed.
+
+**Cross-references:**
+- DESIGN_REBASE.md §P3 — "The compiler has become a heuristic soup" (don't add more compiler heuristics; fix at Phase 1)
+- DESIGN_REBASE.md §P4 — "The IntentContract LLM lacks the context it needs to be correct" (extend vocabulary, same pattern as Direction #1)
+- CLAUDE.md Platform Design Principles — *"Don't use AI for data restructuring — let the compiler detect and optimise redundant AI steps"* (this is the principle being violated)
+- WP-4 — closest analog. Free-text `custom_code` was promoted to structured `mapping[]`. Same pattern applies here: `generate/internal` for filter/projection should be promoted to structured `transform` kinds.
+- WP-13 — silent fabrication on empty AI input. WP-16 creates more of those AI boundaries unnecessarily.
+- WP-15 — shallow AI schemas. WP-16 multiplies the number of slots WP-15 fails to validate.
+
+**Proposed solution (layered — see WORKPLAN_INTENT_CONTRACT.md for task-level detail):**
+
+1. **Inventory + grammar (tasks 0.7, 0.8):** Sweep the existing `transform` operations vs. operations the regression scenarios need. Add missing primitives to the grammar, IR converter, and runtime executors. At minimum: `project_column` (config: `{column_index}` or `{field_path}`) and `set_difference` (config: `{reference_slot, key_field}`). Also formalize that shape-changing transforms must have structured config — no free-text `rule: string` for the new primitives.
+
+2. **Vocabulary injection (task 0.9):** Add a "Workflow Primitives" section to `buildVocabularyInjection()`, listed alongside plugin actions. Same shape as plugin action entries: name, when-to-use, structured config, example usage. Listed primitives: all `transform` kinds + `aggregate`. Each entry includes a one-line "use this instead of `generate/internal` when ..." trigger.
+
+3. **Phase 1 prompt rules (task 0.10):** Explicit guidance: *"For internal data operations, prefer `transform` steps over `generate/internal`. Use `generate/internal` only when the operation requires reasoning beyond rule application (free-form classification, summarization, semantic comparison). If you find yourself writing `instruction: 'extract column 5 from rows'` or `instruction: 'remove rows already in the existing list'`, you should be writing a structured `transform` step instead."* Include the complaint-logger pattern as a negative example with side-by-side rewrite.
+
+4. **Defensive grammar nudge (task 0.11):** On `kind: "generate"` with `domain: "internal"`, require a `reason: string` field. The LLM must justify why a deterministic transform isn't sufficient. Cheap to add, makes the choice deliberate, and gives downstream telemetry a signal about how often `generate/internal` is being used and why.
+
+5. **Measure (task 0.12):** After 1–4 land, sweep all 10 regression scenarios. For each `ai_processing` step in the compiled DSL, regex-match the `prompt` field against deterministic-op fingerprints (`^extract column \d`, `^keep .* where .* contains`, `^remove .* already`, `^group .* by`). Report residual count.
+
+6. **Compiler rewrite (Solution D — deferred, gated on step 5):** If step 5 shows residue > 0 after Phase 1 tuning, add a compiler pass that rewrites those `ai_processing` steps to `transform` steps. If 0, defer indefinitely — adding a compiler pass *just in case* is exactly the heuristic-soup pattern the rebase doc warns against.
+
+**Sequencing rationale:** Steps 1–4 are upstream fixes at Phase 1 (where the choice is made). Step 5 measures whether Phase 1 alone is sufficient. Step 6 is the compiler safety net — only built if measured to be necessary. This is the inverse of the current pattern (compiler heuristic ships first; root cause deferred) and matches DESIGN_REBASE's prescribed direction.
+
+**Files (expected fix surface):**
+- `lib/agentkit/v6/intent/intent-schema-types.ts` — extend `transform` step kinds with `project_column`, `set_difference`
+- `lib/agentkit/v6/intent/intent-contract-schema.ts` (Zod) — same
+- `lib/agentkit/v6/vocabulary/PluginVocabularyExtractor.ts` — add `extractWorkflowPrimitives()` parallel to plugin extraction
+- `lib/agentkit/v6/intent/intent-system-prompt-v2.ts` — `buildVocabularyInjection()` includes Workflow Primitives section + new prompt rules
+- `lib/agentkit/v6/compiler/IntentToIRConverter.ts` — handle new `transform` kinds
+- `lib/pilot/operations/DataOperations.ts` (or equivalent) — runtime executors for `project_column`, `set_difference`
+
+**Test cases:**
+- After fix: `complaint-email-logger`'s `phase4-pilot-dsl-steps.json` has at most 1 `ai_processing` step (none for the deterministic operations); steps 4, 5, 6 become `transform` steps with structured config.
+- After fix: Phase 1 IntentContract for complaint-logger uses `transform/project_column`, `transform/filter`, `transform/set_difference` instead of three `generate/internal` steps.
+- After fix: regression measurement (task 0.12) reports residual `ai_processing`-with-deterministic-fingerprint count across all 10 scenarios.
+- After fix: end-to-end correctness — complaint-logger appends only complaint emails, dedup actually works, no fabricated rows.
+
+**Compounding with WP-15:** When WP-15 + WP-16 land together, the complaint-logger DSL drops from 3 `ai_processing` steps with shallow schemas to 0 `ai_processing` steps for deterministic ops. The single remaining AI step (if any — perhaps for keyword classification beyond the simple `contains` check) has a deep `output_schema` that Direction #2's `AIOutputValidator` can actually enforce. The fabrication-risk surface shrinks dramatically.
+
+---
+
+### WP-17: Loop item slot misderived from nested array and overwritten across loops
+
+**Severity:** High (P1 — declared schema doesn't match runtime data; cross-step type validator can't catch downstream errors when the source schema lies)
+**Discovered as:** Regression scenario review of `tests/v6-regression/scenarios/aliexpress-delivery-tracker/` (2026-05-08)
+**Status:** ⬜ Not started
+**Solution (build tasks):** [WORKPLAN_INTENT_CONTRACT.md](./V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_INTENT_CONTRACT.md) tasks **2.12** (nested-array unwrap), **2.13** (multi-loop `item_ref` collision handling).
+
+**Problem:** When an IntentContract loop iterates over a slot whose **top-level type is not array** but contains a nested array (e.g., `over: "aliexpress_emails"` where the slot is the search-results wrapper `{emails: array<...>, total_found, ...}`), the loop item slot ends up declared with the **wrapper's schema** instead of the per-element schema. Compounded by a second bug: when multiple loops share an `item_ref` name, each loop's `buildLoopSlots()` call overwrites the prior slot in `slots[]`, so `produced_by` reflects only the last loop.
+
+**Canonical reproducer:** `aliexpress-delivery-tracker`. The IntentContract has 3 loops all using `over: "aliexpress_emails"` and `item_ref: "email"`:
+- `extract_package_details` (extracts fields per email)
+- `mark_emails_read` (modifies each email)
+- `move_to_shopping_label` (modifies each email)
+
+`aliexpress_emails` is a Gmail search-results wrapper: top-level `type: "object"` with `properties: {emails: array<email>, total_found: number, search_query: string, ...}`.
+
+The resulting `email` slot in `phase2-data-schema.json`:
+
+```json
+"email": {
+  "schema": {
+    "type": "object",
+    "source": "inferred",
+    "properties": {
+      "emails": { "type": "array", "items": {...email object...} },   // ← wrapper leaked through
+      "total_found": { "type": "number" },                             // ← wrapper field
+      "search_query": { "type": "string" },                            // ← wrapper field
+      ...
+    }
+  },
+  "scope": "loop",
+  "produced_by": "move_to_shopping_label"   // ← last loop wins
+}
+```
+
+Expected:
+
+```json
+"email": {
+  "schema": {
+    "type": "object",
+    "source": "inferred",
+    "properties": {
+      "id": {...}, "subject": {...}, "from": {...}, "to": {...},
+      "date": {...}, "snippet": {...}, "body": {...}, "labels": {...},
+      "attachments": {...}, "thread_id": {...}
+    }
+  },
+  "scope": "loop",
+  "produced_by": "extract_package_details"   // first/canonical owner
+}
+```
+
+**Root cause (two bugs in `buildLoopSlots()`):**
+
+🐛 **Bug A — nested-array unwrap missing.** [DataSchemaBuilder.ts:458-464](../../lib/agentkit/v6/capability-binding/DataSchemaBuilder.ts#L458-L464):
+
+```typescript
+if (overSlot?.schema.type === 'array' && overSlot.schema.items) {
+  itemSchema = { ...this.deepCopySchema(overSlot.schema.items), source: 'inferred' }
+} else if (overSlot) {
+  // Iterating over non-array (edge case) — use the slot schema directly
+  itemSchema = { ...this.deepCopySchema(overSlot.schema), source: 'inferred' }
+}
+```
+
+Only handles slots whose top-level type is `array`. For `over: "aliexpress_emails"` the slot type is `object`, so the check fails and the fallback at line 461 copies the **entire wrapper** as the item schema. The same gap exists in the second-pass fixup at [DataSchemaBuilder.ts:632-633](../../lib/agentkit/v6/capability-binding/DataSchemaBuilder.ts#L632-L633).
+
+In the compiled DSL the runtime loop correctly iterates over `{{aliexpress_emails.emails}}` (the IR converter / compiler unwraps it). So **execution works**, but the **declared schema is wrong** — every cross-step type check on `email.id`, `email.body`, `email.subject` runs against a schema that has no such top-level fields (it has `email.emails[].id`, etc.).
+
+🐛 **Bug B — multi-loop `item_ref` overwrite.** [DataSchemaBuilder.ts:466-470](../../lib/agentkit/v6/capability-binding/DataSchemaBuilder.ts#L466-L470):
+
+```typescript
+slots[step.loop.item_ref] = {
+  schema: itemSchema,
+  scope: 'loop',
+  produced_by: step.id,
+}
+```
+
+Direct assignment with no collision check. When 3 loops share `item_ref: "email"`, the third call (`move_to_shopping_label`) overwrites the prior slot. `produced_by` reflects only the last loop, and any per-loop refinements (e.g., if loops had different over-arrays) would be lost.
+
+**Why both bugs hide:**
+- Runtime variable resolution doesn't consult the schema for loop iteration values — it uses the actual iteration data. So execution succeeds despite the schema being wrong.
+- Phase 4 cross-step type validator (WORKPLAN.md task 4.7 / WORKPLAN_INTENT_CONTRACT.md task 4.7) checks references against `data_schema`. With Bug A, every per-iteration field reference like `{{email.id}}` should *fail* type validation — but instead it either silently passes (validator misses the case) or auto-repairs (task 7.3 safety net). Either way: the validator can't actually enforce correctness because the schema lies.
+- WP-15's auto-repair compounds this. With Bug A producing a wrong-but-non-empty schema, WP-15's depth check sees `properties` present and doesn't fire — the `{type:any}` fallback that would have flagged the issue never triggers.
+
+**Why this matters (fabrication risk):**
+
+This is the same class of "schema lies about reality" failure as WP-13 and WP-15. The runtime `AIOutputValidator` (Direction #2) only catches what the schema declares. When the schema for the *input* to an AI step is wrong, the AI's output schema can be perfectly correct and still mismatch what the AI actually receives. In `aliexpress-delivery-tracker`:
+
+- `extract_fields` step3 receives `{{email}}` — an actual single-email object at runtime
+- The declared input schema says `email` has fields `emails`, `total_found`, `search_query` (the wrapper)
+- The AI prompt says "extract from `email.body`, `email.subject`" — references that don't exist in the declared schema but DO exist in the runtime data
+- Cross-step type validator either silently passes or auto-repairs both sides — gap is hidden
+
+**Trigger scenarios:** Any workflow with:
+- A loop whose `over` slot is a wrapper-object (not a top-level array) — e.g., Gmail/Drive/Sheets search results, paginated APIs that return `{items: [...], total, ...}`. **Common.**
+- Multiple loops over the same array (mark-as-read + apply-label is the canonical pattern). Confirmed in `aliexpress-delivery-tracker`. Likely repeats across email-batch scenarios.
+
+**To-be-confirmed scenarios** (regression sweep needed): `gmail-urgency-flagging`, `expense-invoice-email-scanner`, `leads-per-salesperson-email`, `complaint-email-logger` (no loops, so unaffected), `aliexpress-delivery-tracker` (confirmed).
+
+**Cross-references:**
+- WP-2 — closest analog: field-name mismatches between plugin output and downstream refs. WP-17 is structurally similar but at the loop boundary instead of the cross-step boundary.
+- WP-15 — when item schema is wrong, WP-15's depth validator can't fire because `properties` are technically present.
+- DESIGN.md §3.4 (Scatter-gather item scope) — explicitly states *"The compiler infers `current_email.schema` from `raw_emails.schema.items`"*. WP-17 is a **failure to honor this design contract** when the array is nested.
+- DESIGN_REBASE.md §P1 — "schema contract became advisory" — exactly the failure mode at the loop boundary.
+
+**Proposed solution (two surgical fixes in adjacent code):**
+
+1. **Fix Bug A — nested-array unwrap (task 2.12).** When `overSlot.schema.type !== 'array'`, walk into the schema and find the **single nested array** under `properties[].items` (or `properties[].properties[].items`). If exactly one nested array is found, use its `items` as the item schema. This matches what the IR converter / compiler already does when it rewrites `over: "aliexpress_emails"` to `iterate_over: "{{aliexpress_emails.emails}}"`.
+   - **Edge case 1:** if the wrapper has multiple arrays at the same nesting level (rare), require an explicit `loop.over_field` field on the IntentContract step (small grammar addition) so the LLM disambiguates.
+   - **Edge case 2:** if no nested array is found, log a warning and keep the existing behavior (copy wrapper) — that's still better than dropping the slot.
+   - Same logic must be added to the second-pass fixup at line 632.
+
+2. **Fix Bug B — multi-loop `item_ref` collision (task 2.13).** Two options:
+   - **Option a (preferred):** Track all producers. When `slots[item_ref]` already exists with `scope: 'loop'`, verify the new schema matches the existing one (same `over`-array's items shape). If yes, leave the slot alone but **append the loop step to a `produced_by_loops: string[]` field** for traceability. If no, that's a genuine collision (different shapes for the same name) — log an error.
+   - **Option b:** Treat each loop's `item_ref` as scope-local — rename to `<loop_id>__<item_ref>` internally, even if the IntentContract uses the same name. Cleaner but more invasive (downstream refs would need rewriting).
+   - Recommendation: Option a. Three loops over the same source share semantics; renaming would obscure that.
+
+**Files (expected fix surface):**
+- `lib/agentkit/v6/capability-binding/DataSchemaBuilder.ts` — both bugs in `buildLoopSlots()` and the second-pass fixup loop
+- Possibly `lib/agentkit/v6/intent/intent-schema-types.ts` — only if Edge case 1 needs a grammar addition (`loop.over_field`)
+- Tests in `__tests__/DataSchemaBuilder*.test.ts` — new cases for nested-array unwrap and multi-loop item_ref
+
+**Test cases:**
+- After fix: `aliexpress-delivery-tracker`'s `email` slot has the per-email schema (`id`, `subject`, `from`, `to`, `body`, ...) — not the search-results wrapper.
+- After fix: `email` slot's `produced_by` reflects the first/canonical loop (or all three via `produced_by_loops`).
+- Unit test: loop with `over` pointing to an object slot containing a single nested array → item slot has the array's `items` schema.
+- Unit test: loop with `over` pointing to an array slot directly → behavior unchanged (regression guard).
+- Unit test: 3 loops with same `item_ref` over the same array → slot exists once, schema correct, all three loops tracked.
+- Cross-step regression: after fix, the cross-step type validator should produce 0 unresolved-reference warnings for `aliexpress-delivery-tracker` references like `{{email.id}}`, `{{email.body}}`.
+
+**Compounding with WP-15:** WP-17's Bug A produces a wrong-but-non-empty schema, which masks WP-15's depth check from firing on loop item slots (the wrong schema technically has `properties`). After WP-17 lands, WP-15's depth validator will see clean per-element schemas and can correctly catch any remaining shallow declarations.
+
+---
+
+### WP-18: Shape-preserving transform inherits schema from wrong slot when compiler auto-unwraps input
+
+**Severity:** High (P1 — declared schema doesn't match runtime data; affects every workflow that filters/sorts/dedupes Sheets data or other wrapper-style plugin output. Common pattern across the regression suite.)
+**Discovered as:** Regression scenario review of `tests/v6-regression/scenarios/leads-per-salesperson-email/` (2026-05-08)
+**Status:** ⬜ Not started
+**Solution (build tasks):** [WORKPLAN_INTENT_CONTRACT.md](./V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_INTENT_CONTRACT.md) tasks **2.14** (honor LLM-declared `transform.output_schema` even on shape-preserving ops) + **2.15** (verify task 4.5 auto-injected slot registration actually fires for `rows_to_objects`).
+
+**Problem:** `DataSchemaBuilder.inferSchemaForTransformStep()` treats `filter`, `sort`, `dedupe`, `flatten` as shape-preserving and inherits the output slot schema from the input slot (per the design table in WORKPLAN_INTENT_CONTRACT.md line 159). This rule has an unstated assumption: **the input slot schema represents the data the operation will actually see at runtime**. That assumption breaks when the input is a plugin wrapper (Sheets `{values: array<array>, row_count, ...}`, paginated APIs, etc.) and the compiler auto-injects an unwrap transform (`rows_to_objects`) before the filter. The filter operates on object array data, but its output slot inherits the wrapper schema.
+
+The LLM's explicit `transform.output_schema` declaration — which would have caught this — is **ignored** because the operation is "shape-preserving."
+
+**Canonical reproducer:** `leads-per-salesperson-email`. The `filter_qualified_leads` step in [phase1-intent-contract.json:124-165](../../tests/v6-regression/scenarios/leads-per-salesperson-email/output/phase1-intent-contract.json#L124-L165) explicitly declared an output_schema:
+
+```json
+"output_schema": {
+  "type": "array",
+  "items": {
+    "type": "object",
+    "properties": {
+      "Date": {...}, "Lead Name": {...}, "Company": {...},
+      "Email": {...}, "Phone": {...}, "Stage": {...},
+      "Notes": {...}, "Sales Person": {...}
+    }
+  }
+}
+```
+
+But [phase2-data-schema.json:57-112](../../tests/v6-regression/scenarios/leads-per-salesperson-email/output/phase2-data-schema.json#L57-L112) shows the `qualified_leads` slot inherited the Sheets wrapper instead:
+
+```json
+"qualified_leads": {
+  "schema": {
+    "type": "object",
+    "source": "inferred",
+    "properties": {
+      "range": { "type": "string" },
+      "values": { "type": "array", "items": { "type": "array", ... } },
+      "row_count": { "type": "number" },
+      "column_count": { "type": "number" },
+      ...
+    }
+  },
+  "produced_by": "filter_qualified_leads"
+}
+```
+
+Meanwhile [phase4-pilot-dsl-steps.json](../../tests/v6-regression/scenarios/leads-per-salesperson-email/output/phase4-pilot-dsl-steps.json) shows:
+- Step 2: auto-injected `transform/rows_to_objects` consuming `{{raw_leads.values}}` → `raw_leads_objects`
+- Step 3: `transform/filter` consuming `{{raw_leads_objects}}` → `qualified_leads`, with the **correct** declared `output_schema` (array of lead objects) preserved in step config
+
+So three sources of truth disagree: **(a)** the data_schema slot says `qualified_leads` is the Sheets wrapper, **(b)** the DSL step config carries the correct array-of-leads schema, **(c)** the actual runtime data is an array of lead objects. Downstream steps (e.g., `generate_user_summary_html` reading `{{qualified_leads}}` and prompting "Date, Lead Name, Company, ...") work at runtime but can't be type-validated against the slot schema.
+
+**Root cause (two compounding issues):**
+
+🐛 **Bug A — Shape-preserving rule overrides LLM declaration.** [DataSchemaBuilder.ts](../../lib/agentkit/v6/capability-binding/DataSchemaBuilder.ts) `inferSchemaForTransformStep()` for ops in `{filter, sort, dedupe, flatten}` inherits from the input slot unconditionally. When the LLM has declared `transform.output_schema`, it should win — the LLM is signaling "the shape is changing because the input wrapper is being unwrapped" or "I want a stricter schema than the input."
+
+🐛 **Bug B — Auto-injected `rows_to_objects` slot missing from data_schema.** WORKPLAN_INTENT_CONTRACT.md task 4.5 was meant to register a slot for the auto-injected transform's output (e.g., `raw_leads_objects`). The slot is **not present** in this scenario's `phase2-data-schema.json`. Either task 4.5 isn't firing, or it fires after Phase 2 completes, so even if the inheritance rule walked the producer chain it wouldn't find the unwrapped slot to inherit from.
+
+The two bugs reinforce each other: with the unwrapped slot missing AND the LLM declaration ignored, the wrapper schema wins by default.
+
+**Why both effects compound (failure chain):**
+1. Compiler auto-injects `rows_to_objects` to convert Sheets wrapper → object array
+2. `raw_leads_objects` slot is not registered in data_schema (Bug B / task 4.5 gap)
+3. `DataSchemaBuilder` builds `qualified_leads` slot using shape-preserving rule
+4. Rule inherits from `raw_leads` (wrapper) — the LLM's declared array-of-leads `output_schema` is discarded (Bug A)
+5. `qualified_leads.schema` is the wrapper; downstream consumers can't be validated correctly
+
+**Why it matters (validation failures):**
+- Cross-step type validator: `generate_user_summary_html` reads `{{qualified_leads}}` and the AI prompt asks for `Date`, `Lead Name`, `Company`, etc. — fields the slot says don't exist (slot has `range`, `values`, `row_count`).
+- `transform/group` step at `group_leads_by_salesperson` operates on `qualified_leads` with `rules.group_by: "Sales Person"` — validator can't verify that `Sales Person` is a valid field of the array items because the slot doesn't declare items at all.
+- Same "schema lies about reality" failure class as WP-13 / WP-15 / WP-17. Direction #2's `AIOutputValidator` can't enforce correctness when input-side schema is wrong.
+
+**Trigger scenarios:** Any workflow that filters / sorts / dedupes / flattens output from a plugin that returns a wrapper (Sheets `read_range`, paginated APIs, etc.) and relies on compiler auto-unwrap. Confirmed in `leads-per-salesperson-email`. Likely repeats wherever Sheets data is filtered or grouped — sweep needed across `gmail-urgency-flagging`, `expense-invoice-email-scanner`, `gantt-urgent-tasks`, `complaint-email-logger` (which has `transform/rows_to_objects` auto-inject confirmed but doesn't filter via shape-preserving op so may not trigger), `leads-email-summary`, etc.
+
+**Cross-references:**
+- WP-13 / WP-15 / WP-17 — same "schema lies about reality" failure class.
+- DESIGN.md §2 (Schema sources) — the design table doesn't anticipate compiler auto-injects affecting shape-preserving inheritance.
+- DESIGN_REBASE.md §P1 — "schema contract became advisory" — exact instance: the contract is wrong, not just unenforced.
+- WORKPLAN.md task 7.6 (auto-inserted transform output registration) — original Architecture A version of this fix.
+- WORKPLAN_INTENT_CONTRACT.md task 4.5 — port of 7.6 to Architecture B; marked Done but evidently not firing for this scenario.
+- WORKPLAN_INTENT_CONTRACT.md task 4.7 (cross-step type compatibility checks) — should be flagging the discrepancy between the wrapper slot schema and downstream consumer field references; either it's flagging silently, or auto-repair (task 7.3) is masking.
+
+**Proposed solution (two surgical fixes):**
+
+1. **Fix Bug A — honor LLM-declared `transform.output_schema` (task 2.14).** In `DataSchemaBuilder.inferSchemaForTransformStep()`, change the rule for shape-preserving ops:
+   - **Today:** unconditionally inherit from input slot.
+   - **Proposed:** if the LLM declared `transform.output_schema`, use that. Otherwise, fall back to the inheritance rule.
+   - This treats the LLM as the authority on output shape — same pattern as shape-changing ops (`map`, `group`, etc.) which already require LLM declaration. Also matches WP-15's principle: trust LLM-declared schemas, validate them, don't second-guess them.
+   - Edge case: if the LLM-declared schema and the inherited schema both exist and disagree, log a warning but use the LLM declaration. The inherited schema is heuristic; the declaration is explicit.
+
+2. **Fix Bug B — verify auto-injected slot registration (task 2.15).** Audit task 4.5 (`Port auto-inserted transform slot registration`). Confirm:
+   - That `raw_leads_objects` (or whatever the auto-injected transform produces) gets a slot registered in data_schema with `source: "inferred"`.
+   - That the slot is registered **before** downstream slots that consume it are built — order matters because Bug A's fallback inheritance walks the producer chain.
+   - That the inheritance rule, when falling back, picks the slot at the **direct** input position (post-unwrap), not the original pre-unwrap source.
+   - If task 4.5 is broken, fix it. If it's correct but timing is wrong, sequence it before `inferSchemaForTransformStep` runs for downstream consumers.
+
+**Files (expected fix surface):**
+- `lib/agentkit/v6/capability-binding/DataSchemaBuilder.ts` — `inferSchemaForTransformStep()` for both bugs
+- `lib/agentkit/v6/compiler/ExecutionGraphCompiler.ts` — verify auto-injected slot registration (task 4.5 audit)
+- Tests in `__tests__/DataSchemaBuilder*.test.ts` — new cases: filter step with declared output_schema (declaration wins); filter step on Sheets wrapper input (auto-unwrap chain); filter step without declaration (inheritance still works)
+
+**Test cases:**
+- After fix: `leads-per-salesperson-email`'s `qualified_leads` slot has the declared array-of-leads schema, not the Sheets wrapper.
+- After fix: `raw_leads_objects` slot exists in data_schema with `source: "inferred"`.
+- After fix: cross-step type validator (task 4.7) can resolve `qualified_leads.Date`, `qualified_leads.Sales Person` against the per-row item schema.
+- Unit test: shape-preserving transform with explicit `output_schema` → declaration wins.
+- Unit test: shape-preserving transform without `output_schema` → inheritance still works (regression guard).
+- Unit test: filter consuming auto-injected `rows_to_objects` output → output slot has the unwrapped object-array schema.
+
+**Compounding with WP-15 / WP-17:** WP-18 produces a wrong-but-non-empty schema (the wrapper has `properties`), masking WP-15's depth check on downstream consumers. WP-17 + WP-18 are sister failures — both are "schema inheritance picks the wrong source when the data flow involves an implicit unwrap." After WP-17 + WP-18 land, the cross-step type validator (task 4.7) can finally enforce correctness across loop boundaries and shape-preserving transform boundaries.
+
+---
+
 ## Phase D Hardening Roadmap
 
 These are improvements to Phase D (mock WorkflowPilot execution) designed to catch more of the Phase E class of bugs without paying the token cost of live LLM calls. WP-9 (F7 — real LLM in Phase D+) is the ultimate answer but has been deferred. The items below close specific gaps observed during WP-11 through WP-14.
@@ -791,6 +1204,13 @@ Already documented as WP-9 / F7 — deferred due to ~$0.10-0.15 per run token co
 
 | Date | Change | Details |
 |------|--------|---------|
+| 2026-05-08 | Drift investigation — W2 scope corrected | Pre-W2 trace confirmed `transform/reduce` is fully supported end-to-end (LLM `aggregate` → IR converter `convertAggregate()` → runtime `StepExecutor.transformReduce`). Original "drift" finding read the wrong source file — the active V6 IntentContract grammar at [`semantic-plan/types/intent-schema-types.ts:322`](../../lib/agentkit/v6/semantic-plan/types/intent-schema-types.ts#L322) does include `reduce`, `merge`, `select`. Minor real drifts: `merge` lacks top-level runtime case (low impact — LLM uses `map` with multi-source `inputs[]`); `dedupe` vs `deduplicate` naming. WP-16 task 0.8 narrowed to actually-needed primitives (`with_fields`, `project_column`, `set_difference`, `filter.where contains_any`). Headline finding unchanged: `with_fields` is the leverage point for 5 of 10 WP-16 instances. See [V6_WP16_INVENTORY.md § Drift Investigation](./V6_WP16_INVENTORY.md#drift-investigation-2026-05-08). |
+| 2026-05-08 | W1 complete — WP-16 task 0.7 inventory finished | Full sweep of all 10 regression scenarios. Output: [V6_WP16_INVENTORY.md](./V6_WP16_INVENTORY.md). 30 ai_processing steps total; 10 (33%) are WP-16 instances spread across 6 of 10 scenarios (complaint, expense-invoice, contract-enddate, gantt, orders-po, po-monitor); 18 legitimate AI; 1 borderline (XLSX synth). 4 scenarios (aliexpress, leads-per-salesperson, gmail-urgency, leads-email-summary) have ZERO WP-16 instances — confirms Phase 1 LLM uses primitives correctly when grammar provides them. **Highest-leverage missing primitive:** `transform/with_fields` (computed/derived fields) — 5 of 10 WP-16 instances depend on it; without it, multi-stage prep gets jammed into one ai_processing step (gantt "AI contagion"). **Drift surfaced:** `transform/reduce` is being emitted in DSL across 3 scenarios despite being absent from the [intent-schema-types.ts:143](../../lib/agentkit/v6/intent/intent-schema-types.ts#L143) enum — investigation required before W2. WP-16's status now 🟡 In progress; WP-16 task 0.8 description rewritten with priority-ordered concrete primitives. Path B Wave 1 ✅ complete. |
+| 2026-05-08 | WP-16 augmented with `expense-invoice-email-scanner` sweep evidence | Sweep of scenario 3 surfaced no new structural WP but added concrete examples to WP-16's task 0.7 inventory scope. The LLM correctly used `transform/flatten`, `transform/filter`, and `aggregate` (subset/count) for deterministic ops — strong evidence that grammar availability (task 0.8), not vocabulary visibility (task 0.9), is the primary lever. One residual `generate/internal` step (`build_attachment_row`) implements a structured cross-source merge with computed field; routed to AI because (a) the `transform.operation` enum at [intent-schema-types.ts:143](../../lib/agentkit/v6/intent/intent-schema-types.ts#L143) omits `merge`/`reduce`/`select` despite the design table listing them (design/code drift), and (b) no `derive` / `with_fields` primitive exists for computed boolean fields. WP-16's task 0.7 description updated to require reconciling the drift and considering the new primitive. Also confirmed: WP-15 / WP-17 / WP-18 fingerprints absent from this scenario (different data flow shape — flat array filtering, no wrapper-unwrap chain, single loop). |
+| 2026-05-08 | WP-18 documented — Shape-preserving transform inherits schema from wrong slot when compiler auto-unwraps input | Surfaced via `leads-per-salesperson-email` regression sweep (Path A continuation, scenario 2). The `filter_qualified_leads` step explicitly declared an `output_schema` of `array<{Date, Lead Name, ...}>`, but `qualified_leads` slot in data_schema came out as the Sheets wrapper (`{values, row_count, ...}`) because `DataSchemaBuilder` treats filter as shape-preserving and inherits the input slot schema unconditionally. Two compounding issues: (1) LLM-declared `transform.output_schema` is ignored for shape-preserving ops; (2) auto-injected `rows_to_objects` slot (`raw_leads_objects`) is missing from data_schema — task 4.5 was meant to register it but evidently doesn't fire. Three sources of truth disagree (slot schema vs DSL step config vs runtime data), and downstream cross-step type validation can't catch field-reference errors. Trigger: any workflow that filters / sorts / dedupes Sheets data or wrapper-style plugin output. Fix tasks queued in [WORKPLAN_INTENT_CONTRACT.md](./V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_INTENT_CONTRACT.md) tasks 2.14 (honor LLM-declared output_schema) + 2.15 (audit auto-injected slot registration). Also confirms two diagnostic points: (a) `transform.output_schema` grammar already supports nested `items`/`properties` — narrows WP-15's scope to `generate.outputs[]` and `extract.fields[]` only; (b) when grammar primitives exist (filter, group), the LLM uses them correctly — strongly supports WP-16's primary lever being grammar (task 0.8) rather than vocabulary (task 0.9). |
+| 2026-05-08 | WP-17 documented — Loop item slot misderived from nested array and overwritten across loops | Surfaced via `aliexpress-delivery-tracker` regression scenario sweep (Path A continuation after WP-15/WP-16 docs landed). Two adjacent bugs in `DataSchemaBuilder.buildLoopSlots()`: (1) `overSlot.schema.type === 'array'` check at [line 458](../../lib/agentkit/v6/capability-binding/DataSchemaBuilder.ts#L458) only handles top-level arrays — when a loop iterates over a wrapper-object slot like Gmail's `{emails: array, total_found, ...}`, the entire wrapper is copied as the item schema instead of unwrapping to `properties.emails.items`; (2) direct slot assignment at [line 466](../../lib/agentkit/v6/capability-binding/DataSchemaBuilder.ts#L466) with no collision check — when 3 loops share `item_ref: "email"`, the third call overwrites the first two and `produced_by` reflects only the last loop. Both bugs hide because runtime variable resolution doesn't consult the schema for iteration values (execution succeeds despite wrong schema), and WP-15's auto-repair masks the depth check from firing. Same "schema lies about reality" failure class as WP-13 / WP-15 — Direction #2's `AIOutputValidator` can't enforce correctness when the input-side schema is wrong. Common trigger: wrapper-object responses (Gmail/Drive/Sheets search), multi-loop patterns (mark-read + apply-label). Fix tasks queued in [WORKPLAN_INTENT_CONTRACT.md](./V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_INTENT_CONTRACT.md) tasks 2.12 (nested-array unwrap) + 2.13 (multi-loop collision handling). |
+| 2026-05-06 | WP-16 documented — Deterministic data operations routed to AI step | Surfaced via the same `complaint-email-logger` regression review that produced WP-15. 3 of 7 DSL steps (step4 column projection, step5 keyword filter, step6 anti-join dedup) compiled to `ai_processing` because Phase 1 declared `kind: "generate", domain: "internal"` for all of them. Two structural gaps: (1) Phase 1 vocabulary doesn't expose workflow primitives — only plugin actions are injected, so `generate/internal` is the path of least resistance; (2) IntentContract `transform` grammar lacks `project_column` and `set_difference` kinds, leaving free-text `rule: string` or `generate/internal` as the only options. Same pattern as WP-4 (free-text `custom_code` → structured `mapping[]`). Compounds WP-13 (silent fabrication on AI boundaries) and WP-15 (shallow AI schemas) — fix tasks queued in [WORKPLAN_INTENT_CONTRACT.md](./V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_INTENT_CONTRACT.md) (0.7–0.12). Solution D (compiler-side rewrite) is deferred and gated on 0.12 measurement. |
+| 2026-05-06 | WP-15 documented — AI-declared output slots lose item-level shape | Surfaced via `complaint-email-logger` regression review: `phase2-data-schema.json` slots `existing_message_ids`, `candidate_rows`, `new_rows_to_append` are all depth-1 even though the prompt enumerates `sender email, subject, date, full email text, Gmail message link/id`. Root cause is structural — IntentContract `generate.outputs[]` / `extract.fields[]` grammar has no slot for `items` (arrays) or `properties` (objects), and `WORKPLAN.md` task 7.3 auto-repair masks the gap by silently degrading to `items:{type:"any"}` / `properties:{}`. Same fabrication-risk class as WP-13 — Direction #2's `AIOutputValidator` fails open because there's nothing concrete to validate against. Fix tasks queued in [WORKPLAN_INTENT_CONTRACT.md](./V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_INTENT_CONTRACT.md) (0.4–0.6 grammar + prompt, 2.11 builder); 7.3 retirement gated on regression measurement. |
 | 2026-04-14 | WP-14 reopened — multi-nested-step scatter body gap | Contract End-Date Summary Phase E: step7 (`ai_processing/generate`) failed with Anthropic 400 `"prompt is too long: 1,004,169 tokens > 1,000,000 maximum"`. Root cause: WP-14 original fix's `isExtractLike` guard is gated inside the **single-nested-step branch** of `processScatterItem()` at [ParallelExecutor.ts:403](../../lib/pilot/ParallelExecutor.ts#L403). The contract scenario's scatter body has **two** nested steps (step5 `read_file_content` fetching full document text ~165KB/doc, step6 `ai_processing/generate` extracting 5 small fields), which flows into the **multi-step branch** at [line 470](../../lib/pilot/ParallelExecutor.ts#L470) — no `isExtractLike` guard there, unconditionally spreads `{...item, ...step5.output, ...step6.output}`, preserving the full `content` string per iteration. 4 docs × ~165KB ≈ 1M tokens at step7. WP-14's original Verified note ("All 10 regression scenarios pass Phase D after fixes") held because Phase D uses stub plugin payloads ~20 bytes per field — invisible in mocks, only surfaces with realistic Phase E payloads. Exactly the [PD-1](#pd-1-realistic-plugin-mock-payloads-high-value) gap. Proposed fix: extend `isExtractLike` detection to the last nested step in the multi-step branch. Stronger long-term fix (deferred): compiler emits explicit `gather.output_source: "<last_step_output_variable>"` as a schema-declared contract per DESIGN_REBASE §P3. See D-B25 in `V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION.md` for the per-scenario discovery timeline. |
 | 2026-04-05 | WP-11 & WP-12 documented | AliExpress Delivery Tracker scenario live run: user received email with fabricated "Unknown X" rows. Two root causes: (1) search_emails compiled without content_level=full — bodies empty; (2) document-extractor selected for free-text email body extraction instead of ai_processing. Both open. |
 | 2026-04-05 | WP-13 documented | AliExpress Delivery Tracker scenario live run (after WP-11/12 patches): search_emails returned 0 results due to stale query, but downstream AI generate step fabricated a two-row HTML table with fake package numbers (12345, 67890) and fake products, which was sent to the user as if real. Distinct from WP-12: WP-13 fires whenever an AI step downstream of an empty collection has no guardrail against hallucination. |

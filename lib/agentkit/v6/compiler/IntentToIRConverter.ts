@@ -281,7 +281,7 @@ export class IntentToIRConverter {
         return this.convertAggregate(step as AggregateStep & BoundStep, ctx)
 
       case 'deliver':
-        return [this.convertDeliver(step as DeliverStep & BoundStep, ctx)]
+        return this.convertDeliver(step as DeliverStep & BoundStep, ctx)
 
       case 'notify':
         return [this.convertNotify(step as NotifyStep & BoundStep, ctx)]
@@ -827,7 +827,7 @@ export class IntentToIRConverter {
    * Convert deliver step to operation node
    * Now schema-aware: maps generic parameters to plugin-specific parameter names
    */
-  private convertDeliver(step: DeliverStep & BoundStep, ctx: ConversionContext): string {
+  private convertDeliver(step: DeliverStep & BoundStep, ctx: ConversionContext): string[] {
     const nodeId = this.generateNodeId(ctx)
     const outputVar = step.output || `${step.id}_result`
 
@@ -837,20 +837,97 @@ export class IntentToIRConverter {
     const inputVar = this.resolveRefName(step.deliver.input, ctx)
     genericParams.data = inputVar
 
-    // D-B19: Map deliver.mapping entries directly to top-level genericParams.
-    // mapping[].to values are param names (spreadsheet_id, range, values), not nested fields.
-    // Use resolveValueRef for all from types to get proper {{ }} wrapping.
+    // D-B19c: Classify deliver.mapping[].to values against the bound action's
+    // parameter schema:
+    //   - PARAM_NAME mode (D-B19): all `to` values are plugin param names
+    //     (e.g. spreadsheet_id, message_id) → copy to genericParams[m.to].
+    //   - COLUMN_HEADER mode (D-B19c): no `to` values are plugin param names —
+    //     they are spreadsheet column headers (e.g. "Type", "Vendor / merchant").
+    //     Synthesize a precursor transform/map node that projects the input
+    //     array to {header: source_field, ...} objects in IC-declared order;
+    //     set genericParams.values to the synthesized output variable. The
+    //     append_rows executor's array-of-objects mode handles the rest.
+    //   - MIXED mode (none today): warn loudly, default to PARAM_NAME for compat.
+    const synthesizedNodeIds: string[] = []
     if (step.deliver.mapping && step.deliver.mapping.length > 0) {
-      for (const m of step.deliver.mapping) {
-        if (typeof m.from === 'object' && 'kind' in m.from) {
-          genericParams[m.to] = this.resolveValueRef(m.from as any, ctx)
-        } else if (typeof m.from === 'object' && 'ref' in m.from) {
-          const varName = this.resolveRefName(m.from.ref, ctx)
-          genericParams[m.to] = m.from.field ? `${varName}.${m.from.field}` : varName
-        } else {
-          genericParams[m.to] = m.from
+      const schema = (this.pluginManager && step.plugin_key && step.action)
+        ? this.getPluginActionSchema(step.plugin_key, step.action)
+        : null
+      const paramNames = schema?.parameters?.properties
+        ? new Set(Object.keys(schema.parameters.properties))
+        : null
+      const allAreParams = paramNames
+        ? step.deliver.mapping.every((m: any) => paramNames.has(m.to))
+        : true
+      const noneAreParams = paramNames
+        ? step.deliver.mapping.every((m: any) => !paramNames.has(m.to))
+        : false
+      const isColumnHeaderMode = paramNames !== null && noneAreParams
+      const isMixedMode = paramNames !== null && !allAreParams && !noneAreParams
+
+      if (isMixedMode) {
+        ctx.warnings.push(
+          `Step ${step.id}: deliver.mapping has both param-name and column-header values for ${step.plugin_key}.${step.action} — defaulting to D-B19 PARAM_NAME mode for backward compat. Verify scenario intent.`
+        )
+      }
+
+      if (isColumnHeaderMode) {
+        // Build header → source-field dict (insertion order = IC mapping order).
+        const fieldMapping: Record<string, string> = {}
+        for (const m of step.deliver.mapping) {
+          let sourceField: string | undefined
+          if (typeof m.from === 'object' && 'ref' in m.from && m.from.field) {
+            sourceField = m.from.field
+          } else if (typeof m.from === 'object' && 'kind' in m.from && (m.from as any).kind === 'ref' && (m.from as any).field) {
+            sourceField = (m.from as any).field
+          }
+          if (sourceField) {
+            fieldMapping[m.to] = sourceField
+          }
         }
-        logger.debug(`  → deliver.mapping: ${m.to} = ${genericParams[m.to]}`)
+
+        if (Object.keys(fieldMapping).length > 0) {
+          // Synthesize precursor transform/map node.
+          const synthNodeId = this.generateNodeId(ctx)
+          const synthOutputVar = `${step.id}_rows`
+          const transformConfig: any = {
+            type: 'map',
+            input: inputVar,
+            field_mapping: fieldMapping,
+          }
+          const synthNode: ExecutionNode = {
+            id: synthNodeId,
+            type: 'operation',
+            operation: {
+              operation_type: 'transform',
+              transform: transformConfig,
+              description: `D-B19c: Project ${inputVar} into row objects for ${step.plugin_key}.${step.action}`,
+            },
+            outputs: [{ variable: synthOutputVar }],
+            next: nodeId,
+          }
+          ctx.nodes.set(synthNodeId, synthNode)
+          synthesizedNodeIds.push(synthNodeId)
+
+          // Deliver step now reads from the synthesized rows variable.
+          genericParams.values = `{{${synthOutputVar}}}`
+          logger.debug(
+            `[IntentToIRConverter] D-B19c: COLUMN_HEADER mode for ${step.plugin_key}.${step.action} — synthesized transform/map ${synthNodeId} (${Object.keys(fieldMapping).length} columns) → ${genericParams.values}`
+          )
+        }
+      } else {
+        // PARAM_NAME mode (D-B19) — existing behavior.
+        for (const m of step.deliver.mapping) {
+          if (typeof m.from === 'object' && 'kind' in m.from) {
+            genericParams[m.to] = this.resolveValueRef(m.from as any, ctx)
+          } else if (typeof m.from === 'object' && 'ref' in m.from) {
+            const varName = this.resolveRefName(m.from.ref, ctx)
+            genericParams[m.to] = m.from.field ? `${varName}.${m.from.field}` : varName
+          } else {
+            genericParams[m.to] = m.from
+          }
+          logger.debug(`  → deliver.mapping: ${m.to} = ${genericParams[m.to]}`)
+        }
       }
     }
 
@@ -925,7 +1002,13 @@ export class IntentToIRConverter {
       ctx.variableMap.set(step.output, outputVar)
     }
 
-    return nodeId
+    // D-B19c: when a precursor transform was synthesized, the entry point is the
+    // precursor (its `next` already chains to the deliver node). Return both IDs
+    // so the caller registers both in the IR — the precursor first.
+    if (synthesizedNodeIds.length > 0) {
+      return [...synthesizedNodeIds, nodeId]
+    }
+    return [nodeId]
   }
 
   /**
@@ -1194,6 +1277,58 @@ export class IntentToIRConverter {
       logger.debug(`[IntentToIRConverter] WP-4: Converted mapping to field_mapping:`, transformConfig.field_mapping)
     }
 
+    // W2 / WP-16: with_fields — augment items with computed fields.
+    // Walk each expression and normalize `ref: <inputVar>` → `ref: "item"` so the
+    // runtime evaluator binds field accesses to the per-iteration value (matches
+    // the `transformFilter` convention).
+    if (step.transform.op === 'with_fields' && Array.isArray((step.transform as any).fields)) {
+      const fields = (step.transform as any).fields as Array<{ name: string; expression: any }>
+      transformConfig.fields = fields.map(f => ({
+        name: f.name,
+        expression: this.normalizeExpressionRefs(f.expression, ctx, inputVar),
+      }))
+      delete transformConfig.custom_code
+      logger.debug(`[IntentToIRConverter] WP-16 (with_fields): Normalized ${fields.length} field expression(s)`)
+    }
+
+    // W2 / WP-16: project_column — extract a single column/field from each row.
+    // Config is forwarded as-is; the runtime executor handles all three column kinds.
+    if (step.transform.op === 'project_column' && (step.transform as any).column) {
+      transformConfig.column = (step.transform as any).column
+      delete transformConfig.custom_code
+      logger.debug(`[IntentToIRConverter] WP-16 (project_column): kind=${transformConfig.column.kind}`)
+    }
+
+    // W2 / WP-16: set_difference — anti-join. Resolve `reference: RefName` to the
+    // actual variable path so the runtime's resolveVariable() can fetch the
+    // reference array. `key_field` (and optional `reference_key_field`) are copied as-is.
+    if (step.transform.op === 'set_difference') {
+      const refName = (step.transform as any).reference
+      const keyField = (step.transform as any).key_field
+      const refKeyField = (step.transform as any).reference_key_field
+      if (typeof refName !== 'string' || !refName) {
+        ctx.warnings.push(
+          `set_difference step "${step.id}" missing required "reference" RefName — runtime will fail`
+        )
+      } else {
+        transformConfig.reference = this.resolveRefName(refName, ctx)
+      }
+      if (typeof keyField !== 'string' || !keyField) {
+        ctx.warnings.push(
+          `set_difference step "${step.id}" missing required "key_field" — runtime will fail`
+        )
+      } else {
+        transformConfig.key_field = keyField
+      }
+      if (typeof refKeyField === 'string' && refKeyField) {
+        transformConfig.reference_key_field = refKeyField
+      }
+      delete transformConfig.custom_code
+      logger.debug(
+        `[IntentToIRConverter] WP-16 (set_difference): reference=${transformConfig.reference}, key_field=${transformConfig.key_field}`
+      )
+    }
+
     const operation: OperationConfig = {
       operation_type: 'transform',
       transform: transformConfig,
@@ -1328,6 +1463,7 @@ export class IntentToIRConverter {
       lt: 'lt',
       lte: 'lte',
       contains: 'contains',
+      contains_any: 'contains_any', // W2: keyword-filter shorthand — runtime in ConditionalEvaluator
       exists: 'exists',
       is_empty: 'is_empty',
       not_empty: 'exists', // Map to exists
@@ -1338,6 +1474,98 @@ export class IntentToIRConverter {
     }
 
     return map[comparator] || 'eq'
+  }
+
+  /**
+   * W2 / WP-16: Normalize `Expression` AST refs for `with_fields` runtime.
+   *
+   * The LLM emits `{kind: "ref", ref: "<inputVar>", field: "X"}` to mean "field X
+   * on each item being iterated." The runtime evaluator's per-iteration scope
+   * binds the current item under `"item"` (matching the existing `transformFilter`
+   * convention). So we rewrite `ref: <inputVar>` → `ref: "item"` for any expression
+   * inside `with_fields.fields[].expression`.
+   *
+   * Refs to OTHER slots are left untouched — the runtime resolves them via context.
+   *
+   * The `if` expression's `condition` field is a Condition AST (not Expression);
+   * we delegate to `convertCondition()` with `isFilterContext: true` so its refs
+   * are normalized consistently with how filter conditions are handled.
+   */
+  private normalizeExpressionRefs(
+    expr: any,
+    ctx: ConversionContext,
+    inputVar: string
+  ): any {
+    if (expr == null || typeof expr !== 'object' || typeof expr.kind !== 'string') {
+      return expr
+    }
+
+    switch (expr.kind) {
+      case 'ref': {
+        // Rewrite ref: <inputVar> → ref: "item" for per-iteration field access.
+        // Match against the resolved input variable name (post-resolveRefName).
+        if (expr.ref === inputVar || expr.ref === this.resolveRefName(expr.ref, ctx)) {
+          // Only rewrite when the LLM was referring to the iteration source.
+          // Compare against both the raw RefName and the resolved variable name.
+          if (expr.ref === inputVar) {
+            return { ...expr, ref: 'item' }
+          }
+        }
+        return expr
+      }
+
+      case 'literal':
+      case 'config':
+      case 'today':
+        return expr
+
+      case 'concat':
+        return {
+          ...expr,
+          args: Array.isArray(expr.args)
+            ? expr.args.map((a: any) => this.normalizeExpressionRefs(a, ctx, inputVar))
+            : expr.args,
+        }
+
+      case 'if':
+        return {
+          ...expr,
+          condition: this.convertCondition(expr.condition, ctx, { isFilterContext: true, inputVar }),
+          then: this.normalizeExpressionRefs(expr.then, ctx, inputVar),
+          else: this.normalizeExpressionRefs(expr.else, ctx, inputVar),
+        }
+
+      case 'date_diff':
+        return {
+          ...expr,
+          left: this.normalizeExpressionRefs(expr.left, ctx, inputVar),
+          right: this.normalizeExpressionRefs(expr.right, ctx, inputVar),
+        }
+
+      case 'date_add':
+        return {
+          ...expr,
+          date: this.normalizeExpressionRefs(expr.date, ctx, inputVar),
+          days: this.normalizeExpressionRefs(expr.days, ctx, inputVar),
+        }
+
+      case 'null_check':
+        return {
+          ...expr,
+          value: this.normalizeExpressionRefs(expr.value, ctx, inputVar),
+        }
+
+      case 'all_not_null':
+        // `refs[]` are field names on the current item. The runtime evaluator
+        // checks the current item directly (via `ref in currentItem`) before
+        // falling back to context.resolveVariable. No rewriting needed.
+        return expr
+
+      default:
+        // Unknown kind — leave as-is. The runtime evaluator will raise a
+        // typed error when it encounters an unrecognized expression.
+        return expr
+    }
   }
 
   /**

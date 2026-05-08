@@ -596,6 +596,34 @@ export class ConditionalEvaluator {
         // String not_contains: case-insensitive check
         return !String(left).toLowerCase().includes(String(right).toLowerCase());
 
+      case 'contains_any':
+        // W2: keyword-filter shorthand — `left` contains ANY of the values in `right` (case-insensitive).
+        // `right` MUST be an array. Useful for "subject contains any of [complaint, refund, ...]" patterns.
+        // Replaces verbose OR-of-contains trees.
+        if (left === null || left === undefined) return false;
+        if (!Array.isArray(right)) {
+          throw new ConditionError(
+            `contains_any requires an array on the right side, got ${typeof right}`,
+            undefined,
+            { right }
+          );
+        }
+        if (Array.isArray(left)) {
+          // Array left: any element matches any value in right (case-insensitive for strings)
+          return left.some(leftItem =>
+            right.some(rightItem => {
+              if (typeof leftItem === 'string' && typeof rightItem === 'string') {
+                return leftItem.toLowerCase() === rightItem.toLowerCase();
+              }
+              return leftItem === rightItem;
+            })
+          );
+        }
+        // String left: substring contains any of the values in right (case-insensitive)
+        return right.some(v =>
+          String(left).toLowerCase().includes(String(v).toLowerCase())
+        );
+
       case 'in':
         return Array.isArray(right) && right.includes(left);
 

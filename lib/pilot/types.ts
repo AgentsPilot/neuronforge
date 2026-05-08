@@ -392,6 +392,7 @@ export type ComparisonOperator =
   | 'less_than'
   | 'less_than_or_equal'
   | 'contains'
+  | 'contains_any'  // W2: substring/array element matches any of [v1, v2, ...] (case-insensitive)
   | 'not_contains'
   | 'in'
   | 'not_in'

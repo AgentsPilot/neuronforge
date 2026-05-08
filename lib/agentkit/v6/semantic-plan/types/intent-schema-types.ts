@@ -149,7 +149,8 @@ export type Comparator =
   | "gte"
   | "lt"
   | "lte"
-  | "contains"
+  | "contains"          // substring match (string) or array-includes (array) — single value
+  | "contains_any"      // W2: substring matches ANY of [v1, v2, ...] (case-insensitive). Subsumes the keyword-filter pattern (e.g., "subject contains any of [complaint, refund, ...]") — replaces verbose OR-of-contains trees.
   | "exists"
   | "is_empty"
   | "not_empty"
@@ -158,6 +159,42 @@ export type Comparator =
   | "starts_with"
   | "ends_with"
   | "matches";
+
+// ------------------------------------------------------------
+// Expression AST (W2 / WP-16) — value-producing structured AST for `transform/with_fields`.
+// Closed vocabulary: exactly 10 op kinds. Extensions require evidence (regression scenario)
+// + reviewer approval + full plumbing (Zod + runtime evaluator + prompt examples).
+// See: docs/v6/V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_INTENT_CONTRACT.md task 0.8.
+// ------------------------------------------------------------
+
+export type Expression =
+  // Atoms — produce concrete values
+  | { kind: "literal"; value: JsonPrimitive }
+  | { kind: "ref"; ref: RefName; field?: string }
+  | { kind: "config"; key: string }
+
+  // Composition — combine values
+  | { kind: "concat"; args: Expression[] }                                  // string concatenation
+  | {
+      kind: "if";
+      condition: Condition;
+      then: Expression;
+      else: Expression;
+    }                                                                        // conditional value
+
+  // Date — date arithmetic for windowing/age computations
+  | { kind: "today" }                                                        // current date as ISO 8601 string
+  | {
+      kind: "date_diff";
+      left: Expression;
+      right: Expression;
+      unit: "days";                                                          // future: hours/minutes if a regression scenario demands
+    }
+  | { kind: "date_add"; date: Expression; days: Expression }
+
+  // Null / presence checks — common for status reasoning
+  | { kind: "null_check"; value: Expression; invert?: boolean }              // null_check → true if null; invert: true → true if NOT null
+  | { kind: "all_not_null"; refs: RefName[] };                               // true iff every ref resolves to a non-null value
 
 export type Condition =
   | { op: "and"; conditions: Condition[] }
@@ -329,7 +366,19 @@ export type TransformOp =
   | "flatten"
   | "merge"
   | "select"
-  | "custom";
+  | "custom"
+  // W2 / WP-16: structured primitives for deterministic operations the LLM
+  // previously fell back to ai_processing/generate for. See V6_WP16_INVENTORY.md.
+  | "with_fields"        // augment items with computed fields (5 of 10 WP-16 instances)
+  | "project_column"     // extract column N from rows / field X from objects
+  | "set_difference";    // anti-join — keep items whose key is NOT in a reference array
+
+// Column-extraction config for `transform/project_column`.
+// Discriminated union — exactly one form per usage.
+export type ProjectColumnConfig =
+  | { kind: "by_index"; index: number }                  // 2D arrays — 0-based column index
+  | { kind: "by_field"; field: string }                  // arrays of objects — top-level field name
+  | { kind: "by_field_path"; path: string };             // arrays of objects — dot-notation path (e.g., "metadata.id")
 
 export interface TransformStep extends BaseStep {
   kind: "transform";
@@ -348,6 +397,25 @@ export interface TransformStep extends BaseStep {
 
     // Optional output schema declaration (for transforms that restructure data)
     output_schema?: JsonObject;
+
+    // W2 / WP-16: typed configs for the new structured primitives.
+    // Each is only valid when `op` matches.
+
+    // Required when op === "with_fields" — list of computed fields to add to each input item.
+    fields?: Array<{ name: string; expression: Expression }>;
+
+    // Required when op === "project_column" — how to select the column.
+    column?: ProjectColumnConfig;
+
+    // Required when op === "set_difference" — slot whose keys are excluded.
+    reference?: RefName;
+
+    // Required when op === "set_difference" — field in input items to compare on.
+    key_field?: string;
+
+    // Optional when op === "set_difference" — field in reference items to compare on.
+    // Defaults to `key_field` if reference items use the same field name.
+    reference_key_field?: string;
   };
 }
 
