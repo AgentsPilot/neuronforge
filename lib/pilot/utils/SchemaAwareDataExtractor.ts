@@ -2,6 +2,15 @@ export class SchemaAwareDataExtractor {
   extract(data: any, schema: any): any {
     return {};
   }
+
+  async extractArray(data: any, _plugin?: string, _action?: string): Promise<any[]> {
+    if (Array.isArray(data)) return data;
+    if (data && typeof data === 'object') {
+      const firstArray = Object.values(data).find(v => Array.isArray(v));
+      return (firstArray as any[]) ?? [];
+    }
+    return [];
+  }
 }
 
 // Export singleton instance for convenience
