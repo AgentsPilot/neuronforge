@@ -902,6 +902,7 @@ CORRECT approach - First check if field_x exists:
     "input"?: "summary_text",  // optional
     "format"?: "html",
     "instruction": "Create content with summary and metrics",
+    "reason"?: "Required when domain=\"internal\" — see W2 nudge below",
     "outputs"?: [
       {
         "name": "title",
@@ -918,6 +919,38 @@ CORRECT approach - First check if field_x exists:
 }
 
 **IMPORTANT**: The inputs array MUST include ALL data the generate step will reference. If your instruction mentions aggregates, metrics, or computed values, include those variables in inputs. This ensures they're available to the AI and avoids recomputation.
+
+**W2 / WP-16 — required \`reason\` for \`domain: "internal"\`:**
+
+When you pick \`uses: [{ capability: "generate", domain: "internal" }]\`, you are routing the operation to an LLM at runtime. This is the right choice for SEMANTIC reasoning over unstructured text (HTML email synthesis, classification, summarization, free-form composition) — but it is the WRONG choice for deterministic data manipulation (computed fields, column projection, anti-join, filtering, mapping).
+
+Before choosing \`generate/internal\`, check whether a structured \`transform\` primitive expresses the same operation:
+
+| If the operation is... | Use |
+|---|---|
+| Adding a computed field (boolean, status, date arithmetic, string composition, template substitution) | \`transform/with_fields\` |
+| Combining fields from multiple input slots into one row + computed fields | \`transform/with_fields\` (cross-source via \`{kind: "ref", ref: "<other_slot>"}\`) |
+| Extracting one column/field from each row | \`transform/project_column\` |
+| Removing items already present in another list | \`transform/set_difference\` |
+| Filtering by a structured rule (eq, contains, gt, contains_any, etc.) | \`transform/filter\` |
+| Renaming/projecting fields | \`transform/map\` with \`mapping\` |
+| Counting / summing / aggregating to a scalar | \`aggregate\` step |
+
+If a structured primitive fits, use it — your IntentContract will be cheaper, faster, and validatable at runtime.
+
+**If a structured primitive does NOT fit, you MUST include a \`reason\` field on the generate step explaining why.** Examples of valid reasons:
+- \`reason: "Free-form HTML email body composition with conditional content based on data shape — no template structure available"\`
+- \`reason: "Classifying email content by tone — requires semantic reasoning, not rule-based"\`
+- \`reason: "Summarizing meeting transcript — semantic compression, no deterministic equivalent"\`
+
+Examples of INVALID reasons (these mean you should be using a transform primitive instead):
+- ❌ \`reason: "Compute has_valid_amount from amount field"\` — use \`with_fields\` with a \`null_check\` expression
+- ❌ \`reason: "Filter rows where status equals 'active'"\` — use \`transform/filter\` with a structured \`where\`
+- ❌ \`reason: "Combine extracted_fields with uploaded_file.web_view_link"\` — use \`with_fields\` with cross-source \`ref\`s
+
+Without a \`reason\` field on \`generate/internal\`, the IR converter will log a warning. This warning is a signal that the LLM (you) defaulted to AI when a structured alternative existed. The W5 measurement task counts these as residual deterministic-AI fallbacks across the regression suite.
+
+For \`generate\` with non-internal domains (e.g., \`domain: "email-content"\`, \`domain: "document"\`), \`reason\` is NOT required — those are inherently AI uses.
 
 **HTML FORMAT PREFERENCE**: When a generate or summarize step produces content that will be delivered via email (i.e., the output feeds into a send_email/notify step):
 - Default to format: "html" and instruct the AI to produce an HTML table for structured/tabular data

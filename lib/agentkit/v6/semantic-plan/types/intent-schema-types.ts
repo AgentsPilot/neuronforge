@@ -477,6 +477,24 @@ export interface GenerateStep extends BaseStep {
     format?: "text" | "html" | "markdown" | "json";
     instruction: string;
 
+    /**
+     * W2 / WP-16 task 0.11 — defensive nudge for `domain: "internal"` use.
+     *
+     * REQUIRED when `uses[].capability === "generate"` AND `uses[].domain === "internal"`.
+     * Free-text justification for why a deterministic `transform` step (with_fields,
+     * project_column, set_difference, filter, map, group, etc.) cannot express the
+     * operation. Makes the AI-fallback choice deliberate rather than default; gives
+     * downstream telemetry a signal about how often the LLM picks AI for what could
+     * be a structured transform — feeds W5's measurement (task 0.12).
+     *
+     * NOT required for `domain` values other than "internal" (e.g., "email-content"
+     * generation, summarization, free-form synthesis are legitimate AI uses).
+     *
+     * Cannot be enforced purely at the type level (depends on runtime `uses[]`),
+     * so the IR converter validates and emits a warning when missing.
+     */
+    reason?: string;
+
     // Optional: structured outputs (still semantic)
     outputs?: Array<{
       name: string; // e.g., "email_subject", "email_body_html"

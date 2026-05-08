@@ -1145,6 +1145,28 @@ export class IntentToIRConverter {
     const nodeId = this.generateNodeId(ctx)
     const outputVar = this.getOutputVariable(step, ctx)
 
+    // W2 / WP-16 task 0.11 — defensive `reason` field nudge.
+    // When the LLM picks `generate/internal` for a deterministic-looking
+    // operation, the structured `transform` primitives (with_fields,
+    // project_column, set_difference, filter, map, group, etc.) are almost
+    // always a better choice. Require a `reason` field on internal-domain
+    // generate steps so the choice is deliberate and visible to W5
+    // measurement (task 0.12).
+    //
+    // Other domains (email-content generation, summarization, etc.) are
+    // legitimate AI uses and don't need a justification.
+    const isInternalGenerate = step.uses?.some(
+      u => u.capability === 'generate' && u.domain === 'internal'
+    ) ?? false
+    if (isInternalGenerate && !step.generate.reason) {
+      ctx.warnings.push(
+        `Step "${step.id}" (generate/internal) has no \`reason\` field — LLM picked AI ` +
+          `for a deterministic-looking operation without justifying why a structured ` +
+          `transform (with_fields/project_column/set_difference/filter/map/group) ` +
+          `couldn't express it. Update Phase 1 prompt to enforce \`reason\`.`
+      )
+    }
+
     const inputVar = step.generate.input ? this.resolveRefName(step.generate.input, ctx) : undefined
 
     // Build output schema from generate.outputs if present
