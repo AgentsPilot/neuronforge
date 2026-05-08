@@ -65,6 +65,18 @@ export interface DataSlot {
 
   /** Which steps consume this slot */
   consumed_by?: string[]
+
+  /**
+   * WP-17 Bug B: when multiple loops share the same `item_ref` name (canonical
+   * pattern: mark_emails_read + apply_label_to_emails both iterating over the
+   * same array with `item_ref: "email"`), each loop ID is recorded here. The
+   * slot's `schema` is the shared per-iteration shape. Without this, the
+   * second loop's call to `buildLoopSlots` would overwrite the first slot's
+   * `produced_by`, hiding the true producer set.
+   *
+   * Only set on slots with `scope: 'loop'`. Empty/absent on global slots.
+   */
+  produced_by_loops?: string[]
 }
 
 /**
