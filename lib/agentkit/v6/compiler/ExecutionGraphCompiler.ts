@@ -42,6 +42,30 @@ import { analyzeOutputSchema } from '@/lib/pilot/utils/SchemaAwareDataExtractor'
 const moduleLogger = createLogger({ module: 'V6', service: 'ExecutionGraphCompiler' })
 
 /**
+ * W2 / WP-16 Expression AST kinds used by `transform/with_fields`.
+ * The compiler's `resolveStructuredRefs` walker treats these as opaque —
+ * subtrees containing them are passed through unchanged so the runtime
+ * evaluator (lib/pilot/transforms/StructuredTransforms.ts:evaluateExpression)
+ * receives the full structured AST. Without this, atoms like
+ * `{kind: "ref", ref: "item", field: "Email"}` inside a `null_check.value`
+ * get rewritten to `"{{item.Email}}"` strings, and the evaluator throws
+ * "invalid expression" because it expects {kind, ...} objects.
+ *
+ * Note: `literal`, `ref`, `config` are NOT in this set — they're shared
+ * vocabulary with the existing Condition / ValueRef ASTs and the rewriter
+ * needs to handle them in their non-W2 contexts.
+ */
+const W2_EXPRESSION_OP_KINDS = new Set([
+  'concat',
+  'if',
+  'today',
+  'date_diff',
+  'date_add',
+  'null_check',
+  'all_not_null',
+])
+
+/**
  * Compilation Result
  */
 export interface CompilationResult {
@@ -563,7 +587,11 @@ export class ExecutionGraphCompiler {
       'rows_to_objects',  // For converting 2D arrays (like Sheets) to objects
       'map_headers',  // Normalize/rename headers in 2D arrays
       'render_table',  // For rendering data as HTML/formatted tables
-      'fetch_content'  // For fetching attachment/file content from plugins
+      'fetch_content',  // For fetching attachment/file content from plugins
+      // W2 / WP-16: structured primitives for deterministic operations.
+      // Runtime impls in lib/pilot/transforms/StructuredTransforms.ts; switch
+      // cases in lib/pilot/StepExecutor.ts.
+      'with_fields', 'project_column', 'set_difference'
     ]
 
     if (!validPilotOps.includes(pilotOperation)) {
@@ -2991,6 +3019,17 @@ export class ExecutionGraphCompiler {
         // The IR converter's resolveValueRef() should convert these to strings,
         // but deeply nested values or edge cases may survive unresolved.
         if (typeof value.kind === 'string') {
+          // W2 / WP-16: preserve Expression AST subtrees as opaque. The runtime
+          // evaluator (lib/pilot/transforms/StructuredTransforms.ts:evaluateExpression)
+          // walks these structurally — if we resolve `{kind: "ref"}` atoms inside
+          // a `null_check`, `if`, `concat`, etc. to template strings, the evaluator
+          // throws "invalid expression" because it expects {kind, ...} objects.
+          // The W2 ops themselves are the marker: when we see one, return its
+          // subtree untouched so atoms inside it stay structured.
+          if (W2_EXPRESSION_OP_KINDS.has(value.kind)) {
+            return value
+          }
+
           count++
           switch (value.kind) {
             case 'config':
