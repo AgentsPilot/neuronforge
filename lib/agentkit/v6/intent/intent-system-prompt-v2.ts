@@ -803,6 +803,122 @@ If you claim "filtering for X" in the description, you must either:
 **Field types:**
 "string" | "number" | "boolean" | "date" | "currency" | "object" | "array" | "unknown"
 
+### 6.4.1) NESTED FIELD SHAPE (WP-15) — REQUIRED for arrays/objects
+
+This rule applies to BOTH \`extract.fields[]\` and \`generate.outputs[]\` (sections 6.4 and 6.7).
+
+**THE RULE:**
+- When you declare \`type: "array"\`, you MUST include \`items\` describing the element shape.
+- When you declare \`type: "object"\`, you MUST include \`properties\` describing each field.
+- The fields you mention in your \`instruction\` text MUST appear here as structured \`properties\` — do not leave them only in prose.
+
+**Why this matters:** the data_schema for downstream steps is built from these declarations. If you declare \`type: "array"\` without \`items\`, downstream steps see a bag-of-things with no field names — references like \`{{candidate_rows.rows[0].sender_email}}\` cannot be validated and cross-step type checking fails open. The \`instruction\` text is for the AI's eyes; the structured shape is for the compiler's.
+
+**Vocabulary** (recursive):
+
+\`\`\`
+NestedFieldSpec = {
+  type: "string" | "number" | "boolean" | "date" | "currency" | "object" | "array" | "unknown"
+  required?: boolean
+  description?: string
+  // when type="array":
+  items?: NestedFieldSpec
+  // when type="object":
+  properties?: Record<string, NestedFieldSpec>
+}
+\`\`\`
+
+#### ✅ CORRECT — array of objects with item shape declared
+
+Scenario: a \`generate\` step produces \`candidate_rows\` containing the per-email columns to append (canonical \`complaint-email-logger\` shape). The instruction enumerates 5 fields, so all 5 MUST appear in \`outputs\`:
+
+\`\`\`json
+{
+  "kind": "generate",
+  "generate": {
+    "instruction": "For each complaint email, build a row with sender email, subject, date, full email text, and the Gmail message link/id.",
+    "outputs": [
+      {
+        "name": "rows",
+        "type": "array",
+        "description": "One row per complaint email",
+        "items": {
+          "type": "object",
+          "properties": {
+            "sender_email":         { "type": "string", "description": "Email of the complainer" },
+            "subject":              { "type": "string", "description": "Email subject line" },
+            "date":                 { "type": "date",   "description": "Date received" },
+            "full_email_text":      { "type": "string", "description": "Full plain-text body" },
+            "gmail_message_link_id":{ "type": "string", "description": "Gmail message id (used to build a link)" }
+          }
+        }
+      }
+    ]
+  }
+}
+\`\`\`
+
+#### ❌ WRONG — depth-1 declaration (REJECTED by WP-15)
+
+Same scenario, but \`items\` is missing. Even though the \`instruction\` lists 5 fields, the structured shape declares only an unnamed array:
+
+\`\`\`json
+{
+  "kind": "generate",
+  "generate": {
+    "instruction": "For each complaint email, build a row with sender email, subject, date, full email text, and the Gmail message link/id.",
+    "outputs": [
+      { "name": "rows", "type": "array", "description": "One row per complaint email" }
+    ]
+  }
+}
+\`\`\`
+
+This produces a slot with shape \`{rows: array<unknown>}\` — downstream references to \`rows[i].sender_email\` cannot be validated, and \`DataSchemaBuilder\` is forced to emit a depth-1 fallback. The compiler logs a warning and auto-fills \`items: {type: "any"}\` as a safety net, but you should never rely on this — declare \`items\` explicitly.
+
+#### ✅ CORRECT — extract step with nested object array
+
+\`\`\`json
+{
+  "kind": "extract",
+  "extract": {
+    "input": "invoice_pdf",
+    "fields": [
+      { "name": "invoice_number", "type": "string", "required": true },
+      { "name": "total_amount",   "type": "currency", "required": true },
+      {
+        "name": "line_items",
+        "type": "array",
+        "required": false,
+        "description": "Each line on the invoice",
+        "items": {
+          "type": "object",
+          "properties": {
+            "sku":      { "type": "string" },
+            "qty":      { "type": "number" },
+            "unit_price": { "type": "currency" },
+            "subtotal":   { "type": "currency" }
+          }
+        }
+      }
+    ]
+  }
+}
+\`\`\`
+
+#### Producing-slot rule — use the EXACT field names from upstream
+
+If your \`instruction\` reads fields from an upstream slot (e.g., \`from\`, \`subject\`, \`body\`), the producing slot's schema is shown above in the vocabulary section. **Use those exact field names in your output \`properties\`.** Do not invent new names.
+
+| Upstream emits  | ✅ Use this in \`properties\` | ❌ Do not invent |
+|---|---|---|
+| \`from\`         | \`from\`         | \`sender\`, \`sender_email\` |
+| \`subject\`      | \`subject\`      | \`title\`, \`email_title\` |
+| \`internalDate\` | \`internalDate\` | \`date\`, \`received_at\` |
+| \`id\`           | \`id\`           | \`message_id\`, \`email_id\` |
+
+If your output renames a field intentionally (e.g., projection to a destination schema like Sheets columns), name the OUTPUT field after the destination column — but the field on the right-hand side of the mapping must match the upstream exactly. Cross-step type validation will flag mismatches.
+
 ### 6.5) CLASSIFY - Categorize items
 
 {
@@ -903,6 +1019,9 @@ CORRECT approach - First check if field_x exists:
     "format"?: "html",
     "instruction": "Create content with summary and metrics",
     "reason"?: "Required when domain=\"internal\" — see W2 nudge below",
+    // Each output is a NestedFieldSpec with a top-level "name". When type is
+    // "array" you MUST declare "items"; when "object" you MUST declare
+    // "properties". See section 6.4.1 for the full rule + worked examples.
     "outputs"?: [
       {
         "name": "title",
@@ -910,9 +1029,17 @@ CORRECT approach - First check if field_x exists:
         "description": "content title"
       },
       {
-        "name": "body",
-        "type": "string",
-        "description": "content body"
+        "name": "rows",
+        "type": "array",
+        "description": "structured rows the next step will append",
+        "items": {
+          "type": "object",
+          "properties": {
+            "id":      { "type": "string" },
+            "subject": { "type": "string" },
+            "date":    { "type": "date"   }
+          }
+        }
       }
     ]
   }

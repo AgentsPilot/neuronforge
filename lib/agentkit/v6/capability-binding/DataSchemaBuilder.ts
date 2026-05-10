@@ -344,12 +344,7 @@ export class DataSchemaBuilder {
 
     const properties: Record<string, SchemaField> = {}
     for (const field of step.extract.fields) {
-      properties[field.name] = {
-        type: this.mapExtractType(field.type),
-        description: field.description,
-        required: field.required,
-        source: 'ai_declared',
-      }
+      properties[field.name] = this.buildSchemaFromNestedFieldSpec(field, step.id, field.name)
     }
 
     return {
@@ -375,11 +370,7 @@ export class DataSchemaBuilder {
 
     const properties: Record<string, SchemaField> = {}
     for (const output of step.generate.outputs) {
-      properties[output.name] = {
-        type: this.mapExtractType(output.type),
-        description: output.description,
-        source: 'ai_declared',
-      }
+      properties[output.name] = this.buildSchemaFromNestedFieldSpec(output, step.id, output.name)
     }
 
     return {
@@ -387,6 +378,72 @@ export class DataSchemaBuilder {
       properties,
       source: 'ai_declared',
     }
+  }
+
+  /**
+   * WP-15: recursively walk a NestedFieldSpec from the IntentContract grammar
+   * (extract.fields[] / generate.outputs[]) into a SchemaField.
+   *
+   * The grammar mirrors JSON Schema conventions: when `type === "array"`,
+   * `items` declares the element shape; when `type === "object"`, `properties`
+   * declares per-key shape. Without this walk, depth-1 inference produced slots
+   * like `{rows: {type: "array"}}` with no `items.properties`, forcing the
+   * compiler's auto-repair safety net (validateSchemaDepth) to fire and
+   * silently degrade to `items: {type: "any"}`.
+   *
+   * Logs a warning when the LLM declares array/object without nested shape —
+   * still emits a permissive schema so the pipeline doesn't hard-fail, but the
+   * warning is the W5 retirement signal for task 7.3 / 4.6 (auto-repair).
+   *
+   * @param spec   the NestedFieldSpec from IntentContract (may be nested)
+   * @param stepId for diagnostic context in warnings
+   * @param path   dot-separated field path for diagnostic context
+   */
+  private buildSchemaFromNestedFieldSpec(
+    spec: { type?: string; required?: boolean; description?: string; items?: any; properties?: Record<string, any> },
+    stepId: string,
+    path: string
+  ): SchemaField {
+    const fieldType = this.mapExtractType(spec.type)
+
+    const out: SchemaField = {
+      type: fieldType,
+      source: 'ai_declared',
+    }
+    if (spec.description !== undefined) out.description = spec.description
+    if (spec.required !== undefined) out.required = spec.required
+
+    if (fieldType === 'array') {
+      if (spec.items) {
+        out.items = this.buildSchemaFromNestedFieldSpec(spec.items, stepId, `${path}[]`)
+      } else {
+        // WP-15: LLM declared array without items shape. Schema is shallow —
+        // matches the failure mode that auto-repair (task 7.3) currently masks.
+        // Emit a permissive items so downstream consumers don't crash, but
+        // surface a warning so the W5 measurement can count residual firings.
+        this.warn(
+          `Step ${stepId}: field "${path}" declared as array without "items" — falling back to items:{type:"any"}. Declare item shape per WP-15 (system-prompt section 6.4.1).`
+        )
+        out.items = { type: 'any', source: 'ai_declared' }
+      }
+    }
+
+    if (fieldType === 'object') {
+      if (spec.properties && typeof spec.properties === 'object') {
+        const props: Record<string, SchemaField> = {}
+        for (const [key, child] of Object.entries(spec.properties)) {
+          props[key] = this.buildSchemaFromNestedFieldSpec(child, stepId, `${path}.${key}`)
+        }
+        out.properties = props
+      } else {
+        this.warn(
+          `Step ${stepId}: field "${path}" declared as object without "properties" — falling back to properties:{}. Declare field shape per WP-15 (system-prompt section 6.4.1).`
+        )
+        out.properties = {}
+      }
+    }
+
+    return out
   }
 
   /**

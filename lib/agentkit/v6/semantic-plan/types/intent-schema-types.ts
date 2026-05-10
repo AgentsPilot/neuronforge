@@ -115,6 +115,37 @@ export interface OutputRef {
 
 export type ScalarType = "string" | "number" | "boolean";
 
+/**
+ * WP-15: recursive shape declaration for AI-step output declarations.
+ *
+ * Used inside `extract.fields[]` and `generate.outputs[]` to describe the
+ * shape of nested data (array elements, object properties). Mirrors JSON
+ * Schema conventions: when `type: "array"`, `items` describes element shape;
+ * when `type: "object"`, `properties` describes field shape (keyed by name).
+ *
+ * Without this, the LLM can only declare depth-1 shapes — e.g., "rows is an
+ * array" — losing the per-element field list (sender, subject, date, ...).
+ * The free-text `instruction` carries the field intent but no structured
+ * field captures it, so DataSchemaBuilder produces shallow slot schemas
+ * and downstream cross-step type validation fails open.
+ *
+ * Top-level entries in `outputs[]` / `fields[]` add a `name` field; nested
+ * entries inside `items` / `properties.<k>` are nameless (the parent's
+ * record key or array position is the implicit name).
+ *
+ * Symmetric with the runtime `SchemaField` type at
+ * `lib/agentkit/v6/logical-ir/schemas/workflow-data-schema.ts`.
+ */
+export interface NestedFieldSpec {
+  type?: ScalarType | "date" | "currency" | "object" | "array" | "unknown";
+  required?: boolean;
+  description?: string;
+  // When type === "array": shape of each element.
+  items?: NestedFieldSpec;
+  // When type === "object": shape of each named property.
+  properties?: Record<string, NestedFieldSpec>;
+}
+
 export interface ConfigParam {
   key: string; // e.g., "amount_threshold"
   type: ScalarType | "json";
@@ -426,12 +457,11 @@ export interface ExtractStep extends BaseStep {
   extract: {
     input: RefName; // usually attachment/document/text ref
     // Fields are semantic. Compiler maps them to downstream structures.
-    fields: Array<{
-      name: string; // e.g. "amount"
-      type?: ScalarType | "date" | "currency" | "object" | "array" | "unknown";
-      required?: boolean;
-      description?: string;
-    }>;
+    // WP-15: each field is a NestedFieldSpec with a top-level `name`. When
+    // a field has `type: "array"` it MUST declare `items` (element shape);
+    // when `type: "object"` it MUST declare `properties` (per-key shape).
+    // Recursive depth is bounded only by the schema author's discipline.
+    fields: Array<{ name: string } & NestedFieldSpec>;
 
     // "deterministic" indicates you expect a stable schema output (e.g., deterministic_extract)
     deterministic?: boolean;
@@ -495,12 +525,12 @@ export interface GenerateStep extends BaseStep {
      */
     reason?: string;
 
-    // Optional: structured outputs (still semantic)
-    outputs?: Array<{
-      name: string; // e.g., "email_subject", "email_body_html"
-      type?: ScalarType | "object" | "array" | "unknown";
-      description?: string;
-    }>;
+    // Optional: structured outputs (still semantic).
+    // WP-15: each output is a NestedFieldSpec with a top-level `name`. When
+    // a field has `type: "array"` it MUST declare `items` (element shape);
+    // when `type: "object"` it MUST declare `properties` (per-key shape).
+    // Cf. ExtractStep.extract.fields above — same recursive shape vocabulary.
+    outputs?: Array<{ name: string } & NestedFieldSpec>;
   };
 }
 
