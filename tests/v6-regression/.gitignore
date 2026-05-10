@@ -1,1 +1,5 @@
 output/
+# Checkpoint-variant output dirs (CP-A / CP-B / CP-C / future) — temporary
+# measurement artifacts from pipeline regen runs, regenerable on demand.
+output-cp-*/
+output-w*/
