@@ -2569,6 +2569,39 @@ Respond ONLY with the JSON array. No markdown, no explanation, no code blocks.`;
       // `Object.values(item)[N]`. This is non-canonical but tolerant — the
       // alternative is silent empty objects → empty filter → empty email.
       const COLUMN_N = /^column_(\d+)$/;
+
+      // WP-23: detect the "objects-to-2D-array" pattern. The LLM emits
+      // `field_mapping: {"0": "sender_email", "1": "subject", ...}` to
+      // express "convert each object to an array where col 0 = sender_email".
+      // Without this branch, the runtime builds objects with numeric-string
+      // keys, which downstream Sheets append (or any 2D-array consumer)
+      // can't handle → returns null → calibration stop.
+      // Detection: ALL target keys are non-negative integer strings.
+      const NUMERIC_KEY = /^\d+$/;
+      const targetKeys = Object.keys(mapping);
+      const isObjectsToArray = targetKeys.length > 0 && targetKeys.every(k => NUMERIC_KEY.test(k));
+
+      if (isObjectsToArray) {
+        const indices = targetKeys.map(k => parseInt(k, 10));
+        const len = Math.max(...indices) + 1;
+        const applyToArray = (item: any) => {
+          const row = new Array(len).fill(null);
+          for (const [target, src] of Object.entries(mapping)) {
+            const idx = parseInt(target, 10);
+            const value = item ? item[src] : undefined;
+            row[idx] = value !== undefined ? value : null;
+          }
+          return row;
+        };
+        if (Array.isArray(data)) {
+          logger.info({ mapping, itemCount: data.length, rowLength: len }, '[transformMap] WP-23: field_mapping with numeric keys → 2D array');
+          return data.map(applyToArray);
+        }
+        if (data && typeof data === 'object') {
+          return applyToArray(data);
+        }
+      }
+
       const applyMapping = (item: any) => {
         const mapped: Record<string, any> = {};
         for (const [targetField, sourceField] of Object.entries(mapping)) {

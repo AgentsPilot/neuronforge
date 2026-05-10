@@ -38,6 +38,7 @@ The weak points are ordered by likelihood of causing failures as new scenarios a
 | [WP-20](#wp-20-project_columnby_index-rejects-object-rows-after-wp-sr-auto-inject) | `transform/project_column` with `column.kind: "by_index"` hard-throws when the input is an array of objects rather than a raw 2D array. After WP-SR landed (auto-inject of `rows_to_objects` for Sheets-derived inputs), upstream rows are now always objects with header keys — but the LLM still emits `by_index: N` based on the column position it saw in the user's prompt ("column E, index 4"). The compiler used to pass raw 2D arrays through, so `by_index` worked; post-WP-SR it doesn't. Sister bug to the original WP-SR `column_N` failure in `transform/map`. | P1 | ✅ Fixed (2026-05-10) — `transformProjectColumn` now tolerates object rows via `Object.values(row)[index]` fallback, mirroring the `transform/map` `column_N` tolerance. |
 | [WP-21](#wp-21-contains_any-rejects-string-rhs-when-config-value-is-comma-separated) | `contains_any` operator hard-throws when the right-hand side resolves to a string instead of an array. The LLM commonly emits keyword-list config values as comma-separated strings (`"complaint, refund, angry, not working"`) because that's how the user wrote them in their prose prompt. The runtime requires an array. Same shape as WP-20 — LLM emission style mismatched with the runtime contract; runtime tolerance is the cleanest fix. | P1 | ✅ Fixed (2026-05-10) — runtime tolerance via `coerceToArray()` helper in `ConditionalEvaluator`. `contains_any`, `in`, and `not_in` all accept comma-separated strings (split + trim). 11 new unit tests covering canonical complaint-logger pattern + whitespace handling + case-insensitivity + regression guards for array RHS. |
 | [WP-22](#wp-22-set_differencereference-bare-refname-not-resolved-by-runtime) | `transform/set_difference` runtime calls `context.resolveVariable(config.reference)` but the IR converter emits the reference as a bare RefName (`"existing_message_ids"`). `resolveVariable` requires `{{...}}` template syntax — bare strings are returned as-is, so the runtime sees the literal string `"existing_message_ids"` and throws `set_difference.reference must resolve to an array; got string`. Convention mismatch between IR converter and runtime. | P1 | ✅ Fixed (2026-05-10) — both surfaces fixed: (A) IR converter now emits `{{varname}}` (one-line change in `convertTransform` for `set_difference`), (B) runtime defensively wraps bare strings before resolving (handles existing phase4 files without recompile). 3 new unit tests with strict `resolveVariable` stub verifying both bare and templated forms resolve correctly. |
+| [WP-23](#wp-23-transformmap-with-numeric-key-field_mapping-produces-objects-not-2d-arrays) | `transform/map` with `field_mapping` whose target keys are numeric strings (`"0"`, `"1"`, ...) is the LLM's expression of "convert objects to 2D array for Sheets append". The runtime currently builds a plain object (`mapped[targetField] = item[sourceField]`), producing `[{"0": ..., "1": ...}, ...]` — an array of objects with numeric-string keys, NOT the 2D array the LLM intended. Downstream `google-sheets.append_rows` expects a 2D array of cell values, gets these weird objects, returns null, and the runtime errors as a calibration stop. Sister bug to WP-20 (object-row tolerance) and WP-SR (`column_N` source keys) — same shape-mismatch class. | P1 | ✅ Fixed (2026-05-10) — runtime tolerance in `transformMap` Mode 0. Detection: all target keys match `/^\d+$/`. When detected, emit an array per item (length = `max(numericKeys) + 1`, missing slots null) instead of an object. 10 new unit tests in `transformMap.numeric-keys.test.ts` covering canonical complaint-logger pattern, JSON shape, missing source fields, non-contiguous indices, and 4 regression guards (string keys, mixed keys, WP-SR `column_N`, empty mapping). |
 
 ---
 
@@ -1208,6 +1209,82 @@ Auto-converting `ai_processing` on an array into a scatter would change semantic
 
 ---
 
+### WP-23: `transform/map` with numeric-key `field_mapping` produces objects, not 2D arrays
+
+**Severity:** High (blocks Phase E for any scenario whose final step appends to Sheets via `google-sheets.append_rows`)
+**Encountered as:** Phase E live run on `complaint-email-logger` (2026-05-10, post-WP-22 fix) — `Calibration stop: Non-retryable execution error at step "Append new complaint email rows to the UrgentEmails tab in Google Sheets"` (step11 returned null)
+**Status:** ⬜ Documented — fix to follow
+
+**Problem:** The LLM emits `transform/map` with `field_mapping: {"0": "sender_email", "1": "subject", ...}` as the canonical "convert objects to 2D array for Sheets append" pattern. The numeric-string target keys are intended as **array indices**:
+
+```json
+"field_mapping": {
+  "0": "sender_email",
+  "1": "subject",
+  "2": "date",
+  "3": "full_email_text",
+  "4": "gmail_message_link_id"
+}
+```
+
+But [`transformMap` Mode 0](../../lib/pilot/StepExecutor.ts) builds a plain object via `mapped[targetField] = item[sourceField]`. Result:
+
+```json
+[
+  { "0": "barak@x.com", "1": "complaint", "2": "Sun...", "4": "msg-1" },
+  ...
+]
+```
+
+— an array of objects with numeric-string keys (note `"3"` may be missing if the source field is undefined). Downstream `google-sheets.append_rows` expects a 2D array (`[[row1...], [row2...]]`) for the `values` parameter; it receives these malformed objects and returns null. Runtime classifies that as a non-retryable error and aborts.
+
+**Why this slipped past CP-D:** the W5 fingerprint measurement only inspects `ai_processing` step prompts. A `transform/map` step with non-canonical `field_mapping` doesn't show up in the deterministic-AI-fallback axis. Same blind spot as WP-SR / WP-20 / WP-22.
+
+**Why the LLM emits this:** the user's prompt typically says "append rows where col 1 is sender, col 2 is subject, col 3 is date..." (1-based) or "the columns are sender, subject, date..." (positional). The LLM correctly reads this as a column-ordered list and wants to express "produce arrays". Lacking a canonical primitive for "objects-to-rows", it picks `transform/map` with numeric target keys as the closest fit.
+
+**Three intervention options (analogous to WP-20/21/22):**
+
+A. **Runtime tolerance** in `transformMap` Mode 0:
+   - Detect: all `field_mapping` target keys are non-negative integer strings (`/^\d+$/`)
+   - When detected: produce `[Array(N+1).fill(null).map((_, i) => item[mapping[String(i)]])]` per row instead of an object
+   - Length = `max(numericKeys) + 1`; gaps fill with null
+   - Pro: smallest blast radius; consistent with rest of WP family.
+
+B. **Compiler-side rewrite**: detect at compile time and emit a different op (e.g., `objects_to_rows` with explicit `column_order: ["sender_email", "subject", ...]`).
+   - Pro: keeps runtime strict; explicit op better for tooling.
+   - Con: heavier; needs new op + grammar.
+
+C. **LLM emission steering**: tell Phase 1 LLM "to convert array-of-objects to 2D array, use [different op or shape]".
+   - Pro: targets root cause.
+   - Con: depends on compliance; the natural phrasing is "field 0 = X" so the LLM will likely keep using numeric keys.
+
+**Recommended fix:** A.
+
+```ts
+// In transformMap Mode 0 (lib/pilot/StepExecutor.ts)
+const allNumericKeys = Object.keys(mapping).every(k => /^\d+$/.test(k));
+if (allNumericKeys && Object.keys(mapping).length > 0) {
+  const indices = Object.keys(mapping).map(k => parseInt(k, 10));
+  const len = Math.max(...indices) + 1;
+  const applyToArray = (item: any) => {
+    const row = new Array(len).fill(null);
+    for (const [target, src] of Object.entries(mapping)) {
+      row[parseInt(target, 10)] = item ? item[src] ?? null : null;
+    }
+    return row;
+  };
+  if (Array.isArray(data)) return data.map(applyToArray);
+  if (data && typeof data === 'object') return applyToArray(data);
+}
+// fall through to existing object-building behavior...
+```
+
+**Files:** `lib/pilot/StepExecutor.ts` (~15 lines in `transformMap`), `lib/pilot/__tests__/StructuredTransforms.test.ts` or new test file (4–6 tests).
+
+**Sibling failure mode (separate, lower priority):** `full_email_text` resolves to undefined in step10 even though step7's `field_mapping` declares `full_email_text: "body"`. Likely Gmail `search_emails` returned without `body` populated — same WP-11 family (`content_level: full` not auto-applied). Track separately; doesn't block WP-23.
+
+---
+
 ### WP-22: `set_difference.reference` bare RefName not resolved by runtime
 
 **Severity:** High (blocks Phase D / Phase E for any scenario using `set_difference` with a runtime variable reference)
@@ -1489,6 +1566,8 @@ Already documented as WP-9 / F7 — deferred due to ~$0.10-0.15 per run token co
 
 | Date | Change | Details |
 |------|--------|---------|
+| 2026-05-10 | WP-23 fixed — `transform/map` with numeric-key `field_mapping` now produces 2D arrays | Runtime tolerance in `transformMap` Mode 0: when all target keys match `/^\d+$/`, emit `Array(max+1).fill(null)` per row and assign by parsed index, rather than an object. Aligns with `google-sheets.append_rows` contract (2D array of cell values). Sister fix to WP-SR (`column_N` source keys), WP-20 (object-row tolerance), and WP-22 (bare RefName tolerance) — all four are runtime-tolerance fixes for LLM emission patterns that don't match strict runtime contracts. **Phase D** continues to pass (9/9 steps; the conditional then-branch containing the affected step doesn't fire on mock data); the unit tests directly validate the algorithm on the canonical complaint-logger emission. **Phase E** is the actual validation — must be re-run on `complaint-email-logger` to confirm step10 produces a 2D array and step11 (`append_rows`) succeeds. **Sibling issue noted (separate, lower priority):** during the failed Phase E, `full_email_text` resolved to undefined for some rows (Gmail body wasn't fetched). Likely WP-11 family (`content_level: full` not auto-applied for the complaint-logger search). With WP-23, missing fields produce null cells instead of skipped keys — Sheets accepts null. |
+| 2026-05-10 | WP-23 documented — `transform/map` with numeric-key `field_mapping` produces objects instead of 2D arrays | Surfaced during Phase E live run on `complaint-email-logger` (post-WP-22). Cascade reached step11 of 11, then `google-sheets.append_rows` returned null because step10 produced `[{"0":..., "1":..., "4":...}, ...]` (objects with numeric-string keys) instead of `[[row1], [row2], ...]` (2D array). LLM emits `field_mapping: {"0": "sender_email", "1": "subject", ...}` as the canonical "objects-to-2D-array" pattern but the runtime builds objects. Recommended fix: A — runtime tolerance in `transformMap` Mode 0 (detect numeric-only target keys, emit array per row). Same shape-mismatch family as WP-SR / WP-20 / WP-22. Documented; fix to follow as separate commit. Reinforces the CP-D blind spot (W5 fingerprint measurement only checks `ai_processing` prompts; can't catch `transform/map` shape issues). |
 | 2026-05-10 | WP-22 fixed — `set_difference.reference` resolves bare RefName + emits `{{}}` form going forward | Two surfaces fixed: (A) `IntentToIRConverter.convertTransform()` for `set_difference` now emits `transformConfig.reference = "{{varname}}"` (matches convention used by `step.input` and other runtime refs), (B) `transformSetDifference` defensively wraps bare strings in `{{}}` before calling `resolveVariable` (handles existing phase4 files without forcing recompile, and tolerates any non-standard emission paths). 3 new unit tests in `StructuredTransforms.test.ts` using a stricter `resolveVariable` stub that mirrors the production contract (no `{{}}` → returns literal). **Phase D on complaint-email-logger now passes end-to-end** (9/9 steps completed, 0 failures) — was failing at step6 → step8 → finally green after WP-20 + WP-21 + WP-22 unblocked the full cascade. The complaint-email-logger Phase D is the canonical 4-WP integration test for the post-WP-SR Sheets pipeline. 157/157 known-good tests passing (was 154 before WP-22). |
 | 2026-05-10 | WP-22 documented — `set_difference.reference` bare RefName not resolved by runtime | Surfaced during Phase D rerun on `complaint-email-logger` after WP-21 fix landed (cascade now reaches step8 instead of failing at step6). Convention mismatch: IR converter emits `reference: "existing_message_ids"` (bare RefName) but runtime calls `resolveVariable()` which requires `{{...}}` syntax. Two fix options (recommended: A — IR converter emits `{{varname}}`). Documented; fix to follow as separate commit. |
 | 2026-05-10 | WP-21 fixed — runtime tolerance for comma-separated string RHS on `contains_any`, `in`, `not_in` | `coerceToArray()` helper in `ConditionalEvaluator.ts` accepts both array and comma-separated string forms (split on comma + trim). All three set-membership operators now tolerate either form. Same philosophy as WP-SR (`column_N`) and WP-20 (object rows): be liberal in what we accept from LLM emissions, since the user's prose-style "complaint, refund, angry, not working" is unambiguous. 11 new unit tests covering canonical complaint-logger pattern, whitespace handling, case-insensitivity, and array-RHS regression guards. 154/154 known-good tests passing (was 143 before WP-21). Phase D on complaint-email-logger advanced past step6 (was failing at step6 → now fails at step8 with WP-22). |
