@@ -68,6 +68,43 @@ const logger = createLogger({ module: 'StepExecutor', service: 'workflow-pilot' 
 // import { TaskComplexityAnalyzer } from './TaskComplexityAnalyzer';
 // import { PerStepModelRouter } from './PerStepModelRouter';
 
+/**
+ * WP-25: convert an Excel-style column letter ("A", "B", ..., "Z", "AA", ...)
+ * to a 0-indexed position. A=0, B=1, ..., Z=25, AA=26, AB=27, ...
+ */
+function letterToIndex(letters: string): number {
+  let idx = 0;
+  for (const c of letters) {
+    idx = idx * 26 + (c.charCodeAt(0) - 'A'.charCodeAt(0) + 1);
+  }
+  return idx - 1;
+}
+
+/**
+ * WP-23 / WP-25: parse a `field_mapping` target key as a positional column
+ * identifier. Returns the 0-indexed column position, or null if the key
+ * doesn't match any known positional pattern.
+ *
+ * Recognized patterns (all observed in LLM emissions for objects-to-2D-array):
+ *   "0", "1", "42"               → numeric index
+ *   "column_0", "column_1"       → numeric index from suffix
+ *   "A", "B", ..., "Z", "AA"     → Excel letter
+ *   "column_A", "column_B"       → Excel letter from suffix
+ *
+ * When `transformMap` Mode 0 sees a `field_mapping` whose target keys ALL
+ * parse positional via this helper, it emits a 2D array per row instead of
+ * an object. Otherwise it falls through to object-building (WP-4 behavior).
+ */
+function parsePositionalKey(key: string): number | null {
+  if (/^\d+$/.test(key)) return parseInt(key, 10);
+  let m = key.match(/^column_(\d+)$/);
+  if (m) return parseInt(m[1], 10);
+  if (/^[A-Z]+$/.test(key)) return letterToIndex(key);
+  m = key.match(/^column_([A-Z]+)$/);
+  if (m) return letterToIndex(m[1]);
+  return null;
+}
+
 export class StepExecutor {
   private supabase: SupabaseClient;
   private auditTrail: AuditTrailService;
@@ -2570,31 +2607,42 @@ Respond ONLY with the JSON array. No markdown, no explanation, no code blocks.`;
       // alternative is silent empty objects → empty filter → empty email.
       const COLUMN_N = /^column_(\d+)$/;
 
-      // WP-23: detect the "objects-to-2D-array" pattern. The LLM emits
-      // `field_mapping: {"0": "sender_email", "1": "subject", ...}` to
-      // express "convert each object to an array where col 0 = sender_email".
-      // Without this branch, the runtime builds objects with numeric-string
-      // keys, which downstream Sheets append (or any 2D-array consumer)
-      // can't handle → returns null → calibration stop.
-      // Detection: ALL target keys are non-negative integer strings.
-      const NUMERIC_KEY = /^\d+$/;
+      // WP-23 / WP-25: detect the "objects-to-2D-array" pattern. The LLM emits
+      // `field_mapping` with positional target keys to express "convert each
+      // object to an array where target N = sourceField". Multiple emission
+      // styles observed in the wild — all four mean the same thing:
+      //
+      //   {"0": "sender_email", "1": "subject"}              ← numeric (WP-23)
+      //   {"column_0": "sender_email", "column_1": "subject"} ← column_N
+      //   {"A": "sender_email", "B": "subject"}              ← Excel letter (WP-25)
+      //   {"column_A": "sender_email", "column_B": "subject"} ← column_letter (WP-25)
+      //
+      // `parsePositionalKey()` maps each pattern to its numeric index
+      // (Excel-style letter conversion: A=0, B=1, ..., Z=25, AA=26). When ALL
+      // target keys parse as positional, emit a 2D array per row; otherwise
+      // fall through to existing object-building behavior.
       const targetKeys = Object.keys(mapping);
-      const isObjectsToArray = targetKeys.length > 0 && targetKeys.every(k => NUMERIC_KEY.test(k));
+      const positions: Array<[string, number]> = [];
+      let allPositional = targetKeys.length > 0;
+      for (const k of targetKeys) {
+        const idx = parsePositionalKey(k);
+        if (idx === null) { allPositional = false; break; }
+        positions.push([k, idx]);
+      }
 
-      if (isObjectsToArray) {
-        const indices = targetKeys.map(k => parseInt(k, 10));
-        const len = Math.max(...indices) + 1;
+      if (allPositional) {
+        const len = Math.max(...positions.map(([, i]) => i)) + 1;
         const applyToArray = (item: any) => {
           const row = new Array(len).fill(null);
-          for (const [target, src] of Object.entries(mapping)) {
-            const idx = parseInt(target, 10);
+          for (const [target, idx] of positions) {
+            const src = mapping[target];
             const value = item ? item[src] : undefined;
             row[idx] = value !== undefined ? value : null;
           }
           return row;
         };
         if (Array.isArray(data)) {
-          logger.info({ mapping, itemCount: data.length, rowLength: len }, '[transformMap] WP-23: field_mapping with numeric keys → 2D array');
+          logger.info({ mapping, itemCount: data.length, rowLength: len }, '[transformMap] WP-23/25: field_mapping with positional keys → 2D array');
           return data.map(applyToArray);
         }
         if (data && typeof data === 'object') {

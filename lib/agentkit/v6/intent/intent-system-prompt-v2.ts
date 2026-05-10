@@ -1260,6 +1260,36 @@ NOTE: For persistent destinations (structured storage, databases, etc):
 - If you need to CREATE or GET_OR_CREATE a container (folder, sheet tab, database table), use an ArtifactStep with appropriate strategy
 - If you're using an EXISTING resource with ID/path from config, NO artifact step is needed - pass the config reference directly to the deliver operation
 - Example: For appending to an existing spreadsheet with known ID and tab name, pass spreadsheet_id and tab_name directly to the append action (no artifact step)
+
+**Mapping \`to\` field — canonical form (WP-25):**
+
+For ROW-ORIENTED destinations (e.g., Google Sheets \`append_rows\`, BigQuery \`append_rows\`, any plugin where rows are appended to a 2D table), the mapping \`to\` field is a **column position** — the index of the destination column.
+
+✅ **CANONICAL: use numeric string indices** (\`"0"\`, \`"1"\`, \`"2"\`, ...):
+\`\`\`json
+"mapping": [
+  { "from": { "ref": "complaint_rows", "field": "sender_email" }, "to": "0" },
+  { "from": { "ref": "complaint_rows", "field": "subject" }, "to": "1" },
+  { "from": { "ref": "complaint_rows", "field": "date" }, "to": "2" },
+  { "from": { "ref": "complaint_rows", "field": "full_email_text" }, "to": "3" },
+  { "from": { "ref": "complaint_rows", "field": "gmail_message_link_id" }, "to": "4" }
+]
+\`\`\`
+
+❌ **DO NOT USE** these equivalent-but-non-canonical forms — they all express the same intent but increase pipeline variance:
+- \`"to": "A"\` (Excel-style letter)
+- \`"to": "column_A"\` (column_<letter>)
+- \`"to": "column_0"\` (column_<digit>)
+
+The runtime tolerates all four forms today (WP-23 + WP-25), but the canonical numeric-string form keeps IRs predictable and lets the runtime tolerance be retired in the future.
+
+For NAMED-FIELD destinations (e.g., CRM record-create, key-value store \`set\`), use the destination's actual field name instead:
+\`\`\`json
+"mapping": [
+  { "from": { "ref": "lead", "field": "email" }, "to": "Email" },           // Salesforce field name
+  { "from": { "ref": "lead", "field": "lead_name" }, "to": "Full Name" }
+]
+\`\`\`
 }
 
 ### 6.12) NOTIFY - Send notification/message

@@ -40,6 +40,7 @@ The weak points are ordered by likelihood of causing failures as new scenarios a
 | [WP-22](#wp-22-set_differencereference-bare-refname-not-resolved-by-runtime) | `transform/set_difference` runtime calls `context.resolveVariable(config.reference)` but the IR converter emits the reference as a bare RefName (`"existing_message_ids"`). `resolveVariable` requires `{{...}}` template syntax — bare strings are returned as-is, so the runtime sees the literal string `"existing_message_ids"` and throws `set_difference.reference must resolve to an array; got string`. Convention mismatch between IR converter and runtime. | P1 | ✅ Fixed (2026-05-10) — both surfaces fixed: (A) IR converter now emits `{{varname}}` (one-line change in `convertTransform` for `set_difference`), (B) runtime defensively wraps bare strings before resolving (handles existing phase4 files without recompile). 3 new unit tests with strict `resolveVariable` stub verifying both bare and templated forms resolve correctly. |
 | [WP-23](#wp-23-transformmap-with-numeric-key-field_mapping-produces-objects-not-2d-arrays) | `transform/map` with `field_mapping` whose target keys are numeric strings (`"0"`, `"1"`, ...) is the LLM's expression of "convert objects to 2D array for Sheets append". The runtime currently builds a plain object (`mapped[targetField] = item[sourceField]`), producing `[{"0": ..., "1": ...}, ...]` — an array of objects with numeric-string keys, NOT the 2D array the LLM intended. Downstream `google-sheets.append_rows` expects a 2D array of cell values, gets these weird objects, returns null, and the runtime errors as a calibration stop. Sister bug to WP-20 (object-row tolerance) and WP-SR (`column_N` source keys) — same shape-mismatch class. | P1 | ✅ Fixed (2026-05-10) — runtime tolerance in `transformMap` Mode 0. Detection: all target keys match `/^\d+$/`. When detected, emit an array per item (length = `max(numericKeys) + 1`, missing slots null) instead of an object. 10 new unit tests in `transformMap.numeric-keys.test.ts` covering canonical complaint-logger pattern, JSON shape, missing source fields, non-contiguous indices, and 4 regression guards (string keys, mixed keys, WP-SR `column_N`, empty mapping). |
 | [WP-24](#wp-24-content_level-not-forced-full-for-deterministic-body-consumers) | Gmail `search_emails` returns `body` empty unless `content_level: 'full'` is set. The existing WP-11 fix forces `content_level: full` when the graph contains an AI step or a deliver-extract action — but it misses workflows where downstream consumers are **deterministic** transforms (filter on `item.body`, map with `field_mapping: {full_email_text: "body"}`). Result: rows append to Sheets but the body column comes through empty. Same root cause as WP-11; WP-24 extends the detection. | P1 | ✅ Fixed (2026-05-10) — schema-driven detection in `enforceContentLevelForExtraction()`. Two new helpers: `getGatedOutputFields(schema)` reads the plugin's `output_dependencies` and returns the union of `unpopulated_fields` (the set of fields populated only at `content_level: full`); `someNodeReferencesGatedField(ctx, gatedFields)` walks all non-fetch IR node configs and detects references via JSON-value match (`"body"`) or path-tail match (`\.body["}\b]`). Fires PER fetch node — precise (skips fetches that produce gated fields no consumer actually reads), generic (any plugin declaring `output_dependencies`), no false positives on substring matches. 17 new unit tests in `enforceContentLevel.wp24.test.ts` covering canonical complaint-logger filter+map pattern, edge cases (malformed deps, empty fields, fetch-skip, substring-FP guard). |
+| [WP-25](#wp-25-broaden-positional-key-detection-in-transformmap-mode-0) | The LLM has multiple emission styles for "convert objects to 2D array for Sheets append": `{"0": "field"}` (numeric), `{"column_0": "field"}` (column_N), `{"A": "field"}` (Excel letter), `{"column_A": "field"}` (column_letter). WP-23 only caught the first pattern. The 2nd Phase E run on `complaint-email-logger` emitted the `column_A`-style variant — `transformMap` produced objects with `column_A`/`column_B`/... keys, `append_rows` returned null, runtime calibration-stopped. Sister to WP-23. | P1 | ✅ Fixed (2026-05-10) — **two-layer fix:** (a) **runtime tolerance** in `transformMap` Mode 0 via `parsePositionalKey()` helper that recognizes all four patterns and converts each target key to a numeric index (Excel-style: A=0, B=1, ..., AA=26). When ALL target keys parse as positional, runtime emits a 2D array per row. (b) **prompt steering** in section 6.11 (DELIVER) declaring numeric-string `"to": "0"` as the canonical form for row-oriented destinations and explicitly listing the 3 non-canonical equivalents to avoid. Defense in depth — prompt converges LLM toward one pattern; runtime tolerance handles drift. 12 new unit tests covering each pattern + canonical complaint-logger column_A failure mode + regression guards. |
 
 ---
 
@@ -1210,6 +1211,69 @@ Auto-converting `ai_processing` on an array into a scatter would change semantic
 
 ---
 
+### WP-25: Broaden positional-key detection in `transformMap` Mode 0
+
+**Severity:** High (blocks Phase E for any Sheets append workflow where the LLM picks a non-numeric positional pattern)
+**Encountered as:** Phase E re-run on `complaint-email-logger` after WP-24 fix landed (2026-05-10) — body cells now populated thanks to WP-24, but step10 (`append_rows`) still returned `null`.
+**Status:** ✅ Fixed — runtime tolerance, broadened pattern recognition
+
+**Problem:** WP-23 introduced runtime tolerance for `field_mapping` with all-numeric target keys (`"0"`, `"1"`, ...) — recognizing the LLM's "objects-to-2D-array for Sheets append" intent. But the LLM is creative with positional descriptors. On the same scenario, a fresh compile produced:
+
+```json
+"field_mapping": {
+  "column_A": "sender_email",
+  "column_B": "subject",
+  "column_C": "date",
+  "column_D": "full_email_text",
+  "column_E": "gmail_message_link_id"
+}
+```
+
+This bypasses `^\d+$` so `transformMap` falls through to object-building → `[{"column_A": "...", "column_B": "...", ...}]`. `append_rows` plugin schema requires `values: array<array<cell-values>>` (a 2D array), not column-letter-keyed objects. Plugin returned null → calibration stop.
+
+**Pattern catalog observed in the wild:**
+
+| Pattern | Example target keys | Index mapping |
+|---|---|---|
+| Numeric (WP-23) | `"0"`, `"1"`, `"2"` | parseInt |
+| `column_<N>` | `"column_0"`, `"column_1"` | parseInt(suffix) |
+| Excel letter | `"A"`, `"B"`, `"AA"` | A=0, B=1, ..., Z=25, AA=26 |
+| `column_<letter>` | `"column_A"`, `"column_B"` | letter conversion of suffix |
+
+All four mean the same thing: "the target keys are positional column identifiers, not field names — emit a 2D array."
+
+**Fix:** new `parsePositionalKey(key: string): number | null` helper that returns the numeric index for any of the four patterns (or null if not positional). `transformMap` Mode 0 now checks `targetKeys.every(k => parsePositionalKey(k) !== null)` instead of just the numeric regex. When detected, emit a 2D array; otherwise, fall through to object-building.
+
+```ts
+function parsePositionalKey(key: string): number | null {
+  // "0", "1", "42"
+  if (/^\d+$/.test(key)) return parseInt(key, 10);
+  // "column_0", "column_1"
+  let m = key.match(/^column_(\d+)$/);
+  if (m) return parseInt(m[1], 10);
+  // "A", "B", ..., "Z", "AA", ...
+  if (/^[A-Z]+$/.test(key)) return letterToIndex(key);
+  // "column_A", "column_B", ..., "column_AA"
+  m = key.match(/^column_([A-Z]+)$/);
+  if (m) return letterToIndex(m[1]);
+  return null;
+}
+
+function letterToIndex(letters: string): number {
+  let idx = 0;
+  for (const c of letters) {
+    idx = idx * 26 + (c.charCodeAt(0) - 'A'.charCodeAt(0) + 1);
+  }
+  return idx - 1;  // A=0, B=1, ..., Z=25, AA=26
+}
+```
+
+**Files:** `lib/pilot/StepExecutor.ts` (+~20 lines for helper + extended detection), `lib/pilot/__tests__/transformMap.numeric-keys.test.ts` (renamed in spirit but kept name; +12 new tests).
+
+**Why this isn't a permanent fix:** the LLM might invent a 5th pattern next month. The right long-term fix is either compiler-side rewrite to a canonical op (e.g., `objects_to_rows` with explicit `column_order: [...]`) or LLM emission steering. Tracked as future work — for now, runtime tolerance covers the observed patterns.
+
+---
+
 ### WP-24: `content_level` not forced `full` for deterministic body consumers
 
 **Severity:** High (Sheets rows append but content columns are empty)
@@ -1626,6 +1690,7 @@ Already documented as WP-9 / F7 — deferred due to ~$0.10-0.15 per run token co
 
 | Date | Change | Details |
 |------|--------|---------|
+| 2026-05-10 | WP-25 fixed — runtime tolerance for 4 positional-key patterns + prompt steering toward canonical numeric form | Phase E re-run on `complaint-email-logger` (post-WP-24 fix; body cells now populated) failed at step10 (`append_rows`) because step9 emitted `field_mapping: {column_A: "sender_email", column_B: "subject", ...}`. WP-23's `^\d+$` regex didn't match → runtime built objects with column-letter keys → Sheets append got malformed input → returned null. Two-layer fix: **(a) runtime tolerance:** `parsePositionalKey()` helper in `StepExecutor.ts` recognizes all four observed positional patterns — numeric (`"0"`), `column_<digit>` (`"column_0"`), Excel letter (`"A"`, `"AA"`), `column_<letter>` (`"column_A"`) — and maps each to a 0-indexed column position via Excel-style letter conversion (A=0, B=1, ..., Z=25, AA=26). When ALL target keys parse as positional, runtime emits a 2D array per row. **(b) prompt steering:** section 6.11 (DELIVER) now declares numeric-string `"to": "0"` as the canonical form for row-oriented destinations (`append_rows` and similar) and explicitly enumerates the 3 non-canonical equivalents to avoid. Defense in depth: prompt converges LLM on one pattern (reduces variance, makes IRs predictable); runtime tolerance handles drift if LLM picks an alternate. 12 new unit tests in `transformMap.numeric-keys.test.ts` covering each pattern + mixed-positional + canonical complaint-logger column_A failure + regression guards. 196/196 known-good tests passing (was 184). The complaint-email-logger Phase E should now succeed end-to-end on re-run. |
 | 2026-05-10 | WP-24 fixed — `content_level: 'full'` forced when deterministic consumers reference gated output fields | Schema-driven extension of WP-11. Reads the plugin's `output_dependencies` declarations to learn which fields are gated (populated only at `content_level: full`), then walks all transform/notify/deliver IR node configs and triggers the upgrade if any reference a gated field. Eliminates the deterministic-consumer blind spot that caused complaint-email-logger Phase E to append empty `full_email_text` cells. Generic across plugins — works for any action that declares `output_dependencies`. 17 new unit tests covering canonical filter+map patterns, fetch-node skip, substring-false-positive guards, and edge cases. 184/184 known-good tests passing (was 167 before WP-24). The complaint-email-logger Phase E should now produce non-empty body cells on re-run. |
 | 2026-05-10 | WP-23 fixed — `transform/map` with numeric-key `field_mapping` now produces 2D arrays | Runtime tolerance in `transformMap` Mode 0: when all target keys match `/^\d+$/`, emit `Array(max+1).fill(null)` per row and assign by parsed index, rather than an object. Aligns with `google-sheets.append_rows` contract (2D array of cell values). Sister fix to WP-SR (`column_N` source keys), WP-20 (object-row tolerance), and WP-22 (bare RefName tolerance) — all four are runtime-tolerance fixes for LLM emission patterns that don't match strict runtime contracts. **Phase D** continues to pass (9/9 steps; the conditional then-branch containing the affected step doesn't fire on mock data); the unit tests directly validate the algorithm on the canonical complaint-logger emission. **Phase E** is the actual validation — must be re-run on `complaint-email-logger` to confirm step10 produces a 2D array and step11 (`append_rows`) succeeds. **Sibling issue noted (separate, lower priority):** during the failed Phase E, `full_email_text` resolved to undefined for some rows (Gmail body wasn't fetched). Likely WP-11 family (`content_level: full` not auto-applied for the complaint-logger search). With WP-23, missing fields produce null cells instead of skipped keys — Sheets accepts null. |
 | 2026-05-10 | WP-23 documented — `transform/map` with numeric-key `field_mapping` produces objects instead of 2D arrays | Surfaced during Phase E live run on `complaint-email-logger` (post-WP-22). Cascade reached step11 of 11, then `google-sheets.append_rows` returned null because step10 produced `[{"0":..., "1":..., "4":...}, ...]` (objects with numeric-string keys) instead of `[[row1], [row2], ...]` (2D array). LLM emits `field_mapping: {"0": "sender_email", "1": "subject", ...}` as the canonical "objects-to-2D-array" pattern but the runtime builds objects. Recommended fix: A — runtime tolerance in `transformMap` Mode 0 (detect numeric-only target keys, emit array per row). Same shape-mismatch family as WP-SR / WP-20 / WP-22. Documented; fix to follow as separate commit. Reinforces the CP-D blind spot (W5 fingerprint measurement only checks `ai_processing` prompts; can't catch `transform/map` shape issues). |

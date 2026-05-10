@@ -22,28 +22,58 @@
  */
 
 const COLUMN_N = /^column_(\d+)$/;
-const NUMERIC_KEY = /^\d+$/;
 
 interface FieldMapping {
   [target: string]: string;
 }
 
 /**
- * Pure-function mirror of `transformMap` Mode 0 (WP-4 + WP-SR + WP-23).
- * Returns array-of-arrays (2D) when all target keys are numeric, else
- * array-of-objects.
+ * WP-25: Excel-style column letter to 0-indexed position.
+ * A=0, B=1, ..., Z=25, AA=26, AB=27, ...
+ */
+function letterToIndex(letters: string): number {
+  let idx = 0;
+  for (const c of letters) {
+    idx = idx * 26 + (c.charCodeAt(0) - 'A'.charCodeAt(0) + 1);
+  }
+  return idx - 1;
+}
+
+/**
+ * WP-23 / WP-25: parse a `field_mapping` target key as a positional column
+ * identifier. Returns the 0-indexed column position, or null if not positional.
+ */
+function parsePositionalKey(key: string): number | null {
+  if (/^\d+$/.test(key)) return parseInt(key, 10);
+  let m = key.match(/^column_(\d+)$/);
+  if (m) return parseInt(m[1], 10);
+  if (/^[A-Z]+$/.test(key)) return letterToIndex(key);
+  m = key.match(/^column_([A-Z]+)$/);
+  if (m) return letterToIndex(m[1]);
+  return null;
+}
+
+/**
+ * Pure-function mirror of `transformMap` Mode 0 (WP-4 + WP-SR + WP-23 + WP-25).
+ * Returns array-of-arrays (2D) when all target keys are positional (any of
+ * the 4 patterns), else array-of-objects.
  */
 function applyFieldMapping(data: any[], mapping: FieldMapping): any[] {
   const targetKeys = Object.keys(mapping);
-  const isObjectsToArray = targetKeys.length > 0 && targetKeys.every(k => NUMERIC_KEY.test(k));
+  const positions: Array<[string, number]> = [];
+  let allPositional = targetKeys.length > 0;
+  for (const k of targetKeys) {
+    const idx = parsePositionalKey(k);
+    if (idx === null) { allPositional = false; break; }
+    positions.push([k, idx]);
+  }
 
-  if (isObjectsToArray) {
-    const indices = targetKeys.map(k => parseInt(k, 10));
-    const len = Math.max(...indices) + 1;
+  if (allPositional) {
+    const len = Math.max(...positions.map(([, i]) => i)) + 1;
     return data.map((item: any) => {
       const row = new Array(len).fill(null);
-      for (const [target, src] of Object.entries(mapping)) {
-        const idx = parseInt(target, 10);
+      for (const [target, idx] of positions) {
+        const src = mapping[target];
         const value = item ? item[src] : undefined;
         row[idx] = value !== undefined ? value : null;
       }
@@ -217,5 +247,151 @@ describe('transformMap Mode 0 — WP-23 objects-to-2D-array detection', () => {
     const input = [{ a: 1 }];
     const out = applyFieldMapping(input, {});
     expect(out[0]).toEqual({});
+  });
+});
+
+// ─── WP-25: broaden positional-key detection to all 4 patterns ────────────
+
+describe('WP-25 — parsePositionalKey covers all four LLM emission styles', () => {
+  it('numeric: "0", "1", "42"', () => {
+    expect(parsePositionalKey('0')).toBe(0);
+    expect(parsePositionalKey('1')).toBe(1);
+    expect(parsePositionalKey('42')).toBe(42);
+  });
+
+  it('column_N (numeric suffix): "column_0", "column_3"', () => {
+    expect(parsePositionalKey('column_0')).toBe(0);
+    expect(parsePositionalKey('column_3')).toBe(3);
+    expect(parsePositionalKey('column_99')).toBe(99);
+  });
+
+  it('Excel letter: A=0, B=1, ..., Z=25, AA=26, AB=27', () => {
+    expect(parsePositionalKey('A')).toBe(0);
+    expect(parsePositionalKey('B')).toBe(1);
+    expect(parsePositionalKey('Z')).toBe(25);
+    expect(parsePositionalKey('AA')).toBe(26);
+    expect(parsePositionalKey('AB')).toBe(27);
+  });
+
+  it('column_<letter>: "column_A", "column_AA"', () => {
+    expect(parsePositionalKey('column_A')).toBe(0);
+    expect(parsePositionalKey('column_B')).toBe(1);
+    expect(parsePositionalKey('column_Z')).toBe(25);
+    expect(parsePositionalKey('column_AA')).toBe(26);
+  });
+
+  it('non-positional keys return null', () => {
+    expect(parsePositionalKey('date')).toBeNull();
+    expect(parsePositionalKey('lead_name')).toBeNull();
+    expect(parsePositionalKey('a')).toBeNull(); // lowercase doesn't match
+    expect(parsePositionalKey('column_a')).toBeNull(); // lowercase suffix
+    expect(parsePositionalKey('column_')).toBeNull();
+    expect(parsePositionalKey('A1')).toBeNull(); // mixed letter+digit
+    expect(parsePositionalKey('')).toBeNull();
+  });
+});
+
+describe('WP-25 — column_<letter> field_mapping produces 2D array', () => {
+  // The exact failing emission from complaint-email-logger Phase E #2:
+  const COLUMN_LETTER_MAPPING: FieldMapping = {
+    column_A: 'sender_email',
+    column_B: 'subject',
+    column_C: 'date',
+    column_D: 'full_email_text',
+    column_E: 'gmail_message_link_id',
+  };
+
+  const ROWS = [
+    {
+      sender_email: 'a@x.com',
+      subject: 'I have a complaint',
+      date: 'Sun, 10 May',
+      full_email_text: 'The product broke.',
+      gmail_message_link_id: 'msg-001',
+    },
+    {
+      sender_email: 'b@y.com',
+      subject: 'Refund pls',
+      date: 'Mon, 11 May',
+      full_email_text: 'Want a refund.',
+      gmail_message_link_id: 'msg-002',
+    },
+  ];
+
+  it('canonical complaint-logger column_A pattern → 2D array', () => {
+    const out = applyFieldMapping(ROWS, COLUMN_LETTER_MAPPING);
+    expect(Array.isArray(out[0])).toBe(true);
+    expect(out[0]).toEqual([
+      'a@x.com',
+      'I have a complaint',
+      'Sun, 10 May',
+      'The product broke.',
+      'msg-001',
+    ]);
+    expect(out[1]).toEqual([
+      'b@y.com',
+      'Refund pls',
+      'Mon, 11 May',
+      'Want a refund.',
+      'msg-002',
+    ]);
+  });
+
+  it('Sheets append_rows compatibility: 2D shape, not column-letter-keyed objects', () => {
+    const out = applyFieldMapping(ROWS, COLUMN_LETTER_MAPPING);
+    const json = JSON.stringify(out);
+    expect(json.startsWith('[[')).toBe(true);
+    expect(json).not.toContain('"column_A"');
+    expect(json).not.toContain('"column_B"');
+  });
+});
+
+describe('WP-25 — Excel letter (A/B/C) and column_N field_mapping also produce 2D', () => {
+  const ROW = { sender: 'a@x.com', subject: 'hi', date: 'today' };
+
+  it('A, B, C target keys produce 2D array', () => {
+    const out = applyFieldMapping([ROW], { A: 'sender', B: 'subject', C: 'date' });
+    expect(out[0]).toEqual(['a@x.com', 'hi', 'today']);
+  });
+
+  it('column_0, column_1, column_2 target keys produce 2D array', () => {
+    const out = applyFieldMapping([ROW], {
+      column_0: 'sender',
+      column_1: 'subject',
+      column_2: 'date',
+    });
+    expect(out[0]).toEqual(['a@x.com', 'hi', 'today']);
+  });
+
+  it('AA letter (column index 26) + Z (25) handled correctly', () => {
+    const row: any = { a: 'col_25', b: 'col_26' };
+    const out = applyFieldMapping([row], { Z: 'a', AA: 'b' });
+    expect(out[0]).toHaveLength(27);
+    expect(out[0][25]).toBe('col_25');
+    expect(out[0][26]).toBe('col_26');
+  });
+
+  it('mixed positional patterns ALL count as positional → 2D array', () => {
+    // Defensive: if the LLM mixes "0" and "column_A" (semantically same
+    // intent), we still recognize it as positional.
+    const out = applyFieldMapping([ROW], {
+      '0': 'sender',
+      column_B: 'subject',
+      C: 'date',
+    });
+    expect(Array.isArray(out[0])).toBe(true);
+    expect(out[0]).toEqual(['a@x.com', 'hi', 'today']);
+  });
+
+  it('regression: mixed positional + non-positional keys → falls through to objects', () => {
+    // If even one key is non-positional, the whole mapping is treated as
+    // string-keyed (object output). Caller intent is ambiguous; safer to
+    // build an object than an array with confusing column placement.
+    const out = applyFieldMapping([ROW], {
+      '0': 'sender',
+      subject_field: 'subject',
+    });
+    expect(Array.isArray(out[0])).toBe(false);
+    expect(out[0]).toEqual({ '0': 'a@x.com', subject_field: 'hi' });
   });
 });
