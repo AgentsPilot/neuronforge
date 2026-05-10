@@ -1043,8 +1043,13 @@ export class IntentToIRConverter {
       // For plugins that use different recipient params (channel_id, recipient_phone),
       // the LLM should put them in notify.options with the correct param name.
       if (schemaProps.has('recipients') && step.notify.recipients?.to) {
+        // Robust: LLM occasionally emits recipients.to as a single ValueRef
+        // object instead of an array of ValueRefs. Normalize before mapping.
+        const toList = Array.isArray(step.notify.recipients.to)
+          ? step.notify.recipients.to
+          : [step.notify.recipients.to]
         params.recipients = {
-          to: step.notify.recipients.to.map((r: any) => this.resolveValueRef(r, ctx))
+          to: toList.map((r: any) => this.resolveValueRef(r, ctx))
         }
       }
 
@@ -1089,8 +1094,13 @@ export class IntentToIRConverter {
 
       if (isSendAction) {
         if (step.notify.recipients?.to) {
+          // Robust: LLM occasionally emits recipients.to as a single ValueRef
+          // object instead of an array of ValueRefs. Normalize before mapping.
+          const toList = Array.isArray(step.notify.recipients.to)
+            ? step.notify.recipients.to
+            : [step.notify.recipients.to]
           params.recipients = {
-            to: step.notify.recipients.to.map((r: any) => this.resolveValueRef(r, ctx))
+            to: toList.map((r: any) => this.resolveValueRef(r, ctx))
           }
         }
         const contentObj: Record<string, any> = {}

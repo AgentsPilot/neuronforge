@@ -297,7 +297,11 @@ export class ExecutionGraphCompiler {
       }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error)
+      const stack = error instanceof Error && error.stack ? error.stack : ''
       this.log(ctx, `Compilation failed: ${errorMessage}`)
+      // Surface the stack so we can diagnose generic-looking errors like
+      // "object is not iterable" without instrumenting the entire pipeline.
+      if (stack) this.log(ctx, `Stack:\n${stack}`)
 
       return {
         success: false,
@@ -3879,10 +3883,17 @@ export class ExecutionGraphCompiler {
       for (const step of steps) {
         if (step.output_variable && step.output_schema) {
           const schema = step.output_schema
-          const requiredFields = new Set<string>(schema.required || [])
-          const allFields = new Set<string>(
-            Object.keys(schema.properties || schema.items?.properties || {})
-          )
+          // Defensive: JSON Schema convention has `required` as an array of
+          // field names. Some upstream emitters (LLM, DataSchemaBuilder) may
+          // produce a boolean (`required: true` meaning "this whole schema is
+          // required") which is non-standard. Coerce to empty array — the
+          // nullable-detection algorithm only cares about per-field required-ness.
+          const requiredArr = Array.isArray(schema.required) ? schema.required : []
+          const requiredFields = new Set<string>(requiredArr)
+          const propsSrc = (schema.properties && typeof schema.properties === 'object' ? schema.properties : null)
+            ?? (schema.items?.properties && typeof schema.items.properties === 'object' ? schema.items.properties : null)
+            ?? {}
+          const allFields = new Set<string>(Object.keys(propsSrc))
           // Nullable fields = all fields minus required fields
           outputFieldInfo.set(step.output_variable, { required: requiredFields, all: allFields })
         }
@@ -4500,15 +4511,42 @@ export class ExecutionGraphCompiler {
    */
   private async loadPluginAction(pluginKey: string, action: string): Promise<any> {
     try {
-      // Load plugin definition from lib/plugins/definitions/
+      // Load plugin definition from lib/plugins/definitions/.
+      // Plugin files use the canonical `${pluginKey}-plugin-v2.json` suffix
+      // (e.g., google-mail-plugin-v2.json). Fall back to the legacy short
+      // form `${pluginKey}.json` for older / future definitions.
       const fs = await import('fs/promises')
       const path = await import('path')
-      const pluginPath = path.join(process.cwd(), 'lib', 'plugins', 'definitions', `${pluginKey}.json`)
-      const pluginDef = JSON.parse(await fs.readFile(pluginPath, 'utf-8'))
 
-      // Find the action definition
-      const actionDef = pluginDef.actions?.find((a: any) => a.name === action)
-      return actionDef
+      const candidates = [
+        path.join(process.cwd(), 'lib', 'plugins', 'definitions', `${pluginKey}-plugin-v2.json`),
+        path.join(process.cwd(), 'lib', 'plugins', 'definitions', `${pluginKey}.json`),
+      ]
+
+      let pluginDef: any = null
+      for (const pluginPath of candidates) {
+        try {
+          pluginDef = JSON.parse(await fs.readFile(pluginPath, 'utf-8'))
+          break
+        } catch {
+          // try next candidate
+        }
+      }
+
+      if (!pluginDef) {
+        this.logger.warn(`Failed to load plugin definition for ${pluginKey} (tried: ${candidates.join(', ')})`)
+        return null
+      }
+
+      // Find the action definition. Modern definitions use `actions: { [name]: ActionDef }`;
+      // legacy ones use `actions: ActionDef[]` with `name` field. Handle both.
+      if (pluginDef.actions && typeof pluginDef.actions === 'object' && !Array.isArray(pluginDef.actions)) {
+        return pluginDef.actions[action] ?? null
+      }
+      if (Array.isArray(pluginDef.actions)) {
+        return pluginDef.actions.find((a: any) => a.name === action) ?? null
+      }
+      return null
     } catch (error) {
       this.logger.warn(`Failed to load plugin action ${pluginKey}.${action}: ${error}`)
       return null
@@ -4542,8 +4580,25 @@ export class ExecutionGraphCompiler {
 
     if (!actionDef) return formats
 
+    // Normalize parameters into a legacy array-of-{name, ...} form regardless
+    // of plugin file shape. V2 plugin definitions use JSON Schema:
+    //   parameters: { type: "object", required: [...], properties: {name: schema} }
+    // Legacy plugin definitions use an array:
+    //   parameters: [{name: "x", type: "string", items: ...}, ...]
+    const params = actionDef.parameters
+    let paramList: any[] = []
+    if (Array.isArray(params)) {
+      paramList = params
+    } else if (params && typeof params === 'object' && params.properties && typeof params.properties === 'object') {
+      // V2 form — flatten properties to {name, ...schema} entries
+      paramList = Object.entries(params.properties).map(([name, schema]) => ({
+        name,
+        ...(schema as any),
+      }))
+    }
+
     // Analyze parameter schemas
-    for (const param of actionDef.parameters || []) {
+    for (const param of paramList) {
       // Check for 2D array requirements (Sheets)
       if (param.type === 'array' && param.items?.type === 'array') {
         formats.needs2DArray = true

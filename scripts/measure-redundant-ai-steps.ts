@@ -184,6 +184,16 @@ interface MeasurementReport {
 // is the standard `npx ts-node scripts/...` invocation).
 const SCENARIOS_ROOT = path.resolve(process.cwd(), 'tests/v6-regression/scenarios')
 
+// CP-C / future-checkpoint support: allow pointing the sweep at an alternative
+// output subdirectory (e.g. `output-cp-c` for post-W3 regen).
+function getOutputSubdir(): string {
+  const idx = process.argv.indexOf('--output-subdir')
+  if (idx !== -1 && process.argv[idx + 1]) {
+    return process.argv[idx + 1]
+  }
+  return 'output'
+}
+
 function listScenarios(filter?: Set<string>): string[] {
   if (!fs.existsSync(SCENARIOS_ROOT)) {
     console.error(`[measure-redundant-ai-steps] Scenarios directory not found: ${SCENARIOS_ROOT}`)
@@ -198,7 +208,8 @@ function listScenarios(filter?: Set<string>): string[] {
 }
 
 function readPhase4Steps(scenario: string): any[] | null {
-  const file = path.join(SCENARIOS_ROOT, scenario, 'output', 'phase4-pilot-dsl-steps.json')
+  const subdir = getOutputSubdir()
+  const file = path.join(SCENARIOS_ROOT, scenario, subdir, 'phase4-pilot-dsl-steps.json')
   if (!fs.existsSync(file)) return null
   try {
     return JSON.parse(fs.readFileSync(file, 'utf-8'))
