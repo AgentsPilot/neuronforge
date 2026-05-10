@@ -34,6 +34,7 @@ The weak points are ordered by likelihood of causing failures as new scenarios a
 | [WP-16](#wp-16-deterministic-data-operations-routed-to-ai-step) | Deterministic data operations (filter, column projection, anti-join, dedup) routed to `ai_processing` because Phase 1 vocabulary doesn't expose workflow primitives — the LLM defaults to `generate/internal` for any internal data op. Each unnecessary AI step adds cost, latency, and fabrication risk; compounds WP-13/WP-15 by inserting LLM boundaries where none were needed. | P1 | 🟡 In progress — task 0.7 ✅ done (see [V6_WP16_INVENTORY.md](./V6_WP16_INVENTORY.md)); tasks 0.8–0.12 ⬜ pending |
 | [WP-17](#wp-17-loop-item-slot-misderived-from-nested-array-and-overwritten-across-loops) | Loop `item_ref` slot has the wrong schema (full wrapper object instead of unwrapped per-element shape) when the iterated array is nested under a field, AND the slot is overwritten when multiple loops share an `item_ref` name. Two bugs in `DataSchemaBuilder.buildLoopSlots()` — declared schema doesn't match the runtime iteration value. Cross-step type validator can't catch downstream errors because the source schema lies. | P1 | ✅ Fixed (2026-05-08) — `DataSchemaBuilder.unwrapWrapperToArray()` + `deriveLoopItemSchema()` for Bug A; `produced_by_loops[]` collision-merge for Bug B. 9 unit tests in `__tests__/DataSchemaBuilder.wp17-wp18.test.ts`. |
 | [WP-18](#wp-18-shape-preserving-transform-inherits-schema-from-wrong-slot-when-compiler-auto-unwraps-input) | Shape-preserving transforms (`filter`, `sort`, `dedupe`, `flatten`) inherit schema from the input slot per design — but when the input is a plugin wrapper (e.g., Sheets `{values, row_count, ...}`) the compiler auto-injects a `rows_to_objects` transform that unwraps to an object array. `DataSchemaBuilder` doesn't anticipate this and inherits the wrapper schema instead of the post-unwrap shape. The LLM's explicit `transform.output_schema` declaration — which would have caught the discrepancy — is ignored. Same "schema lies about reality" failure class as WP-13/15/17. | P1 | ✅ Fixed (2026-05-08) — `inferSchemaForTransformStep()` now honors LLM-declared `transform.output_schema` first (Bug A), then walks wrapper-objects via `unwrapWrapperToArray()` for shape-preserving inheritance (Bug B, mirrors Phase 4 auto-inject at schema level). 5 unit tests in same file. |
+| [WP-19](#wp-19-ai_processing-on-array-input-bulk-vs-per-item) | `ai_processing` step takes an array input and produces an array output (one extraction per item) but runs as a single bulk LLM call instead of a scatter-gather. The LLM emits `kind: "generate"` with `input: <array>` and trusts the LLM to "do for each" inside one prompt. Token-bloat risk on unbounded inputs (WP-14 family) plus higher hallucination/omission rates than per-item processing. Compiler doesn't auto-rewrite because bulk is legitimate for some patterns (cross-item summarization). | P2 | ⬜ Future — observed in `aliexpress-delivery-tracker/output/phase4-pilot-dsl-steps.json` step3 (2026-05-10). Three intervention options: (A) Phase 1 prompt steering, (B) compiler detection + warning, (C) compiler auto-rewrite. Deferred — current scenarios survive small inboxes; revisit when bulk-call failure (token bloat or item drop) is observed in Phase E. |
 
 ---
 
@@ -1121,6 +1122,89 @@ The two bugs reinforce each other: with the unwrapped slot missing AND the LLM d
 
 ---
 
+### WP-19: `ai_processing` on array input — bulk vs per-item
+
+**Severity:** Medium
+**Encountered as:** Manual review of `aliexpress-delivery-tracker/output/phase4-pilot-dsl-steps.json` step3 (2026-05-10)
+**Status:** ⬜ Future — observed, deferred until a Phase E run actually fails
+
+**Problem:** When the LLM needs to apply AI extraction/classification/generation to each item in an array, it can emit one of two shapes:
+
+1. **Per-item (canonical, safer):** `kind: "loop"` over the array with `kind: "generate"` (or `extract`) inside. The compiler produces a `scatter_gather` running the LLM N times, once per item.
+2. **Bulk (current AliExpress emission):** `kind: "generate"` with `input: <array>` and an instruction like "for each email...". The compiler produces a single `ai_processing` step that passes the whole array to one LLM call and trusts the LLM to return an array back.
+
+The LLM picks (2) when the operation has no per-item side-effects (no API calls per item), because (2) is "simpler" — one call instead of N. But (2) has known failure modes:
+
+- **Token bloat (WP-14 family):** if the array is unbounded (Gmail search results: could be 1 or 100 emails), the prompt grows linearly. With 50 emails × 2KB each = 100KB+ prompts that hit the model's input window or rate limits.
+- **Hallucination / drift in bulk extraction:** LLMs reliably drop or invent items when extracting in bulk — observed at ~5–10% rate even on small inputs. Per-item processing produces more reliable structured output.
+- **All-or-nothing failure:** one malformed input can fail the whole batch; per-item processing isolates failures.
+
+**Concrete example (AliExpress):**
+
+```json
+// IntentContract step3 (LLM emission)
+{
+  "kind": "generate",
+  "generate": {
+    "input": "delivery_emails",                  // ← whole array
+    "instruction": "For each email...",          // ← natural-language for-each
+    "outputs": [{
+      "name": "deliveries",
+      "type": "array",
+      "items": { /* per-email shape */ }         // ← LLM expected to return all in one shot
+    }]
+  }
+}
+
+// Compiled DSL step3
+{ "type": "ai_processing", "input": "{{delivery_emails}}", ... }
+```
+
+Compare with step6 in the same scenario (`mark_and_label_emails`), where the LLM correctly emitted `kind: "loop"` because labeling is a Gmail API call per email.
+
+**Why the compiler doesn't auto-rewrite:**
+
+By design — bulk processing is legitimate for some patterns:
+- Cross-item summarization ("summarize this thread of emails")
+- Cross-item classification with shared context ("rank these leads by urgency relative to each other")
+- Single-shot extraction of a global field ("what's the overall sentiment of this conversation")
+
+Auto-converting `ai_processing` on an array into a scatter would change semantics for these. A safe conversion needs a per-item independence signal that the current grammar doesn't expose.
+
+**Three intervention options:**
+
+1. **Phase 1 prompt steering (lowest risk).** Add explicit guidance to `intent-system-prompt-v2.ts`:
+
+   > When you need AI to apply *independently* to each item in an array (extract per-item fields, classify per-item, generate per-item content), wrap the AI step in a `kind: "loop"` over the array with `item_ref`. Per-item AI calls are safer for token budgets, more reliable for structured output, and isolate failures.
+   >
+   > Use a single bulk AI call only when the operation requires cross-item context (summarization, comparative ranking, conversation analysis).
+
+   Plus a positive example (per-item) and a negative example (bulk over an unbounded array).
+
+   Pro: targets root cause; LLM is non-deterministic but observable. Con: still depends on LLM compliance.
+
+2. **Compiler detection + warning.** Detect at compile time:
+   - `ai_processing` step with `input` resolving to an array slot
+   - `output_schema` is `array<object>` with `items.properties` matching the input's per-element shape
+   - No cross-item operation hint in the prompt
+
+   Emit a warning "AI on array input — consider scatter_gather for per-item processing". Non-blocking; observable. Could be promoted to an error after measurement shows 0 legitimate bulk-on-array patterns.
+
+   Pro: catches all emissions regardless of LLM choice. Con: warning fatigue if false positives are common.
+
+3. **Compiler auto-rewrite.** Transform detected `ai_processing` patterns into `scatter_gather` wrapping the AI step, with `item_ref` injected. Per-item LLM calls.
+
+   Pro: fixes the problem unconditionally. Con: changes semantics for legitimate bulk operations; needs an opt-out signal in the IntentContract grammar.
+
+**When to act:** This is a latent risk, not an active bug for small inputs. Defer until:
+- A Phase E run fails with token-bloat or item-drop on a real-data array, OR
+- A new scenario regularly exercises arrays larger than ~20 items, OR
+- The W5 measurement starts surfacing this as a recurring `generate/internal` pattern.
+
+**Compounding with WP-13 / WP-14:** WP-13 documented bulk AI's tendency to fabricate when input is empty; WP-14 documented scatter token bloat from full-item merges. WP-19 is the missing third leg — the choice between bulk and scatter at emission time. All three are facets of "LLM-on-collections is risky and needs structural guardrails."
+
+---
+
 ## Phase D Hardening Roadmap
 
 These are improvements to Phase D (mock WorkflowPilot execution) designed to catch more of the Phase E class of bugs without paying the token cost of live LLM calls. WP-9 (F7 — real LLM in Phase D+) is the ultimate answer but has been deferred. The items below close specific gaps observed during WP-11 through WP-14.
@@ -1204,6 +1288,7 @@ Already documented as WP-9 / F7 — deferred due to ~$0.10-0.15 per run token co
 
 | Date | Change | Details |
 |------|--------|---------|
+| 2026-05-10 | WP-19 documented (future / latent risk) | During manual Phase 4 review of `aliexpress-delivery-tracker/output/phase4-pilot-dsl-steps.json`, observed that step3 is a single bulk `ai_processing` call (`input: "{{delivery_emails}}"`) instead of a scatter_gather, despite step6 in the same scenario correctly being a per-item loop for Gmail labeling. Investigation showed the LLM emitted Phase 1 step3 as `kind: "generate"` with `input: <whole array>` — bulk processing — while step6 correctly used `kind: "loop"`. Compiler faithfully translated both. The bulk-on-array pattern carries token-bloat (WP-14 family) + hallucination/omission risk + all-or-nothing failure mode. Three intervention options identified (prompt steering / compiler warning / compiler auto-rewrite). Deferred — current scenarios survive small inboxes; revisit when bulk-call failure is observed in Phase E. |
 | 2026-05-10 | RETIRE-1: auto-repair safety nets retired (validateAISchemaDepth + WP-15 builder fallback) | CP-D verified 0/10 firings of both auto-repair safety nets across all regression scenarios — the retirement gate established by Q-A4 sequencing was met. Switched both from warn-and-repair to throw-on-violation: (a) [`ExecutionGraphCompiler.validateAISchemaDepth()`](../../lib/agentkit/v6/compiler/ExecutionGraphCompiler.ts) now throws when an AI-declared slot has `type: "array"` without `items` (or `type: "object"` without `properties`); (b) [`DataSchemaBuilder.buildSchemaFromNestedFieldSpec()`](../../lib/agentkit/v6/capability-binding/DataSchemaBuilder.ts) (added in [707a429](../../lib/agentkit/v6/capability-binding/__tests__/DataSchemaBuilder.wp15.test.ts) for WP-15) now throws on shallow nested specs instead of emitting `items:{type:"any"}` / `properties:{}` and a warning. Behavior change: future emissions that produce a shallow AI schema will fail the pipeline at compile time with a clear error instead of degrading silently. Easy to revert if the gate proves premature. **Deferred (RETIRE-2):** disabling AI fallbacks for the 5 retire-safe deterministic primitives (`project_column`, `set_difference`, `filter`, `group`, `dedupe`). The "fallback" lives in the LLM's emission choice (it picks `generate/internal` instead of the structured `transform` primitive) — there are no explicit fallback branches inside StepExecutor's transform functions. Genuine retirement requires extracting the W5 fingerprint logic from [`scripts/measure-redundant-ai-steps.ts`](../../scripts/measure-redundant-ai-steps.ts) into a shared module and wiring it into the compiler as a hard gate that rejects `generate/internal` prompts matching the retire-safe fingerprints. Larger blast radius; deserves its own PR + fresh CP-E measurements (post-WP-SR + null-key changes) before committing. |
 | 2026-05-10 | WP-SR shipped + CP-D sweep finding | After AUDIT-1 (`SchemaAwareDataExtractor` + `VisionContentBuilder` restoration), discovered that the runtime cascade for Sheets-style 2D-array → object workflows was still broken. Phase E on `leads-per-salesperson-email` produced `[{}, {}, ...]` at the LLM-emitted `transform/map` step because `rows_to_objects` (now firing post-restoration) was lowercasing headers (`"Lead Name"` → `"lead name"`) while the LLM's `field_mapping` referenced original-case headers (`{date: "Date", lead_name: "Lead Name"}`) — every `item["Date"]` lookup returned undefined. Fixed in WP-SR with three coordinated changes: (a) `config.preserve_case: true` opt-in on `rowsToObjects` (extracted to pure module `lib/pilot/transforms/RowsToObjects.ts` for testability), (b) compiler auto-inject now sets `preserve_case: true`, (c) `transformMap` Mode 0 now tolerates `column_N` source keys via positional access (`Object.values(item)[N]`) for the LLM's non-canonical alternative emission. Plus a `group transform null-key guard` follow-up: items whose group-by field resolves to null/undefined/empty-string are dropped by default with a single aggregated warning (was: silently grouped under literal `"null"` and downstream sent emails to recipient `"null"`); opt-in `config.include_null_keys: true` restores legacy behavior. Plus DSL simulator now understands `rows_to_objects` (cosmetic warning fix). **Phase E verified end-to-end on `leads-per-salesperson-email`**: 3 qualified leads filtered, summary email sent, 2 of 3 per-salesperson emails delivered (the 3rd dropped because Lead 5's source row was missing the Sales Person column — the null-key guard now prevents the silent send-to-`"null"` failure mode). 141/141 tests passing (134 prior + 7 new). **CP-D sweep finding (logged for transparency):** of the 10 regression scenarios, 4 use `google-sheets.read_range` (`complaint-email-logger`, `gantt-urgent-tasks`, `leads-email-summary`, `leads-per-salesperson-email`) — all 4 had phase4 outputs compiled pre-restoration and so were missing the auto-injected `rows_to_objects` step; all 4 would have failed end-to-end at runtime the same way `leads-per-salesperson-email` did before WP-SR. `orders-po-extractor-xlsx` uses `transform/group` on `vendor` and benefits from the null-key guard if any extracted line item lacks vendor. **The W5 / CP-D fingerprint measurement (5–6 primitives safe-to-retire) remains valid for the deterministic-AI-fallback axis** — but did not exercise the runtime data-flow axis. Re-running Phase E across all 4 Sheets scenarios with the post-WP-SR pipeline is recommended next time those scenarios are touched. |
 | 2026-05-10 | AUDIT-1: V6 utility files restored from `8a9b720` (silently nuked by `eb22311` April merge) | Phase E run on `leads-per-salesperson-email` produced an empty email — investigation traced the failure to a 2D-array→objects conversion that should have been handled by [`SchemaAwareDataExtractor.ts`](../../lib/pilot/utils/SchemaAwareDataExtractor.ts), which turned out to be a 28-line stub. Git archaeology revealed the original 426-line implementation existed at V6 introduction (`8a9b720`) and was silently overwritten by commit `eb22311` ("feat: add core infrastructure and enhance existing plugins" — a 44-file mega-merge with +11,770/-3,708, almost certainly a long-lived branch merged from a state pre-V6). Two days later (`2f8d982`) someone patched the type contracts with stubs returning hardcoded false values, but never restored the implementation — so callers (`ExecutionGraphCompiler.detectOutputIs2DArray()`, `StepExecutor.analyzeOutputSchemaStructure()`) silently received garbage from April 10 to May 10 (~30 days). **Audit identified two more `eb22311` victims:** [`VisionContentBuilder.ts`](../../lib/pilot/utils/VisionContentBuilder.ts) (452→17 lines, vision/PDF processing was a no-op — likely affecting `expense-invoice-email-scanner` and `orders-po-extractor-xlsx`) and `lib/debug/DebugSessionManager.ts` (309→23 lines, but pre-existing static-vs-instance API mismatch with WorkflowPilot — separate issue, deferred). **Restored from `git show 8a9b720:<file>`:** `SchemaAwareDataExtractor.ts` (+426 lines) and `VisionContentBuilder.ts` (+452 lines). Typecheck clean; existing 118/118 test suite passes (W2 + WP-15 + WP-17/18 + contains_any + W2-pipeline integration). **Other findings (not eb22311 fault, documented for transparency):** `lib/extraction/utils/SchemaAwareDataExtractor.ts` and `lib/extraction/UniversalExtractor.ts` are also stubs but are dead code (no imports anywhere), so harmless. **Process gap:** the `eb22311` PR description claimed "Enhanced schema-aware utilities" — it actually deleted them. Need a process to catch large net-deletions in code review (e.g., automated stub detector flagging functions whose entire body is `return false/null/[]/{}`). |
