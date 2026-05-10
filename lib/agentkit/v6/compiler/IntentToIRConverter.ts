@@ -1813,13 +1813,14 @@ export class IntentToIRConverter {
    * placeholder values for every field.
    */
   private enforceContentLevelForExtraction(ctx: ConversionContext): void {
-    // Does the graph contain any extraction-like step (ai node, or deliver.extract_*)?
-    let hasExtractionConsumer = false
+    // WP-11 (original): force `content_level: 'full'` when the graph contains
+    // an AI step or a deliver-extract action.
+    let hasGlobalExtractionConsumer = false
     for (const node of ctx.nodes.values()) {
       const op = node.operation
       if (!op) continue
       if (op.operation_type === 'ai') {
-        hasExtractionConsumer = true
+        hasGlobalExtractionConsumer = true
         break
       }
       if (
@@ -1827,11 +1828,10 @@ export class IntentToIRConverter {
         typeof op.deliver?.action === 'string' &&
         /extract/i.test(op.deliver.action)
       ) {
-        hasExtractionConsumer = true
+        hasGlobalExtractionConsumer = true
         break
       }
     }
-    if (!hasExtractionConsumer) return
 
     // For each fetch node: if its plugin schema has a content_level enum param
     // that includes 'full', set it to 'full' unless already explicit.
@@ -1850,15 +1850,97 @@ export class IntentToIRConverter {
 
       if ((config as any).content_level === 'full') continue
 
+      // WP-24: schema-driven detection of *deterministic* body consumers.
+      // The plugin's `output_dependencies` declares which output fields are
+      // unpopulated at non-full content levels (e.g., Gmail's `body` is empty
+      // unless content_level='full'). If any downstream IR node references one
+      // of those fields, we must force `content_level: 'full'` even when no
+      // AI or extract step is present.
+      //
+      // This catches workflows that use deterministic transforms (filter on
+      // `item.body`, map with `field_mapping: {target: "body"}`) which the
+      // original WP-11 heuristic missed — observed during Phase E on
+      // complaint-email-logger where rows appended but body column was empty.
+      const gatedFields = this.getGatedOutputFields(schema)
+      const hasGatedConsumer = gatedFields.size > 0 && this.someNodeReferencesGatedField(ctx, gatedFields)
+
+      const triggerReason = hasGlobalExtractionConsumer
+        ? 'graph has AI/extract consumer'
+        : hasGatedConsumer
+          ? `downstream node references gated field(s): ${[...gatedFields].join(', ')}`
+          : null
+
+      if (!triggerReason) continue
+
       const previous = (config as any).content_level
       ;(config as any).content_level = 'full'
       logger.info(
-        `[O-WP11] Set content_level='full' for ${plugin_key}.${action} (was ${previous ?? 'unset'}) — graph has extraction consumer`
+        `[O-WP11/WP24] Set content_level='full' for ${plugin_key}.${action} (was ${previous ?? 'unset'}) — ${triggerReason}`
       )
       ctx.warnings.push(
-        `[O-WP11] Auto-set content_level='full' on ${plugin_key}.${action} because downstream step extracts from body text.`
+        `[O-WP11/WP24] Auto-set content_level='full' on ${plugin_key}.${action} — ${triggerReason}.`
       )
     }
+  }
+
+  /**
+   * WP-24 helper: read `output_dependencies` from the plugin action schema and
+   * return the union of all `unpopulated_fields` — the set of output fields
+   * that are populated only when the gating param (e.g., `content_level`) is
+   * at its highest level (`full`).
+   *
+   * Generic across plugins. Returns an empty set if the schema doesn't declare
+   * `output_dependencies` or it's malformed.
+   */
+  private getGatedOutputFields(schema: any): Set<string> {
+    const gated = new Set<string>()
+    const deps = schema?.output_dependencies
+    if (!Array.isArray(deps)) return gated
+    for (const dep of deps) {
+      const fields = dep?.unpopulated_fields
+      if (Array.isArray(fields)) {
+        for (const f of fields) {
+          if (typeof f === 'string' && f.length > 0) gated.add(f)
+        }
+      }
+    }
+    return gated
+  }
+
+  /**
+   * WP-24 helper: walk all IR node configs (transform / notify / deliver / ai)
+   * and return true if any reference one of the gated field names.
+   *
+   * Detection strategy: stringify each node's operation config and search for
+   *   - JSON-value match: `"<field>"` (e.g., `field_mapping: {target: "body"}`)
+   *   - Path-tail match: `\.<field>` followed by `"`, `}`, or word boundary
+   *     (catches `condition.field: "item.body"` and `value: "{{var.body}}"`)
+   *
+   * Skips fetch nodes — only consumers are relevant. Conservative: regex is
+   * scoped to the operation config blob, not the whole node, to avoid
+   * matching node IDs / metadata that happen to contain the field name.
+   */
+  private someNodeReferencesGatedField(ctx: ConversionContext, gatedFields: Set<string>): boolean {
+    if (gatedFields.size === 0) return false
+    for (const node of ctx.nodes.values()) {
+      const op = node.operation
+      if (!op || op.operation_type === 'fetch') continue
+      const haystack = JSON.stringify({
+        transform: (op as any).transform,
+        deliver: (op as any).deliver,
+        notify: (op as any).notify,
+        ai: (op as any).ai,
+      })
+      for (const field of gatedFields) {
+        // Escape regex special chars in field name (defensive — fields are
+        // usually plain identifiers but be safe).
+        const esc = field.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+        const valueRe = new RegExp(`"${esc}"`)
+        const pathTailRe = new RegExp(`\\.${esc}(?:["}\\b]|$)`)
+        if (valueRe.test(haystack) || pathTailRe.test(haystack)) return true
+      }
+    }
+    return false
   }
 
   /**

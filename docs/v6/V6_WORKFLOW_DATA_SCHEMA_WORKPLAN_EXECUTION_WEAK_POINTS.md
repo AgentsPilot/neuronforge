@@ -39,6 +39,7 @@ The weak points are ordered by likelihood of causing failures as new scenarios a
 | [WP-21](#wp-21-contains_any-rejects-string-rhs-when-config-value-is-comma-separated) | `contains_any` operator hard-throws when the right-hand side resolves to a string instead of an array. The LLM commonly emits keyword-list config values as comma-separated strings (`"complaint, refund, angry, not working"`) because that's how the user wrote them in their prose prompt. The runtime requires an array. Same shape as WP-20 — LLM emission style mismatched with the runtime contract; runtime tolerance is the cleanest fix. | P1 | ✅ Fixed (2026-05-10) — runtime tolerance via `coerceToArray()` helper in `ConditionalEvaluator`. `contains_any`, `in`, and `not_in` all accept comma-separated strings (split + trim). 11 new unit tests covering canonical complaint-logger pattern + whitespace handling + case-insensitivity + regression guards for array RHS. |
 | [WP-22](#wp-22-set_differencereference-bare-refname-not-resolved-by-runtime) | `transform/set_difference` runtime calls `context.resolveVariable(config.reference)` but the IR converter emits the reference as a bare RefName (`"existing_message_ids"`). `resolveVariable` requires `{{...}}` template syntax — bare strings are returned as-is, so the runtime sees the literal string `"existing_message_ids"` and throws `set_difference.reference must resolve to an array; got string`. Convention mismatch between IR converter and runtime. | P1 | ✅ Fixed (2026-05-10) — both surfaces fixed: (A) IR converter now emits `{{varname}}` (one-line change in `convertTransform` for `set_difference`), (B) runtime defensively wraps bare strings before resolving (handles existing phase4 files without recompile). 3 new unit tests with strict `resolveVariable` stub verifying both bare and templated forms resolve correctly. |
 | [WP-23](#wp-23-transformmap-with-numeric-key-field_mapping-produces-objects-not-2d-arrays) | `transform/map` with `field_mapping` whose target keys are numeric strings (`"0"`, `"1"`, ...) is the LLM's expression of "convert objects to 2D array for Sheets append". The runtime currently builds a plain object (`mapped[targetField] = item[sourceField]`), producing `[{"0": ..., "1": ...}, ...]` — an array of objects with numeric-string keys, NOT the 2D array the LLM intended. Downstream `google-sheets.append_rows` expects a 2D array of cell values, gets these weird objects, returns null, and the runtime errors as a calibration stop. Sister bug to WP-20 (object-row tolerance) and WP-SR (`column_N` source keys) — same shape-mismatch class. | P1 | ✅ Fixed (2026-05-10) — runtime tolerance in `transformMap` Mode 0. Detection: all target keys match `/^\d+$/`. When detected, emit an array per item (length = `max(numericKeys) + 1`, missing slots null) instead of an object. 10 new unit tests in `transformMap.numeric-keys.test.ts` covering canonical complaint-logger pattern, JSON shape, missing source fields, non-contiguous indices, and 4 regression guards (string keys, mixed keys, WP-SR `column_N`, empty mapping). |
+| [WP-24](#wp-24-content_level-not-forced-full-for-deterministic-body-consumers) | Gmail `search_emails` returns `body` empty unless `content_level: 'full'` is set. The existing WP-11 fix forces `content_level: full` when the graph contains an AI step or a deliver-extract action — but it misses workflows where downstream consumers are **deterministic** transforms (filter on `item.body`, map with `field_mapping: {full_email_text: "body"}`). Result: rows append to Sheets but the body column comes through empty. Same root cause as WP-11; WP-24 extends the detection. | P1 | ✅ Fixed (2026-05-10) — schema-driven detection in `enforceContentLevelForExtraction()`. Two new helpers: `getGatedOutputFields(schema)` reads the plugin's `output_dependencies` and returns the union of `unpopulated_fields` (the set of fields populated only at `content_level: full`); `someNodeReferencesGatedField(ctx, gatedFields)` walks all non-fetch IR node configs and detects references via JSON-value match (`"body"`) or path-tail match (`\.body["}\b]`). Fires PER fetch node — precise (skips fetches that produce gated fields no consumer actually reads), generic (any plugin declaring `output_dependencies`), no false positives on substring matches. 17 new unit tests in `enforceContentLevel.wp24.test.ts` covering canonical complaint-logger filter+map pattern, edge cases (malformed deps, empty fields, fetch-skip, substring-FP guard). |
 
 ---
 
@@ -1209,6 +1210,65 @@ Auto-converting `ai_processing` on an array into a scatter would change semantic
 
 ---
 
+### WP-24: `content_level` not forced `full` for deterministic body consumers
+
+**Severity:** High (Sheets rows append but content columns are empty)
+**Encountered as:** Successful Phase E on `complaint-email-logger` (2026-05-10, post-WP-23) — append succeeded but column D (`full_email_text`) was empty across all rows.
+**Status:** ⬜ Documented — fix to follow
+
+**Problem:** WP-11's `enforceContentLevelForExtraction()` post-pass forces `content_level: 'full'` on Gmail `search_emails` (and similar fetch actions) when downstream extraction is detected. The existing detection only matches:
+1. `op.operation_type === 'ai'` (any AI step)
+2. `op.operation_type === 'deliver'` with action matching `/extract/i`
+
+Both fired correctly when complaints went through an AI extraction step. But this scenario uses **deterministic transforms** instead:
+
+```
+step6 (filter):
+  condition: { field: "item.body", operator: "contains_any", value: "{{input.keywords}}" }
+
+step7 (map):
+  field_mapping: { full_email_text: "body", subject: "subject", ... }
+```
+
+Both reference `item.body` — but neither is an AI step or a deliver-extract action. The heuristic returned `hasExtractionConsumer: false`, `content_level` stayed unset, Gmail returned empty `body` fields, downstream rows appended with empty body cells.
+
+**Schema-driven precision:** the Gmail plugin definition declares which fields are gated:
+
+```json
+"output_dependencies": [
+  {
+    "when_param": { "content_level": "metadata" },
+    "unpopulated_fields": ["body", "snippet"]
+  },
+  {
+    "when_param": { "content_level": "snippet" },
+    "unpopulated_fields": ["body"]
+  }
+]
+```
+
+The union of `unpopulated_fields` across entries (= `{body, snippet}`) is the set of "fields that are populated only when `content_level: full`". If any downstream node references one of those fields, force `full`.
+
+**Fix:**
+
+1. Add a helper `getGatedOutputFields(plugin_key, action): Set<string>` that reads `output_dependencies` and returns the union of all `unpopulated_fields`.
+
+2. Extend `enforceContentLevelForExtraction()` per fetch node:
+   - Compute `gatedFields` for the fetch action
+   - Walk all nodes and check whether any references a gated field via JSON-shape detection (value match `"<field>"` OR path tail `\.<field>"|}|\b`)
+   - If yes → force `content_level: 'full'`
+   - Existing AI / deliver-extract checks remain (fast-path)
+
+3. The schema-driven approach is precise (uses the plugin's own declarations), generic (works for any plugin that declares `output_dependencies`), and minimizes false positives (only triggers when a gated field is actually referenced).
+
+**Files:** `lib/agentkit/v6/compiler/IntentToIRConverter.ts` (~50 lines: helper + extended detection), unit/integration test for `enforceContentLevelForExtraction` covering the deterministic-consumer case.
+
+**Why this slipped past tests:** the existing test for WP-11 covers AI consumers but not deterministic ones — same blind spot family as the CP-D fingerprint measurement (W5 doesn't catch transform/map shape issues; WP-11 tests don't catch transform/filter body-references).
+
+**Sibling check (audit during fix):** other plugins with `output_dependencies` blocks should be similarly handled. Search the plugin definitions for the key. Common candidates: any "search/list" action with a `content_level`, `verbosity`, or similar enum that gates body-like fields.
+
+---
+
 ### WP-23: `transform/map` with numeric-key `field_mapping` produces objects, not 2D arrays
 
 **Severity:** High (blocks Phase E for any scenario whose final step appends to Sheets via `google-sheets.append_rows`)
@@ -1566,6 +1626,7 @@ Already documented as WP-9 / F7 — deferred due to ~$0.10-0.15 per run token co
 
 | Date | Change | Details |
 |------|--------|---------|
+| 2026-05-10 | WP-24 fixed — `content_level: 'full'` forced when deterministic consumers reference gated output fields | Schema-driven extension of WP-11. Reads the plugin's `output_dependencies` declarations to learn which fields are gated (populated only at `content_level: full`), then walks all transform/notify/deliver IR node configs and triggers the upgrade if any reference a gated field. Eliminates the deterministic-consumer blind spot that caused complaint-email-logger Phase E to append empty `full_email_text` cells. Generic across plugins — works for any action that declares `output_dependencies`. 17 new unit tests covering canonical filter+map patterns, fetch-node skip, substring-false-positive guards, and edge cases. 184/184 known-good tests passing (was 167 before WP-24). The complaint-email-logger Phase E should now produce non-empty body cells on re-run. |
 | 2026-05-10 | WP-23 fixed — `transform/map` with numeric-key `field_mapping` now produces 2D arrays | Runtime tolerance in `transformMap` Mode 0: when all target keys match `/^\d+$/`, emit `Array(max+1).fill(null)` per row and assign by parsed index, rather than an object. Aligns with `google-sheets.append_rows` contract (2D array of cell values). Sister fix to WP-SR (`column_N` source keys), WP-20 (object-row tolerance), and WP-22 (bare RefName tolerance) — all four are runtime-tolerance fixes for LLM emission patterns that don't match strict runtime contracts. **Phase D** continues to pass (9/9 steps; the conditional then-branch containing the affected step doesn't fire on mock data); the unit tests directly validate the algorithm on the canonical complaint-logger emission. **Phase E** is the actual validation — must be re-run on `complaint-email-logger` to confirm step10 produces a 2D array and step11 (`append_rows`) succeeds. **Sibling issue noted (separate, lower priority):** during the failed Phase E, `full_email_text` resolved to undefined for some rows (Gmail body wasn't fetched). Likely WP-11 family (`content_level: full` not auto-applied for the complaint-logger search). With WP-23, missing fields produce null cells instead of skipped keys — Sheets accepts null. |
 | 2026-05-10 | WP-23 documented — `transform/map` with numeric-key `field_mapping` produces objects instead of 2D arrays | Surfaced during Phase E live run on `complaint-email-logger` (post-WP-22). Cascade reached step11 of 11, then `google-sheets.append_rows` returned null because step10 produced `[{"0":..., "1":..., "4":...}, ...]` (objects with numeric-string keys) instead of `[[row1], [row2], ...]` (2D array). LLM emits `field_mapping: {"0": "sender_email", "1": "subject", ...}` as the canonical "objects-to-2D-array" pattern but the runtime builds objects. Recommended fix: A — runtime tolerance in `transformMap` Mode 0 (detect numeric-only target keys, emit array per row). Same shape-mismatch family as WP-SR / WP-20 / WP-22. Documented; fix to follow as separate commit. Reinforces the CP-D blind spot (W5 fingerprint measurement only checks `ai_processing` prompts; can't catch `transform/map` shape issues). |
 | 2026-05-10 | WP-22 fixed — `set_difference.reference` resolves bare RefName + emits `{{}}` form going forward | Two surfaces fixed: (A) `IntentToIRConverter.convertTransform()` for `set_difference` now emits `transformConfig.reference = "{{varname}}"` (matches convention used by `step.input` and other runtime refs), (B) `transformSetDifference` defensively wraps bare strings in `{{}}` before calling `resolveVariable` (handles existing phase4 files without forcing recompile, and tolerates any non-standard emission paths). 3 new unit tests in `StructuredTransforms.test.ts` using a stricter `resolveVariable` stub that mirrors the production contract (no `{{}}` → returns literal). **Phase D on complaint-email-logger now passes end-to-end** (9/9 steps completed, 0 failures) — was failing at step6 → step8 → finally green after WP-20 + WP-21 + WP-22 unblocked the full cascade. The complaint-email-logger Phase D is the canonical 4-WP integration test for the post-WP-SR Sheets pipeline. 157/157 known-good tests passing (was 154 before WP-22). |
