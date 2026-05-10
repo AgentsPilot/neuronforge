@@ -1343,7 +1343,13 @@ export class IntentToIRConverter {
           `set_difference step "${step.id}" missing required "reference" RefName — runtime will fail`
         )
       } else {
-        transformConfig.reference = this.resolveRefName(refName, ctx)
+        // WP-22: emit `{{varname}}` so the runtime's `resolveVariable()`
+        // recognizes it as a variable reference. Without the braces,
+        // resolveVariable returns the bare name as a literal string
+        // (because it requires `{{...}}` syntax), and `transformSetDifference`
+        // throws "reference must resolve to an array; got string".
+        // Aligns with the convention used elsewhere (step.input, etc.).
+        transformConfig.reference = `{{${this.resolveRefName(refName, ctx)}}}`
       }
       if (typeof keyField !== 'string' || !keyField) {
         ctx.warnings.push(

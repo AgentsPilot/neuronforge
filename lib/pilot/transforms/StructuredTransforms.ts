@@ -207,7 +207,16 @@ export function transformSetDifference(
   if (Array.isArray(config?.reference)) {
     referenceArray = config.reference;
   } else if (typeof config?.reference === 'string') {
-    const resolved = context.resolveVariable(config.reference);
+    // WP-22: defensively wrap bare RefNames in `{{}}` before calling
+    // resolveVariable, which requires template syntax. The IR converter
+    // now emits `{{varname}}` (post-WP-22 fix), but older phase4 files
+    // and any non-standard emission paths may still pass bare names.
+    // Without this, resolveVariable returns the bare string as a literal
+    // and the next branch throws "got string" — masking the real intent.
+    const ref = config.reference.startsWith('{{')
+      ? config.reference
+      : `{{${config.reference}}}`;
+    const resolved = context.resolveVariable(ref);
     if (Array.isArray(resolved)) {
       referenceArray = resolved;
     } else if (resolved == null) {

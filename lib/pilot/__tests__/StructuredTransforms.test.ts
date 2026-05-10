@@ -615,6 +615,77 @@ describe('transformSetDifference', () => {
     expect(setDiff(data, { reference: 'existing_ids', key_field: 'id' }, ctx)).toEqual([{ id: 'B', name: 'Banana' }]);
   });
 
+  // WP-22: production-like resolveVariable requires {{...}} syntax. The
+  // StubContext above is permissive (strips both forms equivalently), so we
+  // use a stricter stub here that mirrors the production contract.
+  describe('WP-22 — bare RefName tolerance with strict resolveVariable', () => {
+    class StrictContext implements IExpressionContext {
+      variables: Record<string, any> = {};
+      inputValues: Record<string, any> = {};
+
+      setVariable(name: string, value: any): void {
+        this.variables[name] = value;
+      }
+
+      // Mirrors lib/pilot/ExecutionContext.resolveVariable:
+      //   "If it's not a string, return as-is. If no '{{', return as literal."
+      resolveVariable(reference: any): any {
+        if (typeof reference !== 'string') return reference;
+        if (!reference.includes('{{')) return reference; // ← the strict check
+        const path = reference.replace(/^\{\{\s*|\s*\}\}$/g, '');
+        const parts = path.split('.');
+        let current: any = this.variables;
+        for (const p of parts) {
+          if (current == null || typeof current !== 'object') return undefined;
+          current = current[p];
+        }
+        return current;
+      }
+
+      clone(): StrictContext {
+        const copy = new StrictContext();
+        copy.variables = { ...this.variables };
+        copy.inputValues = { ...this.inputValues };
+        return copy;
+      }
+    }
+
+    function makeStrictCtx(vars: Record<string, any> = {}): StrictContext {
+      const ctx = new StrictContext();
+      ctx.variables = { ...vars };
+      return ctx;
+    }
+
+    it('bare RefName ("existing_ids") resolves correctly via auto-wrap', () => {
+      // The exact failure mode from Phase D rerun on complaint-email-logger:
+      // IR converter emitted `reference: "existing_message_ids"` (bare),
+      // production resolveVariable returned the literal string, runtime
+      // threw "got string". Post-WP-22, the runtime auto-wraps before
+      // resolving, so this works.
+      const data = [{ id: 'A' }, { id: 'B' }];
+      const ctx = makeStrictCtx({ existing_ids: [{ id: 'A' }] });
+      expect(transformSetDifference(data, { reference: 'existing_ids', key_field: 'id' }, ctx))
+        .toEqual([{ id: 'B' }]);
+    });
+
+    it('templated `{{existing_ids}}` (post-WP-22-fix IR shape) also resolves correctly', () => {
+      // Post-WP-22 IR converter fix: emits `reference: "{{existing_ids}}"`.
+      // Runtime should accept this form too (it does — startsWith('{{') skips
+      // the wrap step).
+      const data = [{ id: 'A' }, { id: 'B' }];
+      const ctx = makeStrictCtx({ existing_ids: [{ id: 'A' }] });
+      expect(transformSetDifference(data, { reference: '{{existing_ids}}', key_field: 'id' }, ctx))
+        .toEqual([{ id: 'B' }]);
+    });
+
+    it('regression demo: WITHOUT auto-wrap the bare RefName would resolve to a literal string', () => {
+      // Sanity-check the strict stub behaves like production.
+      const ctx = makeStrictCtx({ existing_ids: [{ id: 'A' }] });
+      expect(ctx.resolveVariable('existing_ids')).toBe('existing_ids'); // literal, not the array
+      expect(ctx.resolveVariable('{{existing_ids}}')).toEqual([{ id: 'A' }]); // resolved
+    });
+  });
+
   it('uses reference_key_field when reference items use a different field', () => {
     const data = [{ message_id: 'A1' }, { message_id: 'B2' }];
     const reference = [{ url: 'A1' }, { url: 'C3' }];
