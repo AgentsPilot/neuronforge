@@ -193,7 +193,10 @@ describe('ConditionalEvaluator.contains_any', () => {
   });
 
   describe('error handling', () => {
-    it('throws when right side is not an array (string)', () => {
+    it('comma-separated string RHS is now accepted (WP-21 was: threw)', () => {
+      // BEFORE WP-21: a string RHS hard-threw. After WP-21, the runtime
+      // splits on comma + trims, so this evaluates as if RHS were
+      // ['not-an-array']. "not-an-array" doesn't match "hello" → false.
       const ctx = makeCtx({ item: { subject: 'hello' } });
       const condition: any = {
         conditionType: 'simple',
@@ -201,10 +204,10 @@ describe('ConditionalEvaluator.contains_any', () => {
         operator: 'contains_any',
         value: 'not-an-array',
       };
-      expect(() => evaluator.evaluate(condition, ctx)).toThrow(/contains_any requires an array/);
+      expect(evaluator.evaluate(condition, ctx)).toBe(false);
     });
 
-    it('throws when right side is not an array (number)', () => {
+    it('throws when right side is neither array nor string (number)', () => {
       const ctx = makeCtx({ item: { subject: 'hello' } });
       const condition: any = {
         conditionType: 'simple',
@@ -212,7 +215,141 @@ describe('ConditionalEvaluator.contains_any', () => {
         operator: 'contains_any',
         value: 42,
       };
-      expect(() => evaluator.evaluate(condition, ctx)).toThrow(/contains_any requires an array/);
+      expect(() => evaluator.evaluate(condition, ctx))
+        .toThrow(/contains_any requires an array or comma-separated string/);
+    });
+  });
+
+  // WP-21: runtime tolerance for comma-separated string RHS
+  describe('WP-21 — comma-separated string RHS tolerance', () => {
+    it('canonical complaint-email-logger pattern: matches keyword in body', () => {
+      // The exact failure mode from Phase D rerun on complaint-email-logger.
+      // workflow_config emits "complaint, refund, angry, not working" — a
+      // single string. Before WP-21 this threw; after WP-21 it splits on
+      // comma + trims and behaves like the array form.
+      const ctx = makeCtx({
+        item: { body: 'I have a complaint about my recent order' },
+      });
+      const condition: any = {
+        conditionType: 'simple',
+        field: 'item.body',
+        operator: 'contains_any',
+        value: 'complaint, refund, angry, not working',
+      };
+      expect(evaluator.evaluate(condition, ctx)).toBe(true);
+    });
+
+    it('whitespace around commas is trimmed', () => {
+      const ctx = makeCtx({ item: { body: 'we need a refund please' } });
+      const condition: any = {
+        conditionType: 'simple',
+        field: 'item.body',
+        operator: 'contains_any',
+        value: 'complaint  ,    refund  ,angry,    not working',
+      };
+      expect(evaluator.evaluate(condition, ctx)).toBe(true);
+    });
+
+    it('case-insensitive after splitting (consistent with array RHS)', () => {
+      const ctx = makeCtx({ item: { body: 'I am ANGRY about this' } });
+      const condition: any = {
+        conditionType: 'simple',
+        field: 'item.body',
+        operator: 'contains_any',
+        value: 'complaint, refund, angry',
+      };
+      expect(evaluator.evaluate(condition, ctx)).toBe(true);
+    });
+
+    it('no match → false (mirrors array behavior)', () => {
+      const ctx = makeCtx({ item: { body: 'just a friendly hello' } });
+      const condition: any = {
+        conditionType: 'simple',
+        field: 'item.body',
+        operator: 'contains_any',
+        value: 'complaint, refund, angry',
+      };
+      expect(evaluator.evaluate(condition, ctx)).toBe(false);
+    });
+
+    it('empty string RHS → no match (no keywords to test)', () => {
+      const ctx = makeCtx({ item: { body: 'anything' } });
+      const condition: any = {
+        conditionType: 'simple',
+        field: 'item.body',
+        operator: 'contains_any',
+        value: '',
+      };
+      expect(evaluator.evaluate(condition, ctx)).toBe(false);
+    });
+
+    it('single-value string RHS (no commas) → treated as 1-element array', () => {
+      const ctx = makeCtx({ item: { body: 'this is a complaint' } });
+      const condition: any = {
+        conditionType: 'simple',
+        field: 'item.body',
+        operator: 'contains_any',
+        value: 'complaint',
+      };
+      expect(evaluator.evaluate(condition, ctx)).toBe(true);
+    });
+
+    it('array RHS still works (regression guard for WP-21)', () => {
+      const ctx = makeCtx({ item: { body: 'I want a refund' } });
+      const condition: any = {
+        conditionType: 'simple',
+        field: 'item.body',
+        operator: 'contains_any',
+        value: ['complaint', 'refund', 'angry'],
+      };
+      expect(evaluator.evaluate(condition, ctx)).toBe(true);
+    });
+  });
+
+  // WP-21 also extends `in` and `not_in` operators with the same tolerance
+  describe('WP-21 — `in` / `not_in` accept comma-separated string RHS', () => {
+    it('`in` matches when value is in comma-separated list', () => {
+      const ctx = makeCtx({ item: { stage: '4' } });
+      const condition: any = {
+        conditionType: 'simple',
+        field: 'item.stage',
+        operator: 'in',
+        value: '1, 2, 3, 4',
+      };
+      expect(evaluator.evaluate(condition, ctx)).toBe(true);
+    });
+
+    it('`in` returns false when value is not in list', () => {
+      const ctx = makeCtx({ item: { stage: '7' } });
+      const condition: any = {
+        conditionType: 'simple',
+        field: 'item.stage',
+        operator: 'in',
+        value: '1, 2, 3, 4',
+      };
+      expect(evaluator.evaluate(condition, ctx)).toBe(false);
+    });
+
+    it('`not_in` returns true when value is not in list', () => {
+      const ctx = makeCtx({ item: { stage: '7' } });
+      const condition: any = {
+        conditionType: 'simple',
+        field: 'item.stage',
+        operator: 'not_in',
+        value: '1, 2, 3, 4',
+      };
+      expect(evaluator.evaluate(condition, ctx)).toBe(true);
+    });
+
+    it('`in` still works with array RHS (regression guard)', () => {
+      const ctx = makeCtx({ item: { stage: '4' } });
+      const condition: any = {
+        conditionType: 'simple',
+        field: 'item.stage',
+        operator: 'in',
+        value: ['1', '2', '3', '4'],
+      };
+      expect(evaluator.evaluate(condition, ctx)).toBe(true);
     });
   });
 });

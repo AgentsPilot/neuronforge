@@ -36,7 +36,8 @@ The weak points are ordered by likelihood of causing failures as new scenarios a
 | [WP-18](#wp-18-shape-preserving-transform-inherits-schema-from-wrong-slot-when-compiler-auto-unwraps-input) | Shape-preserving transforms (`filter`, `sort`, `dedupe`, `flatten`) inherit schema from the input slot per design — but when the input is a plugin wrapper (e.g., Sheets `{values, row_count, ...}`) the compiler auto-injects a `rows_to_objects` transform that unwraps to an object array. `DataSchemaBuilder` doesn't anticipate this and inherits the wrapper schema instead of the post-unwrap shape. The LLM's explicit `transform.output_schema` declaration — which would have caught the discrepancy — is ignored. Same "schema lies about reality" failure class as WP-13/15/17. | P1 | ✅ Fixed (2026-05-08) — `inferSchemaForTransformStep()` now honors LLM-declared `transform.output_schema` first (Bug A), then walks wrapper-objects via `unwrapWrapperToArray()` for shape-preserving inheritance (Bug B, mirrors Phase 4 auto-inject at schema level). 5 unit tests in same file. |
 | [WP-19](#wp-19-ai_processing-on-array-input-bulk-vs-per-item) | `ai_processing` step takes an array input and produces an array output (one extraction per item) but runs as a single bulk LLM call instead of a scatter-gather. The LLM emits `kind: "generate"` with `input: <array>` and trusts the LLM to "do for each" inside one prompt. Token-bloat risk on unbounded inputs (WP-14 family) plus higher hallucination/omission rates than per-item processing. Compiler doesn't auto-rewrite because bulk is legitimate for some patterns (cross-item summarization). | P2 | ⬜ Future — observed in `aliexpress-delivery-tracker/output/phase4-pilot-dsl-steps.json` step3 (2026-05-10). Three intervention options: (A) Phase 1 prompt steering, (B) compiler detection + warning, (C) compiler auto-rewrite. Deferred — current scenarios survive small inboxes; revisit when bulk-call failure (token bloat or item drop) is observed in Phase E. |
 | [WP-20](#wp-20-project_columnby_index-rejects-object-rows-after-wp-sr-auto-inject) | `transform/project_column` with `column.kind: "by_index"` hard-throws when the input is an array of objects rather than a raw 2D array. After WP-SR landed (auto-inject of `rows_to_objects` for Sheets-derived inputs), upstream rows are now always objects with header keys — but the LLM still emits `by_index: N` based on the column position it saw in the user's prompt ("column E, index 4"). The compiler used to pass raw 2D arrays through, so `by_index` worked; post-WP-SR it doesn't. Sister bug to the original WP-SR `column_N` failure in `transform/map`. | P1 | ✅ Fixed (2026-05-10) — `transformProjectColumn` now tolerates object rows via `Object.values(row)[index]` fallback, mirroring the `transform/map` `column_N` tolerance. |
-| [WP-21](#wp-21-contains_any-rejects-string-rhs-when-config-value-is-comma-separated) | `contains_any` operator hard-throws when the right-hand side resolves to a string instead of an array. The LLM commonly emits keyword-list config values as comma-separated strings (`"complaint, refund, angry, not working"`) because that's how the user wrote them in their prose prompt. The runtime requires an array. Same shape as WP-20 — LLM emission style mismatched with the runtime contract; runtime tolerance is the cleanest fix. | P1 | ⬜ Documented (2026-05-10) — observed during Phase D rerun on `complaint-email-logger` (post-WP-20 fix). Three intervention options analogous to WP-20: (A) runtime tolerance (split comma-separated string into array), (B) compiler-side conversion at value resolution time, (C) LLM emission steering for keyword-list config keys. Recommended fix: A. |
+| [WP-21](#wp-21-contains_any-rejects-string-rhs-when-config-value-is-comma-separated) | `contains_any` operator hard-throws when the right-hand side resolves to a string instead of an array. The LLM commonly emits keyword-list config values as comma-separated strings (`"complaint, refund, angry, not working"`) because that's how the user wrote them in their prose prompt. The runtime requires an array. Same shape as WP-20 — LLM emission style mismatched with the runtime contract; runtime tolerance is the cleanest fix. | P1 | ✅ Fixed (2026-05-10) — runtime tolerance via `coerceToArray()` helper in `ConditionalEvaluator`. `contains_any`, `in`, and `not_in` all accept comma-separated strings (split + trim). 11 new unit tests covering canonical complaint-logger pattern + whitespace handling + case-insensitivity + regression guards for array RHS. |
+| [WP-22](#wp-22-set_differencereference-bare-refname-not-resolved-by-runtime) | `transform/set_difference` runtime calls `context.resolveVariable(config.reference)` but the IR converter emits the reference as a bare RefName (`"existing_message_ids"`). `resolveVariable` requires `{{...}}` template syntax — bare strings are returned as-is, so the runtime sees the literal string `"existing_message_ids"` and throws `set_difference.reference must resolve to an array; got string`. Convention mismatch between IR converter and runtime. | P1 | ⬜ Documented (2026-05-10) — observed during Phase D rerun on `complaint-email-logger` (post-WP-21 fix). Two fix options: (A) IR converter emits `{{varname}}` (matches convention used elsewhere), (B) runtime uses `getVariable(name)` instead of `resolveVariable` for bare RefNames. A is cleaner; produces well-formed runtime refs. |
 
 ---
 
@@ -1207,6 +1208,72 @@ Auto-converting `ai_processing` on an array into a scatter would change semantic
 
 ---
 
+### WP-22: `set_difference.reference` bare RefName not resolved by runtime
+
+**Severity:** High (blocks Phase D / Phase E for any scenario using `set_difference` with a runtime variable reference)
+**Encountered as:** Phase D rerun on `complaint-email-logger` after WP-21 fix landed (2026-05-10) — `Step step8 failed: set_difference.reference must resolve to an array; got string`
+**Status:** ⬜ Documented — fix to follow
+
+**Problem:** Convention mismatch between the IR converter (compile-time) and the runtime transform. The IR converter for `set_difference` emits the reference as a **bare RefName**:
+
+```ts
+// lib/agentkit/v6/compiler/IntentToIRConverter.ts (~line 1346)
+transformConfig.reference = this.resolveRefName(refName, ctx)
+//   → "existing_message_ids"  (bare string, no {{}})
+```
+
+But the runtime calls `context.resolveVariable()` to look it up:
+
+```ts
+// lib/pilot/transforms/StructuredTransforms.ts (~line 210)
+} else if (typeof config?.reference === 'string') {
+  const resolved = context.resolveVariable(config.reference);
+  ...
+```
+
+And [`ExecutionContext.resolveVariable`](../../lib/pilot/ExecutionContext.ts) requires `{{...}}` template syntax:
+
+```ts
+if (!reference.includes('{{')) {
+  return reference;  // returned as literal string!
+}
+```
+
+So `resolveVariable("existing_message_ids")` returns the literal string `"existing_message_ids"`. The runtime sees `typeof resolved === 'string'` and throws.
+
+**Why it didn't fail before WP-SR:** the cascade had to first survive steps 1–7 to even reach `set_difference`. Pre-WP-SR the chain blew up at step5 (`project_column.by_index` on object rows) or earlier. Post-WP-20+WP-21, step8 is now reachable.
+
+**Two fix options:**
+
+**A. IR converter emits `{{varname}}`** (recommended):
+```ts
+transformConfig.reference = `{{${this.resolveRefName(refName, ctx)}}}`
+```
+Pro: matches the convention used elsewhere (e.g., `step.input` is `"{{varname}}"`). Single source of truth — IR represents runtime variable refs with `{{}}` syntax. Tooling that reads the IR sees a normal variable reference.
+Con: slight asymmetry with `transformConfig.input` which is bare. But `input` is duplicated at the top-level `step.input` (which IS wrapped) — the bare form there is for IR-tracking only, not runtime resolution.
+
+**B. Runtime uses `getVariable(name)` for bare RefNames:**
+```ts
+} else if (typeof config?.reference === 'string') {
+  const refName = config.reference.replace(/^\{\{\s*|\s*\}\}$/g, '');
+  const resolved = context.getVariable(refName);
+  ...
+```
+Pro: tolerant of either form. Con: adds runtime logic; doesn't fix the underlying convention mismatch.
+
+**Recommended:** A. Tiny change (1 line in converter), aligns with existing convention.
+
+**Files (Option A):** `lib/agentkit/v6/compiler/IntentToIRConverter.ts` (~1 line), unit test in compiler tests verifying the emission, regression test in `StructuredTransforms.test.ts`.
+
+**Possible siblings to audit:** other transforms that also use `resolveRefName` for runtime-resolved fields:
+- `with_fields` Expression refs (already use `{{}}` per W2 normalization — confirmed safe)
+- `loop.over` (already wrapped at the `step.input` level — confirmed safe)
+- `aggregate.input` (uses top-level `step.input` — confirmed safe)
+
+`set_difference.reference` appears to be the only emit site with this bug. Audit the others to confirm.
+
+---
+
 ### WP-21: `contains_any` rejects string RHS when config value is comma-separated
 
 **Severity:** High (blocks Phase D / Phase E for any scenario where LLM emits keyword-list config as a comma-separated string)
@@ -1422,6 +1489,8 @@ Already documented as WP-9 / F7 — deferred due to ~$0.10-0.15 per run token co
 
 | Date | Change | Details |
 |------|--------|---------|
+| 2026-05-10 | WP-22 documented — `set_difference.reference` bare RefName not resolved by runtime | Surfaced during Phase D rerun on `complaint-email-logger` after WP-21 fix landed (cascade now reaches step8 instead of failing at step6). Convention mismatch: IR converter emits `reference: "existing_message_ids"` (bare RefName) but runtime calls `resolveVariable()` which requires `{{...}}` syntax. Two fix options (recommended: A — IR converter emits `{{varname}}`). Documented; fix to follow as separate commit. |
+| 2026-05-10 | WP-21 fixed — runtime tolerance for comma-separated string RHS on `contains_any`, `in`, `not_in` | `coerceToArray()` helper in `ConditionalEvaluator.ts` accepts both array and comma-separated string forms (split on comma + trim). All three set-membership operators now tolerate either form. Same philosophy as WP-SR (`column_N`) and WP-20 (object rows): be liberal in what we accept from LLM emissions, since the user's prose-style "complaint, refund, angry, not working" is unambiguous. 11 new unit tests covering canonical complaint-logger pattern, whitespace handling, case-insensitivity, and array-RHS regression guards. 154/154 known-good tests passing (was 143 before WP-21). Phase D on complaint-email-logger advanced past step6 (was failing at step6 → now fails at step8 with WP-22). |
 | 2026-05-10 | WP-21 documented — `contains_any` rejects string RHS when config is comma-separated | Surfaced during Phase D rerun on `complaint-email-logger` immediately after WP-20 fix landed (step5 now passes, step6 hits a new failure). LLM emitted `complaint_keywords: "complaint, refund, angry, not working"` (single comma-separated string in workflow_config) but `contains_any` requires the RHS to be an array. Same shape as the WP-SR family — LLM emission style mismatched with runtime contract. Documented with three intervention options (runtime tolerance preferred); fix to follow as a separate commit per user direction. |
 | 2026-05-10 | WP-20 fixed — `project_column.by_index` tolerates object rows post-WP-SR | Phase D on `complaint-email-logger` failed at step5 (`project_column.by_index requires array rows; row 0 is object`). Diagnosed as the post-WP-SR sister of the original `column_N` collision: after the compiler's auto-inject of `rows_to_objects` (with `preserve_case: true`), Sheets-derived rows are now objects with header keys, but the LLM still emits `by_index: N` because the user's prompt says "column E (index 4)". Same fix shape as WP-SR's runtime tolerance for `column_N` in `transform/map`: `transformProjectColumn` now falls back to `Object.values(row)[index]` when row is an object. Works because `rows_to_objects(preserve_case=true)` preserves key insertion order matching column order. Updated 1 existing test (was asserting throw) and added 2 new tests for the fallback paths. Reinforces the CP-D blind spot: LLM-emission fingerprint measurement doesn't catch runtime data-flow bugs — need CP-E (Phase D+E across all 10 scenarios) to surface this class. |
 | 2026-05-10 | WP-19 documented (future / latent risk) | During manual Phase 4 review of `aliexpress-delivery-tracker/output/phase4-pilot-dsl-steps.json`, observed that step3 is a single bulk `ai_processing` call (`input: "{{delivery_emails}}"`) instead of a scatter_gather, despite step6 in the same scenario correctly being a per-item loop for Gmail labeling. Investigation showed the LLM emitted Phase 1 step3 as `kind: "generate"` with `input: <whole array>` — bulk processing — while step6 correctly used `kind: "loop"`. Compiler faithfully translated both. The bulk-on-array pattern carries token-bloat (WP-14 family) + hallucination/omission risk + all-or-nothing failure mode. Three intervention options identified (prompt steering / compiler warning / compiler auto-rewrite). Deferred — current scenarios survive small inboxes; revisit when bulk-call failure is observed in Phase E. |

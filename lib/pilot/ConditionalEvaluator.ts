@@ -28,6 +28,28 @@ import {
 } from './types';
 import { ExecutionContext } from './ExecutionContext';
 
+/**
+ * WP-21: tolerate set-membership operators (`contains_any`, `in`, `not_in`)
+ * receiving a comma-separated string instead of an array.
+ *
+ * Why: the LLM frequently emits keyword-list config values as a single
+ * comma-separated string in `workflow_config` because that's how users
+ * write keyword lists in prose ("complaint, refund, angry, not working").
+ * The runtime contract requires an array. Rather than failing, we split
+ * on comma and trim whitespace — same philosophy as WP-SR's `column_N`
+ * tolerance and WP-20's object-row tolerance.
+ *
+ * Returns `null` when the value is neither array nor string — caller
+ * should throw with a meaningful error in that case.
+ */
+function coerceToArray(value: any): any[] | null {
+  if (Array.isArray(value)) return value;
+  if (typeof value === 'string') {
+    return value.split(',').map(s => s.trim()).filter(s => s.length > 0);
+  }
+  return null;
+}
+
 export class ConditionalEvaluator {
   /**
    * Evaluate condition against execution context
@@ -596,14 +618,15 @@ export class ConditionalEvaluator {
         // String not_contains: case-insensitive check
         return !String(left).toLowerCase().includes(String(right).toLowerCase());
 
-      case 'contains_any':
+      case 'contains_any': {
         // W2: keyword-filter shorthand — `left` contains ANY of the values in `right` (case-insensitive).
-        // `right` MUST be an array. Useful for "subject contains any of [complaint, refund, ...]" patterns.
-        // Replaces verbose OR-of-contains trees.
+        // `right` is normally an array. WP-21: also accept comma-separated string
+        // (LLM emits keyword lists this way to mirror user prose).
         if (left === null || left === undefined) return false;
-        if (!Array.isArray(right)) {
+        const rightArr = coerceToArray(right);
+        if (rightArr === null) {
           throw new ConditionError(
-            `contains_any requires an array on the right side, got ${typeof right}`,
+            `contains_any requires an array or comma-separated string on the right side, got ${typeof right}`,
             undefined,
             { right }
           );
@@ -611,7 +634,7 @@ export class ConditionalEvaluator {
         if (Array.isArray(left)) {
           // Array left: any element matches any value in right (case-insensitive for strings)
           return left.some(leftItem =>
-            right.some(rightItem => {
+            rightArr.some(rightItem => {
               if (typeof leftItem === 'string' && typeof rightItem === 'string') {
                 return leftItem.toLowerCase() === rightItem.toLowerCase();
               }
@@ -620,15 +643,22 @@ export class ConditionalEvaluator {
           );
         }
         // String left: substring contains any of the values in right (case-insensitive)
-        return right.some(v =>
+        return rightArr.some(v =>
           String(left).toLowerCase().includes(String(v).toLowerCase())
         );
+      }
 
-      case 'in':
-        return Array.isArray(right) && right.includes(left);
+      case 'in': {
+        // WP-21: accept array OR comma-separated string on the RHS.
+        const rightArr = coerceToArray(right);
+        return rightArr !== null && rightArr.includes(left);
+      }
 
-      case 'not_in':
-        return Array.isArray(right) && !right.includes(left);
+      case 'not_in': {
+        // WP-21: accept array OR comma-separated string on the RHS.
+        const rightArr = coerceToArray(right);
+        return rightArr !== null && !rightArr.includes(left);
+      }
 
       case 'exists':
         return left !== undefined && left !== null;
