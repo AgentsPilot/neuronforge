@@ -49,6 +49,9 @@ import {
   transformSetDifference as runSetDifference,
   StructuredTransformError,
 } from './transforms/StructuredTransforms';
+// WP-SR: rows_to_objects extracted into a pure module for the same
+// testability reason (no StepExecutor import chain in unit tests).
+import { rowsToObjects } from './transforms/RowsToObjects';
 import { AISConfigService } from '@/lib/services/AISConfigService';
 import { createLogger } from '@/lib/logger';
 import { schemaExtractor, analyzeOutputSchema } from './utils/SchemaAwareDataExtractor';
@@ -2556,10 +2559,32 @@ Respond ONLY with the JSON array. No markdown, no explanation, no code blocks.`;
     // Handles both array input (map each item) and single object input (inside scatter-gather).
     if (config && config.field_mapping && typeof config.field_mapping === 'object') {
       const mapping = config.field_mapping as Record<string, string>;
+      // WP-SR: support `column_N` source keys for positional access. The LLM
+      // sometimes invents `field_mapping: {Date: "column_0", "Lead Name": "column_1"}`
+      // for what semantically is a 2D-array → object conversion. By the time
+      // this map step runs, the auto-injected `rows_to_objects` has already
+      // converted the input to an array of objects with header keys (with
+      // `preserve_case: true` — see ExecutionGraphCompiler.normalizeDataFormats).
+      // For the `column_N` pattern, fall back to positional access via
+      // `Object.values(item)[N]`. This is non-canonical but tolerant — the
+      // alternative is silent empty objects → empty filter → empty email.
+      const COLUMN_N = /^column_(\d+)$/;
       const applyMapping = (item: any) => {
         const mapped: Record<string, any> = {};
         for (const [targetField, sourceField] of Object.entries(mapping)) {
-          mapped[targetField] = item[sourceField];
+          let value: any;
+          const colMatch = typeof sourceField === 'string' ? sourceField.match(COLUMN_N) : null;
+          if (colMatch) {
+            const idx = parseInt(colMatch[1], 10);
+            if (Array.isArray(item)) {
+              value = item[idx];
+            } else if (item && typeof item === 'object') {
+              value = Object.values(item)[idx];
+            }
+          } else {
+            value = item ? item[sourceField] : undefined;
+          }
+          mapped[targetField] = value;
         }
         return mapped;
       };
@@ -3443,53 +3468,23 @@ Respond ONLY with the JSON array. No markdown, no explanation, no code blocks.`;
    * Output: [{id: "1", name: "John", email: "john@example.com"}, {id: "2", name: "Jane", email: "jane@example.com"}]
    */
   private transformRowsToObjects(data: any[], config: any): any[] {
-    if (!Array.isArray(data)) {
-      throw new ExecutionError('rows_to_objects operation requires array input', 'INVALID_INPUT_TYPE');
+    // Delegate to the pure helper in lib/pilot/transforms/RowsToObjects.ts —
+    // extracted so unit tests can import without pulling StepExecutor's heavy
+    // import chain (same pattern as StructuredTransforms for W2).
+    try {
+      const result = rowsToObjects(data, config || {});
+      logger.debug({
+        inputRows: data.length,
+        outputObjects: result.length,
+        preserveCase: config?.preserve_case === true,
+      }, 'rows_to_objects: Converted via pure helper');
+      return result;
+    } catch (e: any) {
+      if (e?.name === 'RowsToObjectsError') {
+        throw new ExecutionError(e.message, e.code);
+      }
+      throw e;
     }
-
-    if (data.length === 0) {
-      logger.debug({}, 'rows_to_objects: Empty input array, returning empty array');
-      return [];
-    }
-
-    // Check if this is a 2D array (array of arrays)
-    if (!Array.isArray(data[0])) {
-      // Already an array of objects or primitives - return as-is
-      logger.debug({}, 'rows_to_objects: Input is not a 2D array, returning as-is');
-      return data;
-    }
-
-    // Get headers from first row (or use config.headers if provided)
-    const headers: string[] = config?.headers || data[0];
-
-    // Skip first row if it was used as headers
-    const dataRows = config?.headers ? data : data.slice(1);
-
-    if (dataRows.length === 0) {
-      logger.debug({}, 'rows_to_objects: No data rows after header, returning empty array');
-      return [];
-    }
-
-    // Convert each row to an object using headers as keys
-    const result = dataRows.map((row: any[]) => {
-      const obj: Record<string, any> = {};
-      headers.forEach((header: string, index: number) => {
-        // Normalize header names: trim whitespace, handle empty headers
-        // ✅ CRITICAL FIX: Convert to lowercase for consistent key matching
-        // Sheet headers may be "Id" or "ID" but code expects "id"
-        const key = (header || `column_${index}`).toString().trim().toLowerCase();
-        obj[key] = row[index] !== undefined ? row[index] : null;
-      });
-      return obj;
-    });
-
-    logger.debug({
-      inputRows: data.length,
-      outputObjects: result.length,
-      headers: headers.slice(0, 5)
-    }, 'rows_to_objects: Converted 2D array to objects');
-
-    return result;
   }
 
   /**

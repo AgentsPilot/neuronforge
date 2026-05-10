@@ -2516,7 +2516,19 @@ export class ExecutionGraphCompiler {
             continue
           }
 
-          // Case 1: 2D array → Insert rows_to_objects transform
+          // Case 1: 2D array → Insert rows_to_objects transform.
+          //
+          // WP-SR: set `preserve_case: true` so the runtime keeps the
+          // original Sheet header text (e.g. "Date", "Lead Name") rather
+          // than lowercasing it ("date", "lead name"). Reason: when the LLM
+          // emits a downstream `transform/map` step, it almost always
+          // references the original-case header in its `field_mapping`
+          // (e.g. `{date: "Date", lead_name: "Lead Name"}`). With the
+          // default lowercase behavior, `item["Date"]` is undefined, every
+          // row becomes `{}`, and downstream filters silently drop everything.
+          // This auto-inject path didn't fire at all for ~30 days
+          // (SchemaAwareDataExtractor was a stub — see f1804f4), so no
+          // existing caller depends on the default lowercase behavior here.
           const convertStepId = `step_${++ctx.stepCounter}`
           const normalizedVarName = `${step.output_variable}_objects`
 
@@ -2527,7 +2539,7 @@ export class ExecutionGraphCompiler {
             input: `{{${step.output_variable}.${detection.arrayFieldName}}}`,
             description: `Auto-normalize: Convert 2D array to objects`,
             output_variable: normalizedVarName,
-            config: {}
+            config: { preserve_case: true }
           }
 
           normalized.push(convertStep)
