@@ -32,13 +32,14 @@ Triggered by TL after Dev submits the workplan.
 ### What to check
 
 1. **Architectural fit** — does the approach align with existing patterns in the codebase?
-2. **Provider factory** — if AI/LLM is involved, is the provider abstraction used correctly?
-3. **Supabase/RLS** — are RLS policies considered? Any risk of bypassing row-level security?
-4. **Serverless constraints** — no long-running processes, no Node-only APIs incompatible with Vercel Edge
-5. **Zod** — are all input boundaries covered?
-6. **TypeScript** — are types defined correctly? Any risky `any` usages?
-7. **Missing steps** — are there implementation steps the Dev missed that would cause issues later?
-8. **Over-engineering** — is the approach proportional to the requirement?
+2. **Skill compliance** — if the workplan involves a new API route, repository, or plugin, the corresponding `.claude/skills/<name>/SKILL.md` is the source of truth. Read it and verify the workplan's approach matches its checklist. Reject if the Dev is improvising from older files instead of following the skill.
+3. **Provider factory** — if AI/LLM is involved, is the provider abstraction used correctly?
+4. **Supabase/RLS** — are RLS policies considered? Any risk of bypassing row-level security?
+5. **Serverless constraints** — no long-running processes, no Node-only APIs incompatible with Vercel Edge
+6. **Zod** — are all input boundaries covered?
+7. **TypeScript** — are types defined correctly? Any risky `any` usages?
+8. **Missing steps** — are there implementation steps the Dev missed that would cause issues later?
+9. **Over-engineering** — is the approach proportional to the requirement?
 
 ### How to annotate
 
@@ -70,13 +71,14 @@ Triggered by TL after Dev marks implementation complete.
 ### What to check
 
 1. **Standards compliance** — TypeScript strict, Zod on all API boundaries, Pino logging
-2. **Security** — no RLS bypasses, no secrets in code, input sanitisation
-3. **Performance** — unnecessary re-renders, unoptimised DB queries, missing caching
-4. **Error handling** — all error paths handled and logged
-5. **Code clarity** — comments explain the *why*, function names are self-explanatory
-6. **Test coverage** — are the right things testable? (QA will test, but SA flags untestable code)
-7. **Dead code** — no unused imports, variables, or commented-out code blocks
-8. **Pattern consistency** — no new patterns introduced without justification
+2. **Skill checklist** — if the work scaffolds an API route / repository / plugin, walk through the matching `.claude/skills/<name>/SKILL.md` "Final checklist" against the diff. Every unchecked item is a code review comment.
+3. **Security** — no RLS bypasses, no secrets in code, input sanitisation
+4. **Performance** — unnecessary re-renders, unoptimised DB queries, missing caching
+5. **Error handling** — all error paths handled and logged
+6. **Code clarity** — comments explain the *why*, function names are self-explanatory
+7. **Test coverage** — are the right things testable? (QA will test, but SA flags untestable code)
+8. **Dead code** — no unused imports, variables, or commented-out code blocks
+9. **Pattern consistency** — no new patterns introduced without justification
 
 ### How to annotate
 
