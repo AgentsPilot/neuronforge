@@ -35,6 +35,8 @@ The weak points are ordered by likelihood of causing failures as new scenarios a
 | [WP-17](#wp-17-loop-item-slot-misderived-from-nested-array-and-overwritten-across-loops) | Loop `item_ref` slot has the wrong schema (full wrapper object instead of unwrapped per-element shape) when the iterated array is nested under a field, AND the slot is overwritten when multiple loops share an `item_ref` name. Two bugs in `DataSchemaBuilder.buildLoopSlots()` — declared schema doesn't match the runtime iteration value. Cross-step type validator can't catch downstream errors because the source schema lies. | P1 | ✅ Fixed (2026-05-08) — `DataSchemaBuilder.unwrapWrapperToArray()` + `deriveLoopItemSchema()` for Bug A; `produced_by_loops[]` collision-merge for Bug B. 9 unit tests in `__tests__/DataSchemaBuilder.wp17-wp18.test.ts`. |
 | [WP-18](#wp-18-shape-preserving-transform-inherits-schema-from-wrong-slot-when-compiler-auto-unwraps-input) | Shape-preserving transforms (`filter`, `sort`, `dedupe`, `flatten`) inherit schema from the input slot per design — but when the input is a plugin wrapper (e.g., Sheets `{values, row_count, ...}`) the compiler auto-injects a `rows_to_objects` transform that unwraps to an object array. `DataSchemaBuilder` doesn't anticipate this and inherits the wrapper schema instead of the post-unwrap shape. The LLM's explicit `transform.output_schema` declaration — which would have caught the discrepancy — is ignored. Same "schema lies about reality" failure class as WP-13/15/17. | P1 | ✅ Fixed (2026-05-08) — `inferSchemaForTransformStep()` now honors LLM-declared `transform.output_schema` first (Bug A), then walks wrapper-objects via `unwrapWrapperToArray()` for shape-preserving inheritance (Bug B, mirrors Phase 4 auto-inject at schema level). 5 unit tests in same file. |
 | [WP-19](#wp-19-ai_processing-on-array-input-bulk-vs-per-item) | `ai_processing` step takes an array input and produces an array output (one extraction per item) but runs as a single bulk LLM call instead of a scatter-gather. The LLM emits `kind: "generate"` with `input: <array>` and trusts the LLM to "do for each" inside one prompt. Token-bloat risk on unbounded inputs (WP-14 family) plus higher hallucination/omission rates than per-item processing. Compiler doesn't auto-rewrite because bulk is legitimate for some patterns (cross-item summarization). | P2 | ⬜ Future — observed in `aliexpress-delivery-tracker/output/phase4-pilot-dsl-steps.json` step3 (2026-05-10). Three intervention options: (A) Phase 1 prompt steering, (B) compiler detection + warning, (C) compiler auto-rewrite. Deferred — current scenarios survive small inboxes; revisit when bulk-call failure (token bloat or item drop) is observed in Phase E. |
+| [WP-20](#wp-20-project_columnby_index-rejects-object-rows-after-wp-sr-auto-inject) | `transform/project_column` with `column.kind: "by_index"` hard-throws when the input is an array of objects rather than a raw 2D array. After WP-SR landed (auto-inject of `rows_to_objects` for Sheets-derived inputs), upstream rows are now always objects with header keys — but the LLM still emits `by_index: N` based on the column position it saw in the user's prompt ("column E, index 4"). The compiler used to pass raw 2D arrays through, so `by_index` worked; post-WP-SR it doesn't. Sister bug to the original WP-SR `column_N` failure in `transform/map`. | P1 | ✅ Fixed (2026-05-10) — `transformProjectColumn` now tolerates object rows via `Object.values(row)[index]` fallback, mirroring the `transform/map` `column_N` tolerance. |
+| [WP-21](#wp-21-contains_any-rejects-string-rhs-when-config-value-is-comma-separated) | `contains_any` operator hard-throws when the right-hand side resolves to a string instead of an array. The LLM commonly emits keyword-list config values as comma-separated strings (`"complaint, refund, angry, not working"`) because that's how the user wrote them in their prose prompt. The runtime requires an array. Same shape as WP-20 — LLM emission style mismatched with the runtime contract; runtime tolerance is the cleanest fix. | P1 | ⬜ Documented (2026-05-10) — observed during Phase D rerun on `complaint-email-logger` (post-WP-20 fix). Three intervention options analogous to WP-20: (A) runtime tolerance (split comma-separated string into array), (B) compiler-side conversion at value resolution time, (C) LLM emission steering for keyword-list config keys. Recommended fix: A. |
 
 ---
 
@@ -1205,6 +1207,138 @@ Auto-converting `ai_processing` on an array into a scatter would change semantic
 
 ---
 
+### WP-21: `contains_any` rejects string RHS when config value is comma-separated
+
+**Severity:** High (blocks Phase D / Phase E for any scenario where LLM emits keyword-list config as a comma-separated string)
+**Encountered as:** Phase D rerun on `complaint-email-logger` after WP-20 fix landed (2026-05-10) — `Step step6 failed: contains_any requires an array on the right side, got string`
+**Status:** ⬜ Documented — fix to follow
+
+**Problem:** `contains_any` is a set-membership operator added in W2/contains_any work. It expects the right-hand side to be an array of values to match against:
+
+```
+case 'contains_any':
+  ...
+  if (!Array.isArray(right)) {
+    throw new ConditionError(
+      `contains_any requires an array on the right side, got ${typeof right}`,
+      ...
+    );
+  }
+```
+
+But the LLM commonly emits keyword-list values in `workflow_config` as a single comma-separated string, mirroring how users write keyword lists in prose:
+
+```
+// User's enhanced-prompt.json:
+"if the email content contains any of these keywords (case-insensitive match):
+ 'complaint', 'refund', 'angry', 'not working'"
+
+// LLM's workflow_config:
+"complaint_keywords": "complaint, refund, angry, not working"   ← single string
+```
+
+The condition resolves `value: "{{input.complaint_keywords}}"` to that string, runtime sees `Array.isArray(right) === false`, hard-throws.
+
+**Why this collides with the WP-SR family:** same shape — the LLM's natural emission style (string for human-written keyword lists) doesn't match the runtime's strict contract (array required). Like WP-SR (`column_N` keys in `field_mapping`) and WP-20 (`by_index` on object rows), the runtime can either be tolerant or strict; tolerance is the safer default since the user's intent is unambiguous.
+
+**Three intervention options (analogous to WP-20):**
+
+A. **Runtime tolerance** in `ConditionalEvaluator` — when the RHS resolves to a string, split on comma + trim, treat as array. Limit the split to operators that semantically take a list (`contains_any`, `in`, `not_in`). Same philosophy as WP-SR's `column_N` and WP-20's object-row tolerance: be liberal in what you accept from LLM emissions.
+
+B. **Compiler-side conversion** — at value-resolution time, when an operator semantically requires an array but the resolved value is a string, split. Tighter scope, but requires plumbing operator metadata into the compiler.
+
+C. **LLM emission steering** — Phase 1 prompt rule: keyword-list config values must be JSON arrays, not comma-separated strings. Targets root cause but depends on LLM compliance and conflicts with how users write prose prompts.
+
+**Recommended fix:** A (runtime tolerance).
+
+```ts
+case 'contains_any':
+  ...
+  let rightArr: any[];
+  if (Array.isArray(right)) {
+    rightArr = right;
+  } else if (typeof right === 'string') {
+    // WP-21: tolerate comma-separated strings — the LLM frequently emits
+    // keyword-list config as a single string mirroring the user's prose.
+    rightArr = right.split(',').map(s => s.trim()).filter(s => s.length > 0);
+  } else {
+    throw new ConditionError(
+      `contains_any requires an array or comma-separated string on the right side, got ${typeof right}`,
+      ...
+    );
+  }
+  // ... use rightArr for matching ...
+```
+
+Should also extend the `in` and `not_in` operators with the same tolerance — same rationale.
+
+**Files:** `lib/pilot/ConditionalEvaluator.ts` (~10 lines × 3 operators), `lib/pilot/__tests__/ConditionalEvaluator.contains_any.test.ts` (4 new tests: comma-separated string RHS, whitespace handling, empty string RHS, single-value string RHS).
+
+---
+
+### WP-20: `project_column.by_index` rejects object rows after WP-SR auto-inject
+
+**Severity:** High (blocks Phase D / Phase E for any Sheets scenario using positional column extraction)
+**Encountered as:** Phase D failure on `complaint-email-logger` (2026-05-10) — `Step step5 failed: project_column.by_index requires array rows; row 0 is object`
+**Status:** ✅ Fixed — runtime tolerance for object rows
+
+**Problem:** `transform/project_column` with `column.kind: "by_index"` hard-throws when the input is an array of objects rather than a raw 2D array:
+
+```
+case 'by_index': {
+  if (!Array.isArray(row)) {
+    throw new StructuredTransformError(
+      `project_column.by_index requires array rows; row ${idx} is ${typeof row}`,
+      'INVALID_INPUT_TYPE'
+    );
+  }
+  return row[column.index];
+}
+```
+
+This was correct pre-WP-SR: the auto-inject of `rows_to_objects` was dead (SchemaAwareDataExtractor stub), so Sheets `read_range` outputs flowed through to consumers as raw 2D arrays. The LLM saw "column E, index 4" in the user's prompt and emitted `column: { kind: "by_index", index: 4 }`, which worked.
+
+After WP-SR landed (commit 59c64cd), the auto-inject works — the compiler now inserts `rows_to_objects` (with `preserve_case: true`) before any consumer of the Sheets wrapper. So by the time `project_column` runs, rows are objects with header keys (`{Date, "Lead Name", Stage, ...}`), not arrays. `by_index: 4` blows up.
+
+**Concrete cascade (complaint-email-logger):**
+```
+step3: read_range                  → existing_sheet_data (2D wrapper)
+step4: rows_to_objects (auto)      → existing_sheet_data_objects (array of objects)
+step5: project_column by_index: 4  → ❌ throws — row is object
+```
+
+**Sister bug:** identical shape to the original WP-SR failure in `transform/map`'s WP-4 `field_mapping` Mode 0, where the LLM emitted `column_N` source keys after the same upstream conversion. Both are post-WP-SR collisions where the LLM's positional emission (chosen because the user's prompt says "column N") doesn't match the runtime's now-converted input.
+
+**Fix:** Same pattern as the WP-SR `column_N` runtime tolerance. When `column.kind === 'by_index'` and the row is an object, fall back to `Object.values(row)[index]`. The auto-inject's `preserve_case: true` keeps insertion order matching column order, so positional access via `Object.values` gives the expected column.
+
+```ts
+case 'by_index': {
+  if (Array.isArray(row)) {
+    return row[column.index];
+  }
+  if (row && typeof row === 'object') {
+    // Post-WP-SR: rows_to_objects converts 2D arrays to objects with header
+    // keys. The LLM may still emit `by_index` thinking the input is a raw
+    // 2D array. Fall back to positional access via Object.values, which
+    // works because rows_to_objects(preserve_case=true) keeps key insertion
+    // order matching column order.
+    return Object.values(row)[column.index];
+  }
+  throw new StructuredTransformError(
+    `project_column.by_index requires array or object rows; row ${idx} is ${typeof row}`,
+    'INVALID_INPUT_TYPE'
+  );
+}
+```
+
+**Files:** `lib/pilot/transforms/StructuredTransforms.ts` (~10 lines), `lib/pilot/__tests__/StructuredTransforms.test.ts` (one existing test asserting throw needs to flip; add 2 new tests for the fallback).
+
+**Secondary issue (separate, lower priority):** in the failing scenario, step5's `output_schema` was the read_range wrapper (`{values, row_count, ...}`), not the column-of-strings shape `project_column` actually produces. The compiler is propagating the input schema as the output schema for `project_column` — wrong but doesn't block runtime. Track separately if it confuses downstream consumers.
+
+**Why this slipped past CP-D:** the CP-D measurement only counted W5 fingerprints (deterministic-AI-fallback firings) — it didn't actually run the compiled DSL. Same blind spot as the WP-SR finding: LLM emission analysis doesn't catch runtime data-flow bugs. Need CP-E (Phase D + Phase E across all 10 scenarios) to surface this class.
+
+---
+
 ## Phase D Hardening Roadmap
 
 These are improvements to Phase D (mock WorkflowPilot execution) designed to catch more of the Phase E class of bugs without paying the token cost of live LLM calls. WP-9 (F7 — real LLM in Phase D+) is the ultimate answer but has been deferred. The items below close specific gaps observed during WP-11 through WP-14.
@@ -1288,6 +1422,8 @@ Already documented as WP-9 / F7 — deferred due to ~$0.10-0.15 per run token co
 
 | Date | Change | Details |
 |------|--------|---------|
+| 2026-05-10 | WP-21 documented — `contains_any` rejects string RHS when config is comma-separated | Surfaced during Phase D rerun on `complaint-email-logger` immediately after WP-20 fix landed (step5 now passes, step6 hits a new failure). LLM emitted `complaint_keywords: "complaint, refund, angry, not working"` (single comma-separated string in workflow_config) but `contains_any` requires the RHS to be an array. Same shape as the WP-SR family — LLM emission style mismatched with runtime contract. Documented with three intervention options (runtime tolerance preferred); fix to follow as a separate commit per user direction. |
+| 2026-05-10 | WP-20 fixed — `project_column.by_index` tolerates object rows post-WP-SR | Phase D on `complaint-email-logger` failed at step5 (`project_column.by_index requires array rows; row 0 is object`). Diagnosed as the post-WP-SR sister of the original `column_N` collision: after the compiler's auto-inject of `rows_to_objects` (with `preserve_case: true`), Sheets-derived rows are now objects with header keys, but the LLM still emits `by_index: N` because the user's prompt says "column E (index 4)". Same fix shape as WP-SR's runtime tolerance for `column_N` in `transform/map`: `transformProjectColumn` now falls back to `Object.values(row)[index]` when row is an object. Works because `rows_to_objects(preserve_case=true)` preserves key insertion order matching column order. Updated 1 existing test (was asserting throw) and added 2 new tests for the fallback paths. Reinforces the CP-D blind spot: LLM-emission fingerprint measurement doesn't catch runtime data-flow bugs — need CP-E (Phase D+E across all 10 scenarios) to surface this class. |
 | 2026-05-10 | WP-19 documented (future / latent risk) | During manual Phase 4 review of `aliexpress-delivery-tracker/output/phase4-pilot-dsl-steps.json`, observed that step3 is a single bulk `ai_processing` call (`input: "{{delivery_emails}}"`) instead of a scatter_gather, despite step6 in the same scenario correctly being a per-item loop for Gmail labeling. Investigation showed the LLM emitted Phase 1 step3 as `kind: "generate"` with `input: <whole array>` — bulk processing — while step6 correctly used `kind: "loop"`. Compiler faithfully translated both. The bulk-on-array pattern carries token-bloat (WP-14 family) + hallucination/omission risk + all-or-nothing failure mode. Three intervention options identified (prompt steering / compiler warning / compiler auto-rewrite). Deferred — current scenarios survive small inboxes; revisit when bulk-call failure is observed in Phase E. |
 | 2026-05-10 | RETIRE-1: auto-repair safety nets retired (validateAISchemaDepth + WP-15 builder fallback) | CP-D verified 0/10 firings of both auto-repair safety nets across all regression scenarios — the retirement gate established by Q-A4 sequencing was met. Switched both from warn-and-repair to throw-on-violation: (a) [`ExecutionGraphCompiler.validateAISchemaDepth()`](../../lib/agentkit/v6/compiler/ExecutionGraphCompiler.ts) now throws when an AI-declared slot has `type: "array"` without `items` (or `type: "object"` without `properties`); (b) [`DataSchemaBuilder.buildSchemaFromNestedFieldSpec()`](../../lib/agentkit/v6/capability-binding/DataSchemaBuilder.ts) (added in [707a429](../../lib/agentkit/v6/capability-binding/__tests__/DataSchemaBuilder.wp15.test.ts) for WP-15) now throws on shallow nested specs instead of emitting `items:{type:"any"}` / `properties:{}` and a warning. Behavior change: future emissions that produce a shallow AI schema will fail the pipeline at compile time with a clear error instead of degrading silently. Easy to revert if the gate proves premature. **Deferred (RETIRE-2):** disabling AI fallbacks for the 5 retire-safe deterministic primitives (`project_column`, `set_difference`, `filter`, `group`, `dedupe`). The "fallback" lives in the LLM's emission choice (it picks `generate/internal` instead of the structured `transform` primitive) — there are no explicit fallback branches inside StepExecutor's transform functions. Genuine retirement requires extracting the W5 fingerprint logic from [`scripts/measure-redundant-ai-steps.ts`](../../scripts/measure-redundant-ai-steps.ts) into a shared module and wiring it into the compiler as a hard gate that rejects `generate/internal` prompts matching the retire-safe fingerprints. Larger blast radius; deserves its own PR + fresh CP-E measurements (post-WP-SR + null-key changes) before committing. |
 | 2026-05-10 | WP-SR shipped + CP-D sweep finding | After AUDIT-1 (`SchemaAwareDataExtractor` + `VisionContentBuilder` restoration), discovered that the runtime cascade for Sheets-style 2D-array → object workflows was still broken. Phase E on `leads-per-salesperson-email` produced `[{}, {}, ...]` at the LLM-emitted `transform/map` step because `rows_to_objects` (now firing post-restoration) was lowercasing headers (`"Lead Name"` → `"lead name"`) while the LLM's `field_mapping` referenced original-case headers (`{date: "Date", lead_name: "Lead Name"}`) — every `item["Date"]` lookup returned undefined. Fixed in WP-SR with three coordinated changes: (a) `config.preserve_case: true` opt-in on `rowsToObjects` (extracted to pure module `lib/pilot/transforms/RowsToObjects.ts` for testability), (b) compiler auto-inject now sets `preserve_case: true`, (c) `transformMap` Mode 0 now tolerates `column_N` source keys via positional access (`Object.values(item)[N]`) for the LLM's non-canonical alternative emission. Plus a `group transform null-key guard` follow-up: items whose group-by field resolves to null/undefined/empty-string are dropped by default with a single aggregated warning (was: silently grouped under literal `"null"` and downstream sent emails to recipient `"null"`); opt-in `config.include_null_keys: true` restores legacy behavior. Plus DSL simulator now understands `rows_to_objects` (cosmetic warning fix). **Phase E verified end-to-end on `leads-per-salesperson-email`**: 3 qualified leads filtered, summary email sent, 2 of 3 per-salesperson emails delivered (the 3rd dropped because Lead 5's source row was missing the Sales Person column — the null-key guard now prevents the silent send-to-`"null"` failure mode). 141/141 tests passing (134 prior + 7 new). **CP-D sweep finding (logged for transparency):** of the 10 regression scenarios, 4 use `google-sheets.read_range` (`complaint-email-logger`, `gantt-urgent-tasks`, `leads-email-summary`, `leads-per-salesperson-email`) — all 4 had phase4 outputs compiled pre-restoration and so were missing the auto-injected `rows_to_objects` step; all 4 would have failed end-to-end at runtime the same way `leads-per-salesperson-email` did before WP-SR. `orders-po-extractor-xlsx` uses `transform/group` on `vendor` and benefits from the null-key guard if any extracted line item lacks vendor. **The W5 / CP-D fingerprint measurement (5–6 primitives safe-to-retire) remains valid for the deterministic-AI-fallback axis** — but did not exercise the runtime data-flow axis. Re-running Phase E across all 4 Sheets scenarios with the post-WP-SR pipeline is recommended next time those scenarios are touched. |

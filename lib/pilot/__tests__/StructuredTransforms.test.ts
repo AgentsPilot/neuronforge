@@ -505,8 +505,29 @@ describe('transformProjectColumn', () => {
       expect(transformProjectColumn([['a', 'b']], { column: { kind: 'by_index', index: 10 } })).toEqual([undefined]);
     });
 
-    it('throws when row is not an array', () => {
-      expect(() => transformProjectColumn([{ a: 1 }], { column: { kind: 'by_index', index: 0 } })).toThrow(/array rows/);
+    // WP-20: post-WP-SR tolerance for object rows.
+    it('falls back to Object.values(row)[N] when rows are objects (WP-20)', () => {
+      // Mirrors the canonical complaint-email-logger Phase D failure: after
+      // the auto-inject of rows_to_objects(preserve_case=true), Sheets-derived
+      // rows are objects with header keys (insertion order matches column order).
+      const data = [
+        { Date: '14/12/2025', 'Lead Name': 'Lead 1', Stage: '4', Email: 'a@x.com', 'Gmail Link': 'msg-001' },
+        { Date: '12/12/2025', 'Lead Name': 'Lead 2', Stage: '3', Email: 'b@x.com', 'Gmail Link': 'msg-002' },
+      ];
+      // index 4 = the 5th column = "Gmail Link"
+      expect(transformProjectColumn(data, { column: { kind: 'by_index', index: 4 } })).toEqual(['msg-001', 'msg-002']);
+      // index 0 = first column = "Date"
+      expect(transformProjectColumn(data, { column: { kind: 'by_index', index: 0 } })).toEqual(['14/12/2025', '12/12/2025']);
+    });
+
+    it('returns undefined for out-of-bounds index on object rows (WP-20)', () => {
+      const data = [{ a: 1, b: 2 }];
+      expect(transformProjectColumn(data, { column: { kind: 'by_index', index: 99 } })).toEqual([undefined]);
+    });
+
+    it('throws when row is neither array nor object', () => {
+      expect(() => transformProjectColumn(['plain string'], { column: { kind: 'by_index', index: 0 } }))
+        .toThrow(/requires array or object rows/);
     });
   });
 

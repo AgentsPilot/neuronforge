@@ -1,85 +1,68 @@
 {
   "version": "intent.v1",
-  "goal": "Scan inbox emails from the last 7 days for complaint-related messages and append new matching emails to the specified spreadsheet tab while skipping rows already logged by Gmail message link/id.",
+  "goal": "Scan Gmail inbox for complaint emails from the last 7 days, deduplicate against existing rows in Google Sheets, and append new complaint emails to the UrgentEmails tab",
   "unit_of_work": {
-    "entity": "message",
+    "entity": "email",
     "parent_entity": "inbox"
   },
   "config": [
     {
       "key": "spreadsheet_id",
       "type": "string",
-      "default": "1RHLbBXzrKv24gNgp7a4Lr7RlMIrP9fjacfGWjhPAbOE",
-      "description": "Destination spreadsheet identifier for logging complaint emails."
+      "description": "Google Sheets spreadsheet ID for the destination",
+      "default": "1RHLbBXzrKv24gNgp7a4Lr7RlMIrP9fjacfGWjhPAbOE"
     },
     {
       "key": "sheet_tab_name",
       "type": "string",
-      "default": "UrgentEmails",
-      "description": "Destination sheet tab name for logged complaint emails."
+      "description": "Name of the worksheet tab to append complaint emails to",
+      "default": "UrgentEmails"
     },
     {
       "key": "gmail_search_query",
       "type": "string",
-      "default": "in:inbox newer_than:7d (complaint OR refund OR angry OR \"not working\")",
-      "description": "Gmail search query for inbox messages in scope."
+      "description": "Gmail search query to find candidate complaint emails from the last 7 days",
+      "default": "in:inbox newer_than:7d (complaint OR refund OR angry OR \"not working\")"
     },
     {
       "key": "complaint_keywords",
-      "type": "string",
-      "default": "complaint, refund, angry, not working",
-      "description": "Complaint keywords used for case-insensitive matching against email content."
-    },
-    {
-      "key": "sheet_dedup_rule",
-      "type": "string",
-      "default": "skip if Gmail message link/id already exists in the sheet",
-      "description": "Deduplication rule for avoiding duplicate sheet rows."
-    },
-    {
-      "key": "thread_handling",
-      "type": "string",
-      "default": "log every message that matches the complaint rule",
-      "description": "Thread handling rule for logging matching messages independently."
-    },
-    {
-      "key": "columns",
-      "type": "string",
-      "default": "sender email, subject, date, full email text, Gmail message link/id",
-      "description": "Expected destination column order in the sheet tab."
+      "type": "json",
+      "description": "List of keywords to match against email content (case-insensitive)",
+      "default": [
+        "complaint",
+        "refund",
+        "angry",
+        "not working"
+      ]
     },
     {
       "key": "user_email",
       "type": "string",
-      "default": "meiribarak@gmail.com",
-      "description": "User email address used to construct Gmail message links."
+      "description": "User's email address",
+      "default": "meiribarak@gmail.com"
     }
   ],
   "invariants": [
     {
-      "description": "Only messages matching the complaint rule are eligible for logging."
+      "description": "Each complaint email is logged at most once, deduplicated by Gmail message ID"
     },
     {
-      "description": "Each matching Gmail message is treated independently, even within the same thread."
+      "description": "Every matching message is logged independently, even if part of the same thread"
     },
     {
-      "description": "Do not append a row when the Gmail message link/id already exists in the destination tab."
-    },
-    {
-      "description": "Appended rows must preserve the exact column order: sender email, subject, date, full email text, Gmail message link/id."
+      "description": "Rows are appended in order: sender email, subject, date, full email text, Gmail message link/id"
     }
   ],
   "required_outcomes": [
-    "Fetch inbox emails from the last 7 days with full message content.",
-    "Read existing rows from the destination sheet tab.",
-    "Identify complaint emails using case-insensitive keyword matching on email content.",
-    "Append exactly one row for each new matching message not already present in the sheet."
+    "All complaint emails from the last 7 days that are not already in the sheet are appended to the UrgentEmails tab",
+    "No duplicate rows are created for emails already present in the sheet",
+    "Each appended row contains: sender email, subject, date, full email text, Gmail message link/id"
   ],
   "steps": [
     {
-      "id": "fetch_recent_emails",
+      "id": "search_complaint_emails",
       "kind": "data_source",
-      "summary": "Search inbox emails from the last 7 days with full content for complaint candidates.",
+      "summary": "Search Gmail inbox for emails from the last 7 days matching complaint keywords",
       "uses": [
         {
           "capability": "search",
@@ -89,7 +72,7 @@
           }
         }
       ],
-      "output": "recent_emails",
+      "output": "candidate_emails",
       "source": {
         "domain": "email",
         "intent": "search"
@@ -99,15 +82,46 @@
         "key": "gmail_search_query"
       },
       "retrieval": {
+        "max_results": 100,
         "include_content": "full",
-        "include_attachments": false,
-        "include_metadata": true
+        "include_attachments": false
       }
     },
     {
-      "id": "read_existing_sheet_rows",
+      "id": "ensure_sheet_tab",
+      "kind": "artifact",
+      "summary": "Ensure the UrgentEmails tab exists in the destination spreadsheet",
+      "uses": [
+        {
+          "capability": "upsert",
+          "domain": "table",
+          "preferences": {
+            "provider_family": "google"
+          }
+        }
+      ],
+      "output": "sheet_tab",
+      "artifact": {
+        "domain": "table",
+        "type": "sheet_tab",
+        "strategy": "get_or_create",
+        "name_hint": "UrgentEmails",
+        "options": {
+          "spreadsheet_id": {
+            "kind": "config",
+            "key": "spreadsheet_id"
+          },
+          "tab_name": {
+            "kind": "config",
+            "key": "sheet_tab_name"
+          }
+        }
+      }
+    },
+    {
+      "id": "read_existing_rows",
       "kind": "data_source",
-      "summary": "Read existing rows from the destination sheet tab to identify already logged Gmail message link/id values.",
+      "summary": "Read existing rows from the UrgentEmails tab to get already-logged Gmail message IDs",
       "uses": [
         {
           "capability": "get",
@@ -117,10 +131,13 @@
           }
         }
       ],
-      "output": "existing_sheet_rows",
+      "inputs": [
+        "sheet_tab"
+      ],
+      "output": "existing_sheet_data",
       "source": {
         "domain": "table",
-        "intent": "get"
+        "intent": "read"
       },
       "payload": {
         "spreadsheet_id": {
@@ -145,148 +162,281 @@
     },
     {
       "id": "extract_existing_message_ids",
-      "kind": "generate",
-      "summary": "Extract the existing Gmail message link/id values from the destination sheet rows for deduplication.",
+      "kind": "transform",
+      "summary": "Extract the Gmail message link/id column (column E, index 4) from existing sheet rows to build a dedup set",
       "inputs": [
-        "existing_sheet_rows"
+        "existing_sheet_data"
       ],
       "output": "existing_message_ids",
-      "uses": [
-        {
-          "capability": "generate",
-          "domain": "internal"
+      "transform": {
+        "op": "project_column",
+        "input": "existing_sheet_data",
+        "column": {
+          "kind": "by_index",
+          "index": 4
         }
-      ],
-      "generate": {
-        "format": "json",
-        "instruction": "From the sheet row data, extract the values from the fifth column only and return them as a normalized list of existing Gmail message link/id values. Ignore header rows or blank rows.",
-        "outputs": [
-          {
-            "name": "message_ids",
-            "type": "array",
-            "description": "Existing Gmail message link/id values already present in the sheet."
-          }
-        ]
       }
     },
     {
-      "id": "prepare_candidate_emails",
-      "kind": "generate",
-      "summary": "Identify complaint emails, construct Gmail message link/id values, and prepare rows in the required column order.",
+      "id": "filter_by_complaint_keywords",
+      "kind": "transform",
+      "summary": "Filter candidate emails to only those whose body or subject contains complaint keywords (case-insensitive)",
       "inputs": [
-        "recent_emails"
+        "candidate_emails"
       ],
-      "output": "candidate_rows",
-      "uses": [
-        {
-          "capability": "generate",
-          "domain": "internal"
+      "output": "complaint_emails",
+      "transform": {
+        "op": "filter",
+        "input": "candidate_emails",
+        "description": "Keep emails where body or subject contains any complaint keyword",
+        "where": {
+          "op": "or",
+          "conditions": [
+            {
+              "op": "test",
+              "left": {
+                "kind": "ref",
+                "ref": "candidate_emails",
+                "field": "body"
+              },
+              "comparator": "contains_any",
+              "right": {
+                "kind": "config",
+                "key": "complaint_keywords"
+              }
+            },
+            {
+              "op": "test",
+              "left": {
+                "kind": "ref",
+                "ref": "candidate_emails",
+                "field": "subject"
+              },
+              "comparator": "contains_any",
+              "right": {
+                "kind": "config",
+                "key": "complaint_keywords"
+              }
+            }
+          ]
         }
-      ],
-      "generate": {
-        "format": "json",
-        "instruction": "Review each email independently. Treat an email as a complaint if its subject, snippet, or body contains any of these keywords in a case-insensitive way: complaint, refund, angry, not working. For each matching email, produce one output record with these fields: sender_email from the email field 'from', subject from 'subject', date from 'date', full_email_text from 'body', gmail_message_link_id constructed as a Gmail message URL using the user's email context and the email field 'id', row_values as an array in this exact order: sender email, subject, date, full email text, Gmail message link/id. Include the original email id as id. Exclude non-matching emails. Treat every matching message independently even if multiple messages belong to the same thread.",
-        "outputs": [
-          {
-            "name": "rows",
-            "type": "array",
-            "description": "Prepared complaint email records ready for deduplication and append."
-          }
-        ]
       }
     },
     {
-      "id": "filter_new_rows",
-      "kind": "generate",
-      "summary": "Remove complaint email rows whose Gmail message link/id already exists in the destination sheet.",
+      "id": "prepare_complaint_rows",
+      "kind": "transform",
+      "summary": "Map complaint emails to row format: sender email, subject, date, full email text, Gmail message id",
       "inputs": [
-        "candidate_rows",
-        "existing_message_ids"
+        "complaint_emails"
       ],
-      "output": "new_rows_to_append",
-      "uses": [
-        {
-          "capability": "generate",
-          "domain": "internal"
-        }
-      ],
-      "generate": {
-        "format": "json",
-        "instruction": "Compare each prepared complaint email record against the existing Gmail message link/id list. Keep only records whose gmail_message_link_id is not already present. Return the remaining records unchanged and also return a 2D array of row values ready for sheet append. Apply the deduplication rule exactly as configured: skip if Gmail message link/id already exists in the sheet.",
-        "outputs": [
-          {
-            "name": "rows",
-            "type": "array",
-            "description": "New complaint email records not yet logged."
-          },
-          {
-            "name": "values",
-            "type": "array",
-            "description": "2D array of row values ready to append to the sheet."
-          }
-        ]
-      }
-    },
-    {
-      "id": "append_new_rows",
-      "kind": "deliver",
-      "summary": "Append new complaint email rows to the destination sheet tab.",
-      "inputs": [
-        "new_rows_to_append"
-      ],
-      "output": "append_result",
-      "uses": [
-        {
-          "capability": "append",
-          "domain": "table",
-          "preferences": {
-            "provider_family": "google"
-          }
-        }
-      ],
-      "deliver": {
-        "domain": "table",
-        "intent": "append_record",
-        "input": "new_rows_to_append",
+      "output": "complaint_rows",
+      "transform": {
+        "op": "map",
+        "input": "complaint_emails",
         "mapping": [
           {
-            "from": {
-              "kind": "config",
-              "key": "spreadsheet_id"
-            },
-            "to": "spreadsheet_id"
+            "to": "sender_email",
+            "from": "from"
           },
           {
-            "from": {
-              "kind": "config",
-              "key": "sheet_tab_name"
-            },
-            "to": "range"
+            "to": "subject",
+            "from": "subject"
           },
           {
-            "from": {
-              "kind": "ref",
-              "ref": "new_rows_to_append",
-              "field": "values"
-            },
-            "to": "values"
+            "to": "date",
+            "from": "date"
+          },
+          {
+            "to": "full_email_text",
+            "from": "body"
+          },
+          {
+            "to": "gmail_message_link_id",
+            "from": "id"
           }
         ],
-        "options": {
-          "input_option": {
-            "kind": "literal",
-            "value": "USER_ENTERED"
-          },
-          "insert_data_option": {
-            "kind": "literal",
-            "value": "INSERT_ROWS"
+        "output_schema": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "sender_email": {
+                "type": "string"
+              },
+              "subject": {
+                "type": "string"
+              },
+              "date": {
+                "type": "string"
+              },
+              "full_email_text": {
+                "type": "string"
+              },
+              "gmail_message_link_id": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "sender_email",
+              "subject",
+              "date",
+              "full_email_text",
+              "gmail_message_link_id"
+            ]
           }
         }
+      }
+    },
+    {
+      "id": "deduplicate_against_existing",
+      "kind": "transform",
+      "summary": "Remove complaint rows whose Gmail message ID already exists in the sheet",
+      "inputs": [
+        "complaint_rows",
+        "existing_message_ids"
+      ],
+      "output": "new_complaint_rows",
+      "transform": {
+        "op": "set_difference",
+        "input": "complaint_rows",
+        "reference": "existing_message_ids",
+        "key_field": "gmail_message_link_id"
+      }
+    },
+    {
+      "id": "check_new_complaints_exist",
+      "kind": "decide",
+      "summary": "Only append rows if there are new complaint emails to log",
+      "inputs": [
+        "new_complaint_rows"
+      ],
+      "decide": {
+        "condition": {
+          "op": "test",
+          "left": {
+            "kind": "ref",
+            "ref": "new_complaint_rows",
+            "field": "length"
+          },
+          "comparator": "gt",
+          "right": {
+            "kind": "literal",
+            "value": 0
+          }
+        },
+        "then": [
+          {
+            "id": "format_rows_for_sheets",
+            "kind": "transform",
+            "summary": "Convert complaint row objects into 2D array format for Google Sheets append (each row: [sender_email, subject, date, full_email_text, gmail_message_link_id])",
+            "inputs": [
+              "new_complaint_rows"
+            ],
+            "output": "formatted_rows",
+            "transform": {
+              "op": "map",
+              "input": "new_complaint_rows",
+              "description": "Transform each complaint row object into an ordered array: [sender_email, subject, date, full_email_text, gmail_message_link_id]",
+              "mapping": [
+                {
+                  "to": "0",
+                  "from": "sender_email"
+                },
+                {
+                  "to": "1",
+                  "from": "subject"
+                },
+                {
+                  "to": "2",
+                  "from": "date"
+                },
+                {
+                  "to": "3",
+                  "from": "full_email_text"
+                },
+                {
+                  "to": "4",
+                  "from": "gmail_message_link_id"
+                }
+              ],
+              "output_schema": {
+                "type": "array",
+                "items": {
+                  "type": "array"
+                }
+              }
+            }
+          },
+          {
+            "id": "append_to_sheet",
+            "kind": "deliver",
+            "summary": "Append new complaint email rows to the UrgentEmails tab in Google Sheets",
+            "inputs": [
+              "formatted_rows",
+              "sheet_tab"
+            ],
+            "output": "append_result",
+            "uses": [
+              {
+                "capability": "append",
+                "domain": "table",
+                "preferences": {
+                  "provider_family": "google"
+                }
+              }
+            ],
+            "deliver": {
+              "domain": "table",
+              "intent": "append_rows",
+              "input": "formatted_rows",
+              "destination": "sheet_tab",
+              "mapping": [
+                {
+                  "from": {
+                    "kind": "config",
+                    "key": "spreadsheet_id"
+                  },
+                  "to": "spreadsheet_id"
+                },
+                {
+                  "from": {
+                    "kind": "computed",
+                    "op": "concat",
+                    "args": [
+                      {
+                        "kind": "config",
+                        "key": "sheet_tab_name"
+                      },
+                      {
+                        "kind": "literal",
+                        "value": "!A:E"
+                      }
+                    ]
+                  },
+                  "to": "range"
+                },
+                {
+                  "from": {
+                    "kind": "ref",
+                    "ref": "formatted_rows"
+                  },
+                  "to": "values"
+                }
+              ]
+            }
+          }
+        ]
       }
     }
   ],
-  "confidence": 0.91,
+  "confidence": 0.93,
   "meta": {
-    "plan_title": "Customer Complaint Email Logger (Gmail → Google Sheets)"
+    "estimated_steps": 8,
+    "services_used": [
+      "google-mail",
+      "google-sheets"
+    ],
+    "dedup_strategy": "set_difference on gmail_message_link_id against existing sheet column E",
+    "thread_handling": "each matching message logged independently"
   }
 }

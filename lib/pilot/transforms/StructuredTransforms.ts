@@ -131,13 +131,24 @@ export function transformProjectColumn(data: any, config: any): any[] {
   return data.map((row, idx) => {
     switch (column.kind) {
       case 'by_index': {
-        if (!Array.isArray(row)) {
-          throw new StructuredTransformError(
-            `project_column.by_index requires array rows; row ${idx} is ${typeof row}`,
-            'INVALID_INPUT_TYPE'
-          );
+        if (Array.isArray(row)) {
+          return row[column.index];
         }
-        return row[column.index];
+        // WP-20: post-WP-SR tolerance. The compiler's `rows_to_objects`
+        // auto-inject (with `preserve_case: true`) converts Sheets-derived
+        // 2D rows to objects with header keys before this transform runs.
+        // The LLM may still emit `by_index: N` based on the column position
+        // it saw in the user's prompt ("column E"). Fall back to positional
+        // access via `Object.values` — safe because `rows_to_objects` preserves
+        // key insertion order matching column order. Sister tolerance to the
+        // `column_N` fallback in `transformMap` Mode 0 (WP-SR).
+        if (row && typeof row === 'object') {
+          return Object.values(row)[column.index];
+        }
+        throw new StructuredTransformError(
+          `project_column.by_index requires array or object rows; row ${idx} is ${typeof row}`,
+          'INVALID_INPUT_TYPE'
+        );
       }
       case 'by_field': {
         if (row == null || typeof row !== 'object') {

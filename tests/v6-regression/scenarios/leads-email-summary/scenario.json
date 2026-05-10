@@ -1,11 +1,11 @@
 {
   "name": "High-Qualified Leads Email Summary",
   "description": "Read Google Sheets leads tab, filter by Stage=4, render HTML summary table, email to recipient list",
-  "created": "2026-03-26",
-  "plugins": ["google-mail", "google-sheets"],
+  "created": "2026-05-10",
+  "plugins": ["google-mail", "google-sheets", "chatgpt-research"],
   "expected": {
-    "min_steps": 4,
-    "step_types": ["action", "transform"],
+    "min_steps": 6,
+    "step_types": ["action", "transform", "ai_processing"],
     "phase_a_checks": 14,
     "phase_d_success": true,
     "phase_e_success": true

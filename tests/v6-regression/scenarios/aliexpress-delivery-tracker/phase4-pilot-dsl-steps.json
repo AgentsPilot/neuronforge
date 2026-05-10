@@ -1,0 +1,610 @@
+[
+  {
+    "step_id": "step1",
+    "type": "action",
+    "description": "Search Gmail for AliExpress delivery update emails from the known sender address, retrieving full email content for extraction",
+    "plugin": "google-mail",
+    "output_variable": "aliexpress_emails",
+    "output_schema": {
+      "type": "object",
+      "source": "plugin",
+      "description": "Search results with email details",
+      "properties": {
+        "emails": {
+          "type": "array",
+          "source": "plugin",
+          "description": "Array of matching emails",
+          "items": {
+            "type": "object",
+            "source": "plugin",
+            "semantic_type": "email_message",
+            "properties": {
+              "id": {
+                "type": "string",
+                "source": "plugin",
+                "description": "Gmail message ID"
+              },
+              "thread_id": {
+                "type": "string",
+                "source": "plugin",
+                "description": "Gmail thread ID"
+              },
+              "subject": {
+                "type": "string",
+                "source": "plugin",
+                "description": "Email subject"
+              },
+              "from": {
+                "type": "string",
+                "source": "plugin",
+                "description": "Sender address"
+              },
+              "to": {
+                "type": "string",
+                "source": "plugin",
+                "description": "Recipient addresses"
+              },
+              "date": {
+                "type": "string",
+                "source": "plugin",
+                "description": "Email date"
+              },
+              "snippet": {
+                "type": "string",
+                "source": "plugin",
+                "description": "Email preview snippet (first ~200 chars of email body - USE THIS for content matching/filtering)"
+              },
+              "labels": {
+                "type": "array",
+                "source": "plugin",
+                "description": "Gmail labels",
+                "items": {
+                  "type": "string",
+                  "source": "plugin"
+                }
+              },
+              "body": {
+                "type": "string",
+                "source": "plugin",
+                "description": "Email body text (NOTE: Usually empty in search results - use 'snippet' field instead for email content)"
+              },
+              "attachments": {
+                "type": "array",
+                "source": "plugin",
+                "description": "Attachment metadata (if include_attachments=true). Each item contains: filename, mimeType, size, attachment_id (use with get_email_attachment), message_id (email ID)",
+                "items": {
+                  "type": "object",
+                  "source": "plugin",
+                  "semantic_type": "file_attachment",
+                  "properties": {
+                    "filename": {
+                      "type": "string",
+                      "source": "plugin",
+                      "description": "Attachment filename"
+                    },
+                    "mimeType": {
+                      "type": "string",
+                      "source": "plugin",
+                      "description": "MIME type (application/pdf, image/png, etc.)"
+                    },
+                    "size": {
+                      "type": "number",
+                      "source": "plugin",
+                      "description": "File size in bytes"
+                    },
+                    "attachment_id": {
+                      "type": "string",
+                      "source": "plugin",
+                      "description": "Attachment ID (required for get_email_attachment action)"
+                    },
+                    "message_id": {
+                      "type": "string",
+                      "source": "plugin",
+                      "description": "Email message ID (required for get_email_attachment action)"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "total_found": {
+          "type": "number",
+          "source": "plugin",
+          "description": "Number of emails returned"
+        },
+        "total_available": {
+          "type": "number",
+          "source": "plugin",
+          "description": "Estimated total matching emails"
+        },
+        "search_query": {
+          "type": "string",
+          "source": "plugin",
+          "description": "The search query that was executed"
+        },
+        "searched_at": {
+          "type": "string",
+          "source": "plugin",
+          "description": "ISO 8601 timestamp of search"
+        }
+      }
+    },
+    "id": "step1",
+    "params": {
+      "query": "{{input.gmail_search_query}}",
+      "max_results": 30,
+      "include_attachments": false,
+      "content_level": "full"
+    },
+    "name": "Search Gmail for AliExpress delivery update emails from the known sender address, retrieving full email content for extraction",
+    "action": "search_emails"
+  },
+  {
+    "step_id": "step2",
+    "type": "transform",
+    "operation": "filter",
+    "input": "{{aliexpress_emails.emails}}",
+    "description": "Filter emails to only those containing delivery update or shipment keywords in subject or body",
+    "config": {
+      "type": "filter",
+      "input": "aliexpress_emails.emails",
+      "custom_code": "Keep only emails whose subject or body contains delivery-related keywords",
+      "condition": {
+        "conditionType": "complex_or",
+        "conditions": [
+          {
+            "operator": "contains_any",
+            "value": "{{input.search_keywords}}",
+            "field": "item.subject",
+            "conditionType": "simple"
+          },
+          {
+            "operator": "contains_any",
+            "value": "{{input.search_keywords}}",
+            "field": "item.body",
+            "conditionType": "simple"
+          }
+        ]
+      }
+    },
+    "output_variable": "delivery_emails",
+    "output_schema": {
+      "type": "array",
+      "source": "inferred",
+      "description": "Array of matching emails",
+      "items": {
+        "type": "object",
+        "source": "plugin",
+        "semantic_type": "email_message",
+        "properties": {
+          "id": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Gmail message ID"
+          },
+          "thread_id": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Gmail thread ID"
+          },
+          "subject": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Email subject"
+          },
+          "from": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Sender address"
+          },
+          "to": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Recipient addresses"
+          },
+          "date": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Email date"
+          },
+          "snippet": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Email preview snippet (first ~200 chars of email body - USE THIS for content matching/filtering)"
+          },
+          "labels": {
+            "type": "array",
+            "source": "plugin",
+            "description": "Gmail labels",
+            "items": {
+              "type": "string",
+              "source": "plugin"
+            }
+          },
+          "body": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Email body text (NOTE: Usually empty in search results - use 'snippet' field instead for email content)"
+          },
+          "attachments": {
+            "type": "array",
+            "source": "plugin",
+            "description": "Attachment metadata (if include_attachments=true). Each item contains: filename, mimeType, size, attachment_id (use with get_email_attachment), message_id (email ID)",
+            "items": {
+              "type": "object",
+              "source": "plugin",
+              "semantic_type": "file_attachment",
+              "properties": {
+                "filename": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "Attachment filename"
+                },
+                "mimeType": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "MIME type (application/pdf, image/png, etc.)"
+                },
+                "size": {
+                  "type": "number",
+                  "source": "plugin",
+                  "description": "File size in bytes"
+                },
+                "attachment_id": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "Attachment ID (required for get_email_attachment action)"
+                },
+                "message_id": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "Email message ID (required for get_email_attachment action)"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "id": "step2",
+    "_on_empty": "warn",
+    "name": "Filter emails to only those containing delivery update or shipment keywords in subject or body"
+  },
+  {
+    "step_id": "step3",
+    "type": "ai_processing",
+    "input": "{{delivery_emails}}",
+    "prompt": "For each email in the delivery_emails array, analyze the email body and subject to extract: 1) The package/tracking number, 2) A list of product names included in the shipment, 3) The current delivery status (e.g., 'Shipped', 'In Transit', 'Out for Delivery', 'Delivered'), 4) The estimated delivery date if available. Also preserve the email id for downstream processing. If a field cannot be found, use 'N/A'.",
+    "description": "Extract package number, list of products, and delivery summary (status and estimated delivery date) from each AliExpress delivery email",
+    "config": {
+      "ai_type": "generate",
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "deliveries": {
+            "type": "array",
+            "description": "One entry per delivery email with extracted details"
+          }
+        },
+        "required": [
+          "deliveries"
+        ]
+      },
+      "type": "generate",
+      "instruction": "For each email in the delivery_emails array, analyze the email body and subject to extract: 1) The package/tracking number, 2) A list of product names included in the shipment, 3) The current delivery status (e.g., 'Shipped', 'In Transit', 'Out for Delivery', 'Delivered'), 4) The estimated delivery date if available. Also preserve the email id for downstream processing. If a field cannot be found, use 'N/A'.",
+      "input": "{{delivery_emails}}"
+    },
+    "output_variable": "extracted_deliveries",
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "deliveries": {
+          "type": "array",
+          "source": "ai_declared",
+          "description": "One entry per delivery email with extracted details",
+          "items": {
+            "type": "object",
+            "source": "ai_declared",
+            "properties": {
+              "email_id": {
+                "type": "string",
+                "source": "ai_declared",
+                "description": "Gmail message ID for downstream labeling/marking"
+              },
+              "package_number": {
+                "type": "string",
+                "source": "ai_declared",
+                "description": "Package or tracking number"
+              },
+              "products": {
+                "type": "string",
+                "source": "ai_declared",
+                "description": "Comma-separated list of product names in the shipment"
+              },
+              "delivery_status": {
+                "type": "string",
+                "source": "ai_declared",
+                "description": "Current delivery status (Shipped, In Transit, Out for Delivery, Delivered, etc.)"
+              },
+              "estimated_delivery_date": {
+                "type": "string",
+                "source": "ai_declared",
+                "description": "Estimated delivery date if available, otherwise N/A"
+              }
+            }
+          }
+        }
+      },
+      "source": "ai_declared"
+    },
+    "input_schema": {
+      "type": "array",
+      "source": "inferred",
+      "description": "Array of matching emails",
+      "items": {
+        "type": "object",
+        "source": "plugin",
+        "semantic_type": "email_message",
+        "properties": {
+          "id": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Gmail message ID"
+          },
+          "thread_id": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Gmail thread ID"
+          },
+          "subject": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Email subject"
+          },
+          "from": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Sender address"
+          },
+          "to": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Recipient addresses"
+          },
+          "date": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Email date"
+          },
+          "snippet": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Email preview snippet (first ~200 chars of email body - USE THIS for content matching/filtering)"
+          },
+          "labels": {
+            "type": "array",
+            "source": "plugin",
+            "description": "Gmail labels",
+            "items": {
+              "type": "string",
+              "source": "plugin"
+            }
+          },
+          "body": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Email body text (NOTE: Usually empty in search results - use 'snippet' field instead for email content)"
+          },
+          "attachments": {
+            "type": "array",
+            "source": "plugin",
+            "description": "Attachment metadata (if include_attachments=true). Each item contains: filename, mimeType, size, attachment_id (use with get_email_attachment), message_id (email ID)",
+            "items": {
+              "type": "object",
+              "source": "plugin",
+              "semantic_type": "file_attachment",
+              "properties": {
+                "filename": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "Attachment filename"
+                },
+                "mimeType": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "MIME type (application/pdf, image/png, etc.)"
+                },
+                "size": {
+                  "type": "number",
+                  "source": "plugin",
+                  "description": "File size in bytes"
+                },
+                "attachment_id": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "Attachment ID (required for get_email_attachment action)"
+                },
+                "message_id": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "Email message ID (required for get_email_attachment action)"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "id": "step3",
+    "name": "Extract package number, list of products, and delivery summary (status and estimated delivery date) from each AliExpress delivery email"
+  },
+  {
+    "step_id": "step4",
+    "type": "ai_processing",
+    "input": "{{extracted_deliveries}}",
+    "prompt": "Create a professional HTML email body. Start with a brief greeting and introductory sentence like 'Here is a summary of your latest AliExpress delivery updates:'. Then create an HTML table with the following columns: Package Number, Products, Delivery Status, Estimated Delivery Date. Style the table with borders, a colored header row (e.g., light blue background), padding, and clean professional formatting. Populate the table rows from the deliveries array in extracted_deliveries. If there are no deliveries, show a message saying 'No AliExpress delivery updates found.' End with a brief closing line.",
+    "description": "Compose an HTML email body with a brief introductory message and an HTML summary table of all AliExpress delivery updates",
+    "config": {
+      "ai_type": "generate",
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "html_body": {
+            "type": "string",
+            "description": "Complete HTML email body with summary table"
+          }
+        },
+        "required": [
+          "html_body"
+        ]
+      },
+      "type": "generate",
+      "instruction": "Create a professional HTML email body. Start with a brief greeting and introductory sentence like 'Here is a summary of your latest AliExpress delivery updates:'. Then create an HTML table with the following columns: Package Number, Products, Delivery Status, Estimated Delivery Date. Style the table with borders, a colored header row (e.g., light blue background), padding, and clean professional formatting. Populate the table rows from the deliveries array in extracted_deliveries. If there are no deliveries, show a message saying 'No AliExpress delivery updates found.' End with a brief closing line.",
+      "input": "{{extracted_deliveries}}"
+    },
+    "output_variable": "summary_email_content",
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "html_body": {
+          "type": "string",
+          "source": "ai_declared",
+          "description": "Complete HTML email body with summary table"
+        }
+      },
+      "source": "ai_declared"
+    },
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "deliveries": {
+          "type": "array",
+          "source": "ai_declared",
+          "description": "One entry per delivery email with extracted details",
+          "items": {
+            "type": "object",
+            "source": "ai_declared",
+            "properties": {
+              "email_id": {
+                "type": "string",
+                "source": "ai_declared",
+                "description": "Gmail message ID for downstream labeling/marking"
+              },
+              "package_number": {
+                "type": "string",
+                "source": "ai_declared",
+                "description": "Package or tracking number"
+              },
+              "products": {
+                "type": "string",
+                "source": "ai_declared",
+                "description": "Comma-separated list of product names in the shipment"
+              },
+              "delivery_status": {
+                "type": "string",
+                "source": "ai_declared",
+                "description": "Current delivery status (Shipped, In Transit, Out for Delivery, Delivered, etc.)"
+              },
+              "estimated_delivery_date": {
+                "type": "string",
+                "source": "ai_declared",
+                "description": "Estimated delivery date if available, otherwise N/A"
+              }
+            }
+          }
+        }
+      },
+      "source": "ai_declared"
+    },
+    "id": "step4",
+    "name": "Compose an HTML email body with a brief introductory message and an HTML summary table of all AliExpress delivery updates"
+  },
+  {
+    "step_id": "step5",
+    "type": "action",
+    "description": "Send the AliExpress delivery summary email to the user",
+    "plugin": "google-mail",
+    "id": "step5",
+    "params": {
+      "recipients": {
+        "to": [
+          "{{input.recipient_email}}"
+        ]
+      },
+      "content": {
+        "subject": "{{input.summary_email_subject}}",
+        "html_body": "{{summary_email_content.html_body}}"
+      }
+    },
+    "name": "Send the AliExpress delivery summary email to the user",
+    "action": "send_email"
+  },
+  {
+    "step_id": "step6",
+    "type": "scatter_gather",
+    "description": "Loop over delivery_emails",
+    "scatter": {
+      "input": "{{delivery_emails}}",
+      "steps": [
+        {
+          "step_id": "step7",
+          "type": "action",
+          "description": "Mark the email as read and add the shopping label",
+          "plugin": "google-mail",
+          "output_variable": "label_result",
+          "output_schema": {
+            "type": "object",
+            "source": "plugin",
+            "description": "Result of the email modification",
+            "properties": {
+              "message_id": {
+                "type": "string",
+                "source": "plugin",
+                "description": "The modified message ID",
+                "required": true
+              },
+              "labels_added": {
+                "type": "array",
+                "source": "plugin",
+                "description": "Labels that were added",
+                "items": {
+                  "type": "string",
+                  "source": "plugin"
+                },
+                "required": true
+              },
+              "labels_removed": {
+                "type": "array",
+                "source": "plugin",
+                "description": "Labels that were removed",
+                "items": {
+                  "type": "string",
+                  "source": "plugin"
+                },
+                "required": true
+              }
+            }
+          },
+          "id": "step7",
+          "params": {
+            "message_id": "{{current_email.id}}",
+            "add_labels": [
+              "{{input.shopping_label}}"
+            ],
+            "mark_read": true
+          },
+          "name": "Mark the email as read and add the shopping label",
+          "action": "modify_email"
+        }
+      ],
+      "itemVariable": "current_email"
+    },
+    "gather": {
+      "operation": "collect"
+    },
+    "output_variable": "labeled_emails",
+    "id": "step6",
+    "name": "Loop over delivery_emails"
+  }
+]
