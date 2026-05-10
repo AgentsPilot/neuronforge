@@ -6987,26 +6987,41 @@ export class ExecutionGraphCompiler {
   /**
    * Validate AI output_schema depth — reject array without items, object without properties.
    * (Task 4.6)
+   *
+   * RETIRE-1 (2026-05-10): switched from warn-and-repair to throw-on-violation
+   * after CP-D verified 0/10 firings across the regression suite. The Q-A4
+   * sequencing gate was met: the LLM consistently emits depth-2+ shapes for
+   * array/object output declarations under the WP-15 prompt + grammar.
+   *
+   * If a future emission produces a shallow shape, this throws at compile
+   * time with a clear error instead of silently auto-filling `items:{type:"any"}`
+   * / `properties:{}` and producing surprising runtime behavior. Revert to
+   * warn-and-repair if the gate proves premature.
    */
   private validateAISchemaDepth(graph: ExecutionGraph, ctx: CompilerContext): void {
     const dataSchema = graph.data_schema
     if (!dataSchema) return
 
+    const violations: string[] = []
     for (const [slotName, slot] of Object.entries(dataSchema.slots)) {
       if (slot.schema.source !== 'ai_declared') continue
 
       if (slot.schema.type === 'array' && !slot.schema.items) {
-        this.warn(ctx,
-          `AI-declared slot "${slotName}" is type "array" but missing "items" schema. ` +
-          `Auto-repairing with items: { type: "any" }`)
-        slot.schema.items = { type: 'any', source: 'ai_declared' }
+        violations.push(`slot "${slotName}": type "array" without "items"`)
       }
 
       if (slot.schema.type === 'object' && !slot.schema.properties) {
-        this.warn(ctx,
-          `AI-declared slot "${slotName}" is type "object" but missing "properties". ` +
-          `This may cause runtime issues.`)
+        violations.push(`slot "${slotName}": type "object" without "properties"`)
       }
+    }
+
+    if (violations.length > 0) {
+      throw new Error(
+        `AI-declared schema depth violation (RETIRE-1, was warn-and-repair until 2026-05-10): ${violations.join('; ')}. ` +
+        `The LLM should declare element shape via 'items' for arrays and 'properties' for objects ` +
+        `(see Phase 1 system prompt section 6.4.1 — WP-15). If this is a regression in LLM output, ` +
+        `consider reverting RETIRE-1 by restoring the warn-and-repair behavior in this method.`
+      )
     }
   }
 

@@ -413,34 +413,42 @@ export class DataSchemaBuilder {
     if (spec.description !== undefined) out.description = spec.description
     if (spec.required !== undefined) out.required = spec.required
 
+    // RETIRE-1 (2026-05-10): switched from warn-and-fallback to throw-on-violation
+    // after CP-D verified 0/10 firings across the regression suite. The Q-A4
+    // sequencing gate was met: the LLM consistently emits depth-2+ shapes for
+    // array/object output declarations under the WP-15 prompt + grammar.
+    //
+    // If a future emission produces a shallow shape, this throws at the
+    // builder layer with a clear error instead of silently emitting
+    // `items:{type:"any"}` / `properties:{}` and producing surprising
+    // downstream behavior. Revert by restoring the warn-and-fallback
+    // branches if the gate proves premature.
     if (fieldType === 'array') {
-      if (spec.items) {
-        out.items = this.buildSchemaFromNestedFieldSpec(spec.items, stepId, `${path}[]`)
-      } else {
-        // WP-15: LLM declared array without items shape. Schema is shallow —
-        // matches the failure mode that auto-repair (task 7.3) currently masks.
-        // Emit a permissive items so downstream consumers don't crash, but
-        // surface a warning so the W5 measurement can count residual firings.
-        this.warn(
-          `Step ${stepId}: field "${path}" declared as array without "items" — falling back to items:{type:"any"}. Declare item shape per WP-15 (system-prompt section 6.4.1).`
+      if (!spec.items) {
+        throw new Error(
+          `[DataSchemaBuilder] Step ${stepId}: field "${path}" declared as array without "items" ` +
+          `(RETIRE-1, was warn-and-fallback until 2026-05-10). The LLM must declare element shape ` +
+          `for array fields — see Phase 1 system prompt section 6.4.1 (WP-15). ` +
+          `If this is a regression, restore the warn-and-fallback branch in DataSchemaBuilder.`
         )
-        out.items = { type: 'any', source: 'ai_declared' }
       }
+      out.items = this.buildSchemaFromNestedFieldSpec(spec.items, stepId, `${path}[]`)
     }
 
     if (fieldType === 'object') {
-      if (spec.properties && typeof spec.properties === 'object') {
-        const props: Record<string, SchemaField> = {}
-        for (const [key, child] of Object.entries(spec.properties)) {
-          props[key] = this.buildSchemaFromNestedFieldSpec(child, stepId, `${path}.${key}`)
-        }
-        out.properties = props
-      } else {
-        this.warn(
-          `Step ${stepId}: field "${path}" declared as object without "properties" — falling back to properties:{}. Declare field shape per WP-15 (system-prompt section 6.4.1).`
+      if (!spec.properties || typeof spec.properties !== 'object') {
+        throw new Error(
+          `[DataSchemaBuilder] Step ${stepId}: field "${path}" declared as object without "properties" ` +
+          `(RETIRE-1, was warn-and-fallback until 2026-05-10). The LLM must declare per-key field shape ` +
+          `for object fields — see Phase 1 system prompt section 6.4.1 (WP-15). ` +
+          `If this is a regression, restore the warn-and-fallback branch in DataSchemaBuilder.`
         )
-        out.properties = {}
       }
+      const props: Record<string, SchemaField> = {}
+      for (const [key, child] of Object.entries(spec.properties)) {
+        props[key] = this.buildSchemaFromNestedFieldSpec(child, stepId, `${path}.${key}`)
+      }
+      out.properties = props
     }
 
     return out

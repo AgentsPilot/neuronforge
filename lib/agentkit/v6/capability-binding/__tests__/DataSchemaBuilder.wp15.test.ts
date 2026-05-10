@@ -295,10 +295,16 @@ describe('WP-15 extract step — nested array-of-object fields', () => {
   });
 });
 
-// ─── Failure-mode fallbacks (LLM declared shallow shape) ───────────────────
+// ─── Failure-mode: shallow LLM declarations now THROW (RETIRE-1, 2026-05-10) ───
+//
+// Behavior changed from warn-and-fallback to throw-on-violation after CP-D
+// verified 0/10 firings of the safety net across the regression suite. The
+// old `items:{type:"any"}` / `properties:{}` auto-fill is gone. To revert,
+// restore the warn-and-fallback branches in
+// `DataSchemaBuilder.buildSchemaFromNestedFieldSpec`.
 
-describe('WP-15 fallbacks for shallow LLM declarations', () => {
-  it('emits items:{type:"any"} + warning when array has no items', () => {
+describe('WP-15 RETIRE-1: shallow LLM declarations throw at the builder', () => {
+  it('throws when generate.outputs[] has type:"array" without items', () => {
     const builder = makeBuilder();
     const step = makeStep({
       id: 'gen',
@@ -312,19 +318,13 @@ describe('WP-15 fallbacks for shallow LLM declarations', () => {
       },
     });
 
-    const schema = (builder as any).inferSchemaForGenerateStep(step);
-    const rows = schema.properties.rows;
-    expect(rows.type).toBe('array');
-    expect(rows.items).toBeDefined();
-    expect(rows.items.type).toBe('any');
-    expect(rows.items.source).toBe('ai_declared');
-
-    // The W5 measurement signal — must be a warning.
-    const warnings = getWarnings(builder);
-    expect(warnings.some(w => w.includes('"rows"') && w.includes('without "items"'))).toBe(true);
+    expect(() => (builder as any).inferSchemaForGenerateStep(step))
+      .toThrow(/field "rows" declared as array without "items"/);
+    expect(() => (builder as any).inferSchemaForGenerateStep(step))
+      .toThrow(/RETIRE-1/);
   });
 
-  it('emits properties:{} + warning when object has no properties', () => {
+  it('throws when generate.outputs[] has type:"object" without properties', () => {
     const builder = makeBuilder();
     const step = makeStep({
       id: 'gen',
@@ -338,16 +338,11 @@ describe('WP-15 fallbacks for shallow LLM declarations', () => {
       },
     });
 
-    const schema = (builder as any).inferSchemaForGenerateStep(step);
-    const env = schema.properties.envelope;
-    expect(env.type).toBe('object');
-    expect(env.properties).toEqual({});
-
-    const warnings = getWarnings(builder);
-    expect(warnings.some(w => w.includes('"envelope"') && w.includes('without "properties"'))).toBe(true);
+    expect(() => (builder as any).inferSchemaForGenerateStep(step))
+      .toThrow(/field "envelope" declared as object without "properties"/);
   });
 
-  it('warning path on extract.fields[] mirrors generate behavior', () => {
+  it('throws on extract.fields[] with type:"array" without items', () => {
     const builder = makeBuilder();
     const step = makeStep({
       id: 'extract',
@@ -361,13 +356,11 @@ describe('WP-15 fallbacks for shallow LLM declarations', () => {
       },
     });
 
-    const schema = (builder as any).inferSchemaForExtractStep(step);
-    expect(schema.properties.tags.items.type).toBe('any');
-    const warnings = getWarnings(builder);
-    expect(warnings.some(w => w.includes('"tags"') && w.includes('without "items"'))).toBe(true);
+    expect(() => (builder as any).inferSchemaForExtractStep(step))
+      .toThrow(/field "tags" declared as array without "items"/);
   });
 
-  it('uses dotted path in warnings for nested fields', () => {
+  it('throws with dotted path for nested shallow fields', () => {
     const builder = makeBuilder();
     const step = makeStep({
       id: 'gen',
@@ -387,9 +380,7 @@ describe('WP-15 fallbacks for shallow LLM declarations', () => {
       },
     });
 
-    (builder as any).inferSchemaForGenerateStep(step);
-    const warnings = getWarnings(builder);
-    // Path should reflect nesting.
-    expect(warnings.some(w => w.includes('envelope.tags'))).toBe(true);
+    expect(() => (builder as any).inferSchemaForGenerateStep(step))
+      .toThrow(/field "envelope\.tags" declared as array without "items"/);
   });
 });

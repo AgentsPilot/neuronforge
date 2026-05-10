@@ -3322,6 +3322,20 @@ Respond ONLY with the JSON array. No markdown, no explanation, no code blocks.`;
     // Detect if 2D array pattern
     const is2DArray = Array.isArray(unwrappedData[0]);
 
+    // Data-quality guard (WP-SR follow-up): when an item's key field is
+    // missing/null/undefined/empty-string, we previously coerced it via
+    // String(null) = "null" and grouped under that literal — which then
+    // propagated downstream as a recipient string "null" in send_email
+    // (observed in the leads-per-salesperson Phase E run on Lead 5, whose
+    // sheet row was missing the Sales Person column).
+    //
+    // Default behavior: skip items with empty keys and log a single warning
+    // with the count. Opt-in `config.include_null_keys: true` preserves the
+    // legacy behavior for cases where the caller genuinely wants a "missing"
+    // bucket (e.g., reporting on data completeness).
+    const includeNullKeys = config.include_null_keys === true;
+    let skippedNullKeys = 0;
+
     // Build grouped object using generic extractValueByKey
     const grouped = unwrappedData.reduce((acc, item, index) => {
       // Skip header row for 2D arrays
@@ -3329,9 +3343,18 @@ Respond ONLY with the JSON array. No markdown, no explanation, no code blocks.`;
         return acc;
       }
 
-      const key = groupKey
-        ? String(this.extractValueByKey(item, groupKey, unwrappedData))
-        : String(item);
+      const rawKey = groupKey
+        ? this.extractValueByKey(item, groupKey, unwrappedData)
+        : item;
+
+      // Treat null / undefined / empty-string as "missing key" by default.
+      const isMissing = rawKey === null || rawKey === undefined || rawKey === '';
+      if (isMissing && !includeNullKeys) {
+        skippedNullKeys++;
+        return acc;
+      }
+
+      const key = String(rawKey);
 
       if (!acc[key]) {
         acc[key] = [];
@@ -3340,7 +3363,14 @@ Respond ONLY with the JSON array. No markdown, no explanation, no code blocks.`;
       return acc;
     }, {} as Record<string, any[]>);
 
-    logger.debug({ groupKey: groupKey || 'value', groupCount: Object.keys(grouped).length, is2DArray }, 'Grouped data');
+    if (skippedNullKeys > 0) {
+      logger.warn(
+        { groupKey: groupKey || 'value', skippedNullKeys, totalItems: unwrappedData.length },
+        `transformGroup: dropped ${skippedNullKeys} item(s) with empty/null group key. Set config.include_null_keys=true to preserve them.`
+      );
+    }
+
+    logger.debug({ groupKey: groupKey || 'value', groupCount: Object.keys(grouped).length, is2DArray, skippedNullKeys }, 'Grouped data');
 
     // Return both grouped object and array of groups for iteration
     const groups = Object.entries(grouped).map(([key, items]) => ({
