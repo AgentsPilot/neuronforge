@@ -44,6 +44,9 @@ The weak points are ordered by likelihood of causing failures as new scenarios a
 | [WP-26](#wp-26-o23-doesnt-recognize-project_columnby_index-as-a-positional-consumer) | The compiler's O23 optimization in `normalizeDataFormats` is supposed to skip the `rows_to_objects` auto-inject when all downstream consumers use positional access on the 2D array. Today the check only matches the flat `step.config.column_index` property; it does NOT recognize the modern `project_column` shape (`config.column = {kind: "by_index", index: N}`) introduced by W2/WP-16, nor the WP-25 positional `field_mapping` (numeric/letter target keys). When the actual upstream sheet has NO header row (common — users store data starting at row 1), the unnecessary `rows_to_objects` consumes the single data row as a header → 0 data rows downstream → set_difference reference is empty → dedup silently fails → rows duplicate on every run. | P1 | ⬜ Future — observed on `complaint-email-logger` Phase E (2026-05-11). User workaround: add a header row to the destination sheet. Fix: extend the O23 `allUseColumnIndex` check to also recognize `step.config?.column?.kind === 'by_index'` (project_column shape) and `parsePositionalKey()` target keys on `transform/map` (WP-25 shape). When all downstream consumers are positional, skip rows_to_objects insertion and rewrite consumer inputs to point at `producer.<arrayField>`. |
 | [WP-27](#wp-27-sheets-append_rows-shifts-to-non-A-column-when-existing-data-has-empty-cells) | `google-sheets.append_rows` uses Google Sheets' "logical table" auto-detection. When the existing data in the target range has empty cells creating a column discontinuity (e.g., column D empty between A-C and E with data — as happens after WP-11/WP-24 evolution: an earlier run wrote rows without the body cell, a later run reads them back), Sheets API's table-walker detects the non-empty column (E) as the "table" and appends new rows after it (E2, F2, ...) instead of at A2. The data shape was correct (5-col 2D array); only the placement shifted. Result: appended rows visually misaligned, sheet has data in two disjoint column ranges. | P1 | ⬜ Future — observed on `complaint-email-logger` Phase E (2026-05-11). User workaround: add a header row (forces Sheets to detect the table at A1). Fix: compiler-side emission of a tighter `range` for append_rows. Currently emits `range: "SheetName!A:E"` (column range — vulnerable to table-walking). Should emit `range: "SheetName!A1"` (point start) OR `range: "SheetName"` (sheet-name-only — Sheets defaults to A1) — both force the API to anchor at A1 regardless of existing cell sparsity. Compiler heuristic: when emitting `append_rows`, normalize the `range` parameter to either bare-sheet-name or `<sheet>!A1`. |
 | [WP-28](#wp-28-bare-numeric-source-keys-in-field_mapping-not-recognized-as-positional) | `transform/map` with `field_mapping` where SOURCE keys are bare numeric strings (`"0"`, `"1"`, ...) — the LLM's "give me column N from each row" emission. Today's runtime only recognizes `column_<digit>` as positional source keys (WP-SR fix); bare `"0"` falls through to literal property access on the post-`rows_to_objects` object → `item["0"]` is undefined → every field maps to undefined → empty objects → downstream filter drops everything → user receives "No data available." email despite real Sheet data. Sister to WP-SR / WP-25 — same emission-style family, just on the source side of the mapping. | P1 | ✅ Fixed (2026-05-11) — **two-layer fix mirroring WP-25:** (a) **runtime tolerance:** replaced the `COLUMN_N` regex with `parsePositionalKey()` (already exists from WP-25 for target-keys) on the source side, so all 4 positional patterns work uniformly — bare numeric (`"0"`), `column_<digit>`, Excel letter, `column_<letter>`. (b) **prompt steering:** extended section 6.11 (or wherever WP-25's target-key guidance lives) with source-key canonical form. Defense in depth — prompt converges LLM on field-name source keys; runtime handles drift. N new unit tests covering 4 source patterns + canonical leads-email-summary failure + regression guards. |
+| [WP-29](#wp-29-parsedate-is-locale-sensitive-misinterprets-ddmmyyyy-as-mmddyyyy) | `parseDate` in `StructuredTransforms.ts` uses `new Date(value)` which is locale-sensitive. For slash-format inputs like `"12/5/2026"` (the user's Google Sheets DD/MM/YYYY locale), JavaScript interprets as MM/DD/YYYY → Dec 5, 2026 → `date_diff` returns wildly wrong values (207 days instead of 1). For inputs like `"13/5/2026"` (no month 13 in MM/DD), `new Date()` returns Invalid Date → `date_diff` returns null. Cascades through `date_diff` / `date_add` Expression ops in `with_fields` → downstream filter on `days_until_finish` drops every row → empty result email. | P1 | ✅ Fixed (2026-05-11) — **three-tier disambiguation in `parseDate`:** (1) ISO format unambiguous, (2) Tier 1: if either day or month part > 12, format is forced (handles `"13/5/2026"` for free), (3) Tier 2: user-timezone-driven locale via new `IExpressionContext.getUserTimezone()` hook. America/* (excluding South America) → MM/DD/YYYY; everywhere else (and undefined) → DD/MM/YYYY (~85% of world population). `ExecutionContext.getUserTimezone()` reads from `inputValues._user_timezone` / `inputValues.user_timezone` / `variables._user_timezone` — WorkflowPilot can wire from user-context system. New `buildDate()` helper validates day/month overflow (e.g., Feb 30 → null). Tier 3 (explicit `date_format` workflow_config hint) deferred — requires Phase 1 prompt steering. |
+| [WP-30](#wp-30-config-expression-resolves-to-literal-string-instead-of-config-value) | `evaluateExpression` for `kind: "config"` calls `context.resolveVariable(\`input.${expr.key}\`)` with a bare path (no `{{...}}` braces). Production `ExecutionContext.resolveVariable` strictly requires `{{...}}` syntax — bare strings are returned as-is. So `{kind: "config", key: "date_window_days"}` returns the literal string `"input.date_window_days"` instead of the value `3`. Cascades through `date_add(today, config_ref)` → `Number("input.date_window_days")` = NaN → `date_add` returns null → `window_end` field is null in every row. Same convention mismatch as WP-22 (`set_difference.reference`). Likely silently broken since W2 (WP-16) shipped — W2 unit tests used a permissive stub context that strips `{{}}` permissively, hiding the production-strict mismatch. | P1 | ✅ Fixed (2026-05-11) — wrapped both `case 'config'` and non-`item` `case 'ref'` paths in `{{}}` before calling `resolveVariable` (audit found the same bug in `ref` for cross-slot references). One-line change each, mirrors WP-22's defensive wrap. |
+| [WP-31](#wp-31-today--date_diff-use-time-difference-instead-of-calendar-day-difference) | `today` returns `new Date().toISOString()` — a moment including time-of-day. `date_diff(a, b, 'days')` then computes `Math.floor((a − b) / 86_400_000)` — fractional-days flooring, not calendar-day difference. So `date_diff(May 12 00:00 UTC, May 11 08:29 UTC, 'days')` = `floor(15.5h / 24h)` = `floor(0.65)` = **0** instead of the expected 1. Filter `1 ≤ days_until_finish ≤ 3` then drops the May 12 tasks (the most urgent ones!). Worst-case off-by-one is N tasks dropped where N depends on how close to noon you run the workflow. Compounds with WP-29 (date parsing) and WP-30 (config refs) in the gantt-urgent-tasks cascade. | P1 | ✅ Fixed (2026-05-11) — **three-part fix:** (A) `case 'today'` returns midnight UTC of the current calendar day, optionally in user's local timezone via WP-29's `getUserTimezone()` hook. (B) `case 'date_diff'` with `unit: 'days'` defensively normalizes both sides to UTC midnight using `Math.round` (DST-safe). (C) `case 'date_add'` keeps existing semantics; combined with the new midnight `today`, `today + N days` is exactly N×24h later. 12 new unit tests covering all cases. User confirmed Phase E on gantt-urgent-tasks now produces 3 tasks as expected. |
 
 ---
 
@@ -1214,6 +1217,289 @@ Auto-converting `ai_processing` on an array into a scatter would change semantic
 
 ---
 
+### WP-31: `today` + `date_diff` use time-difference instead of calendar-day difference
+
+**Severity:** High (silent off-by-one drops the most-urgent items in time-window filters)
+**Encountered as:** Phase E on `gantt-urgent-tasks` after WP-29 + WP-30 fixes landed (2026-05-11) — user expected 3 urgent tasks in summary email; received 1.
+**Status:** ⬜ Documented — fix to follow
+
+**Problem:** The W2 expression runtime treats "days between" as `(timestamp_a − timestamp_b) / 86_400_000` floored, not as calendar-day difference.
+
+```ts
+case 'today':
+  return new Date().toISOString();          // ← current moment, includes time
+
+case 'date_diff': {
+  ...
+  const ms = dLeft.getTime() - dRight.getTime();
+  if (expr.unit === 'days') return Math.floor(ms / (1000 * 60 * 60 * 24));
+}
+```
+
+For a workflow run at 11:30 local (8:30 UTC), `today` = May 11 08:30 UTC. `parseDate("12/5/2026")` = May 12 00:00 UTC (via WP-29's `buildDate`). Then:
+
+```
+ms = May 12 00:00 UTC − May 11 08:30 UTC = 15.5h = 55_800_000 ms
+Math.floor(55_800_000 / 86_400_000) = Math.floor(0.65) = 0
+```
+
+So `days_until_finish` for a May-12 task is **0** instead of the expected **1**. The downstream filter `1 ≤ days_until_finish ≤ 3` drops it.
+
+**Concrete cascade (gantt-urgent-tasks, post-WP-29/30):**
+
+| Task | finish_date | days_until_finish (actual) | days_until_finish (expected) | Filter `1≤x≤3` |
+|---|---|---|---|---|
+| Employee signature | "12/5/2026" | 0 | 1 | DROPPED ❌ |
+| Global market research | "12/5/2026" | 0 | 1 | DROPPED ❌ |
+| Define account sender | "13/5/2026" | 1 | 2 | kept ✓ |
+
+The May-13 task happened to land far enough out that even with the floor-truncation, it still got 1 ≥ 1 → passes filter. So **exactly 1 task** survives, not 3.
+
+The bug is worst at noon (12:00 UTC, fractional = 0.5) and best at midnight (fractional = 0, integer math gives the right answer). User happened to run at 11:30 → 2 of 3 tasks dropped.
+
+**Three-part fix:**
+
+#### A. `today` returns calendar day at UTC midnight
+
+```ts
+case 'today': {
+  const tz = context.getUserTimezone?.();
+  if (tz) {
+    // Compute today's date in the user's local timezone, return midnight UTC of that date.
+    const fmt = new Intl.DateTimeFormat('en-CA', {
+      timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit'
+    });
+    const [y, m, d] = fmt.format(new Date()).split('-').map(s => parseInt(s, 10));
+    return new Date(Date.UTC(y, m - 1, d)).toISOString();
+  }
+  // Server UTC fallback
+  const now = new Date();
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())).toISOString();
+}
+```
+
+#### B. `date_diff` defensively normalizes both sides
+
+```ts
+case 'date_diff': {
+  const dLeft = parseDate(...);
+  const dRight = parseDate(...);
+  if (dLeft == null || dRight == null) return null;
+  if (expr.unit === 'days') {
+    // Normalize both to UTC midnight before computing diff.
+    const a = Date.UTC(dLeft.getUTCFullYear(), dLeft.getUTCMonth(), dLeft.getUTCDate());
+    const b = Date.UTC(dRight.getUTCFullYear(), dRight.getUTCMonth(), dRight.getUTCDate());
+    return Math.round((a - b) / 86_400_000);  // round, not floor — both at midnight UTC so should be integer
+  }
+  ...
+}
+```
+
+`Math.round` (instead of `floor`) handles any DST or leap-second weirdness — both sides at UTC midnight, so the result is always an integer, but `round` is safer.
+
+#### C. `date_add` preserves midnight semantics
+
+`date_add(today, 3, 'days')` should produce a midnight-UTC date 3 calendar days later. Today returns midnight UTC, plus `3 * 86_400_000` ms = exactly midnight UTC 3 days later. Already works after (A). No code change needed for `date_add` itself.
+
+**Files:** `lib/pilot/transforms/StructuredTransforms.ts` (~30 lines: `today` + `date_diff` updates), `lib/pilot/__tests__/StructuredTransforms.wp29-wp30.test.ts` extended with WP-31 tests (or new file).
+
+**Why this wasn't caught earlier:** the W2 unit tests use contrived datetimes (often the same moment for both sides) that happen to floor to the correct integer. Real-world inputs where one side is a date-only string and the other is "now" surface the fractional-days bug.
+
+---
+
+### WP-30: `config` expression resolves to literal string instead of config value
+
+**Severity:** High (silent null cascade through `with_fields` / `date_add` / `date_diff`)
+**Encountered as:** Phase E on `gantt-urgent-tasks` (2026-05-11) — every row's `window_end` field came out null even though `workflow_config.date_window_days = 3`.
+**Status:** ⬜ Documented — fix to follow with WP-29
+
+**Problem:** The W2 Expression evaluator at [`StructuredTransforms.ts:307-312`](../../lib/pilot/transforms/StructuredTransforms.ts):
+
+```ts
+case 'config': {
+  if (typeof expr.key !== 'string' || !expr.key) {
+    throw new StructuredTransformError('config expression requires `key` string', 'INVALID_EXPRESSION');
+  }
+  return context.resolveVariable(`input.${expr.key}`);   // ← bare path, no {{}}
+}
+```
+
+Production [`ExecutionContext.resolveVariable`](../../lib/pilot/ExecutionContext.ts) requires `{{...}}` template syntax:
+
+```ts
+if (!reference.includes('{{')) {
+  return reference;   // bare strings returned as literal!
+}
+```
+
+So `evaluateExpression({kind: "config", key: "date_window_days"}, ...)` returns the literal string `"input.date_window_days"` instead of the actual value `3`.
+
+**Concrete cascade (gantt-urgent-tasks):**
+
+```
+step6 with_fields expression:
+  { kind: "date_add", date: {kind: "today"}, days: {kind: "config", key: "date_window_days"} }
+
+evaluateExpression(days) → "input.date_window_days"   (literal string)
+Number("input.date_window_days") → NaN
+date_add: !Number.isFinite(NaN) → return null
+window_end: null in every row
+```
+
+Downstream step7 filter on `days_until_finish <= {{input.date_window_days}}` then fails for entirely separate reasons (WP-29's date parsing bug) — but even if WP-29 were fixed, `window_end: null` would still produce wrong results in any downstream consumer.
+
+**Why this wasn't caught before:** W2 unit tests use a permissive stub context that strips `{{}}` equivalently for both `{{X}}` and bare `X`. The strict production behavior was never exercised in the W2/W3 measurement. Same blind spot as WP-22 — fingerprint measurement and unit tests with permissive stubs miss runtime convention mismatches.
+
+**Fix:** wrap the path in `{{}}` before calling `resolveVariable`. Same shape as WP-22's runtime defensive wrap. One line.
+
+```ts
+case 'config': {
+  if (typeof expr.key !== 'string' || !expr.key) {
+    throw new StructuredTransformError('config expression requires `key` string', 'INVALID_EXPRESSION');
+  }
+  return context.resolveVariable(`{{input.${expr.key}}}`);   // ← wrapped
+}
+```
+
+**Sibling audit needed:** the `ref` case in the same `evaluateExpression` function also calls `context.resolveVariable(path)` with a bare path for non-`item` refs. Likely broken for cross-slot refs but not yet exercised in our scenarios (most refs are to `item`). Should apply the same wrap.
+
+```ts
+case 'ref': {
+  if (expr.ref === 'item') { ...special-cased correctly... }
+  const path = expr.field ? `${expr.ref}.${expr.field}` : expr.ref;
+  return context.resolveVariable(`{{${path}}}`);   // also needs wrap
+}
+```
+
+**Files:** `lib/pilot/transforms/StructuredTransforms.ts` (~2 lines), unit test using a strict stub mirroring production `resolveVariable` (same pattern as WP-22 tests).
+
+---
+
+### WP-29: `parseDate` is locale-sensitive — misinterprets DD/MM/YYYY as MM/DD/YYYY
+
+**Severity:** High (silent date corruption in `date_diff` / `date_add` expressions)
+**Encountered as:** Phase E on `gantt-urgent-tasks` (2026-05-11) — `days_until_finish` came out as `207` instead of `1` for `finish_date: "12/5/2026"`, and as `null` for `"13/5/2026"`.
+**Status:** ⬜ Documented — fix to follow
+
+**Problem:** [`parseDate` in `StructuredTransforms.ts:398`](../../lib/pilot/transforms/StructuredTransforms.ts):
+
+```ts
+export function parseDate(value: any): Date | null {
+  if (value == null) return null;
+  if (value instanceof Date) return isNaN(value.getTime()) ? null : value;
+  const d = new Date(value);   // ← locale-sensitive parsing
+  return isNaN(d.getTime()) ? null : d;
+}
+```
+
+JavaScript's `Date` constructor parses slash-format strings via implementation-defined logic:
+- `"2026-05-12"` (ISO) → always May 12 ✓
+- `"12/5/2026"` (slash) → Dec 5 (MM/DD/YYYY interpretation) on most engines
+
+The user's Google Sheet (locale `Asia/Jerusalem`) stores dates as DD/MM/YYYY. The runtime misinterprets them.
+
+**Concrete cascade (gantt-urgent-tasks):**
+
+| Sheet cell | `new Date()` interpretation | `days_until_finish` (today = May 11) | Expected (DD/MM) |
+|---|---|---|---|
+| `"12/5/2026"` | Dec 5, 2026 | 207 | 1 (May 12) |
+| `"13/5/2026"` | Invalid (no month 13) | null | 2 (May 13) |
+
+Downstream filter `1 <= days_until_finish <= 3` drops both → "no data" cascade.
+
+**Three-tier fix design**
+
+#### Tier 1 — Unambiguous detection (no user signal needed)
+
+If the date string is `X/Y/Z` (or `X-Y-Z` non-ISO), check whether either `X` or `Y` is `> 12`:
+
+| Date string | `X > 12`? | `Y > 12`? | Unambiguous? |
+|---|---|---|---|
+| `"13/5/2026"` | Yes (13 is not a month) | No | Yes → DD/MM/YYYY |
+| `"5/13/2026"` | No | Yes (13 is not a month) | Yes → MM/DD/YYYY |
+| `"12/5/2026"` | No | No | Ambiguous → falls to Tier 2 |
+| `"5/5/2026"` | No | No | Ambiguous → falls to Tier 2 |
+
+Tier 1 alone fixes `"13/5/2026"` without user signal — the format is forced.
+
+#### Tier 2 — User-timezone-driven locale (your suggestion)
+
+For Tier-1-ambiguous cases (both parts ≤ 12), use the user's timezone to infer locale:
+
+| Timezone bucket | Examples | Preferred format |
+|---|---|---|
+| US/Canada/Mexico | `America/New_York`, `America/Los_Angeles`, `America/Chicago` | MM/DD/YYYY |
+| East Asia | `Asia/Tokyo`, `Asia/Seoul`, `Asia/Shanghai` | YYYY/MM/DD (uncommon in slash form, usually ISO) |
+| Everywhere else (default) | `Asia/Jerusalem`, `Europe/*`, `Africa/*`, `Australia/*`, most of `Asia/*` | DD/MM/YYYY |
+
+Plumbing: extend `IExpressionContext` with an optional `getUserTimezone(): string | undefined` method. Returns whatever the platform exposes (from `lib/user-context/`, the user's profile, or the workflow_config's `_user_timezone` if set). `parseDate` consults it for ambiguous cases.
+
+If `getUserTimezone()` returns undefined, default to DD/MM/YYYY (covers ~85% of world population).
+
+#### Tier 3 — workflow_config explicit hint (deferred follow-up)
+
+Future enhancement: the LLM can emit an explicit `date_format` key in workflow_config when the user's prompt mentions the format. E.g.:
+
+```
+User: "the Due Date column is in DD/MM/YYYY format"
+LLM emits: workflow_config.date_format: "DD/MM/YYYY"
+```
+
+`parseDate` consults this hint first (highest priority). Deferred to a separate WP — requires Phase 1 prompt steering.
+
+**Implementation sketch (Tier 1 + Tier 2):**
+
+```ts
+export function parseDate(value: any, context?: IExpressionContext): Date | null {
+  if (value == null) return null;
+  if (value instanceof Date) return isNaN(value.getTime()) ? null : value;
+  if (typeof value !== 'string') {
+    const d = new Date(value);
+    return isNaN(d.getTime()) ? null : d;
+  }
+
+  const trimmed = value.trim();
+
+  // Try ISO first (always unambiguous)
+  if (/^\d{4}-\d{1,2}-\d{1,2}/.test(trimmed)) {
+    const d = new Date(trimmed);
+    if (!isNaN(d.getTime())) return d;
+  }
+
+  // Slash-format parsing
+  const slashMatch = trimmed.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/);
+  if (slashMatch) {
+    const a = parseInt(slashMatch[1], 10);
+    const b = parseInt(slashMatch[2], 10);
+    const y = parseInt(slashMatch[3], 10);
+    const year = y < 100 ? 2000 + y : y;
+
+    // Tier 1: unambiguous detection
+    if (a > 12 && b <= 12)      return new Date(year, b - 1, a);  // DD/MM
+    if (b > 12 && a <= 12)      return new Date(year, a - 1, b);  // MM/DD
+
+    // Tier 2: ambiguous — use user timezone
+    if (a <= 12 && b <= 12) {
+      const tz = context?.getUserTimezone?.();
+      const prefersMMDD = tz != null && /^America\/(?!Sao_Paulo|Argentina|Asuncion|Bogota|Caracas|Cuiaba|Guyana|La_Paz|Lima|Manaus|Montevideo|Paramaribo|Recife|Santiago)/.test(tz);
+      return prefersMMDD
+        ? new Date(year, a - 1, b)   // MM/DD
+        : new Date(year, b - 1, a);  // DD/MM (default)
+    }
+  }
+
+  // Fallback: hand off to JS engine (ISO, RFC2822, etc.)
+  const d = new Date(trimmed);
+  return isNaN(d.getTime()) ? null : d;
+}
+```
+
+The America/* timezone check excludes South American zones (which use DD/MM despite being in the Americas). Conservative — false positives on this rule produce DD/MM which is the safer default.
+
+**Files:** `lib/pilot/transforms/StructuredTransforms.ts` (~40 lines: extended `parseDate`, optional `getUserTimezone` parameter), `lib/pilot/types.ts` or wherever `IExpressionContext` lives (~2 lines: add optional method), unit tests for all 4 patterns + Tier 1 + Tier 2 + regression guards.
+
+---
+
 ### WP-28: Bare numeric SOURCE keys in `field_mapping` not recognized as positional
 
 **Severity:** High (silent data loss — user receives "no data" email despite real Sheet data)
@@ -1902,6 +2188,9 @@ Already documented as WP-9 / F7 — deferred due to ~$0.10-0.15 per run token co
 
 | Date | Change | Details |
 |------|--------|---------|
+| 2026-05-11 | WP-31 fixed — `today` returns UTC-midnight calendar day; `date_diff` measures whole calendar-day deltas | Phase E on `gantt-urgent-tasks` after WP-29/30 landed produced only 1 of 3 expected tasks in the summary email because `today` returned `new Date().toISOString()` (current moment) and `date_diff(date_only, today, 'days')` computed fractional-days floor → tasks finishing "tomorrow" rounded to `days_until_finish = 0`, failing the `1 ≤ days_until_finish ≤ 3` filter. **Three-part fix:** (A) `case 'today'` returns midnight UTC of the current calendar day (optionally in user's local timezone via WP-29's `getUserTimezone()` hook). (B) `case 'date_diff'` with `unit: 'days'` defensively normalizes both sides to UTC midnight before computing diff (uses `Math.round` for DST-safety). (C) `case 'date_add'` keeps existing semantics; combined with the new midnight `today`, `today + N days` is exactly N×24h later. 12 new unit tests covering `today` semantics, midnight-normalization, time-of-day edge cases (00:01 vs 23:59 of prev day → 1 day, not 0), and integration with `date_add` / DD/MM input. **251/251 known-good tests passing** (was 239 before WP-31). User confirmed Phase E now produces 3 tasks as expected. |
+| 2026-05-11 | WP-29 + WP-30 fixed — date parsing locale-aware + config/ref expressions wrap path in `{{}}` | Both bugs surfaced during gantt-urgent-tasks Phase E "no data" cascade. **WP-29:** new three-tier disambiguation in `parseDate` — ISO → unambiguous (day or month > 12) → user-timezone-driven (via new `IExpressionContext.getUserTimezone()` hook) → DD/MM default. `ExecutionContext` populates from `inputValues._user_timezone` (or `user_timezone`) — WorkflowPilot can wire from the user-context system. New `buildDate()` validates day/month overflow. **WP-30:** one-line wrap of bare paths in `{{}}` before `resolveVariable` for both `config` AND non-`item` `ref` cases (audit found `ref` had the same convention mismatch). Mirrors WP-22's runtime defensive wrap. **Tests:** 34 new tests in `StructuredTransforms.wp29-wp30.test.ts` — Tier 0/1/2 disambiguation, 6 timezones, edge cases, canonical gantt scenario, config/ref resolution with strict stub mirroring production `resolveVariable`. **239/239 known-good tests passing** (was 205 before WP-29/30). |
+| 2026-05-11 | WP-29 + WP-30 documented — gantt-urgent-tasks Phase E "no data" cascade from date parsing + config-expression bugs | Phase E on `gantt-urgent-tasks` succeeded structurally (11/11 steps) but produced an empty-state email despite real Sheet data. Two compounding W2 Expression-evaluator bugs identified: (a) **WP-29** — `parseDate` uses `new Date()` which interprets `"12/5/2026"` (user's DD/MM/YYYY Sheet) as Dec 5 → `days_until_finish` returns 207 instead of 1. (b) **WP-30** — `case 'config'` in `evaluateExpression` calls `resolveVariable('input.X')` with a bare path; production runtime requires `{{...}}` so it returns the literal string → `Number()` = NaN → `date_add` returns null → `window_end` null in every row. Cascade: step7 filter on `days_until_finish` (wrong values) AND `<= date_window_days` (config ref broken) drops all rows. Both bugs likely silently broken since W2 (WP-16) shipped — W2 unit tests use a permissive stub that hides both. **WP-29 design:** three-tier — (1) unambiguous detection (day or month > 12 self-resolves), (2) user-timezone-driven locale via new `IExpressionContext.getUserTimezone()` hook (per user suggestion — more principled than a fixed default), (3) explicit `date_format` workflow_config hint (deferred). Tier 1+2 bundled in fix. **WP-30 design:** one-line wrap path in `{{}}` before `resolveVariable`, mirroring WP-22's fix. Audit also identified the `ref` case (non-`item` slot refs) has the same bare-path bug — same wrap fix applies. Fix to follow as one commit bundle. |
 | 2026-05-11 | WP-28 fixed — `parsePositionalKey()` now handles SOURCE keys in `field_mapping` (mirrors WP-25 target-side) | Phase E on `leads-email-summary` succeeded structurally (7/7 steps) but produced an empty-state email despite real Sheet data. step3 emitted `field_mapping: {Date: "0", "Lead Name": "1", ...}` — bare numeric SOURCE keys, the LLM's "give me column N from each row" emission. WP-SR's source-side regex only matched `column_<digit>`; bare `"0"` fell through to literal property access on the post-`rows_to_objects` object → undefined → empty objects → empty filter → "No data available." Two-layer fix mirroring WP-25: (a) runtime — replaced `COLUMN_N` regex with `parsePositionalKey()` on source side, recognizing all 4 patterns (numeric, column_N, Excel letter, column_letter); literal key lookup still wins when it succeeds for backward compat. (b) prompt — extended TRANSFORM section's MAP guidance with "Mapping `from` field — canonical form" subsection: use named source fields when producer emits objects; positional descriptors are tolerated but discouraged. 9 new unit tests in `transformMap.numeric-keys.test.ts` covering canonical leads-email-summary pattern, all 4 source patterns + WP-SR regression guard + literal-key-wins backward compat + raw-2D-array path + out-of-range. **205/205 known-good tests passing** (was 196 before WP-28). |
 | 2026-05-11 | WP-26 + WP-27 documented — Sheets append failure modes on header-less / sparse-data sheets | Phase E re-run on `complaint-email-logger` after WP-25 succeeded structurally (no errors, 10/10 steps), but two operational issues surfaced: (a) duplicate rows appended because `set_difference` dedup silently failed — root cause: O23 optimization in `normalizeDataFormats` doesn't recognize `project_column.by_index` config shape, so `rows_to_objects` gets auto-injected unnecessarily and consumes the only data row as a header when the sheet has no header row → empty `existing_message_ids` reference → no dedup. (b) rows shifted to column E because Sheets `append_rows` table-detection found a discontinuity at the empty D column in legacy pre-WP-24 row(s). Documented as WP-26 (O23 detection gap) and WP-27 (range normalization for append_rows). Both deferred — user workaround: add header row to the destination sheet (resolves both symptoms operationally). Compiler-side fix tracked for the next iteration. |
 | 2026-05-10 | WP-25 fixed — runtime tolerance for 4 positional-key patterns + prompt steering toward canonical numeric form | Phase E re-run on `complaint-email-logger` (post-WP-24 fix; body cells now populated) failed at step10 (`append_rows`) because step9 emitted `field_mapping: {column_A: "sender_email", column_B: "subject", ...}`. WP-23's `^\d+$` regex didn't match → runtime built objects with column-letter keys → Sheets append got malformed input → returned null. Two-layer fix: **(a) runtime tolerance:** `parsePositionalKey()` helper in `StepExecutor.ts` recognizes all four observed positional patterns — numeric (`"0"`), `column_<digit>` (`"column_0"`), Excel letter (`"A"`, `"AA"`), `column_<letter>` (`"column_A"`) — and maps each to a 0-indexed column position via Excel-style letter conversion (A=0, B=1, ..., Z=25, AA=26). When ALL target keys parse as positional, runtime emits a 2D array per row. **(b) prompt steering:** section 6.11 (DELIVER) now declares numeric-string `"to": "0"` as the canonical form for row-oriented destinations (`append_rows` and similar) and explicitly enumerates the 3 non-canonical equivalents to avoid. Defense in depth: prompt converges LLM on one pattern (reduces variance, makes IRs predictable); runtime tolerance handles drift if LLM picks an alternate. 12 new unit tests in `transformMap.numeric-keys.test.ts` covering each pattern + mixed-positional + canonical complaint-logger column_A failure + regression guards. 196/196 known-good tests passing (was 184). The complaint-email-logger Phase E should now succeed end-to-end on re-run. |

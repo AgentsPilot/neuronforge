@@ -29,6 +29,15 @@ export interface IExpressionContext {
   setVariable(name: string, value: any): void;
   resolveVariable(reference: string): any;
   clone(): IExpressionContext;
+  /**
+   * WP-29: user timezone hint for locale-sensitive operations (e.g.,
+   * disambiguating DD/MM/YYYY vs MM/DD/YYYY in `parseDate`). Returns the
+   * user's IANA timezone (e.g., `"Asia/Jerusalem"`, `"America/New_York"`)
+   * when available from user-context / workflow_config / profile, or
+   * undefined when no signal is available. `parseDate` falls back to
+   * DD/MM/YYYY (covers ~85% of world population) when undefined.
+   */
+  getUserTimezone?(): string | undefined;
 }
 
 /**
@@ -298,17 +307,26 @@ export function evaluateExpression(
         return currentItem;
       }
       // Otherwise resolve from execution context (other slots).
+      // WP-30: wrap path in `{{}}` — production `resolveVariable` requires
+      // template syntax. Bare paths return as literal strings, silently
+      // breaking cross-slot refs. Same convention mismatch family as WP-22
+      // (set_difference.reference) and the WP-30 `config` case below.
       const path = typeof expr.field === 'string' && expr.field.length > 0
         ? `${expr.ref}.${expr.field}`
         : expr.ref;
-      return context.resolveVariable(path);
+      return context.resolveVariable(`{{${path}}}`);
     }
 
     case 'config': {
       if (typeof expr.key !== 'string' || !expr.key) {
         throw new StructuredTransformError('config expression requires `key` string', 'INVALID_EXPRESSION');
       }
-      return context.resolveVariable(`input.${expr.key}`);
+      // WP-30: wrap path in `{{}}` — production `resolveVariable` requires
+      // template syntax. Without braces it returns the literal string
+      // "input.<key>" instead of the config value. Likely silently broken
+      // since W2 (WP-16) shipped — W2 unit tests used a permissive stub
+      // context that strips `{{}}` equivalently for both forms.
+      return context.resolveVariable(`{{input.${expr.key}}}`);
     }
 
     case 'concat': {
@@ -330,17 +348,52 @@ export function evaluateExpression(
         : evaluateExpression(expr.else, currentItem, context, evaluator);
     }
 
-    case 'today':
-      return new Date().toISOString();
+    case 'today': {
+      // WP-31: `today` returns the calendar date at UTC midnight, not the
+      // current moment. This way `date_diff(date_only_string, today, 'days')`
+      // produces whole-day differences regardless of the time-of-day when
+      // the workflow runs. Previously this returned `new Date().toISOString()`
+      // and `date_diff` was floor of fractional-days arithmetic, which
+      // off-by-one'd entire workflows depending on wall-clock time.
+      //
+      // If a user timezone is available (via WP-29's `getUserTimezone()` hook),
+      // we compute today's date in that timezone, then return its UTC midnight.
+      // Otherwise fall back to server UTC date.
+      const tz = context.getUserTimezone?.();
+      if (tz) {
+        try {
+          const parts = new Intl.DateTimeFormat('en-CA', {
+            timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit',
+          }).format(new Date()).split('-').map(s => parseInt(s, 10));
+          const [y, m, d] = parts;
+          if (Number.isFinite(y) && Number.isFinite(m) && Number.isFinite(d)) {
+            return new Date(Date.UTC(y, m - 1, d)).toISOString();
+          }
+        } catch {
+          // Invalid timezone string — fall through to server UTC
+        }
+      }
+      const now = new Date();
+      return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())).toISOString();
+    }
 
     case 'date_diff': {
       const left = evaluateExpression(expr.left, currentItem, context, evaluator);
       const right = evaluateExpression(expr.right, currentItem, context, evaluator);
-      const dLeft = parseDate(left);
-      const dRight = parseDate(right);
+      const dLeft = parseDate(left, context);
+      const dRight = parseDate(right, context);
       if (dLeft == null || dRight == null) return null;
-      const ms = dLeft.getTime() - dRight.getTime();
-      if (expr.unit === 'days') return Math.floor(ms / (1000 * 60 * 60 * 24));
+      if (expr.unit === 'days') {
+        // WP-31: normalize both sides to UTC midnight before computing diff
+        // so we measure calendar-day differences, not time-difference-divided-by-24h.
+        // Defensive — works even if one side has a non-midnight time-of-day.
+        const a = Date.UTC(dLeft.getUTCFullYear(), dLeft.getUTCMonth(), dLeft.getUTCDate());
+        const b = Date.UTC(dRight.getUTCFullYear(), dRight.getUTCMonth(), dRight.getUTCDate());
+        // Both sides are UTC midnight ⇒ result is an integer. `round` is
+        // defensive against any DST / leap-second weirdness producing a
+        // tiny fractional component.
+        return Math.round((a - b) / (1000 * 60 * 60 * 24));
+      }
       throw new StructuredTransformError(
         `date_diff: unsupported unit "${expr.unit}"`,
         'INVALID_EXPRESSION'
@@ -348,7 +401,7 @@ export function evaluateExpression(
     }
 
     case 'date_add': {
-      const base = parseDate(evaluateExpression(expr.date, currentItem, context, evaluator));
+      const base = parseDate(evaluateExpression(expr.date, currentItem, context, evaluator), context);
       const days = Number(evaluateExpression(expr.days, currentItem, context, evaluator));
       if (base == null || !Number.isFinite(days)) return null;
       const result = new Date(base.getTime() + days * 24 * 60 * 60 * 1000);
@@ -394,12 +447,108 @@ export function evaluateExpression(
 /**
  * Parse a date value (string, number, or Date) into a Date object.
  * Returns null if the value cannot be parsed.
+ *
+ * WP-29: slash-format date parsing is locale-sensitive. JavaScript's `Date`
+ * constructor interprets `"12/5/2026"` as MM/DD/YYYY (Dec 5) on most
+ * engines, but the user's Google Sheet may store DD/MM/YYYY (May 12).
+ *
+ * Three-tier disambiguation:
+ *
+ *   1. **ISO format** — always unambiguous, used directly.
+ *   2. **Slash/dash format with day or month > 12** — self-disambiguates
+ *      (e.g., "13/5/2026" must be DD/MM since no month 13).
+ *   3. **Slash/dash format ambiguous** — use user timezone (from optional
+ *      context.getUserTimezone()) to pick locale:
+ *        - America/* (excluding South America) → MM/DD/YYYY
+ *        - Everywhere else (and undefined) → DD/MM/YYYY (covers ~85% of
+ *          world population by default).
+ *
+ * Tier 3 (explicit `date_format` workflow_config hint) deferred to a
+ * future WP — requires Phase 1 prompt steering.
  */
-export function parseDate(value: any): Date | null {
+export function parseDate(value: any, context?: IExpressionContext): Date | null {
   if (value == null) return null;
   if (value instanceof Date) return isNaN(value.getTime()) ? null : value;
-  const d = new Date(value);
+  if (typeof value !== 'string') {
+    const d = new Date(value);
+    return isNaN(d.getTime()) ? null : d;
+  }
+
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return null;
+
+  // Tier 0: ISO format (always unambiguous)
+  if (/^\d{4}-\d{1,2}-\d{1,2}/.test(trimmed)) {
+    const d = new Date(trimmed);
+    if (!isNaN(d.getTime())) return d;
+  }
+
+  // Slash/dash format: M/D/Y or D/M/Y
+  const m = trimmed.match(/^(\d{1,2})[/\-](\d{1,2})[/\-](\d{2,4})(.*)$/);
+  if (m) {
+    const a = parseInt(m[1], 10);
+    const b = parseInt(m[2], 10);
+    const y = parseInt(m[3], 10);
+    const trailing = m[4] || '';
+    const year = y < 100 ? 2000 + y : y;
+
+    // Tier 1: unambiguous detection (one of the parts is > 12)
+    if (a > 12 && b <= 12) return buildDate(year, b, a, trailing);  // DD/MM
+    if (b > 12 && a <= 12) return buildDate(year, a, b, trailing);  // MM/DD
+
+    if (a <= 12 && b <= 12) {
+      // Tier 2: ambiguous — use user timezone to pick locale.
+      const tz = context?.getUserTimezone?.();
+      const prefersMMDD = tz != null && isUSDateFormatTimezone(tz);
+      return prefersMMDD
+        ? buildDate(year, a, b, trailing)    // MM/DD
+        : buildDate(year, b, a, trailing);   // DD/MM (default)
+    }
+    // Both > 12 → genuinely invalid date components; fall through.
+  }
+
+  // Fallback: hand off to JS engine (RFC 2822, etc.)
+  const d = new Date(trimmed);
   return isNaN(d.getTime()) ? null : d;
+}
+
+/**
+ * WP-29 helper: build a Date from year/month/day plus optional trailing
+ * time portion (e.g., "T07:30:00Z" if the slash-format input has one).
+ * Falls back to local-midnight when no time is given. Returns null if the
+ * resulting Date is invalid (e.g., Feb 30).
+ */
+function buildDate(year: number, month: number, day: number, trailing: string): Date | null {
+  // If trailing has a time portion, reconstruct as ISO and let Date parse.
+  const trailingTrimmed = trailing.trim();
+  if (trailingTrimmed.length > 0) {
+    const iso = `${year.toString().padStart(4, '0')}-${month.toString().padStart(2, '0')}-${day.toString().padStart(2, '0')}${trailingTrimmed.startsWith('T') ? trailingTrimmed : 'T' + trailingTrimmed}`;
+    const d = new Date(iso);
+    if (!isNaN(d.getTime())) return d;
+  }
+  // Date-only: construct via UTC year/month/day. Month is 0-indexed in JS.
+  const d = new Date(Date.UTC(year, month - 1, day));
+  // Validate (e.g., new Date(2026, 1, 30) silently becomes Mar 2)
+  if (d.getUTCFullYear() !== year || d.getUTCMonth() !== month - 1 || d.getUTCDate() !== day) {
+    return null;
+  }
+  return d;
+}
+
+/**
+ * WP-29 helper: does this IANA timezone correspond to a region that uses
+ * MM/DD/YYYY as the typical slash-format? Mainly the US/Canada/territories.
+ * Excludes South America (which uses DD/MM despite being in Americas).
+ *
+ * Conservative — false positives produce DD/MM (the safer default for ~85%
+ * of the world's population). Returns true ONLY when we're confident the
+ * user's locale prefers MM/DD.
+ */
+function isUSDateFormatTimezone(tz: string): boolean {
+  // Match America/* but exclude common South American zones
+  if (!/^America\//.test(tz)) return false;
+  const SOUTH_AMERICAN = /^America\/(Argentina|Asuncion|Bogota|Buenos_Aires|Campo_Grande|Caracas|Cayenne|Cuiaba|Fortaleza|Guayaquil|Guyana|La_Paz|Lima|Maceio|Manaus|Montevideo|Paramaribo|Porto_Acre|Porto_Velho|Recife|Rio_Branco|Santarem|Santiago|Sao_Paulo)/;
+  return !SOUTH_AMERICAN.test(tz);
 }
 
 /**

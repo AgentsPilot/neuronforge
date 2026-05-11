@@ -232,6 +232,28 @@ export class ExecutionContext implements IExecutionContext {
   }
 
   /**
+   * WP-29: user timezone hint for locale-sensitive operations (e.g.,
+   * disambiguating DD/MM/YYYY vs MM/DD/YYYY in `parseDate`).
+   *
+   * Sources, in priority order:
+   *   1. `variables._user_timezone`  (runtime override — wired by WorkflowPilot
+   *      from the user-context system or workflow_config)
+   *   2. `inputValues._user_timezone` (workflow_config-injected, set by the
+   *      caller before execution starts)
+   *   3. `inputValues.user_timezone` (alternative naming for backward compat)
+   *
+   * Returns undefined when no signal is available. `parseDate` then falls
+   * back to DD/MM/YYYY (covers ~85% of world population).
+   */
+  getUserTimezone(): string | undefined {
+    const fromVars = this.variables?._user_timezone;
+    if (typeof fromVars === 'string' && fromVars.length > 0) return fromVars;
+    const fromInputs = this.inputValues?._user_timezone ?? this.inputValues?.user_timezone;
+    if (typeof fromInputs === 'string' && fromInputs.length > 0) return fromInputs;
+    return undefined;
+  }
+
+  /**
    * Resolve variable reference like {{step1.data.email}}
    *
    * Supports:
