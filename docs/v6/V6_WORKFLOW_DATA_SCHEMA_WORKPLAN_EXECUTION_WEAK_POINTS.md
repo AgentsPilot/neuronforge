@@ -41,6 +41,8 @@ The weak points are ordered by likelihood of causing failures as new scenarios a
 | [WP-23](#wp-23-transformmap-with-numeric-key-field_mapping-produces-objects-not-2d-arrays) | `transform/map` with `field_mapping` whose target keys are numeric strings (`"0"`, `"1"`, ...) is the LLM's expression of "convert objects to 2D array for Sheets append". The runtime currently builds a plain object (`mapped[targetField] = item[sourceField]`), producing `[{"0": ..., "1": ...}, ...]` — an array of objects with numeric-string keys, NOT the 2D array the LLM intended. Downstream `google-sheets.append_rows` expects a 2D array of cell values, gets these weird objects, returns null, and the runtime errors as a calibration stop. Sister bug to WP-20 (object-row tolerance) and WP-SR (`column_N` source keys) — same shape-mismatch class. | P1 | ✅ Fixed (2026-05-10) — runtime tolerance in `transformMap` Mode 0. Detection: all target keys match `/^\d+$/`. When detected, emit an array per item (length = `max(numericKeys) + 1`, missing slots null) instead of an object. 10 new unit tests in `transformMap.numeric-keys.test.ts` covering canonical complaint-logger pattern, JSON shape, missing source fields, non-contiguous indices, and 4 regression guards (string keys, mixed keys, WP-SR `column_N`, empty mapping). |
 | [WP-24](#wp-24-content_level-not-forced-full-for-deterministic-body-consumers) | Gmail `search_emails` returns `body` empty unless `content_level: 'full'` is set. The existing WP-11 fix forces `content_level: full` when the graph contains an AI step or a deliver-extract action — but it misses workflows where downstream consumers are **deterministic** transforms (filter on `item.body`, map with `field_mapping: {full_email_text: "body"}`). Result: rows append to Sheets but the body column comes through empty. Same root cause as WP-11; WP-24 extends the detection. | P1 | ✅ Fixed (2026-05-10) — schema-driven detection in `enforceContentLevelForExtraction()`. Two new helpers: `getGatedOutputFields(schema)` reads the plugin's `output_dependencies` and returns the union of `unpopulated_fields` (the set of fields populated only at `content_level: full`); `someNodeReferencesGatedField(ctx, gatedFields)` walks all non-fetch IR node configs and detects references via JSON-value match (`"body"`) or path-tail match (`\.body["}\b]`). Fires PER fetch node — precise (skips fetches that produce gated fields no consumer actually reads), generic (any plugin declaring `output_dependencies`), no false positives on substring matches. 17 new unit tests in `enforceContentLevel.wp24.test.ts` covering canonical complaint-logger filter+map pattern, edge cases (malformed deps, empty fields, fetch-skip, substring-FP guard). |
 | [WP-25](#wp-25-broaden-positional-key-detection-in-transformmap-mode-0) | The LLM has multiple emission styles for "convert objects to 2D array for Sheets append": `{"0": "field"}` (numeric), `{"column_0": "field"}` (column_N), `{"A": "field"}` (Excel letter), `{"column_A": "field"}` (column_letter). WP-23 only caught the first pattern. The 2nd Phase E run on `complaint-email-logger` emitted the `column_A`-style variant — `transformMap` produced objects with `column_A`/`column_B`/... keys, `append_rows` returned null, runtime calibration-stopped. Sister to WP-23. | P1 | ✅ Fixed (2026-05-10) — **two-layer fix:** (a) **runtime tolerance** in `transformMap` Mode 0 via `parsePositionalKey()` helper that recognizes all four patterns and converts each target key to a numeric index (Excel-style: A=0, B=1, ..., AA=26). When ALL target keys parse as positional, runtime emits a 2D array per row. (b) **prompt steering** in section 6.11 (DELIVER) declaring numeric-string `"to": "0"` as the canonical form for row-oriented destinations and explicitly listing the 3 non-canonical equivalents to avoid. Defense in depth — prompt converges LLM toward one pattern; runtime tolerance handles drift. 12 new unit tests covering each pattern + canonical complaint-logger column_A failure mode + regression guards. |
+| [WP-26](#wp-26-o23-doesnt-recognize-project_columnby_index-as-a-positional-consumer) | The compiler's O23 optimization in `normalizeDataFormats` is supposed to skip the `rows_to_objects` auto-inject when all downstream consumers use positional access on the 2D array. Today the check only matches the flat `step.config.column_index` property; it does NOT recognize the modern `project_column` shape (`config.column = {kind: "by_index", index: N}`) introduced by W2/WP-16, nor the WP-25 positional `field_mapping` (numeric/letter target keys). When the actual upstream sheet has NO header row (common — users store data starting at row 1), the unnecessary `rows_to_objects` consumes the single data row as a header → 0 data rows downstream → set_difference reference is empty → dedup silently fails → rows duplicate on every run. | P1 | ⬜ Future — observed on `complaint-email-logger` Phase E (2026-05-11). User workaround: add a header row to the destination sheet. Fix: extend the O23 `allUseColumnIndex` check to also recognize `step.config?.column?.kind === 'by_index'` (project_column shape) and `parsePositionalKey()` target keys on `transform/map` (WP-25 shape). When all downstream consumers are positional, skip rows_to_objects insertion and rewrite consumer inputs to point at `producer.<arrayField>`. |
+| [WP-27](#wp-27-sheets-append_rows-shifts-to-non-A-column-when-existing-data-has-empty-cells) | `google-sheets.append_rows` uses Google Sheets' "logical table" auto-detection. When the existing data in the target range has empty cells creating a column discontinuity (e.g., column D empty between A-C and E with data — as happens after WP-11/WP-24 evolution: an earlier run wrote rows without the body cell, a later run reads them back), Sheets API's table-walker detects the non-empty column (E) as the "table" and appends new rows after it (E2, F2, ...) instead of at A2. The data shape was correct (5-col 2D array); only the placement shifted. Result: appended rows visually misaligned, sheet has data in two disjoint column ranges. | P1 | ⬜ Future — observed on `complaint-email-logger` Phase E (2026-05-11). User workaround: add a header row (forces Sheets to detect the table at A1). Fix: compiler-side emission of a tighter `range` for append_rows. Currently emits `range: "SheetName!A:E"` (column range — vulnerable to table-walking). Should emit `range: "SheetName!A1"` (point start) OR `range: "SheetName"` (sheet-name-only — Sheets defaults to A1) — both force the API to anchor at A1 regardless of existing cell sparsity. Compiler heuristic: when emitting `append_rows`, normalize the `range` parameter to either bare-sheet-name or `<sheet>!A1`. |
 
 ---
 
@@ -1211,6 +1213,133 @@ Auto-converting `ai_processing` on an array into a scatter would change semantic
 
 ---
 
+### WP-26: O23 doesn't recognize `project_column.by_index` as a positional consumer
+
+**Severity:** High (silent dedup failure → duplicate rows on every run for sheets without a header row)
+**Encountered as:** Phase E on `complaint-email-logger` (2026-05-11) — second consecutive run appended duplicate rows because dedup against existing sheet data silently produced an empty reference list.
+**Status:** ⬜ Future — user workaround applied (add header row); compiler fix tracked here
+
+**Problem:** The compiler's [`normalizeDataFormats`](../../lib/agentkit/v6/compiler/ExecutionGraphCompiler.ts) Phase 3.5 includes an "O23" optimization: when a fetch action produces a 2D array (Sheets `read_range`), check whether ALL downstream consumers use positional column access. If yes, skip auto-injecting `rows_to_objects` and rewrite consumer inputs to point at the raw `.values` field instead.
+
+The check (~line 2497):
+
+```ts
+const allUseColumnIndex = downstreamConsumers.length > 0 && downstreamConsumers.every(s =>
+  s.config?.column_index !== undefined || s.config?.column_index === 0
+)
+```
+
+This looks for a flat `step.config.column_index` property. But the modern `project_column` (introduced in W2 / WP-16) declares positional access as:
+
+```ts
+config: { column: { kind: "by_index", index: 4 } }
+```
+
+The check doesn't see `column_index` at the top level → returns `false` → `rows_to_objects` auto-inject fires.
+
+**Cascade observed on `complaint-email-logger`:**
+
+User's `UrgentEmails` sheet has NO header row — data starts at A1 directly. step3 returns:
+
+```json
+"values": [
+  ["Barak Meiri <meiribarak@gmail.com>", "Fwd: ...", "Sun, 10 May ...", "", "19e132ee6f2eb226"]
+]
+```
+
+That's 1 row of data. The auto-injected `rows_to_objects` consumes this single row as a header → output is `[]` (empty array). Downstream:
+
+- step5 `project_column.by_index: 4` on `[]` → `[]` (existing_message_ids is empty)
+- step8 `set_difference` reference is `[]` → no items get filtered out
+- All candidate emails appear to be "new" → duplicates appended on every run
+
+**Why this didn't appear in unit tests:** all our `rows_to_objects` tests use input arrays with at least 2 rows (header + data). The single-row edge case wasn't exercised.
+
+**Fix:**
+
+Extend the O23 `allUseColumnIndex` check to also recognize:
+
+1. `project_column.by_index`: `step.config?.column?.kind === 'by_index'`
+2. WP-25 positional `field_mapping` on `transform/map`: all target keys parse as positional via `parsePositionalKey()` (numeric / column_N / Excel letter / column_letter)
+
+When ALL downstream consumers are positional under either form, skip the `rows_to_objects` insertion and rewrite consumer inputs to `{{producer_var.<arrayField>}}` (today done only when `column_index` matches).
+
+```ts
+const isPositionalConsumer = (s: WorkflowStep): boolean => {
+  // Existing column_index path
+  if (s.config?.column_index !== undefined) return true;
+  // WP-26 project_column.by_index
+  if (s.operation === 'project_column' && s.config?.column?.kind === 'by_index') return true;
+  // WP-26 transform/map with positional field_mapping (WP-25 patterns)
+  if (s.operation === 'map' && s.config?.field_mapping && typeof s.config.field_mapping === 'object') {
+    const keys = Object.keys(s.config.field_mapping);
+    if (keys.length > 0 && keys.every(k => parsePositionalKey(k) !== null)) return true;
+  }
+  return false;
+};
+const allUsePositional = downstreamConsumers.length > 0 && downstreamConsumers.every(isPositionalConsumer);
+```
+
+When true, skip the rows_to_objects insertion and apply the existing consumer-rewrite path. The runtime `project_column.by_index` (WP-20) and `transform/map` positional (WP-23/25) already handle raw 2D arrays correctly.
+
+**Files:** `lib/agentkit/v6/compiler/ExecutionGraphCompiler.ts` (~25 lines: extended check + reuse existing rewrite path). Unit test: compiler integration covering 3 cases — (a) positional only → no rows_to_objects, (b) named-field consumer → rows_to_objects fires, (c) mix → rows_to_objects fires (conservative).
+
+**Sibling failure note:** even with WP-26 fixed, the underlying "sheet has no header row" semantic mismatch remains an open question. The LLM's mental model often assumes a header row because the user's prompt names columns. Documented as "user must add header row OR pipeline must be configured to skip header detection." Could be a future prompt-steering or compiler heuristic improvement (track row count in data_schema and warn when downstream rows_to_objects on single-row data).
+
+---
+
+### WP-27: Sheets `append_rows` shifts to non-A column when existing data has empty cells
+
+**Severity:** High (rows append at the wrong column, visually misaligned)
+**Encountered as:** Phase E on `complaint-email-logger` (2026-05-11) — step10 succeeded but `updated_range: "UrgentEmails!E2:I3"` instead of A2:E3.
+**Status:** ⬜ Future — user workaround applied (add header row); compiler fix tracked here
+
+**Problem:** Google Sheets `append_rows` API uses a "logical table" auto-detection algorithm. Given `range: "UrgentEmails!A:E"`, the API scans the range for the bottom of any contiguous data table and appends after it.
+
+When existing data has **column discontinuity** (e.g., column D empty between A-C and E with data — as can happen when an earlier run wrote rows without the body cell), the API may detect the non-empty trailing column (E) as the "table" rather than the full A-E row.
+
+Observed payload:
+
+```
+input.range: "UrgentEmails!A:E"
+existing row: ["A val", "B val", "C val", "", "E val"]   ← D empty
+output.table_range: "UrgentEmails!E1"      ← Sheets thinks table is at E
+output.updated_range: "UrgentEmails!E2:I3" ← appended at E2 (rows × 5 cols)
+```
+
+The data shape was correct (5-column 2D array). Only placement shifted. Result: sheet has data in two disjoint column ranges (A-E for the original row, E-I for the new rows).
+
+**Why this is sensitive to WP-24:** before WP-24 fixed `content_level: 'full'` auto-application, the `full_email_text` cell came through empty. Rows written in that state had empty D cells. After WP-24, new rows have populated D cells. The discontinuity exists only because of the historical pre-WP-24 row(s).
+
+**Fix:**
+
+Compiler-side normalization of the `range` parameter for `append_rows`. Currently the LLM tends to emit `range: "<sheet>!A:E"` (column range). The Sheets API behaves better when `range` is:
+
+- `"<sheet>"` (bare sheet name — defaults to A1) — **recommended**
+- `"<sheet>!A1"` (point start) — alternative
+
+Both force Sheets to anchor the table-walker at A1 regardless of existing cell sparsity.
+
+Heuristic: in `IntentToIRConverter` or `ExecutionGraphCompiler`, when binding `google-sheets.append_rows` (and similar `append`-intent actions on other plugins with the same quirk), normalize `params.range`:
+
+```ts
+// Strip A:Z column range and any explicit row range; collapse to "<sheet>!A1"
+if (typeof params.range === 'string' && params.range.includes('!')) {
+  const [sheetName] = params.range.split('!');
+  params.range = `${sheetName}!A1`;
+}
+```
+
+Or simpler — emit just the sheet name (the plugin executor can default to A1).
+
+**Alternative (less compiler-coupled):** plugin-side normalization in `google-sheets-plugin-executor.ts` for `append_rows`: rewrite the `range` parameter at execution time. Pro: contained to plugin. Con: doesn't apply to other plugins with similar quirks (BigQuery, Airtable, etc.).
+
+**Files (compiler approach):** `lib/agentkit/v6/compiler/ExecutionGraphCompiler.ts` Phase 4.5 normalization (~15 lines) + plugin-executor unit test verifying the rewrite.
+
+**Sibling check (operational):** the underlying Sheets quirk affects any plugin that wraps `append`-style writes. Audit other "append" actions for similar emission patterns when WP-27 is implemented.
+
+---
+
 ### WP-25: Broaden positional-key detection in `transformMap` Mode 0
 
 **Severity:** High (blocks Phase E for any Sheets append workflow where the LLM picks a non-numeric positional pattern)
@@ -1690,6 +1819,7 @@ Already documented as WP-9 / F7 — deferred due to ~$0.10-0.15 per run token co
 
 | Date | Change | Details |
 |------|--------|---------|
+| 2026-05-11 | WP-26 + WP-27 documented — Sheets append failure modes on header-less / sparse-data sheets | Phase E re-run on `complaint-email-logger` after WP-25 succeeded structurally (no errors, 10/10 steps), but two operational issues surfaced: (a) duplicate rows appended because `set_difference` dedup silently failed — root cause: O23 optimization in `normalizeDataFormats` doesn't recognize `project_column.by_index` config shape, so `rows_to_objects` gets auto-injected unnecessarily and consumes the only data row as a header when the sheet has no header row → empty `existing_message_ids` reference → no dedup. (b) rows shifted to column E because Sheets `append_rows` table-detection found a discontinuity at the empty D column in legacy pre-WP-24 row(s). Documented as WP-26 (O23 detection gap) and WP-27 (range normalization for append_rows). Both deferred — user workaround: add header row to the destination sheet (resolves both symptoms operationally). Compiler-side fix tracked for the next iteration. |
 | 2026-05-10 | WP-25 fixed — runtime tolerance for 4 positional-key patterns + prompt steering toward canonical numeric form | Phase E re-run on `complaint-email-logger` (post-WP-24 fix; body cells now populated) failed at step10 (`append_rows`) because step9 emitted `field_mapping: {column_A: "sender_email", column_B: "subject", ...}`. WP-23's `^\d+$` regex didn't match → runtime built objects with column-letter keys → Sheets append got malformed input → returned null. Two-layer fix: **(a) runtime tolerance:** `parsePositionalKey()` helper in `StepExecutor.ts` recognizes all four observed positional patterns — numeric (`"0"`), `column_<digit>` (`"column_0"`), Excel letter (`"A"`, `"AA"`), `column_<letter>` (`"column_A"`) — and maps each to a 0-indexed column position via Excel-style letter conversion (A=0, B=1, ..., Z=25, AA=26). When ALL target keys parse as positional, runtime emits a 2D array per row. **(b) prompt steering:** section 6.11 (DELIVER) now declares numeric-string `"to": "0"` as the canonical form for row-oriented destinations (`append_rows` and similar) and explicitly enumerates the 3 non-canonical equivalents to avoid. Defense in depth: prompt converges LLM on one pattern (reduces variance, makes IRs predictable); runtime tolerance handles drift if LLM picks an alternate. 12 new unit tests in `transformMap.numeric-keys.test.ts` covering each pattern + mixed-positional + canonical complaint-logger column_A failure + regression guards. 196/196 known-good tests passing (was 184). The complaint-email-logger Phase E should now succeed end-to-end on re-run. |
 | 2026-05-10 | WP-24 fixed — `content_level: 'full'` forced when deterministic consumers reference gated output fields | Schema-driven extension of WP-11. Reads the plugin's `output_dependencies` declarations to learn which fields are gated (populated only at `content_level: full`), then walks all transform/notify/deliver IR node configs and triggers the upgrade if any reference a gated field. Eliminates the deterministic-consumer blind spot that caused complaint-email-logger Phase E to append empty `full_email_text` cells. Generic across plugins — works for any action that declares `output_dependencies`. 17 new unit tests covering canonical filter+map patterns, fetch-node skip, substring-false-positive guards, and edge cases. 184/184 known-good tests passing (was 167 before WP-24). The complaint-email-logger Phase E should now produce non-empty body cells on re-run. |
 | 2026-05-10 | WP-23 fixed — `transform/map` with numeric-key `field_mapping` now produces 2D arrays | Runtime tolerance in `transformMap` Mode 0: when all target keys match `/^\d+$/`, emit `Array(max+1).fill(null)` per row and assign by parsed index, rather than an object. Aligns with `google-sheets.append_rows` contract (2D array of cell values). Sister fix to WP-SR (`column_N` source keys), WP-20 (object-row tolerance), and WP-22 (bare RefName tolerance) — all four are runtime-tolerance fixes for LLM emission patterns that don't match strict runtime contracts. **Phase D** continues to pass (9/9 steps; the conditional then-branch containing the affected step doesn't fire on mock data); the unit tests directly validate the algorithm on the canonical complaint-logger emission. **Phase E** is the actual validation — must be re-run on `complaint-email-logger` to confirm step10 produces a 2D array and step11 (`append_rows`) succeeds. **Sibling issue noted (separate, lower priority):** during the failed Phase E, `full_email_text` resolved to undefined for some rows (Gmail body wasn't fetched). Likely WP-11 family (`content_level: full` not auto-applied for the complaint-logger search). With WP-23, missing fields produce null cells instead of skipped keys — Sheets accepts null. |
