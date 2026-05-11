@@ -1,0 +1,340 @@
+{
+  "slots": {
+    "raw_gantt_rows": {
+      "schema": {
+        "type": "object",
+        "source": "plugin",
+        "properties": {
+          "range": {
+            "type": "string",
+            "source": "plugin",
+            "description": "The actual range that was read (may differ from requested)",
+            "required": true
+          },
+          "values": {
+            "type": "array",
+            "source": "plugin",
+            "description": "2D array of cell values (rows of cells)",
+            "items": {
+              "type": "array",
+              "source": "plugin",
+              "items": {
+                "type": "string",
+                "source": "plugin"
+              }
+            },
+            "required": true
+          },
+          "row_count": {
+            "type": "number",
+            "source": "plugin",
+            "description": "Number of rows returned",
+            "required": true
+          },
+          "column_count": {
+            "type": "number",
+            "source": "plugin",
+            "description": "Number of columns returned"
+          },
+          "major_dimension": {
+            "type": "string",
+            "source": "plugin",
+            "description": "How data is organized (ROWS or COLUMNS)"
+          },
+          "retrieved_at": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Timestamp when data was retrieved (ISO 8601)"
+          }
+        }
+      },
+      "scope": "global",
+      "produced_by": "read_gantt_data",
+      "consumed_by": [
+        "convert_rows_to_objects"
+      ]
+    },
+    "task_objects": {
+      "schema": {
+        "type": "array",
+        "source": "ai_declared",
+        "items": {
+          "type": "object",
+          "source": "ai_declared",
+          "properties": {
+            "task_name": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "finish_date": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "priority": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            }
+          }
+        }
+      },
+      "scope": "global",
+      "produced_by": "convert_rows_to_objects",
+      "consumed_by": [
+        "filter_valid_tasks"
+      ]
+    },
+    "valid_tasks": {
+      "schema": {
+        "type": "array",
+        "source": "inferred",
+        "items": {
+          "type": "object",
+          "source": "ai_declared",
+          "properties": {
+            "task_name": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "finish_date": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "priority": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            }
+          }
+        }
+      },
+      "scope": "global",
+      "produced_by": "filter_valid_tasks",
+      "consumed_by": [
+        "filter_urgent_priority"
+      ]
+    },
+    "urgent_tasks": {
+      "schema": {
+        "type": "array",
+        "source": "inferred",
+        "items": {
+          "type": "object",
+          "source": "ai_declared",
+          "properties": {
+            "task_name": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "finish_date": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "priority": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            }
+          }
+        }
+      },
+      "scope": "global",
+      "produced_by": "filter_urgent_priority",
+      "consumed_by": [
+        "add_date_window_fields"
+      ]
+    },
+    "tasks_with_dates": {
+      "schema": {
+        "type": "array",
+        "source": "ai_declared",
+        "items": {
+          "type": "object",
+          "source": "ai_declared",
+          "properties": {
+            "task_name": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "finish_date": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "priority": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "window_start": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "window_end": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "days_until_finish": {
+              "type": "number",
+              "source": "ai_declared",
+              "required": true
+            }
+          }
+        }
+      },
+      "scope": "global",
+      "produced_by": "add_date_window_fields",
+      "consumed_by": [
+        "filter_within_date_window"
+      ]
+    },
+    "tasks_in_window": {
+      "schema": {
+        "type": "array",
+        "source": "inferred",
+        "items": {
+          "type": "object",
+          "source": "ai_declared",
+          "properties": {
+            "task_name": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "finish_date": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "priority": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "window_start": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "window_end": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "days_until_finish": {
+              "type": "number",
+              "source": "ai_declared",
+              "required": true
+            }
+          }
+        }
+      },
+      "scope": "global",
+      "produced_by": "filter_within_date_window",
+      "consumed_by": [
+        "sort_by_finish_date"
+      ]
+    },
+    "sorted_tasks": {
+      "schema": {
+        "type": "array",
+        "source": "inferred",
+        "items": {
+          "type": "object",
+          "source": "ai_declared",
+          "properties": {
+            "task_name": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "finish_date": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "priority": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "window_start": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "window_end": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "days_until_finish": {
+              "type": "number",
+              "source": "ai_declared",
+              "required": true
+            }
+          }
+        }
+      },
+      "scope": "global",
+      "produced_by": "sort_by_finish_date",
+      "consumed_by": [
+        "count_matching_tasks",
+        "compose_email_body"
+      ]
+    },
+    "matching_count": {
+      "schema": {
+        "type": "number",
+        "description": "Count of matching_count",
+        "source": "inferred"
+      },
+      "scope": "global",
+      "produced_by": "count_matching_tasks",
+      "consumed_by": [
+        "compose_email_body"
+      ]
+    },
+    "task_metrics": {
+      "schema": {
+        "type": "number",
+        "description": "Count of matching_count",
+        "source": "inferred"
+      },
+      "scope": "global",
+      "produced_by": "count_matching_tasks"
+    },
+    "email_content": {
+      "schema": {
+        "type": "object",
+        "properties": {
+          "subject": {
+            "type": "string",
+            "source": "ai_declared",
+            "description": "Email subject line"
+          },
+          "body": {
+            "type": "string",
+            "source": "ai_declared",
+            "description": "Full HTML email body with table or no-results message and spreadsheet link"
+          }
+        },
+        "source": "ai_declared"
+      },
+      "scope": "global",
+      "produced_by": "compose_email_body",
+      "consumed_by": [
+        "send_notification_email"
+      ]
+    }
+  }
+}
