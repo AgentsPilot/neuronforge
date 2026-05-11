@@ -1,0 +1,368 @@
+{
+  "slots": {
+    "candidate_emails": {
+      "schema": {
+        "type": "object",
+        "source": "plugin",
+        "description": "Search results with email details",
+        "properties": {
+          "emails": {
+            "type": "array",
+            "source": "plugin",
+            "description": "Array of matching emails",
+            "items": {
+              "type": "object",
+              "source": "plugin",
+              "semantic_type": "email_message",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "Gmail message ID"
+                },
+                "thread_id": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "Gmail thread ID"
+                },
+                "subject": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "Email subject"
+                },
+                "from": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "Sender address"
+                },
+                "to": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "Recipient addresses"
+                },
+                "date": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "Email date"
+                },
+                "snippet": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "Email preview snippet (first ~200 chars of email body - USE THIS for content matching/filtering)"
+                },
+                "labels": {
+                  "type": "array",
+                  "source": "plugin",
+                  "description": "Gmail labels",
+                  "items": {
+                    "type": "string",
+                    "source": "plugin"
+                  }
+                },
+                "body": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "Email body text (NOTE: Usually empty in search results - use 'snippet' field instead for email content)"
+                },
+                "attachments": {
+                  "type": "array",
+                  "source": "plugin",
+                  "description": "Attachment metadata (if include_attachments=true). Each item contains: filename, mimeType, size, attachment_id (use with get_email_attachment), message_id (email ID)",
+                  "items": {
+                    "type": "object",
+                    "source": "plugin",
+                    "semantic_type": "file_attachment",
+                    "properties": {
+                      "filename": {
+                        "type": "string",
+                        "source": "plugin",
+                        "description": "Attachment filename"
+                      },
+                      "mimeType": {
+                        "type": "string",
+                        "source": "plugin",
+                        "description": "MIME type (application/pdf, image/png, etc.)"
+                      },
+                      "size": {
+                        "type": "number",
+                        "source": "plugin",
+                        "description": "File size in bytes"
+                      },
+                      "attachment_id": {
+                        "type": "string",
+                        "source": "plugin",
+                        "description": "Attachment ID (required for get_email_attachment action)"
+                      },
+                      "message_id": {
+                        "type": "string",
+                        "source": "plugin",
+                        "description": "Email message ID (required for get_email_attachment action)"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "total_found": {
+            "type": "number",
+            "source": "plugin",
+            "description": "Number of emails returned"
+          },
+          "total_available": {
+            "type": "number",
+            "source": "plugin",
+            "description": "Estimated total matching emails"
+          },
+          "search_query": {
+            "type": "string",
+            "source": "plugin",
+            "description": "The search query that was executed"
+          },
+          "searched_at": {
+            "type": "string",
+            "source": "plugin",
+            "description": "ISO 8601 timestamp of search"
+          }
+        }
+      },
+      "scope": "global",
+      "produced_by": "search_inbox_emails",
+      "consumed_by": [
+        "classify_urgency"
+      ]
+    },
+    "urgent_emails": {
+      "schema": {
+        "type": "array",
+        "source": "inferred"
+      },
+      "scope": "global",
+      "produced_by": "split_by_urgency",
+      "consumed_by": [
+        "process_urgent_emails",
+        "prepare_summary_rows"
+      ]
+    },
+    "urgent_count": {
+      "schema": {
+        "type": "number",
+        "description": "Count of urgent_count",
+        "source": "inferred"
+      },
+      "scope": "global",
+      "produced_by": "split_by_urgency",
+      "consumed_by": [
+        "generate_summary_email"
+      ]
+    },
+    "urgency_split": {
+      "schema": {
+        "type": "object",
+        "properties": {
+          "urgent_emails": {
+            "type": "array",
+            "source": "inferred"
+          },
+          "urgent_count": {
+            "type": "number",
+            "description": "Count of urgent_count",
+            "source": "inferred"
+          }
+        },
+        "source": "inferred"
+      },
+      "scope": "global",
+      "produced_by": "split_by_urgency"
+    },
+    "urgent_email": {
+      "schema": {
+        "type": "array",
+        "source": "inferred"
+      },
+      "scope": "loop",
+      "produced_by": "process_urgent_emails",
+      "consumed_by": [
+        "mark_important",
+        "apply_tracking_label"
+      ]
+    },
+    "processed_urgent_emails": {
+      "schema": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "source": "plugin",
+          "description": "Result of the email modification",
+          "properties": {
+            "message_id": {
+              "type": "string",
+              "source": "plugin",
+              "description": "The modified message ID",
+              "required": true
+            },
+            "labels_added": {
+              "type": "array",
+              "source": "plugin",
+              "description": "Labels that were added",
+              "items": {
+                "type": "string",
+                "source": "plugin"
+              },
+              "required": true
+            },
+            "labels_removed": {
+              "type": "array",
+              "source": "plugin",
+              "description": "Labels that were removed",
+              "items": {
+                "type": "string",
+                "source": "plugin"
+              },
+              "required": true
+            }
+          }
+        },
+        "source": "inferred"
+      },
+      "scope": "global",
+      "produced_by": "process_urgent_emails"
+    },
+    "importance_result": {
+      "schema": {
+        "type": "object",
+        "source": "plugin",
+        "description": "Result of the email modification",
+        "properties": {
+          "message_id": {
+            "type": "string",
+            "source": "plugin",
+            "description": "The modified message ID",
+            "required": true
+          },
+          "labels_added": {
+            "type": "array",
+            "source": "plugin",
+            "description": "Labels that were added",
+            "items": {
+              "type": "string",
+              "source": "plugin"
+            },
+            "required": true
+          },
+          "labels_removed": {
+            "type": "array",
+            "source": "plugin",
+            "description": "Labels that were removed",
+            "items": {
+              "type": "string",
+              "source": "plugin"
+            },
+            "required": true
+          }
+        }
+      },
+      "scope": "loop",
+      "produced_by": "mark_important"
+    },
+    "label_result": {
+      "schema": {
+        "type": "object",
+        "source": "plugin",
+        "description": "Result of the email modification",
+        "properties": {
+          "message_id": {
+            "type": "string",
+            "source": "plugin",
+            "description": "The modified message ID",
+            "required": true
+          },
+          "labels_added": {
+            "type": "array",
+            "source": "plugin",
+            "description": "Labels that were added",
+            "items": {
+              "type": "string",
+              "source": "plugin"
+            },
+            "required": true
+          },
+          "labels_removed": {
+            "type": "array",
+            "source": "plugin",
+            "description": "Labels that were removed",
+            "items": {
+              "type": "string",
+              "source": "plugin"
+            },
+            "required": true
+          }
+        }
+      },
+      "scope": "loop",
+      "produced_by": "apply_tracking_label",
+      "consumed_by": [
+        "process_urgent_emails"
+      ]
+    },
+    "summary_rows": {
+      "schema": {
+        "type": "array",
+        "source": "ai_declared",
+        "items": {
+          "type": "object",
+          "source": "ai_declared",
+          "properties": {
+            "sender": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "subject": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "received_date": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "urgency_classification": {
+              "type": "string",
+              "source": "ai_declared"
+            }
+          }
+        }
+      },
+      "scope": "global",
+      "produced_by": "prepare_summary_rows",
+      "consumed_by": [
+        "generate_summary_email"
+      ]
+    },
+    "summary_email_content": {
+      "schema": {
+        "type": "object",
+        "properties": {
+          "subject": {
+            "type": "string",
+            "source": "ai_declared",
+            "description": "Email subject line for the summary"
+          },
+          "body": {
+            "type": "string",
+            "source": "ai_declared",
+            "description": "Full HTML body of the summary email"
+          }
+        },
+        "source": "ai_declared"
+      },
+      "scope": "global",
+      "produced_by": "generate_summary_email",
+      "consumed_by": [
+        "send_summary_email"
+      ]
+    }
+  }
+}

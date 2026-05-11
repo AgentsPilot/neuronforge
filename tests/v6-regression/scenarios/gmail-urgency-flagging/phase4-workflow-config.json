@@ -1,0 +1,13 @@
+{
+  "gmail_search_query": "in:inbox -label:AgentsPilot newer_than:30d",
+  "urgency_keywords": "today, urgent, immediately, now, sensitive",
+  "tracking_label_name": "AgentsPilot",
+  "summary_recipient": "meiribarak@gmail.com",
+  "google_mail__email_send__recipients": "meiribarak@gmail.com",
+  "google_mail__email_search__query": "in:inbox -label:AgentsPilot newer_than:30d",
+  "urgency_method": "Keyword rules",
+  "urgent_actions": "Mark as important",
+  "non_urgent_behavior": "Do nothing",
+  "tracking_strategy": "Add tracking label",
+  "summary_delivery": "Email summary to user"
+}
