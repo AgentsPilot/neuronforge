@@ -9,7 +9,7 @@
     {
       "key": "spreadsheet_id",
       "type": "string",
-      "description": "Google Sheets spreadsheet ID for the destination",
+      "description": "Google Sheets spreadsheet ID for the destination sheet",
       "default": "1RHLbBXzrKv24gNgp7a4Lr7RlMIrP9fjacfGWjhPAbOE"
     },
     {
@@ -54,7 +54,7 @@
     }
   ],
   "required_outcomes": [
-    "All complaint emails from the last 7 days that are not already in the sheet are appended to the UrgentEmails tab",
+    "All complaint emails from the last 7 days that are not already in the sheet are appended as new rows",
     "No duplicate rows are created for emails already present in the sheet",
     "Each appended row contains: sender email, subject, date, full email text, Gmail message link/id"
   ],
@@ -180,7 +180,7 @@
     {
       "id": "filter_by_complaint_keywords",
       "kind": "transform",
-      "summary": "Filter candidate emails to only those whose body or subject contains complaint keywords (case-insensitive)",
+      "summary": "Filter candidate emails to keep only those whose body or subject contains complaint keywords",
       "inputs": [
         "candidate_emails"
       ],
@@ -188,7 +188,7 @@
       "transform": {
         "op": "filter",
         "input": "candidate_emails",
-        "description": "Keep emails where body or subject contains any complaint keyword",
+        "description": "Keep emails where body or subject contains any complaint keyword (case-insensitive)",
         "where": {
           "op": "or",
           "conditions": [
@@ -225,7 +225,7 @@
     {
       "id": "prepare_complaint_rows",
       "kind": "transform",
-      "summary": "Map complaint emails to row format: sender email, subject, date, full email text, Gmail message id",
+      "summary": "Map complaint emails to the row format needed for the spreadsheet: sender email, subject, date, full email text, Gmail message link/id",
       "inputs": [
         "complaint_emails"
       ],
@@ -290,7 +290,7 @@
     {
       "id": "deduplicate_against_existing",
       "kind": "transform",
-      "summary": "Remove complaint rows whose Gmail message ID already exists in the sheet",
+      "summary": "Remove complaint rows whose Gmail message link/id already exists in the sheet, keeping only new complaints",
       "inputs": [
         "complaint_rows",
         "existing_message_ids"
@@ -304,128 +304,74 @@
       }
     },
     {
-      "id": "check_new_complaints_exist",
-      "kind": "decide",
-      "summary": "Only append rows if there are new complaint emails to log",
+      "id": "append_new_complaints",
+      "kind": "deliver",
+      "summary": "Append new complaint email rows to the UrgentEmails tab in Google Sheets",
       "inputs": [
-        "new_complaint_rows"
+        "new_complaint_rows",
+        "sheet_tab"
       ],
-      "decide": {
-        "condition": {
-          "op": "test",
-          "left": {
-            "kind": "ref",
-            "ref": "new_complaint_rows",
-            "field": "length"
-          },
-          "comparator": "gt",
-          "right": {
-            "kind": "literal",
-            "value": 0
+      "output": "append_result",
+      "uses": [
+        {
+          "capability": "append",
+          "domain": "table",
+          "preferences": {
+            "provider_family": "google"
           }
-        },
-        "then": [
+        }
+      ],
+      "deliver": {
+        "domain": "table",
+        "intent": "append_rows",
+        "input": "new_complaint_rows",
+        "mapping": [
           {
-            "id": "format_rows_for_sheets",
-            "kind": "transform",
-            "summary": "Convert complaint row objects into 2D array format for Google Sheets append (each row: [sender_email, subject, date, full_email_text, gmail_message_link_id])",
-            "inputs": [
-              "new_complaint_rows"
-            ],
-            "output": "formatted_rows",
-            "transform": {
-              "op": "map",
-              "input": "new_complaint_rows",
-              "description": "Transform each complaint row object into an ordered array: [sender_email, subject, date, full_email_text, gmail_message_link_id]",
-              "mapping": [
-                {
-                  "to": "0",
-                  "from": "sender_email"
-                },
-                {
-                  "to": "1",
-                  "from": "subject"
-                },
-                {
-                  "to": "2",
-                  "from": "date"
-                },
-                {
-                  "to": "3",
-                  "from": "full_email_text"
-                },
-                {
-                  "to": "4",
-                  "from": "gmail_message_link_id"
-                }
-              ],
-              "output_schema": {
-                "type": "array",
-                "items": {
-                  "type": "array"
-                }
-              }
-            }
+            "from": {
+              "ref": "new_complaint_rows",
+              "field": "sender_email"
+            },
+            "to": "column_A"
           },
           {
-            "id": "append_to_sheet",
-            "kind": "deliver",
-            "summary": "Append new complaint email rows to the UrgentEmails tab in Google Sheets",
-            "inputs": [
-              "formatted_rows",
-              "sheet_tab"
-            ],
-            "output": "append_result",
-            "uses": [
-              {
-                "capability": "append",
-                "domain": "table",
-                "preferences": {
-                  "provider_family": "google"
-                }
-              }
-            ],
-            "deliver": {
-              "domain": "table",
-              "intent": "append_rows",
-              "input": "formatted_rows",
-              "destination": "sheet_tab",
-              "mapping": [
-                {
-                  "from": {
-                    "kind": "config",
-                    "key": "spreadsheet_id"
-                  },
-                  "to": "spreadsheet_id"
-                },
-                {
-                  "from": {
-                    "kind": "computed",
-                    "op": "concat",
-                    "args": [
-                      {
-                        "kind": "config",
-                        "key": "sheet_tab_name"
-                      },
-                      {
-                        "kind": "literal",
-                        "value": "!A:E"
-                      }
-                    ]
-                  },
-                  "to": "range"
-                },
-                {
-                  "from": {
-                    "kind": "ref",
-                    "ref": "formatted_rows"
-                  },
-                  "to": "values"
-                }
-              ]
-            }
+            "from": {
+              "ref": "new_complaint_rows",
+              "field": "subject"
+            },
+            "to": "column_B"
+          },
+          {
+            "from": {
+              "ref": "new_complaint_rows",
+              "field": "date"
+            },
+            "to": "column_C"
+          },
+          {
+            "from": {
+              "ref": "new_complaint_rows",
+              "field": "full_email_text"
+            },
+            "to": "column_D"
+          },
+          {
+            "from": {
+              "ref": "new_complaint_rows",
+              "field": "gmail_message_link_id"
+            },
+            "to": "column_E"
           }
-        ]
+        ],
+        "options": {
+          "spreadsheet_id": {
+            "kind": "config",
+            "key": "spreadsheet_id"
+          },
+          "range": {
+            "kind": "config",
+            "key": "sheet_tab_name"
+          }
+        }
       }
     }
   ],
@@ -437,6 +383,6 @@
       "google-sheets"
     ],
     "dedup_strategy": "set_difference on gmail_message_link_id against existing sheet column E",
-    "thread_handling": "each matching message logged independently"
+    "thread_handling": "each matching message logged independently regardless of thread"
   }
 }
