@@ -43,6 +43,7 @@ The weak points are ordered by likelihood of causing failures as new scenarios a
 | [WP-25](#wp-25-broaden-positional-key-detection-in-transformmap-mode-0) | The LLM has multiple emission styles for "convert objects to 2D array for Sheets append": `{"0": "field"}` (numeric), `{"column_0": "field"}` (column_N), `{"A": "field"}` (Excel letter), `{"column_A": "field"}` (column_letter). WP-23 only caught the first pattern. The 2nd Phase E run on `complaint-email-logger` emitted the `column_A`-style variant — `transformMap` produced objects with `column_A`/`column_B`/... keys, `append_rows` returned null, runtime calibration-stopped. Sister to WP-23. | P1 | ✅ Fixed (2026-05-10) — **two-layer fix:** (a) **runtime tolerance** in `transformMap` Mode 0 via `parsePositionalKey()` helper that recognizes all four patterns and converts each target key to a numeric index (Excel-style: A=0, B=1, ..., AA=26). When ALL target keys parse as positional, runtime emits a 2D array per row. (b) **prompt steering** in section 6.11 (DELIVER) declaring numeric-string `"to": "0"` as the canonical form for row-oriented destinations and explicitly listing the 3 non-canonical equivalents to avoid. Defense in depth — prompt converges LLM toward one pattern; runtime tolerance handles drift. 12 new unit tests covering each pattern + canonical complaint-logger column_A failure mode + regression guards. |
 | [WP-26](#wp-26-o23-doesnt-recognize-project_columnby_index-as-a-positional-consumer) | The compiler's O23 optimization in `normalizeDataFormats` is supposed to skip the `rows_to_objects` auto-inject when all downstream consumers use positional access on the 2D array. Today the check only matches the flat `step.config.column_index` property; it does NOT recognize the modern `project_column` shape (`config.column = {kind: "by_index", index: N}`) introduced by W2/WP-16, nor the WP-25 positional `field_mapping` (numeric/letter target keys). When the actual upstream sheet has NO header row (common — users store data starting at row 1), the unnecessary `rows_to_objects` consumes the single data row as a header → 0 data rows downstream → set_difference reference is empty → dedup silently fails → rows duplicate on every run. | P1 | ⬜ Future — observed on `complaint-email-logger` Phase E (2026-05-11). User workaround: add a header row to the destination sheet. Fix: extend the O23 `allUseColumnIndex` check to also recognize `step.config?.column?.kind === 'by_index'` (project_column shape) and `parsePositionalKey()` target keys on `transform/map` (WP-25 shape). When all downstream consumers are positional, skip rows_to_objects insertion and rewrite consumer inputs to point at `producer.<arrayField>`. |
 | [WP-27](#wp-27-sheets-append_rows-shifts-to-non-A-column-when-existing-data-has-empty-cells) | `google-sheets.append_rows` uses Google Sheets' "logical table" auto-detection. When the existing data in the target range has empty cells creating a column discontinuity (e.g., column D empty between A-C and E with data — as happens after WP-11/WP-24 evolution: an earlier run wrote rows without the body cell, a later run reads them back), Sheets API's table-walker detects the non-empty column (E) as the "table" and appends new rows after it (E2, F2, ...) instead of at A2. The data shape was correct (5-col 2D array); only the placement shifted. Result: appended rows visually misaligned, sheet has data in two disjoint column ranges. | P1 | ⬜ Future — observed on `complaint-email-logger` Phase E (2026-05-11). User workaround: add a header row (forces Sheets to detect the table at A1). Fix: compiler-side emission of a tighter `range` for append_rows. Currently emits `range: "SheetName!A:E"` (column range — vulnerable to table-walking). Should emit `range: "SheetName!A1"` (point start) OR `range: "SheetName"` (sheet-name-only — Sheets defaults to A1) — both force the API to anchor at A1 regardless of existing cell sparsity. Compiler heuristic: when emitting `append_rows`, normalize the `range` parameter to either bare-sheet-name or `<sheet>!A1`. |
+| [WP-28](#wp-28-bare-numeric-source-keys-in-field_mapping-not-recognized-as-positional) | `transform/map` with `field_mapping` where SOURCE keys are bare numeric strings (`"0"`, `"1"`, ...) — the LLM's "give me column N from each row" emission. Today's runtime only recognizes `column_<digit>` as positional source keys (WP-SR fix); bare `"0"` falls through to literal property access on the post-`rows_to_objects` object → `item["0"]` is undefined → every field maps to undefined → empty objects → downstream filter drops everything → user receives "No data available." email despite real Sheet data. Sister to WP-SR / WP-25 — same emission-style family, just on the source side of the mapping. | P1 | ✅ Fixed (2026-05-11) — **two-layer fix mirroring WP-25:** (a) **runtime tolerance:** replaced the `COLUMN_N` regex with `parsePositionalKey()` (already exists from WP-25 for target-keys) on the source side, so all 4 positional patterns work uniformly — bare numeric (`"0"`), `column_<digit>`, Excel letter, `column_<letter>`. (b) **prompt steering:** extended section 6.11 (or wherever WP-25's target-key guidance lives) with source-key canonical form. Defense in depth — prompt converges LLM on field-name source keys; runtime handles drift. N new unit tests covering 4 source patterns + canonical leads-email-summary failure + regression guards. |
 
 ---
 
@@ -1213,6 +1214,88 @@ Auto-converting `ai_processing` on an array into a scatter would change semantic
 
 ---
 
+### WP-28: Bare numeric SOURCE keys in `field_mapping` not recognized as positional
+
+**Severity:** High (silent data loss — user receives "no data" email despite real Sheet data)
+**Encountered as:** Phase E on `leads-email-summary` (2026-05-11) — step3 produced `[{}, {}, {}, {}, {}]`, step4 filter returned `[]`, step6 AI emitted "No data available."
+**Status:** ✅ Fixed — runtime tolerance + prompt steering
+
+**Problem:** Step3's `field_mapping`:
+
+```json
+{
+  "Date": "0",
+  "Lead Name": "1",
+  "Company": "2",
+  "Email": "3",
+  "Phone": "4",
+  "Stage": "5",
+  "Notes": "6",
+  "Sales Person": "7"
+}
+```
+
+Target keys are real field names; **source keys are bare numeric strings** — the LLM's expression of "for each named target, pluck column N from the input row." Semantic intent: identical to WP-SR's `column_<digit>` pattern, but with the `column_` prefix stripped.
+
+The existing source-side check (added in WP-SR) only matches `^column_(\d+)$`:
+
+```ts
+const COLUMN_N = /^column_(\d+)$/;
+const colMatch = sourceField.match(COLUMN_N);
+if (colMatch) { /* positional access via Object.values(item)[idx] */ }
+else { value = item[sourceField]; }    // bare "0" hits this branch
+```
+
+With item = `{Date: "14/12/2025", "Lead Name": "Lead 1", ...}` (post-rows_to_objects with `preserve_case: true`), `item["0"]` is undefined. Every target field gets undefined → step3 emits empty objects → step4 filter on `item.Stage === "4"` finds nothing → step6 AI sees empty input and emits "No data available." (WP-13 anti-fabrication guard, working as designed) → step7 sends an empty-state email.
+
+**Variant catalog (source-key positional)**
+
+| Pattern | Example source key | Pre-WP-28 handling |
+|---|---|---|
+| `column_<digit>` | `"column_0"` | ✅ WP-SR regex |
+| **Bare numeric** | `"0"` | ❌ Falls through → bug |
+| `column_<letter>` | `"column_A"` | ❌ Falls through |
+| Excel letter | `"A"` | ❌ Falls through |
+
+The 4 variants mirror WP-25's target-key positional catalog. The LLM is creative on both sides of the mapping.
+
+**Fix (runtime, layer A):**
+
+Reuse the `parsePositionalKey()` helper that already exists from WP-25 (recognizes all 4 patterns and maps to a 0-indexed column position via Excel-style letter conversion). Apply it on the source side:
+
+```ts
+const applyMapping = (item: any) => {
+  const mapped: Record<string, any> = {};
+  for (const [targetField, sourceField] of Object.entries(mapping)) {
+    let value: any;
+    const posIdx = typeof sourceField === 'string' ? parsePositionalKey(sourceField) : null;
+    if (posIdx !== null) {
+      if (Array.isArray(item)) {
+        value = item[posIdx];
+      } else if (item && typeof item === 'object') {
+        value = Object.values(item)[posIdx];   // post-rows_to_objects path
+      }
+    } else {
+      value = item ? item[sourceField] : undefined;
+    }
+    mapped[targetField] = value;
+  }
+  return mapped;
+};
+```
+
+Now source-side is consistent with target-side (WP-25): both accept the same 4 positional patterns.
+
+**Fix (prompt, layer B):**
+
+Extend section 6.11 (DELIVER `mapping`) — or wherever `transform/map` `field_mapping` is documented — with source-key canonical guidance. Recommended form: use the actual field names from the producer's output schema (`{Date: "Date"}` style), not positional descriptors. If positional must be used (e.g., when the producer schema isn't known), prefer bare numeric strings (`{Date: "0"}`) over `column_*` variants.
+
+**Files:** `lib/pilot/StepExecutor.ts` (~5 lines: swap `COLUMN_N` regex for `parsePositionalKey()`), `lib/agentkit/v6/intent/intent-system-prompt-v2.ts` (~10 lines prompt extension), unit tests for all 4 source patterns.
+
+**Sibling failure note:** the same source-positional emission can also occur with object input that already has numeric-string keys (uncommon but possible — e.g., output of a previous numeric-keyed `transform/map`). In that case, `item["0"]` succeeds directly without needing the positional fallback. The `parsePositionalKey()` check should fire only when the literal key lookup fails — or always, with `Object.values` being a safe equivalent when item is an indexed object.
+
+---
+
 ### WP-26: O23 doesn't recognize `project_column.by_index` as a positional consumer
 
 **Severity:** High (silent dedup failure → duplicate rows on every run for sheets without a header row)
@@ -1819,6 +1902,7 @@ Already documented as WP-9 / F7 — deferred due to ~$0.10-0.15 per run token co
 
 | Date | Change | Details |
 |------|--------|---------|
+| 2026-05-11 | WP-28 fixed — `parsePositionalKey()` now handles SOURCE keys in `field_mapping` (mirrors WP-25 target-side) | Phase E on `leads-email-summary` succeeded structurally (7/7 steps) but produced an empty-state email despite real Sheet data. step3 emitted `field_mapping: {Date: "0", "Lead Name": "1", ...}` — bare numeric SOURCE keys, the LLM's "give me column N from each row" emission. WP-SR's source-side regex only matched `column_<digit>`; bare `"0"` fell through to literal property access on the post-`rows_to_objects` object → undefined → empty objects → empty filter → "No data available." Two-layer fix mirroring WP-25: (a) runtime — replaced `COLUMN_N` regex with `parsePositionalKey()` on source side, recognizing all 4 patterns (numeric, column_N, Excel letter, column_letter); literal key lookup still wins when it succeeds for backward compat. (b) prompt — extended TRANSFORM section's MAP guidance with "Mapping `from` field — canonical form" subsection: use named source fields when producer emits objects; positional descriptors are tolerated but discouraged. 9 new unit tests in `transformMap.numeric-keys.test.ts` covering canonical leads-email-summary pattern, all 4 source patterns + WP-SR regression guard + literal-key-wins backward compat + raw-2D-array path + out-of-range. **205/205 known-good tests passing** (was 196 before WP-28). |
 | 2026-05-11 | WP-26 + WP-27 documented — Sheets append failure modes on header-less / sparse-data sheets | Phase E re-run on `complaint-email-logger` after WP-25 succeeded structurally (no errors, 10/10 steps), but two operational issues surfaced: (a) duplicate rows appended because `set_difference` dedup silently failed — root cause: O23 optimization in `normalizeDataFormats` doesn't recognize `project_column.by_index` config shape, so `rows_to_objects` gets auto-injected unnecessarily and consumes the only data row as a header when the sheet has no header row → empty `existing_message_ids` reference → no dedup. (b) rows shifted to column E because Sheets `append_rows` table-detection found a discontinuity at the empty D column in legacy pre-WP-24 row(s). Documented as WP-26 (O23 detection gap) and WP-27 (range normalization for append_rows). Both deferred — user workaround: add header row to the destination sheet (resolves both symptoms operationally). Compiler-side fix tracked for the next iteration. |
 | 2026-05-10 | WP-25 fixed — runtime tolerance for 4 positional-key patterns + prompt steering toward canonical numeric form | Phase E re-run on `complaint-email-logger` (post-WP-24 fix; body cells now populated) failed at step10 (`append_rows`) because step9 emitted `field_mapping: {column_A: "sender_email", column_B: "subject", ...}`. WP-23's `^\d+$` regex didn't match → runtime built objects with column-letter keys → Sheets append got malformed input → returned null. Two-layer fix: **(a) runtime tolerance:** `parsePositionalKey()` helper in `StepExecutor.ts` recognizes all four observed positional patterns — numeric (`"0"`), `column_<digit>` (`"column_0"`), Excel letter (`"A"`, `"AA"`), `column_<letter>` (`"column_A"`) — and maps each to a 0-indexed column position via Excel-style letter conversion (A=0, B=1, ..., Z=25, AA=26). When ALL target keys parse as positional, runtime emits a 2D array per row. **(b) prompt steering:** section 6.11 (DELIVER) now declares numeric-string `"to": "0"` as the canonical form for row-oriented destinations (`append_rows` and similar) and explicitly enumerates the 3 non-canonical equivalents to avoid. Defense in depth: prompt converges LLM on one pattern (reduces variance, makes IRs predictable); runtime tolerance handles drift if LLM picks an alternate. 12 new unit tests in `transformMap.numeric-keys.test.ts` covering each pattern + mixed-positional + canonical complaint-logger column_A failure + regression guards. 196/196 known-good tests passing (was 184). The complaint-email-logger Phase E should now succeed end-to-end on re-run. |
 | 2026-05-10 | WP-24 fixed — `content_level: 'full'` forced when deterministic consumers reference gated output fields | Schema-driven extension of WP-11. Reads the plugin's `output_dependencies` declarations to learn which fields are gated (populated only at `content_level: full`), then walks all transform/notify/deliver IR node configs and triggers the upgrade if any reference a gated field. Eliminates the deterministic-consumer blind spot that caused complaint-email-logger Phase E to append empty `full_email_text` cells. Generic across plugins — works for any action that declares `output_dependencies`. 17 new unit tests covering canonical filter+map patterns, fetch-node skip, substring-false-positive guards, and edge cases. 184/184 known-good tests passing (was 167 before WP-24). The complaint-email-logger Phase E should now produce non-empty body cells on re-run. |

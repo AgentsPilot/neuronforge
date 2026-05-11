@@ -2602,10 +2602,10 @@ Respond ONLY with the JSON array. No markdown, no explanation, no code blocks.`;
       // this map step runs, the auto-injected `rows_to_objects` has already
       // converted the input to an array of objects with header keys (with
       // `preserve_case: true` — see ExecutionGraphCompiler.normalizeDataFormats).
-      // For the `column_N` pattern, fall back to positional access via
-      // `Object.values(item)[N]`. This is non-canonical but tolerant — the
-      // alternative is silent empty objects → empty filter → empty email.
-      const COLUMN_N = /^column_(\d+)$/;
+      // Source-side positional handling lives in `applyMapping` below; it
+      // recognizes all 4 patterns via `parsePositionalKey()` (WP-28, mirrors
+      // WP-25 target-side). The alternative is silent empty objects → empty
+      // filter → empty email.
 
       // WP-23 / WP-25: detect the "objects-to-2D-array" pattern. The LLM emits
       // `field_mapping` with positional target keys to express "convert each
@@ -2650,20 +2650,33 @@ Respond ONLY with the JSON array. No markdown, no explanation, no code blocks.`;
         }
       }
 
+      // WP-28: extend source-side positional handling to all 4 patterns
+      // (mirrors WP-25 target-side broadening). Previously only matched
+      // `column_<digit>` via the COLUMN_N regex; now recognizes bare numeric
+      // ("0"), `column_<digit>`, Excel letter ("A"), and `column_<letter>`
+      // ("column_A") uniformly via parsePositionalKey().
+      //
+      // Important: when the literal property lookup would succeed (item has
+      // a key matching the source string), that takes priority — only fall
+      // back to positional access when the literal lookup is undefined AND
+      // the source string parses as a positional pattern. This preserves
+      // backward compat: if a real field happens to be named "0", the
+      // literal lookup still wins.
       const applyMapping = (item: any) => {
         const mapped: Record<string, any> = {};
         for (const [targetField, sourceField] of Object.entries(mapping)) {
-          let value: any;
-          const colMatch = typeof sourceField === 'string' ? sourceField.match(COLUMN_N) : null;
-          if (colMatch) {
-            const idx = parseInt(colMatch[1], 10);
-            if (Array.isArray(item)) {
-              value = item[idx];
-            } else if (item && typeof item === 'object') {
-              value = Object.values(item)[idx];
+          let value: any = item && typeof item === 'object' && sourceField in (item as Record<string, any>)
+            ? (item as Record<string, any>)[sourceField]
+            : undefined;
+          if (value === undefined && typeof sourceField === 'string') {
+            const posIdx = parsePositionalKey(sourceField);
+            if (posIdx !== null) {
+              if (Array.isArray(item)) {
+                value = item[posIdx];
+              } else if (item && typeof item === 'object') {
+                value = Object.values(item)[posIdx];
+              }
             }
-          } else {
-            value = item ? item[sourceField] : undefined;
           }
           mapped[targetField] = value;
         }

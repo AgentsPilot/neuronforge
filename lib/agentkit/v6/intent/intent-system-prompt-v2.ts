@@ -356,6 +356,27 @@ Simple transformations — field rename/select (NO conditional logic, NO lookups
   }
 - ❌ FORBIDDEN: transform op="map" with only description/custom_code and no mapping
 
+**Mapping \`from\` field — canonical form (WP-28):**
+
+When the upstream step's output is an array of OBJECTS (the usual case — Sheets data after \`rows_to_objects\`, API results, etc.), the \`from\` field must be the **exact field name** the producer emits:
+
+✅ **CANONICAL: use field names** (matching the producer's output_schema):
+\`\`\`json
+"mapping": [
+  { "to": "date",        "from": "Date" },
+  { "to": "lead_name",   "from": "Lead Name" },
+  { "to": "stage",       "from": "Stage" }
+]
+\`\`\`
+
+❌ **DO NOT USE** positional source descriptors when the producer emits named fields. These all "work" via runtime tolerance (WP-SR / WP-28), but they obscure intent and break when the producer's column order changes:
+- \`"from": "0"\` (bare numeric position)
+- \`"from": "column_0"\` (column_<digit>)
+- \`"from": "A"\` (Excel letter)
+- \`"from": "column_A"\` (column_<letter>)
+
+The producer's output schema is shown in the upstream step's \`output_schema\`. Read it and use those exact field names for \`from\`. Positional source descriptors should ONLY be used when consuming a raw 2D array that has NOT been converted to objects (uncommon — the compiler auto-injects \`rows_to_objects\` for Sheets-style inputs).
+
 Complex transformations (HAS conditional logic, lookups, or config-based decisions):
 - ❌ FORBIDDEN: transform op="map" with description only
 - ✅ USE GENERATE step instead with clear instruction

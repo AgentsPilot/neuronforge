@@ -21,8 +21,6 @@
  * heavy dependency chain — same pattern as W2 / WP-SR tests).
  */
 
-const COLUMN_N = /^column_(\d+)$/;
-
 interface FieldMapping {
   [target: string]: string;
 }
@@ -81,21 +79,25 @@ function applyFieldMapping(data: any[], mapping: FieldMapping): any[] {
     });
   }
 
-  // Object-building path (existing WP-4 + WP-SR `column_N` tolerance).
+  // Object-building path. Source side uses WP-28 broadened positional
+  // detection via parsePositionalKey (mirrors WP-25 target-side). Literal
+  // key lookup wins when it succeeds; positional fallback fires only when
+  // the literal is undefined.
   return data.map((item: any) => {
     const mapped: Record<string, any> = {};
     for (const [targetField, sourceField] of Object.entries(mapping)) {
-      let value: any;
-      const colMatch = typeof sourceField === 'string' ? sourceField.match(COLUMN_N) : null;
-      if (colMatch) {
-        const idx = parseInt(colMatch[1], 10);
-        if (Array.isArray(item)) {
-          value = item[idx];
-        } else if (item && typeof item === 'object') {
-          value = Object.values(item)[idx];
+      let value: any = item && typeof item === 'object' && sourceField in (item as Record<string, any>)
+        ? (item as Record<string, any>)[sourceField]
+        : undefined;
+      if (value === undefined && typeof sourceField === 'string') {
+        const posIdx = parsePositionalKey(sourceField);
+        if (posIdx !== null) {
+          if (Array.isArray(item)) {
+            value = item[posIdx];
+          } else if (item && typeof item === 'object') {
+            value = Object.values(item)[posIdx];
+          }
         }
-      } else {
-        value = item ? item[sourceField] : undefined;
       }
       mapped[targetField] = value;
     }
@@ -393,5 +395,127 @@ describe('WP-25 — Excel letter (A/B/C) and column_N field_mapping also produce
     });
     expect(Array.isArray(out[0])).toBe(false);
     expect(out[0]).toEqual({ '0': 'a@x.com', subject_field: 'hi' });
+  });
+});
+
+// ─── WP-28: positional SOURCE keys (mirrors WP-25 target-side) ────────────
+
+describe('WP-28 — positional SOURCE keys in field_mapping (4 patterns)', () => {
+  // post-rows_to_objects(preserve_case=true) shape — leads-email-summary's
+  // step3 input
+  const LEADS_ROW = {
+    Date: '14/12/2025',
+    'Lead Name': 'Lead 1',
+    Company: 'Company 1',
+    Email: 'meiribarak@gmail.com',
+    Phone: '526629333',
+    Stage: '4',
+    Notes: 'Need to reach back',
+    'Sales Person': 'barakm@orpak.com',
+  };
+
+  it('canonical leads-email-summary pattern: bare numeric source keys → object output with real values', () => {
+    // The exact failure mode from Phase E: target = field names, source = "0".."7"
+    const out = applyFieldMapping([LEADS_ROW], {
+      date: '0',
+      lead_name: '1',
+      company: '2',
+      email: '3',
+      phone: '4',
+      stage: '5',
+      notes: '6',
+      sales_person: '7',
+    });
+    expect(out[0]).toEqual({
+      date: '14/12/2025',
+      lead_name: 'Lead 1',
+      company: 'Company 1',
+      email: 'meiribarak@gmail.com',
+      phone: '526629333',
+      stage: '4',
+      notes: 'Need to reach back',
+      sales_person: 'barakm@orpak.com',
+    });
+    // Crucially: NOT empty objects
+    expect(out[0].stage).not.toBeUndefined();
+    // Downstream filter on stage === "4" would now match
+    expect(out[0].stage === '4').toBe(true);
+  });
+
+  it('column_<digit> source still works (WP-SR regression guard)', () => {
+    const out = applyFieldMapping([LEADS_ROW], {
+      date: 'column_0',
+      stage: 'column_5',
+    });
+    expect(out[0]).toEqual({ date: '14/12/2025', stage: '4' });
+  });
+
+  it('Excel-letter source (A=0, B=1, ...) — WP-28 new pattern', () => {
+    const out = applyFieldMapping([LEADS_ROW], {
+      date: 'A',
+      stage: 'F', // F=5
+      sales_person: 'H', // H=7
+    });
+    expect(out[0]).toEqual({
+      date: '14/12/2025',
+      stage: '4',
+      sales_person: 'barakm@orpak.com',
+    });
+  });
+
+  it('column_<letter> source — WP-28 new pattern', () => {
+    const out = applyFieldMapping([LEADS_ROW], {
+      date: 'column_A',
+      stage: 'column_F',
+    });
+    expect(out[0]).toEqual({ date: '14/12/2025', stage: '4' });
+  });
+
+  it('mixed source patterns: named + positional in the same mapping', () => {
+    // Defensive: LLM might mix conventions
+    const out = applyFieldMapping([LEADS_ROW], {
+      date: 'Date', // named (preferred)
+      stage: '5', // bare numeric position
+      sales_person: 'column_H', // column_<letter>
+    });
+    expect(out[0]).toEqual({
+      date: '14/12/2025',
+      stage: '4',
+      sales_person: 'barakm@orpak.com',
+    });
+  });
+
+  it('literal key wins over positional when the literal exists (backward compat)', () => {
+    // If item has a real field named "0", that takes priority over
+    // positional interpretation.
+    const item: any = { '0': 'literal-zero', Date: '14/12/2025' };
+    const out = applyFieldMapping([item], { x: '0', y: 'Date' });
+    expect(out[0]).toEqual({ x: 'literal-zero', y: '14/12/2025' });
+  });
+
+  it('positional source on raw 2D array (item is array)', () => {
+    // When the input wasn't run through rows_to_objects, item is an array.
+    // Positional access via item[N] is the natural path.
+    const row = ['14/12/2025', 'Lead 1', 'Company 1'];
+    const out = applyFieldMapping([row], { date: '0', name: '1', co: '2' });
+    expect(out[0]).toEqual({ date: '14/12/2025', name: 'Lead 1', co: 'Company 1' });
+  });
+
+  it('out-of-range positional source → undefined for that field', () => {
+    const out = applyFieldMapping([LEADS_ROW], { date: '0', extra: '99' });
+    expect(out[0]).toEqual({ date: '14/12/2025', extra: undefined });
+  });
+
+  it('all-named mapping (canonical / preferred) — produces objects, no positional fallback', () => {
+    const out = applyFieldMapping([LEADS_ROW], {
+      date: 'Date',
+      lead_name: 'Lead Name',
+      stage: 'Stage',
+    });
+    expect(out[0]).toEqual({
+      date: '14/12/2025',
+      lead_name: 'Lead 1',
+      stage: '4',
+    });
   });
 });
