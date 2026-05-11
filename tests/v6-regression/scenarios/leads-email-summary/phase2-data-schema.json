@@ -1,0 +1,217 @@
+{
+  "slots": {
+    "raw_leads_data": {
+      "schema": {
+        "type": "object",
+        "source": "plugin",
+        "properties": {
+          "range": {
+            "type": "string",
+            "source": "plugin",
+            "description": "The actual range that was read (may differ from requested)",
+            "required": true
+          },
+          "values": {
+            "type": "array",
+            "source": "plugin",
+            "description": "2D array of cell values (rows of cells)",
+            "items": {
+              "type": "array",
+              "source": "plugin",
+              "items": {
+                "type": "string",
+                "source": "plugin"
+              }
+            },
+            "required": true
+          },
+          "row_count": {
+            "type": "number",
+            "source": "plugin",
+            "description": "Number of rows returned",
+            "required": true
+          },
+          "column_count": {
+            "type": "number",
+            "source": "plugin",
+            "description": "Number of columns returned"
+          },
+          "major_dimension": {
+            "type": "string",
+            "source": "plugin",
+            "description": "How data is organized (ROWS or COLUMNS)"
+          },
+          "retrieved_at": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Timestamp when data was retrieved (ISO 8601)"
+          }
+        }
+      },
+      "scope": "global",
+      "produced_by": "read_leads_data",
+      "consumed_by": [
+        "parse_leads_with_headers"
+      ]
+    },
+    "lead_records": {
+      "schema": {
+        "type": "array",
+        "source": "ai_declared",
+        "items": {
+          "type": "object",
+          "source": "ai_declared",
+          "properties": {
+            "Date": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "Lead Name": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "Company": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "Email": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "Phone": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "Stage": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "Notes": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "Sales Person": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            }
+          }
+        }
+      },
+      "scope": "global",
+      "produced_by": "parse_leads_with_headers",
+      "consumed_by": [
+        "filter_stage_4_leads"
+      ]
+    },
+    "qualified_leads": {
+      "schema": {
+        "type": "array",
+        "source": "inferred",
+        "items": {
+          "type": "object",
+          "source": "ai_declared",
+          "properties": {
+            "Date": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "Lead Name": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "Company": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "Email": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "Phone": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "Stage": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "Notes": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "Sales Person": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            }
+          }
+        }
+      },
+      "scope": "global",
+      "produced_by": "filter_stage_4_leads",
+      "consumed_by": [
+        "count_qualified_leads",
+        "generate_email_content"
+      ]
+    },
+    "qualified_count": {
+      "schema": {
+        "type": "number",
+        "description": "Count of qualified_count",
+        "source": "inferred"
+      },
+      "scope": "global",
+      "produced_by": "count_qualified_leads",
+      "consumed_by": [
+        "generate_email_content"
+      ]
+    },
+    "lead_metrics": {
+      "schema": {
+        "type": "number",
+        "description": "Count of qualified_count",
+        "source": "inferred"
+      },
+      "scope": "global",
+      "produced_by": "count_qualified_leads"
+    },
+    "email_content": {
+      "schema": {
+        "type": "object",
+        "properties": {
+          "subject": {
+            "type": "string",
+            "source": "ai_declared",
+            "description": "Email subject line"
+          },
+          "body": {
+            "type": "string",
+            "source": "ai_declared",
+            "description": "Complete HTML email body with either a styled leads table or a none-found message"
+          }
+        },
+        "source": "ai_declared"
+      },
+      "scope": "global",
+      "produced_by": "generate_email_content",
+      "consumed_by": [
+        "send_leads_email"
+      ]
+    }
+  }
+}

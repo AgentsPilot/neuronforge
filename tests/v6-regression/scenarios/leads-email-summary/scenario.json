@@ -1,13 +1,14 @@
 {
   "name": "High-Qualified Leads Email Summary",
-  "description": "Read Google Sheets leads tab, filter by Stage=4, render HTML summary table, email to recipient list",
+  "description": "Read Google Sheets leads tab, deterministic field-name map (post-WP-SR rows_to_objects + WP-28 source-side positional fallback for bare numeric keys), filter by Stage=4, AI generate HTML summary table (or 'no data' fallback), send summary email to recipient list. Tests Sheets-to-objects conversion + filter + AI HTML rendering. Prerequisite: destination sheet has a header row (WP-26 workaround).",
   "created": "2026-05-10",
-  "plugins": ["google-mail", "google-sheets", "chatgpt-research"],
+  "plugins": ["google-mail", "google-sheets"],
   "expected": {
-    "min_steps": 6,
+    "min_steps": 7,
     "step_types": ["action", "transform", "ai_processing"],
     "phase_a_checks": 14,
     "phase_d_success": true,
-    "phase_e_success": true
+    "phase_e_success": true,
+    "phase_e_success_timestamp": "2026-05-11T07:05:34Z"
   }
 }

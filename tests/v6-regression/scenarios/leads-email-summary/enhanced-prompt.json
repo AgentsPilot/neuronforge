@@ -4,7 +4,7 @@
     "sections": {
         "data": [
             "- Read lead rows from the Google Sheets spreadsheet with ID \"1RHLbBXzrKv24gNgp7a4Lr7RlMIrP9fjacfGWjhPAbOE\".",
-            "- Read lead rows from the tab named \"Leads Tab\".",
+            "- Read lead rows from the tab named \"Leads\" Tab.",
             "- Treat the first row as the header row.",
             "- Locate columns by these exact header names: Date, Lead Name, Company, Email, Phone, Stage, Notes, Sales Person.",
             "- Use the full set of populated rows beneath the header row as the candidate lead records."
@@ -53,7 +53,7 @@
             },
             {
                 "key": "google_sheets__table_read__sheet_tab_name",
-                "value": "Leads Tab"
+                "value": "Leads"
             },
             {
                 "key": "google_sheets__table_read__header_row",
