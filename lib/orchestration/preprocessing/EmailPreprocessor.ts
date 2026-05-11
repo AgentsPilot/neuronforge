@@ -88,31 +88,90 @@ export class EmailPreprocessor {
   }
 
   /**
-   * Remove email signatures, disclaimers, and other noise
+   * Remove email signatures, disclaimers, and other noise.
+   *
+   * For LLM prompts, we truncate large bodies to reduce token usage:
+   * - HTML is stripped from body content (extracts plain text)
+   * - Body is truncated to MAX_BODY_LENGTH chars (sufficient for classification/filtering)
+   * - Full body is preserved in _fullBody for downstream steps that need it (e.g., storing to spreadsheet)
+   * - Signatures, disclaimers, and quoted replies are removed first
    */
+  private static readonly MAX_BODY_LENGTH = 500; // Truncate bodies longer than this (reduced for token efficiency)
+
   private static removeNoise(emails: any[]): any[] {
     return emails.map(email => {
       if (!email.body && !email.snippet) {
         return email;
       }
 
-      let body = email.body || email.snippet || '';
+      const originalBody = email.body || '';
+      const snippet = email.snippet || '';
 
-      // Remove common signature patterns
-      body = this.removeSignatures(body);
+      // Strip HTML tags first (many emails are HTML formatted)
+      let cleanedBody = this.stripHtml(originalBody);
 
-      // Remove email disclaimers
-      body = this.removeDisclaimers(body);
+      // Clean the body of noise (signatures, disclaimers, quoted replies)
+      if (cleanedBody) {
+        cleanedBody = this.removeSignatures(cleanedBody);
+        cleanedBody = this.removeDisclaimers(cleanedBody);
+        cleanedBody = this.removeQuotedReplies(cleanedBody);
+        cleanedBody = cleanedBody.trim();
+      }
 
-      // Remove quoted replies (lines starting with >)
-      body = this.removeQuotedReplies(body);
+      // Truncate if still too large after cleaning
+      const needsTruncation = cleanedBody.length > this.MAX_BODY_LENGTH;
+      const truncatedBody = needsTruncation
+        ? cleanedBody.substring(0, this.MAX_BODY_LENGTH) + '... [truncated]'
+        : cleanedBody;
+
+      // Clean snippet too (usually already plain text but apply same cleaning)
+      let cleanedSnippet = this.stripHtml(snippet);
+      cleanedSnippet = this.removeSignatures(cleanedSnippet);
+      cleanedSnippet = this.removeDisclaimers(cleanedSnippet);
+      cleanedSnippet = this.removeQuotedReplies(cleanedSnippet);
+
+      // For LLM: use snippet if available (it's already a summary), otherwise use truncated body
+      const llmBody = cleanedSnippet.trim() || truncatedBody;
 
       return {
         ...email,
-        body: body.trim(),
-        _originalBodyLength: (email.body || email.snippet || '').length,
+        // Use cleaned body for LLM (prefer snippet, fallback to truncated body)
+        body: llmBody,
+        snippet: cleanedSnippet.trim(),
+        // Preserve full body for downstream steps that need complete content
+        _fullBody: needsTruncation ? originalBody : undefined,
+        _originalBodyLength: originalBody.length,
       };
     });
+  }
+
+  /**
+   * Strip HTML tags and decode HTML entities to get plain text
+   */
+  private static stripHtml(html: string): string {
+    if (!html) return '';
+
+    // Remove script and style tags with their content
+    let text = html.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '');
+    text = text.replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '');
+
+    // Remove HTML tags
+    text = text.replace(/<[^>]+>/g, ' ');
+
+    // Decode common HTML entities
+    text = text.replace(/&nbsp;/gi, ' ');
+    text = text.replace(/&amp;/gi, '&');
+    text = text.replace(/&lt;/gi, '<');
+    text = text.replace(/&gt;/gi, '>');
+    text = text.replace(/&quot;/gi, '"');
+    text = text.replace(/&#39;/gi, "'");
+    text = text.replace(/&#x27;/gi, "'");
+    text = text.replace(/&apos;/gi, "'");
+
+    // Collapse multiple whitespace into single space
+    text = text.replace(/\s+/g, ' ');
+
+    return text.trim();
   }
 
   /**

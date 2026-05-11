@@ -132,9 +132,10 @@ export function CalibrationSetup({
       if (Array.isArray(agent.input_schema)) {
         // Array format: [{name, type, default_value, ...}]
         for (const field of agent.input_schema) {
-          // Only use default_value if no value provided in initialInputValues
-          if (field.default_value !== undefined && values[field.name] === undefined) {
-            values[field.name] = field.default_value;
+          // Only use default/default_value if no value provided in initialInputValues
+          const defaultVal = field.default_value ?? field.default;
+          if (defaultVal !== undefined && values[field.name] === undefined) {
+            values[field.name] = defaultVal;
           }
         }
         console.log('[CalibrationSetup] Initialized inputValues from array input_schema:', values);
@@ -159,6 +160,7 @@ export function CalibrationSetup({
   const [progress, setProgress] = useState(0)
   const [currentStep, setCurrentStep] = useState('')
   const [hasStarted, setHasStarted] = useState(false)
+  const [hasCompleted, setHasCompleted] = useState(false) // Track when test actually finished
   const [isWaitingForConfig, setIsWaitingForConfig] = useState(false)
   const [currentIssueIndex, setCurrentIssueIndex] = useState(0)
   const [isFixingMode, setIsFixingMode] = useState(false)
@@ -203,7 +205,14 @@ export function CalibrationSetup({
 
     if (Array.isArray(agent.input_schema)) {
       console.log('[CalibrationSetup] Input schema is already array format, length:', agent.input_schema.length)
+      // Normalize: ensure default_value is set (some schemas use 'default' instead)
+      // Also filter out any invalid entries without a name
       baseSchema = agent.input_schema
+        .filter((field: any) => field && field.name)
+        .map((field: any) => ({
+          ...field,
+          default_value: field.default_value ?? field.default
+        }))
     } else if (typeof agent.input_schema === 'object') {
       // Convert object format {key: value} to array format [{name, type, ...}]
       baseSchema = Object.keys(agent.input_schema).map(key => {
@@ -292,8 +301,8 @@ export function CalibrationSetup({
       console.log('[CalibrationSetup] schemaMetadata keys:', Object.keys(schemaMetadata))
     }
 
-    if (!schemaMetadata) {
-      console.log('[CalibrationSetup] No schemaMetadata, returning null')
+    if (!fieldName || !schemaMetadata) {
+      console.log('[CalibrationSetup] No fieldName or schemaMetadata, returning null')
       return null
     }
 
@@ -670,6 +679,7 @@ export function CalibrationSetup({
       })
     } else if (!isRunning && hasStarted && issues) {
       // Test completed - add summary message
+      setHasCompleted(true) // Mark test as actually completed
       const totalIssues = issues.critical.length + issues.warnings.length
       setTimeout(() => {
         if (totalIssues === 0) {
@@ -804,6 +814,7 @@ export function CalibrationSetup({
   // Debug logging for right column state
   console.log('[CalibrationSetup] Right column state:', {
     hasStarted,
+    hasCompleted,
     isRunning,
     hasIssues,
     totalIssues,
@@ -1393,6 +1404,7 @@ export function CalibrationSetup({
                                 }))
                               }}
                               getDynamicOptions={getDynamicOptions}
+                              allRequired={true}
                             />
                           </div>
                         </Card>
@@ -1540,6 +1552,7 @@ export function CalibrationSetup({
                                       }))
                                     }}
                                     getDynamicOptions={getConfigDynamicOptions}
+                                    allRequired={true}
                                   />
 
                                   <button
@@ -1774,18 +1787,18 @@ export function CalibrationSetup({
                                     }))
                                   }}
                                   getDynamicOptions={getDynamicOptions}
+                                  allRequired={true}
                                 />
 
-                                {/* Run button - disabled until all required fields are filled */}
+                                {/* Run button - disabled until all fields are filled */}
                                 <button
                                   onClick={() => {
                                     onRun(inputValues)
                                     setHasStarted(true)
                                   }}
                                   disabled={(() => {
-                                    // Check if all required parameters have values
-                                    const requiredParams = inputSchemaArray.filter((p: any) => p.required)
-                                    return requiredParams.some((p: any) => {
+                                    // All input fields are mandatory for calibration test
+                                    return inputSchemaArray.some((p: any) => {
                                       const value = inputValues[p.name]
                                       return value === undefined || value === '' || value === null
                                     })
@@ -1881,6 +1894,7 @@ export function CalibrationSetup({
                                       }))
                                     }}
                                     getDynamicOptions={getConfigDynamicOptions}
+                                    allRequired={true}
                                   />
 
                                   {/* Save & Continue button */}
@@ -2035,23 +2049,26 @@ export function CalibrationSetup({
             </div>
 
             <div className="flex-1 p-6 overflow-y-auto" style={{ scrollbarGutter: 'stable' }}>
-              {!hasStarted || isWaitingForConfig ? (
-                // Before test or waiting for config
+              {!hasStarted || isWaitingForConfig || (!hasCompleted && !isRunning) ? (
+                // Before test, waiting for config, or waiting for user to submit input form
                 <div className="flex flex-col items-center justify-center h-full text-center">
                   <div className="w-16 h-16 rounded-full bg-[var(--v2-surface-hover)] flex items-center justify-center mb-4">
                     <AlertCircle className="w-8 h-8 text-[var(--v2-text-tertiary)]" />
                   </div>
                   <p className="text-sm text-[var(--v2-text-secondary)]">
-                    {isWaitingForConfig ? 'Complete configuration to start test' : 'Start the test to see issues'}
+                    {isWaitingForConfig ? 'Complete configuration to start test' :
+                     !hasCompleted && !isRunning ? 'Fill in the input values and run the test' :
+                     'Start the test to see issues'}
                   </p>
                 </div>
-              ) : !hasIssues && !isRunning ? (
+              ) : !hasIssues && hasCompleted ? (
                 // No issues found - Success state
                 (() => {
                   console.log('[CalibrationSetup RIGHT COLUMN] Success state render:', {
                     hasIssues,
                     isRunning,
                     hasStarted,
+                    hasCompleted,
                     productionReady: agent.production_ready
                   })
                   // Calculate summary data

@@ -49,6 +49,7 @@ import { IssueCollector } from './shadow/IssueCollector';
 import { FailureClassifier } from './shadow/FailureClassifier';
 import { ExecutionSummaryCollector } from './shadow/ExecutionSummaryCollector';
 import { systemConfigRepository } from '@/lib/repositories/SystemConfigRepository';
+import { DataPreprocessor } from '@/lib/orchestration/preprocessing/DataPreprocessor';
 
 // Create module-level logger for structured logging to dev.log
 const logger = createLogger({ module: 'StepExecutor', service: 'workflow-pilot' });
@@ -1393,6 +1394,41 @@ export class StepExecutor {
 
     const contextSummary = this.buildContextSummary(context);
 
+    // Preprocess data to reduce token usage before sending to LLM.
+    // This strips large fields (e.g., full email bodies) that aren't needed for LLM analysis.
+    // The original data remains in context for downstream steps that need complete content.
+    let preprocessedParams = enrichedParams;
+    if (step.type === 'ai_processing') {
+      try {
+        // Log input size before preprocessing
+        const inputSize = JSON.stringify(enrichedParams).length;
+        logger.info(
+          { stepId: step.id, inputSizeChars: inputSize },
+          '[Preprocessing] Input size before preprocessing'
+        );
+
+        const preprocessResult = await DataPreprocessor.preprocess(enrichedParams, {
+          removeNoise: true,
+          extractMetadata: false, // Skip metadata extraction for performance
+          normalizeData: false,   // Skip normalization - we just want to strip large fields
+          deduplicate: false,
+        });
+        if (preprocessResult.success) {
+          preprocessedParams = preprocessResult.cleanedInput;
+          const outputSize = JSON.stringify(preprocessedParams).length;
+          const savings = inputSize - outputSize;
+          const savingsPercent = inputSize > 0 ? ((savings / inputSize) * 100).toFixed(1) : '0';
+          logger.info(
+            { stepId: step.id, inputSizeChars: inputSize, outputSizeChars: outputSize, savingsChars: savings, savingsPercent },
+            `[Preprocessing] Reduced input by ${savingsPercent}% (${savings} chars saved)`
+          );
+        }
+      } catch (preprocessError) {
+        // Non-fatal: continue with original params if preprocessing fails
+        logger.warn({ err: preprocessError, stepId: step.id }, 'Data preprocessing failed, using original params');
+      }
+    }
+
     // WP-13: Guard ai_processing steps against hallucination when their input is
     // empty. Without this guard, an LLM asked to "create an HTML table of
     // delivery updates" will fabricate plausible rows when handed an empty
@@ -1405,7 +1441,7 @@ export class StepExecutor {
     //          to the prompt. Defence in depth for cases where the input is
     //          technically non-empty but contains no usable data.
     if (step.type === 'ai_processing') {
-      const emptyCheck = this.detectEmptyAIProcessingInput(enrichedParams, step);
+      const emptyCheck = this.detectEmptyAIProcessingInput(preprocessedParams, step);
       if (emptyCheck.isEmpty) {
         logger.warn(
           { stepId: step.id, reason: emptyCheck.reason },
@@ -1423,7 +1459,7 @@ export class StepExecutor {
     const { fullPrompt, isVisionMode } = await this.buildLLMPrompt(
       prompt,
       contextSummary,
-      enrichedParams
+      preprocessedParams
     );
 
     // Vision mode warning: runAgentKit doesn't support multimodal content

@@ -23,13 +23,14 @@ export interface QueryComponent {
 }
 
 export interface QueryValidationRule {
-  type: 'date_range_conflict' | 'required_dependency' | 'conflicting_flags' | 'at_least_one_required';
+  type: 'date_range_conflict' | 'required_dependency' | 'conflicting_flags' | 'at_least_one_required' | 'required_field';
   fields: string[];
   message: string;
   // For date_range_conflict: compares two date fields to ensure valid range
   // For required_dependency: ensures field B is set when field A is set
   // For conflicting_flags: warns when both boolean fields are set (unlikely to return results)
   // For at_least_one_required: warns when none of the specified fields have values
+  // For required_field: ensures the field is set (prevents empty queries that fetch all data)
 }
 
 export interface QueryComponentsConfig {
@@ -59,6 +60,11 @@ export function parseQueryToComponents(
   config: QueryComponentsConfig
 ): Record<string, string | boolean> {
   const result: Record<string, string | boolean> = {};
+
+  // Handle null/undefined/empty query
+  if (!query) {
+    return result;
+  }
 
   for (const component of config.components) {
     // Skip operator fields during initial parse - they're derived from the main field
@@ -295,6 +301,11 @@ const gmailQueryConfig: QueryComponentsConfig = {
   ],
   validationRules: [
     {
+      type: 'required_field',
+      fields: ['newer_than'],
+      message: 'A time period is required to prevent fetching too many emails. Please select how far back to search (e.g., "1 Week", "1 Month").'
+    },
+    {
       type: 'date_range_conflict',
       fields: ['newer_than', 'older_than'],
       message: 'Invalid date range: "Newer Than" must be a longer period than "Older Than" to create a valid range. For example, "Newer Than 30 days" + "Older Than 7 days" finds emails between 7-30 days old.'
@@ -306,8 +317,8 @@ const gmailQueryConfig: QueryComponentsConfig = {
     },
     {
       type: 'at_least_one_required',
-      fields: ['subject', 'from', 'to', 'has_attachment', 'newer_than', 'older_than', 'is_unread', 'is_starred', 'label', 'in_folder'],
-      message: 'Please specify at least one search criterion (subject, sender, date range, etc.) to filter emails.'
+      fields: ['subject', 'from', 'to', 'has_attachment', 'older_than', 'is_unread', 'is_starred', 'label', 'in_folder'],
+      message: 'Please specify at least one additional search criterion (subject, sender, etc.) to filter emails.'
     }
   ],
   examples: [
@@ -421,14 +432,19 @@ const outlookQueryConfig: QueryComponentsConfig = {
   ],
   validationRules: [
     {
+      type: 'required_field',
+      fields: ['from_date'],
+      message: 'A "From Date" is required to prevent fetching too many emails. Please specify how far back to search.'
+    },
+    {
       type: 'date_range_conflict',
       fields: ['from_date', 'to_date'],
       message: 'Invalid date range: "From Date" must be before "To Date".'
     },
     {
       type: 'at_least_one_required',
-      fields: ['search_query', 'has_attachments', 'is_read', 'importance', 'from_date', 'to_date'],
-      message: 'Please specify at least one search criterion (keywords, attachments, read status, etc.) to filter emails.'
+      fields: ['search_query', 'has_attachments', 'is_read', 'importance', 'to_date'],
+      message: 'Please specify at least one additional search criterion (keywords, attachments, read status, etc.) to filter emails.'
     }
   ],
   examples: [
@@ -951,6 +967,22 @@ export function validateQueryComponents(
         });
 
         if (!anyFieldSet) {
+          errors.push({
+            type: rule.type,
+            fields: rule.fields,
+            message: rule.message
+          });
+        }
+        break;
+      }
+
+      case 'required_field': {
+        // Check if the required field has a value (prevents empty queries that fetch all data)
+        const [requiredField] = rule.fields;
+        const value = components[requiredField];
+        const hasValue = typeof value === 'boolean' ? value : (typeof value === 'string' && value.trim().length > 0);
+
+        if (!hasValue) {
           errors.push({
             type: rule.type,
             fields: rule.fields,

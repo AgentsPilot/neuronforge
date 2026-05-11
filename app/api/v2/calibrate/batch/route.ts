@@ -243,7 +243,7 @@ export async function POST(req: NextRequest) {
       agentId,
       step2ConfigKeys: step2Debug?.config ? Object.keys(step2Debug.config) : [],
       step2Field: step2Debug?.config?.field,
-      step2ConfigRaw: JSON.stringify(step2Debug?.config).substring(0, 200)
+      step2ConfigRaw: (JSON.stringify(step2Debug?.config) || '').substring(0, 200)
     }, '[DEBUG] Step2 config BEFORE any validation');
 
     logger.info({ sessionId, agentId }, '[Layer 1 Enhanced] Running multi-step structural detection (pre-repair)');

@@ -366,37 +366,47 @@ export function QueryComponentsField({
   const otherComponents = config.components.filter((c) => c.type !== 'boolean' && !c.key.endsWith('_operator'));
 
   return (
-    <div className="space-y-2">
-      {/* Header with expand/collapse */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-1.5">
-          <Sparkles className="w-3 h-3 text-[var(--v2-primary)]" />
-          <span className="text-xs font-medium text-gray-700 dark:text-gray-300">
-            {label || 'Search Builder'}
-          </span>
+    <div className="space-y-0">
+      {/* Emphasized Header */}
+      <div
+        className={cn(
+          "flex items-center justify-between px-3 py-2.5 rounded-t-lg",
+          "bg-gradient-to-r from-indigo-500/10 via-purple-500/10 to-indigo-500/10",
+          "dark:from-indigo-500/20 dark:via-purple-500/20 dark:to-indigo-500/20",
+          "border border-b-0 border-indigo-200 dark:border-indigo-800/50"
+        )}
+      >
+        <div className="flex items-center gap-2">
+          <div className="p-1.5 rounded-md bg-indigo-500/20 dark:bg-indigo-500/30">
+            <Sparkles className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
+          </div>
+          <div>
+            <span className="text-xs font-semibold text-indigo-700 dark:text-indigo-300">
+              {label || 'Search Builder'}
+            </span>
+            {description && (
+              <p className="text-[10px] text-indigo-600/70 dark:text-indigo-400/70">{description}</p>
+            )}
+          </div>
         </div>
         <button
           type="button"
           onClick={() => setIsExpanded(!isExpanded)}
-          className="p-1 hover:bg-gray-100 dark:hover:bg-gray-700 rounded transition-colors"
+          className="p-1.5 hover:bg-indigo-100 dark:hover:bg-indigo-900/30 rounded-md transition-colors"
         >
           {isExpanded ? (
-            <ChevronUp className="w-3.5 h-3.5 text-gray-500" />
+            <ChevronUp className="w-4 h-4 text-indigo-500 dark:text-indigo-400" />
           ) : (
-            <ChevronDown className="w-3.5 h-3.5 text-gray-500" />
+            <ChevronDown className="w-4 h-4 text-indigo-500 dark:text-indigo-400" />
           )}
         </button>
       </div>
 
-      {description && (
-        <p className="text-[10px] text-gray-500 dark:text-gray-400">{description}</p>
-      )}
-
       {isExpanded && (
         <div
           className={cn(
-            'rounded border border-gray-200 dark:border-gray-700 p-3 space-y-3',
-            'bg-gray-50 dark:bg-gray-800/50'
+            'rounded-b-lg border border-t-0 border-indigo-200 dark:border-indigo-800/50 p-4 space-y-4',
+            'bg-gradient-to-b from-indigo-50/50 to-white dark:from-indigo-950/20 dark:to-gray-900/50'
           )}
         >
           {/* Text and select components */}
@@ -406,7 +416,10 @@ export function QueryComponentsField({
 
           {/* Boolean toggles */}
           {booleanComponents.length > 0 && (
-            <div className="border-t border-gray-200 dark:border-gray-700 pt-3">
+            <div className="border-t border-indigo-100 dark:border-indigo-900/50 pt-3">
+              <span className="text-[10px] font-medium text-indigo-600/70 dark:text-indigo-400/70 uppercase tracking-wide mb-2 block">
+                Filters
+              </span>
               <div className="grid gap-1 grid-cols-1">
                 {booleanComponents.map(renderComponent)}
               </div>
@@ -419,7 +432,7 @@ export function QueryComponentsField({
               {validationErrors.map((error, idx) => (
                 <div
                   key={idx}
-                  className="flex items-start gap-1.5 p-2 rounded bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800"
+                  className="flex items-start gap-1.5 p-2 rounded-md bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800"
                 >
                   <AlertTriangle className="w-3.5 h-3.5 text-red-500 flex-shrink-0 mt-0.5" />
                   <span className="text-[10px] text-red-700 dark:text-red-400">
@@ -431,15 +444,15 @@ export function QueryComponentsField({
           )}
 
           {/* Show generated query */}
-          <div className="border-t border-gray-200 dark:border-gray-700 pt-3">
-            <span className="text-[10px] text-gray-500 dark:text-gray-400">
+          <div className="border-t border-indigo-100 dark:border-indigo-900/50 pt-3">
+            <span className="text-[10px] font-medium text-indigo-600/70 dark:text-indigo-400/70 uppercase tracking-wide">
               Generated Query
             </span>
             <div className={cn(
-              "mt-1 p-1.5 rounded bg-white dark:bg-gray-800 border text-[10px] font-mono break-all",
+              "mt-1.5 p-2 rounded-md border text-[10px] font-mono break-all",
               validationErrors.length > 0
-                ? "border-red-300 dark:border-red-700 text-red-600 dark:text-red-400"
-                : "border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-400"
+                ? "bg-red-50 dark:bg-red-900/20 border-red-300 dark:border-red-700 text-red-600 dark:text-red-400"
+                : "bg-indigo-50/50 dark:bg-indigo-950/30 border-indigo-200 dark:border-indigo-800/50 text-indigo-700 dark:text-indigo-300"
             )}>
               {value || '(empty)'}
             </div>

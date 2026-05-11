@@ -37,6 +37,8 @@ interface AgentInputFieldsProps {
   } | null
   // Optional: Custom wrapper className (e.g., for grid layout)
   wrapperClassName?: string
+  // Optional: Mark all fields as required (for calibration)
+  allRequired?: boolean
 }
 
 // Transform field name to Title Case
@@ -204,7 +206,8 @@ export function AgentInputFields({
   onChange,
   errors = {},
   getDynamicOptions,
-  wrapperClassName = 'space-y-3'
+  wrapperClassName = 'space-y-3',
+  allRequired = false
 }: AgentInputFieldsProps) {
   console.log('[AgentInputFields] Received props:', {
     schemaFields: schema.map(s => s.name),
@@ -363,7 +366,7 @@ export function AgentInputFields({
               <span className="text-xs font-medium text-gray-700 dark:text-gray-300">
                 {field.label || formatFieldName(field.name)}
               </span>
-              {field.required && (
+              {(field.required || allRequired) && (
                 <span className="text-red-500 dark:text-red-400 text-xs">*</span>
               )}
             </div>
@@ -404,7 +407,7 @@ export function AgentInputFields({
               <span className="text-xs font-medium text-gray-700 dark:text-gray-300">
                 {field.label || formatFieldName(field.name)}
               </span>
-              {field.required && (
+              {(field.required || allRequired) && (
                 <span className="text-red-500 dark:text-red-400 text-xs">*</span>
               )}
             </div>

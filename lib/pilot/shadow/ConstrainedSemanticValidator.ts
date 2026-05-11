@@ -1246,21 +1246,31 @@ Output format:
         step.dependencies = [];
       }
 
-      // Extract all variable references from input (e.g., {{pdf_attachments}}, {{matching_emails}})
+      // Extract all variable references from input (e.g., {{pdf_attachments}}, {{existing_sheet_rows.values}})
       const referencedVars = new Set<string>();
 
-      if (step.input && typeof step.input === 'string') {
-        const varMatches = step.input.matchAll(/\{\{\s*(\w+)\s*\}\}/g);
-        for (const match of varMatches) {
-          referencedVars.add(match[1]);
+      if (step.input) {
+        if (typeof step.input === 'string') {
+          // Match {{variable}} or {{variable.path}} - capture root variable name only
+          const varMatches = step.input.matchAll(/\{\{\s*(\w+)(?:\.[^}]*)?\s*\}\}/g);
+          for (const match of varMatches) {
+            referencedVars.add(match[1]);
+          }
+        } else if (typeof step.input === 'object') {
+          // Handle object input like { candidate_rows: "{{candidate_rows}}", ... }
+          this.extractVariableReferences(step.input, referencedVars);
         }
       }
 
       // For scatter_gather steps, also check scatter.input
       if (step.type === 'scatter_gather' && step.scatter?.input) {
-        const varMatches = step.scatter.input.matchAll(/\{\{\s*(\w+)\s*\}\}/g);
-        for (const match of varMatches) {
-          referencedVars.add(match[1]);
+        if (typeof step.scatter.input === 'string') {
+          const varMatches = step.scatter.input.matchAll(/\{\{\s*(\w+)(?:\.[^}]*)?\s*\}\}/g);
+          for (const match of varMatches) {
+            referencedVars.add(match[1]);
+          }
+        } else if (typeof step.scatter.input === 'object') {
+          this.extractVariableReferences(step.scatter.input, referencedVars);
         }
       }
 
@@ -1309,13 +1319,15 @@ Output format:
    *
    * Scans params/config objects to find all {{variable}} references
    * Example: { body: "{{digest_content}}", to: "yael@example.com" } → extracts "digest_content"
+   * Example: { values: "{{existing_sheet_rows.values}}" } → extracts "existing_sheet_rows"
    */
   private extractVariableReferences(obj: any, referencedVars: Set<string>): void {
     if (typeof obj === 'string') {
-      // Extract variable references like {{variable_name}}
-      const varMatches = obj.matchAll(/\{\{\s*(\w+)\s*\}\}/g);
+      // Extract variable references like {{variable_name}} or {{variable_name.path.to.field}}
+      // Capture the ROOT variable name (before any dots) - this is what we need for dependencies
+      const varMatches = obj.matchAll(/\{\{\s*(\w+)(?:\.[^}]*)?\s*\}\}/g);
       for (const match of varMatches) {
-        referencedVars.add(match[1]);
+        referencedVars.add(match[1]); // Only add the root variable name
       }
     } else if (Array.isArray(obj)) {
       // Recursively check array items

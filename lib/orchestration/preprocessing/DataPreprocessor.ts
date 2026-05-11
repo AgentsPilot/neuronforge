@@ -40,6 +40,12 @@ export class DataPreprocessor {
       console.log(`[DataPreprocessor] Unwrapped step output: ${stepKeys[0]}`);
     }
 
+    // Unwrap 'input' wrapper (common in ai_processing steps: {input: [...data...]})
+    if (unwrappedData?.input && !unwrappedData.emails && !unwrappedData.contacts) {
+      unwrappedData = unwrappedData.input;
+      console.log(`[DataPreprocessor] Unwrapped 'input' wrapper`);
+    }
+
     // Detect data type
     const dataType = this.detectDataType(unwrappedData);
 
