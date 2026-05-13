@@ -1534,6 +1534,31 @@ export class IntentToIRConverter {
     ctx: ConversionContext,
     inputVar: string
   ): any {
+    // WP-33: tolerate template-string expressions. The LLM sometimes emits
+    // `expression: "{{var.field}}"` (the syntax that works for `step.input`,
+    // condition values, recipients, etc.) instead of the structured
+    // `{kind: "ref", ref: "var", field: "field"}` the W2 grammar specifies.
+    // Without this conversion the string survives into phase4, `resolveAllVariables`
+    // pre-substitutes it to a primitive, and the runtime evaluator throws
+    // INVALID_EXPRESSION because it expects an AST node.
+    if (typeof expr === 'string') {
+      const m = expr.match(/^\s*\{\{\s*([\w$]+)(?:\.([\w$][\w$.]*))?\s*\}\}\s*$/)
+      if (m) {
+        const ref = m[1]
+        const fieldPath = m[2]
+        if (ref === 'input' && fieldPath) {
+          return { kind: 'config', key: fieldPath }
+        }
+        // Apply the same `ref === inputVar → "item"` rewrite the structured path does.
+        const normalizedRef = ref === inputVar ? 'item' : ref
+        return fieldPath
+          ? { kind: 'ref', ref: normalizedRef, field: fieldPath }
+          : { kind: 'ref', ref: normalizedRef }
+      }
+      // Plain non-template string → literal value.
+      return { kind: 'literal', value: expr }
+    }
+
     if (expr == null || typeof expr !== 'object' || typeof expr.kind !== 'string') {
       return expr
     }

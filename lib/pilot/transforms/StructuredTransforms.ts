@@ -272,6 +272,45 @@ export function transformSetDifference(
 // ============================================================
 
 /**
+ * WP-33: Normalize a string-form expression to the structured AST shape
+ * `evaluateExpression` requires.
+ *
+ * Two cases:
+ *   (a) Template form `"{{ref}}"` or `"{{ref.field}}"` (or `"{{input.K}}"`)
+ *       → parse into the structured equivalent and let the runtime resolver
+ *         pick up cross-slot / config values via `context.resolveVariable`.
+ *   (b) Plain string (no `{{}}` syntax) → an already-resolved literal
+ *       (typically the result of `resolveAllVariables` pre-substitution).
+ *       Wrap as `{kind: "literal", value: <string>}`.
+ *
+ * Strings are the only non-structured form we tolerate — other primitives
+ * (number, boolean, etc.) still throw, matching the original strict contract.
+ *
+ * Surfaces fixed: `with_fields.fields[].expression` (LLM commonly emits the
+ * template-string form because every other surface — `step.input`,
+ * `condition.value`, recipient lists — accepts `{{...}}`). Defense-in-depth
+ * companion to the IR converter's pre-compile normalization.
+ */
+export function normalizeStringExpression(s: string): any {
+  // Match {{<ref>}} or {{<ref>.<dotted.path>}}; whitespace tolerated.
+  const m = s.match(/^\s*\{\{\s*([\w$]+)(?:\.([\w$][\w$.]*))?\s*\}\}\s*$/);
+  if (m) {
+    const ref = m[1];
+    const fieldPath = m[2]; // may be undefined, single segment, or dotted
+    if (ref === 'input' && fieldPath) {
+      // `{{input.X}}` is the config-namespace convention used elsewhere.
+      return { kind: 'config', key: fieldPath };
+    }
+    if (fieldPath) {
+      return { kind: 'ref', ref, field: fieldPath };
+    }
+    return { kind: 'ref', ref };
+  }
+  // No {{}} syntax → already-resolved literal value.
+  return { kind: 'literal', value: s };
+}
+
+/**
  * Evaluate an `Expression` AST against a current item + execution context.
  * Closed vocabulary (10 op kinds). Any unknown kind is a hard failure.
  *
@@ -286,6 +325,13 @@ export function evaluateExpression(
   context: IExpressionContext,
   evaluator: IConditionEvaluator
 ): any {
+  // WP-33: tolerate string-form expressions (template `"{{var.field}}"` or
+  // already-resolved literal). Strings are the only non-structured shape
+  // accepted; everything else still throws.
+  if (typeof expr === 'string') {
+    expr = normalizeStringExpression(expr);
+  }
+
   if (expr == null || typeof expr !== 'object' || typeof expr.kind !== 'string') {
     throw new StructuredTransformError(
       `evaluateExpression: invalid expression (must be {kind, ...}): ${JSON.stringify(expr)?.slice(0, 200)}`,

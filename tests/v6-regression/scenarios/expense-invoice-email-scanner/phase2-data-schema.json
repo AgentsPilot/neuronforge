@@ -1,0 +1,719 @@
+{
+  "slots": {
+    "matching_emails": {
+      "schema": {
+        "type": "object",
+        "source": "plugin",
+        "description": "Search results with email details",
+        "properties": {
+          "emails": {
+            "type": "array",
+            "source": "plugin",
+            "description": "Array of matching emails",
+            "items": {
+              "type": "object",
+              "source": "plugin",
+              "semantic_type": "email_message",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "Gmail message ID"
+                },
+                "thread_id": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "Gmail thread ID"
+                },
+                "subject": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "Email subject"
+                },
+                "from": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "Sender address"
+                },
+                "to": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "Recipient addresses"
+                },
+                "date": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "Email date"
+                },
+                "snippet": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "Email preview snippet (first ~200 chars of email body - USE THIS for content matching/filtering)"
+                },
+                "labels": {
+                  "type": "array",
+                  "source": "plugin",
+                  "description": "Gmail labels",
+                  "items": {
+                    "type": "string",
+                    "source": "plugin"
+                  }
+                },
+                "body": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "Email body text (NOTE: Usually empty in search results - use 'snippet' field instead for email content)"
+                },
+                "attachments": {
+                  "type": "array",
+                  "source": "plugin",
+                  "description": "Attachment metadata (if include_attachments=true). Each item contains: filename, mimeType, size, attachment_id (use with get_email_attachment), message_id (email ID)",
+                  "items": {
+                    "type": "object",
+                    "source": "plugin",
+                    "semantic_type": "file_attachment",
+                    "properties": {
+                      "filename": {
+                        "type": "string",
+                        "source": "plugin",
+                        "description": "Attachment filename"
+                      },
+                      "mimeType": {
+                        "type": "string",
+                        "source": "plugin",
+                        "description": "MIME type (application/pdf, image/png, etc.)"
+                      },
+                      "size": {
+                        "type": "number",
+                        "source": "plugin",
+                        "description": "File size in bytes"
+                      },
+                      "attachment_id": {
+                        "type": "string",
+                        "source": "plugin",
+                        "description": "Attachment ID (required for get_email_attachment action)"
+                      },
+                      "message_id": {
+                        "type": "string",
+                        "source": "plugin",
+                        "description": "Email message ID (required for get_email_attachment action)"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "total_found": {
+            "type": "number",
+            "source": "plugin",
+            "description": "Number of emails returned"
+          },
+          "total_available": {
+            "type": "number",
+            "source": "plugin",
+            "description": "Estimated total matching emails"
+          },
+          "search_query": {
+            "type": "string",
+            "source": "plugin",
+            "description": "The search query that was executed"
+          },
+          "searched_at": {
+            "type": "string",
+            "source": "plugin",
+            "description": "ISO 8601 timestamp of search"
+          }
+        }
+      },
+      "scope": "global",
+      "produced_by": "search_emails",
+      "consumed_by": [
+        "flatten_attachments"
+      ]
+    },
+    "all_attachments": {
+      "schema": {
+        "type": "array",
+        "source": "ai_declared",
+        "items": {
+          "type": "object",
+          "source": "ai_declared",
+          "properties": {
+            "email_id": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "from": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "subject": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "date": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "filename": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "mimeType": {
+              "type": "string",
+              "source": "ai_declared"
+            },
+            "size": {
+              "type": "number",
+              "source": "ai_declared"
+            },
+            "attachment_id": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "message_id": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            }
+          }
+        }
+      },
+      "scope": "global",
+      "produced_by": "flatten_attachments",
+      "consumed_by": [
+        "filter_pdf_attachments"
+      ]
+    },
+    "pdf_attachments": {
+      "schema": {
+        "type": "array",
+        "source": "inferred",
+        "items": {
+          "type": "object",
+          "source": "ai_declared",
+          "properties": {
+            "email_id": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "from": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "subject": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "date": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "filename": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "mimeType": {
+              "type": "string",
+              "source": "ai_declared"
+            },
+            "size": {
+              "type": "number",
+              "source": "ai_declared"
+            },
+            "attachment_id": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "message_id": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            }
+          }
+        }
+      },
+      "scope": "global",
+      "produced_by": "filter_pdf_attachments",
+      "consumed_by": [
+        "process_each_attachment"
+      ]
+    },
+    "current_attachment": {
+      "schema": {
+        "type": "object",
+        "source": "inferred",
+        "properties": {
+          "email_id": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "from": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "subject": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "date": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "filename": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "mimeType": {
+            "type": "string",
+            "source": "ai_declared"
+          },
+          "size": {
+            "type": "number",
+            "source": "ai_declared"
+          },
+          "attachment_id": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "message_id": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          }
+        }
+      },
+      "scope": "loop",
+      "produced_by": "process_each_attachment",
+      "consumed_by": [
+        "download_attachment"
+      ]
+    },
+    "processed_items": {
+      "schema": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "source": "ai_declared",
+          "properties": {
+            "type": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "vendor": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "date": {
+              "type": "string",
+              "source": "ai_declared"
+            },
+            "amount": {
+              "type": "string",
+              "source": "ai_declared"
+            },
+            "invoice_receipt_number": {
+              "type": "string",
+              "source": "ai_declared"
+            },
+            "category": {
+              "type": "string",
+              "source": "ai_declared"
+            },
+            "drive_link": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            }
+          }
+        },
+        "source": "inferred"
+      },
+      "scope": "global",
+      "produced_by": "process_each_attachment",
+      "consumed_by": [
+        "generate_digest_email"
+      ]
+    },
+    "attachment_content": {
+      "schema": {
+        "type": "object",
+        "source": "plugin",
+        "description": "Attachment content with metadata",
+        "properties": {
+          "filename": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Attachment filename",
+            "required": true
+          },
+          "mimeType": {
+            "type": "string",
+            "source": "plugin",
+            "description": "MIME type (application/pdf, image/png, etc.)",
+            "required": true
+          },
+          "size": {
+            "type": "number",
+            "source": "plugin",
+            "description": "File size in bytes",
+            "required": true
+          },
+          "data": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Base64-encoded file content for processing"
+          },
+          "extracted_text": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Extracted text from PDF/document (if applicable)"
+          },
+          "is_image": {
+            "type": "boolean",
+            "source": "plugin",
+            "description": "True if attachment is an image"
+          }
+        }
+      },
+      "scope": "loop",
+      "produced_by": "download_attachment",
+      "consumed_by": [
+        "extract_invoice_fields",
+        "upload_pdf_to_drive"
+      ]
+    },
+    "extracted_fields": {
+      "schema": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "source": "ai_declared",
+            "description": "Document type: 'Invoice' or 'Expense'",
+            "required": true
+          },
+          "vendor": {
+            "type": "string",
+            "source": "ai_declared",
+            "description": "Vendor or merchant name",
+            "required": true
+          },
+          "date": {
+            "type": "string",
+            "source": "ai_declared",
+            "description": "Invoice or expense date",
+            "required": false
+          },
+          "amount": {
+            "type": "string",
+            "source": "ai_declared",
+            "description": "Total amount in the document's currency",
+            "required": false
+          },
+          "invoice_receipt_number": {
+            "type": "string",
+            "source": "ai_declared",
+            "description": "Invoice number or receipt number",
+            "required": false
+          },
+          "category": {
+            "type": "string",
+            "source": "ai_declared",
+            "description": "Expense category (e.g., Office Supplies, Travel, Software)",
+            "required": false
+          }
+        },
+        "source": "ai_declared"
+      },
+      "scope": "loop",
+      "produced_by": "extract_invoice_fields",
+      "consumed_by": [
+        "ensure_vendor_folder",
+        "build_digest_row"
+      ]
+    },
+    "vendor_folder": {
+      "schema": {
+        "type": "object",
+        "source": "plugin",
+        "properties": {
+          "folder_id": {
+            "type": "string",
+            "source": "plugin",
+            "description": "ID of the folder (existing or newly created)"
+          },
+          "folder_name": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Name of the folder"
+          },
+          "web_view_link": {
+            "type": "string",
+            "source": "plugin",
+            "description": "URL to view the folder"
+          },
+          "parent_folder_id": {
+            "type": "string",
+            "source": "plugin",
+            "description": "ID of the parent folder"
+          },
+          "created": {
+            "type": "boolean",
+            "source": "plugin",
+            "description": "True if folder was newly created, false if it already existed"
+          },
+          "created_at": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Timestamp when folder was created (if new) or found (if existing)"
+          }
+        }
+      },
+      "scope": "loop",
+      "produced_by": "ensure_vendor_folder",
+      "consumed_by": [
+        "upload_pdf_to_drive"
+      ]
+    },
+    "uploaded_file": {
+      "schema": {
+        "type": "object",
+        "source": "plugin",
+        "properties": {
+          "file_id": {
+            "type": "string",
+            "source": "plugin",
+            "description": "ID of the uploaded file",
+            "required": true
+          },
+          "file_name": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Name of the uploaded file",
+            "required": true
+          },
+          "file_size": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Size of the uploaded file"
+          },
+          "mime_type": {
+            "type": "string",
+            "source": "plugin",
+            "description": "MIME type of the file"
+          },
+          "web_view_link": {
+            "type": "string",
+            "source": "plugin",
+            "description": "URL to view the file",
+            "required": true
+          },
+          "web_content_link": {
+            "type": "string",
+            "source": "plugin",
+            "description": "URL to download the file"
+          },
+          "folder_id": {
+            "type": "string",
+            "source": "plugin",
+            "description": "ID of the folder containing the file"
+          },
+          "uploaded_at": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Timestamp when file was uploaded (ISO 8601)"
+          }
+        }
+      },
+      "scope": "loop",
+      "produced_by": "upload_pdf_to_drive",
+      "consumed_by": [
+        "build_digest_row"
+      ]
+    },
+    "digest_row": {
+      "schema": {
+        "type": "object",
+        "source": "ai_declared",
+        "properties": {
+          "type": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "vendor": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "date": {
+            "type": "string",
+            "source": "ai_declared"
+          },
+          "amount": {
+            "type": "string",
+            "source": "ai_declared"
+          },
+          "invoice_receipt_number": {
+            "type": "string",
+            "source": "ai_declared"
+          },
+          "category": {
+            "type": "string",
+            "source": "ai_declared"
+          },
+          "drive_link": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          }
+        }
+      },
+      "scope": "loop",
+      "produced_by": "build_digest_row",
+      "consumed_by": [
+        "process_each_attachment",
+        "check_amount_threshold",
+        "append_row_to_sheet"
+      ]
+    },
+    "sheet_tab": {
+      "schema": {
+        "type": "object",
+        "source": "plugin",
+        "properties": {
+          "spreadsheet_id": {
+            "type": "string",
+            "source": "plugin",
+            "description": "ID of the spreadsheet",
+            "required": true
+          },
+          "sheet_id": {
+            "type": "number",
+            "source": "plugin",
+            "description": "Unique numeric ID of the sheet tab"
+          },
+          "sheet_name": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Name of the sheet tab",
+            "required": true
+          },
+          "tab_name": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Name of the sheet tab (alias for sheet_name)",
+            "required": true
+          },
+          "existed": {
+            "type": "boolean",
+            "source": "plugin",
+            "description": "True if tab already existed, false if newly created"
+          }
+        }
+      },
+      "scope": "loop",
+      "produced_by": "ensure_sheet_tab",
+      "consumed_by": [
+        "append_row_to_sheet"
+      ]
+    },
+    "appended_row": {
+      "schema": {
+        "type": "object",
+        "source": "plugin",
+        "properties": {
+          "updated_range": {
+            "type": "string",
+            "source": "plugin",
+            "description": "The range where data was appended",
+            "required": true
+          },
+          "appended_rows": {
+            "type": "number",
+            "source": "plugin",
+            "description": "Number of rows appended",
+            "required": true
+          },
+          "appended_columns": {
+            "type": "number",
+            "source": "plugin",
+            "description": "Number of columns in appended data"
+          },
+          "appended_cells": {
+            "type": "number",
+            "source": "plugin",
+            "description": "Total number of cells appended"
+          },
+          "table_range": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Full range of the table including appended data"
+          },
+          "sheet_name": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Name of the sheet where data was appended"
+          },
+          "values": {
+            "type": "array",
+            "source": "plugin",
+            "description": "The values that were appended"
+          },
+          "appended_at": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Timestamp when data was appended (ISO 8601)"
+          }
+        }
+      },
+      "scope": "loop",
+      "produced_by": "append_row_to_sheet"
+    },
+    "digest_email_content": {
+      "schema": {
+        "type": "object",
+        "properties": {
+          "subject": {
+            "type": "string",
+            "source": "ai_declared",
+            "description": "Email subject line for the digest"
+          },
+          "body": {
+            "type": "string",
+            "source": "ai_declared",
+            "description": "Full HTML body of the digest email"
+          }
+        },
+        "source": "ai_declared"
+      },
+      "scope": "global",
+      "produced_by": "generate_digest_email",
+      "consumed_by": [
+        "send_digest_email"
+      ]
+    }
+  }
+}

@@ -1,0 +1,964 @@
+[
+  {
+    "step_id": "step1",
+    "type": "action",
+    "description": "Search Gmail for emails with PDF attachments matching invoice/expense/bill subjects from the last 7 days",
+    "plugin": "google-mail",
+    "output_variable": "matching_emails",
+    "output_schema": {
+      "type": "object",
+      "source": "plugin",
+      "description": "Search results with email details",
+      "properties": {
+        "emails": {
+          "type": "array",
+          "source": "plugin",
+          "description": "Array of matching emails",
+          "items": {
+            "type": "object",
+            "source": "plugin",
+            "semantic_type": "email_message",
+            "properties": {
+              "id": {
+                "type": "string",
+                "source": "plugin",
+                "description": "Gmail message ID"
+              },
+              "thread_id": {
+                "type": "string",
+                "source": "plugin",
+                "description": "Gmail thread ID"
+              },
+              "subject": {
+                "type": "string",
+                "source": "plugin",
+                "description": "Email subject"
+              },
+              "from": {
+                "type": "string",
+                "source": "plugin",
+                "description": "Sender address"
+              },
+              "to": {
+                "type": "string",
+                "source": "plugin",
+                "description": "Recipient addresses"
+              },
+              "date": {
+                "type": "string",
+                "source": "plugin",
+                "description": "Email date"
+              },
+              "snippet": {
+                "type": "string",
+                "source": "plugin",
+                "description": "Email preview snippet (first ~200 chars of email body - USE THIS for content matching/filtering)"
+              },
+              "labels": {
+                "type": "array",
+                "source": "plugin",
+                "description": "Gmail labels",
+                "items": {
+                  "type": "string",
+                  "source": "plugin"
+                }
+              },
+              "body": {
+                "type": "string",
+                "source": "plugin",
+                "description": "Email body text (NOTE: Usually empty in search results - use 'snippet' field instead for email content)"
+              },
+              "attachments": {
+                "type": "array",
+                "source": "plugin",
+                "description": "Attachment metadata (if include_attachments=true). Each item contains: filename, mimeType, size, attachment_id (use with get_email_attachment), message_id (email ID)",
+                "items": {
+                  "type": "object",
+                  "source": "plugin",
+                  "semantic_type": "file_attachment",
+                  "properties": {
+                    "filename": {
+                      "type": "string",
+                      "source": "plugin",
+                      "description": "Attachment filename"
+                    },
+                    "mimeType": {
+                      "type": "string",
+                      "source": "plugin",
+                      "description": "MIME type (application/pdf, image/png, etc.)"
+                    },
+                    "size": {
+                      "type": "number",
+                      "source": "plugin",
+                      "description": "File size in bytes"
+                    },
+                    "attachment_id": {
+                      "type": "string",
+                      "source": "plugin",
+                      "description": "Attachment ID (required for get_email_attachment action)"
+                    },
+                    "message_id": {
+                      "type": "string",
+                      "source": "plugin",
+                      "description": "Email message ID (required for get_email_attachment action)"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "total_found": {
+          "type": "number",
+          "source": "plugin",
+          "description": "Number of emails returned"
+        },
+        "total_available": {
+          "type": "number",
+          "source": "plugin",
+          "description": "Estimated total matching emails"
+        },
+        "search_query": {
+          "type": "string",
+          "source": "plugin",
+          "description": "The search query that was executed"
+        },
+        "searched_at": {
+          "type": "string",
+          "source": "plugin",
+          "description": "ISO 8601 timestamp of search"
+        }
+      }
+    },
+    "id": "step1",
+    "params": {
+      "query": "{{input.gmail_search_query}}",
+      "max_results": 50,
+      "include_attachments": true,
+      "content_level": "full"
+    },
+    "name": "Search Gmail for emails with PDF attachments matching invoice/expense/bill subjects from the last 7 days",
+    "action": "search_emails"
+  },
+  {
+    "step_id": "step2",
+    "type": "transform",
+    "operation": "flatten",
+    "input": "{{matching_emails.emails}}",
+    "description": "Extract attachment metadata from emails, preserving parent email context (sender, subject, date, message_id)",
+    "config": {
+      "type": "flatten",
+      "input": "matching_emails.emails",
+      "custom_code": "Flatten emails to individual attachment records, carrying parent email fields (id, from, subject, date) alongside each attachment (filename, mimeType, size, attachment_id, message_id)",
+      "output_schema": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "email_id": {
+              "type": "string"
+            },
+            "from": {
+              "type": "string"
+            },
+            "subject": {
+              "type": "string"
+            },
+            "date": {
+              "type": "string"
+            },
+            "filename": {
+              "type": "string"
+            },
+            "mimeType": {
+              "type": "string"
+            },
+            "size": {
+              "type": "number"
+            },
+            "attachment_id": {
+              "type": "string"
+            },
+            "message_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "email_id",
+            "from",
+            "subject",
+            "date",
+            "filename",
+            "attachment_id",
+            "message_id"
+          ]
+        }
+      },
+      "field": "attachments"
+    },
+    "output_variable": "all_attachments",
+    "output_schema": {
+      "type": "array",
+      "source": "ai_declared",
+      "items": {
+        "type": "object",
+        "source": "ai_declared",
+        "properties": {
+          "email_id": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "from": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "subject": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "date": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "filename": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "mimeType": {
+            "type": "string",
+            "source": "ai_declared"
+          },
+          "size": {
+            "type": "number",
+            "source": "ai_declared"
+          },
+          "attachment_id": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "message_id": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          }
+        }
+      }
+    },
+    "id": "step2",
+    "_on_empty": "warn",
+    "name": "Extract attachment metadata from emails, preserving parent email context (sender, subject, date, message_id)"
+  },
+  {
+    "step_id": "step3",
+    "type": "transform",
+    "operation": "filter",
+    "input": "{{all_attachments}}",
+    "description": "Keep only PDF attachments",
+    "config": {
+      "type": "filter",
+      "input": "all_attachments",
+      "custom_code": "Filter to only PDF attachments by MIME type",
+      "condition": {
+        "operator": "eq",
+        "value": "application/pdf",
+        "field": "item.mimeType",
+        "conditionType": "simple"
+      }
+    },
+    "output_variable": "pdf_attachments",
+    "output_schema": {
+      "type": "array",
+      "source": "inferred",
+      "items": {
+        "type": "object",
+        "source": "ai_declared",
+        "properties": {
+          "email_id": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "from": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "subject": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "date": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "filename": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "mimeType": {
+            "type": "string",
+            "source": "ai_declared"
+          },
+          "size": {
+            "type": "number",
+            "source": "ai_declared"
+          },
+          "attachment_id": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "message_id": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          }
+        }
+      }
+    },
+    "id": "step3",
+    "_on_empty": "throw",
+    "name": "Keep only PDF attachments"
+  },
+  {
+    "step_id": "step4",
+    "type": "scatter_gather",
+    "description": "Loop over pdf_attachments",
+    "scatter": {
+      "input": "{{pdf_attachments}}",
+      "steps": [
+        {
+          "step_id": "step5",
+          "type": "action",
+          "description": "Download the PDF attachment content from Gmail",
+          "plugin": "google-mail",
+          "output_variable": "attachment_content",
+          "output_schema": {
+            "type": "object",
+            "source": "plugin",
+            "description": "Attachment content with metadata",
+            "properties": {
+              "filename": {
+                "type": "string",
+                "source": "plugin",
+                "description": "Attachment filename",
+                "required": true
+              },
+              "mimeType": {
+                "type": "string",
+                "source": "plugin",
+                "description": "MIME type (application/pdf, image/png, etc.)",
+                "required": true
+              },
+              "size": {
+                "type": "number",
+                "source": "plugin",
+                "description": "File size in bytes",
+                "required": true
+              },
+              "data": {
+                "type": "string",
+                "source": "plugin",
+                "description": "Base64-encoded file content for processing"
+              },
+              "extracted_text": {
+                "type": "string",
+                "source": "plugin",
+                "description": "Extracted text from PDF/document (if applicable)"
+              },
+              "is_image": {
+                "type": "boolean",
+                "source": "plugin",
+                "description": "True if attachment is an image"
+              }
+            }
+          },
+          "id": "step5",
+          "params": {
+            "message_id": "{{current_attachment.message_id}}",
+            "attachment_id": "{{current_attachment.attachment_id}}",
+            "filename": "{{current_attachment.filename}}"
+          },
+          "name": "Download the PDF attachment content from Gmail",
+          "action": "get_email_attachment"
+        },
+        {
+          "step_id": "step6",
+          "type": "action",
+          "description": "Extract structured invoice/expense fields from the PDF attachment",
+          "plugin": "document-extractor",
+          "output_variable": "extracted_fields",
+          "output_schema": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "source": "ai_declared",
+                "description": "Document type: 'Invoice' or 'Expense'",
+                "required": true
+              },
+              "vendor": {
+                "type": "string",
+                "source": "ai_declared",
+                "description": "Vendor or merchant name",
+                "required": true
+              },
+              "date": {
+                "type": "string",
+                "source": "ai_declared",
+                "description": "Invoice or expense date",
+                "required": false
+              },
+              "amount": {
+                "type": "string",
+                "source": "ai_declared",
+                "description": "Total amount in the document's currency",
+                "required": false
+              },
+              "invoice_receipt_number": {
+                "type": "string",
+                "source": "ai_declared",
+                "description": "Invoice number or receipt number",
+                "required": false
+              },
+              "category": {
+                "type": "string",
+                "source": "ai_declared",
+                "description": "Expense category (e.g., Office Supplies, Travel, Software)",
+                "required": false
+              }
+            },
+            "source": "ai_declared"
+          },
+          "id": "step6",
+          "params": {
+            "file_content": "{{attachment_content}}",
+            "fields": [
+              {
+                "name": "type",
+                "type": "string",
+                "required": true
+              },
+              {
+                "name": "vendor",
+                "type": "string",
+                "required": true
+              },
+              {
+                "name": "date",
+                "type": "date",
+                "required": false
+              },
+              {
+                "name": "amount",
+                "type": "currency",
+                "required": false
+              },
+              {
+                "name": "invoice_receipt_number",
+                "type": "string",
+                "required": false
+              },
+              {
+                "name": "category",
+                "type": "string",
+                "required": false
+              }
+            ]
+          },
+          "name": "Extract structured invoice/expense fields from the PDF attachment",
+          "action": "extract_structured_data"
+        },
+        {
+          "step_id": "step7",
+          "type": "action",
+          "description": "Get or create a subfolder named after the vendor under the base Drive folder",
+          "plugin": "google-drive",
+          "output_variable": "vendor_folder",
+          "output_schema": {
+            "type": "object",
+            "source": "plugin",
+            "properties": {
+              "folder_id": {
+                "type": "string",
+                "source": "plugin",
+                "description": "ID of the folder (existing or newly created)"
+              },
+              "folder_name": {
+                "type": "string",
+                "source": "plugin",
+                "description": "Name of the folder"
+              },
+              "web_view_link": {
+                "type": "string",
+                "source": "plugin",
+                "description": "URL to view the folder"
+              },
+              "parent_folder_id": {
+                "type": "string",
+                "source": "plugin",
+                "description": "ID of the parent folder"
+              },
+              "created": {
+                "type": "boolean",
+                "source": "plugin",
+                "description": "True if folder was newly created, false if it already existed"
+              },
+              "created_at": {
+                "type": "string",
+                "source": "plugin",
+                "description": "Timestamp when folder was created (if new) or found (if existing)"
+              }
+            }
+          },
+          "id": "step7",
+          "params": {
+            "folder_name": "{{extracted_fields.vendor}}",
+            "parent_folder_id": "{{input.drive_base_folder_id}}"
+          },
+          "name": "Get or create a subfolder named after the vendor under the base Drive folder",
+          "action": "get_or_create_folder"
+        },
+        {
+          "step_id": "step8",
+          "type": "action",
+          "description": "Upload the PDF attachment to the vendor's Drive subfolder",
+          "plugin": "google-drive",
+          "output_variable": "uploaded_file",
+          "output_schema": {
+            "type": "object",
+            "source": "plugin",
+            "properties": {
+              "file_id": {
+                "type": "string",
+                "source": "plugin",
+                "description": "ID of the uploaded file",
+                "required": true
+              },
+              "file_name": {
+                "type": "string",
+                "source": "plugin",
+                "description": "Name of the uploaded file",
+                "required": true
+              },
+              "file_size": {
+                "type": "string",
+                "source": "plugin",
+                "description": "Size of the uploaded file"
+              },
+              "mime_type": {
+                "type": "string",
+                "source": "plugin",
+                "description": "MIME type of the file"
+              },
+              "web_view_link": {
+                "type": "string",
+                "source": "plugin",
+                "description": "URL to view the file",
+                "required": true
+              },
+              "web_content_link": {
+                "type": "string",
+                "source": "plugin",
+                "description": "URL to download the file"
+              },
+              "folder_id": {
+                "type": "string",
+                "source": "plugin",
+                "description": "ID of the folder containing the file"
+              },
+              "uploaded_at": {
+                "type": "string",
+                "source": "plugin",
+                "description": "Timestamp when file was uploaded (ISO 8601)"
+              }
+            }
+          },
+          "id": "step8",
+          "params": {
+            "file_content": "{{attachment_content.data}}",
+            "file_name": "{{attachment_content.filename}}",
+            "folder_id": "{{vendor_folder.folder_id}}",
+            "mime_type": "{{attachment_content.mimeType}}"
+          },
+          "name": "Upload the PDF attachment to the vendor's Drive subfolder",
+          "action": "upload_file"
+        },
+        {
+          "step_id": "step9",
+          "type": "transform",
+          "operation": "with_fields",
+          "input": "{{extracted_fields}}",
+          "description": "Build a digest table row combining extracted fields with the Drive link from the uploaded file",
+          "config": {
+            "type": "with_fields",
+            "input": "extracted_fields",
+            "output_schema": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string"
+                },
+                "vendor": {
+                  "type": "string"
+                },
+                "date": {
+                  "type": "string"
+                },
+                "amount": {
+                  "type": "string"
+                },
+                "invoice_receipt_number": {
+                  "type": "string"
+                },
+                "category": {
+                  "type": "string"
+                },
+                "drive_link": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "vendor",
+                "drive_link"
+              ]
+            },
+            "fields": [
+              {
+                "name": "drive_link",
+                "expression": "{{uploaded_file.web_view_link}}"
+              }
+            ]
+          },
+          "output_variable": "digest_row",
+          "output_schema": {
+            "type": "object",
+            "source": "ai_declared",
+            "properties": {
+              "type": {
+                "type": "string",
+                "source": "ai_declared",
+                "required": true
+              },
+              "vendor": {
+                "type": "string",
+                "source": "ai_declared",
+                "required": true
+              },
+              "date": {
+                "type": "string",
+                "source": "ai_declared"
+              },
+              "amount": {
+                "type": "string",
+                "source": "ai_declared"
+              },
+              "invoice_receipt_number": {
+                "type": "string",
+                "source": "ai_declared"
+              },
+              "category": {
+                "type": "string",
+                "source": "ai_declared"
+              },
+              "drive_link": {
+                "type": "string",
+                "source": "ai_declared",
+                "required": true
+              }
+            }
+          },
+          "id": "step9",
+          "name": "Build a digest table row combining extracted fields with the Drive link from the uploaded file"
+        },
+        {
+          "step_id": "step10",
+          "type": "conditional",
+          "description": "Conditional: node_9",
+          "condition": {
+            "conditionType": "complex_and",
+            "conditions": [
+              {
+                "conditionType": "simple",
+                "field": "digest_row.amount",
+                "operator": "exists"
+              },
+              {
+                "conditionType": "simple",
+                "field": "digest_row.amount",
+                "operator": "greater_than",
+                "value": "{{input.amount_threshold}}"
+              }
+            ]
+          },
+          "steps": [
+            {
+              "step_id": "step11",
+              "type": "action",
+              "description": "Get or create the target sheet tab in the spreadsheet",
+              "plugin": "google-sheets",
+              "output_variable": "sheet_tab",
+              "output_schema": {
+                "type": "object",
+                "source": "plugin",
+                "properties": {
+                  "spreadsheet_id": {
+                    "type": "string",
+                    "source": "plugin",
+                    "description": "ID of the spreadsheet",
+                    "required": true
+                  },
+                  "sheet_id": {
+                    "type": "number",
+                    "source": "plugin",
+                    "description": "Unique numeric ID of the sheet tab"
+                  },
+                  "sheet_name": {
+                    "type": "string",
+                    "source": "plugin",
+                    "description": "Name of the sheet tab",
+                    "required": true
+                  },
+                  "tab_name": {
+                    "type": "string",
+                    "source": "plugin",
+                    "description": "Name of the sheet tab (alias for sheet_name)",
+                    "required": true
+                  },
+                  "existed": {
+                    "type": "boolean",
+                    "source": "plugin",
+                    "description": "True if tab already existed, false if newly created"
+                  }
+                }
+              },
+              "id": "step11",
+              "params": {
+                "spreadsheet_id": "{{input.spreadsheet_id}}",
+                "tab_name": "{{input.sheet_tab_name}}"
+              },
+              "name": "Get or create the target sheet tab in the spreadsheet",
+              "action": "get_or_create_sheet_tab"
+            },
+            {
+              "step_id": "step12",
+              "type": "transform",
+              "operation": "map",
+              "input": "{{digest_row}}",
+              "description": "D-B19c: Project digest_row into row objects for google-sheets.append_rows",
+              "config": {
+                "type": "map",
+                "input": "digest_row",
+                "field_mapping": {
+                  "0": "type",
+                  "1": "vendor",
+                  "2": "date",
+                  "3": "amount",
+                  "4": "invoice_receipt_number",
+                  "5": "category",
+                  "6": "drive_link"
+                }
+              },
+              "output_variable": "append_row_to_sheet_rows",
+              "id": "step12",
+              "_on_empty": "warn",
+              "name": "D-B19c: Project digest_row into row objects for google-sheets.append_rows"
+            },
+            {
+              "step_id": "step13",
+              "type": "action",
+              "description": "Append the digest row to the Google Sheet",
+              "plugin": "google-sheets",
+              "output_variable": "appended_row",
+              "output_schema": {
+                "type": "object",
+                "source": "plugin",
+                "properties": {
+                  "updated_range": {
+                    "type": "string",
+                    "source": "plugin",
+                    "description": "The range where data was appended",
+                    "required": true
+                  },
+                  "appended_rows": {
+                    "type": "number",
+                    "source": "plugin",
+                    "description": "Number of rows appended",
+                    "required": true
+                  },
+                  "appended_columns": {
+                    "type": "number",
+                    "source": "plugin",
+                    "description": "Number of columns in appended data"
+                  },
+                  "appended_cells": {
+                    "type": "number",
+                    "source": "plugin",
+                    "description": "Total number of cells appended"
+                  },
+                  "table_range": {
+                    "type": "string",
+                    "source": "plugin",
+                    "description": "Full range of the table including appended data"
+                  },
+                  "sheet_name": {
+                    "type": "string",
+                    "source": "plugin",
+                    "description": "Name of the sheet where data was appended"
+                  },
+                  "values": {
+                    "type": "array",
+                    "source": "plugin",
+                    "description": "The values that were appended"
+                  },
+                  "appended_at": {
+                    "type": "string",
+                    "source": "plugin",
+                    "description": "Timestamp when data was appended (ISO 8601)"
+                  }
+                }
+              },
+              "id": "step13",
+              "params": {
+                "spreadsheet_id": "{{input.spreadsheet_id}}",
+                "range": "{{input.sheet_tab_name}}",
+                "values": "{{append_row_to_sheet_rows}}"
+              },
+              "name": "Append the digest row to the Google Sheet",
+              "action": "append_rows"
+            }
+          ],
+          "id": "step10",
+          "name": "Conditional: node_9"
+        }
+      ],
+      "itemVariable": "current_attachment"
+    },
+    "gather": {
+      "operation": "collect"
+    },
+    "output_variable": "processed_items",
+    "id": "step4",
+    "name": "Loop over pdf_attachments"
+  },
+  {
+    "step_id": "step14",
+    "type": "ai_processing",
+    "input": "{{processed_items}}",
+    "prompt": "Generate a professional HTML email body for an expense/invoice digest. If the processed_items array is empty, produce a message stating 'No invoices or expenses were found in the last 7 days.' If items exist, create an HTML table with columns: Type, Vendor / Merchant, Date, Amount, Invoice/Receipt #, Category, Drive Link (as a clickable hyperlink). Style the table with borders, a header row with a background color, and padding for readability. Include a brief introductory sentence summarizing the number of items found. Items with missing amounts should show 'N/A' in the Amount column and include a note that they were not added to the spreadsheet.",
+    "description": "Generate a single HTML digest email body with a table of all processed items",
+    "config": {
+      "ai_type": "generate",
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "subject": {
+            "type": "string",
+            "description": "Email subject line for the digest"
+          },
+          "body": {
+            "type": "string",
+            "description": "Full HTML body of the digest email"
+          }
+        },
+        "required": [
+          "subject",
+          "body"
+        ]
+      },
+      "type": "generate",
+      "instruction": "Generate a professional HTML email body for an expense/invoice digest. If the processed_items array is empty, produce a message stating 'No invoices or expenses were found in the last 7 days.' If items exist, create an HTML table with columns: Type, Vendor / Merchant, Date, Amount, Invoice/Receipt #, Category, Drive Link (as a clickable hyperlink). Style the table with borders, a header row with a background color, and padding for readability. Include a brief introductory sentence summarizing the number of items found. Items with missing amounts should show 'N/A' in the Amount column and include a note that they were not added to the spreadsheet.",
+      "input": "{{processed_items}}"
+    },
+    "output_variable": "digest_email_content",
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "subject": {
+          "type": "string",
+          "source": "ai_declared",
+          "description": "Email subject line for the digest"
+        },
+        "body": {
+          "type": "string",
+          "source": "ai_declared",
+          "description": "Full HTML body of the digest email"
+        }
+      },
+      "source": "ai_declared"
+    },
+    "input_schema": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "source": "ai_declared",
+        "properties": {
+          "type": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "vendor": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "date": {
+            "type": "string",
+            "source": "ai_declared"
+          },
+          "amount": {
+            "type": "string",
+            "source": "ai_declared"
+          },
+          "invoice_receipt_number": {
+            "type": "string",
+            "source": "ai_declared"
+          },
+          "category": {
+            "type": "string",
+            "source": "ai_declared"
+          },
+          "drive_link": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          }
+        }
+      },
+      "source": "inferred"
+    },
+    "id": "step14",
+    "name": "Generate a single HTML digest email body with a table of all processed items"
+  },
+  {
+    "step_id": "step15",
+    "type": "action",
+    "description": "Send the digest email to the configured recipient",
+    "plugin": "google-mail",
+    "id": "step15",
+    "params": {
+      "recipients": {
+        "to": [
+          "{{input.recipient_email}}"
+        ]
+      },
+      "content": {
+        "subject": "{{digest_email_content.subject}}",
+        "html_body": "{{digest_email_content.body}}"
+      }
+    },
+    "name": "Send the digest email to the configured recipient",
+    "action": "send_email"
+  }
+]

@@ -27,6 +27,11 @@ import type { Agent } from '../types';
 import { createLogger } from '@/lib/logger';
 import { PluginManagerV2 } from '@/lib/server/plugin-manager-v2';
 
+// Loose alias used in cross-shape casts below. The structural union of every
+// scatter_gather variant is too painful to express without a full overhaul of
+// the WorkflowStep type, so we keep this permissive.
+type ScatterGatherStep = any;
+
 const logger = createLogger({ module: 'StructuralRepairEngine', service: 'shadow-agent' });
 
 export type StructuralIssueType =
@@ -542,8 +547,52 @@ export class StructuralRepairEngine {
                 // If source returns {emails: [...]}, we should flatten "emails" (root level)
                 // NOT "attachments" (nested inside emails[])
 
-                if (sourceStep.output_schema.type === 'object' && sourceStep.output_schema.properties) {
-                  // Source returns an object - flatten field must be at ROOT level
+                // WP-32: When step.input navigates into a sub-field (e.g. "{{var.emails}}"),
+                // the value flowing into transformFlatten is the sub-field's value (an array of items),
+                // NOT the whole source output. In that case `config.field` is a per-item sub-field
+                // extraction (e.g. "attachments" from each email), not a root-level array name.
+                // Validate `field` against the array items' properties instead of the root keys.
+                const subField = varMatch[2];
+
+                if (
+                  subField &&
+                  sourceStep.output_schema.type === 'object' &&
+                  sourceStep.output_schema.properties?.[subField]?.type === 'array'
+                ) {
+                  // Input navigates into a sub-array — per-item-nested flatten pattern.
+                  const itemProps = sourceStep.output_schema.properties[subField].items?.properties;
+
+                  if (itemProps && typeof itemProps === 'object') {
+                    const perItemArrayFields = Object.keys(itemProps).filter(
+                      key => itemProps[key]?.type === 'array'
+                    );
+
+                    if (perItemArrayFields.includes(field)) {
+                      // Valid per-item-nested flatten — do NOT raise an issue.
+                    } else if (perItemArrayFields.length > 0) {
+                      logger.warn({
+                        stepId,
+                        field,
+                        subField,
+                        perItemArrayFields,
+                        sourceStep: sourceStep.step_id || sourceStep.id,
+                        schemaType: 'object-via-subfield'
+                      }, '[StructuralRepair] Flatten field does not exist as per-item array sub-field');
+
+                      issues.push({
+                        type: 'invalid_flatten_field',
+                        stepId,
+                        description: `Flatten field "${field}" does not exist as a per-item array sub-field in ${sourceStep.step_id || sourceStep.id}.${subField}[]. Available per-item array fields: ${perItemArrayFields.join(', ')}. This will cause empty results.`,
+                        severity: 'critical',
+                        autoFixable: perItemArrayFields.length > 0
+                      });
+                    }
+                    // else: sub-field items have no nested arrays — can't validate meaningfully; skip.
+                  }
+                  // else: sub-field has no items.properties — can't validate; skip.
+                } else if (sourceStep.output_schema.type === 'object' && sourceStep.output_schema.properties) {
+                  // Source returns an object and step.input does NOT navigate into a sub-array —
+                  // flatten field must be at ROOT level.
                   const rootArrayFields = Object.keys(sourceStep.output_schema.properties).filter(
                     key => sourceStep.output_schema.properties[key].type === 'array'
                   );
@@ -770,7 +819,7 @@ export class StructuralRepairEngine {
         if (!match) return noFix;
 
         const brokenVar = match[1];
-        const stepIds = new Set(steps.map(s => s.step_id));
+        const stepIds = new Set(steps.map(s => (s as any).step_id || (s as any).id));
         const suggestion = this.suggestVariableCorrection(brokenVar, stepIds);
 
         if (!suggestion) {
@@ -949,8 +998,8 @@ export class StructuralRepairEngine {
       }
 
       case 'invalid_flatten_field': {
-        // Extract available fields from description
-        const match = issue.description.match(/Available (?:root-level )?array fields in \S+: (.+)\. This will cause empty results/);
+        // Extract available fields from description (WP-32: also recognize per-item array fields wording)
+        const match = issue.description.match(/Available (?:root-level |per-item )?array fields(?: in \S+| (?:in \S+))?: (.+)\. This will cause empty results/);
         if (!match) return noFix;
 
         const availableFields = match[1].split(', ');
@@ -963,7 +1012,7 @@ export class StructuralRepairEngine {
         //   1. Prefer "emails" (common for Gmail/email plugins)
         //   2. Then "items" (common generic pattern)
         //   3. Then "files", "results", "data", "records", "rows"
-        // For nested arrays (from array items):
+        // For nested arrays (from array items, or per-item sub-arrays — WP-32):
         //   1. Prefer "attachments" (common pattern)
         //   2. Then other array fields
 
@@ -972,6 +1021,7 @@ export class StructuralRepairEngine {
         const nestedPriority = ['attachments', 'items', 'files', 'results', 'data'];
 
         // Check if this is root-level (from description pattern)
+        // WP-32: per-item flatten uses nested priority (attachments-first)
         const isRootLevel = issue.description.includes('root-level');
         const priorityList = isRootLevel ? rootPriority : nestedPriority;
 

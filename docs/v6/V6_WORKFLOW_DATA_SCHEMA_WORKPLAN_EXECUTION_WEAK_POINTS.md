@@ -47,6 +47,9 @@ The weak points are ordered by likelihood of causing failures as new scenarios a
 | [WP-29](#wp-29-parsedate-is-locale-sensitive-misinterprets-ddmmyyyy-as-mmddyyyy) | `parseDate` in `StructuredTransforms.ts` uses `new Date(value)` which is locale-sensitive. For slash-format inputs like `"12/5/2026"` (the user's Google Sheets DD/MM/YYYY locale), JavaScript interprets as MM/DD/YYYY → Dec 5, 2026 → `date_diff` returns wildly wrong values (207 days instead of 1). For inputs like `"13/5/2026"` (no month 13 in MM/DD), `new Date()` returns Invalid Date → `date_diff` returns null. Cascades through `date_diff` / `date_add` Expression ops in `with_fields` → downstream filter on `days_until_finish` drops every row → empty result email. | P1 | ✅ Fixed (2026-05-11) — **three-tier disambiguation in `parseDate`:** (1) ISO format unambiguous, (2) Tier 1: if either day or month part > 12, format is forced (handles `"13/5/2026"` for free), (3) Tier 2: user-timezone-driven locale via new `IExpressionContext.getUserTimezone()` hook. America/* (excluding South America) → MM/DD/YYYY; everywhere else (and undefined) → DD/MM/YYYY (~85% of world population). `ExecutionContext.getUserTimezone()` reads from `inputValues._user_timezone` / `inputValues.user_timezone` / `variables._user_timezone` — WorkflowPilot can wire from user-context system. New `buildDate()` helper validates day/month overflow (e.g., Feb 30 → null). Tier 3 (explicit `date_format` workflow_config hint) deferred — requires Phase 1 prompt steering. |
 | [WP-30](#wp-30-config-expression-resolves-to-literal-string-instead-of-config-value) | `evaluateExpression` for `kind: "config"` calls `context.resolveVariable(\`input.${expr.key}\`)` with a bare path (no `{{...}}` braces). Production `ExecutionContext.resolveVariable` strictly requires `{{...}}` syntax — bare strings are returned as-is. So `{kind: "config", key: "date_window_days"}` returns the literal string `"input.date_window_days"` instead of the value `3`. Cascades through `date_add(today, config_ref)` → `Number("input.date_window_days")` = NaN → `date_add` returns null → `window_end` field is null in every row. Same convention mismatch as WP-22 (`set_difference.reference`). Likely silently broken since W2 (WP-16) shipped — W2 unit tests used a permissive stub context that strips `{{}}` permissively, hiding the production-strict mismatch. | P1 | ✅ Fixed (2026-05-11) — wrapped both `case 'config'` and non-`item` `case 'ref'` paths in `{{}}` before calling `resolveVariable` (audit found the same bug in `ref` for cross-slot references). One-line change each, mirrors WP-22's defensive wrap. |
 | [WP-31](#wp-31-today--date_diff-use-time-difference-instead-of-calendar-day-difference) | `today` returns `new Date().toISOString()` — a moment including time-of-day. `date_diff(a, b, 'days')` then computes `Math.floor((a − b) / 86_400_000)` — fractional-days flooring, not calendar-day difference. So `date_diff(May 12 00:00 UTC, May 11 08:29 UTC, 'days')` = `floor(15.5h / 24h)` = `floor(0.65)` = **0** instead of the expected 1. Filter `1 ≤ days_until_finish ≤ 3` then drops the May 12 tasks (the most urgent ones!). Worst-case off-by-one is N tasks dropped where N depends on how close to noon you run the workflow. Compounds with WP-29 (date parsing) and WP-30 (config refs) in the gantt-urgent-tasks cascade. | P1 | ✅ Fixed (2026-05-11) — **three-part fix:** (A) `case 'today'` returns midnight UTC of the current calendar day, optionally in user's local timezone via WP-29's `getUserTimezone()` hook. (B) `case 'date_diff'` with `unit: 'days'` defensively normalizes both sides to UTC midnight using `Math.round` (DST-safe). (C) `case 'date_add'` keeps existing semantics; combined with the new midnight `today`, `today + N days` is exactly N×24h later. 12 new unit tests covering all cases. User confirmed Phase E on gantt-urgent-tasks now produces 3 tasks as expected. |
+| [WP-32](#wp-32-structuralrepairengine-rewrites-flatten-field-from-per-item-nested-to-root-level) | `StructuralRepairEngine.scanWorkflow` runs at the top of `WorkflowPilot.execute()` (before any step runs) and **persists fixes back to the agent in the DB**. When a `transform/flatten` step has `input: "{{producer.emails}}"` (path-navigated to the inner array) and `field: "attachments"` (per-item nested extraction), the validator extracts only the top-level var name (`producer`) from the `{{...}}` template, ignores the `.emails` navigation, and validates `field: attachments` against the **root-level** array fields of `producer`'s output_schema. Since the source returns `{emails: [...], total_found, ...}` (a wrapper-object schema), `attachments` is not at root → flagged as `invalid_flatten_field` → autoFix rewrites to `"emails"` (first match in the priority list `['emails', 'items', 'files', ...]`). Result: runtime sees `field: "emails"` but iterates over emails-array items looking for an `emails` sub-field, finds none, returns `[]`. Phase E "succeeds" but downstream consumers (AI step, send email) get empty data → user receives empty email despite producer returning real attachments. | P1 | ⬜ Documented — fix to follow |
+| [WP-33](#wp-33-with_fields-expression-accepts-template-strings-but-evaluateexpression-requires-structured-form) | `transform/with_fields` LLM emission carries each augmenting field as `{name, expression}`. The W2 grammar requires `expression` to be a structured `{kind: "...", ...}` object (e.g. `{kind: "ref", ref: "X", field: "Y"}`). When the LLM instead emits a template string (`expression: "{{uploaded_file.web_view_link}}"`), the IR converter's `normalizeExpressionRefs` passes non-objects through unchanged, so phase4 stores the raw template string. At runtime, `resolveAllVariables` walks the step config and substitutes `{{...}}` placeholders with their resolved values **before** the transform runs — so `transformWithFields` sees `field.expression = "https://drive.google.com/..."` (a plain string). It then calls `evaluateExpression(expr, ...)` which throws `INVALID_EXPRESSION: must be {kind, ...}`. Scatter-gather item fails, parent scatter fails, downstream notify never runs → user receives **no email at all**. Convention-mismatch family with WP-22 (set_difference.reference), WP-30 (config bare path), WP-32 (validator vs runtime contract). | P1 | ⬜ Documented — fix to follow |
+| [WP-34](#wp-34-deterministicextractor-swallows-pdf-parse-exceptions-and-document-extractor-silently-fabricates-unknown-defaults) | The `document-extractor.extract_structured_data` plugin invokes `DeterministicExtractor` which catches all errors in its main flow and returns a `createFailureResult` (success=false, all fields missing, `method: "text"`). The plugin then applies `"Unknown <FieldName>"` defaults at [`document-extractor-plugin-executor.ts:149`](../../lib/server/document-extractor-plugin-executor.ts#L149) for any required field that came back null/empty. The combination means: when an image-based PDF (no text layer) is passed and `pdfDetector.detect()` either throws or returns empty text, AND AWS Textract is unconfigured (no `AWS_ACCESS_KEY_ID`), AND vision/LLM fallback is not wired in — the workflow does not fail. Instead, downstream consumers receive fabricated `"Unknown Type"`, `"Unknown Vendor"`, etc. as if real data. WP-13-family fabrication risk: the user gets an email that looks legitimate but contains made-up values. Secondary cosmetic: [`gmail-plugin-executor.ts:271-275`](../../lib/server/gmail-plugin-executor.ts#L271-L275) still sets `result.extracted_text = "(PDF text extraction not yet implemented)"` for any PDF attachment — a 2026-02 stub that downstream doesn't actually use (document-extractor reads `data` directly), but is confusing. | P1 | ⬜ Documented — fix deferred (multi-component change) |
 
 ---
 
@@ -1214,6 +1217,502 @@ Auto-converting `ai_processing` on an array into a scatter would change semantic
 - The W5 measurement starts surfacing this as a recurring `generate/internal` pattern.
 
 **Compounding with WP-13 / WP-14:** WP-13 documented bulk AI's tendency to fabricate when input is empty; WP-14 documented scatter token bloat from full-item merges. WP-19 is the missing third leg — the choice between bulk and scatter at emission time. All three are facets of "LLM-on-collections is risky and needs structural guardrails."
+
+---
+
+### WP-34: `DeterministicExtractor` swallows PDF-parse exceptions and document-extractor silently fabricates "Unknown" defaults
+
+**Severity:** P1 — silent data corruption. User receives an email with fabricated content that looks legitimate (vendor, type, etc. are stringified placeholders, not real extraction failures). WP-13 family ("LLM/extractor fabricates plausible-looking data when input is empty/broken").
+**Encountered as:** Phase E on `vocabulary-pipeline` (2026-05-13, after WP-32 + WP-33 fixes landed). The full cascade ran end-to-end, an email was delivered, but every extracted field came through as `"Unknown <FieldName>"` — the document-extractor's missing-required-field default — and the user assumed real extraction had succeeded.
+**Status:** ⬜ Documented — fix deferred (multi-component change)
+
+**Problem:** Three coordinated failures combine into a silent-success cascade.
+
+#### Layer 1 — `DeterministicExtractor.extract()` swallows exceptions
+
+[`DeterministicExtractor.ts:69-251`](../../lib/extraction/DeterministicExtractor.ts#L69) wraps the entire extraction flow in a single `try/catch`. On ANY thrown exception (including PDF parsing failures from `pdfDetector.detect()` for image-based PDFs without a text layer), the catch returns:
+
+```ts
+return this.createFailureResult(error.message, startTime, config.outputSchema);
+```
+
+[`createFailureResult` at line 561-581](../../lib/extraction/DeterministicExtractor.ts#L561) hard-codes:
+
+```ts
+return {
+  success: false,
+  data: {},
+  confidence: 0,
+  metadata: {
+    extractionMethod: 'text',           // ← misleading; says "text" when actually a failure path
+    fieldsExtracted: 0,
+    missingFields: outputSchema?.fields.map(f => f.name) || [],
+    ...
+  },
+  errors: [error],
+};
+```
+
+The error is logged but never re-thrown. From the workflow's perspective, the extractor "succeeded" (no exception bubbled up) — just produced an empty result with `success: false` quietly set in the metadata.
+
+**Observed runtime evidence (vocabulary-pipeline, 2026-05-13):**
+
+```json
+"_extraction_metadata": {
+  "confidence": 0,
+  "method": "text",                  // ← failure path (createFailureResult)
+  "processing_time_ms": 46,          // ← too fast to have called Textract (which is ~1-3s)
+  "success": false,
+  "missing_fields": ["type","vendor","date","amount","invoice_receipt_number","category"]
+}
+```
+
+#### Layer 2 — AWS Textract fallback unavailable in dev
+
+Even if the exception hadn't swallowed, image-based PDFs need OCR. [`TextractClient.ts:19-29`](../../lib/extraction/TextractClient.ts#L19) requires three env vars:
+
+```ts
+this.awsConfigured = !!(
+  process.env.AWS_ACCESS_KEY_ID &&
+  process.env.AWS_SECRET_ACCESS_KEY &&
+  process.env.AWS_REGION
+);
+```
+
+Not set in dev → `analyzeDocument()` returns `{text: '', keyValuePairs: [], tables: []}`. The extractor's downstream `text+llm` fallback path runs but has nothing to work with (PDF text was already empty/garbage). Even though `VisionContentBuilder.ts` was restored in AUDIT-1 (2026-05-10), it's **not wired into `DeterministicExtractor`** — vision is never attempted as a fallback for failed text extraction.
+
+#### Layer 3 — `document-extractor` plugin fabricates "Unknown" defaults
+
+[`document-extractor-plugin-executor.ts:145-152`](../../lib/server/document-extractor-plugin-executor.ts#L145):
+
+```ts
+for (const fieldDef of outputSchema.fields) {
+  if (fieldDef.required && (extractedData[fieldDef.name] === null || extractedData[fieldDef.name] === undefined || extractedData[fieldDef.name] === '')) {
+    const fieldName = fieldDef.name;
+    extractedData[fieldDef.name] = `Unknown ${fieldName.charAt(0).toUpperCase() + fieldName.slice(1)}`;
+    this.logger.info({ field: fieldDef.name, fallback: extractedData[fieldDef.name] }, 'Applied fallback for missing required field');
+  }
+}
+```
+
+The rationale (per the comment): "prevent downstream 'field is required' errors when extraction fails." But the cure is worse than the disease — instead of a clear failure, downstream consumers receive `"Unknown Type"`, `"Unknown Vendor"`, etc. as if they were real extracted values. The AI generator at step14 dutifully renders an email body containing those Unknown values, and the user can't distinguish "extractor failed" from "the PDF actually said 'Unknown Vendor'".
+
+#### Compound cascade (vocabulary-pipeline, 2026-05-13)
+
+```
+step1 ✅ search emails → 1 email with PDF attachment
+step2 ✅ flatten attachments (WP-32 fix) → 1 attachment
+step3 ✅ filter PDFs → 1
+step4 ▶ scatter
+  step5 ✅ download PDF (33KB) — Gmail extracted_text stub set as side effect
+  step6 ❌ document-extractor:
+    └─ DeterministicExtractor.extract():
+        └─ pdfDetector.detect() throws on image-PDF (no text layer)
+        └─ catch block → createFailureResult({}, [...all fields missing], method: "text")
+    └─ Plugin applies "Unknown <Field>" defaults for required fields (type, vendor)
+    └─ Returns {type: "Unknown Type", vendor: "Unknown Vendor", _extraction_metadata: {success: false, confidence: 0, ...}}
+  step7 ✅ get_or_create_folder("Unknown Vendor") — creates a "Unknown Vendor" Drive folder! ❌
+  step8 ✅ upload_file → puts PDF in the wrong folder
+  step9 ✅ with_fields (WP-33 fix) builds digest_row with fabricated values
+step10 conditional `digest_row.amount > threshold`:
+  └─ amount is undefined (not a required field, no fallback applied) → fails `exists` check
+  └─ else branch (no Sheets append)
+step14 ✅ ai_processing generates email body with "Unknown" content
+step15 ✅ send_email delivers fabricated digest to user
+```
+
+**Net result:** workflow reports success, email delivered, Drive has an "Unknown Vendor" folder containing the original PDF, and the user has zero indication that nothing was actually extracted.
+
+#### Secondary cosmetic — Gmail PDF text-extraction stub
+
+[`gmail-plugin-executor.ts:271-275`](../../lib/server/gmail-plugin-executor.ts#L271):
+
+```ts
+} else if (mimeType === 'application/pdf') {
+  // PDF text extraction would require additional library
+  // For now, indicate it's not extracted
+  result.extracted_text = '(PDF text extraction not yet implemented)';
+}
+```
+
+This 2026-02 stub mis-labels every PDF attachment as having no text. It's actually harmless because `document-extractor` ignores `extracted_text` and works off the base64 `data` field. But:
+
+- Any future consumer that reads `extracted_text` (e.g. a simpler AI step asking "summarize this attachment") will receive the literal stub string instead of either real text or a clear null.
+- The stub propagates through to debug logs, scatter contexts, and final outputs as visible noise.
+
+Cosmetic but worth removing alongside the main fix.
+
+#### Trigger scenarios
+
+- Any image-based PDF (scanned receipts, photographed invoices, screenshots-as-PDFs)
+- Any vector PDF that doesn't parse cleanly with pdfjs-dist
+- Any workflow using `document-extractor.extract_structured_data` in dev (no AWS) for non-text-layer PDFs
+- Specifically: `expense-invoice-email-scanner`, `vocabulary-pipeline`, `orders-po-extractor-xlsx`, and any future scenarios involving receipt/invoice extraction
+
+#### Fix shape (deferred — multi-component change)
+
+This isn't a single-line tolerance fix. The right fix spans multiple files and design decisions:
+
+**A. Surface real failures instead of swallowing them.** `DeterministicExtractor.extract()` should let exceptions propagate up (or set a distinct error indicator). The plugin executor should detect `success: false && confidence: 0 && missingFields.length === fields.length` and decide whether to fail loudly, signal `_extraction_metadata.success: false` more prominently, or omit the fabricated-defaults entirely.
+
+**B. Stop fabricating "Unknown <Field>" defaults at the plugin layer.** Either:
+- Return real `null` for missing required fields and rely on downstream code to handle null (most explicit), OR
+- Set the fallback value to a distinct sentinel like `__EXTRACTION_FAILED__` so downstream conditionals can branch on it, OR
+- Surface the failure as a workflow-level error (`success: false` in step output, halt the scatter item) when ALL required fields are missing.
+
+**C. Wire vision/LLM fallback into `DeterministicExtractor`.** AUDIT-1 (2026-05-10) restored `VisionContentBuilder.ts` (452 lines) but it's not invoked from the extractor. Add a path: when text-based extraction yields 0 fields AND Textract is unavailable/empty, send the PDF as image to GPT-4V or Claude Vision via the AI provider factory. The plugin's `use_ai` parameter is already declared but not wired — this is the natural place.
+
+**D. Remove the Gmail PDF stub.** [`gmail-plugin-executor.ts:271-275`](../../lib/server/gmail-plugin-executor.ts#L271): either remove the `extracted_text` field for PDFs entirely (let downstream do extraction), or wire it to actually call pdfjs-dist / document-extractor's text path. Cosmetic but ought to go alongside the main fix.
+
+**E. Add Phase D mock for failure cases.** Phase D doesn't currently simulate "extractor returns 0 fields → applies Unknown defaults → workflow continues with bad data." This blind spot is what allowed this bug to ship undetected.
+
+#### Why this wasn't caught earlier
+
+- Phase D plugin mocks return clean structured data (`{type: "Invoice", vendor: "Acme", ...}`), never the failure-with-defaults shape. The cascade looks correct in mock.
+- Phase A static checks have no way to know the extractor will fail on image PDFs at runtime — it depends on the actual PDF content.
+- Live runs through this scenario before WP-32/WP-33 fixes failed earlier in the pipeline (empty attachments / scatter crash), so the extraction-failure path never got tested.
+- Once WP-32 + WP-33 unblocked the cascade, the bug surfaced immediately. **This is the first scenario in the regression suite where the extractor was actually hit with a real image-based PDF in a working pipeline.**
+
+#### Compounding observation
+
+WP-13 / WP-32 / WP-34 are all variants of "the system prefers to produce wrong-but-syntactically-valid output rather than fail loudly." The compiler validator over-correcting (WP-32), the AI fabricating tables on empty input (WP-13), and the extractor fabricating "Unknown <Field>" on failure (WP-34) all share the same root philosophy. Each one was added with good intent (don't crash workflows mid-execution) but compounds into the bigger systemic issue: **users can't tell when the system failed.**
+
+Long-term: each fabrication site needs a clear signal-the-failure path. The "fail loudly OR clearly indicate failure to downstream" principle should override "don't crash."
+
+**Files (for future fix):**
+
+- `lib/extraction/DeterministicExtractor.ts` (~20 lines: exception handling + add vision-fallback hook)
+- `lib/server/document-extractor-plugin-executor.ts` (~10 lines: remove or guard "Unknown <Field>" defaults; wire `use_ai` to vision path)
+- `lib/server/gmail-plugin-executor.ts` (~5 lines: remove PDF stub)
+- `lib/pilot/utils/VisionContentBuilder.ts` (already exists; wire into extractor)
+- New unit tests covering: failure path returns clear error, vision fallback fires for image PDFs, no Unknown defaults applied when all required fields fail
+- Phase D mock for `extract_structured_data` to optionally return failure shape
+
+---
+
+### WP-33: `with_fields.expression` accepts template strings but `evaluateExpression` requires structured form
+
+**Severity:** P1 — scatter item fails, parent scatter fails as "all items failed", notify never runs → user receives no email at all.
+**Encountered as:** Phase E on `vocabulary-pipeline` (2026-05-13, after WP-32 fix landed). step9 (`transform/with_fields` building a digest table row) failed with `evaluateExpression: invalid expression (must be {kind, ...}): "https://drive.google.com/..."`.
+**Status:** ⬜ Documented — fix to follow
+
+**Problem:** The W2 grammar requires `with_fields.fields[].expression` to be a structured `{kind: "...", ...}` AST node. The LLM is supposed to emit, e.g.:
+
+```json
+{
+  "name": "drive_link",
+  "expression": { "kind": "ref", "ref": "uploaded_file", "field": "web_view_link" }
+}
+```
+
+But the LLM (in `vocabulary-pipeline/phase4-pilot-dsl-steps.json:637-641`) emits a **template string**:
+
+```json
+{ "name": "drive_link", "expression": "{{uploaded_file.web_view_link}}" }
+```
+
+The IR converter's `normalizeExpressionRefs` at [`IntentToIRConverter.ts:1537-1539`](../../lib/agentkit/v6/compiler/IntentToIRConverter.ts#L1537) early-returns on non-object expressions:
+
+```ts
+if (expr == null || typeof expr !== 'object' || typeof expr.kind !== 'string') {
+  return expr   // string passes through unchanged
+}
+```
+
+So phase4 stores the raw template string. At runtime, [`StepExecutor`'s `resolveAllVariables`](../../lib/pilot/StepExecutor.ts) walks the step config (recursive Object/Array/string traversal) and replaces `{{var.field}}` placeholders with their resolved values. By the time `transformWithFields` runs, `field.expression = "https://drive.google.com/..."` — the resolved literal URL string.
+
+`transformWithFields` calls:
+
+```ts
+augmented[field.name] = evaluateExpression(field.expression, item, context, evaluator);
+```
+
+`evaluateExpression` ([`StructuredTransforms.ts:289`](../../lib/pilot/transforms/StructuredTransforms.ts#L289)) is strict:
+
+```ts
+if (expr == null || typeof expr !== 'object' || typeof expr.kind !== 'string') {
+  throw new StructuredTransformError(
+    `evaluateExpression: invalid expression (must be {kind, ...}): ${JSON.stringify(expr)?.slice(0, 200)}`,
+    'INVALID_EXPRESSION'
+  );
+}
+```
+
+A bare string fails this gate. Inside a scatter, this propagates as `SCATTER_ALL_FAILED` and the workflow halts before the downstream conditional send-email branch ever runs.
+
+**Why this is the WP-22 / WP-30 / WP-32 family:**
+
+| WP | Surface | Mismatch |
+|---|---|---|
+| WP-22 | `set_difference.reference` | LLM emits bare RefName, runtime needs `{{varname}}` |
+| WP-30 | `case 'config'` / `case 'ref'` | runtime called `resolveVariable` with bare path, needs `{{}}` |
+| WP-32 | `transform/flatten` | LLM correctly emits per-item-nested field, validator over-corrects to root-level |
+| **WP-33** | **`with_fields.fields[].expression`** | **LLM emits `"{{var.field}}"` template, runtime needs `{kind, ...}` structured AST** |
+
+All four are "LLM emits one valid-looking form, runtime/validator strictly requires another." The pattern recurs because the surface is wider than the grammar's enforcement gate — the LLM can drift to template-string emission especially for cross-slot refs (since `step.input`, `condition.value`, and many other surfaces *do* accept `{{}}` templates).
+
+**Why `resolveAllVariables` makes this worse:** in many other surfaces the LLM's `{{}}` template emission "works" because resolveAllVariables substitutes the value in-place and the consumer takes a primitive value (e.g. a recipient email, a condition RHS). `with_fields` is unusual in expecting a *typed AST node*, not a primitive — so resolveAllVariables transforms an originally-wrong-but-syntactic emission into a definitely-wrong primitive that crashes.
+
+**Concrete cascade (vocabulary-pipeline, 2026-05-13):**
+
+```
+step1 ✅ search emails → 1 email with 1 PDF attachment
+step2 ✅ flatten attachments (WP-32 fixed) → 1 attachment
+step3 ✅ filter (PDFs only) → 1 attachment
+step4 ▶ scatter over [1 attachment]
+  step5 ✅ download PDF (33KB)
+  step6 ✅ document-extractor → mostly-empty fields (vendor "Unknown")
+  step7 ✅ get_or_create_folder "Unknown Vendor"
+  step8 ✅ upload PDF → returns {file_id, web_view_link, ...}
+  step9 ❌ with_fields: evaluateExpression INVALID_EXPRESSION on resolved URL
+step4 ❌ SCATTER_ALL_FAILED (1/1 items)
+step10 (conditional) ⏭ skipped
+step14 (ai_processing) ⏭ skipped
+step15 (send_email) ⏭ skipped
+```
+
+User receives nothing.
+
+**Fix shape (two layers, mirroring WP-22 / WP-30):**
+
+#### A. Runtime tolerance in `evaluateExpression` — defense in depth
+
+When `expr` is a string, normalize it before the structured-form check:
+
+```ts
+function normalizeStringExpression(s: string): any {
+  // Match {{<ref>}} or {{<ref>.<field>}} (single-segment ref + optional one field)
+  const m = s.match(/^\s*\{\{\s*([\w$]+)(?:\.([\w$]+(?:\.[\w$]+)*))?\s*\}\}\s*$/);
+  if (m) {
+    const ref = m[1];
+    const fieldPath = m[2];
+    if (ref === 'input' && fieldPath) {
+      // First segment "input" is the config namespace
+      return { kind: 'config', key: fieldPath };
+    }
+    // Single field segment → standard ref shape
+    if (fieldPath && !fieldPath.includes('.')) {
+      return { kind: 'ref', ref, field: fieldPath };
+    }
+    if (!fieldPath) {
+      return { kind: 'ref', ref };
+    }
+    // Multi-segment field path — keep as ref with dotted field; resolver handles dotted paths.
+    return { kind: 'ref', ref, field: fieldPath };
+  }
+  // Plain string (no template syntax) — already-resolved literal. Wrap as literal.
+  return { kind: 'literal', value: s };
+}
+
+export function evaluateExpression(expr: any, currentItem, context, evaluator): any {
+  // WP-33: tolerate template-string and already-resolved-string expressions.
+  if (typeof expr === 'string') {
+    expr = normalizeStringExpression(expr);
+  }
+  // ... existing structured-form check and switch
+}
+```
+
+This handles both cases:
+- **Pre-resolution path** (LLM template still intact): `"{{uploaded_file.web_view_link}}"` → `{kind: "ref", ref: "uploaded_file", field: "web_view_link"}` → evaluated per-iteration via context.
+- **Post-resolution path** (resolveAllVariables already substituted): `"https://drive.google.com/..."` → `{kind: "literal", value: "https://drive.google.com/..."}` → returned as-is. Correct for cross-slot refs (the resolved value is the same for every iteration anyway).
+
+#### B. IR converter normalization in `normalizeExpressionRefs`
+
+Convert string expressions to structured form at compile time so phase4 has the correct shape (matches the W2 grammar contract; avoids relying on the runtime tolerance):
+
+```ts
+private normalizeExpressionRefs(expr: any, ctx, inputVar: string): any {
+  // WP-33: parse string-form expressions into structured AST nodes.
+  if (typeof expr === 'string') {
+    const m = expr.match(/^\s*\{\{\s*([\w$]+)(?:\.([\w$]+(?:\.[\w$]+)*))?\s*\}\}\s*$/);
+    if (m) {
+      const ref = m[1];
+      const fieldPath = m[2];
+      if (ref === 'input' && fieldPath) {
+        return { kind: 'config', key: fieldPath };
+      }
+      // Apply the same `ref === inputVar → "item"` rewrite the structured path does.
+      const normalizedRef = ref === inputVar ? 'item' : ref;
+      return fieldPath
+        ? { kind: 'ref', ref: normalizedRef, field: fieldPath }
+        : { kind: 'ref', ref: normalizedRef };
+    }
+    // Plain non-template string → literal
+    return { kind: 'literal', value: expr };
+  }
+
+  if (expr == null || typeof expr !== 'object' || typeof expr.kind !== 'string') {
+    return expr;
+  }
+  // ... existing switch
+}
+```
+
+#### C. `resolveAllVariables` skip for structured expressions (deferred / optional)
+
+Once (A) + (B) are in place, the IR converter emits `{kind: "ref", ref: "uploaded_file", field: "web_view_link"}` and `resolveAllVariables` doesn't touch it (it's an object, not a `{{}}` string). The runtime evaluator resolves cross-slot refs via context. This is the cleanest end state.
+
+**Defer (C)** — `resolveAllVariables` traversal is generic and used by many step types. Changing its traversal to skip `with_fields.fields[].expression` would be a surgical exception that doesn't generalize. (B) achieves the same outcome.
+
+**Files:**
+
+- `lib/pilot/transforms/StructuredTransforms.ts` (~25 lines: `normalizeStringExpression` helper + 3-line guard in `evaluateExpression`)
+- `lib/agentkit/v6/compiler/IntentToIRConverter.ts` (~20 lines: string-handling branch in `normalizeExpressionRefs`)
+- `lib/pilot/__tests__/StructuredTransforms.wp33.test.ts` (new — template parsing, resolved-literal handling, with_fields integration, regression guards for `{kind, ...}` path)
+- `lib/agentkit/v6/compiler/__tests__/IntentToIRConverter.wp33.test.ts` (new — converter normalizes string `expression` to structured AST)
+
+**Test coverage to add:**
+
+1. ✅ `evaluateExpression("{{X.Y}}", item, ctx, ev)` → resolves X.Y via context (post-WP-30 wrap)
+2. ✅ `evaluateExpression("{{input.K}}", item, ctx, ev)` → resolves to ctx.inputs.K
+3. ✅ `evaluateExpression("https://example.com", item, ctx, ev)` → returns the string as literal
+4. ✅ `evaluateExpression(123, item, ctx, ev)` → throws (only strings + structured pass)
+5. ✅ Regression: existing structured-form refs continue to work
+6. ✅ IR converter: `with_fields` with `expression: "{{var.field}}"` produces `{kind: "ref", ref: "var", field: "field"}` in phase4
+7. ✅ IR converter: `with_fields` with `expression: "{{inputVar.X}}"` produces `{kind: "ref", ref: "item", field: "X"}` (per-iteration rewrite)
+8. ✅ IR converter: `with_fields` with `expression: "plain-literal"` → `{kind: "literal", value: "plain-literal"}`
+
+**Why this wasn't caught earlier:**
+
+The W2 (WP-16) primitive suite was tested with hand-written structured expressions matching the grammar exactly. LLM-emitted phase4 files for the regression scenarios in CP-D didn't exercise `with_fields` with cross-slot refs to non-loop slots (which is where template-string emission is most natural for the LLM — "just use the same `{{}}` syntax that works everywhere else"). The bug is invisible to Phase A/D mocks because the field's "resolved" value (a URL string) is also a valid stringification — only at runtime, when the typed evaluator expects an AST node, does the type mismatch surface.
+
+---
+
+### WP-32: `StructuralRepairEngine` rewrites flatten `field` from per-item-nested to root-level
+
+**Severity:** P1 — silently corrupts correct LLM emission for the "extract attachments per email" pattern (and any similar wrapper→nested-array→per-item-array flow). User receives empty email; Phase E reports success.
+**Encountered as:** Phase E on `expense-invoice-email-scanner` (2026-05-13) — Gmail search returned 1 matching invoice email with 1 PDF attachment, but step2 (`transform/flatten` over attachments) returned `[]`. User received an empty notification email.
+**Status:** ⬜ Documented — fix to follow
+
+**Problem:** Two coordinated emission/validator points disagree on what "flatten field" means.
+
+**The LLM correctly emits** (in `phase4-pilot-dsl-steps.json`):
+
+```json
+{
+  "step_id": "step2",
+  "type": "transform",
+  "input": "{{matching_emails.emails}}",
+  "config": {
+    "type": "flatten",
+    "input": "matching_emails.emails",
+    "field": "attachments"
+  }
+}
+```
+
+Semantically: "for each email in the emails array, extract its `attachments` sub-array; flatten all per-email arrays into one combined array." The runtime `transformFlatten` in [`StepExecutor.ts`](../../lib/pilot/StepExecutor.ts) implements exactly this: when `field` is set and `data` is an array, it does `data.reduce((acc, item) => acc.concat(item[field]), [])`.
+
+**`StructuralRepairEngine.scanWorkflow`** ([`shadow/StructuralRepairEngine.ts:520-602`](../../lib/pilot/shadow/StructuralRepairEngine.ts#L520)) runs at the top of `WorkflowPilot.execute()` ([`WorkflowPilot.ts:266-294`](../../lib/pilot/WorkflowPilot.ts#L266)), validates the workflow, and **persists fixes back to the `agents.pilot_steps` DB column** — so subsequent runs see the rewritten value too.
+
+```ts
+// StructuralRepairEngine.ts line 531
+const varMatch = inputStr.match(/\{\{(\w+)(?:\.data)?(?:\.(\w+))?\}\}/);
+// For "{{matching_emails.emails}}" → varMatch[1] = "matching_emails", varMatch[2] = "emails"
+
+if (varMatch) {
+  const varName = varMatch[1];
+  const sourceStep = allSteps.find(s => s.output_variable === varName || ...);
+
+  if (sourceStep?.output_schema) {
+    if (sourceStep.output_schema.type === 'object' && sourceStep.output_schema.properties) {
+      // Source returns an object - flatten field must be at ROOT level    ← WRONG ASSUMPTION
+      const rootArrayFields = Object.keys(sourceStep.output_schema.properties).filter(
+        key => sourceStep.output_schema.properties[key].type === 'array'
+      );
+
+      // Check if the flatten field is a root-level array
+      if (!rootArrayFields.includes(field)) {
+        // ...
+        issues.push({ type: 'invalid_flatten_field', ... });
+      }
+    }
+  }
+}
+```
+
+The bug: when `step.input` itself navigates into a sub-field via `{{var.subfield}}`, the input flowing into `transformFlatten` is the *sub-field's* value (an array of items), not the whole source output. The validator captures `varMatch[2] = "emails"` from the regex but then ignores it and validates `config.field` against the **root keys** of the source output_schema. So `field: "attachments"` is rejected (not a root key of `{emails, total_found, ...}`).
+
+The autoFix at [line 951-996](../../lib/pilot/shadow/StructuralRepairEngine.ts#L951) then picks from the root-level priority list `['emails', 'items', 'files', 'results', 'data', 'records', 'rows']` — `emails` is first, so `attachments` → `emails`. The fix is persisted to DB (`WorkflowPilot.ts:284-287`).
+
+**Concrete log evidence (expense-invoice-email-scanner, 2026-05-13):**
+
+```
+[WP-32 DEBUG] transformFlatten entry
+  field: "emails"                    ← AT RUNTIME (rewritten)
+  data: array[1] itemKeys=id,thread_id,subject,from,to,date,snippet,labels,body,attachments
+  field[emails]=missing               ← because no email has an `.emails` field
+```
+
+But `phase4-pilot-dsl-steps.json` on disk still has `field: "attachments"` — the rewrite is only on the DB-stored `agents.pilot_steps`, which is what WorkflowPilot uses at execution time.
+
+**Why the assumption is wrong:** the validator was designed for the canonical Sheets-style pattern where `step.input` is `{{produce_step}}` (the whole wrapper) and `field` names the root array to flatten. That's a valid pattern. But it's not the *only* valid pattern — when the LLM (or compiler O23) has already navigated into a sub-array via `step.input = {{produce_step.X}}`, the meaning of `field` shifts from "the root array to flatten" to "the per-item sub-field to extract before flattening." The validator must distinguish the two cases.
+
+**Trigger scenarios:**
+
+- Gmail attachments: `{{search.emails}}` → flatten `attachments` (today's failure case)
+- Sheets rows with nested cells: `{{read.rows}}` → flatten `tags`
+- Drive folder contents with nested children: `{{list.folders}}` → flatten `files`
+- Any plugin returning `{<key>: array<{<nested-key>: array<...>}>, ...}` shape with a per-item nested-array unwrap
+
+**Fix:** in the "type === 'object'" branch, if `varMatch[2]` is set and `output_schema.properties[varMatch[2]]` is an array schema with `items.properties`, validate `field` against the **array items' properties** instead of root-level keys.
+
+```ts
+if (sourceStep.output_schema.type === 'object' && sourceStep.output_schema.properties) {
+  const subField = varMatch[2];
+
+  if (subField && sourceStep.output_schema.properties[subField]?.type === 'array') {
+    // Input navigates into a sub-array. Validate `field` against the array items' properties.
+    const itemProps = sourceStep.output_schema.properties[subField].items?.properties;
+    if (itemProps) {
+      const itemArrayFields = Object.keys(itemProps).filter(k => itemProps[k].type === 'array');
+      // If field is a per-item array sub-field → VALID, no issue
+      if (itemArrayFields.includes(field)) {
+        // explicitly do nothing — this is the per-item-nested flatten pattern
+      } else if (itemArrayFields.length > 0) {
+        // field is wrong, but suggest from per-item array fields
+        issues.push({
+          type: 'invalid_flatten_field',
+          // ... "Available per-item array fields in <subField>[]: ..."
+        });
+      }
+      // else: subField items have no nested arrays → field can't be anything meaningful, skip validation
+    }
+    // If subField is an array but items have no properties → skip validation (can't reason)
+    return;  // do NOT fall through to root-level validation
+  }
+
+  // Original root-level validation (only fires when no navigation in step.input)
+  const rootArrayFields = Object.keys(sourceStep.output_schema.properties).filter(
+    key => sourceStep.output_schema.properties[key].type === 'array'
+  );
+  if (!rootArrayFields.includes(field)) { /* existing issue push */ }
+}
+```
+
+For the autoFix `case 'invalid_flatten_field'` at line 951, also extend the priority list with a per-item-nested pattern when the description matches the new "per-item array fields" wording — but this is secondary; once detection is correct, autoFix won't fire for valid emissions.
+
+**Files:**
+
+- `lib/pilot/shadow/StructuralRepairEngine.ts` (~30 lines: scan logic + autoFix wording)
+- `lib/pilot/shadow/__tests__/StructuralRepairEngine.wp32.test.ts` (new — canonical expense-invoice pattern, regression guards for Sheets-style root-level pattern, no-source-schema fallback, no-navigation fallback)
+
+**Test coverage to add:**
+
+1. ✅ Canonical: `input: {{x.emails}}` + `field: attachments` where source schema has `emails: array<{attachments: array, ...}>` → **NO issue raised**, no rewrite.
+2. ✅ Regression: `input: {{x}}` (no navigation) + `field: nonexistent` where source has `emails: array, others: array` → issue raised, rewrite to `emails` (existing behavior preserved).
+3. ✅ Regression: `input: {{x.emails}}` + `field: "wrong"` where items have `attachments: array, files: array` → issue raised, suggest from per-item fields.
+4. ✅ Edge: `input: {{x.emails}}` but source's `emails` items have no array sub-fields → no issue raised (can't validate meaningfully).
+5. ✅ Edge: no source schema available → existing skip behavior.
+
+**Why this wasn't caught earlier:**
+
+- The existing regression scenarios for `transform/flatten` over per-item-nested data (`aliexpress-delivery-tracker`, `expense-invoice-email-scanner`) likely had been emitting `field: "emails"` (the wrong-but-validator-friendly form) historically, OR were emitting field-less flatten (depth-only) which doesn't trigger this branch.
+- Phase D uses mock plugin outputs that may not include the wrapper-object shape that triggers the validator's object-branch.
+- The validator's "fix" silently mutates the DSL and persists it, so a subsequent run with the rewritten DSL just produces an empty result that looks like "no matching data" rather than a validator error.
+
+**Compounding observation:** the validator at this point is acting as a "structural truth" enforcer but its truth is plugin-pattern-specific. As long as the LLM's emission is internally consistent (input navigation matches field semantics), the validator should **let it pass**. WP-32 is the third instance of "validator over-corrects valid LLM emissions" (WP-22 was `set_difference.reference` bare-RefName; WP-30 was `config` bare-path) — the recurring theme is **validators that assume a single canonical form rather than detecting which of several valid forms the LLM emitted**.
 
 ---
 
