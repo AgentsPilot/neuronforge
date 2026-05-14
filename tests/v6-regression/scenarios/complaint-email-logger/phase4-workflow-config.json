@@ -1,0 +1,15 @@
+{
+  "spreadsheet_id": "1RHLbBXzrKv24gNgp7a4Lr7RlMIrP9fjacfGWjhPAbOE",
+  "sheet_tab_name": "UrgentEmails",
+  "gmail_search_query": "in:inbox newer_than:7d (complaint OR refund OR angry OR \"not working\")",
+  "complaint_keywords": "complaint, refund, angry, not working",
+  "user_email": "meiribarak@gmail.com",
+  "google_sheets__table_create__spreadsheet_id": "1RHLbBXzrKv24gNgp7a4Lr7RlMIrP9fjacfGWjhPAbOE",
+  "google_sheets__table_create__sheet_tab_name": "UrgentEmails",
+  "google_sheets__table_read__spreadsheet_id": "1RHLbBXzrKv24gNgp7a4Lr7RlMIrP9fjacfGWjhPAbOE",
+  "google_sheets__table_read__sheet_tab_name": "UrgentEmails",
+  "google_mail__email_search__query": "in:inbox newer_than:7d (complaint OR refund OR angry OR \"not working\")",
+  "sheet_dedup_rule": "skip if Gmail message link/id already exists in the sheet",
+  "thread_handling": "log every message that matches the complaint rule",
+  "google_sheets__table_create__columns": "sender email, subject, date, full email text, Gmail message link/id"
+}

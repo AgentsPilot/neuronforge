@@ -31,6 +31,7 @@ Read the following before starting:
 1. `docs/requirements/[feature-slug].md` — acceptance criteria to test against
 2. `docs/workplans/[feature-slug]-workplan.md` — what was built and how
 3. `CLAUDE.md` — project test conventions
+4. **Applicable skill, if any.** If the work scaffolds a new API route, repository, or plugin, read the matching `.claude/skills/<name>/SKILL.md`. Each skill defines the **minimum test cases** that must be present (e.g. `new-api-route` requires happy path + 401 + 400; `new-repository` requires a unit test for each method). Treat any missing case as a Bug in your report, not a nice-to-have.
 
 Then determine your testing plan using these inputs (in priority order):
 1. **Prompt keywords** — if the trigger message contains keywords from the table below, follow them

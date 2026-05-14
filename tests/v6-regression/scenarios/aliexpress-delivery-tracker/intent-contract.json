@@ -1,11 +1,26 @@
 {
   "version": "intent.v1",
-  "goal": "Search Gmail for AliExpress delivery updates, extract package details, consolidate into HTML summary table, and email to user",
+  "goal": "Search Gmail for AliExpress delivery update emails, extract package details and delivery status from each, consolidate into an HTML summary table, email the summary to the user, then mark emails as read and label them 'shopping'.",
   "unit_of_work": {
     "entity": "email",
-    "parent_entity": "search_results"
+    "parent_entity": "mailbox"
   },
   "config": [
+    {
+      "key": "aliexpress_sender",
+      "type": "string",
+      "description": "Sender address for AliExpress delivery notifications",
+      "default": "transaction@notice.aliexpress.com"
+    },
+    {
+      "key": "search_keywords",
+      "type": "json",
+      "description": "Keywords to filter delivery update emails by subject or body",
+      "default": [
+        "delivery update",
+        "shipment"
+      ]
+    },
     {
       "key": "recipient_email",
       "type": "string",
@@ -13,23 +28,45 @@
       "default": "meiribarak@gmail.com"
     },
     {
+      "key": "summary_email_subject",
+      "type": "string",
+      "description": "Subject line for the summary email",
+      "default": "AliExpress Delivery Updates Summary"
+    },
+    {
       "key": "gmail_search_query",
       "type": "string",
-      "description": "Gmail search query for AliExpress delivery updates",
-      "default": "from:transaction@notice.aliexpress.com (subject:(delivery update) OR subject:(shipment) OR delivery update OR shipment)"
+      "description": "Gmail search query to find AliExpress delivery emails",
+      "default": "from:transaction@notice.aliexpress.com (subject:(delivery update) OR subject:(shipment))"
     },
     {
       "key": "max_emails",
       "type": "number",
       "description": "Maximum number of emails to retrieve",
-      "default": 50
+      "default": 30
+    },
+    {
+      "key": "shopping_label",
+      "type": "string",
+      "description": "Gmail label to apply to processed emails",
+      "default": "shopping"
     }
+  ],
+  "invariants": [
+    "Only emails from the configured AliExpress sender address are processed",
+    "Each email is marked as read and labeled after processing",
+    "The summary email is sent only after all extraction is complete"
+  ],
+  "required_outcomes": [
+    "An HTML summary table with package number, products, and delivery status is emailed to the recipient",
+    "All processed AliExpress delivery emails are marked as read",
+    "All processed AliExpress delivery emails are labeled with the shopping label"
   ],
   "steps": [
     {
       "id": "search_aliexpress_emails",
       "kind": "data_source",
-      "summary": "Search Gmail for AliExpress delivery update emails",
+      "summary": "Search Gmail for AliExpress delivery update emails from the known sender address, retrieving full email content for extraction",
       "uses": [
         {
           "capability": "search",
@@ -49,86 +86,64 @@
         "key": "gmail_search_query"
       },
       "retrieval": {
-        "max_results": 50,
-        "include_content": "full"
+        "max_results": 30,
+        "include_content": "full",
+        "include_attachments": false
       }
     },
     {
-      "id": "extract_package_details",
-      "kind": "loop",
-      "summary": "Extract package number, products, and delivery summary from each email",
+      "id": "filter_delivery_keywords",
+      "kind": "transform",
+      "summary": "Filter emails to only those containing delivery update or shipment keywords in subject or body",
       "inputs": [
         "aliexpress_emails"
       ],
-      "output": "extracted_packages",
-      "loop": {
-        "over": "aliexpress_emails",
-        "item_ref": "email",
-        "unit_of_work": {
-          "entity": "email"
-        },
-        "collect": {
-          "enabled": true,
-          "collect_as": "extracted_packages",
-          "from_step_output": "package_info"
-        },
-        "do": [
-          {
-            "id": "extract_fields",
-            "kind": "extract",
-            "summary": "Extract package number, products list, and delivery summary from email body",
-            "inputs": [
-              "email"
-            ],
-            "output": "package_info",
-            "uses": [
-              {
-                "capability": "extract_structured_data",
-                "domain": "document"
+      "output": "delivery_emails",
+      "transform": {
+        "op": "filter",
+        "input": "aliexpress_emails",
+        "description": "Keep only emails whose subject or body contains delivery-related keywords",
+        "where": {
+          "op": "or",
+          "conditions": [
+            {
+              "op": "test",
+              "left": {
+                "kind": "ref",
+                "ref": "aliexpress_emails",
+                "field": "subject"
+              },
+              "comparator": "contains_any",
+              "right": {
+                "kind": "config",
+                "key": "search_keywords"
               }
-            ],
-            "extract": {
-              "input": "email",
-              "fields": [
-                {
-                  "name": "package_number",
-                  "type": "string",
-                  "required": true,
-                  "description": "Tracking or package number"
-                },
-                {
-                  "name": "products",
-                  "type": "array",
-                  "required": true,
-                  "description": "List of product names or descriptions in the shipment"
-                },
-                {
-                  "name": "delivery_status",
-                  "type": "string",
-                  "required": true,
-                  "description": "Current delivery status (e.g., shipped, in transit, out for delivery)"
-                },
-                {
-                  "name": "estimated_delivery_date",
-                  "type": "date",
-                  "required": false,
-                  "description": "Estimated delivery date if available"
-                }
-              ],
-              "deterministic": false
+            },
+            {
+              "op": "test",
+              "left": {
+                "kind": "ref",
+                "ref": "aliexpress_emails",
+                "field": "body"
+              },
+              "comparator": "contains_any",
+              "right": {
+                "kind": "config",
+                "key": "search_keywords"
+              }
             }
-          }
-        ]
+          ]
+        }
       }
     },
     {
-      "id": "generate_html_summary",
+      "id": "extract_delivery_details",
       "kind": "generate",
-      "summary": "Create HTML table summarizing all package deliveries",
+      "summary": "Extract package number, list of products, and delivery summary (status and estimated delivery date) from each AliExpress delivery email",
       "inputs": [
-        "extracted_packages"
+        "delivery_emails"
       ],
-      "output": "summary_content",
+      "output": "extracted_deliveries",
       "uses": [
         {
           "capability": "generate",
@@ -136,14 +151,67 @@
         }
       ],
       "generate": {
-        "input": "extracted_packages",
+        "input": "delivery_emails",
+        "instruction": "For each email in the delivery_emails array, analyze the email body and subject to extract: 1) The package/tracking number, 2) A list of product names included in the shipment, 3) The current delivery status (e.g., 'Shipped', 'In Transit', 'Out for Delivery', 'Delivered'), 4) The estimated delivery date if available. Also preserve the email id for downstream processing. If a field cannot be found, use 'N/A'.",
+        "reason": "AliExpress delivery emails have varied HTML layouts and unstructured content requiring semantic reasoning to identify package numbers, product names, and delivery status from free-form text.",
+        "outputs": [
+          {
+            "name": "deliveries",
+            "type": "array",
+            "description": "One entry per delivery email with extracted details",
+            "items": {
+              "type": "object",
+              "properties": {
+                "email_id": {
+                  "type": "string",
+                  "description": "Gmail message ID for downstream labeling/marking"
+                },
+                "package_number": {
+                  "type": "string",
+                  "description": "Package or tracking number"
+                },
+                "products": {
+                  "type": "string",
+                  "description": "Comma-separated list of product names in the shipment"
+                },
+                "delivery_status": {
+                  "type": "string",
+                  "description": "Current delivery status (Shipped, In Transit, Out for Delivery, Delivered, etc.)"
+                },
+                "estimated_delivery_date": {
+                  "type": "string",
+                  "description": "Estimated delivery date if available, otherwise N/A"
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "compose_summary_email",
+      "kind": "generate",
+      "summary": "Compose an HTML email body with a brief introductory message and an HTML summary table of all AliExpress delivery updates",
+      "inputs": [
+        "extracted_deliveries"
+      ],
+      "output": "summary_email_content",
+      "uses": [
+        {
+          "capability": "generate",
+          "domain": "internal"
+        }
+      ],
+      "generate": {
+        "input": "extracted_deliveries",
         "format": "html",
-        "instruction": "Create a professional HTML table with the following structure: columns for Package Number, Products (comma-separated list), Delivery Status, and Estimated Delivery Date. Include proper table styling with borders, header row background color, and padding for readability. Add a brief introductory message above the table: 'Here is your AliExpress delivery updates summary:'",
+        "instruction": "Create a professional HTML email body. Start with a brief greeting and introductory sentence like 'Here is a summary of your latest AliExpress delivery updates:'. Then create an HTML table with the following columns: Package Number, Products, Delivery Status, Estimated Delivery Date. Style the table with borders, a colored header row (e.g., light blue background), padding, and clean professional formatting. Populate the table rows from the deliveries array in extracted_deliveries. If there are no deliveries, show a message saying 'No AliExpress delivery updates found.' End with a brief closing line.",
+        "reason": "Composing a styled HTML email body with a formatted table from structured data requires free-form HTML generation with conditional content and professional styling — no template structure is available.",
         "outputs": [
           {
             "name": "html_body",
             "type": "string",
-            "description": "Complete HTML content with message and table"
+            "description": "Complete HTML email body with summary table"
           }
         ]
       }
@@ -151,9 +219,9 @@
     {
       "id": "send_summary_email",
       "kind": "notify",
-      "summary": "Send summary email to user",
+      "summary": "Send the AliExpress delivery summary email to the user",
       "inputs": [
-        "summary_content"
+        "summary_email_content"
       ],
       "uses": [
         {
@@ -176,12 +244,12 @@
         },
         "content": {
           "subject": {
-            "kind": "literal",
-            "value": "AliExpress Delivery Updates Summary"
+            "kind": "config",
+            "key": "summary_email_subject"
           },
           "body": {
             "kind": "ref",
-            "ref": "summary_content",
+            "ref": "summary_email_content",
             "field": "html_body"
           },
           "format": "html"
@@ -189,23 +257,33 @@
       }
     },
     {
-      "id": "mark_emails_read",
+      "id": "mark_and_label_emails",
       "kind": "loop",
-      "summary": "Mark all AliExpress delivery emails as read",
+      "summary": "Mark each delivery email as read and apply the shopping label",
       "inputs": [
-        "aliexpress_emails"
+        "delivery_emails"
       ],
+      "output": "labeled_emails",
       "loop": {
-        "over": "aliexpress_emails",
-        "item_ref": "email",
+        "over": "delivery_emails",
+        "item_ref": "current_email",
+        "unit_of_work": {
+          "entity": "email"
+        },
+        "collect": {
+          "enabled": true,
+          "collect_as": "labeled_emails",
+          "from_step_output": "label_result"
+        },
         "do": [
           {
-            "id": "mark_read",
-            "kind": "data_source",
-            "summary": "Mark email as read",
+            "id": "mark_read_and_label",
+            "kind": "deliver",
+            "summary": "Mark the email as read and add the shopping label",
             "inputs": [
-              "email"
+              "current_email"
             ],
+            "output": "label_result",
             "uses": [
               {
                 "capability": "modify",
@@ -215,73 +293,42 @@
                 }
               }
             ],
-            "source": {
+            "deliver": {
               "domain": "email",
-              "intent": "modify"
-            },
-            "payload": {
-              "message_id": {
-                "kind": "ref",
-                "ref": "email",
-                "field": "id"
-              },
-              "mark_read": {
-                "kind": "literal",
-                "value": true
-              }
-            }
-          }
-        ]
-      }
-    },
-    {
-      "id": "move_to_shopping_label",
-      "kind": "loop",
-      "summary": "Move all AliExpress delivery emails to shopping label",
-      "inputs": [
-        "aliexpress_emails"
-      ],
-      "loop": {
-        "over": "aliexpress_emails",
-        "item_ref": "email",
-        "do": [
-          {
-            "id": "apply_label",
-            "kind": "data_source",
-            "summary": "Apply shopping label to email",
-            "inputs": [
-              "email"
-            ],
-            "uses": [
-              {
-                "capability": "modify",
-                "domain": "email",
-                "preferences": {
-                  "provider_family": "google"
+              "intent": "modify_labels",
+              "input": "current_email",
+              "mapping": [
+                {
+                  "from": {
+                    "ref": "current_email",
+                    "field": "id"
+                  },
+                  "to": "message_id"
                 }
-              }
-            ],
-            "source": {
-              "domain": "email",
-              "intent": "modify"
-            },
-            "payload": {
-              "message_id": {
-                "kind": "ref",
-                "ref": "email",
-                "field": "id"
-              },
-              "add_labels": {
-                "kind": "literal",
-                "value": [
-                  "shopping"
+              ],
+              "options": {
+                "mark_read": true,
+                "add_labels": [
+                  {
+                    "kind": "config",
+                    "key": "shopping_label"
+                  }
                 ]
               }
             }
           }
-        ]
+        ],
+        "concurrency": 5
       }
     }
   ],
-  "confidence": 0.95
+  "confidence": 0.9,
+  "meta": {
+    "estimated_steps": 6,
+    "primary_domains": [
+      "email"
+    ],
+    "requires_ai_extraction": true,
+    "note": "AliExpress emails have varied HTML formats; extraction accuracy depends on email content structure"
+  }
 }

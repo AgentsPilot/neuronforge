@@ -1,0 +1,14 @@
+{
+  "spreadsheet_id": "1RHLbBXzrKv24gNgp7a4Lr7RlMIrP9fjacfGWjhPAbOE",
+  "sheet_tab_name": "Leads",
+  "high_qualified_stage": 4,
+  "user_email_recipient": "meiribarak@gmail.com",
+  "user_email_subject": "Your tasks today - Please handle the following leads - High-qualified leads summary",
+  "summary_columns": "Date, Lead Name, Company, Email, Phone, Stage, Notes, Sales Person",
+  "google_mail__email_send__recipients": "meiribarak@gmail.com",
+  "google_sheets__table_read__spreadsheet_id": "1RHLbBXzrKv24gNgp7a4Lr7RlMIrP9fjacfGWjhPAbOE",
+  "google_sheets__table_read__sheet_tab_name": "Leads",
+  "high_qualified_filter": "stage = 4",
+  "sales_delivery_mode": "per_owner (group by Sales Person column)",
+  "summary_format": "HTML table in email body"
+}

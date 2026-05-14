@@ -252,6 +252,19 @@ export class DataSchemaBuilder {
 
   /**
    * Transform step: shape-preserving inherits input schema, shape-changing uses output_schema.
+   *
+   * WP-18 Bug A (2026-05-08): if the LLM declared an `output_schema`, it wins —
+   * even on shape-preserving ops. The "inherit input" rule has an unstated
+   * assumption (input slot represents what the runtime sees) that breaks when
+   * the compiler auto-injects a `rows_to_objects` between fetch + filter.
+   * The LLM's declaration is the authority on shape; the inheritance rule is
+   * a heuristic fallback.
+   *
+   * WP-18 Bug B (2026-05-08): when inheriting from a wrapper-object input slot
+   * (e.g., Sheets `{values, row_count, ...}`) and the runtime will operate on
+   * the unwrapped element shape, walk into the wrapper to find the nested
+   * array's items. Mirrors the Phase 4 compiler's `rows_to_objects`
+   * auto-inject without entangling Phase 2 with that compiler-specific logic.
    */
   private inferSchemaForTransformStep(
     step: BoundStep & TransformStep,
@@ -266,32 +279,43 @@ export class DataSchemaBuilder {
     const inputRef = step.transform.input
     const inputSlot = inputRef ? slots[inputRef] : null
 
-    // Flatten is special: shape-preserving if no output_schema, but can be shape-changing
+    // WP-18 Bug A: LLM-declared output_schema wins for ANY transform op.
+    // Process this first so shape-preserving ops with a declared schema use
+    // the declaration, not the heuristic inheritance.
+    if (step.transform.output_schema) {
+      return this.convertJsonObjectToSchemaField(step.transform.output_schema, 'ai_declared')
+    }
+
+    // Flatten without output_schema: unwrap one array level.
     if (op === 'flatten') {
-      if (step.transform.output_schema) {
-        return this.convertJsonObjectToSchemaField(step.transform.output_schema, 'ai_declared')
-      }
-      // Flatten without output_schema: unwrap one array level
       if (inputSlot?.schema.type === 'array' && inputSlot.schema.items) {
         return { ...inputSlot.schema.items, source: 'inferred' }
       }
       return inputSlot ? { ...inputSlot.schema, source: 'inferred' } : null
     }
 
-    // Shape-preserving: inherit input schema
+    // Shape-preserving without declared schema: inherit input, with
+    // WP-18 Bug B wrapper-unwrap for compiler-auto-injected paths.
     if (SHAPE_PRESERVING_OPS.has(op)) {
       if (!inputSlot) {
         this.warn(`Step ${step.id}: transform input "${inputRef}" not found in slots`)
         return null
       }
+
+      // WP-18 Bug B: if the input is a wrapper-object containing a single
+      // nested array (canonical pattern: Sheets `{values: array<row>, ...}`),
+      // the runtime operates on rows-as-objects after the compiler's
+      // auto-inject. Inherit the array shape, not the wrapper shape.
+      const unwrapped = this.unwrapWrapperToArray(inputSlot.schema)
+      if (unwrapped) {
+        return { ...this.deepCopySchema(unwrapped), source: 'inferred' }
+      }
+
       return { ...this.deepCopySchema(inputSlot.schema), source: 'inferred' }
     }
 
-    // Shape-changing: require output_schema
+    // Shape-changing: require output_schema (already handled above; warn if missing).
     if (SHAPE_CHANGING_OPS.has(op)) {
-      if (step.transform.output_schema) {
-        return this.convertJsonObjectToSchemaField(step.transform.output_schema, 'ai_declared')
-      }
       this.warn(
         `Step ${step.id}: shape-changing transform (${op}) is missing output_schema — ` +
           `cannot determine output shape. Fix in Phase 1 prompt or use extract/generate instead.`
@@ -299,10 +323,7 @@ export class DataSchemaBuilder {
       return null
     }
 
-    // Unknown op: try output_schema, fall back to input
-    if (step.transform.output_schema) {
-      return this.convertJsonObjectToSchemaField(step.transform.output_schema, 'ai_declared')
-    }
+    // Unknown op: fall back to input.
     if (inputSlot) {
       return { ...this.deepCopySchema(inputSlot.schema), source: 'inferred' }
     }
@@ -323,12 +344,7 @@ export class DataSchemaBuilder {
 
     const properties: Record<string, SchemaField> = {}
     for (const field of step.extract.fields) {
-      properties[field.name] = {
-        type: this.mapExtractType(field.type),
-        description: field.description,
-        required: field.required,
-        source: 'ai_declared',
-      }
+      properties[field.name] = this.buildSchemaFromNestedFieldSpec(field, step.id, field.name)
     }
 
     return {
@@ -354,11 +370,7 @@ export class DataSchemaBuilder {
 
     const properties: Record<string, SchemaField> = {}
     for (const output of step.generate.outputs) {
-      properties[output.name] = {
-        type: this.mapExtractType(output.type),
-        description: output.description,
-        source: 'ai_declared',
-      }
+      properties[output.name] = this.buildSchemaFromNestedFieldSpec(output, step.id, output.name)
     }
 
     return {
@@ -366,6 +378,80 @@ export class DataSchemaBuilder {
       properties,
       source: 'ai_declared',
     }
+  }
+
+  /**
+   * WP-15: recursively walk a NestedFieldSpec from the IntentContract grammar
+   * (extract.fields[] / generate.outputs[]) into a SchemaField.
+   *
+   * The grammar mirrors JSON Schema conventions: when `type === "array"`,
+   * `items` declares the element shape; when `type === "object"`, `properties`
+   * declares per-key shape. Without this walk, depth-1 inference produced slots
+   * like `{rows: {type: "array"}}` with no `items.properties`, forcing the
+   * compiler's auto-repair safety net (validateSchemaDepth) to fire and
+   * silently degrade to `items: {type: "any"}`.
+   *
+   * Logs a warning when the LLM declares array/object without nested shape —
+   * still emits a permissive schema so the pipeline doesn't hard-fail, but the
+   * warning is the W5 retirement signal for task 7.3 / 4.6 (auto-repair).
+   *
+   * @param spec   the NestedFieldSpec from IntentContract (may be nested)
+   * @param stepId for diagnostic context in warnings
+   * @param path   dot-separated field path for diagnostic context
+   */
+  private buildSchemaFromNestedFieldSpec(
+    spec: { type?: string; required?: boolean; description?: string; items?: any; properties?: Record<string, any> },
+    stepId: string,
+    path: string
+  ): SchemaField {
+    const fieldType = this.mapExtractType(spec.type)
+
+    const out: SchemaField = {
+      type: fieldType,
+      source: 'ai_declared',
+    }
+    if (spec.description !== undefined) out.description = spec.description
+    if (spec.required !== undefined) out.required = spec.required
+
+    // RETIRE-1 (2026-05-10): switched from warn-and-fallback to throw-on-violation
+    // after CP-D verified 0/10 firings across the regression suite. The Q-A4
+    // sequencing gate was met: the LLM consistently emits depth-2+ shapes for
+    // array/object output declarations under the WP-15 prompt + grammar.
+    //
+    // If a future emission produces a shallow shape, this throws at the
+    // builder layer with a clear error instead of silently emitting
+    // `items:{type:"any"}` / `properties:{}` and producing surprising
+    // downstream behavior. Revert by restoring the warn-and-fallback
+    // branches if the gate proves premature.
+    if (fieldType === 'array') {
+      if (!spec.items) {
+        throw new Error(
+          `[DataSchemaBuilder] Step ${stepId}: field "${path}" declared as array without "items" ` +
+          `(RETIRE-1, was warn-and-fallback until 2026-05-10). The LLM must declare element shape ` +
+          `for array fields — see Phase 1 system prompt section 6.4.1 (WP-15). ` +
+          `If this is a regression, restore the warn-and-fallback branch in DataSchemaBuilder.`
+        )
+      }
+      out.items = this.buildSchemaFromNestedFieldSpec(spec.items, stepId, `${path}[]`)
+    }
+
+    if (fieldType === 'object') {
+      if (!spec.properties || typeof spec.properties !== 'object') {
+        throw new Error(
+          `[DataSchemaBuilder] Step ${stepId}: field "${path}" declared as object without "properties" ` +
+          `(RETIRE-1, was warn-and-fallback until 2026-05-10). The LLM must declare per-key field shape ` +
+          `for object fields — see Phase 1 system prompt section 6.4.1 (WP-15). ` +
+          `If this is a regression, restore the warn-and-fallback branch in DataSchemaBuilder.`
+        )
+      }
+      const props: Record<string, SchemaField> = {}
+      for (const [key, child] of Object.entries(spec.properties)) {
+        props[key] = this.buildSchemaFromNestedFieldSpec(child, stepId, `${path}.${key}`)
+      }
+      out.properties = props
+    }
+
+    return out
   }
 
   /**
@@ -444,6 +530,21 @@ export class DataSchemaBuilder {
 
   /**
    * Build additional slots for loop step: item_ref (loop-scoped) and collect_as.
+   *
+   * WP-17 Bug A (2026-05-08): when the loop iterates over a wrapper-object slot
+   * (e.g., Gmail search-results wrapper `{emails: array<email>, total_found,
+   * ...}`), the previous code at the `else if (overSlot)` branch copied the
+   * entire wrapper as the item schema. Now we walk into the wrapper looking
+   * for a single nested array and use its `items` shape — matching how the
+   * compiler / runtime actually iterate (over the unwrapped element).
+   *
+   * WP-17 Bug B (2026-05-08): when multiple loops share an `item_ref` name
+   * (canonical pattern: mark_emails_read + apply_label_to_emails both using
+   * `item_ref: "email"` over the same source array), the previous code
+   * unconditionally overwrote `slots[item_ref]`, leaving `produced_by` as
+   * the last loop only. Now we detect the collision: if schemas match
+   * (or new is "any"), keep the existing slot and append step.id to
+   * `produced_by_loops`. If schemas differ, log loudly and keep the first.
    */
   private buildLoopSlots(step: BoundStep & LoopStep, slots: Record<string, DataSlot>): void {
     if (!step.loop) return
@@ -453,20 +554,44 @@ export class DataSchemaBuilder {
 
     // item_ref: the current item inside the loop
     if (step.loop.item_ref) {
-      let itemSchema: SchemaField = { type: 'any', source: 'inferred' }
+      const itemSchema = this.deriveLoopItemSchema(overSlot)
 
-      if (overSlot?.schema.type === 'array' && overSlot.schema.items) {
-        // Item = array items schema
-        itemSchema = { ...this.deepCopySchema(overSlot.schema.items), source: 'inferred' }
-      } else if (overSlot) {
-        // Iterating over non-array (edge case) — use the slot schema directly
-        itemSchema = { ...this.deepCopySchema(overSlot.schema), source: 'inferred' }
-      }
+      // WP-17 Bug B: handle multi-loop item_ref collision.
+      const existingSlot = slots[step.loop.item_ref]
+      if (existingSlot && existingSlot.scope === 'loop') {
+        // Slot already created by an earlier loop with the same item_ref name.
+        // Decide whether to merge (compatible schemas) or warn (collision).
+        const newIsAny = itemSchema.type === 'any'
+        const existingIsAny = existingSlot.schema.type === 'any'
+        const schemasMatch = this.schemasShallowEqual(existingSlot.schema, itemSchema)
 
-      slots[step.loop.item_ref] = {
-        schema: itemSchema,
-        scope: 'loop',
-        produced_by: step.id,
+        if (newIsAny || existingIsAny || schemasMatch) {
+          // Compatible — preserve the more-specific schema and record both producers.
+          if (existingIsAny && !newIsAny) {
+            existingSlot.schema = itemSchema
+          }
+          existingSlot.produced_by_loops = existingSlot.produced_by_loops ?? [existingSlot.produced_by]
+          if (!existingSlot.produced_by_loops.includes(step.id)) {
+            existingSlot.produced_by_loops.push(step.id)
+          }
+          logger.debug(
+            { itemRef: step.loop.item_ref, loopId: step.id, allLoops: existingSlot.produced_by_loops },
+            '[DataSchemaBuilder] Multi-loop item_ref — added to produced_by_loops'
+          )
+        } else {
+          // Genuine collision — different schemas for the same name.
+          this.warn(
+            `Loop ${step.id} and ${existingSlot.produced_by} both declare item_ref "${step.loop.item_ref}" ` +
+              `but produce different schemas. Keeping first; field references in the second loop body may not validate.`
+          )
+        }
+      } else {
+        // First loop using this item_ref — create the slot.
+        slots[step.loop.item_ref] = {
+          schema: itemSchema,
+          scope: 'loop',
+          produced_by: step.id,
+        }
       }
     }
 
@@ -626,17 +751,117 @@ export class DataSchemaBuilder {
       const itemSlot = slots[loopStep.loop.item_ref]
       if (!itemSlot) continue
 
-      // If item schema is still "any" but the iterated array now has rich items
-      if (itemSlot.schema.type === 'any' &&
-          overSlot.schema.type === 'array' &&
-          overSlot.schema.items?.type !== 'any') {
-        itemSlot.schema = { ...this.deepCopySchema(overSlot.schema.items!), source: 'inferred' }
-        logger.debug(
-          { itemRef: loopStep.loop.item_ref, overRef },
-          '[DataSchemaBuilder] Fixed up loop item schema from resolved transform'
-        )
+      // If item schema is still "any" but the iterated source now has rich items.
+      // WP-17 Bug A: try the nested-array unwrap first, then fall through to
+      // the existing top-level array path. This catches wrapper-object sources
+      // like Gmail search results that the runtime iterates over the nested
+      // array (via the compiler's auto-inject) but Phase 2 sees as an object.
+      if (itemSlot.schema.type === 'any') {
+        const derived = this.deriveLoopItemSchema(overSlot)
+        if (derived.type !== 'any') {
+          itemSlot.schema = derived
+          logger.debug(
+            { itemRef: loopStep.loop.item_ref, overRef },
+            '[DataSchemaBuilder] Fixed up loop item schema from resolved transform'
+          )
+        }
       }
     }
+  }
+
+  // ============================================================================
+  // WP-17 / WP-18 helpers (2026-05-08) — schema unwrapping + collision merge
+  // ============================================================================
+
+  /**
+   * WP-17 Bug A: derive the per-iteration item schema from a loop's `over` slot.
+   *
+   * - If overSlot is itself an array → use its items.
+   * - If overSlot is a wrapper-object containing exactly one nested array
+   *   (e.g., Gmail's `{emails: array<email>, total_found, ...}`), use the
+   *   nested array's items.
+   * - Otherwise → fall back to `any` and let the second-pass fixup retry
+   *   once upstream slots resolve.
+   *
+   * Mirrors the runtime's actual iteration target without entangling Phase 2
+   * with the Phase 4 compiler's `rows_to_objects` auto-inject logic.
+   */
+  private deriveLoopItemSchema(overSlot: DataSlot | null): SchemaField {
+    if (!overSlot) return { type: 'any', source: 'inferred' }
+
+    if (overSlot.schema.type === 'array' && overSlot.schema.items) {
+      return { ...this.deepCopySchema(overSlot.schema.items), source: 'inferred' }
+    }
+
+    const wrapperArray = this.unwrapWrapperToArray(overSlot.schema)
+    if (wrapperArray && wrapperArray.items) {
+      return { ...this.deepCopySchema(wrapperArray.items), source: 'inferred' }
+    }
+
+    // Iterating over a non-array, non-wrapper slot — preserve schema (rare).
+    return { ...this.deepCopySchema(overSlot.schema), source: 'inferred' }
+  }
+
+  /**
+   * WP-17 Bug A / WP-18 Bug B: walk a wrapper-object schema looking for a
+   * single nested array property. Returns the **array schema** (with items),
+   * or null if the input is not a recognizable wrapper.
+   *
+   * Recognition rule (intentionally conservative):
+   * - Input must be `type: 'object'` with `properties`
+   * - Exactly ONE property at depth 1 must be `type: 'array'` with `items`
+   * - That property (the array, not its items) is returned
+   *
+   * Callers decide whether they want the array shape (e.g., shape-preserving
+   * filter — output is still an array) or the items (e.g., loop iteration —
+   * the per-element shape). Use `result.items` for the latter.
+   *
+   * If 0 or multiple arrays are found, returns null — leaves the caller to
+   * use the existing fallback path (warning + keep wrapper). This avoids
+   * silent misidentification of which array the runtime iterates.
+   */
+  private unwrapWrapperToArray(schema: SchemaField): SchemaField | null {
+    if (schema.type !== 'object' || !schema.properties) return null
+
+    let foundArray: SchemaField | null = null
+    let arrayCount = 0
+    for (const value of Object.values(schema.properties)) {
+      if (value.type === 'array' && value.items) {
+        arrayCount++
+        if (arrayCount === 1) foundArray = value
+        if (arrayCount > 1) return null // ambiguous — bail out
+      }
+    }
+
+    return foundArray
+  }
+
+  /**
+   * WP-17 Bug B: shallow schema-equality check for multi-loop collision merge.
+   * Returns true if two schemas are structurally compatible enough that we
+   * can record both loops as producers of the same `item_ref` slot.
+   *
+   * Compares: top-level type, top-level property names (for objects), array
+   * items type. Does NOT do deep recursion — that's overkill for the
+   * collision-merge decision (different field-level details should still be
+   * treated as the same shape if the top-level structure matches).
+   */
+  private schemasShallowEqual(a: SchemaField, b: SchemaField): boolean {
+    if (a.type !== b.type) return false
+    if (a.type === 'object') {
+      const aKeys = new Set(Object.keys(a.properties ?? {}))
+      const bKeys = new Set(Object.keys(b.properties ?? {}))
+      if (aKeys.size !== bKeys.size) return false
+      for (const k of aKeys) if (!bKeys.has(k)) return false
+      return true
+    }
+    if (a.type === 'array') {
+      // Equal if both have items of the same type, or both lack items
+      const aItems = a.items?.type ?? '__none__'
+      const bItems = b.items?.type ?? '__none__'
+      return aItems === bItems
+    }
+    return true
   }
 
   /**

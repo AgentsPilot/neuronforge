@@ -224,6 +224,34 @@ export class DSLSimulator {
         }
         break
       }
+      case 'rows_to_objects': {
+        // WP-SR: auto-injected by ExecutionGraphCompiler.normalizeDataFormats
+        // (Phase 3.5) for plugins that return 2D arrays (e.g. Sheets read_range).
+        // Mirrors the runtime helper at lib/pilot/transforms/RowsToObjects.ts.
+        if (!Array.isArray(inputData)) {
+          entry.warnings.push(`rows_to_objects input is not an array: ${typeof inputData}`)
+          output = []
+        } else if (inputData.length === 0) {
+          output = []
+        } else if (!Array.isArray(inputData[0])) {
+          // Already an array of objects/primitives — pass through.
+          output = inputData
+        } else {
+          const headers: string[] = config.headers || inputData[0]
+          const dataRows = config.headers ? inputData : inputData.slice(1)
+          const preserveCase = config.preserve_case === true
+          output = dataRows.map((row: any[]) => {
+            const obj: Record<string, any> = {}
+            headers.forEach((header: string, idx: number) => {
+              const trimmed = (header || `column_${idx}`).toString().trim()
+              const key = preserveCase ? trimmed : trimmed.toLowerCase()
+              obj[key] = row[idx] !== undefined ? row[idx] : null
+            })
+            return obj
+          })
+        }
+        break
+      }
       default:
         entry.warnings.push(`Unknown transform operation: ${operation}`)
         output = inputData

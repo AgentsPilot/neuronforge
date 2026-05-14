@@ -1,58 +1,66 @@
 {
   "version": "intent.v1",
-  "goal": "Scan Gmail for invoice/expense PDFs from last 7 days, extract structured data, store attachments in Google Drive per-vendor folders, append to Google Sheets if amount > 50, and send digest email summary",
+  "goal": "Scan Gmail for PDF attachments matching invoice/expense/bill subjects from the last 7 days, extract structured fields from each PDF, store each PDF in a per-vendor Google Drive subfolder under a base folder, append rows to Google Sheets only when amount > 50, and send a single digest email summarizing all items.",
   "unit_of_work": {
-    "entity": "email",
-    "parent_entity": "inbox"
+    "entity": "attachment",
+    "parent_entity": "email"
   },
   "config": [
     {
       "key": "gmail_search_query",
       "type": "string",
-      "description": "Gmail search query with operators for filtering emails",
+      "description": "Gmail search query combining subject filter, attachment filter, and time window",
       "default": "subject:(Invoice OR Expenses OR Bill) has:attachment filename:pdf newer_than:7d"
     },
     {
-      "key": "base_folder_id",
+      "key": "recipient_email",
       "type": "string",
-      "description": "Google Drive base folder ID extracted from URL",
+      "description": "Email address to send the digest summary to",
+      "default": "meiribarak@gmail.com"
+    },
+    {
+      "key": "drive_base_folder_id",
+      "type": "string",
+      "description": "Google Drive folder ID for the base storage location",
       "default": "1BoYgIIQj5QB6F0mWLzD_0-2pMLoxHVp-"
     },
     {
       "key": "spreadsheet_id",
       "type": "string",
-      "description": "Google Sheets spreadsheet ID",
+      "description": "Google Sheets spreadsheet ID for appending invoice/expense rows",
       "default": "1RHLbBXzrKv24gNgp7a4Lr7RlMIrP9fjacfGWjhPAbOE"
     },
     {
       "key": "sheet_tab_name",
       "type": "string",
-      "description": "Sheet tab name to append rows (Invoices or Expenses)",
+      "description": "Name of the sheet tab to append rows into",
       "default": "Invoices"
     },
     {
       "key": "amount_threshold",
       "type": "number",
-      "description": "Minimum amount threshold for Google Sheets insertion",
+      "description": "Minimum amount threshold for appending rows to Google Sheets (in document currency)",
       "default": 50
-    },
-    {
-      "key": "digest_recipient",
-      "type": "string",
-      "description": "Email address to receive digest summary",
-      "default": "meiribarak@gmail.com"
     }
   ],
+  "invariants": [
+    "Every PDF attachment must be stored in Google Drive regardless of extracted amount",
+    "Every processed item must appear in the digest email regardless of extracted amount",
+    "Rows are appended to Google Sheets ONLY when extracted amount is greater than the threshold",
+    "Items with missing or undetectable amounts are included in digest email and stored in Drive but NOT appended to Sheets",
+    "Vendor subfolders are created idempotently under the base folder"
+  ],
   "required_outcomes": [
-    "All matching PDF attachments stored in Google Drive per-vendor folders",
-    "Rows appended to Google Sheets for items with amount > 50",
-    "Digest email sent with summary table of all processed items"
+    "All PDF attachments from matching emails are stored in per-vendor Drive subfolders",
+    "A single digest email is sent with a table of all processed items",
+    "Rows with amount > 50 are appended to the specified Google Sheet tab",
+    "Each digest row includes: Type, Vendor/merchant, Date, Amount, Invoice/receipt #, Category, Drive link"
   ],
   "steps": [
     {
       "id": "search_emails",
       "kind": "data_source",
-      "summary": "Search Gmail for emails with invoice/expense PDF attachments from last 7 days",
+      "summary": "Search Gmail for emails with PDF attachments matching invoice/expense/bill subjects from the last 7 days",
       "uses": [
         {
           "capability": "search",
@@ -72,16 +80,15 @@
         "key": "gmail_search_query"
       },
       "retrieval": {
-        "max_results": 100,
-        "include_content": "snippet",
-        "include_attachments": true,
-        "include_metadata": true
+        "max_results": 50,
+        "include_content": "full",
+        "include_attachments": true
       }
     },
     {
-      "id": "extract_attachments",
+      "id": "flatten_attachments",
       "kind": "transform",
-      "summary": "Extract PDF attachments array from emails",
+      "summary": "Extract attachment metadata from emails, preserving parent email context (sender, subject, date, message_id)",
       "inputs": [
         "matching_emails"
       ],
@@ -89,28 +96,16 @@
       "transform": {
         "op": "flatten",
         "input": "matching_emails",
-        "description": "Extract attachments array from each email, preserving email metadata (sender, subject, date, message_id)",
+        "description": "Flatten emails to individual attachment records, carrying parent email fields (id, from, subject, date) alongside each attachment (filename, mimeType, size, attachment_id, message_id)",
         "output_schema": {
           "type": "array",
           "items": {
             "type": "object",
             "properties": {
-              "attachment_id": {
+              "email_id": {
                 "type": "string"
               },
-              "filename": {
-                "type": "string"
-              },
-              "mime_type": {
-                "type": "string"
-              },
-              "size": {
-                "type": "number"
-              },
-              "message_id": {
-                "type": "string"
-              },
-              "sender": {
+              "from": {
                 "type": "string"
               },
               "subject": {
@@ -118,12 +113,30 @@
               },
               "date": {
                 "type": "string"
+              },
+              "filename": {
+                "type": "string"
+              },
+              "mimeType": {
+                "type": "string"
+              },
+              "size": {
+                "type": "number"
+              },
+              "attachment_id": {
+                "type": "string"
+              },
+              "message_id": {
+                "type": "string"
               }
             },
             "required": [
-              "attachment_id",
+              "email_id",
+              "from",
+              "subject",
+              "date",
               "filename",
-              "mime_type",
+              "attachment_id",
               "message_id"
             ]
           }
@@ -133,7 +146,7 @@
     {
       "id": "filter_pdf_attachments",
       "kind": "transform",
-      "summary": "Keep only PDF attachments (mime_type check)",
+      "summary": "Keep only PDF attachments",
       "inputs": [
         "all_attachments"
       ],
@@ -141,13 +154,13 @@
       "transform": {
         "op": "filter",
         "input": "all_attachments",
-        "description": "Filter for PDF attachments only",
+        "description": "Filter to only PDF attachments by MIME type",
         "where": {
           "op": "test",
           "left": {
             "kind": "ref",
             "ref": "all_attachments",
-            "field": "mime_type"
+            "field": "mimeType"
           },
           "comparator": "eq",
           "right": {
@@ -160,14 +173,14 @@
     {
       "id": "process_each_attachment",
       "kind": "loop",
-      "summary": "Process each PDF attachment: download, extract, store, and prepare for digest",
+      "summary": "For each PDF attachment: download content, extract fields, store in Drive per-vendor folder, build digest row, conditionally append to Sheets",
       "inputs": [
         "pdf_attachments"
       ],
       "output": "processed_items",
       "loop": {
         "over": "pdf_attachments",
-        "item_ref": "attachment",
+        "item_ref": "current_attachment",
         "unit_of_work": {
           "entity": "attachment"
         },
@@ -180,7 +193,7 @@
           {
             "id": "download_attachment",
             "kind": "data_source",
-            "summary": "Download PDF attachment content",
+            "summary": "Download the PDF attachment content from Gmail",
             "uses": [
               {
                 "capability": "download",
@@ -191,7 +204,7 @@
               }
             ],
             "inputs": [
-              "attachment"
+              "current_attachment"
             ],
             "output": "attachment_content",
             "source": {
@@ -201,25 +214,25 @@
             "payload": {
               "message_id": {
                 "kind": "ref",
-                "ref": "attachment",
+                "ref": "current_attachment",
                 "field": "message_id"
               },
               "attachment_id": {
                 "kind": "ref",
-                "ref": "attachment",
+                "ref": "current_attachment",
                 "field": "attachment_id"
               },
               "filename": {
                 "kind": "ref",
-                "ref": "attachment",
+                "ref": "current_attachment",
                 "field": "filename"
               }
             }
           },
           {
-            "id": "extract_fields",
+            "id": "extract_invoice_fields",
             "kind": "extract",
-            "summary": "Extract structured invoice/expense fields from PDF",
+            "summary": "Extract structured invoice/expense fields from the PDF attachment",
             "uses": [
               {
                 "capability": "extract_structured_data",
@@ -229,15 +242,15 @@
             "inputs": [
               "attachment_content"
             ],
-            "output": "extracted_data",
+            "output": "extracted_fields",
             "extract": {
               "input": "attachment_content",
               "fields": [
                 {
                   "name": "type",
                   "type": "string",
-                  "required": false,
-                  "description": "Document type: expense or invoice"
+                  "required": true,
+                  "description": "Document type: 'Invoice' or 'Expense'"
                 },
                 {
                   "name": "vendor",
@@ -253,36 +266,36 @@
                 },
                 {
                   "name": "amount",
-                  "type": "number",
+                  "type": "currency",
                   "required": false,
-                  "description": "Total amount as numeric value"
+                  "description": "Total amount in the document's currency"
                 },
                 {
-                  "name": "invoice_number",
+                  "name": "invoice_receipt_number",
                   "type": "string",
                   "required": false,
-                  "description": "Invoice or receipt number"
+                  "description": "Invoice number or receipt number"
                 },
                 {
                   "name": "category",
                   "type": "string",
                   "required": false,
-                  "description": "Expense category"
+                  "description": "Expense category (e.g., Office Supplies, Travel, Software)"
                 }
               ],
               "deterministic": false,
               "content_hints": {
                 "file_types": [
-                  "application/pdf"
+                  "pdf"
                 ],
                 "language": "en"
               }
             }
           },
           {
-            "id": "get_or_create_vendor_folder",
+            "id": "ensure_vendor_folder",
             "kind": "artifact",
-            "summary": "Get or create vendor-specific subfolder in Google Drive",
+            "summary": "Get or create a subfolder named after the vendor under the base Drive folder",
             "uses": [
               {
                 "capability": "upsert",
@@ -293,31 +306,31 @@
               }
             ],
             "inputs": [
-              "extracted_data"
+              "extracted_fields"
             ],
             "output": "vendor_folder",
             "artifact": {
               "domain": "storage",
               "type": "folder",
               "strategy": "get_or_create",
-              "name_hint": "vendor_folder",
+              "name_hint": "vendor_name",
               "options": {
                 "folder_name": {
                   "kind": "ref",
-                  "ref": "extracted_data",
+                  "ref": "extracted_fields",
                   "field": "vendor"
                 },
                 "parent_folder_id": {
                   "kind": "config",
-                  "key": "base_folder_id"
+                  "key": "drive_base_folder_id"
                 }
               }
             }
           },
           {
-            "id": "upload_to_drive",
+            "id": "upload_pdf_to_drive",
             "kind": "deliver",
-            "summary": "Upload PDF attachment to vendor folder in Google Drive",
+            "summary": "Upload the PDF attachment to the vendor's Drive subfolder",
             "uses": [
               {
                 "capability": "upload",
@@ -331,42 +344,38 @@
               "attachment_content",
               "vendor_folder"
             ],
-            "output": "drive_file",
+            "output": "uploaded_file",
             "deliver": {
               "domain": "storage",
-              "intent": "upload",
+              "intent": "upload_file",
               "input": "attachment_content",
               "destination": "vendor_folder",
               "mapping": [
                 {
                   "from": {
-                    "kind": "ref",
                     "ref": "attachment_content",
-                    "field": "content"
+                    "field": "data"
                   },
                   "to": "file_content"
                 },
                 {
                   "from": {
-                    "kind": "ref",
-                    "ref": "attachment",
+                    "ref": "attachment_content",
                     "field": "filename"
                   },
                   "to": "file_name"
                 },
                 {
                   "from": {
-                    "kind": "ref",
-                    "ref": "attachment",
-                    "field": "mime_type"
+                    "ref": "attachment_content",
+                    "field": "mimeType"
                   },
                   "to": "mime_type"
                 },
                 {
                   "from": {
-                    "kind": "ref",
                     "ref": "vendor_folder",
-                    "field": "id"
+                    "field": "folder_id"
                   },
                   "to": "folder_id"
                 }
@@ -375,234 +384,210 @@
           },
           {
             "id": "build_digest_row",
-            "kind": "generate",
-            "summary": "Build digest table row with extracted fields and Drive link",
-            "uses": [
-              {
-                "capability": "generate",
-                "domain": "internal"
-              }
-            ],
+            "kind": "transform",
+            "summary": "Build a digest table row combining extracted fields with the Drive link from the uploaded file",
             "inputs": [
-              "extracted_data",
-              "drive_file",
-              "attachment"
+              "extracted_fields",
+              "uploaded_file"
             ],
             "output": "digest_row",
-            "generate": {
-              "format": "json",
-              "instruction": "Create a digest row object with fields: type (from extracted_data.type), vendor (from extracted_data.vendor), date (from extracted_data.date), amount (from extracted_data.amount), invoice_number (from extracted_data.invoice_number), category (from extracted_data.category), drive_link (from drive_file.web_view_link or drive_file.web_content_link), has_amount (boolean: true if amount exists and is not null, false otherwise), sender (from attachment.sender), subject (from attachment.subject)",
-              "outputs": [
-                {
-                  "name": "type",
-                  "type": "string",
-                  "description": "Document type"
-                },
-                {
-                  "name": "vendor",
-                  "type": "string",
-                  "description": "Vendor or merchant name"
-                },
-                {
-                  "name": "date",
-                  "type": "string",
-                  "description": "Invoice or expense date"
-                },
-                {
-                  "name": "amount",
-                  "type": "number",
-                  "description": "Total amount"
-                },
-                {
-                  "name": "invoice_number",
-                  "type": "string",
-                  "description": "Invoice or receipt number"
-                },
-                {
-                  "name": "category",
-                  "type": "string",
-                  "description": "Expense category"
-                },
+            "transform": {
+              "op": "with_fields",
+              "input": "extracted_fields",
+              "fields": [
                 {
                   "name": "drive_link",
-                  "type": "string",
-                  "description": "Google Drive shareable link"
-                },
-                {
-                  "name": "has_amount",
-                  "type": "boolean",
-                  "description": "Whether amount field exists and is valid"
-                }
-              ]
-            }
-          }
-        ]
-      }
-    },
-    {
-      "id": "filter_high_value_items",
-      "kind": "transform",
-      "summary": "Filter items where amount > 50 for Google Sheets insertion",
-      "inputs": [
-        "processed_items"
-      ],
-      "output": "high_value_items",
-      "transform": {
-        "op": "filter",
-        "input": "processed_items",
-        "description": "Keep only items with valid amount greater than threshold",
-        "where": {
-          "op": "and",
-          "conditions": [
-            {
-              "op": "test",
-              "left": {
-                "kind": "ref",
-                "ref": "processed_items",
-                "field": "has_amount"
-              },
-              "comparator": "eq",
-              "right": {
-                "kind": "literal",
-                "value": true
-              }
-            },
-            {
-              "op": "test",
-              "left": {
-                "kind": "ref",
-                "ref": "processed_items",
-                "field": "amount"
-              },
-              "comparator": "gt",
-              "right": {
-                "kind": "config",
-                "key": "amount_threshold"
-              }
-            }
-          ]
-        }
-      }
-    },
-    {
-      "id": "check_high_value_items_exist",
-      "kind": "decide",
-      "summary": "Check if any high-value items need to be appended to Google Sheets",
-      "inputs": [
-        "high_value_items"
-      ],
-      "decide": {
-        "condition": {
-          "op": "test",
-          "left": {
-            "kind": "ref",
-            "ref": "high_value_items",
-            "field": "length"
-          },
-          "comparator": "gt",
-          "right": {
-            "kind": "literal",
-            "value": 0
-          }
-        },
-        "then": [
-          {
-            "id": "get_or_create_sheet_tab",
-            "kind": "artifact",
-            "summary": "Get or create sheet tab for appending rows",
-            "uses": [
-              {
-                "capability": "upsert",
-                "domain": "table",
-                "preferences": {
-                  "provider_family": "google"
-                }
-              }
-            ],
-            "output": "sheet_tab",
-            "artifact": {
-              "domain": "table",
-              "type": "sheet_tab",
-              "strategy": "get_or_create",
-              "name_hint": "sheet_tab",
-              "options": {
-                "spreadsheet_id": {
-                  "kind": "config",
-                  "key": "spreadsheet_id"
-                },
-                "tab_name": {
-                  "kind": "config",
-                  "key": "sheet_tab_name"
-                }
-              }
-            }
-          },
-          {
-            "id": "prepare_sheet_rows",
-            "kind": "transform",
-            "summary": "Map digest rows to Google Sheets row format",
-            "inputs": [
-              "high_value_items"
-            ],
-            "output": "sheet_rows",
-            "transform": {
-              "op": "map",
-              "input": "high_value_items",
-              "description": "Convert each digest row to array format: [type, vendor, date, amount, invoice_number, category, drive_link]",
-              "output_schema": {
-                "type": "array",
-                "items": {
-                  "type": "array",
-                  "items": {
-                    "type": "string"
+                  "expression": {
+                    "kind": "ref",
+                    "ref": "uploaded_file",
+                    "field": "web_view_link"
                   }
                 }
+              ],
+              "output_schema": {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string"
+                  },
+                  "vendor": {
+                    "type": "string"
+                  },
+                  "date": {
+                    "type": "string"
+                  },
+                  "amount": {
+                    "type": "string"
+                  },
+                  "invoice_receipt_number": {
+                    "type": "string"
+                  },
+                  "category": {
+                    "type": "string"
+                  },
+                  "drive_link": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type",
+                  "vendor",
+                  "drive_link"
+                ]
               }
             }
           },
           {
-            "id": "append_to_sheets",
-            "kind": "deliver",
-            "summary": "Append high-value items to Google Sheets",
-            "uses": [
-              {
-                "capability": "append",
-                "domain": "table",
-                "preferences": {
-                  "provider_family": "google"
-                }
-              }
-            ],
+            "id": "check_amount_threshold",
+            "kind": "decide",
+            "summary": "If the extracted amount is greater than the threshold, append a row to Google Sheets",
             "inputs": [
-              "sheet_rows",
-              "sheet_tab"
+              "digest_row"
             ],
-            "output": "sheet_result",
-            "deliver": {
-              "domain": "table",
-              "intent": "append",
-              "input": "sheet_rows",
-              "mapping": [
-                {
-                  "from": {
-                    "kind": "config",
-                    "key": "spreadsheet_id"
+            "decide": {
+              "condition": {
+                "op": "and",
+                "conditions": [
+                  {
+                    "op": "test",
+                    "left": {
+                      "kind": "ref",
+                      "ref": "digest_row",
+                      "field": "amount"
+                    },
+                    "comparator": "exists"
                   },
-                  "to": "spreadsheet_id"
+                  {
+                    "op": "test",
+                    "left": {
+                      "kind": "ref",
+                      "ref": "digest_row",
+                      "field": "amount"
+                    },
+                    "comparator": "gt",
+                    "right": {
+                      "kind": "config",
+                      "key": "amount_threshold"
+                    }
+                  }
+                ]
+              },
+              "then": [
+                {
+                  "id": "ensure_sheet_tab",
+                  "kind": "artifact",
+                  "summary": "Get or create the target sheet tab in the spreadsheet",
+                  "uses": [
+                    {
+                      "capability": "upsert",
+                      "domain": "table",
+                      "preferences": {
+                        "provider_family": "google"
+                      }
+                    }
+                  ],
+                  "output": "sheet_tab",
+                  "artifact": {
+                    "domain": "table",
+                    "type": "sheet_tab",
+                    "strategy": "get_or_create",
+                    "name_hint": "sheet_tab",
+                    "options": {
+                      "spreadsheet_id": {
+                        "kind": "config",
+                        "key": "spreadsheet_id"
+                      },
+                      "tab_name": {
+                        "kind": "config",
+                        "key": "sheet_tab_name"
+                      }
+                    }
+                  }
                 },
                 {
-                  "from": {
-                    "kind": "config",
-                    "key": "sheet_tab_name"
-                  },
-                  "to": "range"
-                },
-                {
-                  "from": {
-                    "kind": "ref",
-                    "ref": "sheet_rows"
-                  },
-                  "to": "values"
+                  "id": "append_row_to_sheet",
+                  "kind": "deliver",
+                  "summary": "Append the digest row to the Google Sheet",
+                  "uses": [
+                    {
+                      "capability": "append",
+                      "domain": "table",
+                      "preferences": {
+                        "provider_family": "google"
+                      }
+                    }
+                  ],
+                  "inputs": [
+                    "digest_row",
+                    "sheet_tab"
+                  ],
+                  "output": "appended_row",
+                  "deliver": {
+                    "domain": "table",
+                    "intent": "append_record",
+                    "input": "digest_row",
+                    "mapping": [
+                      {
+                        "from": {
+                          "ref": "digest_row",
+                          "field": "type"
+                        },
+                        "to": "0"
+                      },
+                      {
+                        "from": {
+                          "ref": "digest_row",
+                          "field": "vendor"
+                        },
+                        "to": "1"
+                      },
+                      {
+                        "from": {
+                          "ref": "digest_row",
+                          "field": "date"
+                        },
+                        "to": "2"
+                      },
+                      {
+                        "from": {
+                          "ref": "digest_row",
+                          "field": "amount"
+                        },
+                        "to": "3"
+                      },
+                      {
+                        "from": {
+                          "ref": "digest_row",
+                          "field": "invoice_receipt_number"
+                        },
+                        "to": "4"
+                      },
+                      {
+                        "from": {
+                          "ref": "digest_row",
+                          "field": "category"
+                        },
+                        "to": "5"
+                      },
+                      {
+                        "from": {
+                          "ref": "digest_row",
+                          "field": "drive_link"
+                        },
+                        "to": "6"
+                      }
+                    ],
+                    "options": {
+                      "spreadsheet_id": {
+                        "kind": "config",
+                        "key": "spreadsheet_id"
+                      },
+                      "range": {
+                        "kind": "config",
+                        "key": "sheet_tab_name"
+                      }
+                    }
+                  }
                 }
               ]
             }
@@ -613,7 +598,7 @@
     {
       "id": "generate_digest_email",
       "kind": "generate",
-      "summary": "Generate digest email with HTML table of all processed items",
+      "summary": "Generate a single HTML digest email body with a table of all processed items",
       "uses": [
         {
           "capability": "generate",
@@ -623,21 +608,22 @@
       "inputs": [
         "processed_items"
       ],
-      "output": "digest_content",
+      "output": "digest_email_content",
       "generate": {
         "input": "processed_items",
         "format": "html",
-        "instruction": "Create an HTML email with a summary table. If processed_items is empty, create a message stating 'No invoices or expenses found in the last 7 days.' Otherwise, create an HTML table with columns: Type, Vendor/Merchant, Date, Amount, Invoice/Receipt #, Category, Drive Link. For each item in processed_items, add a table row with the corresponding values. Make Drive Link clickable. Include a header 'Invoice & Expense Summary - Last 7 Days'.",
+        "instruction": "Generate a professional HTML email body for an expense/invoice digest. If the processed_items array is empty, produce a message stating 'No invoices or expenses were found in the last 7 days.' If items exist, create an HTML table with columns: Type, Vendor / Merchant, Date, Amount, Invoice/Receipt #, Category, Drive Link (as a clickable hyperlink). Style the table with borders, a header row with a background color, and padding for readability. Include a brief introductory sentence summarizing the number of items found. Items with missing amounts should show 'N/A' in the Amount column and include a note that they were not added to the spreadsheet.",
+        "reason": "Free-form HTML email body composition with conditional content (empty vs non-empty results) and styled table formatting — requires semantic composition, not rule-based",
         "outputs": [
           {
             "name": "subject",
             "type": "string",
-            "description": "Email subject line"
+            "description": "Email subject line for the digest"
           },
           {
             "name": "body",
             "type": "string",
-            "description": "HTML email body with table"
+            "description": "Full HTML body of the digest email"
           }
         ]
       }
@@ -645,7 +631,7 @@
     {
       "id": "send_digest_email",
       "kind": "notify",
-      "summary": "Send digest email to recipient",
+      "summary": "Send the digest email to the configured recipient",
       "uses": [
         {
           "capability": "send_message",
@@ -656,7 +642,7 @@
         }
       ],
       "inputs": [
-        "digest_content"
+        "digest_email_content"
       ],
       "notify": {
         "channel": "email",
@@ -664,19 +650,19 @@
           "to": [
             {
               "kind": "config",
-              "key": "digest_recipient"
+              "key": "recipient_email"
             }
           ]
         },
         "content": {
           "subject": {
             "kind": "ref",
-            "ref": "digest_content",
+            "ref": "digest_email_content",
             "field": "subject"
           },
           "body": {
             "kind": "ref",
-            "ref": "digest_content",
+            "ref": "digest_email_content",
             "field": "body"
           },
           "format": "html"
@@ -684,5 +670,14 @@
       }
     }
   ],
-  "confidence": 0.95
+  "confidence": 0.9,
+  "meta": {
+    "questions": [
+      {
+        "key": "sheet_tab_name",
+        "question": "Which Google Sheet tab should rows be appended to? The available options mentioned are 'Invoices' and 'Expenses'. Currently defaulting to 'Invoices'.",
+        "default": "Invoices"
+      }
+    ]
+  }
 }

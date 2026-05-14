@@ -1,12 +1,15 @@
 {
   "name": "Gmail Orders PO Extractor (Per-Supplier XLSX Emails)",
-  "description": "Search Gmail for order emails, extract PO line items from attachments, group by vendor, generate per-vendor XLSX, email per-vendor + confirmation. Tests Gmail search + attachment extraction + grouping + scatter-gather delivery.",
+  "description": "Search Gmail for order emails, extract PO line items from attachments, group by vendor, generate per-vendor XLSX, email per-vendor + confirmation. Tests Gmail search + attachment extraction + grouping + scatter-gather delivery. **Phase E result (2026-05-14):** pipeline ran end-to-end successfully (11/11 steps, success=true, confirmation email delivered reporting '0 orders processed') but step1 google-mail.search_emails returned 0 emails for the LLM's query `subject:Orders newer_than:30d`. **Important:** the user verified the same query returns 3 results in the Gmail web UI — discrepancy unresolved. Likely cause: the agent's OAuth connection is to a different Google account than the user's browser session. The empty-input cascade and WP-13 no-data guardrails worked correctly (no fabrication, email accurately reflects the empty result). Pipeline correctness verified; real-data extraction logic untested due to the 0-result input. Re-run with confirmed test data or after verifying the connected account email matches the search target.",
   "created": "2026-04-01",
   "plugins": ["google-mail"],
   "expected": {
     "min_steps": 4,
     "step_types": ["action", "transform", "ai_processing", "scatter_gather"],
     "phase_a_checks": 14,
-    "phase_d_success": true
+    "phase_d_success": true,
+    "phase_e_success": "pipeline_passed_no_data",
+    "phase_e_success_timestamp": "2026-05-14T13:14:39Z",
+    "phase_e_caveat": "Pipeline ran end-to-end with success=true and delivered the confirmation email. step1 google-mail.search_emails returned 0 results (real Gmail API call with query `subject:Orders newer_than:30d`), so the cascade processed 0 orders and reported it accurately. The query yields 3 results in the user's Gmail web UI for the same string — suggests the agent's connected Google account differs from the user's browser session, or another account-scope discrepancy. WP-13 no-fabrication guard verified working: empty input → empty downstream → 0-orders email. Extraction/grouping/per-vendor scatter logic UNTESTED because input was empty. Needs a re-run with real matching emails to validate document-extractor + transform/group + scatter-gather path."
   }
 }

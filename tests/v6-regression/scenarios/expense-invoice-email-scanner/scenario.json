@@ -1,6 +1,6 @@
 {
   "name": "Expense & Invoice Email Scanner",
-  "description": "Scans Gmail for PDF attachments matching invoice/expense queries, extracts structured data via document extractor, stores per-vendor in Google Drive, conditionally appends to Google Sheets if amount > 50, sends HTML digest email",
+  "description": "Scans Gmail for PDF attachments matching invoice/expense queries, extracts structured data via document extractor, stores per-vendor in Google Drive, conditionally appends to Google Sheets if amount > 50, sends HTML digest email. Exercises WP-32 (StructuralRepairEngine flatten-field validation for per-item-nested attachments extraction) and WP-33 (with_fields template-string expression tolerance). Phase E was blocked pre-WP-32 (validator rewrote 'attachments' → 'emails'; flatten returned []) and pre-WP-33 (with_fields received resolved URL string; evaluateExpression threw INVALID_EXPRESSION). Post-fix, the cascade flows end-to-end and a digest email is delivered. **Known weakness (WP-34 deferred):** for image-based PDFs without a text layer, document-extractor returns 'Unknown <Field>' defaults — the cascade succeeds but the email content is fabricated. Real extraction succeeds only on text-layer PDFs or with AWS Textract configured.",
   "created": "2026-03-27",
   "plugins": ["google-mail", "google-drive", "google-sheets", "chatgpt-research"],
   "expected": {
@@ -8,6 +8,8 @@
     "step_types": ["action", "transform", "scatter_gather", "ai_processing", "conditional"],
     "phase_a_checks": 14,
     "phase_d_success": true,
-    "phase_e_success": true
+    "phase_e_success": true,
+    "phase_e_success_timestamp": "2026-05-13T01:06:00Z",
+    "phase_e_caveat": "WP-34: image-PDF extraction returns Unknown defaults; email delivered but content fabricated. Cascade integrity verified (WP-32 + WP-33). Real extraction requires text-layer PDF or Textract."
   }
 }

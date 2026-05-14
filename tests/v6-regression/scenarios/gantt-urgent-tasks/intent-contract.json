@@ -1,68 +1,63 @@
 {
   "version": "intent.v1",
-  "goal": "Read urgent tasks from Gantt Google Sheet finishing within next 3 days (excluding today) and email summary table",
+  "goal": "Read Gantt chart from Google Sheets, identify urgent tasks (Critical/High priority) finishing within the next 3 full days (excluding today), and email a formatted table of results to the user. If no tasks match, send an informational email instead.",
   "unit_of_work": {
     "entity": "task",
-    "parent_entity": "gantt_sheet"
+    "parent_entity": "spreadsheet"
   },
   "config": [
     {
       "key": "spreadsheet_id",
       "type": "string",
-      "description": "Google Sheets spreadsheet ID",
+      "description": "Google Sheets spreadsheet ID for the Gantt chart",
       "default": "1RHLbBXzrKv24gNgp7a4Lr7RlMIrP9fjacfGWjhPAbOE"
     },
     {
       "key": "sheet_tab_name",
       "type": "string",
-      "description": "Sheet tab name containing tasks",
+      "description": "Name of the sheet tab containing the Gantt data",
       "default": "Gantt"
     },
     {
-      "key": "task_name_column",
+      "key": "task_name_column_header",
       "type": "string",
-      "description": "Column letter for task names",
-      "default": "A"
-    },
-    {
-      "key": "finish_date_column",
-      "type": "string",
-      "description": "Column letter for finish dates",
-      "default": "F"
-    },
-    {
-      "key": "priority_column",
-      "type": "string",
-      "description": "Column letter for priority",
-      "default": "G"
+      "description": "Header name for the task name column",
+      "default": "Tasks"
     },
     {
       "key": "urgent_priority_values",
-      "type": "json",
-      "description": "Priority values considered urgent",
-      "default": [
-        "Critical",
-        "High"
-      ]
-    },
-    {
-      "key": "email_recipient",
       "type": "string",
-      "description": "Email recipient address",
-      "default": "meiribarak@gmail.com"
+      "description": "Comma-separated list of priority values considered urgent",
+      "default": "Critical, High"
     },
     {
       "key": "date_window_days",
       "type": "number",
-      "description": "Number of full days ahead to check (excluding today)",
+      "description": "Number of full days ahead (excluding today) to check for finishing tasks",
       "default": 3
+    },
+    {
+      "key": "recipient_email",
+      "type": "string",
+      "description": "Email address to send the notification to",
+      "default": "meiribarak@gmail.com"
     }
+  ],
+  "invariants": [
+    "Only tasks with non-empty task name (column A) are considered valid",
+    "Only tasks with Priority exactly 'Critical' or 'High' are considered urgent",
+    "Date window is tomorrow through 3 days from now (excluding today), using user's account timezone",
+    "An email is always sent — either with matching tasks or a no-results message"
+  ],
+  "required_outcomes": [
+    "An email is sent to the configured recipient with either a table of urgent tasks finishing soon or a message indicating no such tasks exist",
+    "The email includes a link to the source Google Sheet"
   ],
   "steps": [
     {
-      "id": "read_gantt_sheet",
+      "id": "read_gantt_data",
       "kind": "data_source",
-      "summary": "Read all task rows from Gantt sheet tab",
+      "summary": "Read all rows from the Gantt tab of the Google Sheet",
       "uses": [
         {
           "capability": "get",
@@ -72,7 +67,7 @@
           }
         }
       ],
-      "output": "raw_sheet_rows",
+      "output": "raw_gantt_rows",
       "source": {
         "domain": "table",
         "intent": "read_range"
@@ -99,39 +94,17 @@
       }
     },
     {
-      "id": "filter_valid_tasks",
+      "id": "convert_rows_to_objects",
       "kind": "transform",
-      "summary": "Keep only rows with non-empty task name in column A",
+      "summary": "Convert raw 2D array rows into task objects using the first row as headers, mapping column A to task_name, column F to finish_date, column G to priority",
       "inputs": [
-        "raw_sheet_rows"
+        "raw_gantt_rows"
       ],
-      "output": "valid_task_rows",
-      "transform": {
-        "op": "filter",
-        "input": "raw_sheet_rows",
-        "description": "Filter rows where task name column (index 0 for column A) is not empty",
-        "where": {
-          "op": "test",
-          "left": {
-            "kind": "ref",
-            "ref": "raw_sheet_rows",
-            "field": "0"
-          },
-          "comparator": "exists"
-        }
-      }
-    },
-    {
-      "id": "parse_task_objects",
-      "kind": "transform",
-      "summary": "Map sheet rows to task objects with task_name, finish_date, priority fields",
-      "inputs": [
-        "valid_task_rows"
-      ],
-      "output": "parsed_tasks",
+      "output": "task_objects",
       "transform": {
         "op": "map",
-        "input": "valid_task_rows",
+        "input": "raw_gantt_rows",
+        "description": "Convert 2D array rows (with header row) into objects with task_name, finish_date, and priority fields. Row 0 is headers. Column A (index 0) = task_name, Column F (index 5) = finish_date, Column G (index 6) = priority.",
         "mapping": [
           {
             "to": "task_name",
@@ -171,62 +144,215 @@
       }
     },
     {
-      "id": "filter_urgent_tasks",
+      "id": "filter_valid_tasks",
       "kind": "transform",
-      "summary": "Keep only tasks with Priority = Critical or High",
+      "summary": "Filter out rows with empty task names to keep only valid task rows",
       "inputs": [
-        "parsed_tasks"
+        "task_objects"
+      ],
+      "output": "valid_tasks",
+      "transform": {
+        "op": "filter",
+        "input": "task_objects",
+        "description": "Keep only rows where task_name is non-empty",
+        "where": {
+          "op": "and",
+          "conditions": [
+            {
+              "op": "test",
+              "left": {
+                "kind": "ref",
+                "ref": "task_objects",
+                "field": "task_name"
+              },
+              "comparator": "exists"
+            },
+            {
+              "op": "test",
+              "left": {
+                "kind": "ref",
+                "ref": "task_objects",
+                "field": "task_name"
+              },
+              "comparator": "ne",
+              "right": {
+                "kind": "literal",
+                "value": ""
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "filter_urgent_priority",
+      "kind": "transform",
+      "summary": "Filter to only tasks with Priority exactly 'Critical' or 'High'",
+      "inputs": [
+        "valid_tasks"
       ],
       "output": "urgent_tasks",
       "transform": {
         "op": "filter",
-        "input": "parsed_tasks",
-        "description": "Filter tasks where priority is in urgent values list",
+        "input": "valid_tasks",
+        "description": "Keep only tasks where priority is Critical or High",
         "where": {
           "op": "test",
           "left": {
             "kind": "ref",
-            "ref": "parsed_tasks",
+            "ref": "valid_tasks",
             "field": "priority"
           },
           "comparator": "in",
           "right": {
-            "kind": "config",
-            "key": "urgent_priority_values"
+            "kind": "literal",
+            "value": [
+              "Critical",
+              "High"
+            ]
           }
         }
       }
     },
     {
-      "id": "filter_date_window",
-      "kind": "generate",
-      "summary": "Filter urgent tasks to those finishing within next 3 full days (excluding today) using account timezone",
+      "id": "add_date_window_fields",
+      "kind": "transform",
+      "summary": "Compute date window boundaries (tomorrow and 3 days from now) and days until finish for each task",
       "inputs": [
         "urgent_tasks"
       ],
-      "output": "tasks_in_window",
-      "uses": [
-        {
-          "capability": "generate",
-          "domain": "internal"
-        }
-      ],
-      "generate": {
+      "output": "tasks_with_dates",
+      "transform": {
+        "op": "with_fields",
         "input": "urgent_tasks",
-        "instruction": "Filter tasks to keep only those where finish_date falls within the next 3 full days (excluding today). Use the user's Google account timezone for date comparisons. Parse finish_date strings into dates, compute tomorrow's date and 3 days from now, and keep tasks where finish_date is >= tomorrow and <= 3 days from now. Return filtered array of task objects.",
-        "outputs": [
+        "fields": [
           {
-            "name": "filtered_tasks",
-            "type": "array",
-            "description": "Tasks finishing within date window"
+            "name": "window_start",
+            "expression": {
+              "kind": "date_add",
+              "date": {
+                "kind": "today"
+              },
+              "days": {
+                "kind": "literal",
+                "value": 1
+              }
+            }
+          },
+          {
+            "name": "window_end",
+            "expression": {
+              "kind": "date_add",
+              "date": {
+                "kind": "today"
+              },
+              "days": {
+                "kind": "config",
+                "key": "date_window_days"
+              }
+            }
+          },
+          {
+            "name": "days_until_finish",
+            "expression": {
+              "kind": "date_diff",
+              "left": {
+                "kind": "ref",
+                "ref": "urgent_tasks",
+                "field": "finish_date"
+              },
+              "right": {
+                "kind": "today"
+              },
+              "unit": "days"
+            }
           }
-        ]
+        ],
+        "output_schema": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "task_name": {
+                "type": "string"
+              },
+              "finish_date": {
+                "type": "string"
+              },
+              "priority": {
+                "type": "string"
+              },
+              "window_start": {
+                "type": "string"
+              },
+              "window_end": {
+                "type": "string"
+              },
+              "days_until_finish": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "task_name",
+              "finish_date",
+              "priority",
+              "window_start",
+              "window_end",
+              "days_until_finish"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "filter_within_date_window",
+      "kind": "transform",
+      "summary": "Keep only tasks whose finish date falls within the window: tomorrow (days_until_finish >= 1) through 3 days from now (days_until_finish <= date_window_days)",
+      "inputs": [
+        "tasks_with_dates"
+      ],
+      "output": "tasks_in_window",
+      "transform": {
+        "op": "filter",
+        "input": "tasks_with_dates",
+        "description": "Keep tasks where days_until_finish >= 1 AND days_until_finish <= date_window_days (i.e., finishing tomorrow through 3 days from now, excluding today)",
+        "where": {
+          "op": "and",
+          "conditions": [
+            {
+              "op": "test",
+              "left": {
+                "kind": "ref",
+                "ref": "tasks_with_dates",
+                "field": "days_until_finish"
+              },
+              "comparator": "gte",
+              "right": {
+                "kind": "literal",
+                "value": 1
+              }
+            },
+            {
+              "op": "test",
+              "left": {
+                "kind": "ref",
+                "ref": "tasks_with_dates",
+                "field": "days_until_finish"
+              },
+              "comparator": "lte",
+              "right": {
+                "kind": "config",
+                "key": "date_window_days"
+              }
+            }
+          ]
+        }
       }
     },
     {
       "id": "sort_by_finish_date",
       "kind": "transform",
-      "summary": "Sort tasks by finish date ascending (earliest first)",
+      "summary": "Sort matching tasks by finish date ascending (earliest first)",
       "inputs": [
         "tasks_in_window"
       ],
@@ -234,17 +360,17 @@
       "transform": {
         "op": "sort",
         "input": "tasks_in_window",
-        "description": "Sort tasks by finish_date field in ascending order",
+        "description": "Sort tasks by days_until_finish ascending so earliest finishing tasks appear first",
         "rules": {
-          "field": "finish_date",
-          "order": "asc"
+          "field": "days_until_finish",
+          "direction": "asc"
         }
       }
     },
     {
       "id": "count_matching_tasks",
       "kind": "aggregate",
-      "summary": "Count number of matching tasks",
+      "summary": "Count the number of matching urgent tasks to determine email content path",
       "inputs": [
         "sorted_tasks"
       ],
@@ -253,19 +379,19 @@
         "input": "sorted_tasks",
         "outputs": [
           {
-            "name": "task_count",
+            "name": "matching_count",
             "type": "count"
           }
         ]
       }
     },
     {
-      "id": "generate_email_content",
+      "id": "compose_email_body",
       "kind": "generate",
-      "summary": "Generate HTML email with task table or no-results message",
+      "summary": "Compose an HTML email body with either a table of urgent tasks or a no-results message, including a link to the source spreadsheet",
       "inputs": [
         "sorted_tasks",
-        "task_count"
+        "matching_count"
       ],
       "output": "email_content",
       "uses": [
@@ -275,8 +401,10 @@
         }
       ],
       "generate": {
+        "input": "sorted_tasks",
         "format": "html",
-        "instruction": "Generate an HTML email body. If task_count is 0, create a message stating 'No urgent tasks are finishing within the next 3 days (excluding today)'. If task_count > 0, create an HTML table with columns: Task (task_name), Finish Date (finish_date), Priority (priority). Include professional styling with borders, header row background, and padding. Add a link to the Google Sheet at the end using spreadsheet_id from config. Return object with subject and body fields.",
+        "reason": "Free-form HTML email body composition with conditional content (table vs no-results message), professional styling, and dynamic spreadsheet link — requires semantic composition, not a deterministic template",
+        "instruction": "Generate an HTML email for notifying about urgent Gantt chart tasks finishing soon.\n\nRules:\n1. If sorted_tasks is empty (matching_count is 0), compose a brief professional email stating: 'No urgent tasks (Critical or High priority) are scheduled to finish within the next 3 days (excluding today).'\n2. If sorted_tasks has items, compose an email with:\n   - A brief intro: 'The following urgent tasks from your Gantt chart are scheduled to finish within the next 3 days:'\n   - An HTML table with columns: Task, Finish Date, Priority\n   - Use professional table styling: borders, header row with background color, padding\n   - Data comes from sorted_tasks fields: task_name, finish_date, priority\n3. In both cases, include a link to the source Google Sheet at the bottom: https://docs.google.com/spreadsheets/d/1RHLbBXzrKv24gNgp7a4Lr7RlMIrP9fjacfGWjhPAbOE/edit\n4. Use a professional tone.\n5. The subject line should be: 'Urgent Gantt Tasks Finishing Soon' if there are tasks, or 'No Urgent Gantt Tasks Finishing Soon' if empty.",
         "outputs": [
           {
             "name": "subject",
@@ -286,15 +414,15 @@
           {
             "name": "body",
             "type": "string",
-            "description": "HTML email body with table or no-results message"
+            "description": "Full HTML email body with table or no-results message and spreadsheet link"
           }
         ]
       }
     },
     {
-      "id": "send_email_notification",
+      "id": "send_notification_email",
       "kind": "notify",
-      "summary": "Send email with task summary to recipient",
+      "summary": "Send the composed email to the configured recipient",
       "inputs": [
         "email_content"
       ],
@@ -313,7 +441,7 @@
           "to": [
             {
               "kind": "config",
-              "key": "email_recipient"
+              "key": "recipient_email"
             }
           ]
         },
@@ -333,5 +461,13 @@
       }
     }
   ],
-  "confidence": 0.95
+  "confidence": 0.92,
+  "meta": {
+    "plan_title": "Urgent Gantt Tasks Finishing Soon — Email Notifier",
+    "services_used": [
+      "google-sheets",
+      "google-mail"
+    ],
+    "notes": "The workflow reads from a specific Gantt sheet, filters for urgent priority tasks finishing within the next 3 full days (excluding today), and always sends an email — either with a formatted table or a no-results message. Date comparisons use days_until_finish computed via date_diff to handle timezone-aware comparisons. The raw 2D array from Sheets is mapped using positional indices since the data has not been converted to objects by a prior rows_to_objects step."
+  }
 }

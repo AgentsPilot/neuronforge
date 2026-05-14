@@ -1,0 +1,17 @@
+{
+  "gmail_search_query": "subject:Orders newer_than:7d",
+  "primary_recipient": "meiribarak@gmail.com",
+  "additional_summary_recipients": "eomer3@gmail.com; offir.omer@gmail.com",
+  "confirmation_template": "Confirmed. We received PO {order_ID}. Thank you.",
+  "missing_field_status": "Needs review",
+  "google_mail__email_send__recipients": "meiribarak@gmail.com",
+  "summary_email_style": "new email",
+  "email_filter_rule": "subject contains “Orders”",
+  "email_lookback_window": "last 7 days",
+  "attachment_types": "PDF, images (JPG/PNG), DOCX, XLSX",
+  "summary_destination": "HTML table in email body",
+  "supplier_email_source": "extract from PO attachment",
+  "confirmation_style": "reply in same thread; short acknowledgement",
+  "multi_attachment_handling": "process all attachments",
+  "missing_field_handling": "leave blank and flag as Needs review"
+}

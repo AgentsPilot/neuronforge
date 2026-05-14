@@ -1,0 +1,515 @@
+{
+  "slots": {
+    "raw_sheet_data": {
+      "schema": {
+        "type": "object",
+        "source": "plugin",
+        "properties": {
+          "range": {
+            "type": "string",
+            "source": "plugin",
+            "description": "The actual range that was read (may differ from requested)",
+            "required": true
+          },
+          "values": {
+            "type": "array",
+            "source": "plugin",
+            "description": "2D array of cell values (rows of cells)",
+            "items": {
+              "type": "array",
+              "source": "plugin",
+              "items": {
+                "type": "string",
+                "source": "plugin"
+              }
+            },
+            "required": true
+          },
+          "row_count": {
+            "type": "number",
+            "source": "plugin",
+            "description": "Number of rows returned",
+            "required": true
+          },
+          "column_count": {
+            "type": "number",
+            "source": "plugin",
+            "description": "Number of columns returned"
+          },
+          "major_dimension": {
+            "type": "string",
+            "source": "plugin",
+            "description": "How data is organized (ROWS or COLUMNS)"
+          },
+          "retrieved_at": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Timestamp when data was retrieved (ISO 8601)"
+          }
+        }
+      },
+      "scope": "global",
+      "produced_by": "read_leads_sheet",
+      "consumed_by": [
+        "parse_rows_with_headers"
+      ]
+    },
+    "all_leads": {
+      "schema": {
+        "type": "array",
+        "source": "ai_declared",
+        "items": {
+          "type": "object",
+          "source": "ai_declared",
+          "properties": {
+            "date": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "lead_name": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "company": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "email": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "phone": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "stage": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "notes": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "sales_person": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            }
+          }
+        }
+      },
+      "scope": "global",
+      "produced_by": "parse_rows_with_headers",
+      "consumed_by": [
+        "filter_high_qualified"
+      ]
+    },
+    "qualified_leads": {
+      "schema": {
+        "type": "array",
+        "source": "inferred",
+        "items": {
+          "type": "object",
+          "source": "ai_declared",
+          "properties": {
+            "date": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "lead_name": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "company": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "email": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "phone": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "stage": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "notes": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "sales_person": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            }
+          }
+        }
+      },
+      "scope": "global",
+      "produced_by": "filter_high_qualified",
+      "consumed_by": [
+        "count_qualified",
+        "decide_has_leads",
+        "generate_user_summary_email",
+        "group_by_salesperson"
+      ]
+    },
+    "qualified_count": {
+      "schema": {
+        "type": "number",
+        "description": "Count of qualified_count",
+        "source": "inferred"
+      },
+      "scope": "global",
+      "produced_by": "count_qualified",
+      "consumed_by": [
+        "decide_has_leads"
+      ]
+    },
+    "qualified_metrics": {
+      "schema": {
+        "type": "number",
+        "description": "Count of qualified_count",
+        "source": "inferred"
+      },
+      "scope": "global",
+      "produced_by": "count_qualified"
+    },
+    "user_email_body": {
+      "schema": {
+        "type": "object",
+        "properties": {
+          "html_body": {
+            "type": "string",
+            "source": "ai_declared",
+            "description": "Complete HTML email body with styled leads table"
+          }
+        },
+        "source": "ai_declared"
+      },
+      "scope": "loop",
+      "produced_by": "generate_user_summary_email",
+      "consumed_by": [
+        "send_user_summary_email"
+      ]
+    },
+    "salesperson_groups": {
+      "schema": {
+        "type": "array",
+        "source": "ai_declared",
+        "items": {
+          "type": "object",
+          "source": "ai_declared",
+          "properties": {
+            "key": {
+              "type": "string",
+              "source": "ai_declared",
+              "description": "The sales_person value (name or email) that identifies this group",
+              "required": true
+            },
+            "items": {
+              "type": "array",
+              "source": "ai_declared",
+              "description": "Array of leads assigned to this salesperson",
+              "items": {
+                "type": "object",
+                "source": "ai_declared",
+                "properties": {
+                  "date": {
+                    "type": "string",
+                    "source": "ai_declared"
+                  },
+                  "lead_name": {
+                    "type": "string",
+                    "source": "ai_declared"
+                  },
+                  "company": {
+                    "type": "string",
+                    "source": "ai_declared"
+                  },
+                  "email": {
+                    "type": "string",
+                    "source": "ai_declared"
+                  },
+                  "phone": {
+                    "type": "string",
+                    "source": "ai_declared"
+                  },
+                  "stage": {
+                    "type": "string",
+                    "source": "ai_declared"
+                  },
+                  "notes": {
+                    "type": "string",
+                    "source": "ai_declared"
+                  },
+                  "sales_person": {
+                    "type": "string",
+                    "source": "ai_declared"
+                  }
+                }
+              },
+              "required": true
+            }
+          }
+        }
+      },
+      "scope": "loop",
+      "produced_by": "group_by_salesperson",
+      "consumed_by": [
+        "send_per_salesperson_emails"
+      ]
+    },
+    "sp_group": {
+      "schema": {
+        "type": "object",
+        "source": "inferred",
+        "properties": {
+          "key": {
+            "type": "string",
+            "source": "ai_declared",
+            "description": "The sales_person value (name or email) that identifies this group",
+            "required": true
+          },
+          "items": {
+            "type": "array",
+            "source": "ai_declared",
+            "description": "Array of leads assigned to this salesperson",
+            "items": {
+              "type": "object",
+              "source": "ai_declared",
+              "properties": {
+                "date": {
+                  "type": "string",
+                  "source": "ai_declared"
+                },
+                "lead_name": {
+                  "type": "string",
+                  "source": "ai_declared"
+                },
+                "company": {
+                  "type": "string",
+                  "source": "ai_declared"
+                },
+                "email": {
+                  "type": "string",
+                  "source": "ai_declared"
+                },
+                "phone": {
+                  "type": "string",
+                  "source": "ai_declared"
+                },
+                "stage": {
+                  "type": "string",
+                  "source": "ai_declared"
+                },
+                "notes": {
+                  "type": "string",
+                  "source": "ai_declared"
+                },
+                "sales_person": {
+                  "type": "string",
+                  "source": "ai_declared"
+                }
+              }
+            },
+            "required": true
+          }
+        }
+      },
+      "scope": "loop",
+      "produced_by": "send_per_salesperson_emails",
+      "consumed_by": [
+        "generate_sp_email_body",
+        "send_sp_email"
+      ]
+    },
+    "salesperson_email_results": {
+      "schema": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "source": "plugin",
+          "description": "Confirmation of sent email with identifiers",
+          "properties": {
+            "message_id": {
+              "type": "string",
+              "source": "plugin",
+              "description": "Gmail message ID",
+              "required": true
+            },
+            "thread_id": {
+              "type": "string",
+              "source": "plugin",
+              "description": "Gmail thread ID",
+              "required": true
+            },
+            "sent_at": {
+              "type": "string",
+              "source": "plugin",
+              "description": "ISO 8601 timestamp when email was sent",
+              "required": true
+            },
+            "recipient_count": {
+              "type": "number",
+              "source": "plugin",
+              "description": "Total number of recipients (to + cc + bcc)"
+            },
+            "recipients": {
+              "type": "object",
+              "source": "plugin",
+              "description": "Recipient addresses",
+              "properties": {
+                "to": {
+                  "type": "array",
+                  "source": "plugin",
+                  "items": {
+                    "type": "string",
+                    "source": "plugin"
+                  }
+                },
+                "cc": {
+                  "type": "array",
+                  "source": "plugin",
+                  "items": {
+                    "type": "string",
+                    "source": "plugin"
+                  }
+                },
+                "bcc": {
+                  "type": "array",
+                  "source": "plugin",
+                  "items": {
+                    "type": "string",
+                    "source": "plugin"
+                  }
+                }
+              }
+            },
+            "subject": {
+              "type": "string",
+              "source": "plugin",
+              "description": "Email subject line"
+            }
+          }
+        },
+        "source": "inferred"
+      },
+      "scope": "global",
+      "produced_by": "send_per_salesperson_emails"
+    },
+    "sp_email_body": {
+      "schema": {
+        "type": "object",
+        "properties": {
+          "html_body": {
+            "type": "string",
+            "source": "ai_declared",
+            "description": "Complete HTML email body with styled leads table for this salesperson"
+          },
+          "recipient_identifier": {
+            "type": "string",
+            "source": "ai_declared",
+            "description": "The salesperson identifier (name or email) extracted from the group key"
+          }
+        },
+        "source": "ai_declared"
+      },
+      "scope": "loop",
+      "produced_by": "generate_sp_email_body",
+      "consumed_by": [
+        "send_sp_email"
+      ]
+    },
+    "sp_email_sent": {
+      "schema": {
+        "type": "object",
+        "source": "plugin",
+        "description": "Confirmation of sent email with identifiers",
+        "properties": {
+          "message_id": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Gmail message ID",
+            "required": true
+          },
+          "thread_id": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Gmail thread ID",
+            "required": true
+          },
+          "sent_at": {
+            "type": "string",
+            "source": "plugin",
+            "description": "ISO 8601 timestamp when email was sent",
+            "required": true
+          },
+          "recipient_count": {
+            "type": "number",
+            "source": "plugin",
+            "description": "Total number of recipients (to + cc + bcc)"
+          },
+          "recipients": {
+            "type": "object",
+            "source": "plugin",
+            "description": "Recipient addresses",
+            "properties": {
+              "to": {
+                "type": "array",
+                "source": "plugin",
+                "items": {
+                  "type": "string",
+                  "source": "plugin"
+                }
+              },
+              "cc": {
+                "type": "array",
+                "source": "plugin",
+                "items": {
+                  "type": "string",
+                  "source": "plugin"
+                }
+              },
+              "bcc": {
+                "type": "array",
+                "source": "plugin",
+                "items": {
+                  "type": "string",
+                  "source": "plugin"
+                }
+              }
+            }
+          },
+          "subject": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Email subject line"
+          }
+        }
+      },
+      "scope": "loop",
+      "produced_by": "send_sp_email",
+      "consumed_by": [
+        "send_per_salesperson_emails"
+      ]
+    }
+  }
+}

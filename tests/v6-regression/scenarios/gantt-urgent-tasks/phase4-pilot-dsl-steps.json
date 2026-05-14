@@ -1,0 +1,643 @@
+[
+  {
+    "step_id": "step1",
+    "type": "action",
+    "description": "Read all rows from the Gantt tab of the Google Sheet",
+    "plugin": "google-sheets",
+    "output_variable": "raw_gantt_rows",
+    "output_schema": {
+      "type": "object",
+      "source": "plugin",
+      "properties": {
+        "range": {
+          "type": "string",
+          "source": "plugin",
+          "description": "The actual range that was read (may differ from requested)",
+          "required": true
+        },
+        "values": {
+          "type": "array",
+          "source": "plugin",
+          "description": "2D array of cell values (rows of cells)",
+          "items": {
+            "type": "array",
+            "source": "plugin",
+            "items": {
+              "type": "string",
+              "source": "plugin"
+            }
+          },
+          "required": true
+        },
+        "row_count": {
+          "type": "number",
+          "source": "plugin",
+          "description": "Number of rows returned",
+          "required": true
+        },
+        "column_count": {
+          "type": "number",
+          "source": "plugin",
+          "description": "Number of columns returned"
+        },
+        "major_dimension": {
+          "type": "string",
+          "source": "plugin",
+          "description": "How data is organized (ROWS or COLUMNS)"
+        },
+        "retrieved_at": {
+          "type": "string",
+          "source": "plugin",
+          "description": "Timestamp when data was retrieved (ISO 8601)"
+        }
+      }
+    },
+    "id": "step1",
+    "params": {
+      "spreadsheet_id": "{{input.spreadsheet_id}}",
+      "range": "{{input.sheet_tab_name}}!A:G"
+    },
+    "name": "Read all rows from the Gantt tab of the Google Sheet",
+    "action": "read_range"
+  },
+  {
+    "step_id": "step2",
+    "type": "transform",
+    "operation": "rows_to_objects",
+    "input": "{{raw_gantt_rows.values}}",
+    "description": "Auto-normalize: Convert 2D array to objects",
+    "output_variable": "raw_gantt_rows_objects",
+    "config": {
+      "preserve_case": true
+    },
+    "id": "step2",
+    "name": "Auto-normalize: Convert 2D array to objects"
+  },
+  {
+    "step_id": "step3",
+    "type": "transform",
+    "operation": "map",
+    "input": "{{raw_gantt_rows_objects}}",
+    "description": "Convert raw 2D array rows into task objects using the first row as headers, mapping column A to task_name, column F to finish_date, column G to priority",
+    "config": {
+      "type": "map",
+      "input": "raw_gantt_rows_objects",
+      "output_schema": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "task_name": {
+              "type": "string"
+            },
+            "finish_date": {
+              "type": "string"
+            },
+            "priority": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "task_name",
+            "finish_date",
+            "priority"
+          ]
+        }
+      },
+      "field_mapping": {
+        "task_name": "0",
+        "finish_date": "5",
+        "priority": "6"
+      }
+    },
+    "output_variable": "task_objects",
+    "output_schema": {
+      "type": "array",
+      "source": "ai_declared",
+      "items": {
+        "type": "object",
+        "source": "ai_declared",
+        "properties": {
+          "task_name": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "finish_date": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "priority": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          }
+        }
+      }
+    },
+    "id": "step3",
+    "_on_empty": "warn",
+    "name": "Convert raw 2D array rows into task objects using the first row as headers, mapping column A to task_name, column F to finish_date, column G to priority"
+  },
+  {
+    "step_id": "step4",
+    "type": "transform",
+    "operation": "filter",
+    "input": "{{task_objects}}",
+    "description": "Filter out rows with empty task names to keep only valid task rows",
+    "config": {
+      "type": "filter",
+      "input": "task_objects",
+      "custom_code": "Keep only rows where task_name is non-empty",
+      "condition": {
+        "conditionType": "complex_and",
+        "conditions": [
+          {
+            "operator": "exists",
+            "field": "item.task_name",
+            "conditionType": "simple"
+          },
+          {
+            "operator": "ne",
+            "value": "",
+            "field": "item.task_name",
+            "conditionType": "simple"
+          }
+        ]
+      }
+    },
+    "output_variable": "valid_tasks",
+    "output_schema": {
+      "type": "array",
+      "source": "inferred",
+      "items": {
+        "type": "object",
+        "source": "ai_declared",
+        "properties": {
+          "task_name": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "finish_date": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "priority": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          }
+        }
+      }
+    },
+    "id": "step4",
+    "_on_empty": "warn",
+    "name": "Filter out rows with empty task names to keep only valid task rows"
+  },
+  {
+    "step_id": "step5",
+    "type": "transform",
+    "operation": "filter",
+    "input": "{{valid_tasks}}",
+    "description": "Filter to only tasks with Priority exactly 'Critical' or 'High'",
+    "config": {
+      "type": "filter",
+      "input": "valid_tasks",
+      "custom_code": "Keep only tasks where priority is Critical or High",
+      "condition": {
+        "operator": "in",
+        "value": [
+          "Critical",
+          "High"
+        ],
+        "field": "item.priority",
+        "conditionType": "simple"
+      }
+    },
+    "output_variable": "urgent_tasks",
+    "output_schema": {
+      "type": "array",
+      "source": "inferred",
+      "items": {
+        "type": "object",
+        "source": "ai_declared",
+        "properties": {
+          "task_name": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "finish_date": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "priority": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          }
+        }
+      }
+    },
+    "id": "step5",
+    "_on_empty": "warn",
+    "name": "Filter to only tasks with Priority exactly 'Critical' or 'High'"
+  },
+  {
+    "step_id": "step6",
+    "type": "transform",
+    "operation": "with_fields",
+    "input": "{{urgent_tasks}}",
+    "description": "Compute date window boundaries (tomorrow and 3 days from now) and days until finish for each task",
+    "config": {
+      "type": "with_fields",
+      "input": "urgent_tasks",
+      "output_schema": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "task_name": {
+              "type": "string"
+            },
+            "finish_date": {
+              "type": "string"
+            },
+            "priority": {
+              "type": "string"
+            },
+            "window_start": {
+              "type": "string"
+            },
+            "window_end": {
+              "type": "string"
+            },
+            "days_until_finish": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "task_name",
+            "finish_date",
+            "priority",
+            "window_start",
+            "window_end",
+            "days_until_finish"
+          ]
+        }
+      },
+      "fields": [
+        {
+          "name": "window_start",
+          "expression": {
+            "kind": "date_add",
+            "date": {
+              "kind": "today"
+            },
+            "days": {
+              "kind": "literal",
+              "value": 1
+            }
+          }
+        },
+        {
+          "name": "window_end",
+          "expression": {
+            "kind": "date_add",
+            "date": {
+              "kind": "today"
+            },
+            "days": {
+              "kind": "config",
+              "key": "date_window_days"
+            }
+          }
+        },
+        {
+          "name": "days_until_finish",
+          "expression": {
+            "kind": "date_diff",
+            "left": {
+              "kind": "ref",
+              "ref": "item",
+              "field": "finish_date"
+            },
+            "right": {
+              "kind": "today"
+            },
+            "unit": "days"
+          }
+        }
+      ]
+    },
+    "output_variable": "tasks_with_dates",
+    "output_schema": {
+      "type": "array",
+      "source": "ai_declared",
+      "items": {
+        "type": "object",
+        "source": "ai_declared",
+        "properties": {
+          "task_name": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "finish_date": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "priority": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "window_start": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "window_end": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "days_until_finish": {
+            "type": "number",
+            "source": "ai_declared",
+            "required": true
+          }
+        }
+      }
+    },
+    "id": "step6",
+    "name": "Compute date window boundaries (tomorrow and 3 days from now) and days until finish for each task"
+  },
+  {
+    "step_id": "step7",
+    "type": "transform",
+    "operation": "filter",
+    "input": "{{tasks_with_dates}}",
+    "description": "Keep only tasks whose finish date falls within the window: tomorrow (days_until_finish >= 1) through 3 days from now (days_until_finish <= date_window_days)",
+    "config": {
+      "type": "filter",
+      "input": "tasks_with_dates",
+      "custom_code": "Keep tasks where days_until_finish >= 1 AND days_until_finish <= date_window_days (i.e., finishing tomorrow through 3 days from now, excluding today)",
+      "condition": {
+        "conditionType": "complex_and",
+        "conditions": [
+          {
+            "operator": "gte",
+            "value": 1,
+            "field": "item.days_until_finish",
+            "conditionType": "simple"
+          },
+          {
+            "operator": "lte",
+            "value": "{{input.date_window_days}}",
+            "field": "item.days_until_finish",
+            "conditionType": "simple"
+          }
+        ]
+      }
+    },
+    "output_variable": "tasks_in_window",
+    "output_schema": {
+      "type": "array",
+      "source": "inferred",
+      "items": {
+        "type": "object",
+        "source": "ai_declared",
+        "properties": {
+          "task_name": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "finish_date": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "priority": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "window_start": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "window_end": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "days_until_finish": {
+            "type": "number",
+            "source": "ai_declared",
+            "required": true
+          }
+        }
+      }
+    },
+    "id": "step7",
+    "_on_empty": "warn",
+    "name": "Keep only tasks whose finish date falls within the window: tomorrow (days_until_finish >= 1) through 3 days from now (days_until_finish <= date_window_days)"
+  },
+  {
+    "step_id": "step8",
+    "type": "transform",
+    "operation": "sort",
+    "input": "{{tasks_in_window}}",
+    "description": "Sort matching tasks by finish date ascending (earliest first)",
+    "config": {
+      "type": "sort",
+      "input": "tasks_in_window",
+      "custom_code": "Sort tasks by days_until_finish ascending so earliest finishing tasks appear first",
+      "rules": {
+        "field": "days_until_finish",
+        "direction": "asc"
+      }
+    },
+    "output_variable": "sorted_tasks",
+    "output_schema": {
+      "type": "array",
+      "source": "inferred",
+      "items": {
+        "type": "object",
+        "source": "ai_declared",
+        "properties": {
+          "task_name": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "finish_date": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "priority": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "window_start": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "window_end": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "days_until_finish": {
+            "type": "number",
+            "source": "ai_declared",
+            "required": true
+          }
+        }
+      }
+    },
+    "id": "step8",
+    "name": "Sort matching tasks by finish date ascending (earliest first)"
+  },
+  {
+    "step_id": "step9",
+    "type": "transform",
+    "operation": "reduce",
+    "input": "{{sorted_tasks}}",
+    "description": "Count items for matching_count",
+    "config": {
+      "type": "reduce",
+      "input": "sorted_tasks",
+      "reduce_operation": "count",
+      "reducer": "count"
+    },
+    "output_variable": "matching_count",
+    "output_schema": {
+      "type": "number",
+      "description": "Count of matching_count",
+      "source": "inferred"
+    },
+    "id": "step9",
+    "name": "Count items for matching_count"
+  },
+  {
+    "step_id": "step10",
+    "type": "ai_processing",
+    "input": "{{sorted_tasks}}",
+    "prompt": "Generate an HTML email for notifying about urgent Gantt chart tasks finishing soon.\n\nRules:\n1. If sorted_tasks is empty (matching_count is 0), compose a brief professional email stating: 'No urgent tasks (Critical or High priority) are scheduled to finish within the next 3 days (excluding today).'\n2. If sorted_tasks has items, compose an email with:\n   - A brief intro: 'The following urgent tasks from your Gantt chart are scheduled to finish within the next 3 days:'\n   - An HTML table with columns: Task, Finish Date, Priority\n   - Use professional table styling: borders, header row with background color, padding\n   - Data comes from sorted_tasks fields: task_name, finish_date, priority\n3. In both cases, include a link to the source Google Sheet at the bottom: https://docs.google.com/spreadsheets/d/1RHLbBXzrKv24gNgp7a4Lr7RlMIrP9fjacfGWjhPAbOE/edit\n4. Use a professional tone.\n5. The subject line should be: 'Urgent Gantt Tasks Finishing Soon' if there are tasks, or 'No Urgent Gantt Tasks Finishing Soon' if empty.",
+    "description": "Compose an HTML email body with either a table of urgent tasks or a no-results message, including a link to the source spreadsheet",
+    "config": {
+      "ai_type": "generate",
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "subject": {
+            "type": "string",
+            "description": "Email subject line"
+          },
+          "body": {
+            "type": "string",
+            "description": "Full HTML email body with table or no-results message and spreadsheet link"
+          }
+        },
+        "required": [
+          "subject",
+          "body"
+        ]
+      },
+      "type": "generate",
+      "instruction": "Generate an HTML email for notifying about urgent Gantt chart tasks finishing soon.\n\nRules:\n1. If sorted_tasks is empty (matching_count is 0), compose a brief professional email stating: 'No urgent tasks (Critical or High priority) are scheduled to finish within the next 3 days (excluding today).'\n2. If sorted_tasks has items, compose an email with:\n   - A brief intro: 'The following urgent tasks from your Gantt chart are scheduled to finish within the next 3 days:'\n   - An HTML table with columns: Task, Finish Date, Priority\n   - Use professional table styling: borders, header row with background color, padding\n   - Data comes from sorted_tasks fields: task_name, finish_date, priority\n3. In both cases, include a link to the source Google Sheet at the bottom: https://docs.google.com/spreadsheets/d/1RHLbBXzrKv24gNgp7a4Lr7RlMIrP9fjacfGWjhPAbOE/edit\n4. Use a professional tone.\n5. The subject line should be: 'Urgent Gantt Tasks Finishing Soon' if there are tasks, or 'No Urgent Gantt Tasks Finishing Soon' if empty.",
+      "input": "{{sorted_tasks}}"
+    },
+    "output_variable": "email_content",
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "subject": {
+          "type": "string",
+          "source": "ai_declared",
+          "description": "Email subject line"
+        },
+        "body": {
+          "type": "string",
+          "source": "ai_declared",
+          "description": "Full HTML email body with table or no-results message and spreadsheet link"
+        }
+      },
+      "source": "ai_declared"
+    },
+    "input_schema": {
+      "type": "array",
+      "source": "inferred",
+      "items": {
+        "type": "object",
+        "source": "ai_declared",
+        "properties": {
+          "task_name": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "finish_date": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "priority": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "window_start": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "window_end": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "days_until_finish": {
+            "type": "number",
+            "source": "ai_declared",
+            "required": true
+          }
+        }
+      }
+    },
+    "id": "step10",
+    "name": "Compose an HTML email body with either a table of urgent tasks or a no-results message, including a link to the source spreadsheet"
+  },
+  {
+    "step_id": "step11",
+    "type": "action",
+    "description": "Send the composed email to the configured recipient",
+    "plugin": "google-mail",
+    "id": "step11",
+    "params": {
+      "recipients": {
+        "to": [
+          "{{input.recipient_email}}"
+        ]
+      },
+      "content": {
+        "subject": "{{email_content.subject}}",
+        "html_body": "{{email_content.body}}"
+      }
+    },
+    "name": "Send the composed email to the configured recipient",
+    "action": "send_email"
+  }
+]

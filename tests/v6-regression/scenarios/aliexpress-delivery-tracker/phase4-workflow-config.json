@@ -1,0 +1,13 @@
+{
+  "aliexpress_sender": "transaction@notice.aliexpress.com",
+  "search_keywords": [
+    "delivery update",
+    "shipment"
+  ],
+  "recipient_email": "meiribarak@gmail.com",
+  "summary_email_subject": "AliExpress Delivery Updates Summary",
+  "gmail_search_query": "from:transaction@notice.aliexpress.com (subject:(delivery update) OR subject:(shipment))",
+  "max_emails": 30,
+  "shopping_label": "shopping",
+  "google_mail__email_send__recipients": "meiribarak@gmail.com"
+}

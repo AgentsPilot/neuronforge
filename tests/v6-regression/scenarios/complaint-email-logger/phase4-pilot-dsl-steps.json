@@ -1,0 +1,684 @@
+[
+  {
+    "step_id": "step1",
+    "type": "action",
+    "description": "Search Gmail inbox for emails from the last 7 days matching complaint keywords",
+    "plugin": "google-mail",
+    "output_variable": "candidate_emails",
+    "output_schema": {
+      "type": "object",
+      "source": "plugin",
+      "description": "Search results with email details",
+      "properties": {
+        "emails": {
+          "type": "array",
+          "source": "plugin",
+          "description": "Array of matching emails",
+          "items": {
+            "type": "object",
+            "source": "plugin",
+            "semantic_type": "email_message",
+            "properties": {
+              "id": {
+                "type": "string",
+                "source": "plugin",
+                "description": "Gmail message ID"
+              },
+              "thread_id": {
+                "type": "string",
+                "source": "plugin",
+                "description": "Gmail thread ID"
+              },
+              "subject": {
+                "type": "string",
+                "source": "plugin",
+                "description": "Email subject"
+              },
+              "from": {
+                "type": "string",
+                "source": "plugin",
+                "description": "Sender address"
+              },
+              "to": {
+                "type": "string",
+                "source": "plugin",
+                "description": "Recipient addresses"
+              },
+              "date": {
+                "type": "string",
+                "source": "plugin",
+                "description": "Email date"
+              },
+              "snippet": {
+                "type": "string",
+                "source": "plugin",
+                "description": "Email preview snippet (first ~200 chars of email body - USE THIS for content matching/filtering)"
+              },
+              "labels": {
+                "type": "array",
+                "source": "plugin",
+                "description": "Gmail labels",
+                "items": {
+                  "type": "string",
+                  "source": "plugin"
+                }
+              },
+              "body": {
+                "type": "string",
+                "source": "plugin",
+                "description": "Email body text (NOTE: Usually empty in search results - use 'snippet' field instead for email content)"
+              },
+              "attachments": {
+                "type": "array",
+                "source": "plugin",
+                "description": "Attachment metadata (if include_attachments=true). Each item contains: filename, mimeType, size, attachment_id (use with get_email_attachment), message_id (email ID)",
+                "items": {
+                  "type": "object",
+                  "source": "plugin",
+                  "semantic_type": "file_attachment",
+                  "properties": {
+                    "filename": {
+                      "type": "string",
+                      "source": "plugin",
+                      "description": "Attachment filename"
+                    },
+                    "mimeType": {
+                      "type": "string",
+                      "source": "plugin",
+                      "description": "MIME type (application/pdf, image/png, etc.)"
+                    },
+                    "size": {
+                      "type": "number",
+                      "source": "plugin",
+                      "description": "File size in bytes"
+                    },
+                    "attachment_id": {
+                      "type": "string",
+                      "source": "plugin",
+                      "description": "Attachment ID (required for get_email_attachment action)"
+                    },
+                    "message_id": {
+                      "type": "string",
+                      "source": "plugin",
+                      "description": "Email message ID (required for get_email_attachment action)"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "total_found": {
+          "type": "number",
+          "source": "plugin",
+          "description": "Number of emails returned"
+        },
+        "total_available": {
+          "type": "number",
+          "source": "plugin",
+          "description": "Estimated total matching emails"
+        },
+        "search_query": {
+          "type": "string",
+          "source": "plugin",
+          "description": "The search query that was executed"
+        },
+        "searched_at": {
+          "type": "string",
+          "source": "plugin",
+          "description": "ISO 8601 timestamp of search"
+        }
+      }
+    },
+    "id": "step1",
+    "params": {
+      "query": "{{input.gmail_search_query}}",
+      "max_results": 100,
+      "include_attachments": false,
+      "content_level": "full"
+    },
+    "name": "Search Gmail inbox for emails from the last 7 days matching complaint keywords",
+    "action": "search_emails"
+  },
+  {
+    "step_id": "step2",
+    "type": "action",
+    "description": "Ensure the UrgentEmails tab exists in the destination spreadsheet",
+    "plugin": "google-sheets",
+    "output_variable": "sheet_tab",
+    "output_schema": {
+      "type": "object",
+      "source": "plugin",
+      "properties": {
+        "spreadsheet_id": {
+          "type": "string",
+          "source": "plugin",
+          "description": "ID of the spreadsheet",
+          "required": true
+        },
+        "sheet_id": {
+          "type": "number",
+          "source": "plugin",
+          "description": "Unique numeric ID of the sheet tab"
+        },
+        "sheet_name": {
+          "type": "string",
+          "source": "plugin",
+          "description": "Name of the sheet tab",
+          "required": true
+        },
+        "tab_name": {
+          "type": "string",
+          "source": "plugin",
+          "description": "Name of the sheet tab (alias for sheet_name)",
+          "required": true
+        },
+        "existed": {
+          "type": "boolean",
+          "source": "plugin",
+          "description": "True if tab already existed, false if newly created"
+        }
+      }
+    },
+    "id": "step2",
+    "params": {
+      "spreadsheet_id": "{{input.spreadsheet_id}}",
+      "tab_name": "{{input.sheet_tab_name}}"
+    },
+    "name": "Ensure the UrgentEmails tab exists in the destination spreadsheet",
+    "action": "get_or_create_sheet_tab"
+  },
+  {
+    "step_id": "step3",
+    "type": "action",
+    "description": "Read existing rows from the UrgentEmails tab to get already-logged Gmail message IDs",
+    "plugin": "google-sheets",
+    "output_variable": "existing_sheet_data",
+    "output_schema": {
+      "type": "object",
+      "source": "plugin",
+      "properties": {
+        "range": {
+          "type": "string",
+          "source": "plugin",
+          "description": "The actual range that was read (may differ from requested)",
+          "required": true
+        },
+        "values": {
+          "type": "array",
+          "source": "plugin",
+          "description": "2D array of cell values (rows of cells)",
+          "items": {
+            "type": "array",
+            "source": "plugin",
+            "items": {
+              "type": "string",
+              "source": "plugin"
+            }
+          },
+          "required": true
+        },
+        "row_count": {
+          "type": "number",
+          "source": "plugin",
+          "description": "Number of rows returned",
+          "required": true
+        },
+        "column_count": {
+          "type": "number",
+          "source": "plugin",
+          "description": "Number of columns returned"
+        },
+        "major_dimension": {
+          "type": "string",
+          "source": "plugin",
+          "description": "How data is organized (ROWS or COLUMNS)"
+        },
+        "retrieved_at": {
+          "type": "string",
+          "source": "plugin",
+          "description": "Timestamp when data was retrieved (ISO 8601)"
+        }
+      }
+    },
+    "id": "step3",
+    "params": {
+      "spreadsheet_id": "{{input.spreadsheet_id}}",
+      "range": "{{input.sheet_tab_name}}!A:E"
+    },
+    "name": "Read existing rows from the UrgentEmails tab to get already-logged Gmail message IDs",
+    "action": "read_range"
+  },
+  {
+    "step_id": "step4",
+    "type": "transform",
+    "operation": "rows_to_objects",
+    "input": "{{existing_sheet_data.values}}",
+    "description": "Auto-normalize: Convert 2D array to objects",
+    "output_variable": "existing_sheet_data_objects",
+    "config": {
+      "preserve_case": true
+    },
+    "id": "step4",
+    "name": "Auto-normalize: Convert 2D array to objects"
+  },
+  {
+    "step_id": "step5",
+    "type": "transform",
+    "operation": "project_column",
+    "input": "{{existing_sheet_data_objects}}",
+    "description": "Extract the Gmail message link/id column (column E, index 4) from existing sheet rows to build a dedup set",
+    "config": {
+      "type": "project_column",
+      "input": "existing_sheet_data_objects",
+      "column": {
+        "kind": "by_index",
+        "index": 4
+      }
+    },
+    "output_variable": "existing_message_ids",
+    "output_schema": {
+      "type": "object",
+      "source": "inferred",
+      "properties": {
+        "range": {
+          "type": "string",
+          "source": "plugin",
+          "description": "The actual range that was read (may differ from requested)",
+          "required": true
+        },
+        "values": {
+          "type": "array",
+          "source": "plugin",
+          "description": "2D array of cell values (rows of cells)",
+          "items": {
+            "type": "array",
+            "source": "plugin",
+            "items": {
+              "type": "string",
+              "source": "plugin"
+            }
+          },
+          "required": true
+        },
+        "row_count": {
+          "type": "number",
+          "source": "plugin",
+          "description": "Number of rows returned",
+          "required": true
+        },
+        "column_count": {
+          "type": "number",
+          "source": "plugin",
+          "description": "Number of columns returned"
+        },
+        "major_dimension": {
+          "type": "string",
+          "source": "plugin",
+          "description": "How data is organized (ROWS or COLUMNS)"
+        },
+        "retrieved_at": {
+          "type": "string",
+          "source": "plugin",
+          "description": "Timestamp when data was retrieved (ISO 8601)"
+        }
+      }
+    },
+    "id": "step5",
+    "name": "Extract the Gmail message link/id column (column E, index 4) from existing sheet rows to build a dedup set"
+  },
+  {
+    "step_id": "step6",
+    "type": "transform",
+    "operation": "filter",
+    "input": "{{candidate_emails.emails}}",
+    "description": "Filter candidate emails to keep only those whose body or subject contains complaint keywords",
+    "config": {
+      "type": "filter",
+      "input": "candidate_emails.emails",
+      "custom_code": "Keep emails where body or subject contains any complaint keyword (case-insensitive)",
+      "condition": {
+        "conditionType": "complex_or",
+        "conditions": [
+          {
+            "operator": "contains_any",
+            "value": "{{input.complaint_keywords}}",
+            "field": "item.body",
+            "conditionType": "simple"
+          },
+          {
+            "operator": "contains_any",
+            "value": "{{input.complaint_keywords}}",
+            "field": "item.subject",
+            "conditionType": "simple"
+          }
+        ]
+      }
+    },
+    "output_variable": "complaint_emails",
+    "output_schema": {
+      "type": "array",
+      "source": "inferred",
+      "description": "Array of matching emails",
+      "items": {
+        "type": "object",
+        "source": "plugin",
+        "semantic_type": "email_message",
+        "properties": {
+          "id": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Gmail message ID"
+          },
+          "thread_id": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Gmail thread ID"
+          },
+          "subject": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Email subject"
+          },
+          "from": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Sender address"
+          },
+          "to": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Recipient addresses"
+          },
+          "date": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Email date"
+          },
+          "snippet": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Email preview snippet (first ~200 chars of email body - USE THIS for content matching/filtering)"
+          },
+          "labels": {
+            "type": "array",
+            "source": "plugin",
+            "description": "Gmail labels",
+            "items": {
+              "type": "string",
+              "source": "plugin"
+            }
+          },
+          "body": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Email body text (NOTE: Usually empty in search results - use 'snippet' field instead for email content)"
+          },
+          "attachments": {
+            "type": "array",
+            "source": "plugin",
+            "description": "Attachment metadata (if include_attachments=true). Each item contains: filename, mimeType, size, attachment_id (use with get_email_attachment), message_id (email ID)",
+            "items": {
+              "type": "object",
+              "source": "plugin",
+              "semantic_type": "file_attachment",
+              "properties": {
+                "filename": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "Attachment filename"
+                },
+                "mimeType": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "MIME type (application/pdf, image/png, etc.)"
+                },
+                "size": {
+                  "type": "number",
+                  "source": "plugin",
+                  "description": "File size in bytes"
+                },
+                "attachment_id": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "Attachment ID (required for get_email_attachment action)"
+                },
+                "message_id": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "Email message ID (required for get_email_attachment action)"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "id": "step6",
+    "_on_empty": "warn",
+    "name": "Filter candidate emails to keep only those whose body or subject contains complaint keywords"
+  },
+  {
+    "step_id": "step7",
+    "type": "transform",
+    "operation": "map",
+    "input": "{{complaint_emails}}",
+    "description": "Map complaint emails to the row format needed for the spreadsheet: sender email, subject, date, full email text, Gmail message link/id",
+    "config": {
+      "type": "map",
+      "input": "complaint_emails",
+      "output_schema": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "sender_email": {
+              "type": "string"
+            },
+            "subject": {
+              "type": "string"
+            },
+            "date": {
+              "type": "string"
+            },
+            "full_email_text": {
+              "type": "string"
+            },
+            "gmail_message_link_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "sender_email",
+            "subject",
+            "date",
+            "full_email_text",
+            "gmail_message_link_id"
+          ]
+        }
+      },
+      "field_mapping": {
+        "sender_email": "from",
+        "subject": "subject",
+        "date": "date",
+        "full_email_text": "body",
+        "gmail_message_link_id": "id"
+      }
+    },
+    "output_variable": "complaint_rows",
+    "output_schema": {
+      "type": "array",
+      "source": "ai_declared",
+      "items": {
+        "type": "object",
+        "source": "ai_declared",
+        "properties": {
+          "sender_email": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "subject": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "date": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "full_email_text": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "gmail_message_link_id": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          }
+        }
+      }
+    },
+    "id": "step7",
+    "_on_empty": "warn",
+    "name": "Map complaint emails to the row format needed for the spreadsheet: sender email, subject, date, full email text, Gmail message link/id"
+  },
+  {
+    "step_id": "step8",
+    "type": "transform",
+    "operation": "set_difference",
+    "input": "{{complaint_rows}}",
+    "description": "Remove complaint rows whose Gmail message link/id already exists in the sheet, keeping only new complaints",
+    "config": {
+      "type": "set_difference",
+      "input": "complaint_rows",
+      "reference": "{{existing_message_ids}}",
+      "key_field": "gmail_message_link_id"
+    },
+    "output_variable": "new_complaint_rows",
+    "output_schema": {
+      "type": "array",
+      "source": "inferred",
+      "items": {
+        "type": "object",
+        "source": "ai_declared",
+        "properties": {
+          "sender_email": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "subject": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "date": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "full_email_text": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "gmail_message_link_id": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          }
+        }
+      }
+    },
+    "id": "step8",
+    "name": "Remove complaint rows whose Gmail message link/id already exists in the sheet, keeping only new complaints"
+  },
+  {
+    "step_id": "step9",
+    "type": "transform",
+    "operation": "map",
+    "input": "{{new_complaint_rows}}",
+    "description": "D-B19c: Project new_complaint_rows into row objects for google-sheets.append_rows",
+    "config": {
+      "type": "map",
+      "input": "new_complaint_rows",
+      "field_mapping": {
+        "column_A": "sender_email",
+        "column_B": "subject",
+        "column_C": "date",
+        "column_D": "full_email_text",
+        "column_E": "gmail_message_link_id"
+      }
+    },
+    "output_variable": "append_new_complaints_rows",
+    "id": "step9",
+    "_on_empty": "warn",
+    "name": "D-B19c: Project new_complaint_rows into row objects for google-sheets.append_rows"
+  },
+  {
+    "step_id": "step10",
+    "type": "action",
+    "description": "Append new complaint email rows to the UrgentEmails tab in Google Sheets",
+    "plugin": "google-sheets",
+    "output_variable": "append_result",
+    "output_schema": {
+      "type": "object",
+      "source": "plugin",
+      "properties": {
+        "updated_range": {
+          "type": "string",
+          "source": "plugin",
+          "description": "The range where data was appended",
+          "required": true
+        },
+        "appended_rows": {
+          "type": "number",
+          "source": "plugin",
+          "description": "Number of rows appended",
+          "required": true
+        },
+        "appended_columns": {
+          "type": "number",
+          "source": "plugin",
+          "description": "Number of columns in appended data"
+        },
+        "appended_cells": {
+          "type": "number",
+          "source": "plugin",
+          "description": "Total number of cells appended"
+        },
+        "table_range": {
+          "type": "string",
+          "source": "plugin",
+          "description": "Full range of the table including appended data"
+        },
+        "sheet_name": {
+          "type": "string",
+          "source": "plugin",
+          "description": "Name of the sheet where data was appended"
+        },
+        "values": {
+          "type": "array",
+          "source": "plugin",
+          "description": "The values that were appended"
+        },
+        "appended_at": {
+          "type": "string",
+          "source": "plugin",
+          "description": "Timestamp when data was appended (ISO 8601)"
+        }
+      }
+    },
+    "id": "step10",
+    "params": {
+      "spreadsheet_id": "{{input.spreadsheet_id}}",
+      "range": "{{input.sheet_tab_name}}!A:E",
+      "values": "{{append_new_complaints_rows}}"
+    },
+    "name": "Append new complaint email rows to the UrgentEmails tab in Google Sheets",
+    "action": "append_rows"
+  }
+]

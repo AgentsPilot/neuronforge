@@ -21,6 +21,23 @@ const DEFAULT_OPTIONS: GeneratorOptions = {
   indexSuffix: '001',
 }
 
+// WP-36: Document-name bank for the `name` field. Generic `mock_name_NNN`
+// fallback fails any keyword filter (e.g. `contains_any [Contract, MSA, ...]`),
+// which is fine in real runs (real Drive data has real names) but trips
+// Phase D scatter-gather guards on scenarios using business-document filters.
+// The bank is deterministic per index and collectively covers the common
+// substring keywords for business documents: Contract, Agreement, MSA, SOW,
+// Statement of Work, Order Form, Invoice, Vendor. If a scenario filters on a
+// keyword outside this bank, extend or accept the Phase D limitation.
+const DOCUMENT_NAME_BANK = [
+  'Contract Acme Corp 2026',          // Contract
+  'MSA TechStart Inc',                // MSA
+  'SOW Q3 Statement of Work',         // SOW, Statement of Work
+  'Service Agreement Vendor 042',     // Agreement, Vendor
+  'Order Form Q1 Renewal',            // Order Form
+  'Invoice Acme 0142',                // Invoice
+]
+
 // PD-1: Realistic payload body for email/document content. Roughly 1.2KB of
 // varied text so scatter-gather token bloat patterns show up in Phase D
 // (not just Phase E). Trimmed at runtime depending on content_level.
@@ -172,6 +189,13 @@ function generateStringByFieldName(lower: string, fieldName: string, desc: strin
   if (lower === 'sheet_name' || lower === 'tab_name') return `Invoices`
   if (lower === 'vendor') return `Acme Corp ${idx}`
   if (lower === 'category') return `Office Supplies`
+  // WP-36: `name` field cycles through a document-name bank so keyword filters
+  // (e.g. `contains_any [Contract, MSA, ...]`) get realistic input. Generic
+  // `mock_name_NNN` fallback below would drop everything.
+  if (lower === 'name' || lower === 'title') {
+    const i = Math.max(1, parseInt(idx, 10) || 1)
+    return DOCUMENT_NAME_BANK[(i - 1) % DOCUMENT_NAME_BANK.length]
+  }
 
   // Content types
   if (lower === 'mimetype' || lower === 'mime_type') return 'application/pdf'

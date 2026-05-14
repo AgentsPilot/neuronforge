@@ -1,12 +1,14 @@
 {
   "name": "Urgent Gantt Tasks Finishing Soon — Email Notifier",
-  "description": "Read Gantt sheet, filter tasks by Priority (Critical/High) with finish date in next 3 days, generate HTML table, send email. Tests Sheets read + date filtering + conditional no-results handling.",
+  "description": "Read Gantt sheet, project to {priority, task_name, finish_date}, filter to Critical/High priority, augment with computed window_start/window_end/days_until_finish via transform/with_fields (W2 Expression: today + date_add + date_diff), filter to next 3 days (1 ≤ days_until_finish ≤ 3), sort by date, AI generate HTML table summary, send email. Exercises the full W2 expression-evaluator pipeline including date arithmetic, config refs, and locale-aware DD/MM parsing. Prerequisite: destination sheet has a header row (WP-26 workaround). Locked in WP-29 (locale-aware date parsing), WP-30 (config/ref {{}} wrap), and WP-31 (calendar-day date_diff) — all needed for this cascade.",
   "created": "2026-04-01",
   "plugins": ["google-sheets", "google-mail"],
   "expected": {
-    "min_steps": 4,
-    "step_types": ["action", "transform", "ai_processing", "conditional"],
+    "min_steps": 11,
+    "step_types": ["action", "transform", "ai_processing"],
     "phase_a_checks": 14,
-    "phase_d_success": true
+    "phase_d_success": true,
+    "phase_e_success": true,
+    "phase_e_success_timestamp": "2026-05-11T08:42:04Z"
   }
 }

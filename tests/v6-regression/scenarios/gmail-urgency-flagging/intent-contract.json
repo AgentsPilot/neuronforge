@@ -1,6 +1,6 @@
 {
   "version": "intent.v1",
-  "goal": "Scan Gmail inbox for recent emails, classify urgent ones by keyword matching, mark them as important, apply tracking label, and email a summary of actions taken",
+  "goal": "Scan Gmail inbox for emails from the last 30 days, flag urgent emails based on keyword matching in subject/body, mark them as important, apply tracking label, and email a summary of actions taken.",
   "unit_of_work": {
     "entity": "email",
     "parent_entity": "inbox"
@@ -9,14 +9,20 @@
     {
       "key": "gmail_search_query",
       "type": "string",
-      "description": "Gmail search query to find target emails, excluding already-processed ones",
+      "description": "Gmail search query to find candidate emails excluding already-processed ones",
       "default": "in:inbox -label:AgentsPilot newer_than:30d"
     },
     {
       "key": "urgency_keywords",
-      "type": "string",
-      "description": "Comma-separated list of keywords that indicate urgency (case-insensitive match against subject and body)",
-      "default": "today, urgent, immediately, now, sensitive"
+      "type": "json",
+      "description": "List of keywords/phrases to check for urgency (case-insensitive)",
+      "default": [
+        "today",
+        "urgent",
+        "immediately",
+        "now",
+        "sensitive"
+      ]
     },
     {
       "key": "tracking_label_name",
@@ -27,27 +33,34 @@
     {
       "key": "summary_recipient",
       "type": "string",
-      "description": "Email address to receive the summary report",
+      "description": "Email address to send the summary report to",
       "default": "meiribarak@gmail.com"
     }
   ],
   "invariants": [
-    "Only emails matching urgency keywords in subject or body are marked as important",
-    "Non-urgent emails are left unchanged",
-    "Already-labeled emails (with tracking label) are excluded from processing",
-    "Every urgent email gets both the important flag and the tracking label",
-    "Summary email is always sent, even if no urgent emails were found"
+    {
+      "description": "Only emails matching the search query and NOT already labeled with the tracking label are processed"
+    },
+    {
+      "description": "Non-urgent emails are left completely unchanged"
+    },
+    {
+      "description": "Urgent emails are marked important AND labeled with the tracking label"
+    },
+    {
+      "description": "A summary email is always sent, even if no urgent emails were found"
+    }
   ],
   "required_outcomes": [
-    "All urgent emails in the search results are marked as important in Gmail",
-    "All urgent emails receive the tracking label to prevent re-processing",
+    "All urgent emails in the search results are marked as important",
+    "All urgent emails have the tracking label applied",
     "A summary email is sent to the configured recipient listing all flagged emails or stating none were found"
   ],
   "steps": [
     {
       "id": "search_inbox_emails",
       "kind": "data_source",
-      "summary": "Search Gmail inbox for recent emails excluding already-processed ones, fetching full content for keyword analysis",
+      "summary": "Search Gmail inbox for emails from the last 30 days that have not yet been processed (excluding tracking label)",
       "uses": [
         {
           "capability": "search",
@@ -57,7 +70,7 @@
           }
         }
       ],
-      "output": "inbox_emails",
+      "output": "candidate_emails",
       "source": {
         "domain": "email",
         "intent": "search"
@@ -67,7 +80,7 @@
         "key": "gmail_search_query"
       },
       "retrieval": {
-        "max_results": 50,
+        "max_results": 100,
         "include_content": "full",
         "include_attachments": false
       }
@@ -75,31 +88,47 @@
     {
       "id": "classify_urgency",
       "kind": "classify",
-      "summary": "Classify each email as urgent or not-urgent by checking if subject or body contains any of the configured urgency keywords (case-insensitive): today, urgent, immediately, now, sensitive",
+      "summary": "Classify each email as urgent or not-urgent by checking if subject or body contains any of the configured urgency keywords (case-insensitive)",
       "inputs": [
-        "inbox_emails"
+        "candidate_emails"
       ],
       "output": "classified_emails",
-      "uses": [
-        {
-          "capability": "generate",
-          "domain": "internal"
-        }
-      ],
       "classify": {
-        "input": "inbox_emails",
+        "input": "candidate_emails",
         "labels": [
           "urgent",
           "not_urgent"
         ],
         "multi_label": false,
         "output_field": "urgency_classification"
+      },
+      "payload": {
+        "classification_method": {
+          "kind": "literal",
+          "value": "keyword_match"
+        },
+        "keywords": {
+          "kind": "config",
+          "key": "urgency_keywords"
+        },
+        "fields_to_check": {
+          "kind": "literal",
+          "value": [
+            "subject",
+            "body",
+            "snippet"
+          ]
+        },
+        "match_rule": {
+          "kind": "literal",
+          "value": "case_insensitive_contains_any"
+        }
       }
     },
     {
-      "id": "split_urgent_emails",
+      "id": "split_by_urgency",
       "kind": "aggregate",
-      "summary": "Split classified emails into urgent and not-urgent subsets, and count urgent emails",
+      "summary": "Split classified emails into urgent and not-urgent subsets",
       "inputs": [
         "classified_emails"
       ],
@@ -135,7 +164,7 @@
     {
       "id": "process_urgent_emails",
       "kind": "loop",
-      "summary": "For each urgent email, mark as important and apply the tracking label in Gmail",
+      "summary": "For each urgent email, mark as important and apply the tracking label",
       "inputs": [
         "urgent_emails"
       ],
@@ -155,7 +184,45 @@
           {
             "id": "mark_important",
             "kind": "deliver",
-            "summary": "Mark the urgent email as important and apply the AgentsPilot tracking label",
+            "summary": "Mark the urgent email as important in Gmail",
+            "inputs": [
+              "urgent_email"
+            ],
+            "output": "importance_result",
+            "uses": [
+              {
+                "capability": "modify",
+                "domain": "email",
+                "preferences": {
+                  "provider_family": "google"
+                }
+              }
+            ],
+            "deliver": {
+              "domain": "email",
+              "intent": "modify_labels",
+              "input": "urgent_email",
+              "mapping": [
+                {
+                  "from": {
+                    "ref": "urgent_email",
+                    "field": "id"
+                  },
+                  "to": "message_id"
+                }
+              ],
+              "options": {
+                "mark_important": {
+                  "kind": "literal",
+                  "value": true
+                }
+              }
+            }
+          },
+          {
+            "id": "apply_tracking_label",
+            "kind": "deliver",
+            "summary": "Apply the AgentsPilot tracking label to the urgent email so it is excluded from future runs",
             "inputs": [
               "urgent_email"
             ],
@@ -180,36 +247,86 @@
                     "field": "id"
                   },
                   "to": "message_id"
-                },
-                {
-                  "from": {
-                    "kind": "literal",
-                    "value": true
-                  },
-                  "to": "mark_important"
-                },
-                {
-                  "from": {
+                }
+              ],
+              "options": {
+                "add_labels": [
+                  {
                     "kind": "config",
                     "key": "tracking_label_name"
-                  },
-                  "to": "add_labels"
-                }
-              ]
+                  }
+                ]
+              }
             }
           }
         ]
       }
     },
     {
-      "id": "generate_summary",
-      "kind": "generate",
-      "summary": "Generate an HTML summary email body listing all urgent emails that were flagged, or stating none were found. Include sender, subject, date, and matched keywords for each.",
+      "id": "prepare_summary_rows",
+      "kind": "transform",
+      "summary": "Map urgent emails to summary rows with sender, subject, date, and matched keyword info",
       "inputs": [
-        "urgent_emails",
+        "urgent_emails"
+      ],
+      "output": "summary_rows",
+      "transform": {
+        "op": "map",
+        "input": "urgent_emails",
+        "mapping": [
+          {
+            "to": "sender",
+            "from": "from"
+          },
+          {
+            "to": "subject",
+            "from": "subject"
+          },
+          {
+            "to": "received_date",
+            "from": "date"
+          },
+          {
+            "to": "urgency_classification",
+            "from": "urgency_classification"
+          }
+        ],
+        "output_schema": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "sender": {
+                "type": "string"
+              },
+              "subject": {
+                "type": "string"
+              },
+              "received_date": {
+                "type": "string"
+              },
+              "urgency_classification": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "sender",
+              "subject",
+              "received_date"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "generate_summary_email",
+      "kind": "generate",
+      "summary": "Generate an HTML summary email body listing all urgent emails that were flagged, or stating none were found",
+      "inputs": [
+        "summary_rows",
         "urgent_count"
       ],
-      "output": "summary_content",
+      "output": "summary_email_content",
       "uses": [
         {
           "capability": "generate",
@@ -217,13 +334,15 @@
         }
       ],
       "generate": {
+        "input": "summary_rows",
         "format": "html",
-        "instruction": "Generate an HTML email body summarizing the urgent email processing results. Use the urgent_count to determine if any emails were flagged. If urgent_count is 0, produce a message saying 'No urgent emails were found in this scan.' If urgent_count > 0, produce a professional HTML table with columns: Sender, Subject, Received Date, Matched Keywords. For each email in urgent_emails, include the sender (from field), subject, date, and attempt to identify which urgency keywords (today, urgent, immediately, now, sensitive) matched in the subject or body. Use clean professional styling with borders, header background color, and padding. Include a header line like 'Urgent Emails Flagged as Important' and a count summary.",
+        "reason": "Free-form HTML email body composition with conditional content (no-results vs results table) and professional styling — requires semantic composition, not a deterministic template",
+        "instruction": "Generate a professional HTML email summarizing the urgent emails that were flagged in this run. Use the urgent_count to determine the content: If urgent_count is 0, write a clear message stating 'No urgent emails were found in this scan.' If urgent_count > 0, create an HTML table with columns: Sender, Subject, Received Date, and Matched Keywords. Use the summary_rows data to populate the table. Each row should show the sender (from field), subject, received_date, and urgency_classification. Style the table with borders, a colored header row (#4a90d9 background, white text), and alternating row colors for readability. Add padding to cells. Include a header line like 'Urgent Email Summary — [count] email(s) flagged as important'. At the bottom, add a note explaining that these emails were marked as Important and labeled AgentsPilot in Gmail.",
         "outputs": [
           {
             "name": "subject",
             "type": "string",
-            "description": "Email subject line, e.g. 'Urgent emails marked Important (summary)'"
+            "description": "Email subject line for the summary"
           },
           {
             "name": "body",
@@ -236,9 +355,9 @@
     {
       "id": "send_summary_email",
       "kind": "notify",
-      "summary": "Send the summary email to the configured recipient with the list of flagged urgent emails",
+      "summary": "Send the urgency summary email to the configured recipient",
       "inputs": [
-        "summary_content"
+        "summary_email_content"
       ],
       "uses": [
         {
@@ -262,12 +381,12 @@
         "content": {
           "subject": {
             "kind": "ref",
-            "ref": "summary_content",
+            "ref": "summary_email_content",
             "field": "subject"
           },
           "body": {
             "kind": "ref",
-            "ref": "summary_content",
+            "ref": "summary_email_content",
             "field": "body"
           },
           "format": "html"
@@ -277,12 +396,9 @@
   ],
   "confidence": 0.92,
   "meta": {
-    "workflow_type": "inbox_triage",
-    "idempotency_note": "Tracking label ensures emails are not re-processed on subsequent runs",
-    "classification_method": "keyword_matching",
-    "keywords_checked_in": [
-      "subject",
-      "body"
-    ]
+    "estimated_steps": 7,
+    "uses_loop": true,
+    "idempotent_tracking": true,
+    "tracking_mechanism": "Gmail label exclusion in search query prevents re-processing"
   }
 }

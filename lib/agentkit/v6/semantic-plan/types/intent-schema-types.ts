@@ -115,6 +115,37 @@ export interface OutputRef {
 
 export type ScalarType = "string" | "number" | "boolean";
 
+/**
+ * WP-15: recursive shape declaration for AI-step output declarations.
+ *
+ * Used inside `extract.fields[]` and `generate.outputs[]` to describe the
+ * shape of nested data (array elements, object properties). Mirrors JSON
+ * Schema conventions: when `type: "array"`, `items` describes element shape;
+ * when `type: "object"`, `properties` describes field shape (keyed by name).
+ *
+ * Without this, the LLM can only declare depth-1 shapes — e.g., "rows is an
+ * array" — losing the per-element field list (sender, subject, date, ...).
+ * The free-text `instruction` carries the field intent but no structured
+ * field captures it, so DataSchemaBuilder produces shallow slot schemas
+ * and downstream cross-step type validation fails open.
+ *
+ * Top-level entries in `outputs[]` / `fields[]` add a `name` field; nested
+ * entries inside `items` / `properties.<k>` are nameless (the parent's
+ * record key or array position is the implicit name).
+ *
+ * Symmetric with the runtime `SchemaField` type at
+ * `lib/agentkit/v6/logical-ir/schemas/workflow-data-schema.ts`.
+ */
+export interface NestedFieldSpec {
+  type?: ScalarType | "date" | "currency" | "object" | "array" | "unknown";
+  required?: boolean;
+  description?: string;
+  // When type === "array": shape of each element.
+  items?: NestedFieldSpec;
+  // When type === "object": shape of each named property.
+  properties?: Record<string, NestedFieldSpec>;
+}
+
 export interface ConfigParam {
   key: string; // e.g., "amount_threshold"
   type: ScalarType | "json";
@@ -149,7 +180,8 @@ export type Comparator =
   | "gte"
   | "lt"
   | "lte"
-  | "contains"
+  | "contains"          // substring match (string) or array-includes (array) — single value
+  | "contains_any"      // W2: substring matches ANY of [v1, v2, ...] (case-insensitive). Subsumes the keyword-filter pattern (e.g., "subject contains any of [complaint, refund, ...]") — replaces verbose OR-of-contains trees.
   | "exists"
   | "is_empty"
   | "not_empty"
@@ -158,6 +190,42 @@ export type Comparator =
   | "starts_with"
   | "ends_with"
   | "matches";
+
+// ------------------------------------------------------------
+// Expression AST (W2 / WP-16) — value-producing structured AST for `transform/with_fields`.
+// Closed vocabulary: exactly 10 op kinds. Extensions require evidence (regression scenario)
+// + reviewer approval + full plumbing (Zod + runtime evaluator + prompt examples).
+// See: docs/v6/V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_INTENT_CONTRACT.md task 0.8.
+// ------------------------------------------------------------
+
+export type Expression =
+  // Atoms — produce concrete values
+  | { kind: "literal"; value: JsonPrimitive }
+  | { kind: "ref"; ref: RefName; field?: string }
+  | { kind: "config"; key: string }
+
+  // Composition — combine values
+  | { kind: "concat"; args: Expression[] }                                  // string concatenation
+  | {
+      kind: "if";
+      condition: Condition;
+      then: Expression;
+      else: Expression;
+    }                                                                        // conditional value
+
+  // Date — date arithmetic for windowing/age computations
+  | { kind: "today" }                                                        // current date as ISO 8601 string
+  | {
+      kind: "date_diff";
+      left: Expression;
+      right: Expression;
+      unit: "days";                                                          // future: hours/minutes if a regression scenario demands
+    }
+  | { kind: "date_add"; date: Expression; days: Expression }
+
+  // Null / presence checks — common for status reasoning
+  | { kind: "null_check"; value: Expression; invert?: boolean }              // null_check → true if null; invert: true → true if NOT null
+  | { kind: "all_not_null"; refs: RefName[] };                               // true iff every ref resolves to a non-null value
 
 export type Condition =
   | { op: "and"; conditions: Condition[] }
@@ -329,7 +397,19 @@ export type TransformOp =
   | "flatten"
   | "merge"
   | "select"
-  | "custom";
+  | "custom"
+  // W2 / WP-16: structured primitives for deterministic operations the LLM
+  // previously fell back to ai_processing/generate for. See V6_WP16_INVENTORY.md.
+  | "with_fields"        // augment items with computed fields (5 of 10 WP-16 instances)
+  | "project_column"     // extract column N from rows / field X from objects
+  | "set_difference";    // anti-join — keep items whose key is NOT in a reference array
+
+// Column-extraction config for `transform/project_column`.
+// Discriminated union — exactly one form per usage.
+export type ProjectColumnConfig =
+  | { kind: "by_index"; index: number }                  // 2D arrays — 0-based column index
+  | { kind: "by_field"; field: string }                  // arrays of objects — top-level field name
+  | { kind: "by_field_path"; path: string };             // arrays of objects — dot-notation path (e.g., "metadata.id")
 
 export interface TransformStep extends BaseStep {
   kind: "transform";
@@ -348,6 +428,25 @@ export interface TransformStep extends BaseStep {
 
     // Optional output schema declaration (for transforms that restructure data)
     output_schema?: JsonObject;
+
+    // W2 / WP-16: typed configs for the new structured primitives.
+    // Each is only valid when `op` matches.
+
+    // Required when op === "with_fields" — list of computed fields to add to each input item.
+    fields?: Array<{ name: string; expression: Expression }>;
+
+    // Required when op === "project_column" — how to select the column.
+    column?: ProjectColumnConfig;
+
+    // Required when op === "set_difference" — slot whose keys are excluded.
+    reference?: RefName;
+
+    // Required when op === "set_difference" — field in input items to compare on.
+    key_field?: string;
+
+    // Optional when op === "set_difference" — field in reference items to compare on.
+    // Defaults to `key_field` if reference items use the same field name.
+    reference_key_field?: string;
   };
 }
 
@@ -358,12 +457,11 @@ export interface ExtractStep extends BaseStep {
   extract: {
     input: RefName; // usually attachment/document/text ref
     // Fields are semantic. Compiler maps them to downstream structures.
-    fields: Array<{
-      name: string; // e.g. "amount"
-      type?: ScalarType | "date" | "currency" | "object" | "array" | "unknown";
-      required?: boolean;
-      description?: string;
-    }>;
+    // WP-15: each field is a NestedFieldSpec with a top-level `name`. When
+    // a field has `type: "array"` it MUST declare `items` (element shape);
+    // when `type: "object"` it MUST declare `properties` (per-key shape).
+    // Recursive depth is bounded only by the schema author's discipline.
+    fields: Array<{ name: string } & NestedFieldSpec>;
 
     // "deterministic" indicates you expect a stable schema output (e.g., deterministic_extract)
     deterministic?: boolean;
@@ -409,12 +507,30 @@ export interface GenerateStep extends BaseStep {
     format?: "text" | "html" | "markdown" | "json";
     instruction: string;
 
-    // Optional: structured outputs (still semantic)
-    outputs?: Array<{
-      name: string; // e.g., "email_subject", "email_body_html"
-      type?: ScalarType | "object" | "array" | "unknown";
-      description?: string;
-    }>;
+    /**
+     * W2 / WP-16 task 0.11 — defensive nudge for `domain: "internal"` use.
+     *
+     * REQUIRED when `uses[].capability === "generate"` AND `uses[].domain === "internal"`.
+     * Free-text justification for why a deterministic `transform` step (with_fields,
+     * project_column, set_difference, filter, map, group, etc.) cannot express the
+     * operation. Makes the AI-fallback choice deliberate rather than default; gives
+     * downstream telemetry a signal about how often the LLM picks AI for what could
+     * be a structured transform — feeds W5's measurement (task 0.12).
+     *
+     * NOT required for `domain` values other than "internal" (e.g., "email-content"
+     * generation, summarization, free-form synthesis are legitimate AI uses).
+     *
+     * Cannot be enforced purely at the type level (depends on runtime `uses[]`),
+     * so the IR converter validates and emits a warning when missing.
+     */
+    reason?: string;
+
+    // Optional: structured outputs (still semantic).
+    // WP-15: each output is a NestedFieldSpec with a top-level `name`. When
+    // a field has `type: "array"` it MUST declare `items` (element shape);
+    // when `type: "object"` it MUST declare `properties` (per-key shape).
+    // Cf. ExtractStep.extract.fields above — same recursive shape vocabulary.
+    outputs?: Array<{ name: string } & NestedFieldSpec>;
   };
 }
 

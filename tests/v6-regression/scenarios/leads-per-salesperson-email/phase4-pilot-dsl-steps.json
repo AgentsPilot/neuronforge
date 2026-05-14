@@ -1,0 +1,648 @@
+[
+  {
+    "step_id": "step1",
+    "type": "action",
+    "description": "Read all rows from the Leads tab in the Google Sheets spreadsheet",
+    "plugin": "google-sheets",
+    "output_variable": "raw_sheet_data",
+    "output_schema": {
+      "type": "object",
+      "source": "plugin",
+      "properties": {
+        "range": {
+          "type": "string",
+          "source": "plugin",
+          "description": "The actual range that was read (may differ from requested)",
+          "required": true
+        },
+        "values": {
+          "type": "array",
+          "source": "plugin",
+          "description": "2D array of cell values (rows of cells)",
+          "items": {
+            "type": "array",
+            "source": "plugin",
+            "items": {
+              "type": "string",
+              "source": "plugin"
+            }
+          },
+          "required": true
+        },
+        "row_count": {
+          "type": "number",
+          "source": "plugin",
+          "description": "Number of rows returned",
+          "required": true
+        },
+        "column_count": {
+          "type": "number",
+          "source": "plugin",
+          "description": "Number of columns returned"
+        },
+        "major_dimension": {
+          "type": "string",
+          "source": "plugin",
+          "description": "How data is organized (ROWS or COLUMNS)"
+        },
+        "retrieved_at": {
+          "type": "string",
+          "source": "plugin",
+          "description": "Timestamp when data was retrieved (ISO 8601)"
+        }
+      }
+    },
+    "id": "step1",
+    "params": {
+      "spreadsheet_id": "{{input.spreadsheet_id}}",
+      "range": "{{input.sheet_tab_name}}!A:H"
+    },
+    "name": "Read all rows from the Leads tab in the Google Sheets spreadsheet",
+    "action": "read_range"
+  },
+  {
+    "step_id": "step2",
+    "type": "transform",
+    "operation": "rows_to_objects",
+    "input": "{{raw_sheet_data.values}}",
+    "description": "Auto-normalize: Convert 2D array to objects",
+    "output_variable": "raw_sheet_data_objects",
+    "config": {
+      "preserve_case": true
+    },
+    "id": "step2",
+    "name": "Auto-normalize: Convert 2D array to objects"
+  },
+  {
+    "step_id": "step3",
+    "type": "transform",
+    "operation": "map",
+    "input": "{{raw_sheet_data_objects}}",
+    "description": "Convert raw 2D array into array of objects using the first row as header names, normalizing header names (trim whitespace, case-insensitive matching) to canonical column names: Date, Lead Name, Company, Email, Phone, Stage, Notes, Sales Person",
+    "config": {
+      "type": "map",
+      "input": "raw_sheet_data_objects",
+      "output_schema": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "date": {
+              "type": "string"
+            },
+            "lead_name": {
+              "type": "string"
+            },
+            "company": {
+              "type": "string"
+            },
+            "email": {
+              "type": "string"
+            },
+            "phone": {
+              "type": "string"
+            },
+            "stage": {
+              "type": "string"
+            },
+            "notes": {
+              "type": "string"
+            },
+            "sales_person": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "date",
+            "lead_name",
+            "company",
+            "email",
+            "phone",
+            "stage",
+            "notes",
+            "sales_person"
+          ]
+        }
+      },
+      "field_mapping": {
+        "date": "Date",
+        "lead_name": "Lead Name",
+        "company": "Company",
+        "email": "Email",
+        "phone": "Phone",
+        "stage": "Stage",
+        "notes": "Notes",
+        "sales_person": "Sales Person"
+      }
+    },
+    "output_variable": "all_leads",
+    "output_schema": {
+      "type": "array",
+      "source": "ai_declared",
+      "items": {
+        "type": "object",
+        "source": "ai_declared",
+        "properties": {
+          "date": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "lead_name": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "company": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "email": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "phone": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "stage": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "notes": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "sales_person": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          }
+        }
+      }
+    },
+    "id": "step3",
+    "_on_empty": "warn",
+    "name": "Convert raw 2D array into array of objects using the first row as header names, normalizing header names (trim whitespace, case-insensitive matching) to canonical column names: Date, Lead Name, Company, Email, Phone, Stage, Notes, Sales Person"
+  },
+  {
+    "step_id": "step4",
+    "type": "transform",
+    "operation": "filter",
+    "input": "{{all_leads}}",
+    "description": "Filter leads to only those where stage equals the configured high-qualified stage value (4)",
+    "config": {
+      "type": "filter",
+      "input": "all_leads",
+      "custom_code": "Keep only leads where stage equals the high-qualified threshold",
+      "condition": {
+        "operator": "eq",
+        "value": "{{input.high_qualified_stage}}",
+        "field": "item.stage",
+        "conditionType": "simple"
+      }
+    },
+    "output_variable": "qualified_leads",
+    "output_schema": {
+      "type": "array",
+      "source": "inferred",
+      "items": {
+        "type": "object",
+        "source": "ai_declared",
+        "properties": {
+          "date": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "lead_name": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "company": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "email": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "phone": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "stage": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "notes": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "sales_person": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          }
+        }
+      }
+    },
+    "id": "step4",
+    "_on_empty": "warn",
+    "name": "Filter leads to only those where stage equals the configured high-qualified stage value (4)"
+  },
+  {
+    "step_id": "step5",
+    "type": "transform",
+    "operation": "reduce",
+    "input": "{{qualified_leads}}",
+    "description": "Count items for qualified_count",
+    "config": {
+      "type": "reduce",
+      "input": "qualified_leads",
+      "reduce_operation": "count",
+      "reducer": "count"
+    },
+    "output_variable": "qualified_count",
+    "output_schema": {
+      "type": "number",
+      "description": "Count of qualified_count",
+      "source": "inferred"
+    },
+    "id": "step5",
+    "name": "Count items for qualified_count"
+  },
+  {
+    "step_id": "step6",
+    "type": "conditional",
+    "description": "Conditional: node_4",
+    "condition": {
+      "conditionType": "simple",
+      "field": "qualified_count",
+      "operator": "greater_than",
+      "value": 0
+    },
+    "steps": [
+      {
+        "step_id": "step7",
+        "type": "ai_processing",
+        "input": "{{qualified_leads}}",
+        "prompt": "Create a professional HTML email body containing a summary table of all qualified leads. The table must have columns: Date, Lead Name, Company, Email, Phone, Stage, Notes, Sales Person. Use proper HTML table markup with <table>, <thead>, <tbody>, styled with borders, header row background color (#4472C4 with white text), cell padding (8px), and alternating row colors for readability. Include a brief greeting at the top like 'Here are your high-qualified leads for today:' and a closing line. The table should list every lead from the input data.",
+        "description": "Generate an HTML email body with a table of all qualified leads for the user",
+        "config": {
+          "ai_type": "generate",
+          "output_schema": {
+            "type": "object",
+            "properties": {
+              "html_body": {
+                "type": "string",
+                "description": "Complete HTML email body with styled leads table"
+              }
+            },
+            "required": [
+              "html_body"
+            ]
+          },
+          "type": "generate",
+          "instruction": "Create a professional HTML email body containing a summary table of all qualified leads. The table must have columns: Date, Lead Name, Company, Email, Phone, Stage, Notes, Sales Person. Use proper HTML table markup with <table>, <thead>, <tbody>, styled with borders, header row background color (#4472C4 with white text), cell padding (8px), and alternating row colors for readability. Include a brief greeting at the top like 'Here are your high-qualified leads for today:' and a closing line. The table should list every lead from the input data.",
+          "input": "{{qualified_leads}}"
+        },
+        "output_variable": "user_email_body",
+        "output_schema": {
+          "type": "object",
+          "properties": {
+            "html_body": {
+              "type": "string",
+              "source": "ai_declared",
+              "description": "Complete HTML email body with styled leads table"
+            }
+          },
+          "source": "ai_declared"
+        },
+        "input_schema": {
+          "type": "array",
+          "source": "inferred",
+          "items": {
+            "type": "object",
+            "source": "ai_declared",
+            "properties": {
+              "date": {
+                "type": "string",
+                "source": "ai_declared",
+                "required": true
+              },
+              "lead_name": {
+                "type": "string",
+                "source": "ai_declared",
+                "required": true
+              },
+              "company": {
+                "type": "string",
+                "source": "ai_declared",
+                "required": true
+              },
+              "email": {
+                "type": "string",
+                "source": "ai_declared",
+                "required": true
+              },
+              "phone": {
+                "type": "string",
+                "source": "ai_declared",
+                "required": true
+              },
+              "stage": {
+                "type": "string",
+                "source": "ai_declared",
+                "required": true
+              },
+              "notes": {
+                "type": "string",
+                "source": "ai_declared",
+                "required": true
+              },
+              "sales_person": {
+                "type": "string",
+                "source": "ai_declared",
+                "required": true
+              }
+            }
+          }
+        },
+        "id": "step7",
+        "name": "Generate an HTML email body with a table of all qualified leads for the user"
+      },
+      {
+        "step_id": "step8",
+        "type": "action",
+        "description": "Send the full qualified leads summary email to the user",
+        "plugin": "google-mail",
+        "id": "step8",
+        "params": {
+          "recipients": {
+            "to": [
+              "{{input.user_email_recipient}}"
+            ]
+          },
+          "content": {
+            "subject": "{{input.user_email_subject}}",
+            "html_body": "{{user_email_body.html_body}}"
+          }
+        },
+        "name": "Send the full qualified leads summary email to the user",
+        "action": "send_email"
+      },
+      {
+        "step_id": "step9",
+        "type": "transform",
+        "operation": "group",
+        "input": "{{qualified_leads}}",
+        "description": "Group qualified leads by the sales_person field to create per-salesperson groups",
+        "config": {
+          "type": "group",
+          "input": "qualified_leads",
+          "custom_code": "Group leads by the sales_person field. Each group contains the salesperson identifier as key and an array of their assigned leads as items.",
+          "output_schema": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "key": {
+                  "type": "string",
+                  "description": "The sales_person value (name or email) that identifies this group"
+                },
+                "items": {
+                  "type": "array",
+                  "description": "Array of leads assigned to this salesperson",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "date": {
+                        "type": "string"
+                      },
+                      "lead_name": {
+                        "type": "string"
+                      },
+                      "company": {
+                        "type": "string"
+                      },
+                      "email": {
+                        "type": "string"
+                      },
+                      "phone": {
+                        "type": "string"
+                      },
+                      "stage": {
+                        "type": "string"
+                      },
+                      "notes": {
+                        "type": "string"
+                      },
+                      "sales_person": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              },
+              "required": [
+                "key",
+                "items"
+              ]
+            }
+          },
+          "rules": {
+            "group_by": "sales_person"
+          },
+          "output_format": "array",
+          "key_field": "key",
+          "items_field": "items"
+        },
+        "output_variable": "salesperson_groups",
+        "output_schema": {
+          "type": "array",
+          "source": "ai_declared",
+          "items": {
+            "type": "object",
+            "source": "ai_declared",
+            "properties": {
+              "key": {
+                "type": "string",
+                "source": "ai_declared",
+                "description": "The sales_person value (name or email) that identifies this group",
+                "required": true
+              },
+              "items": {
+                "type": "array",
+                "source": "ai_declared",
+                "description": "Array of leads assigned to this salesperson",
+                "items": {
+                  "type": "object",
+                  "source": "ai_declared",
+                  "properties": {
+                    "date": {
+                      "type": "string",
+                      "source": "ai_declared"
+                    },
+                    "lead_name": {
+                      "type": "string",
+                      "source": "ai_declared"
+                    },
+                    "company": {
+                      "type": "string",
+                      "source": "ai_declared"
+                    },
+                    "email": {
+                      "type": "string",
+                      "source": "ai_declared"
+                    },
+                    "phone": {
+                      "type": "string",
+                      "source": "ai_declared"
+                    },
+                    "stage": {
+                      "type": "string",
+                      "source": "ai_declared"
+                    },
+                    "notes": {
+                      "type": "string",
+                      "source": "ai_declared"
+                    },
+                    "sales_person": {
+                      "type": "string",
+                      "source": "ai_declared"
+                    }
+                  }
+                },
+                "required": true
+              }
+            }
+          }
+        },
+        "id": "step9",
+        "name": "Group qualified leads by the sales_person field to create per-salesperson groups"
+      },
+      {
+        "step_id": "step10",
+        "type": "scatter_gather",
+        "description": "Loop over salesperson_groups",
+        "scatter": {
+          "input": "{{salesperson_groups}}",
+          "steps": [
+            {
+              "step_id": "step11",
+              "type": "ai_processing",
+              "input": "{{sp_group}}",
+              "prompt": "Create a professional HTML email body for a salesperson containing a table of their assigned high-qualified leads. The input contains a 'key' (salesperson name/email) and 'items' (array of leads). The table must have columns: Date, Lead Name, Company, Email, Phone, Stage, Notes. Use proper HTML table markup with <table>, <thead>, <tbody>, styled with borders, header row background color (#4472C4 with white text), cell padding (8px), and alternating row colors. Include a greeting addressing the salesperson by name (from the 'key' field) like 'Hi [Name], here are your high-qualified leads for today:' and a closing line encouraging follow-up.",
+              "description": "Generate an HTML email body with a table of this salesperson's assigned qualified leads",
+              "config": {
+                "ai_type": "generate",
+                "output_schema": {
+                  "type": "object",
+                  "properties": {
+                    "html_body": {
+                      "type": "string",
+                      "description": "Complete HTML email body with styled leads table for this salesperson"
+                    },
+                    "recipient_identifier": {
+                      "type": "string",
+                      "description": "The salesperson identifier (name or email) extracted from the group key"
+                    }
+                  },
+                  "required": [
+                    "html_body",
+                    "recipient_identifier"
+                  ]
+                },
+                "type": "generate",
+                "instruction": "Create a professional HTML email body for a salesperson containing a table of their assigned high-qualified leads. The input contains a 'key' (salesperson name/email) and 'items' (array of leads). The table must have columns: Date, Lead Name, Company, Email, Phone, Stage, Notes. Use proper HTML table markup with <table>, <thead>, <tbody>, styled with borders, header row background color (#4472C4 with white text), cell padding (8px), and alternating row colors. Include a greeting addressing the salesperson by name (from the 'key' field) like 'Hi [Name], here are your high-qualified leads for today:' and a closing line encouraging follow-up.",
+                "input": "{{sp_group}}"
+              },
+              "output_variable": "sp_email_body",
+              "output_schema": {
+                "type": "object",
+                "properties": {
+                  "html_body": {
+                    "type": "string",
+                    "source": "ai_declared",
+                    "description": "Complete HTML email body with styled leads table for this salesperson"
+                  },
+                  "recipient_identifier": {
+                    "type": "string",
+                    "source": "ai_declared",
+                    "description": "The salesperson identifier (name or email) extracted from the group key"
+                  }
+                },
+                "source": "ai_declared"
+              },
+              "id": "step11",
+              "name": "Generate an HTML email body with a table of this salesperson's assigned qualified leads"
+            },
+            {
+              "step_id": "step12",
+              "type": "action",
+              "description": "Send the per-salesperson qualified leads email",
+              "plugin": "google-mail",
+              "id": "step12",
+              "params": {
+                "recipients": {
+                  "to": [
+                    "{{sp_email_body.recipient_identifier}}"
+                  ]
+                },
+                "content": {
+                  "subject": "{{input.user_email_subject}}",
+                  "html_body": "{{sp_email_body.html_body}}"
+                }
+              },
+              "name": "Send the per-salesperson qualified leads email",
+              "action": "send_email"
+            }
+          ],
+          "itemVariable": "sp_group"
+        },
+        "gather": {
+          "operation": "collect"
+        },
+        "output_variable": "salesperson_email_results",
+        "id": "step10",
+        "name": "Loop over salesperson_groups"
+      }
+    ],
+    "else_steps": [
+      {
+        "step_id": "step13",
+        "type": "action",
+        "description": "Send an email to the user informing them that no high-qualified leads were found",
+        "plugin": "google-mail",
+        "id": "step13",
+        "params": {
+          "recipients": {
+            "to": [
+              "{{input.user_email_recipient}}"
+            ]
+          },
+          "content": {
+            "subject": "{{input.user_email_subject}}",
+            "html_body": "<html><body><p>Hi,</p><p>No high-qualified leads (Stage = 4) were found in the Leads sheet today.</p><p>No action is required at this time.</p><p>Best regards,<br/>Your Leads Agent</p></body></html>"
+          }
+        },
+        "name": "Send an email to the user informing them that no high-qualified leads were found",
+        "action": "send_email"
+      }
+    ],
+    "id": "step6",
+    "name": "Conditional: node_4"
+  }
+]

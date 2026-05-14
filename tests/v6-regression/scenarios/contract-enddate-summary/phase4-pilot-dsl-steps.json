@@ -1,0 +1,995 @@
+[
+  {
+    "step_id": "step1",
+    "type": "action",
+    "description": "Search Google Drive for the folder named 'Contracts'",
+    "plugin": "google-drive",
+    "output_variable": "contracts_folder_results",
+    "output_schema": {
+      "type": "object",
+      "source": "plugin",
+      "properties": {
+        "files": {
+          "type": "array",
+          "source": "plugin",
+          "description": "List of matching files and folders",
+          "items": {
+            "type": "object",
+            "source": "plugin",
+            "semantic_type": "file_attachment",
+            "properties": {
+              "id": {
+                "type": "string",
+                "source": "plugin",
+                "description": "Unique file ID"
+              },
+              "name": {
+                "type": "string",
+                "source": "plugin",
+                "description": "File or folder name"
+              },
+              "mimeType": {
+                "type": "string",
+                "source": "plugin",
+                "description": "MIME type of the file"
+              },
+              "size": {
+                "type": "string",
+                "source": "plugin",
+                "description": "File size in bytes"
+              },
+              "createdTime": {
+                "type": "string",
+                "source": "plugin",
+                "description": "Creation timestamp (ISO 8601)"
+              },
+              "modifiedTime": {
+                "type": "string",
+                "source": "plugin",
+                "description": "Last modification timestamp (ISO 8601)"
+              },
+              "webViewLink": {
+                "type": "string",
+                "source": "plugin",
+                "description": "URL to view the file"
+              },
+              "shared": {
+                "type": "boolean",
+                "source": "plugin",
+                "description": "Whether file is shared"
+              },
+              "starred": {
+                "type": "boolean",
+                "source": "plugin",
+                "description": "Whether file is starred"
+              }
+            }
+          }
+        },
+        "file_count": {
+          "type": "number",
+          "source": "plugin",
+          "description": "Number of files found"
+        },
+        "search_query": {
+          "type": "string",
+          "source": "plugin",
+          "description": "The search query that was executed"
+        },
+        "next_page_token": {
+          "type": "string",
+          "source": "plugin",
+          "description": "Token for fetching next page of results"
+        },
+        "has_more": {
+          "type": "boolean",
+          "source": "plugin",
+          "description": "Whether more results are available"
+        },
+        "searched_at": {
+          "type": "string",
+          "source": "plugin",
+          "description": "Timestamp when search was performed (ISO 8601)"
+        },
+        "message": {
+          "type": "string",
+          "source": "plugin",
+          "description": "Status message if no results found"
+        }
+      }
+    },
+    "id": "step1",
+    "params": {
+      "query": "name = '{{input.drive_folder_name}}' and mimeType = 'application/vnd.google-apps.folder'",
+      "max_results": 1
+    },
+    "name": "Search Google Drive for the folder named 'Contracts'",
+    "action": "search_files"
+  },
+  {
+    "step_id": "step2",
+    "type": "action",
+    "description": "List all Google Docs within the Contracts folder",
+    "plugin": "google-drive",
+    "output_variable": "all_folder_docs",
+    "output_schema": {
+      "type": "object",
+      "source": "plugin",
+      "properties": {
+        "files": {
+          "type": "array",
+          "source": "plugin",
+          "description": "List of files and folders",
+          "items": {
+            "type": "object",
+            "source": "plugin",
+            "semantic_type": "file_attachment",
+            "properties": {
+              "id": {
+                "type": "string",
+                "source": "plugin",
+                "description": "Unique file ID"
+              },
+              "name": {
+                "type": "string",
+                "source": "plugin",
+                "description": "File or folder name"
+              },
+              "mimeType": {
+                "type": "string",
+                "source": "plugin",
+                "description": "MIME type of the file"
+              },
+              "size": {
+                "type": "string",
+                "source": "plugin",
+                "description": "File size in bytes"
+              },
+              "createdTime": {
+                "type": "string",
+                "source": "plugin",
+                "description": "Creation timestamp (ISO 8601)"
+              },
+              "modifiedTime": {
+                "type": "string",
+                "source": "plugin",
+                "description": "Last modification timestamp (ISO 8601)"
+              },
+              "webViewLink": {
+                "type": "string",
+                "source": "plugin",
+                "description": "URL to view the file"
+              },
+              "shared": {
+                "type": "boolean",
+                "source": "plugin",
+                "description": "Whether file is shared"
+              },
+              "starred": {
+                "type": "boolean",
+                "source": "plugin",
+                "description": "Whether file is starred"
+              }
+            }
+          }
+        },
+        "file_count": {
+          "type": "number",
+          "source": "plugin",
+          "description": "Number of files returned"
+        },
+        "next_page_token": {
+          "type": "string",
+          "source": "plugin",
+          "description": "Token for fetching next page of results"
+        },
+        "has_more": {
+          "type": "boolean",
+          "source": "plugin",
+          "description": "Whether more files are available"
+        },
+        "query_used": {
+          "type": "string",
+          "source": "plugin",
+          "description": "The query used to filter results"
+        },
+        "retrieved_at": {
+          "type": "string",
+          "source": "plugin",
+          "description": "Timestamp when data was retrieved (ISO 8601)"
+        }
+      }
+    },
+    "id": "step2",
+    "params": {
+      "folder_id": "{{contracts_folder_results.files[0].id}}",
+      "max_results": 200,
+      "file_types": [
+        "application/vnd.google-apps.document"
+      ]
+    },
+    "name": "List all Google Docs within the Contracts folder",
+    "action": "list_files"
+  },
+  {
+    "step_id": "step3",
+    "type": "transform",
+    "operation": "filter",
+    "input": "{{all_folder_docs.files}}",
+    "description": "Filter documents whose title contains at least one of the contract keywords (Contract, Agreement, MSA, SOW, Order Form, Statement of Work)",
+    "config": {
+      "type": "filter",
+      "input": "all_folder_docs.files",
+      "custom_code": "Keep only documents whose name contains at least one contract keyword",
+      "condition": {
+        "operator": "contains_any",
+        "value": [
+          "Contract",
+          "Agreement",
+          "MSA",
+          "SOW",
+          "Order Form",
+          "Statement of Work"
+        ],
+        "field": "item.name",
+        "conditionType": "simple"
+      }
+    },
+    "output_variable": "candidate_docs",
+    "output_schema": {
+      "type": "array",
+      "source": "inferred",
+      "description": "List of files and folders",
+      "items": {
+        "type": "object",
+        "source": "plugin",
+        "semantic_type": "file_attachment",
+        "properties": {
+          "id": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Unique file ID"
+          },
+          "name": {
+            "type": "string",
+            "source": "plugin",
+            "description": "File or folder name"
+          },
+          "mimeType": {
+            "type": "string",
+            "source": "plugin",
+            "description": "MIME type of the file"
+          },
+          "size": {
+            "type": "string",
+            "source": "plugin",
+            "description": "File size in bytes"
+          },
+          "createdTime": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Creation timestamp (ISO 8601)"
+          },
+          "modifiedTime": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Last modification timestamp (ISO 8601)"
+          },
+          "webViewLink": {
+            "type": "string",
+            "source": "plugin",
+            "description": "URL to view the file"
+          },
+          "shared": {
+            "type": "boolean",
+            "source": "plugin",
+            "description": "Whether file is shared"
+          },
+          "starred": {
+            "type": "boolean",
+            "source": "plugin",
+            "description": "Whether file is starred"
+          }
+        }
+      }
+    },
+    "id": "step3",
+    "_on_empty": "throw",
+    "name": "Filter documents whose title contains at least one of the contract keywords (Contract, Agreement, MSA, SOW, Order Form, Statement of Work)"
+  },
+  {
+    "step_id": "step4",
+    "type": "scatter_gather",
+    "description": "Loop over candidate_docs",
+    "scatter": {
+      "input": "{{candidate_docs}}",
+      "steps": [
+        {
+          "step_id": "step5",
+          "type": "action",
+          "description": "Read the full text content of the Google Doc",
+          "plugin": "google-drive",
+          "output_variable": "doc_content",
+          "output_schema": {
+            "type": "object",
+            "source": "plugin",
+            "properties": {
+              "file_id": {
+                "type": "string",
+                "source": "plugin",
+                "description": "ID of the file that was read"
+              },
+              "file_name": {
+                "type": "string",
+                "source": "plugin",
+                "description": "Name of the file"
+              },
+              "file_size": {
+                "type": "string",
+                "source": "plugin",
+                "description": "Human-readable file size (e.g., '1.5 MB')"
+              },
+              "mime_type": {
+                "type": "string",
+                "source": "plugin",
+                "description": "MIME type of the file"
+              },
+              "content": {
+                "type": "string",
+                "source": "plugin",
+                "description": "Text content extracted from the file"
+              },
+              "content_length": {
+                "type": "number",
+                "source": "plugin",
+                "description": "Length of the extracted content in characters"
+              },
+              "export_format": {
+                "type": "string",
+                "source": "plugin",
+                "description": "Format the file was exported as (text/plain, text/html, or 'original')"
+              },
+              "read_at": {
+                "type": "string",
+                "source": "plugin",
+                "description": "Timestamp when file was read (ISO 8601)"
+              }
+            }
+          },
+          "id": "step5",
+          "params": {
+            "file_id": "{{doc.id}}",
+            "export_format": "text/plain"
+          },
+          "name": "Read the full text content of the Google Doc",
+          "action": "read_file_content"
+        },
+        {
+          "step_id": "step6",
+          "type": "ai_processing",
+          "input": "{{doc_content}}",
+          "prompt": "Analyze the contract document text and extract the following information:\n\n1. **end_date**: Look for the contract end or expiration date by checking:\n   - Explicit labels like 'End Date:', 'Expiration Date:', 'Termination Date:'\n   - Term sentences like 'This Agreement ends on...', 'shall expire on...', 'effective until...'\n   - Renewal/auto-renewal clauses that include an end date\n   - If multiple plausible end dates are found, choose the most likely contract end date.\n   Return the date in ISO 8601 format (YYYY-MM-DD) or null if not found.\n\n2. **counterparty**: Extract the counterparty name (the other party to the contract). Look for:\n   - Party name blocks near the top of the document\n   - Lines containing 'between ... and ...'\n   - Signature blocks\n   Return null if not found.\n\n3. **notes**: Add any relevant notes, such as:\n   - 'Multiple end dates detected; selected the most likely one' if ambiguity existed\n   - 'End date not found in document' if no end date could be extracted\n   - 'Counterparty not identified' if counterparty was not found\n   - Any other relevant observations about date extraction confidence\n\n4. **doc_title**: The document title from the input metadata.\n5. **doc_link**: The web view link from the input metadata.",
+          "description": "Extract contract end/expiration date, counterparty name, and notes from the document text using AI analysis",
+          "config": {
+            "ai_type": "generate",
+            "output_schema": {
+              "type": "object",
+              "properties": {
+                "end_date": {
+                  "type": "string",
+                  "description": "Contract end/expiration date in ISO 8601 format (YYYY-MM-DD), or null if not found"
+                },
+                "counterparty": {
+                  "type": "string",
+                  "description": "Name of the counterparty to the contract, or null if not found"
+                },
+                "notes": {
+                  "type": "string",
+                  "description": "Notes about the extraction (e.g., multiple dates found, date not found, counterparty not identified)"
+                },
+                "doc_title": {
+                  "type": "string",
+                  "description": "Title of the document"
+                },
+                "doc_link": {
+                  "type": "string",
+                  "description": "Web view link to the document"
+                }
+              },
+              "required": [
+                "end_date",
+                "counterparty",
+                "notes",
+                "doc_title",
+                "doc_link"
+              ]
+            },
+            "type": "generate",
+            "instruction": "Analyze the contract document text and extract the following information:\n\n1. **end_date**: Look for the contract end or expiration date by checking:\n   - Explicit labels like 'End Date:', 'Expiration Date:', 'Termination Date:'\n   - Term sentences like 'This Agreement ends on...', 'shall expire on...', 'effective until...'\n   - Renewal/auto-renewal clauses that include an end date\n   - If multiple plausible end dates are found, choose the most likely contract end date.\n   Return the date in ISO 8601 format (YYYY-MM-DD) or null if not found.\n\n2. **counterparty**: Extract the counterparty name (the other party to the contract). Look for:\n   - Party name blocks near the top of the document\n   - Lines containing 'between ... and ...'\n   - Signature blocks\n   Return null if not found.\n\n3. **notes**: Add any relevant notes, such as:\n   - 'Multiple end dates detected; selected the most likely one' if ambiguity existed\n   - 'End date not found in document' if no end date could be extracted\n   - 'Counterparty not identified' if counterparty was not found\n   - Any other relevant observations about date extraction confidence\n\n4. **doc_title**: The document title from the input metadata.\n5. **doc_link**: The web view link from the input metadata.",
+            "input": "{{doc_content}}"
+          },
+          "output_variable": "extracted_fields",
+          "output_schema": {
+            "type": "object",
+            "properties": {
+              "end_date": {
+                "type": "string",
+                "source": "ai_declared",
+                "description": "Contract end/expiration date in ISO 8601 format (YYYY-MM-DD), or null if not found"
+              },
+              "counterparty": {
+                "type": "string",
+                "source": "ai_declared",
+                "description": "Name of the counterparty to the contract, or null if not found"
+              },
+              "notes": {
+                "type": "string",
+                "source": "ai_declared",
+                "description": "Notes about the extraction (e.g., multiple dates found, date not found, counterparty not identified)"
+              },
+              "doc_title": {
+                "type": "string",
+                "source": "ai_declared",
+                "description": "Title of the document"
+              },
+              "doc_link": {
+                "type": "string",
+                "source": "ai_declared",
+                "description": "Web view link to the document"
+              }
+            },
+            "source": "ai_declared"
+          },
+          "input_schema": {
+            "type": "object",
+            "source": "plugin",
+            "properties": {
+              "file_id": {
+                "type": "string",
+                "source": "plugin",
+                "description": "ID of the file that was read"
+              },
+              "file_name": {
+                "type": "string",
+                "source": "plugin",
+                "description": "Name of the file"
+              },
+              "file_size": {
+                "type": "string",
+                "source": "plugin",
+                "description": "Human-readable file size (e.g., '1.5 MB')"
+              },
+              "mime_type": {
+                "type": "string",
+                "source": "plugin",
+                "description": "MIME type of the file"
+              },
+              "content": {
+                "type": "string",
+                "source": "plugin",
+                "description": "Text content extracted from the file"
+              },
+              "content_length": {
+                "type": "number",
+                "source": "plugin",
+                "description": "Length of the extracted content in characters"
+              },
+              "export_format": {
+                "type": "string",
+                "source": "plugin",
+                "description": "Format the file was exported as (text/plain, text/html, or 'original')"
+              },
+              "read_at": {
+                "type": "string",
+                "source": "plugin",
+                "description": "Timestamp when file was read (ISO 8601)"
+              }
+            }
+          },
+          "id": "step6",
+          "name": "Extract contract end/expiration date, counterparty name, and notes from the document text using AI analysis"
+        }
+      ],
+      "itemVariable": "doc"
+    },
+    "gather": {
+      "operation": "collect"
+    },
+    "output_variable": "extracted_contracts",
+    "id": "step4",
+    "name": "Loop over candidate_docs"
+  },
+  {
+    "step_id": "step7",
+    "type": "transform",
+    "operation": "with_fields",
+    "input": "{{extracted_contracts}}",
+    "description": "Add days_remaining field computed as end_date minus today, and a date_window_end field for filtering",
+    "config": {
+      "type": "with_fields",
+      "input": "extracted_contracts",
+      "output_schema": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "end_date": {
+              "type": "string"
+            },
+            "counterparty": {
+              "type": "string"
+            },
+            "notes": {
+              "type": "string"
+            },
+            "doc_title": {
+              "type": "string"
+            },
+            "doc_link": {
+              "type": "string"
+            },
+            "days_remaining": {
+              "type": "number"
+            },
+            "has_end_date": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "doc_title",
+            "doc_link",
+            "notes",
+            "has_end_date"
+          ]
+        }
+      },
+      "fields": [
+        {
+          "name": "days_remaining",
+          "expression": {
+            "kind": "if",
+            "condition": {
+              "operator": "exists",
+              "field": "item.end_date",
+              "conditionType": "simple"
+            },
+            "then": {
+              "kind": "date_diff",
+              "unit": "days",
+              "left": {
+                "kind": "ref",
+                "ref": "item",
+                "field": "end_date"
+              },
+              "right": {
+                "kind": "today"
+              }
+            },
+            "else": {
+              "kind": "literal",
+              "value": null
+            }
+          }
+        },
+        {
+          "name": "has_end_date",
+          "expression": {
+            "kind": "null_check",
+            "invert": true,
+            "value": {
+              "kind": "ref",
+              "ref": "item",
+              "field": "end_date"
+            }
+          }
+        }
+      ]
+    },
+    "output_variable": "contracts_with_days",
+    "output_schema": {
+      "type": "array",
+      "source": "ai_declared",
+      "items": {
+        "type": "object",
+        "source": "ai_declared",
+        "properties": {
+          "end_date": {
+            "type": "string",
+            "source": "ai_declared"
+          },
+          "counterparty": {
+            "type": "string",
+            "source": "ai_declared"
+          },
+          "notes": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "doc_title": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "doc_link": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "days_remaining": {
+            "type": "number",
+            "source": "ai_declared"
+          },
+          "has_end_date": {
+            "type": "boolean",
+            "source": "ai_declared",
+            "required": true
+          }
+        }
+      }
+    },
+    "id": "step7",
+    "name": "Add days_remaining field computed as end_date minus today, and a date_window_end field for filtering"
+  },
+  {
+    "step_id": "step8",
+    "type": "transform",
+    "operation": "filter",
+    "input": "{{contracts_with_days}}",
+    "description": "Filter subset for expiring_soon",
+    "config": {
+      "type": "filter",
+      "input": "contracts_with_days",
+      "condition": {
+        "conditionType": "complex_and",
+        "conditions": [
+          {
+            "operator": "eq",
+            "value": true,
+            "field": "item.has_end_date",
+            "conditionType": "simple"
+          },
+          {
+            "operator": "gte",
+            "value": 0,
+            "field": "item.days_remaining",
+            "conditionType": "simple"
+          },
+          {
+            "operator": "lte",
+            "value": "{{input.days_window}}",
+            "field": "item.days_remaining",
+            "conditionType": "simple"
+          }
+        ]
+      }
+    },
+    "output_variable": "expiring_soon",
+    "output_schema": {
+      "type": "array",
+      "source": "inferred",
+      "items": {
+        "type": "object",
+        "source": "ai_declared",
+        "properties": {
+          "end_date": {
+            "type": "string",
+            "source": "ai_declared"
+          },
+          "counterparty": {
+            "type": "string",
+            "source": "ai_declared"
+          },
+          "notes": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "doc_title": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "doc_link": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "days_remaining": {
+            "type": "number",
+            "source": "ai_declared"
+          },
+          "has_end_date": {
+            "type": "boolean",
+            "source": "ai_declared",
+            "required": true
+          }
+        }
+      }
+    },
+    "id": "step8",
+    "_on_empty": "warn",
+    "name": "Filter subset for expiring_soon"
+  },
+  {
+    "step_id": "step9",
+    "type": "transform",
+    "operation": "filter",
+    "input": "{{contracts_with_days}}",
+    "description": "Filter subset for missing_end_date",
+    "config": {
+      "type": "filter",
+      "input": "contracts_with_days",
+      "condition": {
+        "operator": "eq",
+        "value": false,
+        "field": "item.has_end_date",
+        "conditionType": "simple"
+      }
+    },
+    "output_variable": "missing_end_date",
+    "output_schema": {
+      "type": "array",
+      "source": "inferred",
+      "items": {
+        "type": "object",
+        "source": "ai_declared",
+        "properties": {
+          "end_date": {
+            "type": "string",
+            "source": "ai_declared"
+          },
+          "counterparty": {
+            "type": "string",
+            "source": "ai_declared"
+          },
+          "notes": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "doc_title": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "doc_link": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "days_remaining": {
+            "type": "number",
+            "source": "ai_declared"
+          },
+          "has_end_date": {
+            "type": "boolean",
+            "source": "ai_declared",
+            "required": true
+          }
+        }
+      }
+    },
+    "id": "step9",
+    "_on_empty": "warn",
+    "name": "Filter subset for missing_end_date"
+  },
+  {
+    "step_id": "step10",
+    "type": "transform",
+    "operation": "reduce",
+    "input": "{{contracts_with_days}}",
+    "description": "Count items for expiring_count",
+    "config": {
+      "type": "reduce",
+      "input": "contracts_with_days",
+      "reduce_operation": "count",
+      "reducer": "count"
+    },
+    "output_variable": "expiring_count",
+    "output_schema": {
+      "type": "number",
+      "description": "Count of expiring_count",
+      "source": "inferred"
+    },
+    "id": "step10",
+    "name": "Count items for expiring_count"
+  },
+  {
+    "step_id": "step11",
+    "type": "transform",
+    "operation": "reduce",
+    "input": "{{missing_end_date}}",
+    "description": "Count items for missing_count",
+    "config": {
+      "type": "reduce",
+      "input": "missing_end_date",
+      "reduce_operation": "count",
+      "reducer": "count"
+    },
+    "output_variable": "missing_count",
+    "output_schema": {
+      "type": "number",
+      "description": "Count of missing_count",
+      "source": "inferred"
+    },
+    "id": "step11",
+    "name": "Count items for missing_count"
+  },
+  {
+    "step_id": "step12",
+    "type": "transform",
+    "operation": "sort",
+    "input": "{{expiring_soon}}",
+    "description": "Sort expiring contracts by end_date ascending",
+    "config": {
+      "type": "sort",
+      "input": "expiring_soon",
+      "custom_code": "Sort by end_date ascending",
+      "rules": {
+        "field": "end_date",
+        "direction": "asc"
+      }
+    },
+    "output_variable": "sorted_expiring",
+    "output_schema": {
+      "type": "array",
+      "source": "inferred",
+      "items": {
+        "type": "object",
+        "source": "ai_declared",
+        "properties": {
+          "end_date": {
+            "type": "string",
+            "source": "ai_declared"
+          },
+          "counterparty": {
+            "type": "string",
+            "source": "ai_declared"
+          },
+          "notes": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "doc_title": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "doc_link": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "days_remaining": {
+            "type": "number",
+            "source": "ai_declared"
+          },
+          "has_end_date": {
+            "type": "boolean",
+            "source": "ai_declared",
+            "required": true
+          }
+        }
+      }
+    },
+    "id": "step12",
+    "name": "Sort expiring contracts by end_date ascending"
+  },
+  {
+    "step_id": "step13",
+    "type": "ai_processing",
+    "input": {
+      "sorted_expiring": "{{sorted_expiring}}",
+      "missing_end_date": "{{missing_end_date}}",
+      "expiring_count": "{{expiring_count}}",
+      "missing_count": "{{missing_count}}"
+    },
+    "prompt": "Generate a professional HTML email body for a contract end-date summary report.\n\nRules:\n1. If there are expiring contracts (sorted_expiring is not empty):\n   - Create an HTML table with columns: Document Title (linked to doc_link), Counterparty, End Date, Days Remaining, Notes\n   - Use professional styling: borders, header row with background color (#4472C4 white text), padding, alternating row colors\n   - Sort order is already applied (by end_date ascending)\n   - After the main table, if there are documents with missing end dates (missing_end_date), add a section titled 'Documents Where End Date Could Not Be Found' with a smaller table showing: Document Title (linked), Counterparty, Notes\n\n2. If there are NO expiring contracts but there ARE missing-date documents:\n   - State that no contracts were found ending within the next 30 days\n   - Show the missing-date documents in a table\n\n3. If there are NO expiring contracts AND NO missing-date documents:\n   - State that no contracts were found ending within the next 30 days and all documents had identifiable end dates outside the window\n\n4. Include a brief header paragraph summarizing the report (e.g., 'Contract End-Date Summary — Next 30 Days')\n5. Include the current date in the header\n6. Make document titles clickable links using the doc_link field",
+    "description": "Generate an HTML email body with a summary table of expiring contracts and missing-date contracts",
+    "config": {
+      "ai_type": "generate",
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "subject": {
+            "type": "string",
+            "description": "Email subject line for the contract summary"
+          },
+          "body": {
+            "type": "string",
+            "description": "Full HTML email body with styled table(s)"
+          }
+        },
+        "required": [
+          "subject",
+          "body"
+        ]
+      },
+      "type": "generate",
+      "instruction": "Generate a professional HTML email body for a contract end-date summary report.\n\nRules:\n1. If there are expiring contracts (sorted_expiring is not empty):\n   - Create an HTML table with columns: Document Title (linked to doc_link), Counterparty, End Date, Days Remaining, Notes\n   - Use professional styling: borders, header row with background color (#4472C4 white text), padding, alternating row colors\n   - Sort order is already applied (by end_date ascending)\n   - After the main table, if there are documents with missing end dates (missing_end_date), add a section titled 'Documents Where End Date Could Not Be Found' with a smaller table showing: Document Title (linked), Counterparty, Notes\n\n2. If there are NO expiring contracts but there ARE missing-date documents:\n   - State that no contracts were found ending within the next 30 days\n   - Show the missing-date documents in a table\n\n3. If there are NO expiring contracts AND NO missing-date documents:\n   - State that no contracts were found ending within the next 30 days and all documents had identifiable end dates outside the window\n\n4. Include a brief header paragraph summarizing the report (e.g., 'Contract End-Date Summary — Next 30 Days')\n5. Include the current date in the header\n6. Make document titles clickable links using the doc_link field"
+    },
+    "output_variable": "email_content",
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "subject": {
+          "type": "string",
+          "source": "ai_declared",
+          "description": "Email subject line for the contract summary"
+        },
+        "body": {
+          "type": "string",
+          "source": "ai_declared",
+          "description": "Full HTML email body with styled table(s)"
+        }
+      },
+      "source": "ai_declared"
+    },
+    "input_schema": {
+      "type": "array",
+      "source": "inferred",
+      "items": {
+        "type": "object",
+        "source": "ai_declared",
+        "properties": {
+          "end_date": {
+            "type": "string",
+            "source": "ai_declared"
+          },
+          "counterparty": {
+            "type": "string",
+            "source": "ai_declared"
+          },
+          "notes": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "doc_title": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "doc_link": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "days_remaining": {
+            "type": "number",
+            "source": "ai_declared"
+          },
+          "has_end_date": {
+            "type": "boolean",
+            "source": "ai_declared",
+            "required": true
+          }
+        }
+      }
+    },
+    "id": "step13",
+    "name": "Generate an HTML email body with a summary table of expiring contracts and missing-date contracts"
+  },
+  {
+    "step_id": "step14",
+    "type": "action",
+    "description": "Send the contract end-date summary email to the configured recipient",
+    "plugin": "google-mail",
+    "id": "step14",
+    "params": {
+      "recipients": {
+        "to": [
+          "{{input.recipient_email}}"
+        ]
+      },
+      "content": {
+        "subject": "{{email_content.subject}}",
+        "html_body": "{{email_content.body}}"
+      }
+    },
+    "name": "Send the contract end-date summary email to the configured recipient",
+    "action": "send_email"
+  }
+]
