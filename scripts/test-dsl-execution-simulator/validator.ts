@@ -8,7 +8,7 @@
  *   duplicate output vars, DAG visualization
  */
 
-import { VariableStore } from './variable-store'
+import { VariableStore, parsePathSegment } from './variable-store'
 import { StepLogEntry } from './dsl-simulator'
 
 export interface ValidationIssue {
@@ -220,7 +220,8 @@ export class Validator {
           const parts = ref.split('.')
           if (parts.length >= 2 && parts[0] !== 'config') {
             const varName = parts[0]
-            const fieldName = parts[1]
+            // WP-35: strip [N] array-index suffix before checking against schema
+            const fieldName = parsePathSegment(parts[1]).name
             const schema = outputSchemas.get(varName)
             if (schema) {
               const knownFields = extractFieldNames(schema)
@@ -324,7 +325,8 @@ export class Validator {
           if (['config', 'input', 'inputs'].includes(parts[0])) continue // config/input refs checked separately
 
           const varName = parts[0]
-          const fieldName = parts[1]
+          // WP-35: strip [N] array-index suffix before checking against schema
+          const fieldName = parsePathSegment(parts[1]).name
 
           // Check scatter item variables
           if (scatterItemVars.has(varName)) {
@@ -518,7 +520,8 @@ export class Validator {
 
     // Check field exists in schema (if schema available and field is nested)
     if (parts.length >= 2) {
-      const fieldName = parts[1]
+      // WP-35: strip [N] array-index suffix before checking against schema
+      const fieldName = parsePathSegment(parts[1]).name
       // Skip JS runtime properties that are valid at runtime but not in schema
       const runtimeProperties = ['length', 'size', 'count']
       if (runtimeProperties.includes(fieldName)) return

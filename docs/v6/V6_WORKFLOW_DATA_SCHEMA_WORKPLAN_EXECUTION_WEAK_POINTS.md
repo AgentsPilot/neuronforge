@@ -50,6 +50,8 @@ The weak points are ordered by likelihood of causing failures as new scenarios a
 | [WP-32](#wp-32-structuralrepairengine-rewrites-flatten-field-from-per-item-nested-to-root-level) | `StructuralRepairEngine.scanWorkflow` runs at the top of `WorkflowPilot.execute()` (before any step runs) and **persists fixes back to the agent in the DB**. When a `transform/flatten` step has `input: "{{producer.emails}}"` (path-navigated to the inner array) and `field: "attachments"` (per-item nested extraction), the validator extracts only the top-level var name (`producer`) from the `{{...}}` template, ignores the `.emails` navigation, and validates `field: attachments` against the **root-level** array fields of `producer`'s output_schema. Since the source returns `{emails: [...], total_found, ...}` (a wrapper-object schema), `attachments` is not at root → flagged as `invalid_flatten_field` → autoFix rewrites to `"emails"` (first match in the priority list `['emails', 'items', 'files', ...]`). Result: runtime sees `field: "emails"` but iterates over emails-array items looking for an `emails` sub-field, finds none, returns `[]`. Phase E "succeeds" but downstream consumers (AI step, send email) get empty data → user receives empty email despite producer returning real attachments. | P1 | ⬜ Documented — fix to follow |
 | [WP-33](#wp-33-with_fields-expression-accepts-template-strings-but-evaluateexpression-requires-structured-form) | `transform/with_fields` LLM emission carries each augmenting field as `{name, expression}`. The W2 grammar requires `expression` to be a structured `{kind: "...", ...}` object (e.g. `{kind: "ref", ref: "X", field: "Y"}`). When the LLM instead emits a template string (`expression: "{{uploaded_file.web_view_link}}"`), the IR converter's `normalizeExpressionRefs` passes non-objects through unchanged, so phase4 stores the raw template string. At runtime, `resolveAllVariables` walks the step config and substitutes `{{...}}` placeholders with their resolved values **before** the transform runs — so `transformWithFields` sees `field.expression = "https://drive.google.com/..."` (a plain string). It then calls `evaluateExpression(expr, ...)` which throws `INVALID_EXPRESSION: must be {kind, ...}`. Scatter-gather item fails, parent scatter fails, downstream notify never runs → user receives **no email at all**. Convention-mismatch family with WP-22 (set_difference.reference), WP-30 (config bare path), WP-32 (validator vs runtime contract). | P1 | ⬜ Documented — fix to follow |
 | [WP-34](#wp-34-deterministicextractor-swallows-pdf-parse-exceptions-and-document-extractor-silently-fabricates-unknown-defaults) | The `document-extractor.extract_structured_data` plugin invokes `DeterministicExtractor` which catches all errors in its main flow and returns a `createFailureResult` (success=false, all fields missing, `method: "text"`). The plugin then applies `"Unknown <FieldName>"` defaults at [`document-extractor-plugin-executor.ts:149`](../../lib/server/document-extractor-plugin-executor.ts#L149) for any required field that came back null/empty. The combination means: when an image-based PDF (no text layer) is passed and `pdfDetector.detect()` either throws or returns empty text, AND AWS Textract is unconfigured (no `AWS_ACCESS_KEY_ID`), AND vision/LLM fallback is not wired in — the workflow does not fail. Instead, downstream consumers receive fabricated `"Unknown Type"`, `"Unknown Vendor"`, etc. as if real data. WP-13-family fabrication risk: the user gets an email that looks legitimate but contains made-up values. Secondary cosmetic: [`gmail-plugin-executor.ts:271-275`](../../lib/server/gmail-plugin-executor.ts#L271-L275) still sets `result.extracted_text = "(PDF text extraction not yet implemented)"` for any PDF attachment — a 2026-02 stub that downstream doesn't actually use (document-extractor reads `data` directly), but is confusing. | P1 | ⬜ Documented — fix deferred (multi-component change) |
+| [WP-35](#wp-35-phase-a-simulator-doesnt-understand-array-index-syntax-in-template-refs) | The Phase A DSL execution simulator (`scripts/test-dsl-execution-simulator/`) doesn't understand the `field[N]` array-index syntax inside `{{...}}` template refs. For `{{contracts_folder_results.files[0].id}}`, `VariableStore._lookupRef` splits on `.` and tries `value["files[0]"]` (literal property lookup) which is `undefined` → ref marked unresolved. Separately, `Validator.checkCrossStepFieldRefs` takes `parts[1] = "files[0]"` as a literal field name and checks against the schema's known fields, finds `files` but not `files[0]` → emits `cross_step_field_ref` error. Both fire at severity `error`, causing Phase A to fail. **The runtime `ExecutionContext.resolveVariable` handles this syntax correctly** — only the simulator is strict. Affects any scenario where the LLM uses `{{var.field[N].subfield}}` to extract "the Nth element then sub-access" (most commonly the first folder/file from a search result). Documented 2026-04-10 as a known false positive in the now-removed `verification_status` block of contract-enddate-summary. | P2 | ⬜ Documented — fix to follow |
+| [WP-36](#wp-36-phase-d-stub-generator-emits-generic-mock_name_nnn-that-fails-keyword-filters) | The Phase D stub data generator at [`stub-data-generator.ts:210`](../../scripts/test-dsl-execution-simulator/stub-data-generator.ts#L210) falls through to `mock_${fieldName}_${idx}` for the `name` field — producing `mock_name_001`, `mock_name_002`, `mock_name_003`. When the LLM emits a `transform/filter` step with `contains_any` operator and content-specific keywords (e.g., `["Contract", "Agreement", "MSA", "SOW", "Order Form", "Statement of Work"]`), zero mock items match → filter produces 0 results → `on_empty: "throw"` correctly fires because the filter feeds a scatter-gather → Phase D aborts with `Transform step produced 0 results from 3 input items`. The runtime safety check is right; the mock data is the problem. Real Drive/Sheets data has realistic names that would match. PD-1 family (Phase D realism gap). Affects any scenario using keyword-substring filters on file/document names — `contract-enddate-summary` is the first to surface it because earlier scenarios filtered on enum fields (`labels`, `urgency`, `priority`) which happen to align with generic mocks. | P2 | ⬜ Documented — fix to follow |
 
 ---
 
@@ -1217,6 +1219,270 @@ Auto-converting `ai_processing` on an array into a scatter would change semantic
 - The W5 measurement starts surfacing this as a recurring `generate/internal` pattern.
 
 **Compounding with WP-13 / WP-14:** WP-13 documented bulk AI's tendency to fabricate when input is empty; WP-14 documented scatter token bloat from full-item merges. WP-19 is the missing third leg — the choice between bulk and scatter at emission time. All three are facets of "LLM-on-collections is risky and needs structural guardrails."
+
+---
+
+### WP-36: Phase D stub generator emits generic `mock_name_NNN` that fails keyword filters
+
+**Severity:** P2 — Phase D false-positive failures for scenarios using content-keyword filters on document/file names. Doesn't affect runtime; only the Phase D gate.
+**Encountered as:** Phase D on `contract-enddate-summary` (2026-05-14). step3 (`transform/filter` with `field: "item.name"`, `operator: "contains_any"`, `value: ["Contract", "Agreement", "MSA", "SOW", "Order Form", "Statement of Work"]`) dropped all 3 mocked items because they were named `mock_name_001/002/003`. step3 fed step4 (scatter_gather) and `on_empty: "throw"` correctly aborted.
+**Status:** ⬜ Documented — fix to follow
+
+**Problem:** The Phase D stub generator's `name` field generator is the generic catch-all branch at [`stub-data-generator.ts:210`](../../scripts/test-dsl-execution-simulator/stub-data-generator.ts#L210):
+
+```ts
+// Generic string
+return `mock_${fieldName}_${idx}`
+```
+
+For the `name` field this produces `mock_name_001`, `mock_name_002`, `mock_name_003`. These strings don't match any natural-language keyword the LLM would emit in a `contains_any` filter — so any keyword filter on `name` drops everything.
+
+**Why this is a Phase D realism gap, not a runtime bug:**
+
+- The pipeline's `on_empty: "throw"` guard fired *correctly* — feeding a scatter-gather an empty array is a real bug in production data flows, so the safety check is by design. We don't weaken it.
+- Real `google-drive.list_files` output would contain real file names like `"MSA - Acme 2026"`, `"Vendor Service Agreement.docx"`, etc., which would match the filter.
+- Only the Phase D mocks produce the all-generic shape that fails.
+
+**Failure shape (contract-enddate-summary):**
+
+```
+step2 google-drive.list_files (mock) → 3 files: [mock_name_001, mock_name_002, mock_name_003]
+step3 transform/filter contains_any ["Contract", "Agreement", "MSA", "SOW", "Order Form", "Statement of Work"]
+        → 0 results from 3 input items
+        → on_empty: throw (feeds scatter_gather at step4)
+        → Aborting
+```
+
+**Trigger scenarios:**
+
+Any scenario where:
+1. A list/search action returns items with a generic `name` field, AND
+2. A downstream filter checks for content-specific substrings in that name, AND
+3. The filter result feeds a scatter_gather (or any step with `on_empty: throw`).
+
+`contract-enddate-summary` is the first scenario in the regression suite that hits all three. Earlier scenarios filtered on enum fields (`labels`, `urgency`, `priority`) or compared against config refs — those happen to align with generic mock outputs.
+
+**Fix shape — document-name bank**
+
+Replace the generic fallback for the `name` field with a small bank of realistic document-style names that include common business-document keywords. Cycle through the bank by index suffix so each item gets a different name across an array.
+
+```ts
+const DOCUMENT_NAME_BANK = [
+  "Contract Acme Corp 2026",          // Contract
+  "MSA TechStart Inc",                // MSA
+  "SOW Q3 Statement of Work",         // SOW, Statement of Work
+  "Service Agreement Vendor 042",     // Agreement, Vendor
+  "Order Form Q1 Renewal",            // Order Form
+  "Invoice Acme 0142",                // Invoice
+];
+
+function generateName(opts: GeneratorOptions): string {
+  const idx = parseInt(opts.indexSuffix || '001', 10);
+  return DOCUMENT_NAME_BANK[(idx - 1) % DOCUMENT_NAME_BANK.length];
+}
+```
+
+In the `generateStringByFieldName` switch, add a `name` case before the generic fallback that returns from the bank.
+
+**Why a bank and not random Lorem-ipsum:** the bank is deterministic per index, so Phase D output is reproducible. The chosen names cover the common substring filter keywords for business-document scenarios (contract, agreement, MSA, SOW, order form, statement of work, invoice, vendor) without scenario-specific tuning.
+
+**Trade-off accepted:** the bank is opinionated. If a future scenario filters on `name contains "Widget"`, Phase D will still fail because the bank doesn't include "Widget." That's a known limitation — the bank handles common business-doc terminology, not arbitrary content. Document this in the bank's comment.
+
+**Why not extend to `subject`, `title`, etc.:** they already have realistic generators ([line 181](../../scripts/test-dsl-execution-simulator/stub-data-generator.ts#L181): `subject` returns `"Invoice #INV-${idx} from Acme Corp"`). Only `name` falls through to the generic fallback. If future scenarios surface gaps elsewhere, extend similarly per field.
+
+**Files:**
+
+- `scripts/test-dsl-execution-simulator/stub-data-generator.ts` (~15 lines: bank constant + `name` case in switch)
+- `scripts/test-dsl-execution-simulator/__tests__/stub-data-generator.wp36.test.ts` (new — bank cycling, index-stable, regression for other fields)
+
+**Test coverage to add:**
+
+1. ✅ `name` field at indexSuffix `001` returns first bank entry
+2. ✅ `name` field cycles through bank by indexSuffix
+3. ✅ `name` field wraps when array longer than bank
+4. ✅ Bank entries collectively cover canonical filter keywords (Contract, Agreement, MSA, SOW, Order Form, Statement of Work)
+5. ✅ Regression: other string fields (`filename`, `subject`, `vendor`) still use their specific generators
+6. ✅ Regression: non-`name` generic fields still use `mock_${fieldName}_${idx}`
+
+**Why this wasn't caught earlier:**
+
+PD-1 in the existing Phase D Hardening Roadmap section flagged "Realistic plugin mocks" as a known gap but never had a concrete reproducer in the regression suite. Contract-enddate-summary is the first scenario where the gap converts to a hard test failure (not just imprecise mocks).
+
+**Compounding observation:**
+
+WP-36 sits in the same conceptual family as WP-35 (Phase A array-index syntax not supported), WP-32 (validator over-corrects valid LLM emission), and WP-13 (silent fabrication on empty input) — all are "test infrastructure / safety checks don't model the runtime accurately." The recurring lesson: **whenever a Phase D / Phase A check fails on data the runtime would handle, fix the test-infrastructure side, not the runtime.**
+
+---
+
+### WP-35: Phase A simulator doesn't understand array-index syntax in template refs
+
+**Severity:** P2 — false-positive Phase A failures on any scenario emitting `{{var.field[N].subfield}}`. Doesn't affect runtime correctness; only the Phase A gate.
+**Encountered as:** Phase A on `contract-enddate-summary` (2026-05-14). 2/14 checks failed at step2 with `unresolved_ref` + `cross_step_field_ref` errors on `{{contracts_folder_results.files[0].id}}`. Same scenario, same step, same path documented as a known false positive 2026-04-10 — never fixed at source.
+**Status:** ⬜ Documented — fix to follow
+
+**Problem:** The Phase A DSL execution simulator at [`scripts/test-dsl-execution-simulator/`](../../scripts/test-dsl-execution-simulator) ships its own simplified path-resolution logic, which doesn't recognize the `field[N]` array-index syntax used in `{{...}}` templates.
+
+#### Surface 1 — `VariableStore._lookupRef` (variable resolution)
+
+[`variable-store.ts:131-162`](../../scripts/test-dsl-execution-simulator/variable-store.ts#L131):
+
+```ts
+private _lookupRef(ref: string): any {
+  const parts = ref.split('.')
+  // ...
+  if (this.stepOutputs.has(parts[0])) {
+    let value = this.stepOutputs.get(parts[0])
+    for (let i = 1; i < parts.length; i++) {
+      if (value === null || value === undefined) return undefined
+      value = value[parts[i]]                       // ← literal property lookup
+    }
+    return value
+  }
+  return undefined
+}
+```
+
+For `{{contracts_folder_results.files[0].id}}`:
+- `parts = ["contracts_folder_results", "files[0]", "id"]`
+- Step 1: `value = stepOutputs.get("contracts_folder_results")` (the stub object)
+- Step 2: `value = value["files[0]"]` → `undefined` (literal `"files[0]"` is not a property name — the object has `files` as an array)
+- Returns `undefined` → caller marks ref as unresolved
+
+#### Surface 2 — `Validator.checkCrossStepFieldRefs` (schema validation)
+
+[`validator.ts:322-356`](../../scripts/test-dsl-execution-simulator/validator.ts#L322):
+
+```ts
+for (const ref of allRefs) {
+  const parts = ref.split('.')
+  if (parts.length < 2) continue
+  if (['config', 'input', 'inputs'].includes(parts[0])) continue
+  const varName = parts[0]
+  const fieldName = parts[1]                        // ← "files[0]" as literal field name
+  // ...
+  const knownFields = extractFieldNames(schema)
+  if (knownFields.length > 0 && !knownFields.includes(fieldName)) {
+    issues.push({
+      severity: 'error',
+      check: 'cross_step_field_ref',
+      step_id: step.step_id,
+      message: `Field "${fieldName}" does not exist in "${varName}" output_schema. Known fields: [${knownFields.join(', ')}]`,
+    })
+  }
+}
+```
+
+Same problem — `fieldName = "files[0]"` checked against `["files", "file_count", ...]`. Fails.
+
+#### Runtime does this correctly
+
+[`ExecutionContext.resolveVariable`](../../lib/pilot/ExecutionContext.ts) and the production path-resolver understand `field[N]` syntax — they parse the segment, look up the property name, expect an array, index into it. So at Phase D / Phase E the workflow runs fine. **Only the simulator is strict.**
+
+#### Concrete failure shape (contract-enddate-summary, 2026-05-14)
+
+```
+"validation": {
+  "issues": [
+    {
+      "severity": "error",
+      "check": "unresolved_ref",
+      "step_id": "step2",
+      "message": "Unresolved variable reference: {{contracts_folder_results.files[0].id}}"
+    },
+    {
+      "severity": "error",
+      "check": "cross_step_field_ref",
+      "step_id": "step2",
+      "message": "Field \"files[0]\" does not exist in \"contracts_folder_results\" output_schema. Known fields: [files, file_count, search_query, next_page_token, has_more, searched_at, message]"
+    }
+  ],
+  "checks_passed": 12,
+  "checks_failed": 2,
+  "total_checks": 14
+}
+```
+
+#### Trigger scenarios
+
+Any scenario where the LLM extracts the Nth element from an array via template syntax:
+- "First folder match from a search" → `{{search.files[0].id}}`
+- "Use the first email's id" → `{{search_emails.emails[0].id}}`
+- Any wrapper-with-array → first-element pattern
+
+This is a natural LLM emission because:
+- The grammar's structured `transform/project_column` requires emitting a whole separate step just to extract one element
+- `{{}}` syntax is widely used elsewhere for sub-field navigation
+- The runtime correctly handles it, so the pattern is "officially supported" in practice
+
+#### Fix shape — surgical, one helper + two call-site updates
+
+Add a shared helper that parses each path segment for the `<name>[<index>]` pattern, then use it from both surfaces.
+
+**A. New helper in `variable-store.ts`:**
+
+```ts
+/**
+ * Parse a single path segment for array-index syntax.
+ * "files[0]"   → { name: "files", index: 0 }
+ * "items"      → { name: "items", index: null }
+ * "items[10]"  → { name: "items", index: 10 }
+ */
+function parsePathSegment(segment: string): { name: string; index: number | null } {
+  const m = segment.match(/^([^[\]]+)\[(\d+)\]$/);
+  if (m) return { name: m[1], index: parseInt(m[2], 10) };
+  return { name: segment, index: null };
+}
+```
+
+**B. Fix `_lookupRef`:**
+
+```ts
+for (let i = 1; i < parts.length; i++) {
+  if (value === null || value === undefined) return undefined;
+  const { name, index } = parsePathSegment(parts[i]);
+  value = value[name];
+  if (index !== null) {
+    if (!Array.isArray(value)) return undefined;
+    value = value[index];
+  }
+}
+```
+
+**C. Fix `checkCrossStepFieldRefs`:**
+
+Strip the `[N]` suffix from each segment before checking against `knownFields`. When the schema field is an array and the next path segment exists, descend into `items.properties` for the next validation step.
+
+```ts
+const { name: fieldName } = parsePathSegment(parts[1]);  // "files[0]" → "files"
+// ... existing check against knownFields ...
+// Optional enhancement: if parts.length > 2 and schema.properties[fieldName].type === 'array',
+// validate parts[2] against schema.properties[fieldName].items.properties
+```
+
+**Files:**
+
+- `scripts/test-dsl-execution-simulator/variable-store.ts` (~15 lines: helper + `_lookupRef` fix)
+- `scripts/test-dsl-execution-simulator/validator.ts` (~10 lines: import helper + strip in `checkCrossStepFieldRefs`)
+- New unit tests covering `field[0]`, `field[10]`, multi-segment dotted-and-indexed paths, regression for non-indexed paths
+
+**Test coverage to add:**
+
+1. ✅ `_lookupRef` resolves `var.field[0].subfield` correctly when stub has `{field: [{subfield: "X"}]}`
+2. ✅ `_lookupRef` returns undefined when index is out of bounds
+3. ✅ `_lookupRef` returns undefined when field exists but isn't an array
+4. ✅ `_lookupRef` regression: non-indexed paths still work
+5. ✅ `checkCrossStepFieldRefs` accepts `field[0]` when schema has `field` as an array
+6. ✅ `checkCrossStepFieldRefs` still errors when the base name doesn't exist (`bogus[0]`)
+7. ✅ End-to-end: contract-enddate-summary's `{{contracts_folder_results.files[0].id}}` Phase A passes
+
+**Why this wasn't caught earlier:**
+
+- The pattern was documented as a known false positive on 2026-04-10 and tolerated via `verification_status` annotations. The verification_status block was removed in a working-tree edit just before the WP-32/33 commit, exposing the failure as a hard Phase A error in the regression runner.
+- Most scenarios in the regression suite don't use `{{var.field[N].subfield}}` syntax — they either iterate via scatter_gather or extract single elements via `transform/project_column`. `contract-enddate-summary` is one of the few that picks the first folder from a search result inline.
+
+**Compounding observation:**
+
+This is the simulator-side equivalent of the recurring "runtime is lenient, validator is strict" mismatch we've seen in WP-22 (set_difference bare RefName), WP-30 (config bare path), WP-32 (flatten field validator), WP-33 (with_fields expression). The recurring lesson: **whenever the runtime accepts a more permissive form than the validator, the validator must be brought up to parity, not the other way around** — because the runtime is what users actually depend on.
 
 ---
 

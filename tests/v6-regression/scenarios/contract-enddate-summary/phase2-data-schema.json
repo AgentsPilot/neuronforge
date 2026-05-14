@@ -1,0 +1,803 @@
+{
+  "slots": {
+    "contracts_folder_results": {
+      "schema": {
+        "type": "object",
+        "source": "plugin",
+        "properties": {
+          "files": {
+            "type": "array",
+            "source": "plugin",
+            "description": "List of matching files and folders",
+            "items": {
+              "type": "object",
+              "source": "plugin",
+              "semantic_type": "file_attachment",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "Unique file ID"
+                },
+                "name": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "File or folder name"
+                },
+                "mimeType": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "MIME type of the file"
+                },
+                "size": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "File size in bytes"
+                },
+                "createdTime": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "Creation timestamp (ISO 8601)"
+                },
+                "modifiedTime": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "Last modification timestamp (ISO 8601)"
+                },
+                "webViewLink": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "URL to view the file"
+                },
+                "shared": {
+                  "type": "boolean",
+                  "source": "plugin",
+                  "description": "Whether file is shared"
+                },
+                "starred": {
+                  "type": "boolean",
+                  "source": "plugin",
+                  "description": "Whether file is starred"
+                }
+              }
+            }
+          },
+          "file_count": {
+            "type": "number",
+            "source": "plugin",
+            "description": "Number of files found"
+          },
+          "search_query": {
+            "type": "string",
+            "source": "plugin",
+            "description": "The search query that was executed"
+          },
+          "next_page_token": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Token for fetching next page of results"
+          },
+          "has_more": {
+            "type": "boolean",
+            "source": "plugin",
+            "description": "Whether more results are available"
+          },
+          "searched_at": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Timestamp when search was performed (ISO 8601)"
+          },
+          "message": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Status message if no results found"
+          }
+        }
+      },
+      "scope": "global",
+      "produced_by": "find_contracts_folder",
+      "consumed_by": [
+        "list_docs_in_folder"
+      ]
+    },
+    "all_folder_docs": {
+      "schema": {
+        "type": "object",
+        "source": "plugin",
+        "properties": {
+          "files": {
+            "type": "array",
+            "source": "plugin",
+            "description": "List of files and folders",
+            "items": {
+              "type": "object",
+              "source": "plugin",
+              "semantic_type": "file_attachment",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "Unique file ID"
+                },
+                "name": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "File or folder name"
+                },
+                "mimeType": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "MIME type of the file"
+                },
+                "size": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "File size in bytes"
+                },
+                "createdTime": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "Creation timestamp (ISO 8601)"
+                },
+                "modifiedTime": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "Last modification timestamp (ISO 8601)"
+                },
+                "webViewLink": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "URL to view the file"
+                },
+                "shared": {
+                  "type": "boolean",
+                  "source": "plugin",
+                  "description": "Whether file is shared"
+                },
+                "starred": {
+                  "type": "boolean",
+                  "source": "plugin",
+                  "description": "Whether file is starred"
+                }
+              }
+            }
+          },
+          "file_count": {
+            "type": "number",
+            "source": "plugin",
+            "description": "Number of files returned"
+          },
+          "next_page_token": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Token for fetching next page of results"
+          },
+          "has_more": {
+            "type": "boolean",
+            "source": "plugin",
+            "description": "Whether more files are available"
+          },
+          "query_used": {
+            "type": "string",
+            "source": "plugin",
+            "description": "The query used to filter results"
+          },
+          "retrieved_at": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Timestamp when data was retrieved (ISO 8601)"
+          }
+        }
+      },
+      "scope": "global",
+      "produced_by": "list_docs_in_folder",
+      "consumed_by": [
+        "filter_by_keywords"
+      ]
+    },
+    "candidate_docs": {
+      "schema": {
+        "type": "array",
+        "source": "inferred",
+        "description": "List of files and folders",
+        "items": {
+          "type": "object",
+          "source": "plugin",
+          "semantic_type": "file_attachment",
+          "properties": {
+            "id": {
+              "type": "string",
+              "source": "plugin",
+              "description": "Unique file ID"
+            },
+            "name": {
+              "type": "string",
+              "source": "plugin",
+              "description": "File or folder name"
+            },
+            "mimeType": {
+              "type": "string",
+              "source": "plugin",
+              "description": "MIME type of the file"
+            },
+            "size": {
+              "type": "string",
+              "source": "plugin",
+              "description": "File size in bytes"
+            },
+            "createdTime": {
+              "type": "string",
+              "source": "plugin",
+              "description": "Creation timestamp (ISO 8601)"
+            },
+            "modifiedTime": {
+              "type": "string",
+              "source": "plugin",
+              "description": "Last modification timestamp (ISO 8601)"
+            },
+            "webViewLink": {
+              "type": "string",
+              "source": "plugin",
+              "description": "URL to view the file"
+            },
+            "shared": {
+              "type": "boolean",
+              "source": "plugin",
+              "description": "Whether file is shared"
+            },
+            "starred": {
+              "type": "boolean",
+              "source": "plugin",
+              "description": "Whether file is starred"
+            }
+          }
+        }
+      },
+      "scope": "global",
+      "produced_by": "filter_by_keywords",
+      "consumed_by": [
+        "read_and_extract_contracts"
+      ]
+    },
+    "doc": {
+      "schema": {
+        "type": "object",
+        "source": "inferred",
+        "semantic_type": "file_attachment",
+        "properties": {
+          "id": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Unique file ID"
+          },
+          "name": {
+            "type": "string",
+            "source": "plugin",
+            "description": "File or folder name"
+          },
+          "mimeType": {
+            "type": "string",
+            "source": "plugin",
+            "description": "MIME type of the file"
+          },
+          "size": {
+            "type": "string",
+            "source": "plugin",
+            "description": "File size in bytes"
+          },
+          "createdTime": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Creation timestamp (ISO 8601)"
+          },
+          "modifiedTime": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Last modification timestamp (ISO 8601)"
+          },
+          "webViewLink": {
+            "type": "string",
+            "source": "plugin",
+            "description": "URL to view the file"
+          },
+          "shared": {
+            "type": "boolean",
+            "source": "plugin",
+            "description": "Whether file is shared"
+          },
+          "starred": {
+            "type": "boolean",
+            "source": "plugin",
+            "description": "Whether file is starred"
+          }
+        }
+      },
+      "scope": "loop",
+      "produced_by": "read_and_extract_contracts",
+      "consumed_by": [
+        "read_doc_content",
+        "extract_contract_fields"
+      ]
+    },
+    "extracted_contracts": {
+      "schema": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "end_date": {
+              "type": "string",
+              "source": "ai_declared",
+              "description": "Contract end/expiration date in ISO 8601 format (YYYY-MM-DD), or null if not found"
+            },
+            "counterparty": {
+              "type": "string",
+              "source": "ai_declared",
+              "description": "Name of the counterparty to the contract, or null if not found"
+            },
+            "notes": {
+              "type": "string",
+              "source": "ai_declared",
+              "description": "Notes about the extraction (e.g., multiple dates found, date not found, counterparty not identified)"
+            },
+            "doc_title": {
+              "type": "string",
+              "source": "ai_declared",
+              "description": "Title of the document"
+            },
+            "doc_link": {
+              "type": "string",
+              "source": "ai_declared",
+              "description": "Web view link to the document"
+            }
+          },
+          "source": "ai_declared"
+        },
+        "source": "inferred"
+      },
+      "scope": "global",
+      "produced_by": "read_and_extract_contracts",
+      "consumed_by": [
+        "compute_days_remaining"
+      ]
+    },
+    "doc_content": {
+      "schema": {
+        "type": "object",
+        "source": "plugin",
+        "properties": {
+          "file_id": {
+            "type": "string",
+            "source": "plugin",
+            "description": "ID of the file that was read"
+          },
+          "file_name": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Name of the file"
+          },
+          "file_size": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Human-readable file size (e.g., '1.5 MB')"
+          },
+          "mime_type": {
+            "type": "string",
+            "source": "plugin",
+            "description": "MIME type of the file"
+          },
+          "content": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Text content extracted from the file"
+          },
+          "content_length": {
+            "type": "number",
+            "source": "plugin",
+            "description": "Length of the extracted content in characters"
+          },
+          "export_format": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Format the file was exported as (text/plain, text/html, or 'original')"
+          },
+          "read_at": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Timestamp when file was read (ISO 8601)"
+          }
+        }
+      },
+      "scope": "loop",
+      "produced_by": "read_doc_content",
+      "consumed_by": [
+        "extract_contract_fields"
+      ]
+    },
+    "extracted_fields": {
+      "schema": {
+        "type": "object",
+        "properties": {
+          "end_date": {
+            "type": "string",
+            "source": "ai_declared",
+            "description": "Contract end/expiration date in ISO 8601 format (YYYY-MM-DD), or null if not found"
+          },
+          "counterparty": {
+            "type": "string",
+            "source": "ai_declared",
+            "description": "Name of the counterparty to the contract, or null if not found"
+          },
+          "notes": {
+            "type": "string",
+            "source": "ai_declared",
+            "description": "Notes about the extraction (e.g., multiple dates found, date not found, counterparty not identified)"
+          },
+          "doc_title": {
+            "type": "string",
+            "source": "ai_declared",
+            "description": "Title of the document"
+          },
+          "doc_link": {
+            "type": "string",
+            "source": "ai_declared",
+            "description": "Web view link to the document"
+          }
+        },
+        "source": "ai_declared"
+      },
+      "scope": "loop",
+      "produced_by": "extract_contract_fields",
+      "consumed_by": [
+        "read_and_extract_contracts"
+      ]
+    },
+    "contracts_with_days": {
+      "schema": {
+        "type": "array",
+        "source": "ai_declared",
+        "items": {
+          "type": "object",
+          "source": "ai_declared",
+          "properties": {
+            "end_date": {
+              "type": "string",
+              "source": "ai_declared"
+            },
+            "counterparty": {
+              "type": "string",
+              "source": "ai_declared"
+            },
+            "notes": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "doc_title": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "doc_link": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "days_remaining": {
+              "type": "number",
+              "source": "ai_declared"
+            },
+            "has_end_date": {
+              "type": "boolean",
+              "source": "ai_declared",
+              "required": true
+            }
+          }
+        }
+      },
+      "scope": "global",
+      "produced_by": "compute_days_remaining",
+      "consumed_by": [
+        "split_by_end_date_status"
+      ]
+    },
+    "expiring_soon": {
+      "schema": {
+        "type": "array",
+        "source": "inferred",
+        "items": {
+          "type": "object",
+          "source": "ai_declared",
+          "properties": {
+            "end_date": {
+              "type": "string",
+              "source": "ai_declared"
+            },
+            "counterparty": {
+              "type": "string",
+              "source": "ai_declared"
+            },
+            "notes": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "doc_title": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "doc_link": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "days_remaining": {
+              "type": "number",
+              "source": "ai_declared"
+            },
+            "has_end_date": {
+              "type": "boolean",
+              "source": "ai_declared",
+              "required": true
+            }
+          }
+        }
+      },
+      "scope": "global",
+      "produced_by": "split_by_end_date_status",
+      "consumed_by": [
+        "sort_expiring_by_date"
+      ]
+    },
+    "missing_end_date": {
+      "schema": {
+        "type": "array",
+        "source": "inferred",
+        "items": {
+          "type": "object",
+          "source": "ai_declared",
+          "properties": {
+            "end_date": {
+              "type": "string",
+              "source": "ai_declared"
+            },
+            "counterparty": {
+              "type": "string",
+              "source": "ai_declared"
+            },
+            "notes": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "doc_title": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "doc_link": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "days_remaining": {
+              "type": "number",
+              "source": "ai_declared"
+            },
+            "has_end_date": {
+              "type": "boolean",
+              "source": "ai_declared",
+              "required": true
+            }
+          }
+        }
+      },
+      "scope": "global",
+      "produced_by": "split_by_end_date_status",
+      "consumed_by": [
+        "generate_email_body"
+      ]
+    },
+    "expiring_count": {
+      "schema": {
+        "type": "number",
+        "description": "Count of expiring_count",
+        "source": "inferred"
+      },
+      "scope": "global",
+      "produced_by": "split_by_end_date_status",
+      "consumed_by": [
+        "generate_email_body"
+      ]
+    },
+    "missing_count": {
+      "schema": {
+        "type": "number",
+        "description": "Count of missing_count",
+        "source": "inferred"
+      },
+      "scope": "global",
+      "produced_by": "split_by_end_date_status",
+      "consumed_by": [
+        "generate_email_body"
+      ]
+    },
+    "split_results": {
+      "schema": {
+        "type": "object",
+        "properties": {
+          "expiring_soon": {
+            "type": "array",
+            "source": "inferred",
+            "items": {
+              "type": "object",
+              "source": "ai_declared",
+              "properties": {
+                "end_date": {
+                  "type": "string",
+                  "source": "ai_declared"
+                },
+                "counterparty": {
+                  "type": "string",
+                  "source": "ai_declared"
+                },
+                "notes": {
+                  "type": "string",
+                  "source": "ai_declared",
+                  "required": true
+                },
+                "doc_title": {
+                  "type": "string",
+                  "source": "ai_declared",
+                  "required": true
+                },
+                "doc_link": {
+                  "type": "string",
+                  "source": "ai_declared",
+                  "required": true
+                },
+                "days_remaining": {
+                  "type": "number",
+                  "source": "ai_declared"
+                },
+                "has_end_date": {
+                  "type": "boolean",
+                  "source": "ai_declared",
+                  "required": true
+                }
+              }
+            }
+          },
+          "missing_end_date": {
+            "type": "array",
+            "source": "inferred",
+            "items": {
+              "type": "object",
+              "source": "ai_declared",
+              "properties": {
+                "end_date": {
+                  "type": "string",
+                  "source": "ai_declared"
+                },
+                "counterparty": {
+                  "type": "string",
+                  "source": "ai_declared"
+                },
+                "notes": {
+                  "type": "string",
+                  "source": "ai_declared",
+                  "required": true
+                },
+                "doc_title": {
+                  "type": "string",
+                  "source": "ai_declared",
+                  "required": true
+                },
+                "doc_link": {
+                  "type": "string",
+                  "source": "ai_declared",
+                  "required": true
+                },
+                "days_remaining": {
+                  "type": "number",
+                  "source": "ai_declared"
+                },
+                "has_end_date": {
+                  "type": "boolean",
+                  "source": "ai_declared",
+                  "required": true
+                }
+              }
+            }
+          },
+          "expiring_count": {
+            "type": "number",
+            "description": "Count of expiring_count",
+            "source": "inferred"
+          },
+          "missing_count": {
+            "type": "number",
+            "description": "Count of missing_count",
+            "source": "inferred"
+          }
+        },
+        "source": "inferred"
+      },
+      "scope": "global",
+      "produced_by": "split_by_end_date_status"
+    },
+    "sorted_expiring": {
+      "schema": {
+        "type": "array",
+        "source": "inferred",
+        "items": {
+          "type": "object",
+          "source": "ai_declared",
+          "properties": {
+            "end_date": {
+              "type": "string",
+              "source": "ai_declared"
+            },
+            "counterparty": {
+              "type": "string",
+              "source": "ai_declared"
+            },
+            "notes": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "doc_title": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "doc_link": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "days_remaining": {
+              "type": "number",
+              "source": "ai_declared"
+            },
+            "has_end_date": {
+              "type": "boolean",
+              "source": "ai_declared",
+              "required": true
+            }
+          }
+        }
+      },
+      "scope": "global",
+      "produced_by": "sort_expiring_by_date",
+      "consumed_by": [
+        "generate_email_body"
+      ]
+    },
+    "email_content": {
+      "schema": {
+        "type": "object",
+        "properties": {
+          "subject": {
+            "type": "string",
+            "source": "ai_declared",
+            "description": "Email subject line for the contract summary"
+          },
+          "body": {
+            "type": "string",
+            "source": "ai_declared",
+            "description": "Full HTML email body with styled table(s)"
+          }
+        },
+        "source": "ai_declared"
+      },
+      "scope": "global",
+      "produced_by": "generate_email_body",
+      "consumed_by": [
+        "send_summary_email"
+      ]
+    }
+  }
+}
