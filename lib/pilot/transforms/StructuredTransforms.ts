@@ -94,11 +94,20 @@ export function transformWithFields(
       ...(item && typeof item === 'object' && !Array.isArray(item) ? item : { value: item }),
     };
     for (const field of fields) {
-      if (typeof field?.name !== 'string' || !field.expression) {
+      if (typeof field?.name !== 'string') {
         throw new StructuredTransformError(
           `with_fields: invalid field declaration (expected {name, expression}): ${JSON.stringify(field)}`,
           'INVALID_CONFIG'
         );
+      }
+      // WP-37: tolerate `expression: undefined` (post-resolveAllVariables
+      // mangling of a template that resolved to undefined). The output field
+      // gets undefined value, matching what would happen if the user had
+      // written {kind: "literal", value: undefined}. Surfaces the missing
+      // data downstream rather than crashing the whole scatter.
+      if (field.expression === undefined) {
+        augmented[field.name] = undefined;
+        continue;
       }
       augmented[field.name] = evaluateExpression(field.expression, item, context, evaluator);
     }

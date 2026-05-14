@@ -52,6 +52,8 @@ The weak points are ordered by likelihood of causing failures as new scenarios a
 | [WP-34](#wp-34-deterministicextractor-swallows-pdf-parse-exceptions-and-document-extractor-silently-fabricates-unknown-defaults) | The `document-extractor.extract_structured_data` plugin invokes `DeterministicExtractor` which catches all errors in its main flow and returns a `createFailureResult` (success=false, all fields missing, `method: "text"`). The plugin then applies `"Unknown <FieldName>"` defaults at [`document-extractor-plugin-executor.ts:149`](../../lib/server/document-extractor-plugin-executor.ts#L149) for any required field that came back null/empty. The combination means: when an image-based PDF (no text layer) is passed and `pdfDetector.detect()` either throws or returns empty text, AND AWS Textract is unconfigured (no `AWS_ACCESS_KEY_ID`), AND vision/LLM fallback is not wired in — the workflow does not fail. Instead, downstream consumers receive fabricated `"Unknown Type"`, `"Unknown Vendor"`, etc. as if real data. WP-13-family fabrication risk: the user gets an email that looks legitimate but contains made-up values. Secondary cosmetic: [`gmail-plugin-executor.ts:271-275`](../../lib/server/gmail-plugin-executor.ts#L271-L275) still sets `result.extracted_text = "(PDF text extraction not yet implemented)"` for any PDF attachment — a 2026-02 stub that downstream doesn't actually use (document-extractor reads `data` directly), but is confusing. | P1 | ⬜ Documented — fix deferred (multi-component change) |
 | [WP-35](#wp-35-phase-a-simulator-doesnt-understand-array-index-syntax-in-template-refs) | The Phase A DSL execution simulator (`scripts/test-dsl-execution-simulator/`) doesn't understand the `field[N]` array-index syntax inside `{{...}}` template refs. For `{{contracts_folder_results.files[0].id}}`, `VariableStore._lookupRef` splits on `.` and tries `value["files[0]"]` (literal property lookup) which is `undefined` → ref marked unresolved. Separately, `Validator.checkCrossStepFieldRefs` takes `parts[1] = "files[0]"` as a literal field name and checks against the schema's known fields, finds `files` but not `files[0]` → emits `cross_step_field_ref` error. Both fire at severity `error`, causing Phase A to fail. **The runtime `ExecutionContext.resolveVariable` handles this syntax correctly** — only the simulator is strict. Affects any scenario where the LLM uses `{{var.field[N].subfield}}` to extract "the Nth element then sub-access" (most commonly the first folder/file from a search result). Documented 2026-04-10 as a known false positive in the now-removed `verification_status` block of contract-enddate-summary. | P2 | ⬜ Documented — fix to follow |
 | [WP-36](#wp-36-phase-d-stub-generator-emits-generic-mock_name_nnn-that-fails-keyword-filters) | The Phase D stub data generator at [`stub-data-generator.ts:210`](../../scripts/test-dsl-execution-simulator/stub-data-generator.ts#L210) falls through to `mock_${fieldName}_${idx}` for the `name` field — producing `mock_name_001`, `mock_name_002`, `mock_name_003`. When the LLM emits a `transform/filter` step with `contains_any` operator and content-specific keywords (e.g., `["Contract", "Agreement", "MSA", "SOW", "Order Form", "Statement of Work"]`), zero mock items match → filter produces 0 results → `on_empty: "throw"` correctly fires because the filter feeds a scatter-gather → Phase D aborts with `Transform step produced 0 results from 3 input items`. The runtime safety check is right; the mock data is the problem. Real Drive/Sheets data has realistic names that would match. PD-1 family (Phase D realism gap). Affects any scenario using keyword-substring filters on file/document names — `contract-enddate-summary` is the first to surface it because earlier scenarios filtered on enum fields (`labels`, `urgency`, `priority`) which happen to align with generic mocks. | P2 | ⬜ Documented — fix to follow |
+| [WP-37](#wp-37-transformwithfields-rejects-undefined-expressions-when-resolveallvariables-pre-substituted-an-unresolvable-template) | `with_fields.fields[].expression` is meant to be a structured AST node (after WP-33) but the runtime pipeline still pre-runs `ExecutionContext.resolveAllVariables` on the whole step config. When the LLM emits a template-string expression like `"{{attachment_item.thread_id}}"` and that path is unresolvable in the current context (e.g., `thread_id` not propagated by an upstream flatten), `resolveAllVariables`'s whole-template branch returns `undefined` and writes it back. `JSON.stringify` then drops the undefined → the runtime sees `{name: "thread_id"}` (expression silently gone) → `transformWithFields`'s `!field.expression` guard throws `INVALID_CONFIG` before WP-33's `evaluateExpression` tolerance can normalize the string. Net result: scatter-gather "all N items failed" cascading abort. Same family as WP-22 / WP-30 / WP-32 / WP-33 — runtime pre-processing destroys valid LLM intent. | P1 | ⬜ Documented — fix to follow |
+| [WP-38](#wp-38-self-referential-gmail-queries-pick-up-the-agents-own-past-confirmation-emails) | Gmail-search workflows that send a confirmation email containing a phrase like `"Orders PO Extraction – Processing Complete"` create a **self-referential feedback loop**: the next run's query `subject:Orders newer_than:7d` matches the agent's own prior confirmation email (because it has "Orders" in the subject). The cascade then processes that confirmation email as if it were a real order — its `attachments: []` correctly propagates through, producing a "no data" downstream result and another confirmation email. The agent keeps sending itself confirmation emails about confirmation emails. Affects `orders-po-extractor-xlsx`, `po-monitor-supplier-confirmation`, and any scenario where the LLM emits both (a) a Gmail search filtering on a domain keyword, and (b) a confirmation email containing that keyword in its subject. Pipeline-correctness-wise nothing is broken (no fabrication, accurate "no data" message), but the data shape is misleading — the unique extraction/grouping logic NEVER GETS TESTED because the only matching email is the agent's own self-output. PD-1/PD-3 realism family. Prompt-level fix: query exclusions like `-from:me` or `-subject:"Processing Complete"`; or quoted-subject filters like `subject:"Order PO"` that target the user-facing pattern, not the agent's confirmation phrasing. | P3 | ⬜ Documented — prompt-level fix deferred (scenario-author concern, not pipeline bug) |
 
 ---
 
@@ -1219,6 +1221,223 @@ Auto-converting `ai_processing` on an array into a scatter would change semantic
 - The W5 measurement starts surfacing this as a recurring `generate/internal` pattern.
 
 **Compounding with WP-13 / WP-14:** WP-13 documented bulk AI's tendency to fabricate when input is empty; WP-14 documented scatter token bloat from full-item merges. WP-19 is the missing third leg — the choice between bulk and scatter at emission time. All three are facets of "LLM-on-collections is risky and needs structural guardrails."
+
+---
+
+### WP-38: Self-referential Gmail queries pick up the agent's own past confirmation emails
+
+**Severity:** P3 — pipeline-correctness-wise nothing is broken (no fabrication, accurate "no data" output). But the unique-to-scenario logic (extraction, grouping, scatter delivery) NEVER gets exercised because the only "matching" email is the agent's own self-output from a prior run. Phase E "passes" without testing what the scenario is actually for.
+**Encountered as:** Phase E on `po-monitor-supplier-confirmation` (2026-05-14). step1 (`google-mail.search_emails` with query `subject:Orders newer_than:7d`) returned 1 email — but it was the agent's OWN prior confirmation email from `orders-po-extractor-xlsx` ("Orders PO Extraction – Processing Complete"). That email has `attachments: []`, so step3 (flatten attachments) produced 0 items → cascade through with empty downstream → final email reports "no data."
+**Status:** ⬜ Documented — prompt-level fix deferred (scenario-author concern, not pipeline bug)
+
+**Problem:** Workflows that meet ALL three conditions create a self-referential feedback loop:
+
+1. **Gmail search with a domain-keyword subject filter** (`subject:Orders`, `subject:Invoice`, `subject:PO`, etc.)
+2. **Confirmation email at the end of the workflow** sent back to the same inbox the search reads
+3. **The confirmation email's subject contains the keyword** (e.g., "Orders PO Extraction – Processing Complete" contains "Orders")
+
+The next run's search matches the prior confirmation. The cascade processes the confirmation as if it were a real domain event, finds no attachments, sends another confirmation. The agent keeps confirming confirmations.
+
+**Concrete cascade (po-monitor-supplier-confirmation, 2026-05-14):**
+
+```
+Prior run's confirmation email lands in inbox:
+  Subject: "Orders PO Extraction – Processing Complete"
+  Body: "Total vendors processed: 0. Total line-item rows extracted: 0..."
+  Attachments: []
+
+Current run:
+  step1 search_emails(query="subject:Orders newer_than:7d") → 1 email (the prior confirmation)
+  step2 filter has-attachments → 1 (passed through; possibly redundant filter bug — see below)
+  step3 flatten attachments → 0
+  step4 filter mime types → 0
+  step5-11 (scatter over attachments) → all empty
+  step12-15 (compose + send confirmation) → "no data" email delivered
+```
+
+Pipeline reports `success: true`, user receives accurate "no data" notification. But step5's scatter body (extraction, AI processing, reply-in-thread) — **the entire reason this scenario exists** — never ran on real data.
+
+**Affected scenarios:**
+
+- `orders-po-extractor-xlsx` — subject filter `Orders`, confirmation subject contains "Orders"
+- `po-monitor-supplier-confirmation` — subject filter `Orders`, confirmation subject contains "Orders"
+- Potentially any future scenario where the LLM emits both surface patterns
+
+**Side observation — possible step2 filter inconsistency:**
+
+In the canonical failure, step2 was described as "Keep only emails that have at least one attachment" but kept the email despite `attachments: []`. The filter's actual condition may check a different field (e.g., a `has_attachments` boolean from Gmail metadata) instead of `attachments.length > 0`. This is **defense-in-depth that didn't fire** — the workflow still produced the correct downstream "no data" because step3 (flatten) handled empty attachments cleanly. Worth investigating separately, but secondary to the self-referential query issue.
+
+**Fix shape — prompt-level, not code**
+
+The LLM's IntentContract emission needs to be steered toward queries that exclude the agent's own emails. Three options ranked by likely impact:
+
+1. **Phase 1 prompt addition:** in the section that explains how to compose Gmail search queries, add a rule: *"Always exclude self-sent emails for inbox-monitor scenarios. Default to `-from:me` (or `-from:<current_user_email>` if available)."* This is the broadest fix.
+
+2. **Confirmation-email subject change:** the LLM should be steered away from putting the domain keyword in the confirmation subject. E.g., "Orders PO Extraction – Processing Complete" should be "Daily PO Summary" or "Workflow Completed" — without "Orders" in the subject. The trade-off: less informative confirmation subjects.
+
+3. **Per-scenario `enhanced-prompt.json` hint:** for affected scenarios, add a user-facing prompt hint like *"exclude self-sent emails when monitoring inbox for orders."* Most surgical, but per-scenario maintenance burden.
+
+Recommended: option 1. The Phase 1 prompt is the natural place to encode "the agent should not read its own emails" — it's a general workflow design principle, not scenario-specific.
+
+**Why this isn't a code bug:**
+
+Every layer of the pipeline did the right thing:
+- Gmail returned what the query asked for
+- The flatten transform correctly handled empty attachments
+- WP-13's no-fabrication guard fired (final email accurately reports "no data")
+- The conditional reply-in-thread step correctly skipped (no supplier_email to reply to)
+
+The failure is *semantic* — the workflow correctly produced an accurate report, but the report wasn't meaningful because the input was the agent's own past output.
+
+**Why "documented but deferred":**
+
+Fixing this requires Phase 1 prompt engineering and regen sweeps to validate the new query patterns across all 10 scenarios. That's a larger change than the runtime tolerance fixes we've been making. For now: document, accept that affected scenarios won't validate their unique extraction logic in Phase E without manual prompt fixes, and revisit when there's appetite for a Phase 1 prompt iteration.
+
+**Workarounds for re-running affected scenarios:**
+
+- Delete the agent's prior confirmation emails from the test inbox before re-running, OR
+- Manually edit the phase4 search query to `subject:Orders newer_than:7d -from:me`, OR
+- Send yourself a test email with the right shape (real PO subject, real XLSX attachment) and a confirmation-subject that doesn't contain "Orders."
+
+**Cross-references:**
+
+- [PD-1](#pd-1-realistic-plugin-mock-payloads-high-value) — Phase D realism gap. WP-38 is the Phase E parallel: Phase E uses real data but the "real" data is contaminated by prior agent runs.
+- [PD-3](#pd-3-token-budget-warnings) — same family; both are "Phase E doesn't tell you when your test is meaningless."
+
+---
+
+### WP-37: `transformWithFields` rejects undefined expressions when `resolveAllVariables` pre-substituted an unresolvable template
+
+**Severity:** P1 — scatter-gather aborts with "all N items failed" when any `with_fields` field references a path that doesn't resolve in the current scatter context. Cascades to no email / no downstream action.
+**Encountered as:** Phase D on `po-monitor-supplier-confirmation` (2026-05-14). step8 (`transform/with_fields` building a normalized PO row) failed all 9 scatter items with `with_fields: invalid field declaration (expected {name, expression}): {"name":"thread_id"}`. The phase4 file has the correct `expression: "{{attachment_item.thread_id}}"` on disk.
+**Status:** ⬜ Documented — fix to follow
+
+**Problem:** Three-layer cascade of pre-existing components combining into a new failure mode.
+
+#### Layer 1 — Phase4 stores template-string expression (WP-33 case)
+
+The LLM emits a `with_fields` field as:
+
+```json
+{
+  "name": "thread_id",
+  "expression": "{{attachment_item.thread_id}}"
+}
+```
+
+WP-33 added IR converter normalization to convert this to `{kind: "ref", ref: "item", field: "thread_id"}` at compile time, AND added runtime tolerance in `evaluateExpression`. But the IR converter normalization only fires on FRESH compiles — when the LLM emits this shape in a regen sweep, the converter rewrites it. For phase4 files compiled BEFORE that converter change (or for paths the converter doesn't traverse), the template-string survives into the saved DSL.
+
+#### Layer 2 — `resolveAllVariables` pre-substitutes the template
+
+[`ExecutionContext.resolveAllVariables`](../../lib/pilot/ExecutionContext.ts) recursively walks the step config before the transform runs:
+
+```ts
+if (typeof obj === 'string') {
+  if (obj.match(/^\{\{.*\}\}$/)) {
+    return this.resolveVariable(obj);   // ← returns undefined when path unresolvable
+  }
+  // ...
+}
+```
+
+For `expression: "{{attachment_item.thread_id}}"`, it calls `resolveVariable`. The scatter's itemVariable is `attachment_item`, but the attachment item's actual data (post-step2 flatten) doesn't have `thread_id` directly — Gmail's `attachments` schema is `{filename, mimeType, size, attachment_id, message_id}`. The thread_id lives on the parent email, not the attachment. So `resolveVariable` returns `undefined`.
+
+The whole-template branch writes `undefined` back to `field.expression`. `field` is now `{name: "thread_id", expression: undefined}`.
+
+#### Layer 3 — `transformWithFields`'s `!field.expression` guard fires before WP-33 tolerance
+
+[`StructuredTransforms.ts:97-102`](../../lib/pilot/transforms/StructuredTransforms.ts#L97):
+
+```ts
+for (const field of fields) {
+  if (typeof field?.name !== 'string' || !field.expression) {
+    throw new StructuredTransformError(
+      `with_fields: invalid field declaration (expected {name, expression}): ${JSON.stringify(field)}`,
+      'INVALID_CONFIG'
+    );
+  }
+  augmented[field.name] = evaluateExpression(field.expression, item, context, evaluator);
+}
+```
+
+`!undefined` is true → throws. WP-33's tolerance in `evaluateExpression` (which handles strings via `normalizeStringExpression`) is never reached because the guard short-circuits first.
+
+`JSON.stringify({name: "thread_id", expression: undefined})` returns `{"name":"thread_id"}` — exactly the error message we saw.
+
+#### Trigger scenarios
+
+Any `transform/with_fields` step where the LLM:
+1. Emits a template-string expression (instead of structured AST), AND
+2. References a path that's unresolvable in the current scope.
+
+Most common cause for (2): the per-item-nested flatten (WP-32) doesn't propagate parent metadata into the flattened items, so refs to parent fields fail. `po-monitor-supplier-confirmation` is the first scenario to combine both patterns:
+- step2 flattens attachments per email (per-item-nested, WP-32)
+- step8 with_fields tries to add `thread_id` from parent → unresolvable
+- step9-10 then need `thread_id` to reply in-thread
+
+#### Fix shape — runtime tolerance in `transformWithFields`
+
+Mirror WP-33's "be liberal at runtime" philosophy. When `field.expression` is `undefined` (post-mangling), treat it as `{kind: "literal", value: undefined}`. The augmented row gets `field.name: undefined` — same semantic as the user explicitly writing a literal undefined.
+
+```ts
+for (const field of fields) {
+  if (typeof field?.name !== 'string') {
+    throw new StructuredTransformError(
+      `with_fields: invalid field declaration (expected {name}): ${JSON.stringify(field)}`,
+      'INVALID_CONFIG'
+    );
+  }
+  // WP-37: tolerate `expression: undefined` (post-resolveAllVariables mangling
+  // of a template that resolved to undefined). The output field gets undefined
+  // value, matching what would happen if the user had written {kind: "literal",
+  // value: undefined}. Surfaces the missing-data downstream rather than crashing
+  // the whole scatter.
+  if (field.expression === undefined) {
+    augmented[field.name] = undefined;
+    continue;
+  }
+  augmented[field.name] = evaluateExpression(field.expression, item, context, evaluator);
+}
+```
+
+Note: keep the `name` check separate — a field with no name is genuinely invalid. Only `expression === undefined` gets the new tolerance.
+
+**Why not also `null` or `''`?** A user could legitimately write `expression: {kind: "literal", value: ""}` — that's a non-empty expression object. The `expression === undefined` check is specifically targeting the resolveAllVariables-mangling case. `null` would be similar to undefined; we could add it too but undefined is the observed shape.
+
+**Why this is safe:** the LLM's intent was "compute this field from a path." If the path doesn't resolve, the field is missing. Returning `undefined` in the augmented row preserves that — downstream sees the field is missing and can branch accordingly (e.g., step9's conditional check for `has_supplier_email` will correctly flag the row as needing review).
+
+#### Long-term consideration
+
+The deeper issue is that `resolveAllVariables` pre-substitutes template strings in places where the runtime evaluator should handle resolution. WP-33's IR converter normalization eliminates this for fresh regens (structured AST never gets pre-substituted), but cached/legacy phase4 files still have raw template strings. Two follow-ons worth considering (deferred):
+
+- **A.** Make `resolveAllVariables` configurable to skip specific paths (e.g., `with_fields.fields[].expression`). Surgical exception that introduces a path-aware filter.
+- **B.** One-time migration sweep over all committed phase4 snapshots to convert template-string expressions to structured AST, eliminating the legacy case.
+
+Both deferred. Runtime tolerance in `transformWithFields` is sufficient for this scenario and any future legacy-file replays.
+
+**Files:**
+
+- `lib/pilot/transforms/StructuredTransforms.ts` (~5 lines: rework the guard + add undefined-tolerance branch)
+- `lib/pilot/__tests__/StructuredTransforms.wp37.test.ts` (new — undefined expression, regression for invalid-name cases, end-to-end with_fields call with mixed valid/undefined fields)
+
+**Test coverage to add:**
+
+1. ✅ `transformWithFields` with `field.expression === undefined` produces row with `field.name: undefined` (no throw)
+2. ✅ `transformWithFields` with `field.expression === undefined` AND other fields present — other fields evaluate correctly
+3. ✅ Regression: `field.name` missing still throws
+4. ✅ Regression: structured AST `{kind, ...}` still evaluates correctly
+5. ✅ Regression: literal value `0`, `""`, `false` still evaluate correctly (they're not undefined)
+6. ✅ End-to-end: canonical po-monitor pattern — scatter-item missing `thread_id`, with_fields produces row with `thread_id: undefined` instead of throwing
+
+**Why this wasn't caught earlier:**
+
+- WP-33's tolerance in `evaluateExpression` looked complete because the test stubs called `evaluateExpression` directly with various input shapes. The test suite never went through `transformWithFields`'s upstream guard with a `field.expression = undefined` input.
+- Earlier scenarios didn't trigger because their `with_fields` expressions referenced paths that DID resolve in the mock data, OR they used structured AST (post-W3-prompt-update regens).
+- po-monitor is the first scenario to combine: (a) per-item-nested flatten without parent propagation, (b) downstream `with_fields` referencing parent fields, (c) template-string emission style.
+
+#### Compounding observation
+
+WP-37 is the fifth runtime-tolerance fix in the "convention-mismatch" family (WP-22 / WP-30 / WP-32 / WP-33 / WP-37). The pattern keeps recurring: the LLM emits a syntactically valid form that's slightly off the strict runtime contract, and some layer of pre-processing fails ungracefully. Each fix is one-line surgical, but the cumulative pattern suggests the runtime contract is too strict for what the LLM actually emits. **Long-term:** consider auditing all `transform/*` runtime guards for similar "throws on shape mismatch" patterns vs "tolerates and continues" patterns — the latter is more aligned with how the LLM behaves.
 
 ---
 

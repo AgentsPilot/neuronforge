@@ -1,12 +1,15 @@
 {
   "name": "Purchase Order Monitor + Supplier Confirmation Agent",
-  "description": "Search Gmail for order emails, extract PO details from attachments, generate HTML summary to multiple recipients, reply in-thread to suppliers with confirmation. Tests attachment extraction + multi-recipient delivery + thread reply.",
+  "description": "Search Gmail for order emails, extract PO details from attachments, generate HTML summary to multiple recipients, reply in-thread to suppliers with confirmation. Tests attachment extraction + multi-recipient delivery + thread reply. **Phase E result (2026-05-14):** pipeline ran end-to-end successfully (9/9 steps, success=true, 'no data' confirmation email delivered). Surfaced and fixed WP-37 (transformWithFields rejected undefined expressions from resolveAllVariables pre-substitution of unresolvable templates — was aborting scatter with 'all 9 items failed' at step8). Surfaced and documented WP-38 (self-referential query): step1's `subject:Orders newer_than:7d` matched the agent's own prior confirmation email from `orders-po-extractor-xlsx` ('Orders PO Extraction – Processing Complete'), which has empty attachments → cascade processed 0 attachments → 'no data' email delivered accurately. The unique scenario logic (document-extractor on PO attachments, transform/group, reply-in-thread to suppliers, multi-recipient HTML summary delivery) was NOT exercised because the input was effectively empty. Pipeline correctness verified; extraction-and-reply logic UNTESTED.",
   "created": "2026-04-01",
   "plugins": ["google-mail"],
   "expected": {
     "min_steps": 4,
     "step_types": ["action", "transform", "ai_processing", "scatter_gather"],
     "phase_a_checks": 14,
-    "phase_d_success": true
+    "phase_d_success": true,
+    "phase_e_success": "pipeline_passed_no_data",
+    "phase_e_success_timestamp": "2026-05-14T13:48:30Z",
+    "phase_e_caveat": "Pipeline ran 9/9 steps end-to-end with success=true and delivered a 'no data' confirmation email. Real Gmail returned 1 email matching `subject:Orders newer_than:7d`, but that email was the agent's own prior confirmation from orders-po-extractor-xlsx ('Orders PO Extraction – Processing Complete') with empty attachments (WP-38 self-referential query). step3 flatten correctly produced 0 attachments → cascade correctly produced empty downstream → final email accurately reports 'no data.' WP-37 fix verified working (with_fields scatter at step5 completed all items instead of aborting). UNTESTED: the unique scenario logic — document-extractor on real PO attachments, transform/group by vendor, reply-in-thread to suppliers (step10), multi-recipient HTML summary delivery (step12-13). Needs re-run with real PO emails (or `-from:me` query exclusion per WP-38 fix) to validate the extraction + reply path."
   }
 }

@@ -455,9 +455,19 @@ describe('transformWithFields', () => {
     expect(() => withFields([], { fields: [] })).toThrow(/non-empty `fields`/);
   });
 
-  it('throws on malformed field declaration', () => {
-    expect(() => withFields([{}], { fields: [{ name: 'x' }] })).toThrow(/invalid field declaration/);
+  it('throws on malformed field declaration (missing name)', () => {
+    // WP-37: missing/undefined `expression` is now tolerated (treated as
+    // undefined value to surface the missing-data downstream rather than
+    // crashing the whole scatter). Only a missing `name` is genuinely
+    // invalid — there's no way to attach the result to anything.
     expect(() => withFields([{}], { fields: [{ expression: {} }] })).toThrow(/invalid field declaration/);
+  });
+
+  it('WP-37: tolerates missing/undefined expression by producing undefined value', () => {
+    expect(withFields([{ a: 1 }], { fields: [{ name: 'x' }] })).toEqual([{ a: 1, x: undefined }]);
+    expect(withFields([{ a: 1 }], { fields: [{ name: 'x', expression: undefined }] })).toEqual([
+      { a: 1, x: undefined },
+    ]);
   });
 
   it('handles non-array input by wrapping single item', () => {

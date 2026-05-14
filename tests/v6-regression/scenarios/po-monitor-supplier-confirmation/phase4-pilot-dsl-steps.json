@@ -1,0 +1,1115 @@
+[
+  {
+    "step_id": "step1",
+    "type": "action",
+    "description": "Search Gmail for emails with subject containing 'Orders' from the last 7 days, including attachment metadata",
+    "plugin": "google-mail",
+    "output_variable": "order_emails",
+    "output_schema": {
+      "type": "object",
+      "source": "plugin",
+      "description": "Search results with email details",
+      "properties": {
+        "emails": {
+          "type": "array",
+          "source": "plugin",
+          "description": "Array of matching emails",
+          "items": {
+            "type": "object",
+            "source": "plugin",
+            "semantic_type": "email_message",
+            "properties": {
+              "id": {
+                "type": "string",
+                "source": "plugin",
+                "description": "Gmail message ID"
+              },
+              "thread_id": {
+                "type": "string",
+                "source": "plugin",
+                "description": "Gmail thread ID"
+              },
+              "subject": {
+                "type": "string",
+                "source": "plugin",
+                "description": "Email subject"
+              },
+              "from": {
+                "type": "string",
+                "source": "plugin",
+                "description": "Sender address"
+              },
+              "to": {
+                "type": "string",
+                "source": "plugin",
+                "description": "Recipient addresses"
+              },
+              "date": {
+                "type": "string",
+                "source": "plugin",
+                "description": "Email date"
+              },
+              "snippet": {
+                "type": "string",
+                "source": "plugin",
+                "description": "Email preview snippet (first ~200 chars of email body - USE THIS for content matching/filtering)"
+              },
+              "labels": {
+                "type": "array",
+                "source": "plugin",
+                "description": "Gmail labels",
+                "items": {
+                  "type": "string",
+                  "source": "plugin"
+                }
+              },
+              "body": {
+                "type": "string",
+                "source": "plugin",
+                "description": "Email body text (NOTE: Usually empty in search results - use 'snippet' field instead for email content)"
+              },
+              "attachments": {
+                "type": "array",
+                "source": "plugin",
+                "description": "Attachment metadata (if include_attachments=true). Each item contains: filename, mimeType, size, attachment_id (use with get_email_attachment), message_id (email ID)",
+                "items": {
+                  "type": "object",
+                  "source": "plugin",
+                  "semantic_type": "file_attachment",
+                  "properties": {
+                    "filename": {
+                      "type": "string",
+                      "source": "plugin",
+                      "description": "Attachment filename"
+                    },
+                    "mimeType": {
+                      "type": "string",
+                      "source": "plugin",
+                      "description": "MIME type (application/pdf, image/png, etc.)"
+                    },
+                    "size": {
+                      "type": "number",
+                      "source": "plugin",
+                      "description": "File size in bytes"
+                    },
+                    "attachment_id": {
+                      "type": "string",
+                      "source": "plugin",
+                      "description": "Attachment ID (required for get_email_attachment action)"
+                    },
+                    "message_id": {
+                      "type": "string",
+                      "source": "plugin",
+                      "description": "Email message ID (required for get_email_attachment action)"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "total_found": {
+          "type": "number",
+          "source": "plugin",
+          "description": "Number of emails returned"
+        },
+        "total_available": {
+          "type": "number",
+          "source": "plugin",
+          "description": "Estimated total matching emails"
+        },
+        "search_query": {
+          "type": "string",
+          "source": "plugin",
+          "description": "The search query that was executed"
+        },
+        "searched_at": {
+          "type": "string",
+          "source": "plugin",
+          "description": "ISO 8601 timestamp of search"
+        }
+      }
+    },
+    "id": "step1",
+    "params": {
+      "query": "{{input.gmail_search_query}}",
+      "max_results": 50,
+      "include_attachments": true,
+      "content_level": "full"
+    },
+    "name": "Search Gmail for emails with subject containing 'Orders' from the last 7 days, including attachment metadata",
+    "action": "search_emails"
+  },
+  {
+    "step_id": "step2",
+    "type": "transform",
+    "operation": "filter",
+    "input": "{{order_emails.emails}}",
+    "description": "Keep only emails that have at least one attachment",
+    "config": {
+      "type": "filter",
+      "input": "order_emails.emails",
+      "custom_code": "Keep only emails that have attachments",
+      "condition": {
+        "operator": "exists",
+        "field": "item.attachments",
+        "conditionType": "simple"
+      }
+    },
+    "output_variable": "emails_with_attachments",
+    "output_schema": {
+      "type": "array",
+      "source": "inferred",
+      "description": "Array of matching emails",
+      "items": {
+        "type": "object",
+        "source": "plugin",
+        "semantic_type": "email_message",
+        "properties": {
+          "id": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Gmail message ID"
+          },
+          "thread_id": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Gmail thread ID"
+          },
+          "subject": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Email subject"
+          },
+          "from": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Sender address"
+          },
+          "to": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Recipient addresses"
+          },
+          "date": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Email date"
+          },
+          "snippet": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Email preview snippet (first ~200 chars of email body - USE THIS for content matching/filtering)"
+          },
+          "labels": {
+            "type": "array",
+            "source": "plugin",
+            "description": "Gmail labels",
+            "items": {
+              "type": "string",
+              "source": "plugin"
+            }
+          },
+          "body": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Email body text (NOTE: Usually empty in search results - use 'snippet' field instead for email content)"
+          },
+          "attachments": {
+            "type": "array",
+            "source": "plugin",
+            "description": "Attachment metadata (if include_attachments=true). Each item contains: filename, mimeType, size, attachment_id (use with get_email_attachment), message_id (email ID)",
+            "items": {
+              "type": "object",
+              "source": "plugin",
+              "semantic_type": "file_attachment",
+              "properties": {
+                "filename": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "Attachment filename"
+                },
+                "mimeType": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "MIME type (application/pdf, image/png, etc.)"
+                },
+                "size": {
+                  "type": "number",
+                  "source": "plugin",
+                  "description": "File size in bytes"
+                },
+                "attachment_id": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "Attachment ID (required for get_email_attachment action)"
+                },
+                "message_id": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "Email message ID (required for get_email_attachment action)"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "id": "step2",
+    "_on_empty": "warn",
+    "name": "Keep only emails that have at least one attachment"
+  },
+  {
+    "step_id": "step3",
+    "type": "transform",
+    "operation": "flatten",
+    "input": "{{emails_with_attachments}}",
+    "description": "Extract all attachments from emails into a flat list, preserving parent email context (message_id, thread_id, from, subject)",
+    "config": {
+      "type": "flatten",
+      "input": "emails_with_attachments",
+      "custom_code": "Flatten attachments array from each email, carrying parent email fields (id, thread_id, from, subject) into each attachment record",
+      "output_schema": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "filename": {
+              "type": "string"
+            },
+            "mimeType": {
+              "type": "string"
+            },
+            "size": {
+              "type": "integer"
+            },
+            "attachment_id": {
+              "type": "string"
+            },
+            "message_id": {
+              "type": "string"
+            },
+            "thread_id": {
+              "type": "string"
+            },
+            "from": {
+              "type": "string"
+            },
+            "subject": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "filename",
+            "mimeType",
+            "attachment_id",
+            "message_id",
+            "thread_id",
+            "from",
+            "subject"
+          ]
+        }
+      },
+      "field": "attachments"
+    },
+    "output_variable": "all_attachments",
+    "output_schema": {
+      "type": "array",
+      "source": "ai_declared",
+      "items": {
+        "type": "object",
+        "source": "ai_declared",
+        "properties": {
+          "filename": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "mimeType": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "size": {
+            "type": "number",
+            "source": "ai_declared"
+          },
+          "attachment_id": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "message_id": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "thread_id": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "from": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "subject": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          }
+        }
+      }
+    },
+    "id": "step3",
+    "_on_empty": "warn",
+    "name": "Extract all attachments from emails into a flat list, preserving parent email context (message_id, thread_id, from, subject)"
+  },
+  {
+    "step_id": "step4",
+    "type": "transform",
+    "operation": "filter",
+    "input": "{{all_attachments}}",
+    "description": "Keep only attachments of supported types: PDF, JPG, PNG, DOCX, XLSX",
+    "config": {
+      "type": "filter",
+      "input": "all_attachments",
+      "custom_code": "Filter to only PDF, JPG, PNG, DOCX, XLSX attachments by MIME type",
+      "condition": {
+        "operator": "in",
+        "value": [
+          "application/pdf",
+          "image/jpeg",
+          "image/png",
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        ],
+        "field": "item.mimeType",
+        "conditionType": "simple"
+      }
+    },
+    "output_variable": "supported_attachments",
+    "output_schema": {
+      "type": "array",
+      "source": "inferred",
+      "items": {
+        "type": "object",
+        "source": "ai_declared",
+        "properties": {
+          "filename": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "mimeType": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "size": {
+            "type": "number",
+            "source": "ai_declared"
+          },
+          "attachment_id": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "message_id": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "thread_id": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "from": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "subject": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          }
+        }
+      }
+    },
+    "id": "step4",
+    "_on_empty": "throw",
+    "name": "Keep only attachments of supported types: PDF, JPG, PNG, DOCX, XLSX"
+  },
+  {
+    "step_id": "step5",
+    "type": "scatter_gather",
+    "description": "Loop over supported_attachments",
+    "scatter": {
+      "input": "{{supported_attachments}}",
+      "steps": [
+        {
+          "step_id": "step6",
+          "type": "action",
+          "description": "Download the attachment content (binary data) from Gmail",
+          "plugin": "google-mail",
+          "output_variable": "attachment_content",
+          "output_schema": {
+            "type": "object",
+            "source": "plugin",
+            "description": "Attachment content with metadata",
+            "properties": {
+              "filename": {
+                "type": "string",
+                "source": "plugin",
+                "description": "Attachment filename",
+                "required": true
+              },
+              "mimeType": {
+                "type": "string",
+                "source": "plugin",
+                "description": "MIME type (application/pdf, image/png, etc.)",
+                "required": true
+              },
+              "size": {
+                "type": "number",
+                "source": "plugin",
+                "description": "File size in bytes",
+                "required": true
+              },
+              "data": {
+                "type": "string",
+                "source": "plugin",
+                "description": "Base64-encoded file content for processing"
+              },
+              "extracted_text": {
+                "type": "string",
+                "source": "plugin",
+                "description": "Extracted text from PDF/document (if applicable)"
+              },
+              "is_image": {
+                "type": "boolean",
+                "source": "plugin",
+                "description": "True if attachment is an image"
+              }
+            }
+          },
+          "id": "step6",
+          "params": {
+            "message_id": "{{attachment_item.message_id}}",
+            "attachment_id": "{{attachment_item.attachment_id}}",
+            "filename": "{{attachment_item.filename}}"
+          },
+          "name": "Download the attachment content (binary data) from Gmail",
+          "action": "get_email_attachment"
+        },
+        {
+          "step_id": "step7",
+          "type": "action",
+          "description": "Extract purchase order fields (order date/time, order_ID, Vendor, QTY, cost, amount, status) and supplier email from the attachment content",
+          "plugin": "document-extractor",
+          "output_variable": "extracted_po_data",
+          "output_schema": {
+            "type": "object",
+            "properties": {
+              "order_date_and_time": {
+                "type": "string",
+                "source": "ai_declared",
+                "description": "Order date and time from the purchase order",
+                "required": false
+              },
+              "order_ID": {
+                "type": "string",
+                "source": "ai_declared",
+                "description": "Purchase order ID/number",
+                "required": false
+              },
+              "Vendor": {
+                "type": "string",
+                "source": "ai_declared",
+                "description": "Vendor or supplier name",
+                "required": false
+              },
+              "QTY": {
+                "type": "number",
+                "source": "ai_declared",
+                "description": "Quantity ordered",
+                "required": false
+              },
+              "cost": {
+                "type": "string",
+                "source": "ai_declared",
+                "description": "Unit cost",
+                "required": false
+              },
+              "amount": {
+                "type": "string",
+                "source": "ai_declared",
+                "description": "Total amount",
+                "required": false
+              },
+              "status": {
+                "type": "string",
+                "source": "ai_declared",
+                "description": "Order status",
+                "required": false
+              },
+              "supplier_email": {
+                "type": "string",
+                "source": "ai_declared",
+                "description": "Supplier email address extracted from the PO attachment content (not from the email sender)",
+                "required": false
+              }
+            },
+            "source": "ai_declared"
+          },
+          "id": "step7",
+          "params": {
+            "file_content": "{{attachment_content}}",
+            "fields": [
+              {
+                "name": "order_date_and_time",
+                "type": "string",
+                "required": false
+              },
+              {
+                "name": "order_ID",
+                "type": "string",
+                "required": false
+              },
+              {
+                "name": "Vendor",
+                "type": "string",
+                "required": false
+              },
+              {
+                "name": "QTY",
+                "type": "number",
+                "required": false
+              },
+              {
+                "name": "cost",
+                "type": "currency",
+                "required": false
+              },
+              {
+                "name": "amount",
+                "type": "currency",
+                "required": false
+              },
+              {
+                "name": "status",
+                "type": "string",
+                "required": false
+              },
+              {
+                "name": "supplier_email",
+                "type": "string",
+                "required": false
+              }
+            ]
+          },
+          "name": "Extract purchase order fields (order date/time, order_ID, Vendor, QTY, cost, amount, status) and supplier email from the attachment content",
+          "action": "extract_structured_data"
+        },
+        {
+          "step_id": "step8",
+          "type": "transform",
+          "operation": "with_fields",
+          "input": "{{extracted_po_data}}",
+          "description": "Build a normalized PO row combining extracted fields with parent email context (thread_id, message_id), flagging rows with missing fields as 'Needs review'",
+          "config": {
+            "type": "with_fields",
+            "input": "extracted_po_data",
+            "output_schema": {
+              "type": "object",
+              "properties": {
+                "order_date_and_time": {
+                  "type": "string"
+                },
+                "order_ID": {
+                  "type": "string"
+                },
+                "Vendor": {
+                  "type": "string"
+                },
+                "QTY": {
+                  "type": "number"
+                },
+                "cost": {
+                  "type": "string"
+                },
+                "amount": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string"
+                },
+                "supplier_email": {
+                  "type": "string"
+                },
+                "thread_id": {
+                  "type": "string"
+                },
+                "source_message_id": {
+                  "type": "string"
+                },
+                "has_all_required_fields": {
+                  "type": "boolean"
+                },
+                "has_supplier_email": {
+                  "type": "boolean"
+                },
+                "display_status": {
+                  "type": "string"
+                }
+              }
+            },
+            "fields": [
+              {
+                "name": "thread_id",
+                "expression": "{{attachment_item.thread_id}}"
+              },
+              {
+                "name": "source_message_id",
+                "expression": "{{attachment_item.message_id}}"
+              },
+              {
+                "name": "has_all_required_fields",
+                "expression": {
+                  "kind": "all_not_null",
+                  "refs": [
+                    "order_date_and_time",
+                    "order_ID",
+                    "Vendor",
+                    "QTY",
+                    "cost",
+                    "amount",
+                    "status"
+                  ]
+                }
+              },
+              {
+                "name": "has_supplier_email",
+                "expression": {
+                  "kind": "null_check",
+                  "invert": true,
+                  "value": {
+                    "kind": "ref",
+                    "ref": "item",
+                    "field": "supplier_email"
+                  }
+                }
+              },
+              {
+                "name": "display_status",
+                "expression": {
+                  "kind": "if",
+                  "condition": {
+                    "operator": "eq",
+                    "value": true,
+                    "field": "unknown",
+                    "conditionType": "simple"
+                  },
+                  "then": {
+                    "kind": "ref",
+                    "ref": "item",
+                    "field": "status"
+                  },
+                  "else": {
+                    "kind": "literal",
+                    "value": "Needs review"
+                  }
+                }
+              }
+            ]
+          },
+          "output_variable": "po_row_with_status",
+          "output_schema": {
+            "type": "object",
+            "source": "ai_declared",
+            "properties": {
+              "order_date_and_time": {
+                "type": "string",
+                "source": "ai_declared"
+              },
+              "order_ID": {
+                "type": "string",
+                "source": "ai_declared"
+              },
+              "Vendor": {
+                "type": "string",
+                "source": "ai_declared"
+              },
+              "QTY": {
+                "type": "number",
+                "source": "ai_declared"
+              },
+              "cost": {
+                "type": "string",
+                "source": "ai_declared"
+              },
+              "amount": {
+                "type": "string",
+                "source": "ai_declared"
+              },
+              "status": {
+                "type": "string",
+                "source": "ai_declared"
+              },
+              "supplier_email": {
+                "type": "string",
+                "source": "ai_declared"
+              },
+              "thread_id": {
+                "type": "string",
+                "source": "ai_declared"
+              },
+              "source_message_id": {
+                "type": "string",
+                "source": "ai_declared"
+              },
+              "has_all_required_fields": {
+                "type": "boolean",
+                "source": "ai_declared"
+              },
+              "has_supplier_email": {
+                "type": "boolean",
+                "source": "ai_declared"
+              },
+              "display_status": {
+                "type": "string",
+                "source": "ai_declared"
+              }
+            }
+          },
+          "id": "step8",
+          "name": "Build a normalized PO row combining extracted fields with parent email context (thread_id, message_id), flagging rows with missing fields as 'Needs review'"
+        },
+        {
+          "step_id": "step9",
+          "type": "transform",
+          "operation": "map",
+          "input": "{{po_row_with_status}}",
+          "description": "Map PO row to final output shape preserving all needed fields",
+          "config": {
+            "type": "map",
+            "input": "po_row_with_status",
+            "output_schema": {
+              "type": "object",
+              "properties": {
+                "order_date_and_time": {
+                  "type": "string"
+                },
+                "order_ID": {
+                  "type": "string"
+                },
+                "Vendor": {
+                  "type": "string"
+                },
+                "QTY": {
+                  "type": "number"
+                },
+                "cost": {
+                  "type": "string"
+                },
+                "amount": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string"
+                },
+                "supplier_email": {
+                  "type": "string"
+                },
+                "thread_id": {
+                  "type": "string"
+                },
+                "source_message_id": {
+                  "type": "string"
+                },
+                "has_supplier_email": {
+                  "type": "boolean"
+                }
+              }
+            },
+            "field_mapping": {
+              "order_date_and_time": "order_date_and_time",
+              "order_ID": "order_ID",
+              "Vendor": "Vendor",
+              "QTY": "QTY",
+              "cost": "cost",
+              "amount": "amount",
+              "status": "display_status",
+              "supplier_email": "supplier_email",
+              "thread_id": "thread_id",
+              "source_message_id": "source_message_id",
+              "has_supplier_email": "has_supplier_email"
+            }
+          },
+          "output_variable": "final_po_row",
+          "output_schema": {
+            "type": "object",
+            "source": "ai_declared",
+            "properties": {
+              "order_date_and_time": {
+                "type": "string",
+                "source": "ai_declared"
+              },
+              "order_ID": {
+                "type": "string",
+                "source": "ai_declared"
+              },
+              "Vendor": {
+                "type": "string",
+                "source": "ai_declared"
+              },
+              "QTY": {
+                "type": "number",
+                "source": "ai_declared"
+              },
+              "cost": {
+                "type": "string",
+                "source": "ai_declared"
+              },
+              "amount": {
+                "type": "string",
+                "source": "ai_declared"
+              },
+              "status": {
+                "type": "string",
+                "source": "ai_declared"
+              },
+              "supplier_email": {
+                "type": "string",
+                "source": "ai_declared"
+              },
+              "thread_id": {
+                "type": "string",
+                "source": "ai_declared"
+              },
+              "source_message_id": {
+                "type": "string",
+                "source": "ai_declared"
+              },
+              "has_supplier_email": {
+                "type": "boolean",
+                "source": "ai_declared"
+              }
+            }
+          },
+          "id": "step9",
+          "_on_empty": "warn",
+          "name": "Map PO row to final output shape preserving all needed fields"
+        },
+        {
+          "step_id": "step10",
+          "type": "conditional",
+          "description": "Conditional: node_9",
+          "condition": {
+            "conditionType": "simple",
+            "field": "final_po_row.has_supplier_email",
+            "operator": "equals",
+            "value": true
+          },
+          "steps": [
+            {
+              "step_id": "step11",
+              "type": "action",
+              "description": "Reply in the same email thread with a short acknowledgement confirmation to the supplier email extracted from the PO",
+              "plugin": "google-mail",
+              "id": "step11",
+              "params": {
+                "recipients": {
+                  "to": [
+                    "{{final_po_row.supplier_email}}"
+                  ]
+                },
+                "content": {
+                  "subject": "Re: PO final_po_row.order_ID - Confirmation",
+                  "body": "Confirmed. We received PO final_po_row.order_ID. Thank you."
+                }
+              },
+              "name": "Reply in the same email thread with a short acknowledgement confirmation to the supplier email extracted from the PO",
+              "action": "send_email"
+            }
+          ],
+          "id": "step10",
+          "name": "Conditional: node_9"
+        }
+      ],
+      "itemVariable": "attachment_item"
+    },
+    "gather": {
+      "operation": "collect"
+    },
+    "output_variable": "processed_po_rows",
+    "id": "step5",
+    "name": "Loop over supported_attachments"
+  },
+  {
+    "step_id": "step12",
+    "type": "ai_processing",
+    "input": "{{processed_po_rows}}",
+    "prompt": "Create a professional HTML email body containing a summary table of all purchase order rows. The table must have exactly these columns: 'Order Date & Time', 'Order ID', 'Vendor', 'QTY', 'Cost', 'Amount', 'Status'. Use an HTML <table> with proper <thead> and <tbody>. Style with borders, header row with a dark background and white text, alternating row colors, and padding for readability. Rows where status is 'Needs review' should be highlighted with a light yellow/orange background. Include a title 'Purchase Order Summary' above the table and a footer with the date the report was generated. Each row corresponds to one processed PO attachment from the input array. Use the fields: order_date_and_time, order_ID, Vendor, QTY, cost, amount, status.",
+    "description": "Generate a professional HTML summary table with all PO rows, columns: order date and time, order_ID, Vendor, QTY, cost, amount, status",
+    "config": {
+      "ai_type": "generate",
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "subject": {
+            "type": "string",
+            "description": "Email subject line for the summary email"
+          },
+          "body": {
+            "type": "string",
+            "description": "Full HTML email body containing the styled summary table"
+          }
+        },
+        "required": [
+          "subject",
+          "body"
+        ]
+      },
+      "type": "generate",
+      "instruction": "Create a professional HTML email body containing a summary table of all purchase order rows. The table must have exactly these columns: 'Order Date & Time', 'Order ID', 'Vendor', 'QTY', 'Cost', 'Amount', 'Status'. Use an HTML <table> with proper <thead> and <tbody>. Style with borders, header row with a dark background and white text, alternating row colors, and padding for readability. Rows where status is 'Needs review' should be highlighted with a light yellow/orange background. Include a title 'Purchase Order Summary' above the table and a footer with the date the report was generated. Each row corresponds to one processed PO attachment from the input array. Use the fields: order_date_and_time, order_ID, Vendor, QTY, cost, amount, status.",
+      "input": "{{processed_po_rows}}"
+    },
+    "output_variable": "html_summary_email",
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "subject": {
+          "type": "string",
+          "source": "ai_declared",
+          "description": "Email subject line for the summary email"
+        },
+        "body": {
+          "type": "string",
+          "source": "ai_declared",
+          "description": "Full HTML email body containing the styled summary table"
+        }
+      },
+      "source": "ai_declared"
+    },
+    "input_schema": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "source": "ai_declared",
+        "properties": {
+          "order_date_and_time": {
+            "type": "string",
+            "source": "ai_declared"
+          },
+          "order_ID": {
+            "type": "string",
+            "source": "ai_declared"
+          },
+          "Vendor": {
+            "type": "string",
+            "source": "ai_declared"
+          },
+          "QTY": {
+            "type": "number",
+            "source": "ai_declared"
+          },
+          "cost": {
+            "type": "string",
+            "source": "ai_declared"
+          },
+          "amount": {
+            "type": "string",
+            "source": "ai_declared"
+          },
+          "status": {
+            "type": "string",
+            "source": "ai_declared"
+          },
+          "supplier_email": {
+            "type": "string",
+            "source": "ai_declared"
+          },
+          "thread_id": {
+            "type": "string",
+            "source": "ai_declared"
+          },
+          "source_message_id": {
+            "type": "string",
+            "source": "ai_declared"
+          },
+          "has_supplier_email": {
+            "type": "boolean",
+            "source": "ai_declared"
+          }
+        }
+      },
+      "source": "inferred"
+    },
+    "id": "step12",
+    "name": "Generate a professional HTML summary table with all PO rows, columns: order date and time, order_ID, Vendor, QTY, cost, amount, status"
+  },
+  {
+    "step_id": "step13",
+    "type": "action",
+    "description": "Send the HTML summary table as a new email to the primary recipient",
+    "plugin": "google-mail",
+    "id": "step13",
+    "params": {
+      "recipients": {
+        "to": [
+          "{{input.primary_recipient}}"
+        ]
+      },
+      "content": {
+        "subject": "{{html_summary_email.subject}}",
+        "html_body": "{{html_summary_email.body}}"
+      }
+    },
+    "name": "Send the HTML summary table as a new email to the primary recipient",
+    "action": "send_email"
+  },
+  {
+    "step_id": "step14",
+    "type": "action",
+    "description": "Send the HTML summary table as a new email to eomer3@gmail.com",
+    "plugin": "google-mail",
+    "id": "step14",
+    "params": {
+      "recipients": {
+        "to": [
+          "eomer3@gmail.com"
+        ]
+      },
+      "content": {
+        "subject": "{{html_summary_email.subject}}",
+        "html_body": "{{html_summary_email.body}}"
+      }
+    },
+    "name": "Send the HTML summary table as a new email to eomer3@gmail.com",
+    "action": "send_email"
+  },
+  {
+    "step_id": "step15",
+    "type": "action",
+    "description": "Send the HTML summary table as a new email to offir.omer@gmail.com",
+    "plugin": "google-mail",
+    "id": "step15",
+    "params": {
+      "recipients": {
+        "to": [
+          "offir.omer@gmail.com"
+        ]
+      },
+      "content": {
+        "subject": "{{html_summary_email.subject}}",
+        "html_body": "{{html_summary_email.body}}"
+      }
+    },
+    "name": "Send the HTML summary table as a new email to offir.omer@gmail.com",
+    "action": "send_email"
+  }
+]
