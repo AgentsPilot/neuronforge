@@ -126,9 +126,10 @@ describe('Plugin Definition Validation', () => {
   });
 
   describe('[smoke]', () => {
-    // Ajv 6 options: `strict` was introduced in Ajv 8 and is not valid here.
-    // `allErrors` collects all validation errors instead of stopping at the first.
-    const ajv = new Ajv({ allErrors: true });
+    // Plugin output_schemas carry custom annotations (x-semantic-type, x-guaranteed,
+    // x-variable-mapping, etc.) that are consumed by the V6 pipeline but not part of
+    // JSON Schema. strict:false stops Ajv 8 from rejecting them as unknown keywords.
+    const ajv = new Ajv({ allErrors: true, strict: false });
 
     describe.each(pluginDefinitions.map(p => [p.fileName, p]))('%s', (_fileName, plugin) => {
       const { definition } = plugin as { fileName: string; filePath: string; definition: Record<string, unknown> };
