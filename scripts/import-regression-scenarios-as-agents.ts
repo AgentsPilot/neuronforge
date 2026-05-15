@@ -2,16 +2,21 @@
  * Import V6 regression scenarios as runnable agents.
  *
  * For each folder under tests/v6-regression/scenarios/, reads the scenario
- * artefacts and inserts a new agent row + agent_configurations row, so the
- * agent can be opened and run from the UI.
+ * artefacts and upserts an agent row + agent_configurations row keyed by
+ * agent_config.scenario_slug, so the agent can be opened and run from the UI.
  *
  * Skips scenarios where scenario.expected.phase_e_success !== true.
- * Inserts new rows on every run (no upsert) — duplicates are expected.
+ *
+ * Default behaviour: upsert — update if a row with the same slug exists for
+ * the user, insert otherwise. User-editable fields (status, mode, schedule,
+ * trigger_conditions, connected_plugins) are preserved on update.
  *
  * Usage:
  *   npx tsx --import ./scripts/env-preload.ts scripts/import-regression-scenarios-as-agents.ts
  *   npx tsx --import ./scripts/env-preload.ts scripts/import-regression-scenarios-as-agents.ts --only expense-invoice-email-scanner
  *   npx tsx --import ./scripts/env-preload.ts scripts/import-regression-scenarios-as-agents.ts --dry-run
+ *   npx tsx --import ./scripts/env-preload.ts scripts/import-regression-scenarios-as-agents.ts --insert-only
+ *   npx tsx --import ./scripts/env-preload.ts scripts/import-regression-scenarios-as-agents.ts --update-only
  *
  * Requires: TEST_USER_ID in .env.local
  */
@@ -53,11 +58,13 @@ interface EnhancedPrompt {
 
 interface ImportResult {
   slug: string
-  status: 'imported' | 'skipped' | 'failed'
+  status: 'inserted' | 'updated' | 'skipped' | 'failed'
   agent_id?: string
   agent_name?: string
   reason?: string
 }
+
+type Mode = 'upsert' | 'insert-only' | 'update-only'
 
 function getArg(name: string): string | undefined {
   const idx = process.argv.indexOf(`--${name}`)
@@ -104,6 +111,15 @@ function buildInputSchema(intent: IntentContract | null): any[] {
 async function main() {
   const onlySlug = getArg('only')
   const dryRun = hasFlag('dry-run')
+  const insertOnly = hasFlag('insert-only')
+  const updateOnly = hasFlag('update-only')
+
+  if (insertOnly && updateOnly) {
+    console.error('--insert-only and --update-only are mutually exclusive')
+    process.exit(1)
+  }
+
+  const mode: Mode = insertOnly ? 'insert-only' : updateOnly ? 'update-only' : 'upsert'
 
   const userId = process.env.TEST_USER_ID
   if (!userId) {
@@ -130,6 +146,7 @@ async function main() {
   console.log('======================================================================')
   console.log(`Importing ${scenarioSlugs.length} scenario(s) as agents${dryRun ? ' (DRY RUN)' : ''}`)
   console.log(`User ID: ${userId}`)
+  console.log(`Mode:    ${mode}`)
   console.log('======================================================================\n')
 
   const { createServerSupabaseClient } = await import('../lib/supabaseServer')
@@ -179,76 +196,153 @@ async function main() {
     const pluginsRequired = Array.from(pluginsSet)
 
     const inputSchema = buildInputSchema(intentContract)
-
-    const agentId = crypto.randomUUID()
     const nowIso = new Date().toISOString()
 
-    const agentRow = {
-      id: agentId,
-      user_id: userId,
-      agent_name: scenario.name,
-      description: scenario.description ?? null,
-      user_prompt: intentContract?.goal ?? scenario.description ?? scenario.name,
-      created_from_prompt: enhancedPrompt?.plan_description ?? null,
-      pilot_steps: dslSteps,
-      workflow_steps: dslSteps,
-      plugins_required: pluginsRequired,
-      connected_plugins: null,
-      input_schema: inputSchema,
-      output_schema: null,
-      agent_config: {
-        scenario_slug: slug,
-        scenario_meta: scenario,
-        enhanced_prompt: enhancedPrompt,
-        intent_contract: intentContract,
-      },
-      status: 'active',
-      mode: 'on_demand',
-      schedule_cron: null,
-      timezone: 'UTC',
-      trigger_conditions: null,
-      generated_plan: null,
-      detected_categories: null,
-      ai_reasoning: null,
-      ai_confidence: null,
-      ai_generated_at: nowIso,
+    const agentConfigField = {
+      scenario_slug: slug,
+      scenario_meta: scenario,
+      enhanced_prompt: enhancedPrompt,
+      intent_contract: intentContract,
     }
 
-    const configRow = {
-      id: `${agentId}-${userId}-${crypto.randomUUID()}`,
-      agent_id: agentId,
-      user_id: userId,
-      input_values: workflowConfig,
-      input_schema: inputSchema,
-      status: 'configured',
-      created_at: nowIso,
+    let existingAgentId: string | null = null
+    if (mode !== 'insert-only') {
+      const { data: existing, error: lookupError } = await supabase
+        .from('agents')
+        .select('id')
+        .eq('user_id', userId)
+        .eq('agent_config->>scenario_slug', slug)
+        .neq('status', 'deleted')
+        .maybeSingle()
+
+      if (lookupError) {
+        results.push({ slug, status: 'failed', reason: `lookup failed: ${lookupError.message}` })
+        console.log(`[FAIL] ${slug} — lookup: ${lookupError.message}`)
+        continue
+      }
+      existingAgentId = existing?.id ?? null
     }
+
+    if (mode === 'update-only' && !existingAgentId) {
+      results.push({ slug, status: 'skipped', reason: 'no existing agent (update-only mode)' })
+      console.log(`[SKIP] ${slug} — no existing agent (update-only)`)
+      continue
+    }
+
+    const isUpdate = existingAgentId !== null
+    const agentId = isUpdate ? existingAgentId! : crypto.randomUUID()
+    const finalStatus: 'updated' | 'inserted' = isUpdate ? 'updated' : 'inserted'
 
     if (dryRun) {
-      results.push({ slug, status: 'imported', agent_id: agentId, agent_name: scenario.name })
-      console.log(`[DRY] ${slug} — would insert agent "${scenario.name}" (${agentId}); ${dslSteps.length} steps; plugins: ${pluginsRequired.join(', ')}; ${inputSchema.length} input fields`)
+      results.push({ slug, status: finalStatus, agent_id: agentId, agent_name: scenario.name })
+      console.log(`[DRY] [${isUpdate ? 'UPDATE' : 'INSERT'}] ${slug} — "${scenario.name}" (${agentId}); ${dslSteps.length} steps; plugins: ${pluginsRequired.join(', ')}; ${inputSchema.length} input fields`)
       continue
     }
 
-    const { error: agentError } = await supabase.from('agents').insert([agentRow])
-    if (agentError) {
-      results.push({ slug, status: 'failed', reason: `agents insert failed: ${agentError.message}` })
-      console.log(`[FAIL] ${slug} — agents insert: ${agentError.message}`)
-      continue
-    }
+    if (isUpdate) {
+      // Preserve user-editable fields: status, mode, schedule_cron, timezone, trigger_conditions, connected_plugins
+      const { error: updateError } = await supabase
+        .from('agents')
+        .update({
+          agent_name: scenario.name,
+          description: scenario.description ?? null,
+          user_prompt: intentContract?.goal ?? scenario.description ?? scenario.name,
+          created_from_prompt: enhancedPrompt?.plan_description ?? null,
+          pilot_steps: dslSteps,
+          workflow_steps: dslSteps,
+          plugins_required: pluginsRequired,
+          input_schema: inputSchema,
+          agent_config: agentConfigField,
+          ai_generated_at: nowIso,
+        })
+        .eq('id', agentId)
+        .eq('user_id', userId)
 
-    const { error: configError } = await supabase.from('agent_configurations').insert([configRow])
-    if (configError) {
-      console.log(`[WARN] ${slug} — agent_configurations insert: ${configError.message}`)
-      results.push({ slug, status: 'imported', agent_id: agentId, agent_name: scenario.name, reason: `config insert warning: ${configError.message}` })
+      if (updateError) {
+        results.push({ slug, status: 'failed', reason: `agents update failed: ${updateError.message}` })
+        console.log(`[FAIL] ${slug} — agents update: ${updateError.message}`)
+        continue
+      }
     } else {
-      results.push({ slug, status: 'imported', agent_id: agentId, agent_name: scenario.name })
+      const agentRow = {
+        id: agentId,
+        user_id: userId,
+        agent_name: scenario.name,
+        description: scenario.description ?? null,
+        user_prompt: intentContract?.goal ?? scenario.description ?? scenario.name,
+        created_from_prompt: enhancedPrompt?.plan_description ?? null,
+        pilot_steps: dslSteps,
+        workflow_steps: dslSteps,
+        plugins_required: pluginsRequired,
+        connected_plugins: null,
+        input_schema: inputSchema,
+        output_schema: null,
+        agent_config: agentConfigField,
+        status: 'active',
+        mode: 'on_demand',
+        schedule_cron: null,
+        timezone: 'UTC',
+        trigger_conditions: null,
+        generated_plan: null,
+        detected_categories: null,
+        ai_reasoning: null,
+        ai_confidence: null,
+        ai_generated_at: nowIso,
+      }
+
+      const { error: insertError } = await supabase.from('agents').insert([agentRow])
+      if (insertError) {
+        results.push({ slug, status: 'failed', reason: `agents insert failed: ${insertError.message}` })
+        console.log(`[FAIL] ${slug} — agents insert: ${insertError.message}`)
+        continue
+      }
     }
 
-    console.log(`[OK]  ${slug} — ${scenario.name} (${agentId})`)
+    const { data: existingConfig } = await supabase
+      .from('agent_configurations')
+      .select('id')
+      .eq('agent_id', agentId)
+      .eq('user_id', userId)
+      .maybeSingle()
+
+    let configError: { message: string } | null = null
+    if (existingConfig) {
+      const { error } = await supabase
+        .from('agent_configurations')
+        .update({
+          input_values: workflowConfig,
+          input_schema: inputSchema,
+          status: 'configured',
+        })
+        .eq('id', existingConfig.id)
+      configError = error
+    } else {
+      const { error } = await supabase
+        .from('agent_configurations')
+        .insert([{
+          id: crypto.randomUUID(),
+          agent_id: agentId,
+          user_id: userId,
+          input_values: workflowConfig,
+          input_schema: inputSchema,
+          status: 'configured',
+          created_at: nowIso,
+        }])
+      configError = error
+    }
+
+    if (configError) {
+      console.log(`[WARN] ${slug} — agent_configurations: ${configError.message}`)
+      results.push({ slug, status: finalStatus, agent_id: agentId, agent_name: scenario.name, reason: `config warning: ${configError.message}` })
+    } else {
+      results.push({ slug, status: finalStatus, agent_id: agentId, agent_name: scenario.name })
+    }
+
+    console.log(`[${isUpdate ? 'UPD' : 'INS'}] ${slug} — ${scenario.name} (${agentId})`)
   }
 
-  const imported = results.filter(r => r.status === 'imported')
+  const inserted = results.filter(r => r.status === 'inserted')
+  const updated = results.filter(r => r.status === 'updated')
   const skipped = results.filter(r => r.status === 'skipped')
   const failed = results.filter(r => r.status === 'failed')
 
@@ -256,10 +350,18 @@ async function main() {
   console.log('IMPORT SUMMARY')
   console.log('======================================================================')
 
-  if (imported.length > 0) {
-    console.log(`\nImported (${imported.length}):`)
-    const idCol = Math.max(...imported.map(r => (r.agent_id || '').length))
-    for (const r of imported) {
+  if (inserted.length > 0) {
+    console.log(`\nInserted (${inserted.length}):`)
+    const idCol = Math.max(...inserted.map(r => (r.agent_id || '').length))
+    for (const r of inserted) {
+      console.log(`   ${(r.agent_id || '').padEnd(idCol)}  ${r.agent_name}`)
+    }
+  }
+
+  if (updated.length > 0) {
+    console.log(`\nUpdated (${updated.length}):`)
+    const idCol = Math.max(...updated.map(r => (r.agent_id || '').length))
+    for (const r of updated) {
       console.log(`   ${(r.agent_id || '').padEnd(idCol)}  ${r.agent_name}`)
     }
   }

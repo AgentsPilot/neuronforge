@@ -1,68 +1,64 @@
 {
-  "timestamp": "2026-05-05T18:52:50.952Z",
+  "timestamp": "2026-05-15T12:33:58.680Z",
   "user_id": "868fda6a-59fa-4e99-8930-9951484078bf",
   "results": [
     {
       "slug": "aliexpress-delivery-tracker",
-      "status": "imported",
+      "status": "updated",
       "agent_id": "e1f4f930-b66f-40ce-a676-e94cb32a1612",
-      "agent_name": "AliExpress Delivery Tracker",
-      "reason": "config insert warning: null value in column \"id\" of relation \"agent_configurations\" violates not-null constraint"
+      "agent_name": "AliExpress Delivery Tracker"
     },
     {
       "slug": "complaint-email-logger",
-      "status": "imported",
-      "agent_id": "0b9083e7-71dd-42ea-bd15-6273f03e5a6e",
-      "agent_name": "Customer Complaint Email Logger",
-      "reason": "config insert warning: null value in column \"id\" of relation \"agent_configurations\" violates not-null constraint"
+      "status": "inserted",
+      "agent_id": "9e578b7f-9602-468f-a1cd-547d3aeb0870",
+      "agent_name": "Customer Complaint Email Logger"
     },
     {
       "slug": "contract-enddate-summary",
-      "status": "skipped",
-      "reason": "phase_e_success: undefined"
+      "status": "inserted",
+      "agent_id": "0f902c3d-d839-4927-bde9-8dd69aa838bc",
+      "agent_name": "Contract End-Date Summary (Next 30 Days)"
     },
     {
       "slug": "expense-invoice-email-scanner",
-      "status": "imported",
+      "status": "updated",
       "agent_id": "ef8eaea0-6e9e-40a6-bb96-64b51b692eb9",
-      "agent_name": "Expense & Invoice Email Scanner",
-      "reason": "config insert warning: null value in column \"id\" of relation \"agent_configurations\" violates not-null constraint"
+      "agent_name": "Expense & Invoice Email Scanner"
     },
     {
       "slug": "gantt-urgent-tasks",
-      "status": "skipped",
-      "reason": "phase_e_success: undefined"
+      "status": "inserted",
+      "agent_id": "62e93742-e97f-4afe-b670-063dd911e7da",
+      "agent_name": "Urgent Gantt Tasks Finishing Soon — Email Notifier"
     },
     {
       "slug": "gmail-urgency-flagging",
-      "status": "imported",
+      "status": "updated",
       "agent_id": "1ea3c438-c3e9-4435-85e5-b8dd70a48f86",
-      "agent_name": "Gmail Urgency Flagging Agent",
-      "reason": "config insert warning: null value in column \"id\" of relation \"agent_configurations\" violates not-null constraint"
+      "agent_name": "Gmail Urgency Flagging Agent"
     },
     {
       "slug": "leads-email-summary",
-      "status": "imported",
-      "agent_id": "80beb0ed-7619-412f-b0c8-2ef30e6471f6",
-      "agent_name": "High-Qualified Leads Email Summary",
-      "reason": "config insert warning: null value in column \"id\" of relation \"agent_configurations\" violates not-null constraint"
+      "status": "inserted",
+      "agent_id": "5816f143-5e7a-4d90-b76b-cc83613b848f",
+      "agent_name": "High-Qualified Leads Email Summary"
     },
     {
       "slug": "leads-per-salesperson-email",
-      "status": "imported",
+      "status": "updated",
       "agent_id": "3859a245-783c-4866-8290-bb73f1d6d298",
-      "agent_name": "High-Qualified Leads Per-Salesperson Email Agent",
-      "reason": "config insert warning: null value in column \"id\" of relation \"agent_configurations\" violates not-null constraint"
+      "agent_name": "High-Qualified Leads Per-Salesperson Email Agent"
     },
     {
       "slug": "orders-po-extractor-xlsx",
       "status": "skipped",
-      "reason": "phase_e_success: undefined"
+      "reason": "phase_e_success: pipeline_passed_no_data"
     },
     {
       "slug": "po-monitor-supplier-confirmation",
       "status": "skipped",
-      "reason": "phase_e_success: undefined"
+      "reason": "phase_e_success: pipeline_passed_no_data"
     }
   ]
 }
