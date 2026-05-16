@@ -450,7 +450,7 @@ This would enable:
 
 ## Related Documentation
 
-- [V6 Architecture Overview](./V6_DECLARATIVE_ARCHITECTURE.md)
+- [V6 Architecture](./V6_ARCHITECTURE.md)
 - [Grounding Engine](../lib/agentkit/v6/semantic-plan/grounding/GroundingEngine.ts)
 - [Semantic Plan Types](../lib/agentkit/v6/semantic-plan/schemas/semantic-plan-types.ts)
 - [Plugin Manager V2](../lib/server/plugin-manager-v2.ts)

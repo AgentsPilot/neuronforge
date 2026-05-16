@@ -927,7 +927,7 @@ WHERE user_id = '...' AND plugin_key = 'google-mail';
 
 ## Related Documentation
 
-- [V6 Architecture Overview](./V6_DECLARATIVE_ARCHITECTURE.md)
+- [V6 Architecture](./V6_ARCHITECTURE.md)
 - [V6 DSL Compiler Fixes](./V6_DSL_COMPILER_FIXES.md)
 - [V6 Schema-Based Grounding](./V6_SCHEMA_BASED_GROUNDING.md)
 - [WorkflowPilot Source](../lib/pilot/WorkflowPilot.ts)

@@ -748,7 +748,7 @@ const prompt: EnhancedPrompt = {
 - **[V6 Architecture](./V6_ARCHITECTURE.md)** - Deep dive into each phase
 - **[V6 API Reference](./V6_API_REFERENCE.md)** - Complete API documentation
 - **Test Suites**: `__tests__/DeclarativeCompiler-*.test.ts`
-- **Example Workflows**: `docs/V6_WORKFLOW_PATTERN_CATALOG.md`
+- **Example Workflows**: [v6-archive/V6_WORKFLOW_PATTERN_CATALOG.md](./v6-archive/V6_WORKFLOW_PATTERN_CATALOG.md) (archived 2026-05-15 — canonical "what we test" is now `tests/v6-regression/scenarios/`)
 
 ---
 
