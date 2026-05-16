@@ -89,6 +89,18 @@ Sourced from [`V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_INTENT_CONTRACT.md`](./V6_WORKFL
 | RETIRE-1 — auto-repair safety nets (validateAISchemaDepth + WP-15 builder fallback) | ✅ Done (2026-05-10) — switched from warn-and-repair to throw-on-violation |
 | ⭐ RETIRE-2 — disable AI fallbacks for 5 retire-safe deterministic primitives (`project_column`, `set_difference`, `filter`, `group`, `dedupe`) | ⬜ Deferred — larger blast radius; needs W5 fingerprint extraction + fresh CP-E measurements |
 
+### Enhanced Prompt Key Hints (EP_KEY_HINTS) workplan
+
+Sourced from [`V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_INTENT_CONTRACT_EP_KEY_HINTS.md`](./V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_INTENT_CONTRACT_EP_KEY_HINTS.md). Addresses O8 (config value validation via `{plugin}__{capability}__{param}` prefix convention).
+
+| Phase | Summary | Status |
+|---|---|---|
+| Phase 1 | V6 vocabulary injection parses prefixed keys + translation/composition/config-key rules | ✅ Done (2026-03-16) |
+| Phase 2 | `PluginDefinitionContext.toActionSummaryContext()` + `toActionSummaryText()` | ✅ Done (2026-03-16) |
+| Phase 3 | Inject action summary into thread-based process-message route | ✅ Done (2026-03-16) |
+| Phase 4 | `Workflow-Agent-Creation-Prompt-v14-chatgpt.txt` (prefix rules + parameter-aware questions) | ✅ Done (2026-03-16) |
+| ⭐ Phase 5 | **End-to-end testing (T1-T10)** — full flow from thread-based enhanced prompt through IntentContract generation, including: backward compat (T4), parameter-aware question quality (T10), same-plugin-two-actions disambiguation (T7), multi-plugin coverage (T8) | ⬜ Todo |
+
 ### Execution workplan
 
 Sourced from [`V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION.md`](./V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION.md). Items there are tracked alongside the scenario regression sweeps. **Most active items now flow through WEAK_POINTS WPs** — the execution workplan is mostly historical strategy now.
@@ -142,6 +154,7 @@ When picking up new work, in priority order:
 4. **WP-15** (P0 grammar gap — foundational; required for RETIRE-2 readiness) — larger; requires grammar + prompt + builder changes
 5. **PD-1** (Phase D realism — partial credit already from WP-36; finish for full coverage)
 6. **WP-38** (P3 prompt-level fix — small effort, unblocks orders-po + po-monitor extraction testing)
+7. **EP_KEY_HINTS Phase 5** (E2E testing of the `plugin__capability__` prefix mechanism — T1-T10 test cases spec'd; mechanism live but never validated end-to-end)
 
 After any of these land:
 

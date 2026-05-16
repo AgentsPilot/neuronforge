@@ -35,7 +35,7 @@ After Tier 1 you should have:
 
 ---
 
-## Tier 2 — Reference (read on demand, ~7 docs)
+## Tier 2 — Reference (read on demand, ~9 docs)
 
 Open these when working on a specific area — no need to read upfront.
 
@@ -48,6 +48,8 @@ Open these when working on a specific area — no need to read upfront.
 | [V6_SCHEMA_BASED_GROUNDING.md](./V6_SCHEMA_BASED_GROUNDING.md) | Phase 2 (Grounding) architecture — schema-only approach, no real data fetch during agent creation. |
 | [V6_PRODUCTION_METADATA_INJECTION.md](./V6_PRODUCTION_METADATA_INJECTION.md) | How V6 dynamically injects plugin metadata at each phase. |
 | [V6_STRICT_SCHEMA_QUICK_REFERENCE.md](./V6_STRICT_SCHEMA_QUICK_REFERENCE.md) | OpenAI strict-mode schema rules — relevant for Phase 1 prompt engineering. |
+| [V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_INTENT_CONTRACT_EP_KEY_HINTS.md](./V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_INTENT_CONTRACT_EP_KEY_HINTS.md) | **Enhanced-Prompt Key Hints design** — the `{plugin}__{capability}__{param}` prefix convention for `resolved_user_inputs`. Live mechanism (Phases 1-4 ✅, Phase 5 E2E testing ⬜). Read when touching `buildVocabularyInjection()`, `toActionSummaryContext()`, the v14 thread template, or Phase 1 LLM behavior. |
+| [V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_REGRESSION_PLAN.md](./V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_REGRESSION_PLAN.md) | **Regression test infrastructure design** — scenario folder layout, `scenario.json` schema, `run-regression.ts` orchestrator, EP Key Hints pre-flight validation. Read when modifying the regression system (`tests/v6-regression/`, `scripts/test-dsl-execution-simulator/`, `scripts/test-workflowpilot-execution.ts`). |
 
 ---
 
@@ -71,8 +73,6 @@ Docs moved to [`v6-archive/`](./v6-archive/) on 2026-05-15 because they either (
 |---|---|
 | `V6_WORKFLOW_DATA_SCHEMA_DESIGN.md` | Superseded by V6_WORKFLOW_DATA_SCHEMA_DESIGN_REBASE.md |
 | `V6_WORKFLOW_DATA_SCHEMA_WORKPLAN.md` | All 6 phases complete; superseded by WORKPLAN_EXECUTION + WORKPLAN_INTENT_CONTRACT |
-| `V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_INTENT_CONTRACT_EP_KEY_HINTS.md` | March 2026 doc on O8 config validation; work folded into main contract workplan |
-| `V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_REGRESSION_PLAN.md` | March 2026 regression strategy; superseded by active scenario tracking |
 | `V6_SCHEMA_DRIVEN_COMPILER_DESIGN.md` | December 2025 proposal; implementation status unclear, overlaps with current docs |
 | `V6_PURE_DECLARATIVE_GAP_ANALYSIS.md` | December 2025 gap analysis; lessons incorporated into current workplans |
 | `V6_PURE_DECLARATIVE_TESTING_GUIDE.md` | December 2025 testing guide; merged into ARCHITECTURE/EXECUTION_GUIDE |
