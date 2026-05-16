@@ -131,6 +131,7 @@ Goal: retire V4 and remove dead code from the abandoned split-API design.
 |---|---|---|
 | 2026-05-16 | Planning | Architectural pivot documented; original Phase A/B/C demoted to Historical Plan section below |
 | 2026-05-16 | Stage 1.6 ✅ | §19.2 verified OBSOLETE — strict schema was for IR v2.0; production uses v4.0 (no `normalization` field). `EXTENDED_IR_JSON_SCHEMA` is dead code (zero production consumers). Added Stage 5.9 cleanup task. One blocker pre-emptively cleared before UI testing. |
+| 2026-05-16 | Stage 1 pre-flight | **EP Key Hints implementation verified live** (Phases 1-4 ✅ of EP_KEY_HINTS workplan). Confirmed: (1) `parsePrefixedKey` / `buildGroupedUserContext` / `buildFlatUserContext` in `intent-system-prompt-v2.ts` (L1840-L1983), (2) `toActionSummaryContext()` / `toActionSummaryText()` on `PluginDefinitionContext` (L221, L284), (3) `plugin_action_summary` injected into Phase 1/2/3 messages in `process-message/route.ts` (L161, L224-225, L335/346/356), (4) `aiAgentPromptTemplate = "Workflow-Agent-Creation-Prompt-v14-chatgpt"` in `init-thread/route.ts:21` (v14 template file present). EP_KEY_HINTS Phase 5 (T1-T10) remains formally untested, but Stage 1.2-1.5 UI runs effectively serve as partial validation. |
 
 ---
 
