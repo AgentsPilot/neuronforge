@@ -47,7 +47,7 @@ Goal: confirm the V2 UI → `/api/v6/generate-ir-semantic` integration works end
 | 1.3 | Compare generated `pilot_steps` to `tests/v6-regression/scenarios/gantt-urgent-tasks/phase4-pilot-dsl-steps.json` | ⬜ Todo |
 | 1.4 | Repeat for `expense-invoice-email-scanner` (WP-32/33 verified) | ⬜ Todo |
 | 1.5 | Repeat for `contract-enddate-summary` (WP-35/36 verified) | ⬜ Todo |
-| 1.6 | Confirm Section 19.2 bug status (IR Formalization schema strict; LLM prompt may not match) | ⬜ Todo |
+| 1.6 | Confirm Section 19.2 bug status (IR Formalization schema strict; LLM prompt may not match) | ✅ Done (2026-05-16) — **OBSOLETE.** The strict schema (`extended-ir-schema.ts` `EXTENDED_IR_JSON_SCHEMA`) is for IR **v2.0** (`ir_version: "2.0"`). Production uses IR **v4.0** (`declarative-ir-types-v4.ts`, `declarative-ir-schema-strict-v4.ts`) — no `normalization` field at all. `IRFormalizer` validates `ir_version === '4.0'` and uses `validateExecutionGraph()` against a different schema. v4 prompt (`formalization-system-v4.md`) explicitly produces v4.0 IR. Grep confirms `EXTENDED_IR_JSON_SCHEMA` has zero production consumers — dead code. Stage 5 cleanup candidate (low priority). |
 | 1.7 | Document delta between V4-generated and V6-generated agent JSON (missing fields, schema mismatches) | ⬜ Todo |
 
 **Exit criteria:** all 3 scenarios produce agents whose `pilot_steps` match the regression snapshots (modulo timestamps + IDs). Any failure escalates to Stage 2.
@@ -99,7 +99,8 @@ Goal: retire V4 and remove dead code from the abandoned split-API design.
 | 5.6 | **Decide:** keep or remove `app/api/v6/generate-semantic-grounded` endpoint. If test-page-only, retire alongside test page or move under `app/api/v6/test/`. | ⬜ Decision needed |
 | 5.7 | **Decide:** keep or remove `lib/agentkit/v6/ambiguity-detection/` module. It runs inside the single-API path internally (its findings are computed and discarded). Suggest **keep** — preserves optionality for future Review UI revival; cost is just code presence. | ⬜ Decision needed |
 | 5.8 | Update CLAUDE.md Key Documentation if any links break after cleanup | ⬜ Todo |
-| 5.9 | Update this doc's status to "✅ Migration Complete" + final Change History entry | ⬜ Todo |
+| 5.9 | **Delete dead v2 IR schema** — `lib/agentkit/v6/logical-ir/schemas/extended-ir-schema.ts` (`EXTENDED_IR_JSON_SCHEMA`) has zero production consumers (verified Stage 1.6). Production uses IR v4.0 schemas. Also consider archiving `docs/extended-ir-architecture/` directory (referenced only by stale doc files). | ⬜ Todo |
+| 5.10 | Update this doc's status to "✅ Migration Complete" + final Change History entry | ⬜ Todo |
 
 ---
 
@@ -129,6 +130,7 @@ Goal: retire V4 and remove dead code from the abandoned split-API design.
 | Date | Stage | What happened |
 |---|---|---|
 | 2026-05-16 | Planning | Architectural pivot documented; original Phase A/B/C demoted to Historical Plan section below |
+| 2026-05-16 | Stage 1.6 ✅ | §19.2 verified OBSOLETE — strict schema was for IR v2.0; production uses v4.0 (no `normalization` field). `EXTENDED_IR_JSON_SCHEMA` is dead code (zero production consumers). Added Stage 5.9 cleanup task. One blocker pre-emptively cleared before UI testing. |
 
 ---
 
@@ -1962,9 +1964,10 @@ When scatter_gather follows a group transform step:
 
 ### 19.2 IR Formalization Schema Mismatch
 
-**Status**: ⚠️ **PARTIALLY ADDRESSED** (verified 2026-05-16) — Schema was tightened in `lib/agentkit/v6/logical-ir/schemas/extended-ir-schema.ts:79-99` (`additionalProperties: false`), which makes it reject extra properties like `description` / `fields` on `normalization`. **However:** no evidence that the Phase 3 IR Formalizer LLM prompt was updated to match. **Risk:** the LLM may still emit non-conforming IR, causing 400 errors at IR validation. **Stage 1 task 1.6 in the Revised Plan above will confirm whether this still fires in production V6 path.**
-**Severity**: High (causes IR validation failure, blocks compilation) — if still active
+**Status**: ✅ **OBSOLETE** (verified 2026-05-16 — Stage 1 task 1.6 result) — The strict schema described here (`EXTENDED_IR_JSON_SCHEMA` in `extended-ir-schema.ts:79-99` with `additionalProperties: false` on `normalization`) is for IR **v2.0** (`ir_version: "2.0"`). Production V6 uses IR **v4.0** (`declarative-ir-types-v4.ts` + `declarative-ir-schema-strict-v4.ts`), validated via `validateExecutionGraph()` in `IRFormalizer.ts` against `ir.ir_version === '4.0'`. The v4 schema has no `normalization` / `required_headers` / `case_sensitive` / `missing_header_action` / `per_group_delivery` fields — different architecture. The active prompt `formalization-system-v4.md` explicitly produces `ir_version: "4.0"` IR. Grep confirms `EXTENDED_IR_JSON_SCHEMA` has **zero production consumers** — pure dead code. Stage 5 cleanup candidate (low priority, no functional impact).
+**Severity**: ~~High (causes IR validation failure, blocks compilation)~~ Historical
 **Discovered**: 2026-01-18
+**Resolved by:** architectural shift from IR v2.0 to v4.0 (predates this verification; exact commit not traced but the v4 schema files + IRFormalizer's `ir_version === '4.0'` checks confirm the transition was complete by 2026-05-16).
 
 **Problem**:
 The Phase 3 IR Formalizer (LLM) generates IR structures that don't conform to the `DeclarativeLogicalIR` schema. The IR validation fails before compilation can begin.
