@@ -1,10 +1,146 @@
 # V6 Agent Creation Integration Plan
 
-> **Status**: Implementation In Progress - Phase A6 (Testing)
-> **Created**: January 17, 2026
-> **Updated**: January 21, 2026 - Added V6WorkflowPreview component for visual workflow approval UI.
+> **Status**: ARCHITECTURAL PIVOT (2026-05-16) — split-API + Review UI design **ABANDONED**. Current direction: **single-API V6, no Review UI** (Path A). Migration in progress on `feature/v6-v2-integration`.
+> **Created**: 2026-01-17
+> **Updated**: 2026-05-16 — Status Update + Revised 5-Stage Migration plan added; original Phase A/B/C content demoted to "Historical Plan" section below.
 
-This document outlines the implementation plan for integrating V6 agent generation with Intent Validation into the existing agent creation flow. When V6 is enabled, it **always** includes the full Intent Validation flow with Review & Customize UI.
+This document is the **single source of truth** for migrating V2 agent creation from V4 (current production default) to V6. The original design (split-API + Review & Customize UI) was abandoned in February — see Status Update below for full context. The current plan is much smaller in scope: flip the feature flag, validate end-to-end, retire V4.
+
+---
+
+## Status Update (2026-05-16) — Architectural Pivot
+
+### What changed
+
+The **original split-API + Review UI architecture has been abandoned.** Specifically:
+
+- `/api/v6/compile-with-decisions` endpoint was created Jan 21 (commit `0f95dbc`) and **DELETED** Feb 8 (commit `e2957d0`).
+- `useV6ReviewMode` feature flag was added Feb 8 but is **dead code** — defaults true and has no effect on runtime behavior.
+- `V6ReviewCustomizeUI` component (`components/v6/V6ReviewCustomizeUI.tsx`, ~27KB) **exists but is orphaned** — only referenced from `/test-plugins-v2` Tab 3, never from production agent creation flow.
+- 5-Layer Ambiguity Detection module (`lib/agentkit/v6/ambiguity-detection/`, 8 files) **still runs** inside the single-API path internally — but no UI surfaces its findings to users.
+
+The current production V6 path is **single-API**: when `useV6AgentGeneration()` is true, [`app/v2/agents/new/page.tsx`](../../app/v2/agents/new/page.tsx) line ~993 calls [`/api/v6/generate-ir-semantic`](../../app/api/v6/generate-ir-semantic/route.ts) which runs all 5 V6 phases end-to-end in one request.
+
+### User decision (2026-05-16)
+
+After reviewing the abandoned architecture and the current production wiring, the decision is to **continue with single-API V6** — no Review UI integration into the production flow. Rationale: users prefer "create the agent, then move to the next screen (run/edit)" over an intermediate confirmation step. The grounding + ambiguity detection still runs internally; just doesn't surface as a UI step.
+
+### Implication
+
+Most of the original plan (Phase A6 test-page validation of split flow, Phase B1-B5 production wiring of Review UI, several open questions around Review UX) **is no longer relevant**. The actual remaining work is much smaller — see Revised Plan below.
+
+---
+
+## Revised Plan — 5-Stage Migration (Current Direction)
+
+> **Branch:** `feature/v6-v2-integration`
+> **Approach:** Path A — single-API V6, no Review UI. Adopt what already exists.
+
+### Stage 1 — Validate the existing single-API V6 path
+
+Goal: confirm the V2 UI → `/api/v6/generate-ir-semantic` integration works end-to-end on real scenarios before any production change.
+
+| Task | Detail | Status |
+|---|---|---|
+| 1.1 | Set `NEXT_PUBLIC_USE_V6_AGENT_GENERATION=true` in `.env.local` | ⬜ Todo |
+| 1.2 | Drive V2 UI through `gantt-urgent-tasks` scenario (smallest, recently verified Phase E) | ⬜ Todo |
+| 1.3 | Compare generated `pilot_steps` to `tests/v6-regression/scenarios/gantt-urgent-tasks/phase4-pilot-dsl-steps.json` | ⬜ Todo |
+| 1.4 | Repeat for `expense-invoice-email-scanner` (WP-32/33 verified) | ⬜ Todo |
+| 1.5 | Repeat for `contract-enddate-summary` (WP-35/36 verified) | ⬜ Todo |
+| 1.6 | Confirm Section 19.2 bug status (IR Formalization schema strict; LLM prompt may not match) | ⬜ Todo |
+| 1.7 | Document delta between V4-generated and V6-generated agent JSON (missing fields, schema mismatches) | ⬜ Todo |
+
+**Exit criteria:** all 3 scenarios produce agents whose `pilot_steps` match the regression snapshots (modulo timestamps + IDs). Any failure escalates to Stage 2.
+
+### Stage 2 — Fix anything Stage 1 surfaces
+
+Goal: address blockers found during Stage 1 verification.
+
+| Task | Detail | Status |
+|---|---|---|
+| 2.1 | Section 19.2 fix: update Phase 3 LLM prompt to match tightened `DeclarativeLogicalIR` schema (no extra `description` / `fields` properties on `normalization`) — only if Stage 1 confirms it still fires | ⬜ Conditional |
+| 2.2 | Any V6 ↔ V2 field-mapping deltas in `mapV6ResponseToAgent()` (e.g., missing `inputs_schema`, `description`, scheduling fields) | ⬜ Conditional |
+| 2.3 | Any new WPs discovered during Stage 1 — document in `V6_OPEN_ITEMS.md` per V6 Work Protocol | ⬜ Conditional |
+
+### Stage 3 — Decide the navigation target after agent save
+
+Goal: confirm where the user lands after agent creation completes.
+
+| Task | Detail | Status |
+|---|---|---|
+| 3.1 | Verify what `/v2/sandbox/{agentId}` page does today — is it the run/edit screen? | ⬜ Todo |
+| 3.2 | If yes: change navigation in `executeAgentCreation()` (~line 1216) from `/agents/{id}` to `/v2/sandbox/{id}` | ⬜ Todo |
+| 3.3 | If no: identify the correct run/edit page and route there | ⬜ Todo |
+
+### Stage 4 — Rollout
+
+Goal: flip the production flag with monitoring + rollback safety.
+
+| Task | Detail | Status |
+|---|---|---|
+| 4.1 | Deploy `feature/v6-v2-integration` to production with `NEXT_PUBLIC_USE_V6_AGENT_GENERATION` still **false** (no user-visible change) | ⬜ Todo |
+| 4.2 | Enable flag for own account first — manual end-to-end creation of 2-3 real-data agents | ⬜ Todo |
+| 4.3 | Define kill-switch — confirm `NEXT_PUBLIC_USE_V6_AGENT_GENERATION` is runtime-readable (no rebuild required to flip back) | ⬜ Todo |
+| 4.4 | Flip flag for all users; communicate via release notes if applicable | ⬜ Todo |
+| 4.5 | Stabilization (~1-2 weeks): monitor for failed agent creations, failed Phase E executions, user-reported issues | ⬜ Todo |
+| 4.6 | Document any new WPs / open items uncovered during stabilization | ⬜ Todo |
+
+### Stage 5 — Cleanup
+
+Goal: retire V4 and remove dead code from the abandoned split-API design.
+
+| Task | Detail | Status |
+|---|---|---|
+| 5.1 | Remove `app/api/generate-agent-v4/route.ts` (~547 lines) | ⬜ Todo |
+| 5.2 | Remove V4 `else` branch in `app/v2/agents/new/page.tsx` around line 993 | ⬜ Todo |
+| 5.3 | Remove `useV6AgentGeneration()` from `lib/utils/featureFlags.ts` + env var docs | ⬜ Todo |
+| 5.4 | Remove `useV6ReviewMode()` from `lib/utils/featureFlags.ts` (dead code from abandoned design) | ⬜ Todo |
+| 5.5 | **Decide:** delete or keep `components/v6/V6ReviewCustomizeUI.tsx`. If `/test-plugins-v2` still uses it, keep + leave a comment; otherwise delete | ⬜ Decision needed |
+| 5.6 | **Decide:** keep or remove `app/api/v6/generate-semantic-grounded` endpoint. If test-page-only, retire alongside test page or move under `app/api/v6/test/`. | ⬜ Decision needed |
+| 5.7 | **Decide:** keep or remove `lib/agentkit/v6/ambiguity-detection/` module. It runs inside the single-API path internally (its findings are computed and discarded). Suggest **keep** — preserves optionality for future Review UI revival; cost is just code presence. | ⬜ Decision needed |
+| 5.8 | Update CLAUDE.md Key Documentation if any links break after cleanup | ⬜ Todo |
+| 5.9 | Update this doc's status to "✅ Migration Complete" + final Change History entry | ⬜ Todo |
+
+---
+
+## Risks
+
+| Risk | Probability | Mitigation |
+|---|---|---|
+| Bug §19.2 (IR schema mismatch) still fires in production V6 path | Medium | Stage 1 task 1.6 verifies; Stage 2 task 2.1 fixes if needed |
+| V6 output JSON missing fields V4 produced (causing broken agents) | Medium | Stage 1 task 1.7 documents delta; Stage 2 task 2.2 addresses |
+| `/v2/sandbox/{agentId}` is not the right next-screen | Low | Stage 3 verifies + redirects to correct target |
+| Flag flip causes regression for specific user/plugin combos not covered by 10 regression scenarios | Medium | Stage 4.5 stabilization window + kill switch (Stage 4.3) |
+| Removing V4 breaks an unknown caller (admin tools, batch scripts, etc.) | Low | Stage 5 task: grep `generate-agent-v4` AND `useV6AgentGeneration` repo-wide before any deletion |
+| 5-Layer Ambiguity Detection deletion (Stage 5.7) removes useful telemetry | Low | Defer the decision; recommendation is keep |
+
+## Open Questions
+
+| # | Question | Why it matters | Resolution path |
+|---|---|---|---|
+| Q1 | Why was split-API + Review UI abandoned in Feb? | Could inform whether to revisit later | Check commit `e2957d0` message + any retrospective notes; ask original author |
+| Q2 | Does `/v2/sandbox/{agentId}` exist and is it the run/edit page? | Determines Stage 3 outcome | Read the route file directly in Stage 3 |
+| Q3 | Are there any callers of `/api/generate-agent-v4` outside `app/v2/agents/new/page.tsx`? | Risk of breaking unknown consumers in Stage 5 | Repo-wide grep before Stage 5 deletion |
+| Q4 | Should the 5-Layer Detection module surface findings to users in a non-UI way (e.g., log/audit trail)? | Could preserve some of the abandoned design's value without UI cost | Stage 5 decision; default is "no, leave as-is" |
+| Q5 | Does the existing `mapV6ResponseToAgent()` cover all fields the `agents` table expects? | Could surface during Stage 1.7 | Verify against `AgentRepository` schema during Stage 1 |
+
+## Progress Log
+
+| Date | Stage | What happened |
+|---|---|---|
+| 2026-05-16 | Planning | Architectural pivot documented; original Phase A/B/C demoted to Historical Plan section below |
+
+---
+
+# Historical Plan — Original Design (Superseded 2026-05-16)
+
+> **Status:** SUPERSEDED. The content below describes the original split-API + Review & Customize UI design that was abandoned in February. Preserved as historical record of the design exploration. **Do not implement from this section** — follow the Revised Plan above.
+>
+> Key superseded items:
+> - The split-API architecture (Phase A1-A6 + B1-B6) — single-API is the chosen direction
+> - The Review & Customize UI in production flow — orphaned, may be retired in Stage 5
+> - The `useV6ReviewMode` feature flag — dead code, to be removed in Stage 5
+> - Sections 1-18 describe the abandoned design and should not be used for implementation. Section 19 (known bugs) is still authoritative.
 
 ---
 
@@ -1758,13 +1894,14 @@ export class AmbiguityDetector {
 
 ## 19. Known Issues / Bugs Identified
 
-> **Note**: Issues discovered during testing that need to be addressed separately from this integration. Review after implementation to validate if still relevant.
+> **Note**: Issues discovered during testing that need to be addressed separately from this integration. Statuses verified against current code 2026-05-16.
 
 ### 19.1 Scatter-Gather After Group Transform - Wrong Variable Reference
 
-**Status**: Identified, Not Fixed
-**Severity**: High (causes runtime failure)
-**Discovered**: January 18, 2026
+**Status**: ✅ **FIXED** (verified 2026-05-16 against `lib/agentkit/v6/compiler/ExecutionGraphCompiler.ts:2830-2842`)
+**Severity**: ~~High (causes runtime failure)~~ Historical
+**Discovered**: 2026-01-18
+**Resolved**: Fix in `ExecutionGraphCompiler.ts` detects group transforms and rewrites scatter-input variable reference to `.groups` (instead of `.data`). Comment in code confirms: "group transform legacy object → groups array".
 
 **Problem**:
 When a `scatter_gather` step follows a `group` transform, the LLM compiler generates `{{stepX.data}}` but the group transform outputs an **object**, not an array. The scatter_gather expects an array to iterate over.
@@ -1825,9 +1962,9 @@ When scatter_gather follows a group transform step:
 
 ### 19.2 IR Formalization Schema Mismatch
 
-**Status**: Identified, Not Fixed
-**Severity**: High (causes IR validation failure, blocks compilation)
-**Discovered**: January 18, 2026
+**Status**: ⚠️ **PARTIALLY ADDRESSED** (verified 2026-05-16) — Schema was tightened in `lib/agentkit/v6/logical-ir/schemas/extended-ir-schema.ts:79-99` (`additionalProperties: false`), which makes it reject extra properties like `description` / `fields` on `normalization`. **However:** no evidence that the Phase 3 IR Formalizer LLM prompt was updated to match. **Risk:** the LLM may still emit non-conforming IR, causing 400 errors at IR validation. **Stage 1 task 1.6 in the Revised Plan above will confirm whether this still fires in production V6 path.**
+**Severity**: High (causes IR validation failure, blocks compilation) — if still active
+**Discovered**: 2026-01-18
 
 **Problem**:
 The Phase 3 IR Formalizer (LLM) generates IR structures that don't conform to the `DeclarativeLogicalIR` schema. The IR validation fails before compilation can begin.
