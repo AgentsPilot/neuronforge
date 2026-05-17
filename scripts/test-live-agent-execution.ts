@@ -18,9 +18,10 @@
  *   --config     <input-dir>/phase4-workflow-config.json
  *
  * Flags:
- *   --use-db-dsl  Load DSL + workflow_config from the agent record in the DB
- *                 (instead of from file). Skips the agent-update step that
- *                 normally overwrites pilot_steps with the file content.
+ *   --use-db-dsl  Load DSL from the agent's `pilot_steps` column and
+ *                 workflow_config from the latest `agent_configurations`
+ *                 row (instead of from file). Skips the agent-update step
+ *                 that normally overwrites `pilot_steps` with file content.
  *                 Use this to test V2-UI-generated agents whose DSL only
  *                 exists in the DB.
  *
@@ -73,9 +74,10 @@ async function main() {
   const inputDir = getArg('input-dir') || path.join(process.cwd(), 'output', 'vocabulary-pipeline')
   const dslPath = getArg('dsl') || path.join(inputDir, 'phase4-pilot-dsl-steps.json')
   const configPath = getArg('config') || path.join(inputDir, 'phase4-workflow-config.json')
-  // When --use-db-dsl is set, load DSL + workflow_config directly from the agent's DB record
-  // (instead of from file), and SKIP the agent-update step that overwrites pilot_steps.
-  // Use this to test V2-UI-generated agents whose DSL only exists in the DB.
+  // When --use-db-dsl is set, load DSL from agents.pilot_steps and config from
+  // the latest agent_configurations.input_values (instead of from file), and
+  // SKIP the agent-update step that would overwrite pilot_steps. Use this to
+  // test V2-UI-generated agents whose DSL only exists in the DB.
   const useDbDsl = args.includes('--use-db-dsl')
 
   const userId = process.env.TEST_USER_ID
@@ -180,11 +182,12 @@ async function main() {
   const { createServerSupabaseClient } = await import('../lib/supabaseServer')
   const supabase = createServerSupabaseClient()
 
-  // Select pilot_steps + workflow_config in the SAME query so the --use-db-dsl
-  // path doesn't need a second round-trip. Extra columns cost nothing if unused.
+  // Select pilot_steps in the SAME query so the --use-db-dsl path doesn't need
+  // a second round-trip for the DSL itself. workflow_config lives in a
+  // separate table (agent_configurations.input_values) and is fetched below.
   const { data: agent, error: agentError } = await supabase
     .from('agents')
-    .select('id, agent_name, status, plugins_required, user_id, pilot_steps, workflow_steps, workflow_config')
+    .select('id, agent_name, status, plugins_required, user_id, pilot_steps, workflow_steps')
     .eq('id', agentId)
     .eq('user_id', userId)
     .neq('status', 'deleted')
@@ -199,6 +202,7 @@ async function main() {
   console.log(`  ✅ Agent found: "${agent.agent_name}" (status: ${agent.status})`)
 
   // Populate DSL from agent record when --use-db-dsl is set, then validate.
+  // workflow_config comes from the agent_configurations table (input_values).
   if (useDbDsl) {
     console.log('\n📥 Loading DSL from agent record...')
     const dbDsl = agent.pilot_steps || agent.workflow_steps
@@ -207,7 +211,28 @@ async function main() {
       process.exit(1)
     }
     dslSteps = dbDsl
-    workflowConfig = agent.workflow_config || {}
+
+    // Fetch workflow_config from agent_configurations (most-recent row).
+    // Empty config is acceptable — UI-generated agents may not save one yet.
+    const { data: cfgRow, error: cfgError } = await supabase
+      .from('agent_configurations')
+      .select('input_values')
+      .eq('agent_id', agentId)
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+
+    if (cfgError) {
+      console.warn(`  ⚠️  Could not read agent_configurations: ${cfgError.message} — proceeding with empty config`)
+      workflowConfig = {}
+    } else if (cfgRow?.input_values) {
+      workflowConfig = cfgRow.input_values as Record<string, any>
+    } else {
+      console.log(`  ℹ️  No agent_configurations row found for this agent — proceeding with empty config`)
+      workflowConfig = {}
+    }
+
     console.log(`  ✅ Loaded ${dslSteps.length} steps + ${Object.keys(workflowConfig).length} config keys from DB`)
     runDslValidation(dslSteps, workflowConfig)
   }
