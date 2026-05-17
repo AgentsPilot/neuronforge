@@ -9,12 +9,20 @@
  *     --agent-id <UUID> \
  *     [--input-dir <path>] \
  *     [--dsl <path>] \
- *     [--config <path>]
+ *     [--config <path>] \
+ *     [--use-db-dsl]
  *
  * Defaults:
  *   --input-dir  output/vocabulary-pipeline/
  *   --dsl        <input-dir>/phase4-pilot-dsl-steps.json
  *   --config     <input-dir>/phase4-workflow-config.json
+ *
+ * Flags:
+ *   --use-db-dsl  Load DSL + workflow_config from the agent record in the DB
+ *                 (instead of from file). Skips the agent-update step that
+ *                 normally overwrites pilot_steps with the file content.
+ *                 Use this to test V2-UI-generated agents whose DSL only
+ *                 exists in the DB.
  *
  * Requires: TEST_USER_ID in .env.local
  */
@@ -65,6 +73,10 @@ async function main() {
   const inputDir = getArg('input-dir') || path.join(process.cwd(), 'output', 'vocabulary-pipeline')
   const dslPath = getArg('dsl') || path.join(inputDir, 'phase4-pilot-dsl-steps.json')
   const configPath = getArg('config') || path.join(inputDir, 'phase4-workflow-config.json')
+  // When --use-db-dsl is set, load DSL + workflow_config directly from the agent's DB record
+  // (instead of from file), and SKIP the agent-update step that overwrites pilot_steps.
+  // Use this to test V2-UI-generated agents whose DSL only exists in the DB.
+  const useDbDsl = args.includes('--use-db-dsl')
 
   const userId = process.env.TEST_USER_ID
   if (!userId) {
@@ -80,62 +92,85 @@ async function main() {
 
   console.log(`   Agent ID:  ${agentId}`)
   console.log(`   User ID:   ${userId}`)
-  console.log(`   DSL file:  ${dslPath}`)
-  console.log(`   Config:    ${configPath}`)
+  if (useDbDsl) {
+    console.log(`   DSL source: agent record in DB (--use-db-dsl)`)
+  } else {
+    console.log(`   DSL file:  ${dslPath}`)
+    console.log(`   Config:    ${configPath}`)
+  }
 
   // ========================================
   // E2: Load and validate DSL
   // ========================================
+  // When --use-db-dsl is set, defer the load to E3 (after agent SELECT).
+  // Otherwise load from file as before.
   console.log('\n📁 Loading and validating DSL...')
 
-  if (!fs.existsSync(dslPath)) {
-    console.error(`❌ DSL file not found: ${dslPath}`)
-    process.exit(1)
-  }
-  if (!fs.existsSync(configPath)) {
-    console.error(`❌ Config file not found: ${configPath}`)
-    process.exit(1)
-  }
+  let dslSteps: any[]
+  let workflowConfig: Record<string, any>
 
-  const dslSteps = JSON.parse(fs.readFileSync(dslPath, 'utf-8'))
-  const workflowConfig = JSON.parse(fs.readFileSync(configPath, 'utf-8'))
-
-  if (!Array.isArray(dslSteps) || dslSteps.length === 0) {
-    console.error('❌ DSL must be a non-empty array of steps')
-    process.exit(1)
-  }
-
-  // Validate each step has required fields
-  const validationErrors: string[] = []
-  for (const step of dslSteps) {
-    const stepId = step.id || step.step_id
-    if (!stepId) validationErrors.push(`Step missing id/step_id`)
-    if (!step.type) validationErrors.push(`${stepId}: missing type`)
-    if (!step.name && !step.description) validationErrors.push(`${stepId}: missing name/description`)
-    if (step.type === 'action') {
-      if (!step.plugin) validationErrors.push(`${stepId}: action step missing plugin`)
-      if (!step.action && !step.operation) validationErrors.push(`${stepId}: action step missing action/operation`)
+  if (useDbDsl) {
+    console.log('  ⏭️  Skipping file load — DSL will be read from agent record (E3)')
+    dslSteps = []
+    workflowConfig = {}
+  } else {
+    if (!fs.existsSync(dslPath)) {
+      console.error(`❌ DSL file not found: ${dslPath}`)
+      process.exit(1)
     }
-    // Validate nested steps in scatter-gather
-    if (step.scatter?.steps) {
-      for (const nested of step.scatter.steps) {
-        const nId = nested.id || nested.step_id
-        if (!nId) validationErrors.push(`Nested step missing id`)
-        if (nested.type === 'action' && !nested.plugin) validationErrors.push(`${nId}: action step missing plugin`)
+    if (!fs.existsSync(configPath)) {
+      console.error(`❌ Config file not found: ${configPath}`)
+      process.exit(1)
+    }
+
+    dslSteps = JSON.parse(fs.readFileSync(dslPath, 'utf-8'))
+    workflowConfig = JSON.parse(fs.readFileSync(configPath, 'utf-8'))
+
+    if (!Array.isArray(dslSteps) || dslSteps.length === 0) {
+      console.error('❌ DSL must be a non-empty array of steps')
+      process.exit(1)
+    }
+  }
+
+  // Validate DSL shape — extracted into function so it can be called after
+  // either the E2 file load or the E3 DB load (--use-db-dsl path).
+  const runDslValidation = (steps: any[], cfg: Record<string, any>) => {
+    if (!Array.isArray(steps) || steps.length === 0) {
+      console.error('❌ DSL must be a non-empty array of steps')
+      process.exit(1)
+    }
+    const validationErrors: string[] = []
+    for (const step of steps) {
+      const stepId = step.id || step.step_id
+      if (!stepId) validationErrors.push(`Step missing id/step_id`)
+      if (!step.type) validationErrors.push(`${stepId}: missing type`)
+      if (!step.name && !step.description) validationErrors.push(`${stepId}: missing name/description`)
+      if (step.type === 'action') {
+        if (!step.plugin) validationErrors.push(`${stepId}: action step missing plugin`)
+        if (!step.action && !step.operation) validationErrors.push(`${stepId}: action step missing action/operation`)
+      }
+      if (step.scatter?.steps) {
+        for (const nested of step.scatter.steps) {
+          const nId = nested.id || nested.step_id
+          if (!nId) validationErrors.push(`Nested step missing id`)
+          if (nested.type === 'action' && !nested.plugin) validationErrors.push(`${nId}: action step missing plugin`)
+        }
       }
     }
-  }
-
-  if (validationErrors.length > 0) {
-    console.error(`❌ DSL validation failed:`)
-    for (const err of validationErrors) {
-      console.error(`   - ${err}`)
+    if (validationErrors.length > 0) {
+      console.error(`❌ DSL validation failed:`)
+      for (const err of validationErrors) {
+        console.error(`   - ${err}`)
+      }
+      process.exit(1)
     }
-    process.exit(1)
+    console.log(`  ✅ DSL valid: ${steps.length} top-level steps`)
+    console.log(`  ✅ Config: ${Object.keys(cfg).length} keys (${Object.keys(cfg).join(', ')})`)
   }
 
-  console.log(`  ✅ DSL valid: ${dslSteps.length} top-level steps`)
-  console.log(`  ✅ Config: ${Object.keys(workflowConfig).length} keys (${Object.keys(workflowConfig).join(', ')})`)
+  if (!useDbDsl) {
+    runDslValidation(dslSteps, workflowConfig)
+  }
 
   // ========================================
   // E3: Connect to Supabase and validate agent exists
@@ -145,9 +180,11 @@ async function main() {
   const { createServerSupabaseClient } = await import('../lib/supabaseServer')
   const supabase = createServerSupabaseClient()
 
+  // Select pilot_steps + workflow_config in the SAME query so the --use-db-dsl
+  // path doesn't need a second round-trip. Extra columns cost nothing if unused.
   const { data: agent, error: agentError } = await supabase
     .from('agents')
-    .select('id, agent_name, status, plugins_required, user_id')
+    .select('id, agent_name, status, plugins_required, user_id, pilot_steps, workflow_steps, workflow_config')
     .eq('id', agentId)
     .eq('user_id', userId)
     .neq('status', 'deleted')
@@ -160,6 +197,20 @@ async function main() {
   }
 
   console.log(`  ✅ Agent found: "${agent.agent_name}" (status: ${agent.status})`)
+
+  // Populate DSL from agent record when --use-db-dsl is set, then validate.
+  if (useDbDsl) {
+    console.log('\n📥 Loading DSL from agent record...')
+    const dbDsl = agent.pilot_steps || agent.workflow_steps
+    if (!dbDsl || !Array.isArray(dbDsl) || dbDsl.length === 0) {
+      console.error(`❌ Agent has no pilot_steps or workflow_steps (or it's empty) — can't run with --use-db-dsl`)
+      process.exit(1)
+    }
+    dslSteps = dbDsl
+    workflowConfig = agent.workflow_config || {}
+    console.log(`  ✅ Loaded ${dslSteps.length} steps + ${Object.keys(workflowConfig).length} config keys from DB`)
+    runDslValidation(dslSteps, workflowConfig)
+  }
 
   // ========================================
   // E4: Validate plugin connections + token refresh
@@ -217,6 +268,11 @@ async function main() {
   // ========================================
   // E5: Update agent with pilot_steps
   // ========================================
+  // When --use-db-dsl is set, the DSL already lives in the agent record;
+  // overwriting it would be a no-op at best and clobbering at worst. Skip.
+  if (useDbDsl) {
+    console.log('\n⏭️  Skipping agent DSL update (--use-db-dsl) — DSL already in DB')
+  } else {
   console.log('\n💾 Updating agent with compiled DSL...')
 
   const { error: updateError } = await supabase
@@ -236,6 +292,7 @@ async function main() {
   }
 
   console.log(`  ✅ Agent updated: ${dslSteps.length} pilot_steps saved`)
+  } // end !useDbDsl
 
   // ========================================
   // E6: Save input_values
