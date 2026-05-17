@@ -500,15 +500,27 @@ export class GmailPluginExecutor extends GoogleBasePluginExecutor {
 
     let message = '';
 
+    // WP-42: tolerate LLM emitting a single-email string for to/cc/bcc instead of
+    // the schema-declared array. Coerce string → [string], pass arrays through,
+    // drop everything else. Runtime tolerance matches the WP-21/22/25 family.
+    const toEmailArray = (v: unknown): string[] => {
+      if (Array.isArray(v)) return v.filter((e) => typeof e === 'string' && e.length > 0)
+      if (typeof v === 'string' && v.length > 0) return [v]
+      return []
+    }
+    const toList = toEmailArray(recipients?.to)
+    const ccList = toEmailArray(recipients?.cc)
+    const bccList = toEmailArray(recipients?.bcc)
+
     // WP-8: All headers use mimeEncodeHeader for non-ASCII safety
-    if (recipients?.to?.length) {
-      message += `To: ${recipients.to.map((r: string) => this.mimeEncodeHeader(r)).join(', ')}\r\n`;
+    if (toList.length) {
+      message += `To: ${toList.map((r) => this.mimeEncodeHeader(r)).join(', ')}\r\n`;
     }
-    if (recipients?.cc?.length) {
-      message += `Cc: ${recipients.cc.map((r: string) => this.mimeEncodeHeader(r)).join(', ')}\r\n`;
+    if (ccList.length) {
+      message += `Cc: ${ccList.map((r) => this.mimeEncodeHeader(r)).join(', ')}\r\n`;
     }
-    if (recipients?.bcc?.length) {
-      message += `Bcc: ${recipients.bcc.map((r: string) => this.mimeEncodeHeader(r)).join(', ')}\r\n`;
+    if (bccList.length) {
+      message += `Bcc: ${bccList.map((r) => this.mimeEncodeHeader(r)).join(', ')}\r\n`;
     }
     if (content?.subject) {
       message += `Subject: ${this.mimeEncodeHeader(content.subject)}\r\n`;

@@ -1738,44 +1738,35 @@ ${pluginDetails}
             )
           }
 
-          // Auto-correct: if input is object type, try to find array field to filter on
+          // Validate input variable is declared as array, unless transform.input
+          // already accesses a nested field of it — in which case the LLM is being
+          // explicit about reaching into a wrapper object; trust the path it wrote.
+          //
+          // WP-40: the previous implementation tried to "auto-correct" by blindly
+          // appending field names from a hardcoded list (`['attachments', 'items', ...]`)
+          // and breaking on the FIRST one without any schema check. That silently
+          // corrupted valid LLM output whenever the input was a wrapper-object
+          // (e.g. {{sheet_rows_wrapper.rows}} → {{sheet_rows_wrapper.rows.attachments}}).
+          // Schema-aware fixes belong in `autoFixFilterTransforms` (below), which uses
+          // skeleton `filter_hints`. Here we only validate.
           const inputVar = (node as any).inputs?.[0]?.variable
           if (inputVar) {
             const varDecl = ir.execution_graph.variables?.find(v => v.name === inputVar)
             if (varDecl && varDecl.type !== 'array') {
-              // Attempt auto-correction: look for common array field names
-              const commonArrayFields = ['attachments', 'items', 'results', 'data', 'list', 'records']
-              let corrected = false
-
-              // Check if transform.input is a variable reference
               const inputRef = transform.input
-              if (inputRef && typeof inputRef === 'string' && inputRef.startsWith('{{') && inputRef.endsWith('}}')) {
-                const varName = inputRef.slice(2, -2).trim()
-
-                // Try appending common array field names
-                for (const fieldName of commonArrayFields) {
-                  const correctedInput = `{{${varName}.${fieldName}}}`
-
-                  // Apply correction
-                  transform.input = correctedInput
-                  corrected = true
-
-                  logger.warn({
-                    nodeId,
-                    originalInput: inputRef,
-                    correctedInput,
-                    reason: `Variable '${varName}' is type '${varDecl.type}', not 'array'. Auto-corrected to access nested array field '${fieldName}'.`
-                  }, 'Auto-corrected filter input to access nested array field')
-
-                  break // Use first match
-                }
-              }
-
-              if (!corrected) {
+              const inputExpr =
+                typeof inputRef === 'string' && inputRef.startsWith('{{') && inputRef.endsWith('}}')
+                  ? inputRef.slice(2, -2).trim()
+                  : null
+              const accessesNestedField =
+                inputExpr !== null && inputExpr.startsWith(`${inputVar}.`)
+              if (!accessesNestedField) {
                 errors.push(
                   `Node '${nodeId}': filter operation requires array input, ` +
                   `but variable '${inputVar}' is declared as type '${varDecl.type}'. ` +
-                  `Either change variable type to 'array' OR use different operation type.`
+                  `Either change variable type to 'array', access a nested array field ` +
+                  `via transform.input (e.g. {{${inputVar}.some_array_field}}), ` +
+                  `or use a different operation type.`
                 )
               }
             }

@@ -1,6 +1,6 @@
 # V6 Open Items — Consolidated Backlog
 
-> **Last Updated:** 2026-05-15
+> **Last Updated:** 2026-05-17
 > **Purpose:** Single source of truth for everything that's deferred, partial, or "future" in V6. Aggregates from `V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_WEAK_POINTS.md`, `V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_INTENT_CONTRACT.md`, the regression `scenario.json` caveats, and session-level observations.
 
 ## How to use this doc
@@ -27,6 +27,7 @@ Sourced from [`V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_WEAK_POINTS.md`](./V6_
 
 | WP | One-line summary | Status | Notes |
 |---|---|---|---|
+| ⭐ [WP-44](./V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_WEAK_POINTS.md#wp-44-v6-formalization-drops-explicit-ep-format-requirements-html-vs-plain-text) | V6 formalization-system-v4.md drops explicit EP format requirements (e.g. `html_body` → `body`, "HTML table" → "plain-text table") | ⬜ Documented | First surfaced 2026-05-17 at Stage 1.2f live Phase E (gantt-urgent-tasks-v2ui). Same Phase 3 prompt-fidelity family as WP-43; bundle as a "Phase 3 prompt-fidelity audit" follow-up. **Two angles:** (A) extend `formalization-system-v4.md` to preserve EP format keywords + plugin-param names; (B) compiler-side rewrite (brittle, not recommended). |
 | ⭐ [WP-34](./V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_WEAK_POINTS.md#wp-34-deterministicextractor-swallows-pdf-parse-exceptions-and-document-extractor-silently-fabricates-unknown-defaults) | `DeterministicExtractor` swallows PDF-parse exceptions → document-extractor fabricates "Unknown" defaults | ⬜ Documented, multi-component | **Highest user-visible risk.** Could send fabricated content to suppliers in po-monitor's reply-in-thread (step10). 5-part fix shape spec'd in the WP body. |
 | [WP-14](./V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_WEAK_POINTS.md#wp-14) (reopened) | Multi-nested-step scatter body token bloat (`isExtractLike` guard missing on multi-step branch in `ParallelExecutor.ts:470`) | ⚠️ Partial fix | Triggers on contract-enddate Phase E (1M tokens). ~30 lines. |
 | [WP-26](./V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_WEAK_POINTS.md#wp-26-o23-doesnt-recognize-project_columnby_index-as-a-positional-consumer) | O23 doesn't recognize `project_column.by_index` as positional consumer | ⬜ Future | User workaround: add header row to sheet. ~15 lines. |

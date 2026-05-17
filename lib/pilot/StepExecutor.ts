@@ -1535,6 +1535,59 @@ export class StepExecutor {
         promptString;
     }
 
+    // WP-43: Bridge the prompt-vs-data shape drift caused by upstream
+    // auto-injected `rows_to_objects`. The Phase 3 IR-author LLM often
+    // transcribes the user's column-letter wording verbatim (e.g. "Use column
+    // A as task_name") into ai_processing.instruction, not knowing that
+    // `rows_to_objects` will convert the 2D array into objects with header
+    // keys before the AI step runs. Without help, the AI takes the
+    // instruction's "2D array / column A" framing literally and either
+    // fabricates or returns empty results despite the data being right there.
+    //
+    // Fix: when the runtime detects ai_processing input is an array of
+    // objects, prepend a brief shape hint that maps positional column
+    // letters → the actual named keys. ~50 tokens; only fires on
+    // post-rows_to_objects shapes, so 2D-array and scalar inputs are
+    // unaffected.
+    if (step.type === 'ai_processing') {
+      // DataPreprocessor may unwrap `{ input: [...] }` into the array itself,
+      // so check both shapes: the unwrapped array OR `.input` nested inside a
+      // wrapper. Fall back to `enrichedParams.input` (pre-preprocess) if both
+      // miss — same data the prompt's "Data for Analysis" section will show.
+      const aiInput = Array.isArray(preprocessedParams)
+        ? preprocessedParams
+        : (preprocessedParams?.input ?? enrichedParams?.input);
+      let shapeHint = '';
+      if (Array.isArray(aiInput) && aiInput.length > 0) {
+        const firstObj = aiInput.find((it: any) => it && typeof it === 'object' && !Array.isArray(it));
+        if (firstObj) {
+          const keys = Object.keys(firstObj);
+          if (keys.length > 0) {
+            const positional = keys
+              .slice(0, 26)
+              .map((k, i) => `column ${String.fromCharCode(65 + i)} = ${JSON.stringify(k)}`)
+              .join(', ');
+            shapeHint =
+              `INPUT DATA SHAPE: The input below is an array of ${aiInput.length} object(s) with these named keys: ${JSON.stringify(keys)}. ` +
+              `If the instruction below references columns by letter or sheet position (e.g. "column A", "column G", or "2D array of rows"), ` +
+              `treat them as positional aliases for these keys (${positional}). Use the named keys directly when extracting values.\n\n`;
+          }
+        }
+      }
+      // WP-43 part 2: Many ai_processing instructions reference temporal terms
+      // ("now", "today", "the next 3 days"), but the prompt never anchored
+      // those to a concrete date — the LLM has no reliable "today" reference
+      // and conservatively returns nothing when asked to filter by date range.
+      // Always inject the current date so date-relative reasoning has a basis.
+      const today = new Date();
+      const todayISO = today.toISOString().slice(0, 10);
+      const todayHuman = today.toUTCString().slice(0, 16); // e.g. "Sun, 17 May 2026"
+      const datePreamble =
+        `CURRENT DATE: Today is ${todayISO} (${todayHuman}). When the instruction below references "today", "now", "the next N days", ` +
+        `"this week", or any other temporal anchor, use this date as the reference point. Dates in the input data may use formats like DD/MM/YYYY or D/M/YYYY — interpret them in that locale unless explicitly told otherwise.\n\n`;
+      promptString = shapeHint + datePreamble + promptString;
+    }
+
     // I3: Append JSON output instruction when output_schema is defined
     // This tells the LLM to respond with structured JSON instead of free-form text
     const outputSchema = (step as any).config?.output_schema || (step as any).output_schema;
@@ -2464,6 +2517,20 @@ Respond ONLY with the JSON array. No markdown, no explanation, no code blocks.`;
           }
           result = orderedResult;
         } else {
+          result = data;
+        }
+        break;
+
+      case 'select':
+        // WP-41: `select` constructs ONE wrapper object from named fields. It is
+        // NOT a per-item transform like `map`. Field values are already resolved
+        // by `resolveAllVariables` at step entry, so `effectiveConfig.fields` is
+        // the post-resolution literal object — just shallow-clone it.
+        if (effectiveConfig?.fields && typeof effectiveConfig.fields === 'object' && !Array.isArray(effectiveConfig.fields)) {
+          result = { ...effectiveConfig.fields };
+        } else {
+          // No fields → identity passthrough of the input (lets downstream see
+          // the source value, mirrors `case 'set'` shape).
           result = data;
         }
         break;
