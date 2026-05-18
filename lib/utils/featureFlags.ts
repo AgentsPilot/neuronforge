@@ -110,6 +110,28 @@ export function useV6ReviewMode(): boolean {
 }
 
 /**
+ * Check if V6 Pipeline A (IntentContract pipeline) is enabled.
+ *
+ * When TRUE, V2 UI agent creation calls `/api/v6/generate-ir-intent-contract`
+ * which runs the regression-tested IntentContract path:
+ *   generateGenericIntentContractV1 → CapabilityBinderV2 →
+ *   IntentToIRConverter → ExecutionGraphCompiler
+ *
+ * When FALSE (default), V2 UI calls `/api/v6/generate-ir-semantic`
+ * (Pipeline B — `SemanticPlanGenerator` → `IRFormalizer` → compiler).
+ *
+ * NOTE: Only has effect when NEXT_PUBLIC_USE_V6_AGENT_GENERATION=true.
+ * Defaults to FALSE during rollout — flip to true after Stage P4 verification.
+ *
+ * @returns {boolean} True if Pipeline A enabled, false to keep Pipeline B
+ */
+export function useV6PipelineA(): boolean {
+  const flag = process.env.NEXT_PUBLIC_USE_V6_PIPELINE_A;
+  console.log("Feature Flag: NEXT_PUBLIC_USE_V6_PIPELINE_A=", flag || 'none (default: false)');
+  return parseBooleanFlag(flag, false);
+}
+
+/**
  * Get all feature flags status
  * Useful for debugging and admin dashboards
  *

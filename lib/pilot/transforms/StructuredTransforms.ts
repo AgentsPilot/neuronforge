@@ -86,6 +86,43 @@ export function transformWithFields(
     );
   }
 
+  // WP-46 (2026-05-17): const-only `with_fields` → singleton object.
+  //
+  // The IntentContract LLM commonly emits a `with_fields` step whose ALL
+  // field expressions are constants (no `item.*` reference): the intent is
+  // "compute these named constants for downstream filters/comparisons,"
+  // not "augment each input row." Example (gantt-urgent-tasks-v2ui):
+  //   fields: [
+  //     { name: "window_start", expression: { kind: "today" } },
+  //     { name: "window_end",   expression: { kind: "date_add", ... } }
+  //   ]
+  // Downstream then references `{{date_window.window_start}}`, treating
+  // `date_window` as a singleton object. The per-item augmentation semantic
+  // (one row in, one row out with extra fields) doesn't fit — it produces
+  // an array of N copies of the same constants, and `.window_start` on an
+  // array resolves to undefined, breaking the filter silently.
+  //
+  // Detection: walk every field's expression tree; if NONE reference
+  // `kind: "ref"` whose ref is `item` (the per-item slot), the whole
+  // operation is constants-only. Evaluate once and return a singleton
+  // object — input array shape is irrelevant when no field needs item data.
+  const allConstant = fields.every((f: any) =>
+    f && f.expression !== undefined && isConstantExpression(f.expression)
+  );
+  if (allConstant) {
+    const singleton: Record<string, any> = {};
+    for (const field of fields) {
+      if (typeof field?.name !== 'string') {
+        throw new StructuredTransformError(
+          `with_fields: invalid field declaration (expected {name, expression}): ${JSON.stringify(field)}`,
+          'INVALID_CONFIG'
+        );
+      }
+      singleton[field.name] = evaluateExpression(field.expression, null, context, evaluator);
+    }
+    return singleton;
+  }
+
   // Coerce non-array input to single-item processing (e.g., when input is one object).
   const items = Array.isArray(data) ? data : (data == null ? [] : [data]);
 
@@ -115,6 +152,29 @@ export function transformWithFields(
   });
 
   return Array.isArray(data) ? result : (result[0] ?? null);
+}
+
+/**
+ * WP-46: Walk an expression tree, return true iff no node references
+ * the per-item slot (`kind: "ref"` with `ref: "item"`). Used to detect
+ * "constants-only" with_fields steps so they can collapse to a singleton.
+ *
+ * Conservative — treats unknown shapes as non-constant.
+ */
+function isConstantExpression(expr: any): boolean {
+  if (expr == null) return true;
+  if (typeof expr !== 'object') return true;
+  if (Array.isArray(expr)) return expr.every(isConstantExpression);
+  // `kind: "ref"` may target either per-item (`item.X`) or a global
+  // variable. Only the former breaks the constants-only assumption.
+  if (expr.kind === 'ref' && (expr.ref === 'item' || (typeof expr.ref === 'string' && expr.ref.startsWith('item.')))) {
+    return false;
+  }
+  // Recurse into all nested values — handles {kind: "date_add", date: {...}, days: {...}}.
+  for (const key of Object.keys(expr)) {
+    if (!isConstantExpression(expr[key])) return false;
+  }
+  return true;
 }
 
 // ============================================================

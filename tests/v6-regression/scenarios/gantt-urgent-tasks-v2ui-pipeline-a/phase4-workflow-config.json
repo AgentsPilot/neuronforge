@@ -1,0 +1,12 @@
+{
+  "read_range": "Gantt!A:G",
+  "header_status": "Status",
+  "gantt_tab_name": "Gantt",
+  "spreadsheet_id": "1RHLbBXzrKv24gNgp7a4Lr7RlMIrP9fjacfGWjhPAbOE",
+  "header_priority": "Priority",
+  "recipient_email": "meiribarak@gmail.com",
+  "date_window_days": 3,
+  "header_task_name": "Tasks",
+  "header_finish_date": "Due Date",
+  "priority_filter_values": "Critical, High"
+}

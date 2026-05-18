@@ -1,0 +1,106 @@
+{
+  "plan_title": "Gantt Critical/High Tasks Due Soon Emailer",
+  "plan_description": "Reads a Google Sheets Gantt tab, finds Critical/High priority tasks whose due date is in the next 3 days (inclusive of today), and emails an HTML summary table to the user.",
+  "sections": {
+    "data": [
+      "- Use Google Sheets spreadsheet_id '1RHLbBXzrKv24gNgp7a4Lr7RlMIrP9fjacfGWjhPAbOE' as the source spreadsheet.",
+      "- Read task rows from the sheet tab named 'Gantt'.",
+      "- Read a wide range that covers all relevant columns (use range 'Gantt!A:Z').",
+      "- Treat the first row of the 'Gantt' tab as the header row and use header names to locate columns.",
+      "- Use the column whose header is exactly 'Tasks' as the task name field.",
+      "- Use the column whose header is exactly 'Due Date' as the finish/due date field.",
+      "- Use the column whose header is exactly 'Priority' as the priority field.",
+      "- Use the column whose header is exactly 'Status' as the status field."
+    ],
+    "actions": [
+      "- Parse each non-header row into a task object using the header row as field names.",
+      "- For each task, interpret the 'Due Date' value as a date.",
+      "- Filter tasks to only those where 'Priority' is exactly 'Critical' OR exactly 'High'.",
+      "- Filter tasks to only those where 'Due Date' is between today and today + 3 days, inclusive.",
+      "- Sort the matching tasks by 'Due Date' ascending (earliest first).",
+      "- If there is at least 1 matching task, generate an HTML email body that contains a nice summary table.",
+      "- If there are 0 matching tasks, generate an HTML email body that clearly states there are no 'Critical' or 'High' priority tasks due in the next 3 days (inclusive of today)."
+    ],
+    "output": [
+      "- When there are matching tasks, produce a nice HTML summary table embedded in the email body (html_body).",
+      "- The HTML table must include exactly these columns in this order: Task name, Finish date, Priority, Status.",
+      "- Map output columns to sheet headers as follows: Task name ← 'Tasks'; Finish date ← 'Due Date'; Priority ← 'Priority'; Status ← 'Status'.",
+      "- The email subject must clearly indicate it is a due-soon summary for Critical/High tasks (for example: 'Gantt: Critical/High tasks due in next 3 days').",
+      "- When there are no matching tasks, produce a short HTML email body (html_body) stating 'No Critical/High tasks due in the next 3 days'."
+    ],
+    "delivery": [
+      "- Send the email via Gmail to the user at meiribarak@gmail.com.",
+      "- Do not CC or BCC anyone."
+    ],
+    "processing_steps": [
+      "- Read the 'Gantt!A:Z' values from Google Sheets.",
+      "- Map the header row to column indexes for: Tasks, Due Date, Priority, Status.",
+      "- Convert each row into a structured task record.",
+      "- Compute the date window: today through today + 3 days (inclusive).",
+      "- Filter and sort tasks.",
+      "- Render the HTML email content (table or no-matches message).",
+      "- Send the email."
+    ]
+  },
+  "specifics": {
+    "services_involved": [
+      "google-sheets",
+      "google-mail"
+    ],
+    "user_inputs_required": [],
+    "resolved_user_inputs": [
+      {
+        "key": "google-sheets__read_range__spreadsheet_id",
+        "value": "1RHLbBXzrKv24gNgp7a4Lr7RlMIrP9fjacfGWjhPAbOE"
+      },
+      {
+        "key": "google-sheets__read_range__range",
+        "value": "Gantt!A:Z"
+      },
+      {
+        "key": "google-mail__send_email__recipients.to",
+        "value": "meiribarak@gmail.com"
+      },
+      {
+        "key": "gantt_tab_name",
+        "value": "Gantt"
+      },
+      {
+        "key": "header_task_name",
+        "value": "Tasks"
+      },
+      {
+        "key": "header_finish_date",
+        "value": "Due Date"
+      },
+      {
+        "key": "header_priority",
+        "value": "Priority"
+      },
+      {
+        "key": "header_status",
+        "value": "Status"
+      },
+      {
+        "key": "priority_filter_values",
+        "value": "Critical, High"
+      },
+      {
+        "key": "date_window_inclusive_rule",
+        "value": "Due Date between today and today+3 days (inclusive)"
+      },
+      {
+        "key": "html_table_columns",
+        "value": "Task name, Finish date, Priority, Status"
+      },
+      {
+        "key": "no_matches_behavior",
+        "value": "send email saying no matches"
+      },
+      {
+        "key": "column_mapping_method",
+        "value": "use header names from first row"
+      }
+    ]
+  }
+}

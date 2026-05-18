@@ -42,7 +42,7 @@ import type {
 } from '@/components/agent-creation/types/generate-agent-v2'
 import { isGenerateAgentV2Success } from '@/components/agent-creation/types/generate-agent-v2'
 import { formatScheduleDisplay } from '@/lib/utils/scheduleFormatter'
-import { useV6AgentGeneration } from '@/lib/utils/featureFlags'
+import { useV6AgentGeneration, useV6PipelineA } from '@/lib/utils/featureFlags'
 import { createTimedThinkingWordCycler } from '@/lib/ui/thinking-words'
 
 // ============================================================================
@@ -988,21 +988,31 @@ function V2AgentBuilderContent() {
 
       // Check if V6 generation is enabled
       const useV6 = useV6AgentGeneration()
+      const useV6PipeA = useV6PipelineA()
       let agentData: CreateAgentData
 
       if (useV6) {
         // ================================================================
-        // V6 FLOW: 5-Phase Semantic Pipeline (Single API Call)
+        // V6 FLOW
+        // - Pipeline A (NEXT_PUBLIC_USE_V6_PIPELINE_A=true): regression-tested
+        //   IntentContract pipeline via /api/v6/generate-ir-intent-contract
+        // - Pipeline B (default): 5-phase semantic pipeline via
+        //   /api/v6/generate-ir-semantic
+        // Both endpoints share the same request/response contract — only the
+        // fetch URL changes. See docs/v6/V6_PIPELINE_A_MIGRATION.md.
         // ================================================================
-        console.log('🚀 Using V6 5-phase semantic pipeline...')
+        const v6Endpoint = useV6PipeA
+          ? '/api/v6/generate-ir-intent-contract'
+          : '/api/v6/generate-ir-semantic'
+        console.log(`🚀 Using V6 (${useV6PipeA ? 'Pipeline A — IntentContract' : 'Pipeline B — Semantic'}) at ${v6Endpoint}...`)
 
         // Show rotating thinking words during V6 generation
         startThinkingWords()
 
         const v6StartTime = Date.now()
 
-        // Single API call - runs all 5 phases
-        const v6Response = await fetch('/api/v6/generate-ir-semantic', {
+        // Single API call - runs all pipeline phases
+        const v6Response = await fetch(v6Endpoint, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',

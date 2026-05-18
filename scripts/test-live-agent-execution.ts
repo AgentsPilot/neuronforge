@@ -334,6 +334,7 @@ async function main() {
   const { error: configError } = await supabase
     .from('agent_configurations')
     .insert([{
+      id: crypto.randomUUID(),
       agent_id: agentId,
       user_id: userId,
       input_values: workflowConfig,
