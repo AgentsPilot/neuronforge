@@ -1,0 +1,86 @@
+{
+  "plan_title": "Qualified Leads (Stage 4) Email Summary Agent",
+  "plan_description": "Reads a Google Sheets leads tracker, filters to Stage = 4 leads, summarizes each lead’s Notes into two bullets, and emails a single HTML table summary to you and your marketing manager.",
+  "sections": {
+    "data": [
+      "- Read lead rows from the Google Sheets spreadsheet with ID \"1RHLbBXzrKv24gNgp7a4Lr7RlMIrP9fjacfGWjhPAbOE\".",
+      "- Read lead rows from the sheet tab named \"Leads\".",
+      "- Read the leads data from the A1 range \"Leads!A1:H10\".",
+      "- Treat the first row of the selected range as the header row.",
+      "- Use the header row to locate the columns named exactly: \"Stage\", \"Notes\", \"Date\", \"Lead Name\", \"Company\", \"Email\", and \"Sales Person\"."
+    ],
+    "actions": [
+      "- Identify the column whose header is exactly \"Stage\".",
+      "- Filter to rows where the Stage cell value is the numeric value 4 (do not match text like \"4\" or values like \"4 - Qualified\").",
+      "- For each filtered row, read the cell under the column header exactly \"Notes\".",
+      "- For each filtered row, generate a two-bullet summary of that Notes text.",
+      "- If a filtered row has an empty Notes cell, output an empty Notes summary for that lead (do not invent content).",
+      "- Build a single combined list of all filtered leads to include in one email."
+    ],
+    "output": [
+      "- Produce a single HTML summary table containing all filtered (Stage = 4) leads.",
+      "- Include table columns in this order: \"Date\", \"Lead Name\", \"Company\", \"Email\", \"Sales Person\", \"Notes summary\".",
+      "- In the \"Notes summary\" cell for each lead, include exactly two bullet points when Notes text exists.",
+      "- If there are zero Stage = 4 leads, produce an HTML email body that clearly states: no qualified leads (Stage = 4) were found in the selected range."
+    ],
+    "delivery": [
+      "- Send one email to the following recipients (To): \"meiribarak@gmail.com\", \"offir.omer@gmail.com\".",
+      "- Email body must include the HTML output (no attachment).",
+      "- Use the email subject: \"Qualified leads (Stage 4) summary\"."
+    ],
+    "processing_steps": [
+      "- Read the specified range from the \"Leads\" tab.",
+      "- Convert the returned rows into structured lead objects using the header row.",
+      "- Filter lead objects where Stage equals numeric 4.",
+      "- Summarize each lead’s Notes into two bullets.",
+      "- Render the final HTML table.",
+      "- Send the email to both recipients."
+    ]
+  },
+  "specifics": {
+    "services_involved": [
+      "google-sheets",
+      "google-mail",
+      "chatgpt-research"
+    ],
+    "user_inputs_required": [],
+    "resolved_user_inputs": [
+      {
+        "key": "google-sheets__table/get__spreadsheet_id",
+        "value": "1RHLbBXzrKv24gNgp7a4Lr7RlMIrP9fjacfGWjhPAbOE"
+      },
+      {
+        "key": "google-sheets__table/get__range",
+        "value": "Leads!A1:H10"
+      },
+      {
+        "key": "google-sheets__table/get__tab_name",
+        "value": "Leads"
+      },
+      {
+        "key": "notes_column_header",
+        "value": "Notes"
+      },
+      {
+        "key": "key_columns",
+        "value": "Date, Lead Name, Company, Email, Sales Person"
+      },
+      {
+        "key": "stage_match_type",
+        "value": "numeric_4_only"
+      },
+      {
+        "key": "notes_summary_style",
+        "value": "two_bullets"
+      },
+      {
+        "key": "google-mail__email/send_message__recipients.to",
+        "value": "meiribarak@gmail.com, offir.omer@gmail.com"
+      },
+      {
+        "key": "no_qualified_leads_behavior",
+        "value": "send_email_no_leads_message"
+      }
+    ]
+  }
+}
