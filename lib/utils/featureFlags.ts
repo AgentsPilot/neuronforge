@@ -109,6 +109,11 @@ export function useV6ReviewMode(): boolean {
   return parseBooleanFlag(flag, true);
 }
 
+// Retired 2026-05-20 (P6): NEXT_PUBLIC_USE_V6_PIPELINE_A flag + useV6PipelineA()
+// helper were a rollout safety net for switching the V2 UI from the semantic
+// pipeline (Pipeline B) to the IntentContract pipeline (Pipeline A). Pipeline A
+// is now the unconditional V6 path. See docs/v6/V6_PIPELINE_A_MIGRATION.md § P6.
+
 /**
  * Get all feature flags status
  * Useful for debugging and admin dashboards

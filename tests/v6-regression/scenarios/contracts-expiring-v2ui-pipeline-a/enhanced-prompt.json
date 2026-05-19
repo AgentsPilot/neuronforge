@@ -1,0 +1,89 @@
+{
+  "plan_title": "Active Contracts Expiring in Next 10 Days (Email Summary)",
+  "plan_description": "Reads a Google Sheets-based contract tracker, finds contracts that are still active and expiring within the next 10 days, and emails an HTML summary table to you.",
+  "sections": {
+    "data": [
+      "- Read the contract tracker from the Google Sheets spreadsheet with spreadsheet_id \"1RHLbBXzrKv24gNgp7a4Lr7RlMIrP9fjacfGWjhPAbOE\".",
+      "- Use the single sheet tab named \"contracts\" as the source table.",
+      "- Treat row 1 as the header row that defines column names.",
+      "- Use the column named \"Contract Ends Due Date\" as the contract expiration/end date field.",
+      "- Use the following columns (by header name) as the report fields: \"Contract ID\", \"Company Name\", \"Contract Amount\", \"Contract Ends Due Date\", \"Email of Contact Person\"."
+    ],
+    "actions": [
+      "- Read all rows from the \"contracts\" tab and map each row into a contract record using the header row as keys.",
+      "- Determine whether a contract is still active by checking if \"Contract Ends Due Date\" is today or later.",
+      "- For active contracts only, include the contract in the results if \"Contract Ends Due Date\" falls within the next 10 days (inclusive).",
+      "- Sort the results by \"Contract Ends Due Date\" ascending (soonest expiring first).",
+      "- If there are 0 matching contracts, prepare a \"none found\" message instead of a table."
+    ],
+    "output": [
+      "- If there are matching contracts, generate an HTML table (for embedding in an email body) containing one row per matching contract.",
+      "- The HTML table columns must be exactly: Contract ID, Company Name, Contract Amount, Contract Ends Due Date, Email of Contact Person.",
+      "- If there are 0 matching contracts, output a short message stating that no active contracts expire in the next 10 days."
+    ],
+    "delivery": [
+      "- Send an email to \"meiribarak@gmail.com\".",
+      "- Email subject must be exactly: \"Contracts expiring in the next 10 days\".",
+      "- If there are matching contracts, embed the HTML table in the email body.",
+      "- If there are 0 matching contracts, send the \"none found\" message in the email body."
+    ],
+    "processing_steps": [
+      "- Load the full contracts table from Google Sheets.",
+      "- Normalize \"Contract Ends Due Date\" values into a comparable date format.",
+      "- Filter to active contracts (end date today or later).",
+      "- Filter active contracts to those expiring within the next 10 days (inclusive).",
+      "- Sort results by end date ascending.",
+      "- Render either an HTML table (matches) or a plain message (no matches).",
+      "- Send the email to the user."
+    ]
+  },
+  "specifics": {
+    "services_involved": [
+      "google-sheets",
+      "google-mail"
+    ],
+    "user_inputs_required": [],
+    "resolved_user_inputs": [
+      {
+        "key": "user_email",
+        "value": "meiribarak@gmail.com"
+      },
+      {
+        "key": "google-sheets__table/get__spreadsheet_id",
+        "value": "1RHLbBXzrKv24gNgp7a4Lr7RlMIrP9fjacfGWjhPAbOE"
+      },
+      {
+        "key": "google-sheets__table/get__range",
+        "value": "contracts!A:Z"
+      },
+      {
+        "key": "google-sheets__get__tab_name",
+        "value": "contracts"
+      },
+      {
+        "key": "header_row",
+        "value": "1"
+      },
+      {
+        "key": "expiration_date_column",
+        "value": "Contract Ends Due Date"
+      },
+      {
+        "key": "report_columns",
+        "value": "Contract ID, Company Name, Contract Amount, Contract Ends Due Date, Email of Contact Person"
+      },
+      {
+        "key": "google-mail__email/send_message__recipients.to",
+        "value": "meiribarak@gmail.com"
+      },
+      {
+        "key": "email_subject",
+        "value": "Contracts expiring in the next 10 days"
+      },
+      {
+        "key": "no_matches_behavior",
+        "value": "send_empty_notice"
+      }
+    ]
+  }
+}

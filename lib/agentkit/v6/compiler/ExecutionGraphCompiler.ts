@@ -680,13 +680,25 @@ export class ExecutionGraphCompiler {
         transformConfig.type = 'dedupe'
         transformedConfig.type = 'dedupe'
         this.log(ctx, `  → Aliased 'deduplicate' → 'dedupe'`)
-      } else if (transformConfig.type === 'select' || transformConfig.type === 'custom') {
-        // D-B18: Alias select/custom → map. Both were removed from the IntentContract
-        // schema (WP-4 mapping is the correct approach). This handles old ICs that still have them.
-        const originalType = transformConfig.type
+      } else if (transformConfig.type === 'select') {
+        // WP-41: `select` constructs ONE wrapper object from named fields and has
+        // DIFFERENT semantics from `map` (which iterates an array per-item).
+        // The previous D-B18 behaviour relabeled `select` → `map`, which caused
+        // the runtime's per-item `map` to produce N copies of the literal config
+        // instead of one wrapper object. The runtime now handles `select` natively
+        // (see `case 'select'` in `StepExecutor.executeTransform`). Preserve the
+        // type as-is; `pilotOperation` stays `'select'` (set at line ~579 from
+        // `transformConfig.type`).
+        this.log(ctx, `  → Preserving 'select' (WP-41: runtime now handles native select semantics)`)
+      } else if (transformConfig.type === 'custom') {
+        // D-B18 (partial): `custom` is still relabeled to `map`. Its IR-side use
+        // is "do something LLM-defined per item" — closer to map than select.
+        // If a real semantic gap shows up in a regression, split this branch the
+        // same way WP-41 split `select` out.
         transformConfig.type = 'map'
         transformedConfig.type = 'map'
-        this.log(ctx, `  → D-B18: Aliased '${originalType}' → 'map' (${originalType} removed from IC schema)`)
+        pilotOperation = 'map'
+        this.log(ctx, `  → D-B18: Aliased 'custom' → 'map' (custom removed from IC schema)`)
       } else if (transformConfig.type === 'map') {
         // IR field: map_expression → DSL field: expression
         if (transformConfig.map_expression) {

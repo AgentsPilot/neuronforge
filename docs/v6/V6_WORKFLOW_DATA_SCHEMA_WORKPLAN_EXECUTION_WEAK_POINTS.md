@@ -54,6 +54,16 @@ The weak points are ordered by likelihood of causing failures as new scenarios a
 | [WP-36](#wp-36-phase-d-stub-generator-emits-generic-mock_name_nnn-that-fails-keyword-filters) | The Phase D stub data generator at [`stub-data-generator.ts:210`](../../scripts/test-dsl-execution-simulator/stub-data-generator.ts#L210) falls through to `mock_${fieldName}_${idx}` for the `name` field — producing `mock_name_001`, `mock_name_002`, `mock_name_003`. When the LLM emits a `transform/filter` step with `contains_any` operator and content-specific keywords (e.g., `["Contract", "Agreement", "MSA", "SOW", "Order Form", "Statement of Work"]`), zero mock items match → filter produces 0 results → `on_empty: "throw"` correctly fires because the filter feeds a scatter-gather → Phase D aborts with `Transform step produced 0 results from 3 input items`. The runtime safety check is right; the mock data is the problem. Real Drive/Sheets data has realistic names that would match. PD-1 family (Phase D realism gap). Affects any scenario using keyword-substring filters on file/document names — `contract-enddate-summary` is the first to surface it because earlier scenarios filtered on enum fields (`labels`, `urgency`, `priority`) which happen to align with generic mocks. | P2 | ✅ Fixed (2026-05-14, commit `71575e4`) — new `DOCUMENT_NAME_BANK` constant with 6 realistic business-doc names (Contract / MSA / SOW / Agreement / Order Form / Invoice) cycled by indexSuffix. New `name`/`title` case in `generateStringByFieldName`. 11 new unit tests covering bank cycling, wrap-around, keyword coverage, and field-specific regressions. |
 | [WP-37](#wp-37-transformwithfields-rejects-undefined-expressions-when-resolveallvariables-pre-substituted-an-unresolvable-template) | `with_fields.fields[].expression` is meant to be a structured AST node (after WP-33) but the runtime pipeline still pre-runs `ExecutionContext.resolveAllVariables` on the whole step config. When the LLM emits a template-string expression like `"{{attachment_item.thread_id}}"` and that path is unresolvable in the current context (e.g., `thread_id` not propagated by an upstream flatten), `resolveAllVariables`'s whole-template branch returns `undefined` and writes it back. `JSON.stringify` then drops the undefined → the runtime sees `{name: "thread_id"}` (expression silently gone) → `transformWithFields`'s `!field.expression` guard throws `INVALID_CONFIG` before WP-33's `evaluateExpression` tolerance can normalize the string. Net result: scatter-gather "all N items failed" cascading abort. Same family as WP-22 / WP-30 / WP-32 / WP-33 — runtime pre-processing destroys valid LLM intent. | P1 | ✅ Fixed (2026-05-14, commit `10df588`) — split the upstream guard so `name` missing still throws (genuinely invalid), but `expression === undefined` is tolerated as `{kind: "literal", value: undefined}`. Augmented row gets `field.name: undefined`, surfacing the missing data downstream instead of crashing the scatter. 8 new tests + 1 pre-existing assertion updated. |
 | [WP-38](#wp-38-self-referential-gmail-queries-pick-up-the-agents-own-past-confirmation-emails) | Gmail-search workflows that send a confirmation email containing a phrase like `"Orders PO Extraction – Processing Complete"` create a **self-referential feedback loop**: the next run's query `subject:Orders newer_than:7d` matches the agent's own prior confirmation email (because it has "Orders" in the subject). The cascade then processes that confirmation email as if it were a real order — its `attachments: []` correctly propagates through, producing a "no data" downstream result and another confirmation email. The agent keeps sending itself confirmation emails about confirmation emails. Affects `orders-po-extractor-xlsx`, `po-monitor-supplier-confirmation`, and any scenario where the LLM emits both (a) a Gmail search filtering on a domain keyword, and (b) a confirmation email containing that keyword in its subject. Pipeline-correctness-wise nothing is broken (no fabrication, accurate "no data" message), but the data shape is misleading — the unique extraction/grouping logic NEVER GETS TESTED because the only matching email is the agent's own self-output. PD-1/PD-3 realism family. Prompt-level fix: query exclusions like `-from:me` or `-subject:"Processing Complete"`; or quoted-subject filters like `subject:"Order PO"` that target the user-facing pattern, not the agent's confirmation phrasing. | P3 | ⬜ Documented — prompt-level fix deferred (scenario-author concern, not pipeline bug) |
+| [WP-39](#wp-39-execution-graph-compiler-d-b18-alias-updates-configtype-but-not-stepoperation) | `ExecutionGraphCompiler` aliases `select` / `custom` transform types → `map` (per D-B18, since `select`/`custom` were removed from the IntentContract schema). The alias logic at [`ExecutionGraphCompiler.ts:683-689`](../../lib/agentkit/v6/compiler/ExecutionGraphCompiler.ts#L683) updates `transformConfig.type` AND `transformedConfig.type` to `"map"` but **does not update `pilotOperation`** (line 579). `pilotOperation` flows into `finalOperation` (line 816) → `step.operation` (line 895), so the compiled step ends up with `operation: "select"` at the top level despite `config.type: "map"`. Runtime `StepExecutor.executeTransform()` reads `step.operation` first — sees `"select"` — falls through its switch — throws `Unknown transform operation: select`. Affects every V6-pipeline-generated workflow where Phase 1 LLM emits `transform/select` (which is its natural choice for "project these columns" patterns since `select` was the original IR vocabulary before W2/WP-16 grammar evolved). First surfaced at runtime during Stage 1.2b V2-UI Phase E run on `gantt-urgent-tasks` prompt — step3 died, blocking steps 4-9 from executing. Same incomplete-aliasing pattern exists for `deduplicate → dedupe` (line 680-682) but doesn't surface because runtime handles both. | P0 | ✅ Fixed (2026-05-17) — added `pilotOperation = 'map'` to the D-B18 alias block. Now `step.operation`, `config.type`, and `transformedConfig.type` all agree on `"map"`. |
+| [WP-40](#wp-40-irformalizer-blind-guess-auto-correction-corrupts-filter-input-paths) | `IRFormalizer.validateIRStructure` at [`IRFormalizer.ts:1741-1782`](../../lib/agentkit/v6/semantic-plan/IRFormalizer.ts#L1741) tries to "auto-correct" a filter whose input variable is declared as non-array by **blindly appending field names from a hardcoded list** `['attachments', 'items', 'results', 'data', 'list', 'records']` and breaking on the FIRST one. There's no schema check — it always picks `attachments`. The compounding errors: (a) the check looks up the BASE variable declaration (`sheet_rows_wrapper`) but `transform.input` may already access a nested field (`{{sheet_rows_wrapper.rows}}` is the array), so the "object" type assessment is meaningless; (b) the corrected path is appended to `transform.input`'s FULL expression, not the base var, producing nonsense like `{{sheet_rows_wrapper.rows.attachments}}`. Runtime resolves to `undefined` → "Transform step has no input data" → cascade abort. First surfaced at Stage 1.2b on the same `gantt-urgent-tasks` V2-UI agent — step4 (`Transform: filter` to skip header row) died once the WP-39 fix unblocked step3. Textbook V6_DESIGN_PRINCIPLES Principle 11 violation: defense-in-depth heuristic SILENTLY corrupts data while logging "Auto-corrected" as if it was a fix. | P0 | ✅ Fixed (2026-05-17) — deleted the blind-guess loop in `validateIRStructure`; restored explicit validation error. Filters whose input already accesses a nested field (`{{var.subfield}}`) bypass the type check (trust the LLM). The schema-aware `autoFixFilterTransforms` (line 1846+) — which uses skeleton `filter_hints` — is the legitimate auto-fix path and is unchanged. |
+| [WP-41](#wp-41-d-b18-select-to-map-alias-is-syntactic-not-semantic) | `ExecutionGraphCompiler`'s D-B18 alias renames `transform.type: "select"` → `"map"` ([WP-39](#wp-39-execution-graph-compiler-d-b18-alias-updates-configtype-but-not-stepoperation) fixed the partial relabel) — but the alias is purely syntactic. `select` and `map` are different operations: `select` constructs ONE wrapper object from source-level references; `map` iterates an input array and produces ONE output per item. The LLM emits `select` with `fields: {rows: "{{src.values}}", row_count: "{{src.row_count}}", ...}` intending a singular wrapper, then downstream consumers do `{{wrapper.rows}}` to drill into the bundled array. After the alias, runtime `map` iterates the 57-row input array and runs the field-construction **per item** — producing 57 identical copies of the literal config (`[{type:"map", input:"...", fields:{...}}, ×57]`) instead of one wrapper. `wrapper.rows` then resolves to undefined on the resulting array, breaking every downstream `transform/filter` consumer. Surfaced at Stage 1.2c live Phase E run after both WP-39 and WP-40 fixes landed — step4 still fails at runtime despite a clean path because step3's output has the wrong shape. Affects every workflow where Phase 1 LLM emits `transform/select` to build a wrapper object (which is its natural choice for "bundle source metadata with the rows array" patterns). | P0 | ✅ Fixed (2026-05-17) — chose **Option A**: restored `select` as a runtime transform op via new `case 'select'` in `StepExecutor.executeTransform` that builds a single wrapper object from `effectiveConfig.fields` (post-resolveAllVariables, values already resolved). Compiler D-B18 alias split into two arms: `select` preserved (no rename, `pilotOperation` stays `'select'`); `custom` still aliases to `map` for now. End-to-end Phase E confirmed 7/7 steps pass on `gantt-urgent-tasks-v2ui` regression scenario (real Gmail delivery succeeded). |
+| [WP-42](#wp-42-gmail-plugin-rejects-string-recipientsto-from-llm-emission) | Gmail plugin executor's `buildEmailMessage` calls `.map()` on `recipients.to` (and `recipients.cc` / `recipients.bcc`), assuming the plugin schema's declared array shape. The LLM commonly emits a single email as a string (`recipients.to: "meiribarak@gmail.com"`) since EP Key Hints surface the value as a string — the natural emission style. Runtime throws `TypeError: recipients.to.map is not a function`. Same plugin-contract / LLM-emission-style mismatch family as WP-21 (`contains_any` with string RHS) and WP-25/28 (positional-key field_mapping). Bonus: `countRecipients` in `base-plugin-executor.ts` called `.length` on the string and returned the character count (e.g., 20 for a 20-char email) — silently inflated `total_recipients` in validation rules ("send email to 20 recipients?" confirmation). Surfaced at Stage 1.2d live Phase E run after WP-41 unblocked the cascade to step9 (the send-email step). | P0 | ✅ Fixed (2026-05-17) — two-line runtime tolerance: (a) new `toEmailArray()` helper in `buildEmailMessage` coerces string → `[string]` and passes arrays through unchanged; (b) `countRecipients` patched to count `1` for a single-email string instead of `string.length`. Mirrors the WP-21/22/25 runtime-tolerance pattern. End-to-end Phase E confirmed on `gantt-urgent-tasks-v2ui` (real email delivered to meiribarak@gmail.com). |
+| [WP-43](#wp-43-ai_processing-prompt-vs-data-shape-and-temporal-anchor-drift) | TWO compounding `ai_processing` prompt-context gaps that together cause the model to silently produce empty/fabricated results despite real input data. **(a) Shape drift:** Phase 3 LLM authors `ai_processing.instruction` referencing column letters (`"Use column A as task_name, column D as status..."`) — the wording naturally inherited from EP Key Hints like `task_name_column: "A"`. But the compiler auto-injects `rows_to_objects` for Sheets data, so by the time the AI step runs, the input is an array of objects with header keys (`Tasks`, `Status`, ...). The model's prompt says one thing; the data shape says another. **(b) Temporal anchor missing:** Instructions like "due_date within the next 3 days **relative to now**" are unresolvable — the prompt never anchors "now" to a concrete date. The model has no reliable reference for date filtering and conservatively returns empty. Both gaps surfaced live on `gantt-urgent-tasks-v2ui` Stage 1.2e after WP-39/40/41/42 fixed all runtime errors: pipeline ran 7/7 steps, sent a "No tasks matched the criteria" email despite 3 tasks in the data that should have matched. | P0 | ✅ Fixed (2026-05-17) — runtime preamble (Option B) prepends two short anchors to every `ai_processing` prompt when input is an array of objects: (1) `INPUT DATA SHAPE` lists named keys + positional aliases (column A=key1, column B=key2, ...); (2) `CURRENT DATE` provides today in ISO + human form with a hint about DD/MM/YYYY interpretation. ~150 tokens, no compiler change, no Phase 3 prompt change. End-to-end Phase E confirmed: AI step now extracts 3 real tasks; email body lists them. **Option A (formalization-system-v4.md prompt extension)** queued as a follow-up to also fix the IR-author-time pass and reduce reliance on the runtime preamble. |
+| [WP-44](#wp-44-v6-formalization-drops-explicit-ep-format-requirements-html-vs-plain-text) | Phase 3 IRFormalizer (using `formalization-system-v4.md`) loses explicit format requirements declared in the user's Enhanced Prompt. The `gantt-urgent-tasks-v2ui` EP says "HTML" 6 times across `sections.output` / `sections.delivery` — including the literal *"Put the HTML summary table in the email `html_body`"*. But the V6 IR authored: (a) AI step prompt saying *"Create a concise **plain-text** email body"*; (b) `output_schema.body.description: "Plain-text email body"`; (c) `send_email` step using `content.body` (plain) instead of `content.html_body`. Net result: user receives an ASCII-pipe-separated table instead of the requested HTML table. **Comparison with the IntentContract pipeline:** the previous `gantt-urgent-tasks` scenario (authored via the old IC pipeline) correctly produced `content.html_body: "{{email_content.body}}"` — fidelity to the EP. The V6 formalization prompt has no equivalent guidance steering the LLM to preserve EP-level format choices. Sister to WP-43: same family of "Phase 3 LLM authors workflow steps that don't reflect EP-level user requirements" — but on a different surface (output format / plugin param choice rather than instruction-language / temporal anchor). | P1 | ⬜ Documented — fix deferred. Two intervention angles: (A) extend `formalization-system-v4.md` with guidance to inspect the EP's `sections.output` + `sections.delivery` for format-specific instructions (`html_body` / `markdown_body` / `plain_body` / structural keywords like "HTML table", "Markdown", "JSON") and (a) author the AI generation prompt to match, (b) wire the resulting field to the matching plugin parameter; (B) compiler-side rewrite — when the EP contains `html_body` and the IR has `content.body`, swap to `content.html_body` (more brittle since it tries to fix what the LLM should have authored correctly). Bundle with WP-43 Option A in the next Phase 3 prompt-fidelity follow-up session. **Effectively resolved by Pipeline A migration** — Pipeline A's IntentContract prompt preserves `html_body` correctly (confirmed live Stage P4 2026-05-17). Once Pipeline B is fully retired (P6) this WP becomes historical. |
+| [WP-45](#wp-45-conditionalevaluator-gte-lte-do-not-resolve-bare-variable-refs-and-are-not-date-aware) | `ConditionalEvaluator` (used by every `transform/filter` step) had two compounding gaps that together break date-range filters: (a) `condition.value` was only defensively resolved as a bare variable reference (`"date_window.window_start"` → `{{date_window.window_start}}`) for the `in`/`not_in` operators (WP-22's narrow O26 fix). For `gte`/`lte`/`gt`/`lt`/`eq`/`ne` the bare string was treated as a literal — `compareValues("19/5/2026", "date_window.window_start", "gte")` was always false. (b) The ordered comparison operators `gte`/`lte`/`gt`/`lt` did raw `>=`/`<=`/`>`/`<` — lexicographic on strings — and never called `parseDate`. So even if (a) were fixed and the runtime got the ISO string `"2026-05-17T00:00:00.000Z"`, `"19/5/2026" >= "2026-05-17T..."` is still a string-vs-string lexicographic compare. Surfaced at Stage P4 of the Pipeline A migration on `gantt-urgent-tasks-v2ui-pipeline-a` — step6 (date-range filter built via `Due Date >= window_start && <= window_end`) returned 0 of 4 priority-matched tasks. WP-29/30/31 (2026-05-11) fixed similar bugs but **only in the W2 expression evaluator** (`StructuredTransforms.ts`'s `evaluateExpression`, used by `transform/with_fields`) — not in `ConditionalEvaluator` (which is its own parser + comparison code in a separate file). Two date parsers diverged: one hardened, one stayed brittle. The old `gantt-urgent-tasks` regression scenario built `days_until_finish` as a *number* in `with_fields` and filtered on that number, so the filter's parseDate gap was never exercised. Pipeline A's LLM picked a cleaner shape (`with_fields` builds a `date_window` object → `filter` directly compares dates), exposing the gap. | P0 | ✅ Fixed (2026-05-17) — (a) generalised bare-string defensive wrap to all comparison operators via `looksLikeBareVariableRef()` helper (identifier-path regex; literal values with spaces/punct stay literal). (b) `gte`/`lte`/`gt`/`lt` now date-aware via new `compareAsDates()` helper: when both sides parse as dates (via the canonical WP-29 `parseDate` re-used from `StructuredTransforms.ts`), compare via `Date.getTime()`; otherwise fall through to native `>=`/`<=`/`>`/`<` (numeric and string comparisons unchanged). (c) `ConditionalEvaluator.parseDate` now delegates to the shared WP-29 parser so `before`/`after`/`within_last_days` also benefit — eliminates the duplicate weaker parser. End-to-end Phase E confirmed on `gantt-urgent-tasks-v2ui-pipeline-a` (3 real tasks delivered in HTML email). |
+| [WP-46](#wp-46-transform-with_fields-with-constants-only-produces-per-item-array-instead-of-singleton-object) | `transform/with_fields` is documented as "augment each input item with computed fields" — input array → output array, same length, each item gets the new fields. But the IntentContract LLM commonly emits it for a different intent: *"compute these named constants for downstream comparisons."* Example (gantt-urgent-tasks-v2ui-pipeline-a step4): `fields: [{name: "window_start", expression: {kind: "today"}}, {name: "window_end", expression: {kind: "date_add", days: {kind: "config", key: "date_window_days"}}}], output_variable: "date_window"`. All field expressions are constants (no `item.*` references). The downstream filter then does `value: "date_window.window_start"` — treating `date_window` as a singleton object. Pre-fix runtime: produces an array of 57 row copies each augmented with the same constants; `.window_start` access on the array is undefined; filter returns 0 rows silently. Same anti-pattern shape as WP-41 (LLM picked transform whose semantics don't match the intended use) but on a different surface (`with_fields` constants-as-object pattern vs `select` build-singleton pattern). | P0 | ✅ Fixed (2026-05-17) — runtime tolerance in `transformWithFields`: new `isConstantExpression()` helper walks each field's expression tree; if ALL field expressions are constant (no `kind: "ref"` with `ref: "item"` or `ref: "item.X"`), evaluate once and return a singleton `{[fieldName]: value, ...}` object regardless of input array length. Per-item augmentation behaviour is unchanged when ANY field references `item.*`. End-to-end Phase E confirmed: step4 emits `{"window_start": "2026-05-18T00:00:00.000Z", "window_end": "2026-05-21T00:00:00.000Z"}`; step6 filter resolves and returns 3 of 4 candidate rows correctly; final HTML email delivered with 3 real tasks. |
+| [WP-47](#wp-47-v2-ui-re-prompts-for-input-values-already-provided-via-ep-resolved_user_inputs-on-pipeline-a) | V2 UI's `extractInputSchema` + post-V6 input-collection flow re-prompts the user for input values they ALREADY provided during the conversational EP build phase — but ONLY on Pipeline A. Root cause: a naming-convention mismatch between two key namespaces that the V2 UI tries to reconcile via strict string equality. (a) The EP's `resolved_user_inputs[]` uses **EP Key Hint format** (`google-sheets__table/get__spreadsheet_id`, `google-mail__email/send_message__recipients.to`, ...). (b) Pipeline A's IC LLM emits its own keys for `config[]` (`spreadsheet_id`, `tab_name`, `range`, ...) — human-readable, transcribed-from-EP values but renamed. The DSL's `{{input.X}}` refs use the IC's keys. The V2 UI builds `resolvedInputs` from the EP keys (set (a)) and then filters `input_schema` looking for `input.name in resolvedInputs` (line 1190 in `app/v2/agents/new/page.tsx`). For IC keys (set (b)), the lookup misses every time — V2 UI thinks the user hasn't provided them and re-prompts. **Pipeline B doesn't show this** because its compiler inlines `resolved_user_inputs` values directly into DSL `params` at compile time, so there are no `{{input.X}}` refs to surface in Source 1 of `extractInputSchema`. | P1 | ✅ Fixed (2026-05-19) — V2 UI now pre-populates `resolvedInputs` from `v6Data.ir.config_defaults` (which Pipeline A returns in the IR; absent on Pipeline B, so the new branch is a no-op there). The IC LLM transcribed EP values into `config[].default`, keyed by the same names the DSL's `{{input.X}}` refs use — exact match for the line-1190 filter. ~12 LOC in `app/v2/agents/new/page.tsx`. The visual concern that `extractInputSchema` still produces duplicate-looking entries (e.g. both `spreadsheet_id` and `google-sheets__table/get__spreadsheet_id`) is left as a separate polish item — not user-blocking because the values are pre-filled. |
+| [WP-48](#wp-48-api-create-agent-violated-claudemd-mandatory-rules-direct-supabase-insert--header-only-auth--no-input-validation) | Pre-existing tech-debt violation surfaced during a code review prompted by the Pipeline A migration. `/api/create-agent/route.ts` — the single endpoint that persists every agent created via the V2 UI (V4 + Pipeline A + Pipeline B all funnel through it) — violated five CLAUDE.md mandatory rules at once: (1) direct `supabase.from('agents').insert([...])` instead of using `AgentRepository.create()` (rule #1); (2) trusted the client-supplied `x-user-id` header without verifying a Supabase session (rule #5 / security); (3) no Zod validation on the request body — only ad-hoc `if (!agent.agent_name)` checks (rule #2); (4) module-scoped service-role Supabase client used unconditionally (rule #4 — RLS bypass without explicit justification); (5) ~40 `console.log/warn/error` calls instead of structured Pino logging (rule #3 / SYSTEM_LOGGING_GUIDELINES.md). Not introduced by Pipeline A — present since `57caa8e Completed full cycle in creating the agent`. Surfaced now because the Pipeline A migration prompted the user to ask "is the agent saved via the repository or direct DB insert?" | P1 | ✅ Fixed (2026-05-19) — five-part refactor: (a) `lib/repositories/types.ts` `CreateAgentInput` extended from 7 fields to ~25 fields covering the full agent persistence shape (`pilot_steps`, `workflow_steps`, `input_schema`, `agent_config`, `ai_reasoning`, etc.). (b) `/api/create-agent` writes via `new AgentRepository().create(...)` instead of direct supabase insert. (c) Auth replaced with `getUser()` from `@/lib/auth` (Supabase SSR session cookie validation) — expired sessions now correctly return 401. (d) Zod schema `CreateAgentSchema` validates the request body shape; pass-through allowed on the inner `agent` object to keep tolerance for V4/V6 emission variants. (e) All `console.*` calls migrated to structured Pino logging per `docs/SYSTEM_LOGGING_GUIDELINES.md` — module logger, per-request correlation ID + child logger, structured `(context, msg)` calls, `{ err: error }` error pattern, `duration` performance metric on completion/error paths, child logger for the AIS subsystem block, ASCII separators + emoji noise removed. Module-scoped service-role supabase client preserved ONLY for the `token_usage` SELECT in the AIS section (no repository for that table yet — documented as a follow-up). |
 
 ---
 
@@ -1221,6 +1231,701 @@ Auto-converting `ai_processing` on an array into a scatter would change semantic
 - The W5 measurement starts surfacing this as a recurring `generate/internal` pattern.
 
 **Compounding with WP-13 / WP-14:** WP-13 documented bulk AI's tendency to fabricate when input is empty; WP-14 documented scatter token bloat from full-item merges. WP-19 is the missing third leg — the choice between bulk and scatter at emission time. All three are facets of "LLM-on-collections is risky and needs structural guardrails."
+
+---
+
+### WP-47: V2 UI re-prompts for input values already provided via EP resolved_user_inputs (on Pipeline A)
+
+**Severity:** P1 — UX-blocking only on Pipeline A. The user has already provided all the values during the conversational EP-build phase; the V2 UI then asks again for each one before finishing agent creation. Existing Pipeline B users don't see this; new Pipeline A users do (and there's no functional consequence beyond the UX — the user can re-enter the values and the agent works).
+**Encountered as:** User report on 2026-05-19 right after the Pipeline A migration landed: "while building the agent via the thread based prompt flow, I answer all the questions and provides all the input values, but still at the end of the creation it prompts the fields it needs once more." Reproduced on agent `670cac2a-…` (the leads-qualified-stage4-v2ui-pipeline-a scenario). Investigation traced the bug to a key-naming mismatch between two namespaces the V2 UI's flow tries to reconcile.
+**Status:** ✅ Fixed (2026-05-19, branch `feature/v6-v2-integration`)
+
+**Problem:**
+
+After the V6 endpoint returns, [`app/v2/agents/new/page.tsx`](../../app/v2/agents/new/page.tsx) does two things:
+
+1. **Builds `input_schema`** via `extractInputSchema(workflow_steps, enhancedPromptData)` from THREE sources (lines 111-176):
+   - **Source 1** — scan DSL `workflow_steps` for `{{input.X}}` references. Produces entries like `name: "spreadsheet_id"`.
+   - **Source 2** — iterate `enhancedPromptData.specifics.resolved_user_inputs`. Comment: *"V6 compiler hardcodes resolved values into steps, so {{input.*}} patterns won't exist"* — assumes Source 1 will be empty. Produces entries like `name: "google-sheets__table/get__spreadsheet_id"`.
+   - **Source 3** — `user_inputs_required` (unanswered inputs).
+
+2. **Filters for required-and-missing** (line 1190):
+   ```ts
+   agentData.input_schema?.filter(
+     (input) => input.required === true && !(input.name in resolvedInputs)
+   )
+   ```
+   where `resolvedInputs` is a plain JS object built from EP `resolved_user_inputs`, keyed by the EP-Key-Hint names.
+
+**The mismatch on Pipeline A:**
+
+| Source 1 entry (DSL ref name) | Source 2 entry (EP key) | `in resolvedInputs`? |
+|---|---|---|
+| `spreadsheet_id` | `google-sheets__table/get__spreadsheet_id` | NO — re-prompted |
+| `tab_name` | `google-sheets__table/get__tab_name` | NO — re-prompted |
+| (no Source 1) | `notes_column_header` | YES — skipped |
+| (no Source 1) | `stage_match_type` | YES — skipped |
+
+The DSL uses Pipeline A's IC LLM-chosen names (`spreadsheet_id`); the resolvedInputs map uses EP-Key-Hint names (`google-sheets__table/get__spreadsheet_id`). The same conceptual input shows up as TWO `input_schema` entries with no bridge between them. V2 UI prompts the user for the DSL-name version every time.
+
+**Why Pipeline B didn't surface this:**
+
+Pipeline B's compiler (in the deprecated semantic flow) **inlines** `resolved_user_inputs` values directly into DSL `params` at compile time:
+```jsonc
+"params": { "spreadsheet_id": "1RHL..." }   // ← literal, no {{input.*}} ref
+```
+Source 1's regex finds nothing in Pipeline B's DSL → no entries with DSL-ref names → no key-mismatch. Source 2 alone produces the schema, with all keys in EP-Key-Hint format matching `resolvedInputs` perfectly.
+
+The cost of Pipeline B's approach: values are frozen into the DSL at compile time, can't be changed later without re-compiling. Pipeline A's approach (keep `{{input.X}}` refs, resolve via `agent_configurations.input_values` at runtime) is architecturally cleaner — but exposed this bridging gap.
+
+**Why this wasn't caught earlier:**
+
+The Pipeline A migration's Stage P1 investigation focused on the response-contract shape the V2 UI's `mapV6ResponseToAgent` consumes — what fields the UI reads from the response. The downstream `requiredParams` filter (the actual user-facing prompt-flow gate) operates AFTER `mapV6ResponseToAgent` runs, on `agentData.input_schema`. P1 didn't audit the post-mapping flow because it was already "working" for Pipeline B. The bug only manifests when (a) the DSL has `{{input.X}}` refs (Pipeline A only) AND (b) those refs use names different from the EP's resolved_user_inputs keys (Pipeline A only, because the IC LLM renames them).
+
+**Fix shape:**
+
+Pipeline A's IR carries `config_defaults: [{key, default, type, description}, ...]` where `key` matches the DSL's `{{input.X}}` ref names by construction (the same converter emits both) AND `default` carries the value the IC LLM transcribed from the EP. The endpoint already returns this in `v6Data.ir.config_defaults`. V2 UI just needs to pre-populate `resolvedInputs` from it:
+
+```ts
+// app/v2/agents/new/page.tsx around line 1180
+if ((v6Data as any)?.ir?.config_defaults) {
+  for (const entry of (v6Data as any).ir.config_defaults) {
+    if (entry?.key && entry.default !== undefined && !(entry.key in resolvedInputs)) {
+      resolvedInputs[entry.key] = entry.default
+    }
+  }
+}
+```
+
+After this:
+- `resolvedInputs.spreadsheet_id = "1RHL..."` ✓ (from IR's config_defaults, matches DSL ref)
+- `resolvedInputs.tab_name = "Leads"` ✓
+- Filter at line 1190 finds all IC keys in resolvedInputs → no re-prompting.
+
+Pipeline B is unaffected because Pipeline B's response doesn't carry `ir.config_defaults` in a comparable shape (and even if it did, Pipeline B's DSL has no `{{input.X}}` refs to match against, so the entries wouldn't show up in `input_schema` from Source 1).
+
+**Files:**
+
+- [`app/v2/agents/new/page.tsx`](../../app/v2/agents/new/page.tsx) — ~12 LOC added in the post-V6-response block that builds `resolvedInputs`. Reads from `v6Data.ir.config_defaults` and merges entries whose keys aren't already in `resolvedInputs`. Pipeline B safe (no-op when `ir.config_defaults` absent).
+
+**Test coverage:**
+
+Verified manually: re-creating an agent via V2 UI with `NEXT_PUBLIC_USE_V6_PIPELINE_A=true` and confirming the post-V6 step transitions directly to scheduling without re-prompting (when all `config[].default` values are populated). The leads-qualified-stage4 scenario is the canonical regression seed.
+
+**Follow-ups not addressed by this fix:**
+
+- `extractInputSchema` (lines 111-176) still produces duplicate-looking entries (e.g., both `spreadsheet_id` and `google-sheets__table/get__spreadsheet_id` in `input_schema`). Visual concern only — the values are pre-filled, the user doesn't get prompted. Worth a polish PR that dedupes entries by path-suffix matching (e.g., recognise that `google-sheets__table/get__spreadsheet_id` ends with `spreadsheet_id` so they're the same conceptual input). Not user-blocking; not done in this commit.
+- The IC LLM could be steered to use EP-Key-Hint format for its `config[].key` names, which would eliminate the mismatch at the source. Prompt-engineering change; defer until clearer evidence the current naming is causing other downstream issues.
+
+**Related anti-pattern:**
+
+This is the same shape as WP-22 / WP-30 / WP-42 — two layers in the same pipeline using different naming/format conventions for what is logically the same value, with no bridge. The fix is always a bridge at the lowest-friction point (here, V2 UI). Worth a V6_DESIGN_PRINCIPLES note: when two layers each independently CAN choose a naming convention, and they cross over, one of them is going to bear the bridging cost — design the cheaper side to be the bridge layer.
+
+---
+
+### WP-46: `transform/with_fields` with constants-only produces per-item array instead of singleton object
+
+**Severity:** P0 — every Pipeline-A workflow that uses `with_fields` to compute named constants for downstream filters/comparisons silently produces an array instead of the singleton object the downstream consumer expects. The error surface is identical to WP-45 (downstream variable resolves to undefined; filter returns 0 rows; "no data" email sent) but the root cause is one step earlier in the chain.
+**Encountered as:** Stage P4 live Phase E re-run after WP-45 was applied, on `gantt-urgent-tasks-v2ui-pipeline-a` (`4c74a248-…`), 2026-05-17. step5 (priority filter) correctly produced 4 candidates. step6 (date-range filter) still returned 0 rows. Log showed `Resolving variable {{date_window.window_start}}` now happens (WP-45 wrapping kicked in), but `resolveVariable` returned `undefined`. Inspection of step4's output: `[{Tasks: "Date", window_start: "...", window_end: "..."}, {Tasks: "Brand Efforts", window_start: "...", window_end: "..."}, ×57]` — an **array of 57 row copies**, not the singleton `{window_start, window_end}` the IR expected.
+**Status:** ✅ Fixed (2026-05-17, branch `feature/v6-v2-integration`)
+
+**Problem:** [`transformWithFields`](../../lib/pilot/transforms/StructuredTransforms.ts) is documented as "augment each input item with computed fields." Its contract: input array (N items) → output array (N items, each with new fields spread on top). When the IntentContract LLM emits a `with_fields` step like:
+
+```json
+{
+  "type": "with_fields",
+  "input": "{{task_objects}}",
+  "fields": [
+    {"name": "window_start", "expression": {"kind": "today"}},
+    {"name": "window_end",   "expression": {"kind": "date_add", "date": {"kind": "today"}, "days": {"kind": "config", "key": "date_window_days"}}}
+  ],
+  "output_variable": "date_window"
+}
+```
+
+…the LLM's actual intent is *"compute two named constants and store them as `date_window` for downstream comparisons."* All field expressions are constants — none reference `item.*`. But the runtime faithfully applies the per-item augmentation contract: 57 input rows → 57 output rows, each augmented with the same constant values.
+
+Downstream filter then does `{ field: "item.Due Date", value: "date_window.window_start", operator: "gte" }`. After WP-45 the bare-string ref is wrapped to `{{date_window.window_start}}` and `resolveVariable` is called. But `date_window` is an array — accessing `.window_start` on it returns `undefined`. Filter compares `"19/5/2026" >= undefined` → false for every row. Silent 0-output.
+
+**Compounding root cause — same anti-pattern as WP-41:** the LLM picked a transform whose runtime semantics don't match the intended use. WP-41 was `select` (single-object construction) being aliased to `map` (per-item iteration). WP-46 is `with_fields` (per-item augmentation) being used for the singleton-constants pattern. Both errors are at the "semantic match between transform choice and intended use" surface. Both are fixed via runtime tolerance — detect the pattern, switch to the right output shape.
+
+**Why this wasn't caught earlier:**
+
+- The old `gantt-urgent-tasks` regression scenario used `with_fields` to build `days_until_finish` — a NUMBER computed PER ITEM (`date_diff(today, due_date, 'days')` where `due_date` is from the current item). That correctly produces an array of augmented rows because the per-item augmentation matches the intent (every row gets its own `days_until_finish` value).
+- Pipeline A's new scenario uses a different pattern: `with_fields` with constants ONLY (no per-item refs). The compiler/runtime never had to distinguish before because Pipeline B's IRFormalizer routed through `ai_processing/extract` to do the date math — no `with_fields` step needed.
+- This is the first time a Pipeline-A LLM emitted constants-only `with_fields`, exposing the semantic gap.
+
+**Fix shape — runtime tolerance:**
+
+Detect at runtime whether ALL field expressions are constant (no `kind: "ref"` targeting `item.*`). If so, evaluate once and return a singleton object. Otherwise, retain the existing per-item augmentation behaviour.
+
+```ts
+const allConstant = fields.every((f: any) =>
+  f && f.expression !== undefined && isConstantExpression(f.expression)
+);
+if (allConstant) {
+  const singleton: Record<string, any> = {};
+  for (const field of fields) {
+    singleton[field.name] = evaluateExpression(field.expression, null, context, evaluator);
+  }
+  return singleton;
+}
+// ... existing per-item augmentation path unchanged ...
+```
+
+The detection (`isConstantExpression`) walks the expression tree recursively. A `kind: "ref"` node is considered per-item iff `ref === "item"` or starts with `"item."`. Any other ref kind (`config`, `today`, `literal`, refs to other global variables, nested `date_add`/`date_diff`) is constant. Conservative — unknown shapes treated as non-constant to preserve existing behaviour.
+
+**Files:**
+
+- [`lib/pilot/transforms/StructuredTransforms.ts`](../../lib/pilot/transforms/StructuredTransforms.ts) `transformWithFields()` — added constants-only fast-path (~25 LOC) + new `isConstantExpression()` helper (~15 LOC).
+
+**Test coverage:**
+
+End-to-end live Phase E on `gantt-urgent-tasks-v2ui-pipeline-a` (3 real tasks delivered in HTML email). **Follow-up:**
+- Unit test `transformWithFields` const-only path: synthetic config with `{kind: "today"}` + `{kind: "literal", value: 3}` fields, input array of 5 items. Assert output is a single object with both fields, not an array of 5.
+- Unit test `isConstantExpression`: `{kind: "today"}` → true; `{kind: "ref", ref: "item.due_date"}` → false; `{kind: "date_add", date: {kind: "today"}, days: {kind: "config", key: "x"}}` → true (nested constants); `{kind: "date_add", date: {kind: "ref", ref: "item.start"}, days: {kind: "literal", value: 7}}` → false (nested item ref).
+- Regression test: re-run all existing W2/`with_fields` regression scenarios; assert their behavior didn't change (most have at least one per-item field, so the new path doesn't activate).
+
+**Related observation — same anti-pattern as WP-41:**
+
+WP-41 and WP-46 share the same shape: LLM picks transform A; the downstream consumer's data flow expects shape B; A and B are different runtime semantics. The fix in both cases is runtime tolerance that switches to shape B when the pattern is detected. Worth a V6_DESIGN_PRINCIPLES note: when an LLM picks a transform type that's "almost right but a different output shape," runtime tolerance is usually cleaner than IR-level rewriting or prompt steering. (a) Runtime tolerance is localized and easy to test; (b) IR rewriting requires the converter to understand the LLM's downstream-consumer intent; (c) prompt steering is fragile across LLM versions.
+
+---
+
+### WP-45: ConditionalEvaluator `gte`/`lte` do not resolve bare variable refs and are not date-aware
+
+**Severity:** P0 — every `transform/filter` that uses ordered comparisons (`gte`/`lte`/`gt`/`lt`) on date or variable-reference values silently returns 0 rows. Pipeline correctness-wise the filter "runs" — no error, no warning — but downstream conditional steps then route to the wrong branch (commonly the "no results" path) and the user sees an empty result email despite real data being upstream.
+**Encountered as:** Stage P4 live Phase E run on Pipeline A's `gantt-urgent-tasks-v2ui-pipeline-a` agent (`4c74a248-…`), 2026-05-17. Pipeline A's IntentContract LLM generated a more elegant workflow than Pipeline B: `transform/with_fields` computes a `date_window = {window_start, window_end}` object using W2 expressions (`{kind: "today"}`, `{kind: "date_add", ...}`), then `transform/filter` directly compares `item.Due Date >= window_start && <= window_end` using `gte` / `lte`. step5 (priority filter) correctly produced 4 candidate rows; step6 (date-range filter) dropped all 4. Diagnosis: condition.value was the bare string `"date_window.window_start"` (not wrapped in `{{...}}`), so the runtime treated it as a literal; even if it had been resolved, the ISO date string would have been compared lexicographically to the DD/MM/YYYY value, failing anyway.
+**Status:** ✅ Fixed (2026-05-17, branch `feature/v6-v2-integration`)
+
+**Problem (two compounding gaps in one file):**
+
+[`lib/pilot/ConditionalEvaluator.ts`](../../lib/pilot/ConditionalEvaluator.ts) is the runtime for `transform/filter` conditions. Two specific gaps:
+
+**Gap (a) — bare-string variable refs only resolved for `in`/`not_in`.** WP-22's defensive wrap (line 168-175, the "O26" comment) handled `condition.value` as a bare RefName specifically for `in`/`not_in` operators. Every other operator (`gte`/`lte`/`gt`/`lt`/`eq`/`ne`) saw the bare string as a literal. The IC LLM (and likely the IRFormalizer too) commonly emits `condition.value: "date_window.window_start"` for cross-variable comparisons, not `{{date_window.window_start}}`.
+
+**Gap (b) — `gte`/`lte`/`gt`/`lt` do raw `>=`/`<=`/`>`/`<`, not date-aware.** Lines 570-588 (pre-fix) called native JavaScript operators without consulting `parseDate`. Only the date-specific operators `before` / `after` / `within_last_days` (lines 715-731) called the internal `parseDate`. So even if Gap (a) were fixed and the runtime received `"2026-05-17T00:00:00.000Z"` as the value, comparing it via `>=` to `"19/5/2026"` (DD/MM/YYYY string) is lexicographic and always false.
+
+**Compounding root cause — two date parsers diverged.** The W2 expression evaluator (`lib/pilot/transforms/StructuredTransforms.ts`'s `parseDate`) was hardened during WP-29 / WP-30 / WP-31 (2026-05-11): added locale-aware DD/MM vs MM/DD disambiguation, UTC-midnight `today`, calendar-day `date_diff`. **`ConditionalEvaluator.ts` had its own private `parseDate`** — narrower, only matched a few fixed regexes (`MM/DD/YYYY` hardcoded), no DD/MM/YYYY support, no locale awareness. WP-29 didn't touch it because the WP was scoped to W2 expressions. The two parsers diverged; one got fixed, one stayed brittle.
+
+**Why this wasn't caught earlier:**
+
+- The old `gantt-urgent-tasks` regression scenario used a different shape: `with_fields` built `days_until_finish` as a NUMBER (`date_diff(today, due_date, 'days')`), then filtered on that number (`days_until_finish >= 1 && <= 3`). Pure numeric comparison — never exercised the filter-side date parser.
+- Pipeline B's `gantt-urgent-tasks-v2ui` scenario sidestepped this entirely by routing through `ai_processing/extract` ("filter to tasks due in the next 3 days") — the LLM did the date math semantically.
+- Pipeline A took a cleaner approach (deterministic `with_fields` produces `date_window`, then `filter` compares dates directly). That shape **never existed before** in any regression scenario. The bug surfaced the first time a fresh LLM picked this design.
+- WP-22 (set_difference.reference bare RefName) added the defensive wrap narrowly to `in`/`not_in`. The lesson — "runtime should tolerate bare RefNames for variable references" — didn't generalize because none of the subsequent scenarios needed it.
+
+**Fix shape:**
+
+Two coordinated changes plus a parser unification, all in `ConditionalEvaluator.ts`:
+
+1. **Generalize the bare-string defensive wrap** — new `looksLikeBareVariableRef()` helper (identifier-path regex). Apply the wrap to all operators when the value parses as a path; literal values with spaces/punctuation stay literal:
+   ```ts
+   } else if (looksLikeBareVariableRef(expectedValue)) {
+     const resolved = context.resolveVariable(`{{${expectedValue}}}`);
+     if (resolved !== undefined && resolved !== `{{${expectedValue}}}`) {
+       expectedValue = resolved;
+     }
+   }
+   ```
+
+2. **Date-aware ordered comparisons** — new `compareAsDates(left, right)` helper. When both sides look date-like (string or Date) AND both parse via the shared parser, compare by `Date.getTime()`; otherwise fall through to native `>=`/`<=`/`>`/`<` (numeric / string comparisons in existing scenarios unaffected):
+   ```ts
+   case 'gte': {
+     const cmp = compareAsDates(left, right);
+     return cmp !== null ? cmp >= 0 : left >= right;
+   }
+   ```
+
+3. **Delegate `parseDate` to the WP-29 shared parser.** Import `parseDate as parseDateShared` from `StructuredTransforms.ts`. The private `ConditionalEvaluator.parseDate` keeps the numeric-input path (Unix timestamps) but delegates string handling to the shared parser. This eliminates the duplicate weaker parser and makes `before` / `after` / `within_last_days` benefit from WP-29's locale-aware disambiguation too.
+
+**Files:**
+
+- [`lib/pilot/ConditionalEvaluator.ts`](../../lib/pilot/ConditionalEvaluator.ts) — `~50 LOC net`: import shared parser, add 2 helpers, generalize bare-string wrap, rewrite `gte`/`lte`/`gt`/`lt` cases, replace private `parseDate` with delegating thin wrapper.
+
+**Test coverage:**
+
+End-to-end live Phase E on `gantt-urgent-tasks-v2ui-pipeline-a` (3 real tasks delivered in HTML email). **Follow-up:**
+- Unit test `compareAsDates`: ISO vs DD/MM, DD/MM vs DD/MM, ISO vs ISO, mixed numeric / date inputs.
+- Unit test `looksLikeBareVariableRef`: `"existing_message_ids"` → true; `"date_window.window_start"` → true; `"item.0"` → false (no, that should be true — it matches the regex); `"Critical, High"` → false (comma); `"Done"` → false (single word but matches regex — false positive). Confirm `resolveVariable(`{{Done}}`)` returns `{{Done}}` unchanged so a literal "Done" stays as itself.
+- Regression test: synthetic IR with `filter` condition `{field: "item.due_date", value: "wrapper.start", operator: "gte"}` + a `wrapper` variable holding an ISO date. Assert items with `due_date >= wrapper.start` pass.
+
+**Related observation — DESIGN_PRINCIPLES Principle 12 candidate:**
+
+WP-45 surfaces a new anti-pattern: **"runtime helpers that look the same should BE the same."** Two `parseDate` functions in two files diverged; one got hardened, one didn't, and the divergence was invisible until a scenario exercised the second path. Worth adding to V6_DESIGN_PRINCIPLES: when shared runtime concepts (date parsing, variable resolution, type coercion) exist in multiple places, prefer a single canonical helper imported by all consumers. The duplicate-implementation shape is identical to WP-21/22/25/28's "runtime tolerance pattern" but at the helper-library level: tolerance code should live in one place, not be reinvented per call site.
+
+---
+
+### WP-44: V6 formalization drops explicit EP format requirements (HTML vs plain text)
+
+**Severity:** P1 — pipeline runs correctly and delivers correct DATA; only the OUTPUT FORMAT is wrong. User sees the right tasks but in a plain-text ASCII-pipe table instead of the requested HTML table. Annoying rather than wrong-content, but a fidelity gap nonetheless — and a regression vs. the previous IntentContract pipeline that handled this correctly.
+**Encountered as:** Stage 1.2f review of the delivered email on `gantt-urgent-tasks-v2ui` (2026-05-17), after WP-39/40/41/42/43 fixed all runtime + extraction issues. User reported receiving an email containing the correct 3 tasks but formatted as a plain-text table with ASCII pipe separators, despite the EP explicitly specifying HTML 6 times.
+**Status:** ⬜ Documented — fix deferred. Bundle with WP-43 Option A in the next Phase 3 prompt-fidelity follow-up session.
+
+**Problem:** The Enhanced Prompt for this scenario reads (excerpt):
+
+```
+sections.output:
+- "Generate a nice HTML summary table for the matching due-soon tasks."
+- "The HTML table must include columns in this order: Task Name, Priority, Due Date, Status."
+- "If any tasks were skipped due to invalid/missing Due Date, include a separate HTML section..."
+
+sections.delivery:
+- "Put the HTML summary table in the email html_body."
+- "If there are skipped tasks, include the skipped section in the same email html_body below the main table..."
+```
+
+The user named the parameter (`html_body`) explicitly. But the V6 IRFormalizer (using `formalization-system-v4.md`) authored:
+
+| Step | Authored content | Should have been |
+|---|---|---|
+| step8 (AI generate) prompt | `"Create a concise plain-text email body listing the tasks in a readable table-like format..."` | `"Create an HTML summary table with columns..."` |
+| step8 output_schema | `body: { description: "Plain-text email body" }` | `body: { description: "HTML email body containing the summary table" }` |
+| step9 (send_email) params | `content: { body: "{{tasks_email_content.body}}" }` | `content: { html_body: "{{tasks_email_content.body}}" }` |
+
+The model dropped "HTML" entirely and defaulted to "plain-text" — a generic safe default that doesn't reflect user intent. Same pipeline ran the previous `gantt-urgent-tasks` scenario (via the OLD IntentContract pipeline) and correctly produced `content.html_body` with HTML generation — so the regression is specifically in the V6 formalization prompt, not anywhere else.
+
+**Why this wasn't caught earlier:**
+
+- Regression scenarios commit pre-baked phase4 snapshots; the format-fidelity gap doesn't surface because the snapshots have the right shape already (either hand-edited or generated by a different prompt version).
+- Phase A / Phase D validation gates check structural correctness (steps connect, types match, etc.) — not "did the authored prompt match the EP's stated format choice." There's no validator that reads `sections.delivery` and checks the resulting send-step parameter.
+- This is the first end-to-end Phase E run from V2 UI to deliver a real, user-visible email. Earlier scenarios either failed at runtime (so the email never sent) or sent emails that happened to use plain-body matching plugin behaviour by accident.
+
+**Fix shape:**
+
+Two angles (mutually compatible; either alone suffices):
+
+**Option A — formalization-system-v4.md prompt extension.** Add a section to the Phase 3 prompt teaching the LLM to:
+1. Scan `sections.output` and `sections.delivery` for explicit format keywords (`HTML`, `Markdown`, `plain text`, `JSON`, `table`, etc.)
+2. Scan for explicit plugin-param names (`html_body`, `markdown_body`, `body`)
+3. When found, author the AI generation prompt to produce that format AND wire the result to the matching plugin parameter
+4. When ambiguous, prefer the user's explicit phrasing over the LLM's "safe default" of plain text
+
+This is the same family as WP-43 Option A. Both surfaces (column-letter refs + format choices) are EP-level user requirements that the V6 formalization prompt currently fails to preserve. Bundle as one follow-up session.
+
+**Option B — compiler-side rewrite.** Less attractive: when the EP contains `html_body` and the IR/DSL has `content.body`, swap to `content.html_body`. Brittle (tries to compensate for what the LLM should have authored correctly) and only fixes one specific manifestation. Not recommended.
+
+**Files (when fix lands):**
+
+- [`lib/agentkit/v6/semantic-plan/prompts/formalization-system-v4.md`](../../lib/agentkit/v6/semantic-plan/prompts/formalization-system-v4.md) — section to add: EP fidelity guidance for AI generation + delivery params.
+
+**Test coverage (when fix lands):**
+
+- Unit test: synthetic EP with `html_body` and "HTML" in delivery section, verify the resulting IR uses `content.html_body` for send_email and authors an HTML-generation prompt for the upstream AI step.
+- Regression: re-run `gantt-urgent-tasks-v2ui` through V2 UI after the prompt fix; verify the new IR has `content.html_body` and the AI prompt says "HTML".
+
+**Related observation — Phase 3 prompt fidelity:**
+
+WP-43 + WP-44 are the same anti-pattern shape: the Phase 3 LLM transcribes loosely from the EP, dropping or misinterpreting specifics. WP-43 dropped data-shape context (column letters → named keys) and temporal anchors (now). WP-44 drops format choices (HTML → plain text) and plugin-param names (`html_body` → `body`). The IC pipeline preserved these via more rigorous prompt engineering; the V6 formalization prompt regressed. Worth a comprehensive "Phase 3 prompt-fidelity audit" pass that compares IC and V6 prompts side-by-side for what guidance was lost in the migration.
+
+---
+
+### WP-43: ai_processing prompt-vs-data shape AND temporal-anchor drift
+
+**Severity:** P0 — pipeline runs all steps successfully but the AI step silently returns empty results despite real matching data. User sees a "no tasks matched" email (or empty result) when the actual data has matches. Catastrophic in the "correct-looking but wrong content" category — worse than a hard failure because there's no error signal pointing at the bug.
+**Encountered as:** Stage 1.2e live Phase E run on `gantt-urgent-tasks-v2ui` (`dc04876c-…`), 2026-05-17, after WP-39/40/41/42 fixes brought the runtime to 7/7 steps. Pipeline succeeded structurally; email sent; **wrong branch taken** (step7 "no tasks" branch instead of step8 "have tasks"). step5 (`ai_processing/extract`) returned `{tasks: []}` despite 3 visible tasks in the input data that matched the criteria (Critical/High priority, due within May 18-20).
+**Status:** ✅ Fixed (2026-05-17, branch `feature/v6-v2-integration`) — runtime preamble (Option B). Option A (Phase 3 prompt change) queued as a follow-up.
+
+**Problem:** Two compounding gaps in the `ai_processing` prompt context, each independently bad, together unrecoverable:
+
+**(a) Shape drift — column-letter references in instruction vs named-key objects in data.**
+
+The Phase 3 LLM authors `ai_processing.instruction` text such as:
+
+> "Convert the provided **2D array** of Google Sheets rows into an array of task objects. Each row corresponds to **columns A:G**. Use **column A** as task_name, **column D** as status, **column F** as due_date, and **column G** as priority."
+
+This wording is inherited verbatim from the Enhanced Prompt's `resolved_user_inputs` (`task_name_column: "A"`, `status_column: "D"`, etc.), which the user wrote when thinking about their Sheet. But the compiler auto-injects `rows_to_objects` for any Sheets-style 2D-array input, so by the time step5 runs:
+
+- Instruction says: "2D array, columns A/D/F/G"
+- Data shape: `[{Tasks: "...", RETAIL: "...", Outsourced: "...", Status: "...", Pre Dec: "...", Due Date: "...", Priority: "..."}, ×57]`
+
+The runtime injects the data into the prompt via `buildLLMPrompt`'s `## Data for Analysis:` section, so the model sees BOTH the misleading instruction AND the actual named-key data — but it takes the instruction's "2D array" framing literally and either:
+- Returns an empty array (model can't find "column A", "column D" in objects with semantic keys), or
+- Fabricates values from the first row positions (worse — silent wrong data)
+
+**(b) Temporal anchor missing — "next 3 days relative to now" but no "now" is provided.**
+
+The instruction also says "Return only tasks whose due_date is within the next 3 days relative to now." But `buildLLMPrompt` doesn't include the current date anywhere in the prompt. The model has no reliable reference for "now" — it knows its training-cutoff date (which is stale by months/years) and it shouldn't guess.
+
+When asked to filter by a date range it can't compute, a well-aligned model returns nothing rather than risk fabrication. So `{tasks: []}`.
+
+**Compounding effect:** even if shape drift was the only bug, the model might guess column mappings positionally. Even if temporal anchor was the only bug, the model might infer a reasonable "now" from data context. But both together push the model firmly into the "return empty" zone — and the empty result then drives step6's conditional `is_empty` check to the wrong branch.
+
+**Why this wasn't caught earlier:**
+
+- Regression scenarios use committed `phase4-pilot-dsl-steps.json` snapshots; Phase D mocks return plausible data that the AI can match. No regression scenario exercises a fresh LLM-authored AI prompt against real data with date-range filtering.
+- WP-13 anti-hallucination guardrails prevent fabrication when input is *technically* empty. But here input is non-empty — just incomprehensible to the model given the prompt mismatch. WP-13 doesn't apply.
+- The IC prompt (`intent-system-prompt-v2.ts`) has WP-28 guidance telling the LLM "use named keys not column letters in `transform/map.field_mapping.from`" — but that's for the IntentContract pipeline AND only covers `transform/map`. The V2 UI uses `formalization-system-v4.md` (no equivalent guidance) and the gap surfaces in `ai_processing.instruction` (different surface).
+- This is the first end-to-end Phase E run from V2 UI on real data with a date-range filter. The earlier successful Stage 1.2c run (3 tasks extracted) was non-reproducibly lucky — the same prompt against the same data, run twice, gave 3 tasks once and 0 tasks the second time. LLM stochasticity masks the underlying instability.
+
+**Fix shape (Option B — runtime preamble):**
+
+Two short anchors prepended to every `ai_processing` prompt when the resolved input is an array of objects (the post-`rows_to_objects` shape):
+
+```
+INPUT DATA SHAPE: The input below is an array of N object(s) with these named keys: [...].
+If the instruction below references columns by letter or sheet position (e.g. "column A",
+"column G", or "2D array of rows"), treat them as positional aliases for these keys
+(column A = "key1", column B = "key2", ...). Use the named keys directly when extracting values.
+
+CURRENT DATE: Today is YYYY-MM-DD (DDD, DD MMM YYYY). When the instruction below references
+"today", "now", "the next N days", "this week", or any other temporal anchor, use this date
+as the reference point. Dates in the input data may use formats like DD/MM/YYYY or D/M/YYYY —
+interpret them in that locale unless explicitly told otherwise.
+```
+
+Combined ~150 tokens, fires only when there's actual data to anchor (2D arrays and scalar inputs are unaffected; non-`ai_processing` step types unaffected).
+
+**Files:**
+
+- [`lib/pilot/StepExecutor.ts`](../../lib/pilot/StepExecutor.ts) — new WP-43 block in `executeLLMDecision`, immediately after the WP-13 Layer 2 anti-hallucination guardrail. ~30 lines net.
+
+**Test coverage:**
+
+End-to-end live Phase E on `tests/v6-regression/scenarios/gantt-urgent-tasks-v2ui/` now succeeds with real content: AI step extracts 3 tasks matching Critical/High priority + due-in-next-3-days, email body lists them, conditional routes to the have-tasks branch (step8 → step9). **Follow-up:**
+- (Option A) Extend `formalization-system-v4.md` AI Operation section to instruct the Phase 3 LLM to author `ai_processing.instruction` text in named-key terms (avoiding the shape-drift gap at the IR-author surface) and to never assume the runtime has access to time-relative references without explicit anchoring.
+- Add unit tests verifying the preamble fires for `ai_processing` with array-of-objects input and is omitted for 2D-array, scalar, or non-`ai_processing` inputs.
+- Consider extending the preamble pattern to other deterministic-language-reference cases (timezone hints, locale, etc.).
+
+**Related observation — anti-pattern: "prompt-context completeness is a platform responsibility":**
+
+LLMs are not deterministic compilers — they need context to reason correctly. When the workflow author or the Phase 3 LLM writes "today" or "column A", the runtime has the responsibility to translate those into something concrete. Same anti-pattern shape as WP-29 / WP-30 / WP-31 (W2 expression-evaluator runtime that resolves `today`/`config`/`date_diff` deterministically because the LLM can't) — except for free-form natural-language instructions, the resolution layer must be a *preamble* rather than a structured replacement.
+
+Worth adding to V6_DESIGN_PRINCIPLES as a new principle or extending an existing one: **"Runtime must provide deterministic anchors that the LLM can rely on."**
+
+---
+
+### WP-42: Gmail plugin rejects string `recipients.to` from LLM emission
+
+**Severity:** P0 — fires on every workflow that sends a single-recipient email via `google-mail.send_email`. The LLM commonly emits the recipient as a string (the natural reading of the EP Key Hint `google-mail__email/send_message__recipients.to: "user@x.com"` and a near-universal pattern for the "send me a summary email" use case). Plugin executor throws `TypeError: recipients.to.map is not a function` and the workflow calibration-stops at the delivery step.
+**Encountered as:** Stage 1.2d live Phase E run on V2-UI-generated `gantt-urgent-tasks` agent (`dc04876c-…`), 2026-05-17, after WP-39, WP-40, AND WP-41 fixes all landed. step9 (`Deliver using google-mail`) died with `recipients.to.map is not a function`. The runtime cascade now ran 8/9 steps successfully — only the delivery step failed.
+**Status:** ✅ Fixed (2026-05-17, branch `feature/v6-v2-integration`)
+
+**Problem:** [`gmail-plugin-executor.ts:498-512`](../../lib/server/gmail-plugin-executor.ts#L498) `buildEmailMessage()` calls `recipients.to.map((r) => ...)` (and similar for `cc` / `bcc`) assuming the plugin schema's declared `array` shape. The schema declares:
+
+```json
+"recipients": {
+  "to": { "type": "array", "items": { "type": "string", "format": "email" } },
+  "cc": { "type": "array", "items": { "type": "string" } },
+  "bcc": { "type": "array", "items": { "type": "string" } }
+}
+```
+
+But the LLM emits a single email as a string:
+
+```json
+"params": {
+  "recipients": {
+    "to": "meiribarak@gmail.com"   ← string, not array
+  }
+}
+```
+
+The pre-check `if (recipients?.to?.length)` passes truthy (the string length is positive), then `.map()` blows up.
+
+Secondary bug compounded with this: [`base-plugin-executor.ts:194-202`](../../lib/server/base-plugin-executor.ts#L194) `countRecipients()` did `recipients.to?.length` on a string and returned the character count (e.g., 20 for `"meiribarak@gmail.com"`). The pre-execution validation rule `total_recipients > 10` then matched, logging `"Send email to {total_recipients} recipients?"` confirmation requests for what was actually one recipient. Silent inflation of validation flags.
+
+**Why this wasn't caught earlier:**
+
+- Existing regression scenarios that send email all happened to use array recipients (either hand-edited phase4 snapshots or generated by an LLM run that happened to emit arrays) — the typecheck never bit.
+- The plugin's parameter validation accepts both string and array values at the schema-validation layer (the schema is enforced softly, not strictly) — so the bad value reaches the executor.
+- This is the first end-to-end live Phase E run from V2 UI output where the LLM picked the string emission style. EP Key Hints surface the value as a string ("meiribarak@gmail.com"), and the LLM faithfully copied that string into `recipients.to` without wrapping in an array.
+
+**Fix shape:**
+
+Two-part runtime tolerance — mirrors the WP-21/WP-22/WP-25 pattern (runtime coerces LLM-emission-style mismatches at the boundary instead of forcing schema-level enforcement).
+
+1. **`buildEmailMessage`**: new `toEmailArray()` helper at the top of the method. Coerces string → `[string]`, passes arrays through unchanged, drops everything else. Apply uniformly to `to`, `cc`, `bcc` before calling `.map()`.
+2. **`countRecipients`**: replace `field?.length` with a typed counter: array → `.length`, non-empty string → `1`, else → `0`. Eliminates the character-count inflation in validation rules.
+
+**Files:**
+
+- [`lib/server/gmail-plugin-executor.ts`](../../lib/server/gmail-plugin-executor.ts) lines 498-517 — `buildEmailMessage` patched with `toEmailArray()` helper.
+- [`lib/server/base-plugin-executor.ts`](../../lib/server/base-plugin-executor.ts) lines 194-205 — `countRecipients` patched with typed counter.
+
+**Test coverage:**
+
+End-to-end live Phase E on `tests/v6-regression/scenarios/gantt-urgent-tasks-v2ui/` confirmed both halves of the fix (real email delivered with correct recipient count). **Follow-up:** add unit tests for both helpers — `toEmailArray("a@b.com") → ["a@b.com"]`, `toEmailArray(["a@b.com", "c@d.com"]) → ["a@b.com", "c@d.com"]`, `toEmailArray(undefined) → []`; `countRecipients({to: "x@y.com"}) → 1`, `countRecipients({to: ["a", "b"], cc: "c"}) → 3`.
+
+**Related observation — same anti-pattern as WP-21/22/25:**
+
+Family of bugs where the LLM's natural emission style doesn't match the runtime's strict-contract expectation. The fix pattern is consistent: **runtime tolerance at the plugin-executor boundary**, not schema-level enforcement (because schema-level enforcement loses information — there's no way to recover the LLM's intent from a rejection). Adding WP-42 to the "runtime tolerance for LLM emission styles" cluster: [WP-21 (`contains_any` string RHS)](#wp-21), [WP-22 (`set_difference.reference` bare RefName)](#wp-22), [WP-25 (positional `field_mapping` target keys)](#wp-25), [WP-28 (positional source keys)](#wp-28), WP-42 (recipients.to string).
+
+---
+
+### WP-41: D-B18 `select` → `map` alias is syntactic, not semantic
+
+**Severity:** P0 — fires whenever Phase 1 LLM emits `transform/select` to build a wrapper object from source-level references (a common pattern for "bundle the rows array with metadata so downstream filters can drill in via `{{wrapper.rows}}`"). Effect: step produces wrong-shape output silently; runtime resolves the downstream consumer path to undefined; cascade abort with a misleading "no input data" error several steps later.
+**Encountered as:** Stage 1.2c live Phase E run on V2-UI-generated `gantt-urgent-tasks` agent (`dc04876c-…`), 2026-05-17, after both WP-39 and WP-40 fixes landed. step3 produces output type `array(57)` of identical copies of the literal config `{type:"map", input:"...", fields:{rows:<array>, row_count:..., ...}}` instead of a single wrapper object. step4's `{{sheet_rows_wrapper.rows}}` then resolves to undefined (`.rows` doesn't exist on the array), surfacing as `Transform step step4 has no input data. Available variables: sheet_read_result, sheet_read_result_objects, sheet_rows_wrapper`.
+**Status:** ✅ Fixed (2026-05-17, branch `feature/v6-v2-integration`) — chose Option A (restore `select` as runtime op). End-to-end Phase E now passes 7/7 steps on `gantt-urgent-tasks-v2ui` scenario.
+
+**Problem:** D-B18 was introduced to bridge a schema change: `select` and `custom` transform types were removed from the IntentContract schema in favor of `map`. The compiler's alias (`ExecutionGraphCompiler.ts` D-B18 block) renames the type label so legacy IRs still compile. But the alias does NOT restructure the operation — and the two operations have fundamentally different semantics:
+
+| Operation | Input semantics | Field expression semantics | Output shape |
+|---|---|---|---|
+| `select` | Reads from `transform.input` as a single source (object or array) | Each field's value is a reference to the **source** | ONE object containing the named fields |
+| `map` | Iterates each ITEM of an array-typed `transform.input` | Each field's value is a reference to `item` (current row) or globals | An array, one element per input item |
+
+Concretely, for the gantt scenario:
+
+**LLM-emitted IR (intended `select` semantics):**
+```json
+{
+  "type": "select",
+  "input": "{{sheet_read_result}}",
+  "fields": {
+    "rows": "{{sheet_read_result.values}}",
+    "row_count": "{{sheet_read_result.row_count}}",
+    "range": "{{sheet_read_result.range}}"
+  }
+}
+// expected output: { rows: [...], row_count: 58, range: "Gantt!A1:G997" }
+```
+
+**After D-B18 alias (broken `map` execution):**
+```json
+{
+  "type": "map",  // ← only the label changed
+  "input": "{{sheet_read_result_objects}}",  // ← compiler also auto-rewrote input
+  "fields": {
+    "rows": "{{sheet_read_result_objects}}",  // ← every field still references source-level vars
+    "row_count": "{{sheet_read_result.row_count}}",
+    ...
+  }
+}
+// actual output: 57 copies of { type:"map", input:"...", fields:{...} } (the config itself)
+//                because `map` runs the field-construction once per item in the input array,
+//                but the field expressions don't reference `item` — they reference globals,
+//                so every iteration produces the same shape.
+```
+
+The downstream filter step then does `{{sheet_rows_wrapper.rows}}` expecting the array-under-`.rows` (the singular-wrapper shape). On the array-of-57-copies shape, `.rows` is undefined.
+
+**Why D-B18 was added:**
+
+The IntentContract schema removed `select` (and `custom`) — presumably for grammar consolidation; both were "fold this into something else" candidates. D-B18 was the migration band-aid: relabel old IR emissions to `map` so the runtime (which only knows `map`) still accepts them. The author's intent was probably to handle the "list comprehension"-style `select` (per-item field projection), not the "object construction" `select` semantics the LLM is actually emitting. The current behavior is correct for the former interpretation and wrong for the latter.
+
+**Three intervention points (Option A chosen, applied 2026-05-17):**
+
+1. ✅ **Restore `select` as a runtime transform op (smallest surgery) — CHOSEN AND APPLIED.** New `case 'select'` in `StepExecutor.executeTransform()` (lines ~2471 area) builds a single output object from `effectiveConfig.fields`. Values are already resolved by `resolveAllVariables` at step entry (so the field expressions like `{{src.values}}` are post-resolution literal values by the time the case runs), so the implementation is a shallow clone: `result = { ...effectiveConfig.fields }`. The compiler's D-B18 alias was split: `select` is now preserved (no rename, `pilotOperation` stays `'select'`), `custom` still aliases to `map`. Net diff: ~12 lines runtime + alias split in compiler.
+
+2. **Compile-time semantic translation (deferred — would be more architecturally correct).** Restructure `select` into `with_fields` or inline the wrapper into the consumer step's `transform.input`. Not pursued because Option A is sufficient for current scenarios; revisit if a future scenario surfaces a `select` shape that the runtime case can't handle.
+
+3. **Phase 1 prompt steering (deferred).** No prompt change made. The runtime now accepts `select` natively, so there's no pressure to steer the LLM away from it. Worth a follow-up to make the formalization-system-v4 prompt document `select` semantics explicitly so the LLM emits it correctly more reliably.
+
+**Why this wasn't caught earlier:**
+
+- Regression scenarios use committed `phase4-pilot-dsl-steps.json` snapshots that pre-date D-B18 OR have been hand-edited; their `step.operation` and `config.type` are already `"map"` with per-item-correct `fields` definitions. Re-running them never re-exercises the alias path.
+- The Phase D mock executor for `map` is permissive: it accepts the LLM's source-level field refs and resolves them once globally per the unit-of-work mocking strategy, producing data that "looks right" downstream. Real runtime iterates per-item and exposes the divergence.
+- This is the first end-to-end live Phase E pass against fresh LLM-generated `select` output (Stage 1.2 of V6 ↔ V2 integration). Prior Phase E runs all used regression-scenario phase4 snapshots.
+- The two operations diverged in semantics LONG before D-B18 — the alias just made the divergence invisible by removing the validation that would have caught a `select` IR at runtime.
+
+**Compounding observation — anti-pattern: "syntactic alias for semantic redirection":**
+
+D-B18 is shaped like a backward-compat alias (rename an old name to a new name). That works when the old and new names refer to the same underlying operation. It fails silently when the operations are different — which is exactly the case here. The same alias-mechanism is used for `deduplicate → dedupe` (lines 680-682) where the two ARE the same operation (runtime handles both), so it works. The lesson is: aliasing is only safe when the two labels are semantically equivalent. For non-equivalent labels, you need real translation logic, not a rename.
+
+**Files (fix landed):**
+
+- [`lib/agentkit/v6/compiler/ExecutionGraphCompiler.ts`](../../lib/agentkit/v6/compiler/ExecutionGraphCompiler.ts) — D-B18 alias block split: `select` arm preserves the type label (just logs the preservation); `custom` arm still aliases to `map`.
+- [`lib/pilot/StepExecutor.ts`](../../lib/pilot/StepExecutor.ts) — new `case 'select'` added in `executeTransform` (above `case 'map'`). Builds `{ ...effectiveConfig.fields }`; falls through to `data` passthrough when no fields object is present.
+
+**Test coverage:**
+
+Live Phase E on `tests/v6-regression/scenarios/gantt-urgent-tasks-v2ui/` confirmed the fix end-to-end: 7/7 steps pass, real email delivered to `meiribarak@gmail.com`. **Follow-up:** add a unit test that runs the runtime `case 'select'` against `effectiveConfig.fields = {rows: [...], row_count: 58}` and asserts the output is a single object `{rows: [...], row_count: 58}` (not an array). Track as a Stage 1 follow-up.
+
+**Related observation — DESIGN_PRINCIPLES gap:**
+
+This bug surfaces a new anti-pattern not yet covered by the 11 principles: **"Backwards-compat aliases must be semantic, not syntactic."** Worth adding as Principle 12 or extending Principle 11. Either way, the Evidence list for whichever principle covers this should cite WP-41.
+
+---
+
+### WP-40: IRFormalizer blind-guess auto-correction corrupts filter input paths
+
+**Severity:** P0 — fires whenever the LLM emits a filter whose input variable is declared as non-array, which happens on every workflow that wraps an array inside an intermediate object (the W2/WP-17 "wrapper" pattern, very common after a `transform/map` produces `{rows, count, range, ...}`). Effect is silent data corruption masked by a "WARN: Auto-corrected" log line — the user sees "no data" or empty results despite real upstream data.
+**Encountered as:** Stage 1.2c live Phase E run on V2-UI-generated `gantt-urgent-tasks` agent (`dc04876c-…`), 2026-05-17. After the WP-39 fix unblocked step3, step4 (`Transform: filter` to skip the sheet header row) failed with `Transform step step4 has no input data. Available variables: sheet_read_result, sheet_read_result_objects, sheet_rows_wrapper`. Trace: IRFormalizer's `validateIRStructure` saw `transform.input: {{sheet_rows_wrapper.rows}}`, decided `sheet_rows_wrapper` was type `"object"` (correct — step3 wraps the array), and "fixed" the path to `{{sheet_rows_wrapper.rows.attachments}}` — a field that doesn't exist anywhere in the data.
+**Status:** ✅ Fixed (2026-05-17, branch `feature/v6-v2-integration`)
+
+**Problem:** The IR-structure validator at [`IRFormalizer.ts:1709-1843`](../../lib/agentkit/v6/semantic-plan/IRFormalizer.ts#L1709) includes an "auto-correction" branch for filter operations whose input variable is declared as non-array:
+
+```ts
+// Auto-correct: if input is object type, try to find array field to filter on
+const inputVar = (node as any).inputs?.[0]?.variable
+if (inputVar) {
+  const varDecl = ir.execution_graph.variables?.find(v => v.name === inputVar)
+  if (varDecl && varDecl.type !== 'array') {
+    // Attempt auto-correction: look for common array field names
+    const commonArrayFields = ['attachments', 'items', 'results', 'data', 'list', 'records']
+    let corrected = false
+
+    const inputRef = transform.input
+    if (inputRef && typeof inputRef === 'string' && inputRef.startsWith('{{') && inputRef.endsWith('}}')) {
+      const varName = inputRef.slice(2, -2).trim()
+
+      // Try appending common array field names
+      for (const fieldName of commonArrayFields) {
+        const correctedInput = `{{${varName}.${fieldName}}}`
+        transform.input = correctedInput
+        corrected = true
+        logger.warn({ ... }, 'Auto-corrected filter input to access nested array field')
+        break // Use first match  ← misleading comment; there's no match check
+      }
+    }
+    // ...
+  }
+}
+```
+
+Three compounding bugs:
+
+1. **No actual match check.** The "Use first match" comment is aspirational — the loop ALWAYS picks `attachments`, the first field name in the list, regardless of whether the variable actually has that field. The schema is never consulted.
+2. **Wrong variable inspected.** `inputVar` comes from `node.inputs[0].variable` (the bare name `sheet_rows_wrapper`); the check decides "this is type object, must be wrong" — but `transform.input` already navigates into a nested field (`{{sheet_rows_wrapper.rows}}`), so the wrapper-object type is *expected*, not erroneous.
+3. **Path-compounding corruption.** When applying the "fix", the code appends to the FULL expression inside `{{...}}` (`varName = "sheet_rows_wrapper.rows"`), so the resulting path is `{{sheet_rows_wrapper.rows.attachments}}` — doubly wrong: the LLM already drilled into `.rows`, and now `.attachments` is bolted on top.
+
+Cascading downstream:
+- Runtime `ExecutionContext.resolveVariable("sheet_rows_wrapper.rows.attachments")` → `undefined` (no such field exists).
+- `StepExecutor.executeTransform` throws `Transform step ${stepId} has no input data` and lists the available variables, which the user sees but can't reconcile because they wrote the right path originally.
+- The actual error message they see has nothing to do with `attachments` — the corruption happened during formalization, log-buried as a `WARN`. The PILOT runtime knows nothing about the original input value.
+
+**Compounding observation — log misleading just like WP-39:**
+
+```
+WARN: Auto-corrected filter input to access nested array field
+  originalInput: "{{sheet_rows_wrapper.rows}}"
+  correctedInput: "{{sheet_rows_wrapper.rows.attachments}}"
+  reason: "Variable 'sheet_rows_wrapper.rows' is type 'object', not 'array'. Auto-corrected to access nested array field 'attachments'."
+```
+
+A reader looking at this log line would conclude "the validator corrected a malformed LLM output." Wrong: the validator CAUSED the malformation. Same Principle-11-violation shape as WP-39's D-B18 alias.
+
+**Why this wasn't caught earlier:**
+
+- Regression scenarios commit `phase4-pilot-dsl-steps.json` post-compile — the IR-level corruption never re-runs (the bad DSL is just frozen, not regenerated).
+- The two scenarios that legitimately use `.attachments` (`po-monitor-supplier-confirmation`, `aliexpress-delivery-tracker`) work because the underlying email data DOES have `attachments` — so even though the "auto-correction" was the same shape, the path happened to resolve. The heuristic looked "smart" on those scenarios but was always a coincidence.
+- This is the first scenario in the regression suite where `sheet_rows_wrapper` (an object-wrapper-around-rows-array) is the filter input. Stage 1.2 of the V6→V2 integration is the first end-to-end live Phase E pass where the corruption was visible in user-facing failure.
+
+**Fix shape:**
+
+Replace the blind-guess block with sane validation:
+
+```ts
+// Validate input variable is declared as array, unless transform.input
+// accesses a nested field (in which case the LLM is being explicit
+// about reaching into a wrapper object — trust it).
+const inputVar = (node as any).inputs?.[0]?.variable
+if (inputVar) {
+  const varDecl = ir.execution_graph.variables?.find(v => v.name === inputVar)
+  if (varDecl && varDecl.type !== 'array') {
+    const inputRef = transform.input
+    const expr = typeof inputRef === 'string' && inputRef.startsWith('{{') && inputRef.endsWith('}}')
+      ? inputRef.slice(2, -2).trim()
+      : null
+    const accessesNestedField = expr !== null && expr.startsWith(`${inputVar}.`)
+    if (!accessesNestedField) {
+      errors.push(
+        `Node '${nodeId}': filter operation requires array input, ` +
+        `but variable '${inputVar}' is declared as type '${varDecl.type}'. ` +
+        `Either change variable type to 'array', access a nested array field ` +
+        `via transform.input (e.g. {{${inputVar}.some_array_field}}), ` +
+        `or use a different operation type.`
+      )
+    }
+  }
+}
+```
+
+This keeps the legitimate purpose of the validator (catch filters that try to operate directly on a wrapper object) but removes the corruption mechanism. The schema-aware `autoFixFilterTransforms` (line 1846+) is unchanged — it uses skeleton `filter_hints` to make schema-informed fixes when those hints exist, which is the only legitimate auto-fix path.
+
+**Files:**
+
+- [`lib/agentkit/v6/semantic-plan/IRFormalizer.ts`](../../lib/agentkit/v6/semantic-plan/IRFormalizer.ts) — block at lines 1741-1782 replaced. Net delta: ~30 lines removed (the loop + commonArrayFields list + correction logic + `corrected` flag), ~12 lines added (nested-access check + error push).
+
+**Test coverage:**
+
+The fix is verified end-to-end by re-running the live execution on the `gantt-urgent-tasks-v2ui` regression scenario (Phase E now progresses past step4). **Follow-up:** add a unit test that runs `validateIRStructure` against a synthetic IR with `transform.type: "filter"`, `inputs[0].variable: "wrapper"`, `variables: [{name:"wrapper", type:"object"}]`, and either (a) `transform.input: "{{wrapper}}"` → asserts error pushed, or (b) `transform.input: "{{wrapper.rows}}"` → asserts NO error and `transform.input` unchanged. Track as a Stage 1 follow-up.
+
+**Related observation — DESIGN_PRINCIPLES Principle 11 evidence:**
+
+This is the same anti-pattern shape as WP-39: defense-in-depth heuristic that logs "I fixed it!" while silently corrupting data. Update Principle 11's Evidence list to include WP-40 alongside WP-39.
+
+---
+
+### WP-39: ExecutionGraphCompiler D-B18 alias updates `config.type` but not `step.operation`
+
+**Severity:** P0 — every V6-pipeline-generated workflow emitting `transform/select` crashes at the first such step at runtime. No workaround at runtime; only the compiler fix unblocks the V6 → V2 migration.
+**Encountered as:** Stage 1.2b live Phase E run on V2-UI-generated `gantt-urgent-tasks` agent (`dc04876c-ec1c-4e88-810a-7b5fe0999e09`), 2026-05-17. step3 (`Transform: select`) failed with `Unknown transform operation: select`. step1+step2 succeeded — real data was flowing. step4-step9 never ran because of the cascade abort.
+**Status:** ✅ Fixed (2026-05-17, branch `feature/v6-v2-integration`)
+
+**Problem:** The compiler at [`lib/agentkit/v6/compiler/ExecutionGraphCompiler.ts`](../../lib/agentkit/v6/compiler/ExecutionGraphCompiler.ts) implements **D-B18 aliasing** — when the IR's `transform.type` is `"select"` or `"custom"` (both removed from the IntentContract schema in favor of WP-4 mapping), it aliases them to `"map"` so the runtime can handle them. The alias logic at lines 683-689 does:
+
+```ts
+} else if (transformConfig.type === 'select' || transformConfig.type === 'custom') {
+  const originalType = transformConfig.type
+  transformConfig.type = 'map'         // ← updates the IR-side config object
+  transformedConfig.type = 'map'        // ← updates the DSL-side config object
+  this.log(ctx, `  → D-B18: Aliased '${originalType}' → 'map' ...`)
+}
+```
+
+But the compiled step's top-level `operation` field comes from a separate variable (`pilotOperation`, line 579) that flows through `finalOperation` (line 816) into `step.operation` (line 895). That variable is **never updated** by the alias block. Result:
+
+```json
+{
+  "step_id": "step3",
+  "type": "transform",
+  "operation": "select",       ← runtime reads this — throws
+  "input": "{{...}}",
+  "config": {
+    "type": "map",               ← alias only updated config.type
+    ...
+  }
+}
+```
+
+At runtime, [`StepExecutor.executeTransform()`](../../lib/pilot/StepExecutor.ts) switches on `step.operation`. Its switch knows `map`, `filter`, `reduce`, `flatten`, etc. but **not** `select` — even though the codebase intentionally retired `select` at the IR layer. So the very alias logic designed to bridge the gap fails to fully bridge it.
+
+**Compounding observation — D-B18 alias was visible in compiler logs:**
+
+The bug was actively hidden by a misleading log message:
+
+```
+INFO:   → D-B18: Aliased 'select' → 'map' (select removed from IC schema)
+```
+
+The log SAID the alias happened, but it only happened halfway. Anyone reading the log would assume `select` → `map` was complete and look elsewhere for the failure cause. This is a V6_DESIGN_PRINCIPLES.md [Principle 11](./V6_DESIGN_PRINCIPLES.md#principle-11--defense-in-depth-must-not-hide-failures) violation — "Defense in depth must not hide failures." The defense-in-depth alias logged success while doing partial work.
+
+Similar incomplete alias also exists for `deduplicate → dedupe` at lines 680-682 (updates both config types but not `pilotOperation`). It doesn't currently surface as a runtime failure because the runtime switch handles both `deduplicate` and `dedupe`. Still — same shape, same risk if runtime ever tightens. Worth a follow-up pass.
+
+**Why this wasn't caught earlier:**
+
+- The regression-scenario `phase4-pilot-dsl-steps.json` files are committed snapshots. They were produced PRE-D-B18 (or were hand-edited) and DON'T contain `operation: "select"` at the top level. So Phase D / Phase E runs of the regression scenarios never exercised this code path.
+- The IRFormalizer's v4 prompt continues to emit `transform.type: "select"` for column-projection patterns (it's still the LLM's natural vocabulary for "project these fields"). The D-B18 alias was added to handle this, but its incomplete behavior was only visible when running on a LIVE LLM-generated DSL with a fresh agent — which is exactly Stage 1.2b of the V6→V2 integration.
+- **This is the first time V6-pipeline-generated output has been run end-to-end via the actual V2 UI path on real data.** The regression suite uses pre-baked snapshots; the integration plan's Phase A6 test-page testing was never executed (per V6_AGENT_CREATION_INTEGRATION_PLAN.md status). So this gap was hiding until now.
+
+**Fix shape:** one-line addition inside the alias block:
+
+```ts
+} else if (transformConfig.type === 'select' || transformConfig.type === 'custom') {
+  const originalType = transformConfig.type
+  transformConfig.type = 'map'
+  transformedConfig.type = 'map'
+  pilotOperation = 'map'          // WP-39: also update the field that ends up in step.operation
+  this.log(ctx, `  → D-B18: Aliased '${originalType}' → 'map' ...`)
+}
+```
+
+Since `pilotOperation` is declared with `let` (line 579), the assignment is in scope.
+
+**Files:**
+
+- [`lib/agentkit/v6/compiler/ExecutionGraphCompiler.ts`](../../lib/agentkit/v6/compiler/ExecutionGraphCompiler.ts) — 1 line added at the D-B18 alias block + 5-line comment explaining the assignment chain
+
+**Test coverage:**
+
+No new unit test added yet — the surface area (writing a synthetic IR through the full compiler) is heavy and the fix is verified by re-running Stage 1.2b. **Follow-up:** add a regression unit test that compiles a minimal IR with `transform.type: "select"` and asserts the emitted `step.operation === "map"`. Track as Stage 1 follow-up.
+
+**Related observation — DESIGN_PRINCIPLES gap:**
+
+This bug strengthens [Principle 11 (Defense in depth must not hide failures)](./V6_DESIGN_PRINCIPLES.md#principle-11--defense-in-depth-must-not-hide-failures) — the D-B18 alias was meant as defense in depth for legacy IRs that still emit `select`, but its incomplete behavior actively misled debugging via a "success" log line. Update Principle 11's Evidence list to include WP-39.
 
 ---
 
@@ -3172,6 +3877,17 @@ Already documented as WP-9 / F7 — deferred due to ~$0.10-0.15 per run token co
 
 | Date | Change | Details |
 |------|--------|---------|
+| 2026-05-19 | WP-48 fixed — `/api/create-agent` migrated from direct supabase.insert to AgentRepository; auth hardened with getUser(); Zod validation added; Pino structured logging; supabase client per SUPABASE_CLIENTS.md; explicit created_at/updated_at timestamps | Pre-existing tech-debt violation surfaced during a code review prompted by the Pipeline A migration. The route violated five CLAUDE.md mandatory rules at once: direct supabase insert (rule #1), x-user-id header trust (rule #5), no Zod validation (rule #2), unconditional service-role client (rule #4), ~40 `console.*` calls instead of structured logging (rule #3 / `docs/SYSTEM_LOGGING_GUIDELINES.md`). Refactor: (a) extended `CreateAgentInput` in `lib/repositories/types.ts` from 7 fields → ~25 fields (covers the full agent persistence shape); (b) switched the insert to `new AgentRepository().create(...)`; (c) replaced `getUserIdFromRequest` with `getUser()` from `@/lib/auth` (Supabase SSR session cookie); (d) added `CreateAgentSchema` Zod validator with `.passthrough()` on the inner agent object; (e) migrated all `console.*` to Pino — module-scoped `createLogger`, per-request correlation ID + child logger, structured `(context, msg)` calls, `{ err: error }` error pattern, `duration` performance metrics on completion + error paths, child logger for the AIS subsystem block, dropped the emoji-laced ASCII separators that obscured the actual flow; (f) replaced the ad-hoc `createClient(... SUPABASE_SERVICE_ROLE_KEY ...)` with the documented `supabaseServer` singleton import per `docs/SUPABASE_CLIENTS.md` — the route now uses the canonical service-role server client for the `token_usage` SELECT and the AIS service call; (g) `AgentRepository.create()` now explicitly stamps `created_at` AND `updated_at` to the same `Date.now()` ISO timestamp so the two columns match exactly on creation (DB defaults could otherwise compute them at slightly different times under load). **Behaviour change worth flagging:** expired sessions now correctly return 401 instead of silently succeeding with a stale x-user-id header. **Why this wasn't caught earlier:** the violation predated the V2 UI integration and never failed a test because every test happened with a valid logged-in user; the security gap was latent. Branch: `feature/v6-v2-integration`. |
+| 2026-05-19 | WP-47 fixed — V2 UI now pre-populates `resolvedInputs` from `v6Data.ir.config_defaults` (eliminates Pipeline A re-prompting) | User reported on 2026-05-19: after the Pipeline A migration, the V2 UI was re-prompting for input values the user had already provided in the conversational EP-build phase. Investigation traced this to a naming mismatch — Pipeline A's IC LLM uses its own keys for `config[]` (`spreadsheet_id`, `tab_name`) while EP `resolved_user_inputs` uses EP-Key-Hint format (`google-sheets__table/get__spreadsheet_id`). The V2 UI's `resolvedInputs` map was built from the EP keys, and the `requiredParams` filter (line 1190) used strict `input.name in resolvedInputs` lookup — so DSL-ref names (Source 1 of `extractInputSchema`) never matched. Pipeline B sidestepped this because its compiler inlines values into DSL params at compile time, leaving no `{{input.X}}` refs in `workflow_steps` for Source 1 to surface. **Fix:** ~12 LOC in `app/v2/agents/new/page.tsx` to merge `v6Data.ir.config_defaults` entries into `resolvedInputs` before the filter runs. IC LLM transcribed EP values into `config[].default` keyed by the same names the DSL's `{{input.X}}` refs use → exact match → filter correctly recognizes all IC keys as already-provided → user transitions directly to scheduling. Pipeline B unaffected (its response doesn't carry `ir.config_defaults` in a comparable shape; if it did, B's DSL has no `{{input.X}}` refs anyway). **New anti-pattern:** when two layers in a pipeline use different naming conventions for the same logical value, one bears the bridging cost — design the cheaper side to be the bridge. Branch: `feature/v6-v2-integration`. |
+| 2026-05-17 | WP-46 fixed — `transform/with_fields` with constants-only emits singleton object instead of per-item array | Surfaced at Stage P4 of the Pipeline A migration right after WP-45 was applied. step5 (priority filter) returned 4 rows; step6 (date filter using WP-45-resolved refs) STILL returned 0. Inspection: step4 (`with_fields` to compute `date_window`) produced an array of 57 row copies each augmented with the same constant `window_start`/`window_end`, not the singleton object the downstream filter expected. Same anti-pattern shape as WP-41 — LLM picked a transform whose runtime semantics don't match the intended use (`with_fields` is per-item augmentation; LLM intended singleton-constants). **Runtime tolerance fix:** new `isConstantExpression()` walks each field's expression tree; if ALL field expressions are constants (no `kind: "ref"` targeting `item.*`), evaluate once and return a singleton `{[fieldName]: value, ...}` object regardless of input array length. Per-item behavior unchanged when ANY field references `item.*`. **Validation:** end-to-end Phase E on `gantt-urgent-tasks-v2ui-pipeline-a` now produces step4 singleton `{window_start: "2026-05-18T00:00:00.000Z", window_end: "2026-05-21T00:00:00.000Z"}`, step6 filter returns 3 of 4 rows, real HTML email delivered with 3 tasks. **Compounding insight from WP-41 + WP-46:** when LLM picks a transform that's "almost right" but a different output shape, runtime tolerance is usually cleaner than IR rewriting or prompt steering. Branch: `feature/v6-v2-integration`. |
+| 2026-05-17 | WP-45 fixed — `ConditionalEvaluator` now resolves bare RefNames for all comparison operators + is date-aware for `gte`/`lte`/`gt`/`lt` | Surfaced at Stage P4 of the Pipeline A migration. Pipeline A's IntentContract LLM generated a date-range filter via direct `gte`/`lte` against `date_window.window_start` / `window_end` (the cleaner shape — Pipeline B routed through AI). Two compounding gaps in `ConditionalEvaluator.ts`: (a) bare-string variable refs only resolved for `in`/`not_in` (WP-22's narrow O26 fix) — `gte`/`lte` saw `"date_window.window_start"` as a literal; (b) `gte`/`lte`/`gt`/`lt` did raw `>=`/`<=`/`>`/`<` without calling `parseDate` — even resolved values would compare lexicographically. **Compounding root cause:** two `parseDate` implementations diverged — WP-29 (2026-05-11) hardened the W2 expression evaluator's parser but `ConditionalEvaluator` had its own private, weaker parser that never got the locale-aware DD/MM/YYYY support. **Three-part fix:** (a) `looksLikeBareVariableRef()` helper generalizes the defensive wrap to all comparison operators; (b) `compareAsDates()` helper makes `gte`/`lte`/`gt`/`lt` date-aware when both sides parse as dates, with fallback to native operators (numeric / string comparisons unchanged); (c) private `parseDate` now delegates to the shared WP-29 parser — eliminates the duplicate parser, makes `before` / `after` / `within_last_days` also benefit from locale awareness. **Validation:** end-to-end Phase E on `gantt-urgent-tasks-v2ui-pipeline-a` confirmed 3 real tasks delivered in HTML email. **New anti-pattern surfaced:** "runtime helpers that look the same should BE the same" — duplicate `parseDate` implementations diverging in hardening is the helper-library-level shape of the WP-21/22/25/28 runtime-tolerance family. Worth a V6_DESIGN_PRINCIPLES Principle 12 candidate. Branch: `feature/v6-v2-integration`. |
+| 2026-05-17 | WP-44 documented — V6 formalization drops EP HTML/format requirements | Surfaced at Stage 1.2f on `gantt-urgent-tasks-v2ui` after WP-39/40/41/42/43 fixed the runtime cascade and AI extraction. User received an email with the 3 correct tasks but formatted as a plain-text ASCII-pipe table — despite the EP saying "HTML" 6 times and naming `html_body` explicitly. Root cause: V6 IRFormalizer (using `formalization-system-v4.md`) authored step8's AI prompt as "Create a concise **plain-text** email body" and step9's send params as `content.body` instead of `content.html_body`. The previous `gantt-urgent-tasks` scenario (via the old IntentContract pipeline) handled this correctly — V6 regressed. Same anti-pattern family as WP-43 (Phase 3 LLM dropping EP-level user requirements). **Fix deferred** — bundle with WP-43 Option A in a "Phase 3 prompt-fidelity audit" follow-up session. Two angles documented: (A) extend `formalization-system-v4.md` to teach the LLM to scan EP for format keywords + plugin-param names and preserve them; (B) compiler-side rewrite (less attractive — brittle compensation). New WP-44 added to V6_OPEN_ITEMS.md P1. |
+| 2026-05-17 | WP-43 fixed — ai_processing prompts now include named-key shape hint + current date anchor | Surfaced after WP-39/40/41/42 fixed all runtime errors on the V2-UI `gantt-urgent-tasks` agent — pipeline ran 7/7 steps but sent a "no tasks matched" email despite 3 visible tasks in the data. **Two compounding gaps** in `ai_processing` prompt context: (a) the Phase 3 LLM authored the AI instruction using column-letter references inherited from the user's EP wording ("Use column A as task_name…") but the data had been auto-converted to named-key objects by upstream `rows_to_objects`; (b) the instruction said "due_date within the next 3 days relative to now" but no concrete "now" was ever provided to the model, so it had no reference for date filtering and conservatively returned empty. **Option B (runtime preamble) chosen and applied:** ~30 LOC in `StepExecutor.executeLLMDecision` prepends two short anchors to every `ai_processing` prompt when input is an array of objects — `INPUT DATA SHAPE` (named keys + positional aliases) and `CURRENT DATE` (ISO + human form with DD/MM/YYYY locale hint). **Validation:** end-to-end Phase E re-run extracted 3 real tasks (`Employee signature - Marketing mail` / `Social – linkedin and Facebook pages - AgentsPilot` / `Global market research / Product & Competitive Analysis`), email routed to the have-tasks branch with real content. **Option A (formalization-system-v4.md prompt extension)** queued as a follow-up — the runtime preamble is defense in depth; ideally the Phase 3 LLM never authors column-letter language in `ai_processing.instruction` to begin with. **Surfaces a new anti-pattern:** "prompt-context completeness is a platform responsibility" — LLMs need deterministic anchors (today's date, data shape, etc.) injected by the runtime; relying on the model to infer them from training context is unreliable. Branch: `feature/v6-v2-integration`. |
+| 2026-05-17 | WP-42 fixed — Gmail plugin tolerates string `recipients.to/cc/bcc` from LLM emission; `countRecipients` no longer counts characters | Surfaced at Stage 1.2d live Phase E run, the final step9 (`google-mail.send_email`) blocker after WP-39 + WP-40 + WP-41 fixes unblocked the cascade. `recipients.to: "meiribarak@gmail.com"` (string) → `.map()` threw `TypeError: recipients.to.map is not a function`. **Two-part fix:** (a) new `toEmailArray()` helper at the top of `buildEmailMessage()` coerces string → `[string]` and passes arrays through unchanged; applied uniformly to to/cc/bcc. (b) `countRecipients()` in `base-plugin-executor.ts` patched with typed counter (array → length, non-empty string → 1, else → 0) — was previously counting string LENGTH (returning ~20 for a single email), silently inflating the `total_recipients > 10` validation rule. Same runtime-tolerance pattern as WP-21/22/25/28 — plugin-executor-boundary coercion for LLM emission styles that don't match strict schema contracts. **Validation:** end-to-end Phase E on `gantt-urgent-tasks-v2ui` now passes 7/7 steps with real email delivered to meiribarak@gmail.com. Branch: `feature/v6-v2-integration`. |
+| 2026-05-17 | WP-41 fixed — `select` restored as a runtime transform op (Option A); compiler D-B18 alias split so `select` is preserved | Chose Option A from the three intervention points documented in the original WP body. **Runtime:** new `case 'select'` in `StepExecutor.executeTransform` (lines ~2471 area) that builds a single object from `effectiveConfig.fields` (values already resolved by `resolveAllVariables` at step entry — implementation is a shallow clone). **Compiler:** D-B18 alias block split into two arms — `select` is preserved (no rename, just a logging breadcrumb); `custom` still aliases to `map` for now. Net runtime diff: ~12 lines; net compiler diff: ~6 lines refactor of the existing alias block. **Validation:** Phase E on `gantt-urgent-tasks-v2ui` step3 now emits a single wrapper object `{rows, range, row_count, column_count, retrieved_at}` (was 57 copies of literal config); cascade runs cleanly through steps 1-8. Step9 then failed with WP-42 (gmail string-recipient bug), which was fixed in a separate runtime-tolerance pass — see WP-42 row above. **Anti-pattern surfaced:** "backwards-compat aliases must be semantic, not syntactic" — added to DESIGN_PRINCIPLES Principle 11 Evidence alongside WP-39 and WP-40. Branch: `feature/v6-v2-integration`. |
+| 2026-05-17 | WP-41 documented — D-B18 `select` → `map` alias is syntactic, not semantic | Surfaced during Stage 1.2c live Phase E run, immediately after both WP-39 and WP-40 fixes landed. step3 in the gantt-urgent-tasks-v2ui scenario still fails downstream because the LLM emitted `transform.type: "select"` (object construction from source-level refs) and D-B18 only relabels the type to `"map"` (per-item iteration over an array). The two operations have different semantics: `select` produces ONE wrapper object; `map` produces an array. Result: step3 emits 57 copies of the literal config object instead of a single wrapper; downstream `{{sheet_rows_wrapper.rows}}` resolves to undefined. **Three intervention options** documented in the WP body: (A) restore `select` as a runtime transform op (smallest surgery), (B) compile-time semantic translation to `with_fields` or input inlining (most architecturally correct), (C) Phase 1 prompt steering away from `select` emission (most fragile). Choice deferred to a focused follow-up session. **New anti-pattern observation:** "Backwards-compat aliases must be semantic, not syntactic" — worth a new V6_DESIGN_PRINCIPLES principle or an extension of Principle 11. Same alias mechanism works correctly for `deduplicate → dedupe` (lines 680-682) because those ARE semantically equivalent. **Why not caught earlier:** regression-scenario phase4 snapshots pre-date D-B18 or were hand-edited; Phase D mock executor is permissive on `map`'s per-item semantics. Branch: `feature/v6-v2-integration`. |
+| 2026-05-17 | WP-40 fixed — `IRFormalizer.validateIRStructure` no longer corrupts filter input paths via blind-guess auto-correction | Surfaced during Stage 1.2c of V6 ↔ V2 integration, the next failure after the WP-39 fix unblocked step3 on the V2-UI `gantt-urgent-tasks` agent. The validator's "auto-correction" for filter operations whose input variable is declared as non-array blindly appended field names from a hardcoded list `['attachments', 'items', 'results', 'data', 'list', 'records']` and broke on the FIRST one — without checking the schema. The LLM had correctly emitted `transform.input: {{sheet_rows_wrapper.rows}}` (an array nested in a wrapper object); the validator looked up the bare `sheet_rows_wrapper`, saw type `object`, and "fixed" the path to `{{sheet_rows_wrapper.rows.attachments}}`. Runtime resolved to `undefined` → "Transform step has no input data" → cascade abort. **Fix:** replaced the blind-guess loop with a check that bypasses the type validation when `transform.input` already accesses a nested field of the input variable (i.e. trust the LLM when it's being explicit). Filters that pass a bare wrapper as input still throw a clear validation error pointing at the right shape. The schema-aware `autoFixFilterTransforms` (line 1846+, which uses skeleton `filter_hints`) is unchanged — that's the legitimate auto-fix path. **Hidden by misleading log:** the validator emitted `WARN: Auto-corrected filter input` as if it had fixed something — actually CAUSED the corruption. Same Principle-11 anti-pattern shape as WP-39. **Why not caught earlier:** the two scenarios that legitimately use `.attachments` (`po-monitor-supplier-confirmation`, `aliexpress-delivery-tracker`) operate on email data that genuinely has an `attachments` field, so the heuristic happened to resolve correctly — looked "smart" but was always coincidence. **No unit test yet** (validator's surface area requires a synthetic IR); tracked as Stage 1 follow-up. Branch: `feature/v6-v2-integration`. |
+| 2026-05-17 | WP-39 fixed — `ExecutionGraphCompiler` D-B18 alias now updates `pilotOperation` in addition to `transformConfig.type`/`transformedConfig.type` | Surfaced during Stage 1.2b of V6 ↔ V2 integration: V2-UI-generated `gantt-urgent-tasks` agent failed at runtime step3 with `Unknown transform operation: select`. Root cause: the compiler's `select`/`custom` → `map` alias (lines 683-689) only updated the IR-side and DSL-side `config.type` fields, not the `pilotOperation` variable (line 579) that flows into `step.operation` (line 895). Result: compiled step had `operation: "select"` at top level despite `config.type: "map"`, runtime's transform switch rejected it. **Fix:** one-line `pilotOperation = 'map'` inside the alias block + 5-line comment explaining the variable-flow chain that makes this necessary. **Hidden by misleading log:** the alias log message said "Aliased 'select' → 'map'" but only did half the work — violates V6_DESIGN_PRINCIPLES Principle 11 (Defense in depth must not hide failures). **Related observation:** `deduplicate → dedupe` alias has the same incomplete-update pattern (lines 680-682); runtime currently handles both so it doesn't surface, but worth a follow-up pass. **Why not caught earlier:** regression scenarios use committed phase4 snapshots that don't contain `operation: "select"` — this is the first end-to-end LLM-generated DSL run from the V2 UI. **No unit test yet** (heavy setup for the compiler); tracked as Stage 1 follow-up. Branch: `feature/v6-v2-integration`. |
 | 2026-05-11 | WP-31 fixed — `today` returns UTC-midnight calendar day; `date_diff` measures whole calendar-day deltas | Phase E on `gantt-urgent-tasks` after WP-29/30 landed produced only 1 of 3 expected tasks in the summary email because `today` returned `new Date().toISOString()` (current moment) and `date_diff(date_only, today, 'days')` computed fractional-days floor → tasks finishing "tomorrow" rounded to `days_until_finish = 0`, failing the `1 ≤ days_until_finish ≤ 3` filter. **Three-part fix:** (A) `case 'today'` returns midnight UTC of the current calendar day (optionally in user's local timezone via WP-29's `getUserTimezone()` hook). (B) `case 'date_diff'` with `unit: 'days'` defensively normalizes both sides to UTC midnight before computing diff (uses `Math.round` for DST-safety). (C) `case 'date_add'` keeps existing semantics; combined with the new midnight `today`, `today + N days` is exactly N×24h later. 12 new unit tests covering `today` semantics, midnight-normalization, time-of-day edge cases (00:01 vs 23:59 of prev day → 1 day, not 0), and integration with `date_add` / DD/MM input. **251/251 known-good tests passing** (was 239 before WP-31). User confirmed Phase E now produces 3 tasks as expected. |
 | 2026-05-11 | WP-29 + WP-30 fixed — date parsing locale-aware + config/ref expressions wrap path in `{{}}` | Both bugs surfaced during gantt-urgent-tasks Phase E "no data" cascade. **WP-29:** new three-tier disambiguation in `parseDate` — ISO → unambiguous (day or month > 12) → user-timezone-driven (via new `IExpressionContext.getUserTimezone()` hook) → DD/MM default. `ExecutionContext` populates from `inputValues._user_timezone` (or `user_timezone`) — WorkflowPilot can wire from the user-context system. New `buildDate()` validates day/month overflow. **WP-30:** one-line wrap of bare paths in `{{}}` before `resolveVariable` for both `config` AND non-`item` `ref` cases (audit found `ref` had the same convention mismatch). Mirrors WP-22's runtime defensive wrap. **Tests:** 34 new tests in `StructuredTransforms.wp29-wp30.test.ts` — Tier 0/1/2 disambiguation, 6 timezones, edge cases, canonical gantt scenario, config/ref resolution with strict stub mirroring production `resolveVariable`. **239/239 known-good tests passing** (was 205 before WP-29/30). |
 | 2026-05-11 | WP-29 + WP-30 documented — gantt-urgent-tasks Phase E "no data" cascade from date parsing + config-expression bugs | Phase E on `gantt-urgent-tasks` succeeded structurally (11/11 steps) but produced an empty-state email despite real Sheet data. Two compounding W2 Expression-evaluator bugs identified: (a) **WP-29** — `parseDate` uses `new Date()` which interprets `"12/5/2026"` (user's DD/MM/YYYY Sheet) as Dec 5 → `days_until_finish` returns 207 instead of 1. (b) **WP-30** — `case 'config'` in `evaluateExpression` calls `resolveVariable('input.X')` with a bare path; production runtime requires `{{...}}` so it returns the literal string → `Number()` = NaN → `date_add` returns null → `window_end` null in every row. Cascade: step7 filter on `days_until_finish` (wrong values) AND `<= date_window_days` (config ref broken) drops all rows. Both bugs likely silently broken since W2 (WP-16) shipped — W2 unit tests use a permissive stub that hides both. **WP-29 design:** three-tier — (1) unambiguous detection (day or month > 12 self-resolves), (2) user-timezone-driven locale via new `IExpressionContext.getUserTimezone()` hook (per user suggestion — more principled than a fixed default), (3) explicit `date_format` workflow_config hint (deferred). Tier 1+2 bundled in fix. **WP-30 design:** one-line wrap path in `{{}}` before `resolveVariable`, mirroring WP-22's fix. Audit also identified the `ref` case (non-`item` slot refs) has the same bare-path bug — same wrap fix applies. Fix to follow as one commit bundle. |

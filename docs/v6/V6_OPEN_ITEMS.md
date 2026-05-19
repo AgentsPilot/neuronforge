@@ -1,6 +1,6 @@
 # V6 Open Items — Consolidated Backlog
 
-> **Last Updated:** 2026-05-15
+> **Last Updated:** 2026-05-20
 > **Purpose:** Single source of truth for everything that's deferred, partial, or "future" in V6. Aggregates from `V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_WEAK_POINTS.md`, `V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_INTENT_CONTRACT.md`, the regression `scenario.json` caveats, and session-level observations.
 
 ## How to use this doc
@@ -27,6 +27,7 @@ Sourced from [`V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_WEAK_POINTS.md`](./V6_
 
 | WP | One-line summary | Status | Notes |
 |---|---|---|---|
+| ⭐ [WP-44](./V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_WEAK_POINTS.md#wp-44-v6-formalization-drops-explicit-ep-format-requirements-html-vs-plain-text) | V6 formalization-system-v4.md drops explicit EP format requirements (e.g. `html_body` → `body`, "HTML table" → "plain-text table") | ⬜ Documented | First surfaced 2026-05-17 at Stage 1.2f live Phase E (gantt-urgent-tasks-v2ui). Same Phase 3 prompt-fidelity family as WP-43; bundle as a "Phase 3 prompt-fidelity audit" follow-up. **Two angles:** (A) extend `formalization-system-v4.md` to preserve EP format keywords + plugin-param names; (B) compiler-side rewrite (brittle, not recommended). |
 | ⭐ [WP-34](./V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_WEAK_POINTS.md#wp-34-deterministicextractor-swallows-pdf-parse-exceptions-and-document-extractor-silently-fabricates-unknown-defaults) | `DeterministicExtractor` swallows PDF-parse exceptions → document-extractor fabricates "Unknown" defaults | ⬜ Documented, multi-component | **Highest user-visible risk.** Could send fabricated content to suppliers in po-monitor's reply-in-thread (step10). 5-part fix shape spec'd in the WP body. |
 | [WP-14](./V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_WEAK_POINTS.md#wp-14) (reopened) | Multi-nested-step scatter body token bloat (`isExtractLike` guard missing on multi-step branch in `ParallelExecutor.ts:470`) | ⚠️ Partial fix | Triggers on contract-enddate Phase E (1M tokens). ~30 lines. |
 | [WP-26](./V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_WEAK_POINTS.md#wp-26-o23-doesnt-recognize-project_columnby_index-as-a-positional-consumer) | O23 doesn't recognize `project_column.by_index` as positional consumer | ⬜ Future | User workaround: add header row to sheet. ~15 lines. |
@@ -50,6 +51,20 @@ Sourced from [`V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_WEAK_POINTS.md`](./V6_
 | WP | Status | Notes |
 |---|---|---|
 | [WP-16](./V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_WEAK_POINTS.md#wp-16-deterministic-data-operations-routed-to-ai-step) | 🟡 In progress | Task 0.7 ✅ done ([V6_WP16_INVENTORY.md](./V6_WP16_INVENTORY.md)). Task 0.8 ✅ done (W2 grammar). Tasks 0.9–0.12 ⬜ pending — see Section 3 below. |
+
+### Cleanup tasks (Pipeline B retirement follow-ups)
+
+Pipeline A migration (P1–P6) completed 2026-05-20. The V2 UI now uses Pipeline A unconditionally; Pipeline B endpoints + library code remain in the repo only as deprecated stubs awaiting deletion. **All 7 Pipeline B route files are tagged with `@deprecated` JSDoc** so future contributors get an IDE strikethrough + tooltip warning before extending them. Full Pipeline B deletion is no longer gated on test page work — all broken Pipeline B test surfaces were retired 2026-05-20 (moved to `archive/` preserving original paths so the work can be recovered via `git mv` if needed; safer than outright deletion):
+
+| Task | Owner | Status | Notes |
+|---|---|---|---|
+| ~~Migrate `app/test-plugins-v2/page.tsx` off Pipeline B endpoints~~ | — | ✅ Done 2026-05-20 | Aggressive cleanup: removed V6 Review Mode section (imports, state, handlers, render block, button). Remaining tabs (plugin / ai-services / thread-based) unaffected. |
+| ~~Retire `public/test-v6-declarative.html`~~ | — | ✅ Archived 2026-05-20 | Moved to `archive/public/test-v6-declarative.html` (git mv). Called broken `/api/v6/compile-declarative` (no longer exists). |
+| ~~Retire `public/test-v6.html`~~ | — | ✅ Archived 2026-05-20 | Moved to `archive/public/test-v6.html` (git mv). Called broken `/api/v6/generate-workflow-plan` + `/api/v6/compile-declarative` (no longer exist). |
+| ~~Retire orphaned V6 review/preview components~~ | — | ✅ Archived 2026-05-20 | Moved to `archive/components/v6/V6ReviewCustomizeUI.tsx` + `archive/components/v6/V6WorkflowPreview.tsx` (git mv). Last consumer was the now-stripped V6 Review Mode section. `components/v6/` directory is now empty. |
+| Delete Pipeline B HTTP endpoints | TBD | ⬜ Open (unblocked) | All 7 routes already tagged with `@deprecated` JSDoc — delete in one sweep: `/api/v6/generate-ir-semantic`, `/api/v6/generate-semantic-grounded`, `/api/v6/generate-semantic-plan`, `/api/v6/generate-ir-fast-path`, `/api/v6/generate-workflow-validated`, `/api/v6/ground-semantic-plan`, `/api/v6/formalize-to-ir`. |
+| Delete Pipeline B library code (after endpoints) | TBD | ⬜ Blocked on endpoints | `lib/agentkit/v6/semantic-plan/SemanticPlanGenerator.ts`, `IRFormalizer.ts`, `GroundingEngine.ts`, `formalization-system-v4.md`, `semantic-plan-system.md`. Plus retire WP-40 and WP-44 (Pipeline-B-prompt-specific) once library is gone. |
+| Decide on `NEXT_PUBLIC_USE_V6_AGENT_GENERATION` flag fate | TBD | ⬜ Open | Currently gates V4 (legacy generator) vs V6. If V4 codepath is to be retired too, this flag + the `/api/generate-agent-v4` endpoint + V4 library code can all go together. Separate decision from Pipeline B retirement. |
 
 ---
 

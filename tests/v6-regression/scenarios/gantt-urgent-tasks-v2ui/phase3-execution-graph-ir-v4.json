@@ -1,0 +1,380 @@
+{
+  "ir_version": "4.0",
+  "goal": "Read tasks from a Google Sheet, filter to Critical/High priority tasks due within the next 3 days, and email a report (or a no-tasks email if none match).",
+  "execution_graph": {
+    "start": "read_tasks_sheet",
+    "nodes": {
+      "read_tasks_sheet": {
+        "id": "read_tasks_sheet",
+        "type": "operation",
+        "operation": {
+          "operation_type": "fetch",
+          "fetch": {
+            "plugin_key": "google-sheets",
+            "action": "read_range",
+            "config": {
+              "spreadsheet_id": "1RHLbBXzrKv24gNgp7a4Lr7RlMIrP9fjacfGWjhPAbOE",
+              "range": "Gantt!A:G"
+            }
+          }
+        },
+        "inputs": [],
+        "outputs": [
+          {
+            "variable": "sheet_read_result"
+          }
+        ],
+        "next": "extract_rows"
+      },
+      "extract_rows": {
+        "id": "extract_rows",
+        "type": "operation",
+        "operation": {
+          "operation_type": "transform",
+          "transform": {
+            "type": "select",
+            "input": "{{sheet_read_result}}",
+            "fields": {
+              "rows": "{{sheet_read_result.values}}",
+              "row_count": "{{sheet_read_result.row_count}}",
+              "column_count": "{{sheet_read_result.column_count}}",
+              "range": "{{sheet_read_result.range}}",
+              "retrieved_at": "{{sheet_read_result.retrieved_at}}"
+            }
+          }
+        },
+        "inputs": [
+          {
+            "variable": "sheet_read_result"
+          }
+        ],
+        "outputs": [
+          {
+            "variable": "sheet_rows_wrapper"
+          }
+        ],
+        "next": "filter_out_header_row"
+      },
+      "filter_out_header_row": {
+        "id": "filter_out_header_row",
+        "type": "operation",
+        "operation": {
+          "operation_type": "transform",
+          "transform": {
+            "type": "filter",
+            "input": "{{sheet_rows_wrapper.rows}}",
+            "filter_expression": {
+              "type": "simple",
+              "variable": "item.0",
+              "operator": "ne",
+              "value": "Task Name"
+            }
+          }
+        },
+        "inputs": [
+          {
+            "variable": "sheet_rows_wrapper"
+          }
+        ],
+        "outputs": [
+          {
+            "variable": "data_rows_no_header"
+          }
+        ],
+        "next": "map_rows_to_task_objects"
+      },
+      "map_rows_to_task_objects": {
+        "id": "map_rows_to_task_objects",
+        "type": "operation",
+        "operation": {
+          "operation_type": "ai",
+          "ai": {
+            "ai_type": "extract",
+            "instruction": "Convert the provided 2D array of Google Sheets rows into an array of task objects. Each row corresponds to columns A:G. Use column A as task_name, column D as status, column F as due_date, and column G as priority. Return only tasks where priority is exactly 'Critical' or 'High' (case-insensitive match allowed). Also return only tasks whose due_date is within the next 3 days relative to now. If due_date is missing or cannot be interpreted as a date, exclude the task. Output an array of objects with fields: task_name, priority, due_date, status.",
+            "input": "{{data_rows_no_header}}",
+            "output_schema": {
+              "type": "object",
+              "properties": {
+                "tasks": {
+                  "type": "array",
+                  "description": "Filtered tasks meeting priority and due date window criteria",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "task_name": {
+                        "type": "string",
+                        "description": "Task name from column A"
+                      },
+                      "priority": {
+                        "type": "string",
+                        "description": "Priority from column G"
+                      },
+                      "due_date": {
+                        "type": "string",
+                        "description": "Due date from column F (as provided or normalized)"
+                      },
+                      "status": {
+                        "type": "string",
+                        "description": "Status from column D"
+                      }
+                    },
+                    "required": [
+                      "task_name",
+                      "priority",
+                      "due_date",
+                      "status"
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "tasks"
+              ]
+            }
+          }
+        },
+        "inputs": [
+          {
+            "variable": "data_rows_no_header"
+          }
+        ],
+        "outputs": [
+          {
+            "variable": "filtered_tasks_result"
+          }
+        ],
+        "next": "check_any_tasks"
+      },
+      "check_any_tasks": {
+        "id": "check_any_tasks",
+        "type": "choice",
+        "choice": {
+          "rules": [
+            {
+              "condition": {
+                "type": "simple",
+                "variable": "filtered_tasks_result.tasks",
+                "operator": "is_empty",
+                "value": true
+              },
+              "next": "send_no_tasks_email"
+            }
+          ],
+          "default": "format_tasks_email_body"
+        },
+        "inputs": [
+          {
+            "variable": "filtered_tasks_result"
+          }
+        ]
+      },
+      "format_tasks_email_body": {
+        "id": "format_tasks_email_body",
+        "type": "operation",
+        "operation": {
+          "operation_type": "ai",
+          "ai": {
+            "ai_type": "generate",
+            "instruction": "Create a concise plain-text email body listing the tasks in a readable table-like format with columns in this exact order: Task Name, Priority, Due Date, Status. Include a short intro line stating these are Critical/High priority tasks due in the next 3 days. If there are many tasks, list them all.",
+            "input": "{{filtered_tasks_result.tasks}}",
+            "output_schema": {
+              "type": "object",
+              "properties": {
+                "subject": {
+                  "type": "string",
+                  "description": "Email subject line"
+                },
+                "body": {
+                  "type": "string",
+                  "description": "Plain-text email body"
+                }
+              },
+              "required": [
+                "subject",
+                "body"
+              ]
+            }
+          }
+        },
+        "inputs": [
+          {
+            "variable": "filtered_tasks_result"
+          }
+        ],
+        "outputs": [
+          {
+            "variable": "tasks_email_content"
+          }
+        ],
+        "next": "send_tasks_email"
+      },
+      "send_tasks_email": {
+        "id": "send_tasks_email",
+        "type": "operation",
+        "operation": {
+          "operation_type": "deliver",
+          "deliver": {
+            "plugin_key": "google-mail",
+            "action": "send_email",
+            "config": {
+              "recipients": {
+                "to": "meiribarak@gmail.com"
+              },
+              "content": {
+                "subject": "{{tasks_email_content.subject}}",
+                "body": "{{tasks_email_content.body}}"
+              }
+            }
+          }
+        },
+        "inputs": [
+          {
+            "variable": "tasks_email_content"
+          }
+        ],
+        "outputs": [
+          {
+            "variable": "sent_email_result"
+          }
+        ],
+        "next": "end"
+      },
+      "send_no_tasks_email": {
+        "id": "send_no_tasks_email",
+        "type": "operation",
+        "operation": {
+          "operation_type": "deliver",
+          "deliver": {
+            "plugin_key": "google-mail",
+            "action": "send_email",
+            "config": {
+              "recipients": {
+                "to": "meiribarak@gmail.com"
+              },
+              "content": {
+                "subject": "No Critical/High tasks due in the next 3 days",
+                "body": "No tasks matched the criteria (Priority: Critical or High; Due Date: within the next 3 days)."
+              }
+            }
+          }
+        },
+        "inputs": [],
+        "outputs": [
+          {
+            "variable": "sent_no_tasks_email_result"
+          }
+        ],
+        "next": "end"
+      },
+      "end": {
+        "id": "end",
+        "type": "end"
+      }
+    },
+    "variables": [
+      {
+        "name": "sheet_read_result",
+        "type": "object",
+        "scope": "global",
+        "source": "google-sheets.read_range"
+      },
+      {
+        "name": "sheet_rows_wrapper",
+        "type": "object",
+        "scope": "global",
+        "source": "transform.select from sheet_read_result"
+      },
+      {
+        "name": "data_rows_no_header",
+        "type": "array",
+        "scope": "global",
+        "source": "transform.filter from sheet_rows_wrapper.rows"
+      },
+      {
+        "name": "filtered_tasks_result",
+        "type": "object",
+        "scope": "global",
+        "source": "ai.extract from data_rows_no_header"
+      },
+      {
+        "name": "tasks_email_content",
+        "type": "object",
+        "scope": "global",
+        "source": "ai.generate from filtered_tasks_result.tasks"
+      },
+      {
+        "name": "sent_email_result",
+        "type": "object",
+        "scope": "global",
+        "source": "google-mail.send_email"
+      },
+      {
+        "name": "sent_no_tasks_email_result",
+        "type": "object",
+        "scope": "global",
+        "source": "google-mail.send_email"
+      }
+    ]
+  },
+  "requirements_enforcement": [
+    {
+      "requirement_id": "R1",
+      "enforced_by": {
+        "node_ids": [
+          "read_tasks_sheet"
+        ],
+        "enforcement_mechanism": "plugin_config"
+      },
+      "validation_passed": true,
+      "validation_details": "Uses literal spreadsheet_id and range from resolved user inputs in google-sheets.read_range."
+    },
+    {
+      "requirement_id": "R2",
+      "enforced_by": {
+        "node_ids": [
+          "map_rows_to_task_objects"
+        ],
+        "enforcement_mechanism": "ai"
+      },
+      "validation_passed": true,
+      "validation_details": "Filters tasks to priority values Critical/High and due_date within next 3 days as specified."
+    },
+    {
+      "requirement_id": "R3",
+      "enforced_by": {
+        "node_ids": [
+          "check_any_tasks",
+          "send_no_tasks_email"
+        ],
+        "enforcement_mechanism": "choice"
+      },
+      "validation_passed": true,
+      "validation_details": "If no tasks match, workflow follows no_matches_behavior by sending a no-tasks email."
+    },
+    {
+      "requirement_id": "R4",
+      "enforced_by": {
+        "node_ids": [
+          "send_tasks_email",
+          "send_no_tasks_email"
+        ],
+        "enforcement_mechanism": "plugin_config"
+      },
+      "validation_passed": true,
+      "validation_details": "Emails are sent to the literal recipient address from resolved user inputs using google-mail.send_email."
+    }
+  ],
+  "resolved_user_inputs": {
+    "google-sheets__table/get__spreadsheet_id": "1RHLbBXzrKv24gNgp7a4Lr7RlMIrP9fjacfGWjhPAbOE",
+    "google-sheets__table/get__range": "Gantt!A:G",
+    "task_name_column": "A",
+    "status_column": "D",
+    "due_date_column": "F",
+    "priority_column": "G",
+    "priority_filter_values": "Critical, High",
+    "finish_date_time_window": "next 3 days",
+    "google-mail__email/send_message__recipients.to": "meiribarak@gmail.com",
+    "no_matches_behavior": "send_no_tasks_email",
+    "output_columns": "Task Name, Priority, Due Date, Status"
+  }
+}

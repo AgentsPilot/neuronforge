@@ -1,0 +1,523 @@
+[
+  {
+    "id": "step1",
+    "name": "Read lead rows from the Leads tab of the specified Google Sheets spreadsheet",
+    "type": "action",
+    "action": "read_range",
+    "params": {
+      "range": "{{input.tab_name}}",
+      "spreadsheet_id": "{{input.spreadsheet_id}}"
+    },
+    "plugin": "google-sheets",
+    "step_id": "step1",
+    "description": "Read lead rows from the Leads tab of the specified Google Sheets spreadsheet",
+    "output_schema": {
+      "type": "object",
+      "source": "plugin",
+      "properties": {
+        "range": {
+          "type": "string",
+          "source": "plugin",
+          "required": true,
+          "description": "The actual range that was read (may differ from requested)"
+        },
+        "values": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "source": "plugin"
+            },
+            "source": "plugin"
+          },
+          "source": "plugin",
+          "required": true,
+          "description": "2D array of cell values (rows of cells)"
+        },
+        "row_count": {
+          "type": "number",
+          "source": "plugin",
+          "required": true,
+          "description": "Number of rows returned"
+        },
+        "column_count": {
+          "type": "number",
+          "source": "plugin",
+          "description": "Number of columns returned"
+        },
+        "retrieved_at": {
+          "type": "string",
+          "source": "plugin",
+          "description": "Timestamp when data was retrieved (ISO 8601)"
+        },
+        "major_dimension": {
+          "type": "string",
+          "source": "plugin",
+          "description": "How data is organized (ROWS or COLUMNS)"
+        }
+      }
+    },
+    "output_variable": "raw_leads_data"
+  },
+  {
+    "id": "step2",
+    "name": "Auto-normalize: Convert 2D array to objects",
+    "type": "transform",
+    "input": "{{raw_leads_data.values}}",
+    "config": {
+      "preserve_case": true
+    },
+    "step_id": "step2",
+    "operation": "rows_to_objects",
+    "description": "Auto-normalize: Convert 2D array to objects",
+    "output_variable": "raw_leads_data_objects"
+  },
+  {
+    "id": "step3",
+    "name": "Convert raw sheet rows into structured lead objects using the first row as headers",
+    "type": "transform",
+    "input": "{{raw_leads_data_objects}}",
+    "config": {
+      "type": "map",
+      "input": "raw_leads_data_objects",
+      "custom_code": "Use the first row as column headers to convert each subsequent row into a keyed object with fields: Date, Lead Name, Company, Email, Sales Person, Stage, Notes",
+      "output_schema": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": [
+            "Date",
+            "Lead Name",
+            "Company",
+            "Email",
+            "Sales Person",
+            "Stage",
+            "Notes"
+          ],
+          "properties": {
+            "Date": {
+              "type": "string"
+            },
+            "Email": {
+              "type": "string"
+            },
+            "Notes": {
+              "type": "string"
+            },
+            "Stage": {
+              "type": "string"
+            },
+            "Company": {
+              "type": "string"
+            },
+            "Lead Name": {
+              "type": "string"
+            },
+            "Sales Person": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "step_id": "step3",
+    "_on_empty": "warn",
+    "operation": "map",
+    "description": "Convert raw sheet rows into structured lead objects using the first row as headers",
+    "output_schema": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "source": "ai_declared",
+        "properties": {
+          "Date": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "Email": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "Notes": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "Stage": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "Company": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "Lead Name": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "Sales Person": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          }
+        }
+      },
+      "source": "ai_declared"
+    },
+    "output_variable": "lead_objects"
+  },
+  {
+    "id": "step4",
+    "name": "Filter lead objects to only those where Stage equals numeric 4",
+    "type": "transform",
+    "input": "{{lead_objects}}",
+    "config": {
+      "type": "filter",
+      "input": "lead_objects",
+      "condition": {
+        "field": "item.Stage",
+        "value": 4,
+        "operator": "eq",
+        "conditionType": "simple"
+      },
+      "custom_code": "Keep only leads where Stage is exactly the numeric value 4"
+    },
+    "step_id": "step4",
+    "_on_empty": "warn",
+    "operation": "filter",
+    "description": "Filter lead objects to only those where Stage equals numeric 4",
+    "output_schema": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "source": "ai_declared",
+        "properties": {
+          "Date": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "Email": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "Notes": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "Stage": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "Company": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "Lead Name": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "Sales Person": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          }
+        }
+      },
+      "source": "inferred"
+    },
+    "output_variable": "qualified_leads"
+  },
+  {
+    "id": "step5",
+    "name": "Conditional: node_3",
+    "type": "conditional",
+    "steps": [
+      {
+        "id": "step6",
+        "name": "For each qualified lead, summarize the Notes field into exactly two bullet points. If Notes is empty, produce an empty string.",
+        "type": "ai_processing",
+        "input": "{{qualified_leads}}",
+        "config": {
+          "type": "generate",
+          "input": "{{qualified_leads}}",
+          "ai_type": "generate",
+          "instruction": "For each lead in the input array, produce the same lead object with an additional field 'notes_summary'. If the lead's 'Notes' field is non-empty, summarize it into exactly two concise bullet points formatted as HTML (using <ul><li>...</li><li>...</li></ul>). If the 'Notes' field is empty or missing, set 'notes_summary' to an empty string. Do NOT invent or fabricate any content — only summarize what exists in the Notes field. Preserve all original fields (Date, Lead Name, Company, Email, Sales Person, Stage, Notes) unchanged.",
+          "output_schema": {
+            "type": "object",
+            "required": [
+              "leads"
+            ],
+            "properties": {
+              "leads": {
+                "type": "array",
+                "description": "Array of lead objects with added notes_summary field"
+              }
+            }
+          }
+        },
+        "prompt": "For each lead in the input array, produce the same lead object with an additional field 'notes_summary'. If the lead's 'Notes' field is non-empty, summarize it into exactly two concise bullet points formatted as HTML (using <ul><li>...</li><li>...</li></ul>). If the 'Notes' field is empty or missing, set 'notes_summary' to an empty string. Do NOT invent or fabricate any content — only summarize what exists in the Notes field. Preserve all original fields (Date, Lead Name, Company, Email, Sales Person, Stage, Notes) unchanged.",
+        "step_id": "step6",
+        "description": "For each qualified lead, summarize the Notes field into exactly two bullet points. If Notes is empty, produce an empty string.",
+        "input_schema": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "source": "ai_declared",
+            "properties": {
+              "Date": {
+                "type": "string",
+                "source": "ai_declared",
+                "required": true
+              },
+              "Email": {
+                "type": "string",
+                "source": "ai_declared",
+                "required": true
+              },
+              "Notes": {
+                "type": "string",
+                "source": "ai_declared",
+                "required": true
+              },
+              "Stage": {
+                "type": "string",
+                "source": "ai_declared",
+                "required": true
+              },
+              "Company": {
+                "type": "string",
+                "source": "ai_declared",
+                "required": true
+              },
+              "Lead Name": {
+                "type": "string",
+                "source": "ai_declared",
+                "required": true
+              },
+              "Sales Person": {
+                "type": "string",
+                "source": "ai_declared",
+                "required": true
+              }
+            }
+          },
+          "source": "inferred"
+        },
+        "output_schema": {
+          "type": "object",
+          "source": "ai_declared",
+          "properties": {
+            "leads": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "source": "ai_declared",
+                "properties": {
+                  "Date": {
+                    "type": "string",
+                    "source": "ai_declared"
+                  },
+                  "Email": {
+                    "type": "string",
+                    "source": "ai_declared"
+                  },
+                  "Notes": {
+                    "type": "string",
+                    "source": "ai_declared"
+                  },
+                  "Stage": {
+                    "type": "string",
+                    "source": "ai_declared"
+                  },
+                  "Company": {
+                    "type": "string",
+                    "source": "ai_declared"
+                  },
+                  "Lead Name": {
+                    "type": "string",
+                    "source": "ai_declared"
+                  },
+                  "Sales Person": {
+                    "type": "string",
+                    "source": "ai_declared"
+                  },
+                  "notes_summary": {
+                    "type": "string",
+                    "source": "ai_declared",
+                    "description": "Two-bullet HTML summary of Notes, or empty string if Notes is empty"
+                  }
+                }
+              },
+              "source": "ai_declared",
+              "description": "Array of lead objects with added notes_summary field"
+            }
+          }
+        },
+        "output_variable": "leads_with_summaries"
+      },
+      {
+        "id": "step7",
+        "name": "Render a single HTML table containing all qualified leads with their notes summaries",
+        "type": "ai_processing",
+        "input": "{{leads_with_summaries}}",
+        "config": {
+          "type": "generate",
+          "input": "{{leads_with_summaries}}",
+          "ai_type": "generate",
+          "instruction": "Build a professional HTML email body containing a summary table of qualified leads (Stage 4). The table must have columns in this exact order: Date, Lead Name, Company, Email, Sales Person, Notes summary. Use the 'leads' array from the input. For each lead, populate the 'Notes summary' column with the 'notes_summary' field value (which contains HTML bullet points or empty string). Style the table with: borders on all cells, a header row with a distinct background color (e.g., #4472C4 with white text), padding in cells (8px), and a clean professional font. Include a brief heading above the table like 'Qualified Leads (Stage 4) Summary'. The output should be a complete HTML fragment suitable for embedding in an email body.",
+          "output_schema": {
+            "type": "object",
+            "required": [
+              "subject",
+              "body"
+            ],
+            "properties": {
+              "body": {
+                "type": "string",
+                "description": "Complete HTML email body with styled table"
+              },
+              "subject": {
+                "type": "string",
+                "description": "Email subject line"
+              }
+            }
+          }
+        },
+        "prompt": "Build a professional HTML email body containing a summary table of qualified leads (Stage 4). The table must have columns in this exact order: Date, Lead Name, Company, Email, Sales Person, Notes summary. Use the 'leads' array from the input. For each lead, populate the 'Notes summary' column with the 'notes_summary' field value (which contains HTML bullet points or empty string). Style the table with: borders on all cells, a header row with a distinct background color (e.g., #4472C4 with white text), padding in cells (8px), and a clean professional font. Include a brief heading above the table like 'Qualified Leads (Stage 4) Summary'. The output should be a complete HTML fragment suitable for embedding in an email body.",
+        "step_id": "step7",
+        "description": "Render a single HTML table containing all qualified leads with their notes summaries",
+        "input_schema": {
+          "type": "object",
+          "source": "ai_declared",
+          "properties": {
+            "leads": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "source": "ai_declared",
+                "properties": {
+                  "Date": {
+                    "type": "string",
+                    "source": "ai_declared"
+                  },
+                  "Email": {
+                    "type": "string",
+                    "source": "ai_declared"
+                  },
+                  "Notes": {
+                    "type": "string",
+                    "source": "ai_declared"
+                  },
+                  "Stage": {
+                    "type": "string",
+                    "source": "ai_declared"
+                  },
+                  "Company": {
+                    "type": "string",
+                    "source": "ai_declared"
+                  },
+                  "Lead Name": {
+                    "type": "string",
+                    "source": "ai_declared"
+                  },
+                  "Sales Person": {
+                    "type": "string",
+                    "source": "ai_declared"
+                  },
+                  "notes_summary": {
+                    "type": "string",
+                    "source": "ai_declared",
+                    "description": "Two-bullet HTML summary of Notes, or empty string if Notes is empty"
+                  }
+                }
+              },
+              "source": "ai_declared",
+              "description": "Array of lead objects with added notes_summary field"
+            }
+          }
+        },
+        "output_schema": {
+          "type": "object",
+          "source": "ai_declared",
+          "properties": {
+            "body": {
+              "type": "string",
+              "source": "ai_declared",
+              "description": "Complete HTML email body with styled table"
+            },
+            "subject": {
+              "type": "string",
+              "source": "ai_declared",
+              "description": "Email subject line"
+            }
+          }
+        },
+        "output_variable": "email_content"
+      },
+      {
+        "id": "step8",
+        "name": "Send the HTML summary email to both recipients",
+        "type": "action",
+        "action": "send_email",
+        "params": {
+          "content": {
+            "subject": "Qualified leads (Stage 4) summary",
+            "html_body": "{{email_content.body}}"
+          },
+          "recipients": {
+            "to": [
+              "meiribarak@gmail.com",
+              "offir.omer@gmail.com"
+            ]
+          }
+        },
+        "plugin": "google-mail",
+        "step_id": "step8",
+        "description": "Send the HTML summary email to both recipients"
+      }
+    ],
+    "step_id": "step5",
+    "condition": {
+      "field": "qualified_leads.length",
+      "value": 0,
+      "operator": "greater_than",
+      "conditionType": "simple"
+    },
+    "else_steps": [
+      {
+        "id": "step9",
+        "name": "Send an email informing recipients that no Stage 4 leads were found",
+        "type": "action",
+        "action": "send_email",
+        "params": {
+          "content": {
+            "subject": "Qualified leads (Stage 4) summary",
+            "html_body": "<html><body><h2>Qualified Leads (Stage 4) Summary</h2><p>No qualified leads (Stage = 4) were found in the selected range (<em>Leads!A1:H10</em>). Please check the spreadsheet or adjust the range if needed.</p></body></html>"
+          },
+          "recipients": {
+            "to": [
+              "meiribarak@gmail.com",
+              "offir.omer@gmail.com"
+            ]
+          }
+        },
+        "plugin": "google-mail",
+        "step_id": "step9",
+        "description": "Send an email informing recipients that no Stage 4 leads were found"
+      }
+    ],
+    "description": "Conditional: node_3"
+  }
+]

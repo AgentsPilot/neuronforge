@@ -1,0 +1,642 @@
+[
+  {
+    "id": "step1",
+    "name": "Read all rows from the Gantt tab of the Google Sheets spreadsheet",
+    "type": "action",
+    "action": "read_range",
+    "params": {
+      "range": "{{input.read_range}}",
+      "spreadsheet_id": "{{input.spreadsheet_id}}"
+    },
+    "plugin": "google-sheets",
+    "step_id": "step1",
+    "description": "Read all rows from the Gantt tab of the Google Sheets spreadsheet",
+    "output_schema": {
+      "type": "object",
+      "source": "plugin",
+      "properties": {
+        "range": {
+          "type": "string",
+          "source": "plugin",
+          "required": true,
+          "description": "The actual range that was read (may differ from requested)"
+        },
+        "values": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "source": "plugin"
+            },
+            "source": "plugin"
+          },
+          "source": "plugin",
+          "required": true,
+          "description": "2D array of cell values (rows of cells)"
+        },
+        "row_count": {
+          "type": "number",
+          "source": "plugin",
+          "required": true,
+          "description": "Number of rows returned"
+        },
+        "column_count": {
+          "type": "number",
+          "source": "plugin",
+          "description": "Number of columns returned"
+        },
+        "retrieved_at": {
+          "type": "string",
+          "source": "plugin",
+          "description": "Timestamp when data was retrieved (ISO 8601)"
+        },
+        "major_dimension": {
+          "type": "string",
+          "source": "plugin",
+          "description": "How data is organized (ROWS or COLUMNS)"
+        }
+      }
+    },
+    "output_variable": "raw_gantt_data"
+  },
+  {
+    "id": "step2",
+    "name": "Auto-normalize: Convert 2D array to objects",
+    "type": "transform",
+    "input": "{{raw_gantt_data.values}}",
+    "config": {
+      "preserve_case": true
+    },
+    "step_id": "step2",
+    "operation": "rows_to_objects",
+    "description": "Auto-normalize: Convert 2D array to objects",
+    "output_variable": "raw_gantt_data_objects"
+  },
+  {
+    "id": "step3",
+    "name": "Convert raw 2D array rows into task objects using the first row as header names. Each subsequent row becomes an object keyed by header values.",
+    "type": "transform",
+    "input": "{{raw_gantt_data_objects}}",
+    "config": {
+      "type": "map",
+      "input": "raw_gantt_data_objects",
+      "custom_code": "Use the first row as column headers and convert each subsequent row into a keyed object. Column mapping is determined by header names from the first row.",
+      "output_schema": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": [
+            "Tasks",
+            "Due Date",
+            "Priority",
+            "Status"
+          ],
+          "properties": {
+            "Tasks": {
+              "type": "string"
+            },
+            "Status": {
+              "type": "string"
+            },
+            "Due Date": {
+              "type": "string"
+            },
+            "Priority": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "step_id": "step3",
+    "_on_empty": "warn",
+    "operation": "map",
+    "description": "Convert raw 2D array rows into task objects using the first row as header names. Each subsequent row becomes an object keyed by header values.",
+    "output_schema": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "source": "ai_declared",
+        "properties": {
+          "Tasks": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "Status": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "Due Date": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "Priority": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          }
+        }
+      },
+      "source": "ai_declared"
+    },
+    "output_variable": "task_objects"
+  },
+  {
+    "id": "step4",
+    "name": "Compute the date window boundaries: today and today + 3 days (inclusive)",
+    "type": "transform",
+    "input": "{{task_objects}}",
+    "config": {
+      "type": "with_fields",
+      "input": "task_objects",
+      "fields": [
+        {
+          "name": "window_start",
+          "expression": {
+            "kind": "today"
+          }
+        },
+        {
+          "name": "window_end",
+          "expression": {
+            "date": {
+              "kind": "today"
+            },
+            "days": {
+              "key": "date_window_days",
+              "kind": "config"
+            },
+            "kind": "date_add"
+          }
+        }
+      ],
+      "output_schema": {
+        "type": "object",
+        "required": [
+          "window_start",
+          "window_end"
+        ],
+        "properties": {
+          "window_end": {
+            "type": "string"
+          },
+          "window_start": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "step_id": "step4",
+    "operation": "with_fields",
+    "description": "Compute the date window boundaries: today and today + 3 days (inclusive)",
+    "output_schema": {
+      "type": "object",
+      "source": "ai_declared",
+      "properties": {
+        "window_end": {
+          "type": "string",
+          "source": "ai_declared",
+          "required": true
+        },
+        "window_start": {
+          "type": "string",
+          "source": "ai_declared",
+          "required": true
+        }
+      }
+    },
+    "output_variable": "date_window"
+  },
+  {
+    "id": "step5",
+    "name": "Filter tasks to only those with Priority exactly 'Critical' or 'High'",
+    "type": "transform",
+    "input": "{{task_objects}}",
+    "config": {
+      "type": "filter",
+      "input": "task_objects",
+      "condition": {
+        "field": "item.Priority",
+        "value": [
+          "Critical",
+          "High"
+        ],
+        "operator": "in",
+        "conditionType": "simple"
+      },
+      "custom_code": "Keep only tasks where Priority is exactly 'Critical' or 'High'"
+    },
+    "step_id": "step5",
+    "_on_empty": "warn",
+    "operation": "filter",
+    "description": "Filter tasks to only those with Priority exactly 'Critical' or 'High'",
+    "output_schema": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "source": "ai_declared",
+        "properties": {
+          "Tasks": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "Status": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "Due Date": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "Priority": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          }
+        }
+      },
+      "source": "inferred"
+    },
+    "output_variable": "priority_filtered_tasks"
+  },
+  {
+    "id": "step6",
+    "name": "Filter tasks to only those where Due Date is between today and today + 3 days (inclusive)",
+    "type": "transform",
+    "input": "{{priority_filtered_tasks}}",
+    "config": {
+      "type": "filter",
+      "input": "priority_filtered_tasks",
+      "condition": {
+        "conditions": [
+          {
+            "field": "item.Due Date",
+            "value": "date_window.window_start",
+            "operator": "gte",
+            "conditionType": "simple"
+          },
+          {
+            "field": "item.Due Date",
+            "value": "date_window.window_end",
+            "operator": "lte",
+            "conditionType": "simple"
+          }
+        ],
+        "conditionType": "complex_and"
+      },
+      "custom_code": "Keep only tasks where Due Date is >= today and <= today + 3 days (inclusive)"
+    },
+    "step_id": "step6",
+    "_on_empty": "warn",
+    "operation": "filter",
+    "description": "Filter tasks to only those where Due Date is between today and today + 3 days (inclusive)",
+    "output_schema": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "source": "ai_declared",
+        "properties": {
+          "Tasks": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "Status": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "Due Date": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "Priority": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          }
+        }
+      },
+      "source": "inferred"
+    },
+    "output_variable": "date_filtered_tasks"
+  },
+  {
+    "id": "step7",
+    "name": "Sort matching tasks by Due Date ascending (earliest first)",
+    "type": "transform",
+    "input": "{{date_filtered_tasks}}",
+    "config": {
+      "type": "sort",
+      "input": "date_filtered_tasks",
+      "rules": {
+        "field": "Due Date",
+        "direction": "asc"
+      },
+      "custom_code": "Sort tasks by Due Date ascending"
+    },
+    "step_id": "step7",
+    "operation": "sort",
+    "description": "Sort matching tasks by Due Date ascending (earliest first)",
+    "output_schema": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "source": "ai_declared",
+        "properties": {
+          "Tasks": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "Status": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "Due Date": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "Priority": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          }
+        }
+      },
+      "source": "inferred"
+    },
+    "output_variable": "sorted_tasks"
+  },
+  {
+    "id": "step8",
+    "name": "Project only the four required columns for the email table: Tasks, Due Date, Priority, Status",
+    "type": "transform",
+    "input": "{{sorted_tasks}}",
+    "config": {
+      "type": "map",
+      "input": "sorted_tasks",
+      "field_mapping": {
+        "Status": "Status",
+        "Priority": "Priority",
+        "Task name": "Tasks",
+        "Finish date": "Due Date"
+      },
+      "output_schema": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": [
+            "Task name",
+            "Finish date",
+            "Priority",
+            "Status"
+          ],
+          "properties": {
+            "Status": {
+              "type": "string"
+            },
+            "Priority": {
+              "type": "string"
+            },
+            "Task name": {
+              "type": "string"
+            },
+            "Finish date": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "step_id": "step8",
+    "_on_empty": "warn",
+    "operation": "map",
+    "description": "Project only the four required columns for the email table: Tasks, Due Date, Priority, Status",
+    "output_schema": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "source": "ai_declared",
+        "properties": {
+          "Status": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "Priority": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "Task name": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "Finish date": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          }
+        }
+      },
+      "source": "ai_declared"
+    },
+    "output_variable": "projected_tasks"
+  },
+  {
+    "id": "step9",
+    "name": "Count items for match_count",
+    "type": "transform",
+    "input": "{{projected_tasks}}",
+    "config": {
+      "type": "reduce",
+      "input": "projected_tasks",
+      "reducer": "count",
+      "reduce_operation": "count"
+    },
+    "step_id": "step9",
+    "operation": "reduce",
+    "description": "Count items for match_count",
+    "output_schema": {
+      "type": "number",
+      "source": "inferred",
+      "description": "Count of match_count"
+    },
+    "output_variable": "match_count"
+  },
+  {
+    "id": "step10",
+    "name": "Conditional: node_8",
+    "type": "conditional",
+    "steps": [
+      {
+        "id": "step11",
+        "name": "Generate an HTML email body with a styled summary table of matching tasks",
+        "type": "ai_processing",
+        "input": "{{projected_tasks}}",
+        "config": {
+          "type": "generate",
+          "input": "{{projected_tasks}}",
+          "ai_type": "generate",
+          "instruction": "Generate a professional HTML email body containing a summary table of tasks that are due soon. The table must have exactly these columns in order: Task name, Finish date, Priority, Status. Use a clean HTML <table> with <thead> and <tbody>. Style the table with: borders (1px solid #ddd), header row with a dark background (#4472C4) and white text, alternating row colors for readability, and cell padding (8px). Above the table, include a brief introductory sentence like 'The following Critical/High priority tasks are due within the next 3 days:'. The data to render is provided in the input array of task objects with fields: Task name, Finish date, Priority, Status.",
+          "output_schema": {
+            "type": "object",
+            "required": [
+              "subject",
+              "body"
+            ],
+            "properties": {
+              "body": {
+                "type": "string",
+                "description": "Full HTML email body with styled table"
+              },
+              "subject": {
+                "type": "string",
+                "description": "Email subject line"
+              }
+            }
+          }
+        },
+        "prompt": "Generate a professional HTML email body containing a summary table of tasks that are due soon. The table must have exactly these columns in order: Task name, Finish date, Priority, Status. Use a clean HTML <table> with <thead> and <tbody>. Style the table with: borders (1px solid #ddd), header row with a dark background (#4472C4) and white text, alternating row colors for readability, and cell padding (8px). Above the table, include a brief introductory sentence like 'The following Critical/High priority tasks are due within the next 3 days:'. The data to render is provided in the input array of task objects with fields: Task name, Finish date, Priority, Status.",
+        "step_id": "step11",
+        "description": "Generate an HTML email body with a styled summary table of matching tasks",
+        "input_schema": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "source": "ai_declared",
+            "properties": {
+              "Status": {
+                "type": "string",
+                "source": "ai_declared",
+                "required": true
+              },
+              "Priority": {
+                "type": "string",
+                "source": "ai_declared",
+                "required": true
+              },
+              "Task name": {
+                "type": "string",
+                "source": "ai_declared",
+                "required": true
+              },
+              "Finish date": {
+                "type": "string",
+                "source": "ai_declared",
+                "required": true
+              }
+            }
+          },
+          "source": "ai_declared"
+        },
+        "output_schema": {
+          "type": "object",
+          "source": "ai_declared",
+          "properties": {
+            "body": {
+              "type": "string",
+              "source": "ai_declared",
+              "description": "HTML email body with no-matches message"
+            },
+            "subject": {
+              "type": "string",
+              "source": "ai_declared",
+              "description": "Email subject line"
+            }
+          }
+        },
+        "output_variable": "email_content"
+      }
+    ],
+    "step_id": "step10",
+    "condition": {
+      "field": "match_count",
+      "value": 0,
+      "operator": "greater_than",
+      "conditionType": "simple"
+    },
+    "else_steps": [
+      {
+        "id": "step12",
+        "name": "Generate an HTML email body stating no Critical/High tasks are due in the next 3 days",
+        "type": "ai_processing",
+        "config": {
+          "type": "generate",
+          "ai_type": "generate",
+          "instruction": "Generate a short, professional HTML email body that states: 'No Critical/High tasks due in the next 3 days.' Keep it brief and clear. Also produce an appropriate subject line.",
+          "output_schema": {
+            "type": "object",
+            "required": [
+              "subject",
+              "body"
+            ],
+            "properties": {
+              "body": {
+                "type": "string",
+                "description": "HTML email body with no-matches message"
+              },
+              "subject": {
+                "type": "string",
+                "description": "Email subject line"
+              }
+            }
+          }
+        },
+        "prompt": "Generate a short, professional HTML email body that states: 'No Critical/High tasks due in the next 3 days.' Keep it brief and clear. Also produce an appropriate subject line.",
+        "step_id": "step12",
+        "description": "Generate an HTML email body stating no Critical/High tasks are due in the next 3 days",
+        "output_schema": {
+          "type": "object",
+          "source": "ai_declared",
+          "properties": {
+            "body": {
+              "type": "string",
+              "source": "ai_declared",
+              "description": "HTML email body with no-matches message"
+            },
+            "subject": {
+              "type": "string",
+              "source": "ai_declared",
+              "description": "Email subject line"
+            }
+          }
+        },
+        "output_variable": "email_content"
+      }
+    ],
+    "description": "Conditional: node_8"
+  },
+  {
+    "id": "step13",
+    "name": "Send the HTML summary email to the user via Gmail",
+    "type": "action",
+    "action": "send_email",
+    "params": {
+      "content": {
+        "subject": "{{email_content.subject}}",
+        "html_body": "{{email_content.body}}"
+      },
+      "recipients": {
+        "to": [
+          "{{input.recipient_email}}"
+        ]
+      }
+    },
+    "plugin": "google-mail",
+    "step_id": "step13",
+    "description": "Send the HTML summary email to the user via Gmail"
+  }
+]

@@ -1,0 +1,39 @@
+{
+  "name": "Active Contracts Expiring in Next 10 Days — Email Summary (V2-UI captured via Pipeline A)",
+  "description": "Captured from the V2 UI agent-creation flow via Pipeline A (`/api/v6/generate-ir-intent-contract`) on 2026-05-19, the same session as the WP-47 + WP-48 fixes. Reads a contracts spreadsheet, computes a date window (today + N days), filters to contracts expiring inside the window, sorts by due date, projects display columns, counts matches, then renders + sends an HTML summary email. Exercises a richer transform chain than `leads-qualified-stage4` (adds sort + reduce + a constants-only `with_fields` step that hits the WP-46 singleton path AND a date-range filter that hits the WP-45 date-aware comparison path). Third V2-UI + Pipeline A regression seed.",
+  "created": "2026-05-19",
+  "source": {
+    "type": "v2-ui-capture",
+    "pipeline": "A",
+    "endpoint": "/api/v6/generate-ir-intent-contract",
+    "agent_id": "36b18a4c-93be-49d7-abf2-97c824465c5c",
+    "branch": "feature/v6-v2-integration",
+    "phase_e_execution_id": "8ec48219-2257-443e-bd94-bf34aa698f15",
+    "phase_e_timestamp": "2026-05-19T20:58:00Z",
+    "feature_flags": {
+      "NEXT_PUBLIC_USE_V6_AGENT_GENERATION": "true",
+      "NEXT_PUBLIC_USE_V6_PIPELINE_A": "true"
+    },
+    "first_agent_saved_via_AgentRepository": true
+  },
+  "plugins": ["google-sheets", "google-mail"],
+  "expected": {
+    "min_steps": 9,
+    "step_types": ["action", "transform", "ai_processing"],
+    "phase_a_checks": 14,
+    "phase_d_success": false,
+    "phase_e_success": true,
+    "phase_e_success_timestamp": "2026-05-19T20:58:00Z",
+    "phase_e_notes": "End-to-end pass: 9/9 steps, real HTML email (1,221 chars in content.html_body) delivered to meiribarak@gmail.com. Sheet had 51 raw rows → 50 contract objects → 2 expiring within the 10-day window. 2,219 tokens (single AI call for email composition). Run via Mode B: --use-db-dsl. Requires agent_configurations.input_values populated with: spreadsheet_id, range, expiration_window_days, email_subject, recipient_email. **First agent in the regression suite that was saved via the refactored /api/create-agent endpoint (WP-48 — AgentRepository + getUser + Zod + Pino + supabaseServer + explicit timestamps)**. Verified: created_at === updated_at exactly (delta 0ms) on the agent row."
+  },
+  "exercises": [
+    "WP-45: ConditionalEvaluator gte/lte date-aware comparison on step4 (`item.\"Contract Ends Due Date\" gte date_window.window_start && lte date_window.window_end`)",
+    "WP-46: transform/with_fields with constants-only expressions (step3 — `date_window = {window_start, window_end}` singleton)",
+    "WP-47: V2 UI pre-populates resolvedInputs from ir.config_defaults (no re-prompting)",
+    "WP-48: agent saved via AgentRepository with explicit created_at + updated_at + Zod validation + getUser auth + supabaseServer per SUPABASE_CLIENTS.md + Pino structured logging",
+    "transform chain shape: read → rows_to_objects → with_fields → filter → sort → map → reduce → ai_processing → send_email (richer than gantt/leads)",
+    "ai_processing/generate for HTML email composition (single AI call, no per-item AI)",
+    "Multi-recipient send_email with array-shape recipients.to (WP-42 path validated)"
+  ],
+  "known_weaknesses": []
+}

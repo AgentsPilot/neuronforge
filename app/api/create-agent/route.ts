@@ -1,230 +1,221 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
+import { z } from 'zod';
+import { createLogger } from '@/lib/logger';
+import { getUser } from '@/lib/auth';
+import { supabaseServer } from '@/lib/supabaseServer';
+import { AgentRepository } from '@/lib/repositories/AgentRepository';
 import { auditLog } from '@/lib/services/AuditTrailService';
 
-// Initialize Supabase client
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
+// Module-scoped Pino logger (per SYSTEM_LOGGING_GUIDELINES.md § Server-Side Logging).
+// Each request creates a child logger with a correlation ID + route below.
+// Note: the project's createLogger (lib/logger.ts) only accepts module+service
+// at the top level — additional context (route, correlationId) is attached via
+// pino's .child() method on the request logger.
+const moduleLogger = createLogger({ module: 'API', service: 'create-agent' });
 
-// Helper function to extract user ID from request (consistent with your other API)
-function getUserIdFromRequest(request: NextRequest): string | null {
-  const userIdHeader = request.headers.get('x-user-id');
-  const authHeader = request.headers.get('authorization');
-  
-  if (userIdHeader) {
-    return userIdHeader;
-  }
-  
-  if (authHeader && authHeader.startsWith('Bearer ')) {
-    // JWT token handling would go here
-  }
-  
-  return null;
-}
+// WP-48: Service-role server client used ONLY for the `token_usage` SELECT in
+// the AIS tracking section below — that table has no repository yet. Agent
+// writes go through AgentRepository (which also uses supabaseServer underneath).
+// Per docs/SUPABASE_CLIENTS.md decision tree: API routes that need to bypass
+// RLS for read-only metrics use the documented `supabaseServer` singleton, NOT
+// an ad-hoc `createClient(... SERVICE_ROLE ...)`.
+
+// Zod schema for the request body. Fields are loose by design — the V2 UI
+// passes a full agent object built either from V4 or V6 generation; we
+// validate the shape, not the specific field values.
+const CreateAgentSchema = z.object({
+  agent: z.object({
+    id: z.string().optional(),
+    agent_name: z.string().min(1, 'agent_name is required'),
+    user_prompt: z.string().nullish(),
+    system_prompt: z.string().nullish(),
+    description: z.string().nullish(),
+    input_schema: z.array(z.unknown()).nullish(),
+    output_schema: z.array(z.unknown()).nullish(),
+    // V2 UI sends an array of plugin keys; older V4 paths emit an object.
+    // The DB column is JSONB and accepts either — be permissive here.
+    connected_plugins: z.union([z.array(z.unknown()), z.record(z.unknown())]).nullish(),
+    status: z.string().nullish(),
+    mode: z.string().nullish(),
+    schedule_cron: z.string().nullish(),
+    timezone: z.string().nullish(),
+    trigger_conditions: z.record(z.unknown()).nullish(),
+    plugins_required: z.array(z.string()).nullish(),
+    workflow_steps: z.array(z.unknown()).nullish(),
+    pilot_steps: z.array(z.unknown()).nullish(),
+    generated_plan: z.unknown().nullish(),
+    detected_categories: z.unknown().nullish(),
+    ai_reasoning: z.union([z.string(), z.array(z.string())]).nullish(),
+    ai_confidence: z.number().nullish(),
+    created_from_prompt: z.string().nullish(),
+    ai_generated_at: z.string().nullish(),
+    agent_config: z.record(z.unknown()).nullish(),
+  }).passthrough(),
+  sessionId: z.string().optional(),
+  agentId: z.string().optional(),
+  thread_id: z.string().optional(),
+});
 
 export async function POST(request: NextRequest) {
+  const correlationId = request.headers.get('x-correlation-id') || crypto.randomUUID();
+  const requestLogger = moduleLogger.child({ route: '/api/create-agent', correlationId });
+  const startTime = Date.now();
+
+  requestLogger.info('Agent creation request received');
+
   try {
-    console.log('📝 POST /api/create-agent - Creating new agent');
-    console.log('📋 Request headers:', Object.fromEntries(request.headers.entries()));
-    
-    // Extract user ID from headers (consistent with your other API)
-    const userId = getUserIdFromRequest(request);
-    console.log('👤 Extracted user ID:', userId);
-    
-    if (!userId) {
-      console.log('❌ No user ID found in request headers');
+    // WP-48: Real auth via Supabase SSR session (cookie-based). Replaces the
+    // prior `x-user-id` header trust which couldn't distinguish a valid
+    // logged-in user from a client that just sets the header.
+    const user = await getUser();
+    if (!user) {
+      requestLogger.warn('Unauthorized — no valid session');
       return NextResponse.json(
-        { 
-          success: false, 
-          error: 'Unauthorized - Please provide user authentication',
-          details: 'Missing x-user-id header or authorization token'
+        {
+          success: false,
+          error: 'Unauthorized',
+          details: 'No valid session — please log in again'
         },
         { status: 401 }
       );
     }
-    
-    const body = await request.json();
-    console.log('Request body keys:', Object.keys(body));
-    
-    // FIXED: Extract agent data AND IDs from the request body
-    const { agent, sessionId: providedSessionId, agentId: providedAgentId, thread_id } = body;
-    
-    console.log('🆔 CREATE-AGENT API - Extracted IDs:', {
-      providedAgentId,
-      providedSessionId,
-      thread_id,
-      hasAgent: !!agent,
-      agentIdType: typeof providedAgentId,
-      sessionIdType: typeof providedSessionId
-    });
-    
-    if (!agent) {
-      console.error('❌ No agent data provided');
+    const userId = user.id;
+    requestLogger.debug({ userId }, 'User authenticated');
+
+    // Parse + validate request body with Zod
+    const rawBody = await request.json().catch(() => null);
+    if (!rawBody) {
+      requestLogger.warn('Invalid JSON in request body');
       return NextResponse.json(
-        { success: false, error: 'Agent data is required' },
+        { success: false, error: 'Invalid JSON in request body' },
         { status: 400 }
       );
     }
 
-    // ENHANCED DEBUG LOGGING for agent_config
-    console.log('=== AGENT CONFIG DEBUG ===');
-    console.log('Agent config present in request:', !!agent.agent_config);
-    if (agent.agent_config) {
-      console.log('Agent config keys:', Object.keys(agent.agent_config));
-      console.log('Agent config size:', JSON.stringify(agent.agent_config).length, 'characters');
-      console.log('Agent config preview:', JSON.stringify(agent.agent_config).substring(0, 200) + '...');
-    }
-    console.log('========================');
-
-    // Validate required fields
-    if (!agent.agent_name) {
-      console.error('❌ Missing required field: agent_name');
+    const parsed = CreateAgentSchema.safeParse(rawBody);
+    if (!parsed.success) {
+      requestLogger.warn(
+        { issuesCount: parsed.error.issues.length, firstIssue: parsed.error.issues[0] },
+        'Request body validation failed'
+      );
       return NextResponse.json(
-        { success: false, error: 'agent_name is required' },
+        {
+          success: false,
+          error: 'Invalid request body',
+          details: process.env.NODE_ENV === 'development' ? parsed.error.issues : 'Validation failed'
+        },
         { status: 400 }
       );
     }
 
-    // Use the authenticated user's ID instead of trusting the client
-    // This is more secure than accepting user_id from the request body
+    const { agent, sessionId: providedSessionId, agentId: providedAgentId, thread_id } = parsed.data;
+
+    // Use the authenticated user's ID — never trust client-provided user_id
     const agentUserIdToUse = userId;
-    
-    console.log('🔒 Using authenticated user ID for agent creation:', agentUserIdToUse);
+    // Use the provided agent ID for database/token-tracking consistency
+    const finalAgentId = providedAgentId || agent.id;
+
+    requestLogger.debug(
+      {
+        userId: agentUserIdToUse,
+        finalAgentId,
+        providedAgentId,
+        providedSessionId,
+        thread_id,
+        hasAgentConfig: !!agent.agent_config,
+        agentConfigKeys: agent.agent_config ? Object.keys(agent.agent_config) : [],
+        agentConfigSize: agent.agent_config ? JSON.stringify(agent.agent_config).length : 0,
+        idSource: providedAgentId ? 'frontend_provided' : agent.id ? 'agent_object' : 'database_generated'
+      },
+      'Agent creation context'
+    );
 
     // Convert ai_reasoning array to string if it exists
-    const aiReasoning = agent.ai_reasoning 
-      ? Array.isArray(agent.ai_reasoning) 
+    const aiReasoning = agent.ai_reasoning
+      ? Array.isArray(agent.ai_reasoning)
         ? agent.ai_reasoning.join('\n')
         : agent.ai_reasoning
       : null;
 
-    // CRITICAL FIX: Use the provided agent ID for database consistency
-    const finalAgentId = providedAgentId || agent.id;
-    
-    console.log('🆔 AGENT ID DECISION:', {
-      providedAgentId,
-      agentId: agent.id,
-      finalAgentId,
-      willUseProvidedId: !!providedAgentId,
-      idSource: providedAgentId ? 'frontend_provided' : agent.id ? 'agent_object' : 'database_generated'
-    });
-
-    // ENHANCED: Prepare data for insertion with agent_config support AND consistent agent ID
-    const agentData = {
-      // CRITICAL FIX: Use the provided agent ID to maintain consistency with token tracking
+    // WP-48: Build CreateAgentInput for the repository. The repository writes
+    // via supabaseServer (RLS-bypassing) which is appropriate here because we've
+    // already authenticated the user and we're setting user_id ourselves.
+    const agentInput = {
       ...(finalAgentId && { id: finalAgentId }),
-
+      user_id: agentUserIdToUse,                              // authenticated user — never trust client
       agent_name: agent.agent_name,
-      user_prompt: agent.user_prompt,
-      user_id: agentUserIdToUse, // Use the authenticated user's ID
-      system_prompt: agent.system_prompt,
-      description: agent.description,
-      input_schema: agent.input_schema || null,
-      output_schema: agent.output_schema || null,
-      connected_plugins: agent.connected_plugins || null,
-      status: agent.status || 'draft',
-      mode: agent.mode || 'on_demand',
-      schedule_cron: agent.schedule_cron || null,
-      timezone: agent.timezone || 'UTC', // FIXED: Add timezone field for scheduled agents
-      trigger_conditions: agent.trigger_conditions || null,
-      plugins_required: agent.plugins_required || null,
-      workflow_steps: agent.workflow_steps || null,
-      pilot_steps: agent.pilot_steps || null, // PILOT: Normalized steps for Pilot execution
-      generated_plan: agent.generated_plan || null, // Added missing field
-      detected_categories: agent.detected_categories || null,
+      description: agent.description ?? null,
+      user_prompt: agent.user_prompt ?? null,
+      system_prompt: agent.system_prompt ?? null,
+      created_from_prompt: agent.created_from_prompt ?? null,
+      input_schema: (agent.input_schema as unknown[] | null) ?? null,
+      output_schema: (agent.output_schema as unknown[] | null) ?? null,
+      plugins_required: (agent.plugins_required as string[] | null) ?? null,
+      connected_plugins: (agent.connected_plugins as unknown[] | Record<string, unknown> | null) ?? null,
+      workflow_steps: (agent.workflow_steps as unknown[] | null) ?? null,
+      pilot_steps: (agent.pilot_steps as unknown[] | null) ?? null,
+      generated_plan: agent.generated_plan ?? null,
+      detected_categories: agent.detected_categories ?? null,
+      trigger_conditions: (agent.trigger_conditions as Record<string, unknown> | null) ?? null,
       ai_reasoning: aiReasoning,
-      ai_confidence: agent.ai_confidence || null,
-      created_from_prompt: agent.created_from_prompt || null,
+      ai_confidence: agent.ai_confidence ?? null,
       ai_generated_at: agent.ai_generated_at ? new Date(agent.ai_generated_at).toISOString() : null,
-
-      // CRITICAL FIX: Add the agent_config JSONB field
-      agent_config: agent.agent_config || null
+      agent_config: (agent.agent_config as Record<string, unknown> | null) ?? null,
+      status: (agent.status as any) || 'draft',
+      mode: agent.mode ?? 'on_demand',
+      schedule_cron: agent.schedule_cron ?? null,
+      timezone: agent.timezone ?? 'UTC',
     };
 
-    console.log('💾 Inserting agent for user:', agentUserIdToUse);
-    console.log('💾 Agent name:', agentData.agent_name);
-    console.log('💾 Agent ID being used:', finalAgentId || 'database_generated');
-    console.log('💾 Agent config being saved:', !!agentData.agent_config);
-    console.log('💾 Pilot steps being saved:', agentData.pilot_steps?.length || 0, 'steps');
-    console.log('💾 Workflow steps being saved:', agentData.workflow_steps?.length || 0, 'steps');
-    console.log('💾 Schedule configuration:', {
-      mode: agentData.mode,
-      schedule_cron: agentData.schedule_cron,
-      timezone: agentData.timezone
-    });
+    requestLogger.info(
+      {
+        userId: agentUserIdToUse,
+        agentName: agentInput.agent_name,
+        finalAgentId: finalAgentId || 'database_generated',
+        hasAgentConfig: !!agentInput.agent_config,
+        pilotStepsCount: (agentInput.pilot_steps as any)?.length || 0,
+        workflowStepsCount: (agentInput.workflow_steps as any)?.length || 0,
+        mode: agentInput.mode,
+        scheduleCron: agentInput.schedule_cron,
+        timezone: agentInput.timezone
+      },
+      'Inserting agent via AgentRepository'
+    );
 
-    // Test Supabase connection first
-    try {
-      const { data: connectionTest, error: connectionError } = await supabase
-        .from('agents')
-        .select('count', { count: 'exact', head: true });
-      
-      if (connectionError) {
-        console.error('💥 Supabase connection error:', connectionError);
-        return NextResponse.json(
-          { 
-            success: false, 
-            error: 'Database connection failed',
-            details: process.env.NODE_ENV === 'development' ? connectionError.message : 'Unable to connect to database'
-          },
-          { status: 500 }
-        );
-      }
-      console.log('✅ Supabase connection successful');
-    } catch (connErr) {
-      console.error('💥 Supabase connection test failed:', connErr);
+    // WP-48: All agent CRUD goes through AgentRepository (per CLAUDE.md mandatory rule #1)
+    const agentRepository = new AgentRepository();
+    const { data, error: repoError } = await agentRepository.create(agentInput as any);
+
+    if (repoError || !data) {
+      const duration = Date.now() - startTime;
+      requestLogger.error(
+        { err: repoError, userId: agentUserIdToUse, duration },
+        'AgentRepository.create failed'
+      );
       return NextResponse.json(
-        { 
-          success: false, 
-          error: 'Database connection failed',
-          details: process.env.NODE_ENV === 'development' ? String(connErr) : 'Unable to connect to database'
+        {
+          success: false,
+          error: 'Failed to create agent',
+          details: process.env.NODE_ENV === 'development' ? repoError?.message : 'Database insert failed'
         },
         { status: 500 }
       );
     }
 
-    // Insert into Supabase
-    const { data, error } = await supabase
-      .from('agents')
-      .insert([agentData])
-      .select()
-      .single();
+    requestLogger.info(
+      {
+        agentId: data.id,
+        userId: agentUserIdToUse,
+        idsMatch: finalAgentId === data.id,
+        agentConfigSize: data.agent_config ? JSON.stringify(data.agent_config).length : 0,
+        mode: data.mode,
+        scheduleCron: data.schedule_cron,
+        timezone: data.timezone
+      },
+      'Agent created successfully'
+    );
 
-    if (error) {
-      console.error('❌ Supabase insert error:', error);
-      return NextResponse.json(
-        { 
-          success: false, 
-          error: 'Failed to create agent', 
-          details: process.env.NODE_ENV === 'development' ? {
-            message: error.message,
-            details: error.details,
-            hint: error.hint,
-            code: error.code
-          } : 'Database insert failed'
-        },
-        { status: 500 }
-      );
-    }
-
-    console.log('✅ Agent created successfully:', data.id, 'for user:', agentUserIdToUse);
-    console.log('✅ Agent ID consistency check:', {
-      requestedId: finalAgentId,
-      createdId: data.id,
-      idsMatch: finalAgentId === data.id,
-      tokenTrackingWillWork: finalAgentId === data.id
-    });
-    console.log('✅ Saved agent_config present:', !!data.agent_config);
-    console.log('✅ Saved agent_config size:', data.agent_config ? JSON.stringify(data.agent_config).length : 0);
-    console.log('✅ Saved schedule configuration:', {
-      mode: data.mode,
-      schedule_cron: data.schedule_cron,
-      timezone: data.timezone
-    });
-
-    // 📝 Audit Trail: Log agent creation (non-blocking)
+    // Audit Trail: Log agent creation (non-blocking)
     auditLog({
       action: 'AGENT_CREATED',
       entityType: 'agent',
@@ -234,7 +225,7 @@ export async function POST(request: NextRequest) {
       details: {
         mode: data.mode,
         plugins_count: data.plugins_required?.length || 0,
-        has_schedule: !!data.scheduled_time,
+        has_schedule: !!data.schedule_cron,
         has_workflow: !!data.workflow_steps?.length,
         workflow_steps_count: data.workflow_steps?.length || 0,
         scheduled_cron: data.schedule_cron || null,
@@ -244,11 +235,11 @@ export async function POST(request: NextRequest) {
       severity: 'info',
       request
     }).catch(err => {
-      // Silent failure - don't block agent creation
-      console.error('⚠️ Audit log failed (non-blocking):', err);
+      // Non-blocking — never block agent creation on audit failure
+      requestLogger.warn({ err, agentId: data.id }, 'Audit log failed (non-blocking)');
     });
 
-    // 🔗 Link agent to thread if thread_id (OpenAI thread ID) provided
+    // Link agent to thread if thread_id (OpenAI thread ID) provided
     if (thread_id) {
       try {
         const { getAgentPromptThreadRepository } = await import('@/lib/agent-creation/agent-prompt-thread-repository');
@@ -262,111 +253,115 @@ export async function POST(request: NextRequest) {
             agent_id: data.id,
             status: 'completed'
           });
-          console.log('🔗 Linked agent to thread:', { agentId: data.id, thread_id, dbRecordId: threadRecord.id });
+          requestLogger.info(
+            { agentId: data.id, thread_id, dbRecordId: threadRecord.id },
+            'Linked agent to thread'
+          );
         } else {
-          console.warn('⚠️ Thread record not found for OpenAI thread ID:', thread_id);
+          requestLogger.warn({ thread_id }, 'Thread record not found for OpenAI thread ID');
         }
       } catch (linkError: any) {
-        console.warn('⚠️ Failed to link agent to thread (non-critical):', linkError.message);
+        requestLogger.warn(
+          { err: linkError, thread_id, agentId: data.id },
+          'Failed to link agent to thread (non-critical)'
+        );
       }
     }
 
     // Track creation costs in AIS system now that agent exists in database
     if (providedSessionId) {
       try {
-        console.log('📊 [AIS] ========================================');
-        console.log('📊 [AIS] TRACKING CREATION COSTS');
-        console.log('📊 [AIS] Agent ID:', data.id);
-        console.log('📊 [AIS] Session ID:', providedSessionId);
-        console.log('📊 [AIS] User ID:', agentUserIdToUse);
-        console.log('📊 [AIS] ========================================');
+        const aisLogger = requestLogger.child({ subsystem: 'AIS', sessionId: providedSessionId, agentId: data.id });
+        aisLogger.debug('Tracking creation costs');
 
-        // First, check if ANY records exist for this session (for debugging)
-        const { data: allSessionRecords } = await supabase
+        // Diagnostic: how many token_usage records exist for this session at all?
+        const { data: allSessionRecords } = await supabaseServer
           .from('token_usage')
           .select('*')
           .eq('session_id', providedSessionId);
 
-        console.log('📊 [AIS] All token_usage records for session:', {
-          count: allSessionRecords?.length || 0,
-          sessionId: providedSessionId,
-          records: allSessionRecords?.map(r => ({
-            activity_type: r.activity_type,
-            input_tokens: r.input_tokens,
-            output_tokens: r.output_tokens,
-            created_at: r.created_at
-          }))
-        });
+        aisLogger.debug(
+          { recordsCount: allSessionRecords?.length || 0 },
+          'token_usage records found for session'
+        );
 
         // Get all creation-related token usage for this session
-        const { data: creationTokens, error: tokenError } = await supabase
+        const { data: creationTokens, error: tokenError } = await supabaseServer
           .from('token_usage')
           .select('input_tokens, output_tokens, activity_type, created_at')
           .eq('session_id', providedSessionId)
           .in('activity_type', ['agent_creation', 'agent_generation']);
 
         if (tokenError) {
-          console.error('❌ [AIS] Error fetching token usage:', tokenError);
+          aisLogger.error({ err: tokenError }, 'Error fetching token usage');
         } else if (creationTokens && creationTokens.length > 0) {
           const totalCreationTokens = creationTokens.reduce((sum: number, record: any) =>
             sum + (record.input_tokens || 0) + (record.output_tokens || 0), 0
           );
 
-          console.log(`📊 [AIS] Found ${creationTokens.length} token records for activity types [agent_creation, agent_generation]`);
-          console.log(`📊 [AIS] Total tokens: ${totalCreationTokens}`);
-          console.log('📊 [AIS] Token breakdown:', creationTokens.map(r => ({
-            activity_type: r.activity_type,
-            input: r.input_tokens,
-            output: r.output_tokens,
-            total: (r.input_tokens || 0) + (r.output_tokens || 0),
-            created_at: r.created_at
-          })));
+          aisLogger.info(
+            {
+              recordsCount: creationTokens.length,
+              totalCreationTokens,
+              activityTypes: ['agent_creation', 'agent_generation']
+            },
+            'Token usage aggregated for creation costs'
+          );
 
           // Import and call trackCreationCosts with server-side supabase client
           const { AgentIntensityService } = await import('@/lib/services/AgentIntensityService');
           const result = await AgentIntensityService.trackCreationCosts(
-            supabase, // Pass the server-side supabase client
+            supabaseServer,
             {
               agent_id: data.id,
               user_id: agentUserIdToUse,
               tokens_used: totalCreationTokens,
-              creation_duration_ms: 0 // We don't track timing across APIs
+              creation_duration_ms: 0 // Cross-API timing not tracked yet
             }
           );
 
           if (result) {
-            console.log(`✅ [AIS] Successfully tracked creation costs: ${totalCreationTokens} tokens for agent ${data.id}`);
-            console.log('✅ [AIS] Tracking result:', {
-              agent_id: result.agent_id,
-              creation_tokens_used: result.creation_tokens_used,
-              total_creation_cost_usd: result.total_creation_cost_usd
-            });
+            aisLogger.info(
+              {
+                agentId: result.agent_id,
+                creationTokensUsed: result.creation_tokens_used,
+                totalCreationCostUsd: result.total_creation_cost_usd
+              },
+              'Creation costs tracked successfully'
+            );
           } else {
-            console.log('⚠️ [AIS] trackCreationCosts returned null');
+            aisLogger.warn('trackCreationCosts returned null');
           }
         } else {
-          console.log('⚠️ [AIS] No token usage records found for session:', providedSessionId);
-          console.log('⚠️ [AIS] This could mean:');
-          console.log('   1. SessionId mismatch between generation and creation');
-          console.log('   2. Token tracking failed during generation');
-          console.log('   3. Wrong activity_type used for token records');
+          aisLogger.warn(
+            { sessionId: providedSessionId },
+            'No token usage records found for session — possible causes: session ID mismatch, generation token tracking failure, or wrong activity_type'
+          );
         }
       } catch (aisError) {
-        console.error('❌ [AIS] Failed to track creation costs:', aisError);
-        // Non-fatal error - continue (agent is already created successfully)
+        requestLogger.error(
+          { err: aisError, subsystem: 'AIS' },
+          'Failed to track creation costs (non-fatal)'
+        );
+        // Non-fatal — agent already created
       }
     } else {
-      console.log('❌ [AIS] ========================================');
-      console.log('❌ [AIS] NO SESSION ID PROVIDED');
-      console.log('❌ [AIS] Cannot track creation costs without sessionId');
-      console.log('❌ [AIS] Check frontend is passing sessionId to create-agent API');
-      console.log('❌ [AIS] ========================================');
+      requestLogger.warn(
+        { agentId: data.id },
+        'No session ID provided — cannot track creation costs in AIS'
+      );
     }
 
-    // Return the structure your frontend expects (consistent with your other API)
+    const duration = Date.now() - startTime;
+    requestLogger.info(
+      { agentId: data.id, userId: agentUserIdToUse, duration },
+      'Agent creation request completed'
+    );
+
+    // Return the structure the frontend expects
     return NextResponse.json(
-      { 
-        success: true, 
+      {
+        success: true,
         agent: data,
         message: 'Agent created successfully',
         analytics: {
@@ -379,20 +374,19 @@ export async function POST(request: NextRequest) {
     );
 
   } catch (error) {
-    console.error('❌ API error:', error);
-    
+    const duration = Date.now() - startTime;
     if (error instanceof SyntaxError) {
-      console.error('❌ JSON parsing error:', error.message);
+      requestLogger.warn({ err: error, duration }, 'JSON parsing error');
       return NextResponse.json(
         { success: false, error: 'Invalid JSON in request body' },
         { status: 400 }
       );
     }
 
-    // Make sure we always return JSON, never HTML
+    requestLogger.error({ err: error, duration }, 'Unhandled error in agent creation');
     return NextResponse.json(
-      { 
-        success: false, 
+      {
+        success: false,
         error: 'Internal server error',
         details: process.env.NODE_ENV === 'development' ? {
           message: error instanceof Error ? error.message : String(error),

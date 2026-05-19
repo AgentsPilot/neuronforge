@@ -1,4 +1,13 @@
 /**
+ * @deprecated Pipeline B endpoint — retired from the V2 UI on 2026-05-20 (P6 of
+ * the Pipeline A migration). Production agent creation now uses Pipeline A via
+ * `/api/v6/generate-ir-intent-contract`. This route is retained only for the
+ * diagnostic test page at `public/test-v6-declarative.html` (recovery-mode
+ * fallback) and is scheduled for deletion once that page migrates or retires.
+ * Do NOT extend or wire new callers to this endpoint. See
+ * `docs/v6/V6_PIPELINE_A_MIGRATION.md` § P6 + `docs/v6/V6_OPEN_ITEMS.md`
+ * "Cleanup tasks (Pipeline B retirement follow-ups)".
+ *
  * API Endpoint: Generate Workflow with Validation
  *
  * POST /api/v6/generate-workflow-validated

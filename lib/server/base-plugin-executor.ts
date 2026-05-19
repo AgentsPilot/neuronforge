@@ -190,15 +190,18 @@ export abstract class BasePluginExecutor {
     return null;
   }
   
-  // Common utility: Count recipients in email parameters
+  // Common utility: Count recipients in email parameters.
+  // WP-42: when a recipients field is a single-email string (LLM emission style),
+  // count it as one recipient — previously `.length` on the string returned the
+  // character count, inflating `total_recipients` (e.g., "user@x.com" → 10).
   protected countRecipients(recipients: any): number {
     if (!recipients) return 0;
-    
-    const to = recipients.to?.length || 0;
-    const cc = recipients.cc?.length || 0;
-    const bcc = recipients.bcc?.length || 0;
-    
-    return to + cc + bcc;
+    const countField = (v: unknown): number => {
+      if (Array.isArray(v)) return v.length;
+      if (typeof v === 'string' && v.length > 0) return 1;
+      return 0;
+    }
+    return countField(recipients.to) + countField(recipients.cc) + countField(recipients.bcc);
   }
 
   // Common utility: Get connection status
