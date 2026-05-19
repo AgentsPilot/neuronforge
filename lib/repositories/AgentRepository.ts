@@ -171,7 +171,14 @@ export class AgentRepository {
   // ============ CRUD Operations ============
 
   /**
-   * Create a new agent
+   * Create a new agent.
+   *
+   * `created_at` and `updated_at` are stamped here so all callers get
+   * correct timestamps regardless of any column-level DB defaults — and so
+   * the two values match exactly on creation (the DB default would compute
+   * them at insert time but could yield slightly different timestamps
+   * across columns under load). This mirrors the explicit `updated_at`
+   * stamping already done by `update()`, `updateStatus()`, etc.
    */
   async create(input: CreateAgentInput): Promise<AgentRepositoryResult<Agent>> {
     const methodLogger = this.logger.child({ method: 'create', userId: input.user_id });
@@ -180,11 +187,14 @@ export class AgentRepository {
     try {
       methodLogger.debug({ agentName: input.agent_name }, 'Creating agent');
 
+      const now = new Date().toISOString();
       const { data, error } = await this.supabase
         .from('agents')
         .insert({
           ...input,
           status: input.status || 'draft',
+          created_at: now,
+          updated_at: now,
         })
         .select()
         .single();

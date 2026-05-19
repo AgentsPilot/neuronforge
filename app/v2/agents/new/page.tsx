@@ -990,6 +990,9 @@ function V2AgentBuilderContent() {
       const useV6 = useV6AgentGeneration()
       const useV6PipeA = useV6PipelineA()
       let agentData: CreateAgentData
+      // WP-47: captured from v6Data.ir.config_defaults inside the V6 block,
+      // read after the V4/V6 branches merge to pre-populate resolvedInputs.
+      let v6IrConfigDefaults: Array<{ key?: string; default?: any }> | undefined
 
       if (useV6) {
         // ================================================================
@@ -1041,6 +1044,11 @@ function V2AgentBuilderContent() {
         if (!v6Data.success) {
           throw new Error('V6 generation returned unsuccessful response')
         }
+
+        // WP-47: capture IR's config_defaults for the post-branch resolvedInputs
+        // pre-population. Pipeline A returns ir.config_defaults; Pipeline B may
+        // not, in which case this stays undefined and the merge is a no-op.
+        v6IrConfigDefaults = (v6Data as any)?.ir?.config_defaults
 
         console.log('✅ V6 generation complete:', {
           steps: v6Data.metadata.steps_generated,
@@ -1181,6 +1189,25 @@ function V2AgentBuilderContent() {
         enhancedPromptData.specifics.resolved_user_inputs.forEach((input: { key: string; value: string }) => {
           resolvedInputs[input.key] = input.value
         })
+      }
+      // WP-47: Pipeline A's IR carries `config_defaults` whose keys match the
+      // DSL's {{input.X}} refs and whose `default` values are the EP's
+      // resolved_user_inputs transcribed by the IC LLM. Without merging these,
+      // the requiredParams filter below treats IC keys (e.g. "spreadsheet_id")
+      // as missing because resolved_user_inputs uses the EP-Key-Hint format
+      // (e.g. "google-sheets__table/get__spreadsheet_id") — the two sets never
+      // intersect, so the user gets re-prompted for values they already gave.
+      // Pipeline B (semantic) doesn't have this issue because its compiler
+      // inlines values into DSL params and there are no {{input.X}} refs at
+      // all; ir.config_defaults is absent or unused. Safe no-op for Pipeline B.
+      if (v6IrConfigDefaults && Array.isArray(v6IrConfigDefaults)) {
+        for (const entry of v6IrConfigDefaults) {
+          if (entry?.key && entry.default !== undefined && !(entry.key in resolvedInputs)) {
+            resolvedInputs[entry.key] = entry.default
+          }
+        }
+      }
+      if (Object.keys(resolvedInputs).length > 0) {
         setInputParameterValues(prev => ({ ...prev, ...resolvedInputs }))
       }
 

@@ -31,7 +31,7 @@ export interface Agent {
   // Additional fields used in agent detail page
   mode?: string | null;
   plugins_required?: string[] | null;
-  connected_plugins?: Record<string, unknown> | null;
+  connected_plugins?: unknown[] | Record<string, unknown> | null;
   input_schema?: unknown[] | null;
   output_schema?: unknown[] | null;
   user_prompt?: string | null;
@@ -47,16 +47,60 @@ export interface Agent {
   production_ready?: boolean;
   // Business intelligence context
   workflow_purpose?: string | null;
+  // Creation metadata + AI context (JSONB column populated at agent creation time;
+  // shape matches CreateAgentInput.agent_config — creation_metadata + ai_context)
+  agent_config?: Record<string, unknown> | null;
+  // AI generation timestamp (separate from created_at — when the AI generated
+  // the workflow, not when the DB row was inserted)
+  ai_generated_at?: string | null;
+  // Workflow scheduling / runtime metadata
+  ai_reasoning?: string | null;
+  ai_confidence?: number | null;
+  trigger_conditions?: Record<string, unknown> | null;
+  detected_categories?: unknown | null;
+  generated_plan?: unknown | null;
+  created_from_prompt?: string | null;
 }
 
 export interface CreateAgentInput {
+  // Identity
+  id?: string;                                   // optional explicit ID (frontend-provided for token-tracking consistency)
   user_id: string;
   agent_name: string;
-  description?: string;
-  config: Record<string, unknown>;
+  description?: string | null;
+
+  // Prompts
+  user_prompt?: string | null;
+  system_prompt?: string | null;
+  created_from_prompt?: string | null;
+
+  // Schema / I/O
+  input_schema?: unknown[] | null;
+  output_schema?: unknown[] | null;
+
+  // Plugins / execution
+  plugins_required?: string[] | null;
+  connected_plugins?: unknown[] | Record<string, unknown> | null;
+  workflow_steps?: unknown[] | null;
+  pilot_steps?: unknown[] | null;
+  generated_plan?: unknown | null;
+  detected_categories?: unknown | null;
+  trigger_conditions?: Record<string, unknown> | null;
+
+  // AI / creation metadata
+  ai_reasoning?: string | null;
+  ai_confidence?: number | null;
+  ai_generated_at?: string | null;
+  agent_config?: Record<string, unknown> | null;  // JSONB: creation_metadata + ai_context
+
+  // Lifecycle / scheduling
   status?: AgentStatus;
-  schedule_cron?: string;
-  timezone?: string;
+  mode?: string | null;
+  schedule_cron?: string | null;
+  timezone?: string | null;
+
+  // Legacy / wider Agent fields (kept for forward-compat — repository spreads input directly)
+  config?: Record<string, unknown>;
 }
 
 export interface UpdateAgentInput {
@@ -185,7 +229,7 @@ export interface SharedAgent {
   detected_categories?: string[] | null;
   created_from_prompt?: string | null;
   ai_generated_at?: string | null;
-  connected_plugins?: Record<string, unknown> | null;
+  connected_plugins?: unknown[] | Record<string, unknown> | null;
   shared_at: string;
   created_at?: string | null;
   updated_at?: string | null;
@@ -221,7 +265,7 @@ export interface CreateSharedAgentInput {
   detected_categories?: string[] | null;
   created_from_prompt?: string | null;
   ai_generated_at?: string | null;
-  connected_plugins?: Record<string, unknown> | null;
+  connected_plugins?: unknown[] | Record<string, unknown> | null;
   quality_score?: number | null;
   reliability_score?: number | null;
   efficiency_score?: number | null;

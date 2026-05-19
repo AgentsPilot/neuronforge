@@ -1,0 +1,515 @@
+[
+  {
+    "id": "step1",
+    "name": "Read all rows from the contracts tab in Google Sheets",
+    "type": "action",
+    "action": "read_range",
+    "params": {
+      "range": "{{input.range}}",
+      "spreadsheet_id": "{{input.spreadsheet_id}}"
+    },
+    "plugin": "google-sheets",
+    "step_id": "step1",
+    "description": "Read all rows from the contracts tab in Google Sheets",
+    "output_schema": {
+      "type": "object",
+      "source": "plugin",
+      "properties": {
+        "range": {
+          "type": "string",
+          "source": "plugin",
+          "required": true,
+          "description": "The actual range that was read (may differ from requested)"
+        },
+        "values": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "source": "plugin"
+            },
+            "source": "plugin"
+          },
+          "source": "plugin",
+          "required": true,
+          "description": "2D array of cell values (rows of cells)"
+        },
+        "row_count": {
+          "type": "number",
+          "source": "plugin",
+          "required": true,
+          "description": "Number of rows returned"
+        },
+        "column_count": {
+          "type": "number",
+          "source": "plugin",
+          "description": "Number of columns returned"
+        },
+        "retrieved_at": {
+          "type": "string",
+          "source": "plugin",
+          "description": "Timestamp when data was retrieved (ISO 8601)"
+        },
+        "major_dimension": {
+          "type": "string",
+          "source": "plugin",
+          "description": "How data is organized (ROWS or COLUMNS)"
+        }
+      }
+    },
+    "output_variable": "raw_contracts"
+  },
+  {
+    "id": "step2",
+    "name": "Auto-normalize: Convert 2D array to objects",
+    "type": "transform",
+    "input": "{{raw_contracts.values}}",
+    "config": {
+      "preserve_case": true
+    },
+    "step_id": "step2",
+    "operation": "rows_to_objects",
+    "description": "Auto-normalize: Convert 2D array to objects",
+    "output_variable": "raw_contracts_objects"
+  },
+  {
+    "id": "step3",
+    "name": "Add days_until_expiry computed field and window_end date to each contract row for filtering",
+    "type": "transform",
+    "input": "{{raw_contracts_objects}}",
+    "config": {
+      "type": "with_fields",
+      "input": "raw_contracts_objects",
+      "fields": [
+        {
+          "name": "days_until_expiry",
+          "expression": {
+            "kind": "date_diff",
+            "left": {
+              "ref": "item",
+              "kind": "ref",
+              "field": "Contract Ends Due Date"
+            },
+            "unit": "days",
+            "right": {
+              "kind": "today"
+            }
+          }
+        }
+      ],
+      "output_schema": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": [
+            "Contract ID",
+            "Company Name",
+            "Contract Amount",
+            "Contract Ends Due Date",
+            "Email of Contact Person",
+            "days_until_expiry"
+          ],
+          "properties": {
+            "Contract ID": {
+              "type": "string"
+            },
+            "Company Name": {
+              "type": "string"
+            },
+            "Contract Amount": {
+              "type": "string"
+            },
+            "days_until_expiry": {
+              "type": "number"
+            },
+            "Contract Ends Due Date": {
+              "type": "string"
+            },
+            "Email of Contact Person": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "step_id": "step3",
+    "operation": "with_fields",
+    "description": "Add days_until_expiry computed field and window_end date to each contract row for filtering",
+    "output_schema": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "source": "ai_declared",
+        "properties": {
+          "Contract ID": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "Company Name": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "Contract Amount": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "days_until_expiry": {
+            "type": "number",
+            "source": "ai_declared",
+            "required": true
+          },
+          "Contract Ends Due Date": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "Email of Contact Person": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          }
+        }
+      },
+      "source": "ai_declared"
+    },
+    "output_variable": "contracts_with_dates"
+  },
+  {
+    "id": "step4",
+    "name": "Filter to contracts that are active (days_until_expiry >= 0) and expiring within the next 10 days (days_until_expiry <= 10)",
+    "type": "transform",
+    "input": "{{contracts_with_dates}}",
+    "config": {
+      "type": "filter",
+      "input": "contracts_with_dates",
+      "condition": {
+        "conditions": [
+          {
+            "field": "item.days_until_expiry",
+            "value": 0,
+            "operator": "gte",
+            "conditionType": "simple"
+          },
+          {
+            "field": "item.days_until_expiry",
+            "value": "{{input.expiration_window_days}}",
+            "operator": "lte",
+            "conditionType": "simple"
+          }
+        ],
+        "conditionType": "complex_and"
+      },
+      "custom_code": "Keep only contracts where days_until_expiry >= 0 AND days_until_expiry <= 10"
+    },
+    "step_id": "step4",
+    "_on_empty": "warn",
+    "operation": "filter",
+    "description": "Filter to contracts that are active (days_until_expiry >= 0) and expiring within the next 10 days (days_until_expiry <= 10)",
+    "output_schema": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "source": "ai_declared",
+        "properties": {
+          "Contract ID": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "Company Name": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "Contract Amount": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "days_until_expiry": {
+            "type": "number",
+            "source": "ai_declared",
+            "required": true
+          },
+          "Contract Ends Due Date": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "Email of Contact Person": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          }
+        }
+      },
+      "source": "inferred"
+    },
+    "output_variable": "expiring_contracts"
+  },
+  {
+    "id": "step5",
+    "name": "Sort expiring contracts by Contract Ends Due Date ascending (soonest first)",
+    "type": "transform",
+    "input": "{{expiring_contracts}}",
+    "config": {
+      "type": "sort",
+      "input": "expiring_contracts",
+      "rules": {
+        "field": "Contract Ends Due Date",
+        "direction": "asc"
+      },
+      "custom_code": "Sort by Contract Ends Due Date ascending"
+    },
+    "step_id": "step5",
+    "operation": "sort",
+    "description": "Sort expiring contracts by Contract Ends Due Date ascending (soonest first)",
+    "output_schema": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "source": "ai_declared",
+        "properties": {
+          "Contract ID": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "Company Name": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "Contract Amount": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "days_until_expiry": {
+            "type": "number",
+            "source": "ai_declared",
+            "required": true
+          },
+          "Contract Ends Due Date": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "Email of Contact Person": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          }
+        }
+      },
+      "source": "inferred"
+    },
+    "output_variable": "sorted_contracts"
+  },
+  {
+    "id": "step6",
+    "name": "Project only the report columns: Contract ID, Company Name, Contract Amount, Contract Ends Due Date, Email of Contact Person",
+    "type": "transform",
+    "input": "{{sorted_contracts}}",
+    "config": {
+      "type": "map",
+      "input": "sorted_contracts",
+      "field_mapping": {
+        "Contract ID": "Contract ID",
+        "Company Name": "Company Name",
+        "Contract Amount": "Contract Amount",
+        "Contract Ends Due Date": "Contract Ends Due Date",
+        "Email of Contact Person": "Email of Contact Person"
+      },
+      "output_schema": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": [
+            "Contract ID",
+            "Company Name",
+            "Contract Amount",
+            "Contract Ends Due Date",
+            "Email of Contact Person"
+          ],
+          "properties": {
+            "Contract ID": {
+              "type": "string"
+            },
+            "Company Name": {
+              "type": "string"
+            },
+            "Contract Amount": {
+              "type": "string"
+            },
+            "Contract Ends Due Date": {
+              "type": "string"
+            },
+            "Email of Contact Person": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "step_id": "step6",
+    "_on_empty": "warn",
+    "operation": "map",
+    "description": "Project only the report columns: Contract ID, Company Name, Contract Amount, Contract Ends Due Date, Email of Contact Person",
+    "output_schema": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "source": "ai_declared",
+        "properties": {
+          "Contract ID": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "Company Name": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "Contract Amount": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "Contract Ends Due Date": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "Email of Contact Person": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          }
+        }
+      },
+      "source": "ai_declared"
+    },
+    "output_variable": "report_rows"
+  },
+  {
+    "id": "step7",
+    "name": "Count items for match_count",
+    "type": "transform",
+    "input": "{{report_rows}}",
+    "config": {
+      "type": "reduce",
+      "input": "report_rows",
+      "reducer": "count",
+      "reduce_operation": "count"
+    },
+    "step_id": "step7",
+    "operation": "reduce",
+    "description": "Count items for match_count",
+    "output_schema": {
+      "type": "number",
+      "source": "inferred",
+      "description": "Count of match_count"
+    },
+    "output_variable": "match_count"
+  },
+  {
+    "id": "step8",
+    "name": "Generate the email body: an HTML table if there are matching contracts, or a 'none found' notice if there are zero matches",
+    "type": "ai_processing",
+    "input": "{{report_rows}}",
+    "config": {
+      "type": "generate",
+      "input": "{{report_rows}}",
+      "ai_type": "generate",
+      "instruction": "Generate an HTML email body for a contract expiration report. If match_count is 0, produce a short professional message stating: 'No active contracts are expiring in the next 10 days.' If match_count > 0, produce a professional HTML table with the following columns: Contract ID, Company Name, Contract Amount, Contract Ends Due Date, Email of Contact Person. Use a clean table with borders, a header row with a light background color, and proper padding. Include a brief introductory sentence above the table like 'The following contracts are expiring within the next 10 days:'. The data rows come from report_rows.",
+      "output_schema": {
+        "type": "object",
+        "required": [
+          "body"
+        ],
+        "properties": {
+          "body": {
+            "type": "string",
+            "description": "The full HTML email body content"
+          }
+        }
+      }
+    },
+    "prompt": "Generate an HTML email body for a contract expiration report. If match_count is 0, produce a short professional message stating: 'No active contracts are expiring in the next 10 days.' If match_count > 0, produce a professional HTML table with the following columns: Contract ID, Company Name, Contract Amount, Contract Ends Due Date, Email of Contact Person. Use a clean table with borders, a header row with a light background color, and proper padding. Include a brief introductory sentence above the table like 'The following contracts are expiring within the next 10 days:'. The data rows come from report_rows.",
+    "step_id": "step8",
+    "description": "Generate the email body: an HTML table if there are matching contracts, or a 'none found' notice if there are zero matches",
+    "input_schema": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "source": "ai_declared",
+        "properties": {
+          "Contract ID": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "Company Name": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "Contract Amount": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "Contract Ends Due Date": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "Email of Contact Person": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          }
+        }
+      },
+      "source": "ai_declared"
+    },
+    "output_schema": {
+      "type": "object",
+      "source": "ai_declared",
+      "properties": {
+        "body": {
+          "type": "string",
+          "source": "ai_declared",
+          "description": "The full HTML email body content"
+        }
+      }
+    },
+    "output_variable": "email_content"
+  },
+  {
+    "id": "step9",
+    "name": "Send the expiring contracts report email to the user",
+    "type": "action",
+    "action": "send_email",
+    "params": {
+      "content": {
+        "subject": "{{input.email_subject}}",
+        "html_body": "{{email_content.body}}"
+      },
+      "recipients": {
+        "to": [
+          "{{input.recipient_email}}"
+        ]
+      }
+    },
+    "plugin": "google-mail",
+    "step_id": "step9",
+    "description": "Send the expiring contracts report email to the user"
+  }
+]
