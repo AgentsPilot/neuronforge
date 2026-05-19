@@ -87,32 +87,15 @@ export function useV6AgentGeneration(): boolean {
   return parseBooleanFlag(flag);
 }
 
-/**
- * Check if V6 Review Mode is enabled
- *
- * When enabled, V6 agent generation uses split API flow with user review UI:
- * - API 1: generate-semantic-grounded (P1+P2+Detection)
- * - Review UI: User reviews ambiguities and makes decisions
- * - API 2: compile-with-decisions (P3+P4+P5)
- *
- * When disabled, uses single API flow (generate-ir-semantic) without review.
- *
- * NOTE: This flag only has effect when NEXT_PUBLIC_USE_V6_AGENT_GENERATION=true.
- * NOTE: This flag defaults to TRUE (enabled) when not set.
- *
- * @returns {boolean} True if review mode enabled, false for direct generation
- */
-export function useV6ReviewMode(): boolean {
-  const flag = process.env.NEXT_PUBLIC_USE_V6_REVIEW_MODE;
-  console.log("Feature Flag: NEXT_PUBLIC_USE_V6_REVIEW_MODE=", flag || 'none (default: true)');
-  // Default to TRUE - review mode is enabled by default
-  return parseBooleanFlag(flag, true);
-}
-
 // Retired 2026-05-20 (P6): NEXT_PUBLIC_USE_V6_PIPELINE_A flag + useV6PipelineA()
 // helper were a rollout safety net for switching the V2 UI from the semantic
 // pipeline (Pipeline B) to the IntentContract pipeline (Pipeline A). Pipeline A
 // is now the unconditional V6 path. See docs/v6/V6_PIPELINE_A_MIGRATION.md § P6.
+
+// Retired 2026-05-20: NEXT_PUBLIC_USE_V6_REVIEW_MODE flag + useV6ReviewMode()
+// helper were dead code from an abandoned split-API design (see Stage 5.4 in
+// docs/v6/V6_AGENT_CREATION_INTEGRATION_PLAN.md). Never had any runtime
+// callers; the V6 Review Mode UI surface was archived alongside this removal.
 
 /**
  * Get all feature flags status
@@ -126,6 +109,5 @@ export function getFeatureFlags() {
     useNewAgentCreationUI: useNewAgentCreationUI(),
     useEnhancedTechnicalWorkflowReview: useEnhancedTechnicalWorkflowReview(),
     useV6AgentGeneration: useV6AgentGeneration(),
-    useV6ReviewMode: useV6ReviewMode(),
   };
 }

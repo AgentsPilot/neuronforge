@@ -94,7 +94,7 @@ Goal: retire V4 and remove dead code from the abandoned split-API design.
 | 5.1 | Remove `app/api/generate-agent-v4/route.ts` (~547 lines) | ⬜ Todo |
 | 5.2 | Remove V4 `else` branch in `app/v2/agents/new/page.tsx` around line 993 | ⬜ Todo |
 | 5.3 | Remove `useV6AgentGeneration()` from `lib/utils/featureFlags.ts` + env var docs | ⬜ Todo |
-| 5.4 | Remove `useV6ReviewMode()` from `lib/utils/featureFlags.ts` (dead code from abandoned design) | ⬜ Todo |
+| 5.4 | Remove `useV6ReviewMode()` from `lib/utils/featureFlags.ts` (dead code from abandoned design) | ✅ Done (2026-05-20) — function, env var `NEXT_PUBLIC_USE_V6_REVIEW_MODE`, 13 unit tests, `getFeatureFlags` entry, and doc references all removed. |
 | 5.5 | **Decide:** delete or keep `components/v6/V6ReviewCustomizeUI.tsx`. If `/test-plugins-v2` still uses it, keep + leave a comment; otherwise delete | ⬜ Decision needed |
 | 5.6 | **Decide:** keep or remove `app/api/v6/generate-semantic-grounded` endpoint. If test-page-only, retire alongside test page or move under `app/api/v6/test/`. | ⬜ Decision needed |
 | 5.7 | **Decide:** keep or remove `lib/agentkit/v6/ambiguity-detection/` module. It runs inside the single-API path internally (its findings are computed and discarded). Suggest **keep** — preserves optionality for future Review UI revival; cost is just code presence. | ⬜ Decision needed |

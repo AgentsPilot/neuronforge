@@ -484,15 +484,11 @@ Feature flags control experimental features and gradual rollouts. See `/docs/fea
 ### Usage
 
 ```typescript
-import { useV6AgentGeneration, useV6ReviewMode, useThreadBasedAgentCreation } from '@/lib/utils/featureFlags';
+import { useV6AgentGeneration, useThreadBasedAgentCreation } from '@/lib/utils/featureFlags';
 
 // Client-side checks
 if (useV6AgentGeneration()) {
   // Use V6 5-phase pipeline
-}
-
-if (useV6ReviewMode()) {
-  // Use split API flow with review UI (default: true)
 }
 
 if (useThreadBasedAgentCreation()) {
@@ -505,7 +501,6 @@ if (useThreadBasedAgentCreation()) {
 | Flag | Function | Purpose |
 |------|----------|---------|
 | `NEXT_PUBLIC_USE_V6_AGENT_GENERATION` | `useV6AgentGeneration()` | Enable V6 semantic pipeline |
-| `NEXT_PUBLIC_USE_V6_REVIEW_MODE` | `useV6ReviewMode()` | Enable 2-step API flow with user review (default: true) |
 | `NEXT_PUBLIC_USE_THREAD_BASED_AGENT_CREATION` | `useThreadBasedAgentCreation()` | Enable thread-based creation |
 | `NEXT_PUBLIC_USE_NEW_AGENT_CREATION_UI` | `useNewAgentCreationUI()` | Enable new conversational UI |
 
