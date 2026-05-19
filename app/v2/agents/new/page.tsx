@@ -42,7 +42,7 @@ import type {
 } from '@/components/agent-creation/types/generate-agent-v2'
 import { isGenerateAgentV2Success } from '@/components/agent-creation/types/generate-agent-v2'
 import { formatScheduleDisplay } from '@/lib/utils/scheduleFormatter'
-import { useV6AgentGeneration, useV6PipelineA } from '@/lib/utils/featureFlags'
+import { useV6AgentGeneration } from '@/lib/utils/featureFlags'
 import { createTimedThinkingWordCycler } from '@/lib/ui/thinking-words'
 
 // ============================================================================
@@ -50,7 +50,9 @@ import { createTimedThinkingWordCycler } from '@/lib/ui/thinking-words'
 // ============================================================================
 
 /**
- * V6 API Response structure from /api/v6/generate-ir-semantic
+ * V6 API Response structure from /api/v6/generate-ir-intent-contract.
+ * (Same shape was previously returned by the now-retired Pipeline B endpoint
+ * /api/v6/generate-ir-semantic — both endpoints share the response contract.)
  */
 interface V6GenerateResponse {
   success: boolean
@@ -178,7 +180,7 @@ function extractInputSchema(workflowSteps: any[], enhancedPromptData?: any): Inp
 /**
  * Map V6 API response to V4-compatible agent object
  *
- * @param v6Response - Response from /api/v6/generate-ir-semantic
+ * @param v6Response - Response from /api/v6/generate-ir-intent-contract
  * @param context - Additional context for agent creation
  * @returns Agent data compatible with /api/create-agent
  */
@@ -988,7 +990,6 @@ function V2AgentBuilderContent() {
 
       // Check if V6 generation is enabled
       const useV6 = useV6AgentGeneration()
-      const useV6PipeA = useV6PipelineA()
       let agentData: CreateAgentData
       // WP-47: captured from v6Data.ir.config_defaults inside the V6 block,
       // read after the V4/V6 branches merge to pre-populate resolvedInputs.
@@ -996,18 +997,19 @@ function V2AgentBuilderContent() {
 
       if (useV6) {
         // ================================================================
-        // V6 FLOW
-        // - Pipeline A (NEXT_PUBLIC_USE_V6_PIPELINE_A=true): regression-tested
-        //   IntentContract pipeline via /api/v6/generate-ir-intent-contract
-        // - Pipeline B (default): 5-phase semantic pipeline via
-        //   /api/v6/generate-ir-semantic
-        // Both endpoints share the same request/response contract — only the
-        // fetch URL changes. See docs/v6/V6_PIPELINE_A_MIGRATION.md.
+        // V6 FLOW — IntentContract pipeline (single LLM call, regression-tested).
+        // Endpoint: /api/v6/generate-ir-intent-contract
+        // Code path: generateGenericIntentContractV1 → CapabilityBinderV2 →
+        // IntentToIRConverter → ExecutionGraphCompiler.
+        //
+        // P6 (2026-05-20): the previous dual-pipeline branching (Pipeline A
+        // vs Pipeline B / `useV6PipelineA()` flag) was retired after Pipeline
+        // A landed end-to-end across 3 regression scenarios. The Pipeline B
+        // endpoints (`/api/v6/generate-ir-semantic` et al.) remain in code
+        // and continue to back the diagnostic test pages, but the V2 UI no
+        // longer uses them. See docs/v6/V6_PIPELINE_A_MIGRATION.md § P6.
         // ================================================================
-        const v6Endpoint = useV6PipeA
-          ? '/api/v6/generate-ir-intent-contract'
-          : '/api/v6/generate-ir-semantic'
-        console.log(`🚀 Using V6 (${useV6PipeA ? 'Pipeline A — IntentContract' : 'Pipeline B — Semantic'}) at ${v6Endpoint}...`)
+        console.log('🚀 Using V6 (IntentContract pipeline)...')
 
         // Show rotating thinking words during V6 generation
         startThinkingWords()
@@ -1015,7 +1017,7 @@ function V2AgentBuilderContent() {
         const v6StartTime = Date.now()
 
         // Single API call - runs all pipeline phases
-        const v6Response = await fetch(v6Endpoint, {
+        const v6Response = await fetch('/api/v6/generate-ir-intent-contract', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',

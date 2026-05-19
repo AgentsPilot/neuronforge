@@ -39,7 +39,6 @@ Feature flag functions are defined in:
 | Flag | Environment Variable | Scope | Default | Active Routes |
 |------|---------------------|-------|---------|---------------|
 | V6 Agent Generation | `NEXT_PUBLIC_USE_V6_AGENT_GENERATION` | Client | `false` | `/v2/agents/new`, `/test-plugins-v2` |
-| V6 Pipeline A (IntentContract) | `NEXT_PUBLIC_USE_V6_PIPELINE_A` | Client | `false` | `/v2/agents/new` (when V6 generation enabled) |
 | V6 Review Mode | `NEXT_PUBLIC_USE_V6_REVIEW_MODE` | Client | `true` | `/v2/agents/new`, `/test-plugins-v2` |
 | Enhanced Technical Workflow Review | `USE_AGENT_GENERATION_ENHANCED_TECHNICAL_WORKFLOW_REVIEW` | Server | `false` | `/v2/agents/new`, `/test-plugins-v2` (via API) |
 | Thread-Based Agent Creation | `NEXT_PUBLIC_USE_THREAD_BASED_AGENT_CREATION` | Client | `false` | Legacy: `/agents/new/chat` only |
@@ -79,39 +78,7 @@ if (useV6) {
 
 ---
 
-### 2. V6 Pipeline A (IntentContract)
-
-**Environment Variable**: `NEXT_PUBLIC_USE_V6_PIPELINE_A`
-
-**Purpose**: Switches V6 agent generation between two coexisting pipelines:
-- **Pipeline A** (TRUE) — regression-tested IntentContract path: `generateGenericIntentContractV1` → `CapabilityBinderV2` → `IntentToIRConverter` → `ExecutionGraphCompiler`. One LLM call. Endpoint: `/api/v6/generate-ir-intent-contract`. Prompts in `intent-system-prompt-v2.ts` carry accumulated fidelity guidance (WP-28 named keys, `html_body` preservation, etc.).
-- **Pipeline B** (FALSE, default) — semantic pipeline: `SemanticPlanGenerator` → `IRFormalizer` → `ExecutionGraphCompiler`. Two LLM calls. Endpoint: `/api/v6/generate-ir-semantic`. Prompts in `*.md` files lack some of Pipeline A's accumulated guidance — see WP-43/WP-44.
-
-**Function**: `useV6PipelineA()`
-
-**Used In**:
-- [app/v2/agents/new/page.tsx](app/v2/agents/new/page.tsx) — switches the V6 endpoint URL between A and B
-
-**Values**:
-- `true` or `1` — Use Pipeline A
-- `false`, `0`, or omit — Use Pipeline B (current default during rollout)
-
-**NOTE**: Only has effect when `NEXT_PUBLIC_USE_V6_AGENT_GENERATION=true`. See [V6_PIPELINE_A_MIGRATION.md](/docs/v6/V6_PIPELINE_A_MIGRATION.md) for the migration plan.
-
-```typescript
-import { useV6AgentGeneration, useV6PipelineA } from '@/lib/utils/featureFlags';
-
-if (useV6AgentGeneration()) {
-  const endpoint = useV6PipelineA()
-    ? '/api/v6/generate-ir-intent-contract'
-    : '/api/v6/generate-ir-semantic';
-  // ...
-}
-```
-
----
-
-### 3. V6 Review Mode
+### 2. V6 Review Mode
 
 **Environment Variable**: `NEXT_PUBLIC_USE_V6_REVIEW_MODE`
 
@@ -157,7 +124,7 @@ if (useV6) {
 
 ---
 
-### 4. Enhanced Technical Workflow Review (V5 Generator)
+### 3. Enhanced Technical Workflow Review (V5 Generator)
 
 **Environment Variable**: `USE_AGENT_GENERATION_ENHANCED_TECHNICAL_WORKFLOW_REVIEW`
 
@@ -190,7 +157,7 @@ const generator = useV5
 
 > **Note**: The following flags are only used in the legacy agent creation route (`/agents/new/chat`). They do NOT affect the current `/v2/agents/new` or `/test-plugins-v2` pages.
 
-### 5. Thread-Based Agent Creation (Legacy)
+### 4. Thread-Based Agent Creation (Legacy)
 
 **Environment Variable**: `NEXT_PUBLIC_USE_THREAD_BASED_AGENT_CREATION`
 
@@ -220,7 +187,7 @@ if (useThreadFlow) {
 
 ---
 
-### 6. New Agent Creation UI (Legacy)
+### 5. New Agent Creation UI (Legacy)
 
 **Environment Variable**: `NEXT_PUBLIC_USE_NEW_AGENT_CREATION_UI`
 
