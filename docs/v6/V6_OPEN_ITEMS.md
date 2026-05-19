@@ -54,14 +54,16 @@ Sourced from [`V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_WEAK_POINTS.md`](./V6_
 
 ### Cleanup tasks (Pipeline B retirement follow-ups)
 
-Pipeline A migration (P1–P6) completed 2026-05-20. The V2 UI now uses Pipeline A unconditionally; Pipeline B endpoints + library code remain in the repo for diagnostic test pages. **All 7 Pipeline B route files are tagged with `@deprecated` JSDoc** so future contributors get an IDE strikethrough + tooltip warning before extending them. Full Pipeline B deletion is gated on these tasks:
+Pipeline A migration (P1–P6) completed 2026-05-20. The V2 UI now uses Pipeline A unconditionally; Pipeline B endpoints + library code remain in the repo only as deprecated stubs awaiting deletion. **All 7 Pipeline B route files are tagged with `@deprecated` JSDoc** so future contributors get an IDE strikethrough + tooltip warning before extending them. Full Pipeline B deletion is no longer gated on test page work — all broken Pipeline B test surfaces were retired 2026-05-20 (moved to `archive/` preserving original paths so the work can be recovered via `git mv` if needed; safer than outright deletion):
 
 | Task | Owner | Status | Notes |
 |---|---|---|---|
-| Migrate `app/test-plugins-v2/page.tsx` off Pipeline B endpoints | TBD | ⬜ Open | Currently calls `/api/v6/generate-semantic-grounded`. Either repoint to Pipeline A or retire this test surface. |
-| Migrate (or retire) `public/test-v6-declarative.html` | TBD | ⬜ Open | Currently calls `/api/v6/generate-ir-semantic` and `/api/v6/generate-workflow-validated`. Static HTML test page — easier to retire than to migrate. |
-| Delete Pipeline B HTTP endpoints (after the two above) | TBD | ⬜ Blocked | All 7 routes already tagged with `@deprecated` JSDoc — delete in one sweep after test pages are off them: `/api/v6/generate-ir-semantic`, `/api/v6/generate-semantic-grounded`, `/api/v6/generate-semantic-plan`, `/api/v6/generate-ir-fast-path`, `/api/v6/generate-workflow-validated`, `/api/v6/ground-semantic-plan`, `/api/v6/formalize-to-ir`. |
-| Delete Pipeline B library code (after endpoints) | TBD | ⬜ Blocked | `lib/agentkit/v6/semantic-plan/SemanticPlanGenerator.ts`, `IRFormalizer.ts`, `GroundingEngine.ts`, `formalization-system-v4.md`, `semantic-plan-system.md`. Plus retire WP-40 and WP-44 (Pipeline-B-prompt-specific) once library is gone. |
+| ~~Migrate `app/test-plugins-v2/page.tsx` off Pipeline B endpoints~~ | — | ✅ Done 2026-05-20 | Aggressive cleanup: removed V6 Review Mode section (imports, state, handlers, render block, button). Remaining tabs (plugin / ai-services / thread-based) unaffected. |
+| ~~Retire `public/test-v6-declarative.html`~~ | — | ✅ Archived 2026-05-20 | Moved to `archive/public/test-v6-declarative.html` (git mv). Called broken `/api/v6/compile-declarative` (no longer exists). |
+| ~~Retire `public/test-v6.html`~~ | — | ✅ Archived 2026-05-20 | Moved to `archive/public/test-v6.html` (git mv). Called broken `/api/v6/generate-workflow-plan` + `/api/v6/compile-declarative` (no longer exist). |
+| ~~Retire orphaned V6 review/preview components~~ | — | ✅ Archived 2026-05-20 | Moved to `archive/components/v6/V6ReviewCustomizeUI.tsx` + `archive/components/v6/V6WorkflowPreview.tsx` (git mv). Last consumer was the now-stripped V6 Review Mode section. `components/v6/` directory is now empty. |
+| Delete Pipeline B HTTP endpoints | TBD | ⬜ Open (unblocked) | All 7 routes already tagged with `@deprecated` JSDoc — delete in one sweep: `/api/v6/generate-ir-semantic`, `/api/v6/generate-semantic-grounded`, `/api/v6/generate-semantic-plan`, `/api/v6/generate-ir-fast-path`, `/api/v6/generate-workflow-validated`, `/api/v6/ground-semantic-plan`, `/api/v6/formalize-to-ir`. |
+| Delete Pipeline B library code (after endpoints) | TBD | ⬜ Blocked on endpoints | `lib/agentkit/v6/semantic-plan/SemanticPlanGenerator.ts`, `IRFormalizer.ts`, `GroundingEngine.ts`, `formalization-system-v4.md`, `semantic-plan-system.md`. Plus retire WP-40 and WP-44 (Pipeline-B-prompt-specific) once library is gone. |
 | Decide on `NEXT_PUBLIC_USE_V6_AGENT_GENERATION` flag fate | TBD | ⬜ Open | Currently gates V4 (legacy generator) vs V6. If V4 codepath is to be retired too, this flag + the `/api/generate-agent-v4` endpoint + V4 library code can all go together. Separate decision from Pipeline B retirement. |
 
 ---

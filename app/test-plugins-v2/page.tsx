@@ -8,15 +8,6 @@ import { v4 as uuidv4 } from 'uuid';
 import { useDebugStream, DebugState, StepStatus } from '@/hooks/useDebugStream';
 import { DebugControls } from '@/components/debug/DebugControls';
 import { StepVisualizer } from '@/components/debug/StepVisualizer';
-import V6ReviewCustomizeUI, {
-  AmbiguityReport as V6AmbiguityReport,
-  UserDecisions as V6UserDecisions
-} from '@/components/v6/V6ReviewCustomizeUI';
-import V6WorkflowPreview, {
-  WorkflowStep as V6WorkflowStep,
-  UserDecision as V6UserDecision
-} from '@/components/v6/V6WorkflowPreview';
-import { useV6AgentGeneration } from '@/lib/utils/featureFlags';
 import type {
   ClarificationAnswer,
   StructuredSelectAnswer,
@@ -748,23 +739,6 @@ export default function TestPluginsPage() {
   const [generatedAgent, setGeneratedAgent] = useState<any>(null);
   const [isGeneratingAgent, setIsGeneratingAgent] = useState(false);
   const [agentGenerationError, setAgentGenerationError] = useState<string | null>(null);
-
-  // V6 Intent Validation state
-  const isV6FeatureFlagEnabled = useV6AgentGeneration();
-  const [v6FlowEnabled, setV6FlowEnabled] = useState(isV6FeatureFlagEnabled);
-  const [v6AmbiguityReport, setV6AmbiguityReport] = useState<V6AmbiguityReport | null>(null);
-  const [v6SemanticPlan, setV6SemanticPlan] = useState<{ goal: string; assumptions?: Array<{ id: string; assumption: string; confidence: number }> } | null>(null);
-  const [v6GroundedPlan, setV6GroundedPlan] = useState<any>(null);
-  const [v6UserDecisions, setV6UserDecisions] = useState<V6UserDecisions | null>(null);
-  const [v6Loading, setV6Loading] = useState(false);
-  const [v6Error, setV6Error] = useState<string | null>(null);
-  const [v6CompiledResult, setV6CompiledResult] = useState<any>(null);
-  const [v6ShowWorkflowPreview, setV6ShowWorkflowPreview] = useState(false);
-
-  // V6 Regeneration/feedback state
-  const [v6RegenerationCount, setV6RegenerationCount] = useState(0);
-  const [v6PreviousWorkflow, setV6PreviousWorkflow] = useState<any[] | null>(null);
-  const [v6FeedbackHistory, setV6FeedbackHistory] = useState<string[]>([]);
 
   // Enhanced Prompt Import state (for skipping to Phase 3)
   const [showEnhancedPromptImportModal, setShowEnhancedPromptImportModal] = useState(false);
@@ -1790,473 +1764,6 @@ export default function TestPluginsPage() {
     generateAgentV4();
   };
 
-  // V6 Intent Validation - Step 1: Generate semantic plan with grounding and ambiguity detection
-  const handleV6IntentValidation = async () => {
-    if (!enhancedPrompt) {
-      addDebugLog('error', 'No enhanced prompt available for V6 Intent Validation');
-      return;
-    }
-
-    setV6Loading(true);
-    setV6Error(null);
-    setV6AmbiguityReport(null);
-    setV6SemanticPlan(null);
-    setV6GroundedPlan(null);
-    setV6FlowEnabled(true);
-
-    try {
-      addDebugLog('info', 'Starting V6 Intent Validation (Phase 1+2 + Ambiguity Detection)...');
-
-      const correlationId = uuidv4();
-      const requestBody = {
-        enhanced_prompt: enhancedPrompt,
-        userId,
-        config: {
-          provider: selectedProvider,
-          model: selectedModel
-        }
-      };
-
-      const response = await fetch('/api/v6/generate-semantic-grounded', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-correlation-id': correlationId
-        },
-        body: JSON.stringify(requestBody)
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error || `HTTP ${response.status}`);
-      }
-
-      // Store results
-      setV6AmbiguityReport(data.ambiguity_report);
-      setV6SemanticPlan(data.semantic_plan);
-      setV6GroundedPlan(data.grounded_plan);
-
-      // Track in API communications
-      setApiCommunications(prev => [...prev, {
-        timestamp: new Date().toISOString(),
-        phase: 'V6-API1',
-        endpoint: '/api/v6/generate-semantic-grounded',
-        request: requestBody,
-        response: data
-      }]);
-
-      addDebugLog('success', `V6 Intent Validation complete - ${data.ambiguity_report?.must_confirm?.length || 0} items need confirmation`);
-
-    } catch (error: any) {
-      const errorMessage = error.message || 'Unknown error';
-      setV6Error(errorMessage);
-      addDebugLog('error', `V6 Intent Validation failed: ${errorMessage}`);
-    } finally {
-      setV6Loading(false);
-    }
-  };
-
-  // V6 Intent Validation - Step 2: Compile with user decisions
-  // Modified to accept optional feedback for regeneration
-  const handleV6CreateAgent = async (
-    decisions: V6UserDecisions,
-    feedback?: {
-      previous_workflow: any[]
-      user_feedback: string
-      feedback_history?: string[]
-    }
-  ) => {
-    if (!v6GroundedPlan) {
-      addDebugLog('error', 'No grounded plan available for V6 compilation');
-      return;
-    }
-
-    setV6Loading(true);
-    setV6Error(null);
-    setV6UserDecisions(decisions);
-
-    // Clear previous result when regenerating
-    if (feedback) {
-      setV6ShowWorkflowPreview(false);
-    }
-
-    try {
-      const isRegeneration = !!feedback;
-      addDebugLog('info', isRegeneration
-        ? `Regenerating workflow with feedback (attempt ${v6RegenerationCount + 1})...`
-        : 'Starting V6 Compilation with user decisions...'
-      );
-
-      const correlationId = uuidv4();
-      const requestBody = {
-        grounded_plan: v6GroundedPlan,
-        user_decisions: decisions,
-        enhanced_prompt: enhancedPrompt,
-        userId,
-        config: {
-          provider: selectedProvider,
-          model: selectedModel
-        },
-        // Include feedback for regeneration
-        ...(feedback && {
-          feedback: {
-            previous_workflow: feedback.previous_workflow,
-            user_feedback: feedback.user_feedback,
-            feedback_history: feedback.feedback_history,
-            regeneration_attempt: v6RegenerationCount + 1
-          }
-        })
-      };
-
-      const response = await fetch('/api/v6/compile-with-decisions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-correlation-id': correlationId
-        },
-        body: JSON.stringify(requestBody)
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error || `HTTP ${response.status}`);
-      }
-
-      // Update regeneration tracking
-      if (feedback) {
-        setV6RegenerationCount(prev => prev + 1);
-        setV6FeedbackHistory(prev => [...prev, feedback.user_feedback]);
-      }
-
-      // Store previous workflow before updating (for next potential regeneration)
-      if (v6CompiledResult?.workflow) {
-        setV6PreviousWorkflow(v6CompiledResult.workflow);
-      }
-
-      // Store compiled result and show workflow preview
-      setV6CompiledResult(data);
-      setV6ShowWorkflowPreview(true);
-
-      // Track in API communications
-      setApiCommunications(prev => [...prev, {
-        timestamp: new Date().toISOString(),
-        phase: feedback ? 'V6-API2-REGEN' : 'V6-API2',
-        endpoint: '/api/v6/compile-with-decisions',
-        request: requestBody,
-        response: data
-      }]);
-
-      addDebugLog('success', `V6 ${feedback ? 'Regeneration' : 'Compilation'} complete - Agent ready: ${data.agent?.agent_name || 'unnamed'}`);
-
-    } catch (error: any) {
-      const errorMessage = error.message || 'Unknown error';
-      setV6Error(errorMessage);
-      addDebugLog('error', `V6 ${feedback ? 'Regeneration' : 'Compilation'} failed: ${errorMessage}`);
-    } finally {
-      setV6Loading(false);
-    }
-  };
-
-  // Handler for V6 decisions change (for tracking/logging)
-  const handleV6DecisionsChange = (decisions: V6UserDecisions) => {
-    setV6UserDecisions(decisions);
-  };
-
-  // Reset V6 flow state
-  const resetV6Flow = () => {
-    setV6FlowEnabled(false);
-    setV6AmbiguityReport(null);
-    setV6SemanticPlan(null);
-    setV6GroundedPlan(null);
-    setV6UserDecisions(null);
-    setV6Error(null);
-    setV6CompiledResult(null);
-    setV6ShowWorkflowPreview(false);
-    // Reset regeneration state
-    setV6RegenerationCount(0);
-    setV6PreviousWorkflow(null);
-    setV6FeedbackHistory([]);
-  };
-
-  // V6 Workflow Preview handlers
-  const handleV6WorkflowGoBack = () => {
-    // Go back to the ambiguity review UI
-    setV6ShowWorkflowPreview(false);
-    setV6CompiledResult(null);
-  };
-
-  const handleV6WorkflowCopyJSON = () => {
-    if (v6CompiledResult) {
-      navigator.clipboard.writeText(JSON.stringify(v6CompiledResult, null, 2));
-      addDebugLog('success', 'V6 Compiled Result copied to clipboard');
-    }
-  };
-
-  const handleV6WorkflowApprove = () => {
-    // TODO: Implement actual agent saving logic
-    addDebugLog('success', 'Agent approved for saving (save logic not yet implemented)');
-    // For now, just show a success message
-    // In the future, this would call an API to persist the agent
-  };
-
-  // Handler for workflow regeneration with user feedback
-  const handleV6RequestChanges = (feedback: string) => {
-    if (!v6UserDecisions || !v6CompiledResult?.workflow) {
-      addDebugLog('error', 'Cannot regenerate: missing decisions or workflow');
-      return;
-    }
-
-    addDebugLog('info', `User requested changes: "${feedback.substring(0, 100)}${feedback.length > 100 ? '...' : ''}"`);
-
-    // Call compile with feedback
-    handleV6CreateAgent(v6UserDecisions, {
-      previous_workflow: v6CompiledResult.workflow,
-      user_feedback: feedback,
-      feedback_history: v6FeedbackHistory
-    });
-  };
-
-  // Transform V6 user decisions to preview format
-  // Uses v6AmbiguityReport to look up human-readable text for each decision
-  const getV6UserDecisionsForPreview = (): V6UserDecision[] => {
-    if (!v6UserDecisions) return [];
-
-    const decisions: V6UserDecision[] = [];
-
-    // Helper to format type as readable label
-    const formatTypeLabel = (type: string): string => {
-      return type
-        .replace(/_/g, ' ')
-        .replace(/\b\w/g, c => c.toUpperCase());
-    };
-
-    // Confirmed patterns - look up in must_confirm items
-    if (v6UserDecisions.confirmed_patterns) {
-      Object.entries(v6UserDecisions.confirmed_patterns).forEach(([id, selectedOptionId]) => {
-        // Find the must_confirm item by ID
-        const mustConfirmItem = v6AmbiguityReport?.must_confirm?.find(item => item.id === id);
-
-        if (mustConfirmItem) {
-          // Find the selected option to get its label
-          const selectedOption = mustConfirmItem.options?.find(opt => opt.id === selectedOptionId);
-          // Use description if available and meaningful, otherwise use title, then format the type
-          const label = mustConfirmItem.description ||
-                        (mustConfirmItem.title && mustConfirmItem.title !== formatTypeLabel(mustConfirmItem.type)
-                          ? mustConfirmItem.title
-                          : formatTypeLabel(mustConfirmItem.type));
-          decisions.push({
-            id,
-            label,
-            value: selectedOption?.label || selectedOptionId,
-            type: 'pattern'
-          });
-        } else {
-          // Fallback if item not found in report
-          decisions.push({
-            id,
-            label: id.replace(/_/g, ' ').replace(/layer\d+/i, '').trim(),
-            value: selectedOptionId as string,
-            type: 'pattern'
-          });
-        }
-      });
-    }
-
-    // Resolved ambiguities - can come from grounding_ambiguities OR must_confirm items (semantic_ambiguity/vague_language types)
-    if (v6UserDecisions.resolved_ambiguities) {
-      Object.entries(v6UserDecisions.resolved_ambiguities).forEach(([id, selectedOptionId]) => {
-        // First check if this is a must_confirm item (semantic_ambiguity or vague_language type)
-        const mustConfirmItem = v6AmbiguityReport?.must_confirm?.find(item => item.id === id);
-
-        if (mustConfirmItem) {
-          // This is a must_confirm item stored as resolved_ambiguity
-          const selectedOption = mustConfirmItem.options?.find(opt => opt.id === selectedOptionId);
-          const label = mustConfirmItem.description ||
-                        (mustConfirmItem.title && mustConfirmItem.title !== formatTypeLabel(mustConfirmItem.type)
-                          ? mustConfirmItem.title
-                          : formatTypeLabel(mustConfirmItem.type));
-          decisions.push({
-            id,
-            label,
-            value: selectedOption?.label || selectedOptionId,
-            type: 'ambiguity'
-          });
-        } else {
-          // Check grounding ambiguities
-          const ambiguityItem = v6AmbiguityReport?.grounding_ambiguities?.find(item => item.id === id);
-
-          if (ambiguityItem) {
-            // Find the selected option to get its label
-            const selectedOption = ambiguityItem.discovered_options?.find(opt => opt.id === selectedOptionId);
-            // Use description if available, otherwise use field name as label
-            const label = ambiguityItem.description || ambiguityItem.field || 'Ambiguity Resolution';
-            decisions.push({
-              id,
-              label,
-              value: selectedOption?.label || selectedOptionId,
-              type: 'ambiguity'
-            });
-          } else {
-            // Fallback if item not found in any report
-            decisions.push({
-              id,
-              label: id.replace(/_/g, ' ') || 'Ambiguity Resolution',
-              value: selectedOptionId as string,
-              type: 'ambiguity'
-            });
-          }
-        }
-      });
-    }
-
-    // Approved assumptions from semantic plan
-    if (v6UserDecisions.approved_assumptions && v6UserDecisions.approved_assumptions.length > 0) {
-      v6UserDecisions.approved_assumptions.forEach(assumptionId => {
-        // Find the assumption text from semantic plan or should_review items
-        const shouldReviewItem = v6AmbiguityReport?.should_review?.find(item =>
-          item.id === assumptionId || item.source_assumption_id === assumptionId
-        );
-        const looksGoodItem = v6AmbiguityReport?.looks_good?.find(item =>
-          item.id === assumptionId || item.source_assumption_id === assumptionId
-        );
-        const semanticAssumption = v6SemanticPlan?.assumptions?.find(a => a.id === assumptionId);
-
-        const assumptionText = shouldReviewItem?.assumption ||
-                               looksGoodItem?.assumption ||
-                               semanticAssumption?.assumption ||
-                               assumptionId;
-
-        // Truncate long assumptions for display
-        const shortLabel = assumptionText.length > 60
-          ? assumptionText.substring(0, 57) + '...'
-          : assumptionText;
-
-        decisions.push({
-          id: assumptionId,
-          label: shortLabel,
-          value: 'Approved',
-          type: 'assumption'
-        });
-      });
-    }
-
-    // Disabled assumptions
-    if (v6UserDecisions.disabled_assumptions && v6UserDecisions.disabled_assumptions.length > 0) {
-      v6UserDecisions.disabled_assumptions.forEach(assumptionId => {
-        const shouldReviewItem = v6AmbiguityReport?.should_review?.find(item =>
-          item.id === assumptionId || item.source_assumption_id === assumptionId
-        );
-        const looksGoodItem = v6AmbiguityReport?.looks_good?.find(item =>
-          item.id === assumptionId || item.source_assumption_id === assumptionId
-        );
-        const semanticAssumption = v6SemanticPlan?.assumptions?.find(a => a.id === assumptionId);
-
-        const assumptionText = shouldReviewItem?.assumption ||
-                               looksGoodItem?.assumption ||
-                               semanticAssumption?.assumption ||
-                               assumptionId;
-
-        // Truncate long assumptions for display
-        const shortLabel = assumptionText.length > 60
-          ? assumptionText.substring(0, 57) + '...'
-          : assumptionText;
-
-        decisions.push({
-          id: assumptionId,
-          label: shortLabel,
-          value: 'Disabled',
-          type: 'assumption'
-        });
-      });
-    }
-
-    // Edge case handling decisions
-    if (v6UserDecisions.edge_case_handling && Object.keys(v6UserDecisions.edge_case_handling).length > 0) {
-      Object.entries(v6UserDecisions.edge_case_handling).forEach(([edgeCaseId, selectedOption]) => {
-        // Edge cases might be stored with descriptive IDs
-        const label = edgeCaseId
-          .replace(/_/g, ' ')
-          .replace(/\b\w/g, c => c.toUpperCase());
-        decisions.push({
-          id: edgeCaseId,
-          label: `Edge Case: ${label}`,
-          value: selectedOption,
-          type: 'pattern'
-        });
-      });
-    }
-
-    return decisions;
-  };
-
-  // Convert pilot_steps from compiled result to WorkflowStep format for preview
-  // Actual DSL structure: { id, name, type, plugin, action, params, config, input, output_schema, on_error, steps }
-  const convertPilotStepsToWorkflowSteps = (pilotSteps: any[]): V6WorkflowStep[] => {
-    if (!pilotSteps || !Array.isArray(pilotSteps)) return [];
-
-    return pilotSteps.map((step, index) => {
-      // Determine the step type based on PILOT DSL step.type
-      let stepType: 'operation' | 'transform' | 'conditional' | 'scatter_gather' | 'control' = 'operation';
-
-      // Map PILOT DSL types to V6WorkflowStep types
-      const pilotType = step.type?.toLowerCase();
-      if (pilotType === 'loop' || pilotType === 'scatter' || pilotType === 'scatter_gather') {
-        stepType = 'scatter_gather';
-      } else if (pilotType === 'conditional' || pilotType === 'decision') {
-        stepType = 'conditional';
-      } else if (pilotType === 'transform' || pilotType === 'ai_processing') {
-        stepType = 'transform';
-      } else if (pilotType === 'parallel') {
-        stepType = 'scatter_gather'; // parallel is similar to scatter_gather for UI purposes
-      } else if (pilotType === 'action' || step.plugin) {
-        stepType = 'operation';
-      }
-
-      // Build the workflow step
-      const workflowStep: V6WorkflowStep = {
-        id: step.id || step.step_id || `step_${index + 1}`,
-        type: stepType,
-        plugin: step.plugin,
-        action: step.action,           // For action type: "read_range", "send_email"
-        operation: step.operation,     // For transform type: "filter", "rows_to_objects"
-        description: step.name,        // "name" field is the human-readable description
-        config: step.config,           // Transform config
-        inputs: step.params || (step.input ? { input: step.input } : step.config), // "params" for actions, "input" for transforms
-        outputs: step.output_schema ? { schema: 'defined' } : undefined,
-      };
-
-      // Handle parallel steps - nested steps in step.steps
-      if (pilotType === 'parallel' && step.steps) {
-        workflowStep.scatter = {
-          input: 'parallel execution',
-          itemVariable: 'task',
-          steps: convertPilotStepsToWorkflowSteps(step.steps),
-        };
-      }
-
-      // Handle scatter/loop steps
-      if ((pilotType === 'scatter' || pilotType === 'scatter_gather') && step.steps) {
-        workflowStep.scatter = {
-          input: step.input || 'items',
-          itemVariable: step.itemVariable || 'item',
-          steps: convertPilotStepsToWorkflowSteps(step.steps),
-        };
-      }
-
-      // Handle conditional branches
-      if (stepType === 'conditional' && step.branches) {
-        workflowStep.branches = step.branches.map((branch: any) => ({
-          condition: typeof branch.condition === 'object' ? JSON.stringify(branch.condition) : branch.condition,
-          steps: convertPilotStepsToWorkflowSteps(branch.steps || []),
-        }));
-      }
-
-      return workflowStep;
-    });
-  };
-
   // Import Enhanced Prompt JSON and skip to Phase 3
   const handleImportEnhancedPrompt = () => {
     setEnhancedPromptImportError(null);
@@ -2284,13 +1791,10 @@ export default function TestPluginsPage() {
       // Set phase to 3
       setCurrentPhase(3);
 
-      // Reset V6 flow state
-      resetV6Flow();
-
       // Clear other state
       setConversationHistory([{
         role: 'assistant',
-        content: `Enhanced Prompt imported successfully. You can now test V6 Intent Validation.`,
+        content: `Enhanced Prompt imported successfully.`,
         data: { imported: true, plan_title: parsed.plan_title }
       }]);
       setClarityScore(100); // Assume imported prompt is fully clarified
@@ -4338,43 +3842,38 @@ export default function TestPluginsPage() {
 
               {/* Action Buttons */}
               <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-                {/* Phase 4 buttons - hidden when V6 feature flag is enabled */}
-                {!isV6FeatureFlagEnabled && (
-                  <>
-                    <button
-                      onClick={() => processMessage(4)}
-                      disabled={isLoading}
-                      style={{
-                        padding: '12px 24px',
-                        backgroundColor: '#6f42c1',
-                        color: 'white',
-                        border: 'none',
-                        borderRadius: '3px',
-                        cursor: isLoading ? 'not-allowed' : 'pointer',
-                        fontSize: '16px',
-                        fontWeight: 'bold'
-                      }}
-                    >
-                      {isLoading ? 'Generating...' : '🔧 Generate Technical Workflow (Phase 4)'}
-                    </button>
-                    <button
-                      onClick={handleAcceptPlan}
-                      disabled={isLoading}
-                      style={{
-                        padding: '12px 24px',
-                        backgroundColor: '#28a745',
-                        color: 'white',
-                        border: 'none',
-                        borderRadius: '3px',
-                        cursor: isLoading ? 'not-allowed' : 'pointer',
-                        fontSize: '16px',
-                        fontWeight: 'bold'
-                      }}
-                    >
-                      Accept Plan (Skip Phase 4)
-                    </button>
-                  </>
-                )}
+                <button
+                  onClick={() => processMessage(4)}
+                  disabled={isLoading}
+                  style={{
+                    padding: '12px 24px',
+                    backgroundColor: '#6f42c1',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '3px',
+                    cursor: isLoading ? 'not-allowed' : 'pointer',
+                    fontSize: '16px',
+                    fontWeight: 'bold'
+                  }}
+                >
+                  {isLoading ? 'Generating...' : '🔧 Generate Technical Workflow (Phase 4)'}
+                </button>
+                <button
+                  onClick={handleAcceptPlan}
+                  disabled={isLoading}
+                  style={{
+                    padding: '12px 24px',
+                    backgroundColor: '#28a745',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '3px',
+                    cursor: isLoading ? 'not-allowed' : 'pointer',
+                    fontSize: '16px',
+                    fontWeight: 'bold'
+                  }}
+                >
+                  Accept Plan (Skip Phase 4)
+                </button>
                 <button
                   onClick={handleRefinePlan}
                   disabled={isLoading}
@@ -4408,210 +3907,7 @@ export default function TestPluginsPage() {
                 >
                   📥 Download JSON ({apiCommunications.length})
                 </button>
-                <button
-                  onClick={handleV6IntentValidation}
-                  disabled={isLoading || v6Loading}
-                  style={{
-                    padding: '12px 24px',
-                    backgroundColor: v6Loading ? '#ccc' : '#0d6efd',
-                    color: 'white',
-                    border: 'none',
-                    borderRadius: '3px',
-                    cursor: (isLoading || v6Loading) ? 'not-allowed' : 'pointer',
-                    fontSize: '16px',
-                    fontWeight: 'bold'
-                  }}
-                  title="Run V6 Intent Validation with 5-Layer Ambiguity Detection"
-                >
-                  {v6Loading ? 'Analyzing...' : '🔍 V6 Intent Validation'}
-                </button>
               </div>
-
-              {/* V6 Intent Validation Results */}
-              {v6FlowEnabled && (
-                <div style={{ marginTop: '20px' }}>
-                  {v6Error && (
-                    <div style={{
-                      padding: '15px',
-                      backgroundColor: '#f8d7da',
-                      border: '1px solid #dc3545',
-                      borderRadius: '5px',
-                      marginBottom: '15px'
-                    }}>
-                      <strong style={{ color: '#dc3545' }}>V6 Error:</strong> {v6Error}
-                      <button
-                        onClick={resetV6Flow}
-                        style={{
-                          marginLeft: '15px',
-                          padding: '5px 10px',
-                          backgroundColor: '#dc3545',
-                          color: 'white',
-                          border: 'none',
-                          borderRadius: '3px',
-                          cursor: 'pointer'
-                        }}
-                      >
-                        Reset V6 Flow
-                      </button>
-                    </div>
-                  )}
-
-                  {v6AmbiguityReport && !v6CompiledResult && (
-                    <div style={{
-                      border: '2px solid #0d6efd',
-                      borderRadius: '5px',
-                      backgroundColor: '#f0f7ff',
-                      padding: '15px'
-                    }}>
-                      <div style={{
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        alignItems: 'center',
-                        marginBottom: '15px'
-                      }}>
-                        <h3 style={{ margin: 0, color: '#0d6efd' }}>🔍 V6 Intent Validation Results</h3>
-                        <button
-                          onClick={resetV6Flow}
-                          style={{
-                            padding: '5px 10px',
-                            backgroundColor: '#6c757d',
-                            color: 'white',
-                            border: 'none',
-                            borderRadius: '3px',
-                            cursor: 'pointer',
-                            fontSize: '12px'
-                          }}
-                        >
-                          Close V6 Flow
-                        </button>
-                      </div>
-
-                      {/* Raw API Output Section - Collapsible */}
-                      <details style={{ marginBottom: '15px' }}>
-                        <summary style={{
-                          cursor: 'pointer',
-                          fontWeight: 'bold',
-                          color: '#6c757d',
-                          padding: '10px',
-                          backgroundColor: '#e9ecef',
-                          borderRadius: '3px'
-                        }}>
-                          📄 View Raw API Output (Debug)
-                        </summary>
-                        <div style={{
-                          marginTop: '10px',
-                          padding: '10px',
-                          backgroundColor: '#f8f9fa',
-                          borderRadius: '3px',
-                          border: '1px solid #dee2e6'
-                        }}>
-                          {v6SemanticPlan && (
-                            <details style={{ marginBottom: '10px' }}>
-                              <summary style={{ cursor: 'pointer', color: '#0d6efd' }}>
-                                Semantic Plan ({Object.keys(v6SemanticPlan).length} fields)
-                              </summary>
-                              <pre style={{
-                                backgroundColor: '#fff',
-                                padding: '10px',
-                                borderRadius: '3px',
-                                overflow: 'auto',
-                                fontSize: '11px',
-                                maxHeight: '300px',
-                                marginTop: '5px',
-                                border: '1px solid #dee2e6'
-                              }}>
-                                {JSON.stringify(v6SemanticPlan, null, 2)}
-                              </pre>
-                            </details>
-                          )}
-
-                          {v6GroundedPlan && (
-                            <details style={{ marginBottom: '10px' }}>
-                              <summary style={{ cursor: 'pointer', color: '#28a745' }}>
-                                Grounded Plan ({Object.keys(v6GroundedPlan).length} fields)
-                              </summary>
-                              <pre style={{
-                                backgroundColor: '#fff',
-                                padding: '10px',
-                                borderRadius: '3px',
-                                overflow: 'auto',
-                                fontSize: '11px',
-                                maxHeight: '300px',
-                                marginTop: '5px',
-                                border: '1px solid #dee2e6'
-                              }}>
-                                {JSON.stringify(v6GroundedPlan, null, 2)}
-                              </pre>
-                            </details>
-                          )}
-
-                          <details>
-                            <summary style={{ cursor: 'pointer', color: '#dc3545' }}>
-                              Ambiguity Report (Confidence: {(v6AmbiguityReport.overall_confidence * 100).toFixed(0)}%)
-                            </summary>
-                            <pre style={{
-                              backgroundColor: '#fff',
-                              padding: '10px',
-                              borderRadius: '3px',
-                              overflow: 'auto',
-                              fontSize: '11px',
-                              maxHeight: '300px',
-                              marginTop: '5px',
-                              border: '1px solid #dee2e6'
-                            }}>
-                              {JSON.stringify(v6AmbiguityReport, null, 2)}
-                            </pre>
-                          </details>
-                        </div>
-                      </details>
-
-                      <V6ReviewCustomizeUI
-                        ambiguityReport={v6AmbiguityReport}
-                        semanticPlan={v6SemanticPlan || undefined}
-                        onDecisionsChange={handleV6DecisionsChange}
-                        onCreateAgent={handleV6CreateAgent}
-                        isLoading={v6Loading}
-                      />
-                    </div>
-                  )}
-
-                  {v6ShowWorkflowPreview && v6CompiledResult && (
-                    <div style={{ marginTop: '15px' }}>
-                      <V6WorkflowPreview
-                        workflowSteps={convertPilotStepsToWorkflowSteps(v6CompiledResult.dsl?.workflow_steps || v6CompiledResult.workflow || [])}
-                        userDecisions={getV6UserDecisionsForPreview()}
-                        agentName={v6CompiledResult.dsl?.agent_name}
-                        onApprove={handleV6WorkflowApprove}
-                        onGoBack={handleV6WorkflowGoBack}
-                        onCopyJSON={handleV6WorkflowCopyJSON}
-                        isLoading={v6Loading}
-                        onRequestChanges={handleV6RequestChanges}
-                        regenerationCount={v6RegenerationCount}
-                        maxRegenerations={3}
-                      />
-
-                      {/* Raw JSON Details (collapsible) */}
-                      <details style={{ marginTop: '15px' }}>
-                        <summary style={{ cursor: 'pointer', fontWeight: 'bold', color: '#6c757d' }}>
-                          View Raw Compiled Result JSON
-                        </summary>
-                        <pre style={{
-                          backgroundColor: '#f8f9fa',
-                          padding: '15px',
-                          borderRadius: '3px',
-                          overflow: 'auto',
-                          fontSize: '12px',
-                          maxHeight: '400px',
-                          marginTop: '10px',
-                          border: '1px solid #e0e0e0'
-                        }}>
-                          {JSON.stringify(v6CompiledResult, null, 2)}
-                        </pre>
-                      </details>
-                    </div>
-                  )}
-                </div>
-              )}
             </div>
           )}
 
@@ -6182,8 +5478,8 @@ export default function TestPluginsPage() {
             </div>
 
             <p style={{ color: '#666', marginBottom: '15px', fontSize: '14px' }}>
-              Paste a Phase 3 Enhanced Prompt JSON to skip directly to testing. This allows you to test V6 Intent Validation
-              with existing prompts without going through Phase 1-2.
+              Paste a Phase 3 Enhanced Prompt JSON to skip directly to testing. This allows you to test Phase 4
+              workflow generation with existing prompts without going through Phase 1-2.
             </p>
 
             <div style={{
