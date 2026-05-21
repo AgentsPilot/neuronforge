@@ -619,25 +619,41 @@ export async function POST(req: NextRequest) {
 
     // 6.8. LAYER 2: Constrained Semantic Validation (LLM Detection + Deterministic Fixes)
     logger.info({ sessionId, agentId }, '[Layer 2] Running constrained semantic validation');
-    // Reuse ConstrainedSemanticValidator imported earlier at line 178
-    const semanticValidator = new ConstrainedSemanticValidator();
+    // Phase 6 — Calibration audit fix (G-CAL-4): reuse the early-detection
+    // validator instance from line 251 instead of constructing a second one.
+    // Each `ConstrainedSemanticValidator` runs an LLM detection pass, so
+    // duplicate instances doubled the token spend per calibration run.
+    const semanticValidator = semanticValidatorEarly;
 
-    // Get all plugin schemas for LLM detection
+    // Get ONLY plugin schemas for plugins used in this workflow (token optimization)
+    // Previously we loaded ALL plugin schemas which wasted 70-80% of input tokens
     const pluginSchemas = new Map();
     const PluginManagerV2 = (await import('@/lib/server/plugin-manager-v2')).default;
     const pluginManager = await PluginManagerV2.getInstance();
-    const allPlugins = pluginManager.getAllPluginDefinitions();
 
-    for (const [key, pluginDef] of allPlugins) {
-      pluginSchemas.set(key, {
-        name: pluginDef.plugin.name,
-        actions: Object.entries(pluginDef.actions).map(([actionKey, actionDef]) => ({
-          name: actionKey,
-          description: actionDef.description,
-          parameters: actionDef.parameters,
-          outputSchema: actionDef.output_schema
-        }))
-      });
+    const requiredPlugins = agent.plugins_required || [];
+    logger.info({
+      sessionId,
+      agentId,
+      requiredPlugins,
+      pluginCount: requiredPlugins.length
+    }, '[Layer 2] Loading only required plugin schemas for LLM detection');
+
+    for (const pluginKey of requiredPlugins) {
+      const pluginDef = pluginManager.getPluginDefinition(pluginKey);
+      if (pluginDef) {
+        pluginSchemas.set(pluginKey, {
+          name: pluginDef.plugin.name,
+          actions: Object.entries(pluginDef.actions).map(([actionKey, actionDef]) => ({
+            name: actionKey,
+            description: actionDef.description,
+            parameters: actionDef.parameters,
+            outputSchema: actionDef.output_schema
+          }))
+        });
+      } else {
+        logger.warn({ sessionId, pluginKey }, '[Layer 2] Plugin definition not found');
+      }
     }
 
     const semanticFixes = await semanticValidator.validateWorkflow(agent, pluginSchemas);
@@ -1004,9 +1020,67 @@ export async function POST(req: NextRequest) {
     let autoFixesApplied = 0;
     let currentAgent = agent; // Track agent state across iterations
     let allIssuesForUI: any[] = []; // Collect all issues for final UI display
+
+    // Phase 6 — Calibration audit fix (G-CAL-1): surface dry-run findings to the UI.
+    // Previously dryRunResult.issues was only logged — critical issues silently
+    // disappeared from the user-visible calibration report. Now we promote
+    // critical + high severity into allIssuesForUI so the user actually sees them.
+    // Also flag empty-data-processing results as a high-severity issue.
+    if (dryRunResult.issues && dryRunResult.issues.length > 0) {
+      for (const issue of dryRunResult.issues) {
+        // Drop only the lowest severity tier to avoid noise; surface everything else.
+        if (issue.severity === 'low') continue;
+        allIssuesForUI.push({
+          source: 'dry_run',
+          type: issue.type,
+          severity: issue.severity,
+          description: issue.description,
+          details: issue.details,
+          suggested_fix: issue.suggestedFix,
+        });
+      }
+      logger.info({
+        sessionId,
+        agentId,
+        surfacedFromDryRun: dryRunResult.issues.filter(i => i.severity !== 'low').length,
+      }, '[G-CAL-1] Dry-run issues promoted to user-visible report');
+    }
+    if (dryRunResult.success && dryRunResult.isEmpty && dryRunResult.workflowType === 'data-processing') {
+      allIssuesForUI.push({
+        source: 'dry_run',
+        type: 'empty_result',
+        severity: 'high',
+        description: 'Workflow returned empty results in a data-processing flow — likely a type mismatch or missing field extraction.',
+        details: { finalOutput: dryRunResult.finalOutput },
+      });
+    }
     const validator = new WorkflowValidator();
     let finalValidationRunCount = 0; // Track final validation runs to prevent infinite loops
     const MAX_FINAL_VALIDATION_RUNS = 2;
+
+    // Surface non-autoFixable structural issues to the UI
+    // These are issues that require user attention (e.g., broken variable references)
+    if (structuralIssues && structuralIssues.length > 0) {
+      const nonFixableStructuralIssues = structuralIssues.filter((i: any) => !i.autoFixable);
+      if (nonFixableStructuralIssues.length > 0) {
+        for (const issue of nonFixableStructuralIssues) {
+          allIssuesForUI.push({
+            source: 'structural_repair',
+            type: issue.type,
+            severity: issue.severity || 'medium',
+            description: issue.description,
+            stepId: issue.stepId,
+            details: issue,
+            suggested_fix: null
+          });
+        }
+        logger.warn({
+          sessionId,
+          agentId,
+          nonFixableCount: nonFixableStructuralIssues.length
+        }, '[StructuralRepair] Non-autoFixable issues surfaced to UI');
+      }
+    }
 
     // Merge input_schema default values into inputValues for fields not provided
     let mergedInputValues = { ...inputValues };
@@ -3719,6 +3793,35 @@ export async function POST(req: NextRequest) {
       finalExecutionId: finalResult?.executionId
     }, 'Auto-calibration loop completed');
 
+    // Phase 6 — Calibration audit fix (G-CAL-3): non-convergence signal.
+    // If the auto-calibration loop hit the iteration cap without converging,
+    // surface a top-level issue so the user sees "calibration could not
+    // converge after N iterations" instead of receiving a silently-incomplete
+    // workflow as though it were ready.
+    if (loopIteration >= MAX_ITERATIONS && allIssuesForUI.length > 0) {
+      allIssuesForUI.push({
+        source: 'calibration_loop',
+        type: 'non_convergence',
+        severity: 'high',
+        description:
+          `Auto-calibration did not converge after ${MAX_ITERATIONS} iterations. ` +
+          `Some issues could not be auto-fixed; please review and resolve them manually before running this workflow.`,
+        details: {
+          totalIterations: loopIteration,
+          maxIterations: MAX_ITERATIONS,
+          autoFixesApplied,
+          remainingIssueCount: allIssuesForUI.length,
+        },
+      });
+      logger.warn({
+        sessionId,
+        agentId,
+        totalIterations: loopIteration,
+        maxIterations: MAX_ITERATIONS,
+        remainingIssueCount: allIssuesForUI.length,
+      }, '[G-CAL-3] Auto-calibration did not converge — surfacing non-convergence issue to user');
+    }
+
     // 8. Process remaining issues that require user input
     logger.info({
       sessionId,
@@ -4095,6 +4198,19 @@ export async function POST(req: NextRequest) {
 
     logger.info({ sessionId, agentId }, 'Batch calibration completed successfully');
 
+    // Phase 6 — User-facing translation boundary.
+    // Convert every raw issue object into plain-English UserFacingIssue
+    // BEFORE returning to the client. The UI for non-technical users will
+    // never see step IDs, error codes, schema paths, etc. Raw payloads
+    // remain in calibration_history (line 4133 above) for support/debug.
+    // See: lib/pilot/shadow/userFacing.ts
+    const { toUserFacingList } = await import('@/lib/pilot/shadow/userFacing');
+    const userFacingIssues = {
+      critical: toUserFacingList(prioritized.critical || []),
+      warnings: toUserFacingList(prioritized.warnings || []),
+      autoRepairs: toUserFacingList(prioritized.autoRepairs || []),
+    };
+
     // 11. Return results
     return NextResponse.json({
       success: true,
@@ -4104,10 +4220,10 @@ export async function POST(req: NextRequest) {
         iterations: loopIteration,
         autoFixesApplied,
         message: autoFixesApplied > 0
-          ? `Automatically fixed ${autoFixesApplied} technical issue(s) across ${loopIteration} calibration round(s)`
-          : 'No auto-fixable issues found'
+          ? `We took care of ${autoFixesApplied} thing${autoFixesApplied === 1 ? '' : 's'} for you while testing your workflow.`
+          : 'Everything looked good while we tested.'
       },
-      issues: prioritized,
+      issues: userFacingIssues,
       summary: {
         total: summary.total,
         critical: summary.critical,

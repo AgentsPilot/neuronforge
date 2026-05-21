@@ -753,6 +753,15 @@ export class StepExecutor {
       context
     );
 
+    // Phase 6 — Tier 3 Fix #10: inject an idempotency key into the params.
+    // Stable across retries of the same logical action invocation, distinct
+    // across loop/scatter iterations. Plugin executors that want idempotent
+    // retries can read `params._idempotency_key` and pass it to their API
+    // (Stripe `Idempotency-Key` header, Slack `client_msg_id`, etc.).
+    // Plugins that don't read it ignore it — zero behavior change.
+    // See workplan: docs/workplans/idempotency-keys-per-plugin-action.md
+    transformedParams._idempotency_key = this.deriveIdempotencyKey(context, step);
+
     // Log transformed params for debugging plugin execution
     logger.debug({
       stepId: step.id,
@@ -1087,6 +1096,57 @@ export class StepExecutor {
       logger.warn({ err: error, pluginName, actionName }, 'Parameter transformation failed (non-critical)');
       return params;  // Return original params if transformation fails
     }
+  }
+
+  /**
+   * Derive a stable idempotency key for a plugin action invocation
+   * (Phase 6 — Tier 3 Fix #10).
+   *
+   * Properties of the returned key:
+   *   • **Stable across retries** — `ErrorRecovery.executeWithRetry` wraps the
+   *     ENTIRE step execution and retries on transient failures. Within a
+   *     single retry chain, this method is called multiple times with the same
+   *     `context` and `step`, so the key is identical for every attempt.
+   *   • **Unique across iterations** — when a step runs inside a loop or
+   *     scatter-gather body, the iteration/scatter index is appended so each
+   *     logical invocation has a distinct key.
+   *   • **Debug-friendly** — the key contains the executionId and stepId, so
+   *     logs and audit events can correlate to it.
+   *
+   * Key format:
+   *   `${executionId}:${stepId}[:iter=N][:scatter=N]`
+   *
+   * Plugin executors that want idempotent retries can read
+   * `params._idempotency_key` and use it as their API's idempotency
+   * mechanism (Stripe `Idempotency-Key` header, Slack `client_msg_id`,
+   * a UPSERT primary key, etc.). Strip the field from `params` before
+   * forwarding to APIs that reject unknown keys.
+   *
+   * Plugins that don't read it ignore it — zero behavior change.
+   */
+  private deriveIdempotencyKey(context: ExecutionContext, step: ActionStep): string {
+    const parts: string[] = [context.executionId, step.id];
+
+    // Loop context: ParallelExecutor.executeLoopIteration sets
+    //   variables.loop = { item, index, iteration }
+    const loopVar = context.getVariable('loop');
+    if (loopVar && typeof loopVar === 'object' && typeof loopVar.index === 'number') {
+      parts.push(`iter=${loopVar.index}`);
+    }
+
+    // Scatter context: ParallelExecutor.executeScatterItem sets
+    //   variables.index = <scatter item index>
+    // (only when not inside a loop, since both write `index`; loop has
+    //  precedence via the loop.index check above, but we add scatter
+    //  separately to disambiguate.)
+    if (!loopVar) {
+      const scatterIndex = context.getVariable('index');
+      if (typeof scatterIndex === 'number') {
+        parts.push(`scatter=${scatterIndex}`);
+      }
+    }
+
+    return parts.join(':');
   }
 
   /**
@@ -2420,6 +2480,7 @@ Respond ONLY with the JSON array. No markdown, no explanation, no code blocks.`;
         break;
 
       case 'map':
+      case 'select':  // 'select' is an alias for 'map' - commonly used for field extraction
         result = this.transformMap(data, effectiveConfig, context);
         break;
 
@@ -2617,6 +2678,73 @@ Respond ONLY with the JSON array. No markdown, no explanation, no code blocks.`;
         }
         return undefined;
       }).filter(v => v !== undefined);
+    }
+
+    // Mode 3b: fields — select multiple fields from each object (for 'select' operation)
+    // Example: config.fields = ["name", "email", "date"] → items.map(item => {name: item.name, email: item.email, date: item.date})
+    // Also handles config.fields as object wrapper: { rows: [...], range: "...", ... } → return the wrapper object
+    if (config && config.fields !== undefined) {
+      // If fields contains the actual data (e.g., from a compiled step that wrapped data in fields)
+      if (Array.isArray(config.fields)) {
+        // fields is an array of field names to select from each item in data
+        const fieldNames = config.fields as string[];
+        logger.info({ fields: fieldNames, itemCount: data.length }, '[transformMap] Using fields array selection');
+        return data.map(item => {
+          if (typeof item === 'object' && item !== null) {
+            const selected: Record<string, any> = {};
+            for (const field of fieldNames) {
+              selected[field] = item[field];
+            }
+            return selected;
+          }
+          return item;
+        });
+      } else if (typeof config.fields === 'object' && config.fields !== null) {
+        // fields is an object - this creates a wrapper with the resolved values
+        // Example: { rows: "{{step2.data}}", range: "{{step1.range}}" }
+        // After resolution: { rows: [...objects...], range: "A:G" }
+        // The variables have already been resolved, so return the wrapper as-is
+
+        const wrapper = config.fields as Record<string, any>;
+
+        // ✅ AUTO-CONVERT: If wrapper.rows is a 2D array (from Google Sheets), convert to objects
+        // Google Sheets returns [[header1, header2, ...], [val1, val2, ...], ...]
+        // We need to convert to [{header1: val1, header2: val2, ...}, ...]
+        if (Array.isArray(wrapper.rows) && wrapper.rows.length > 0 && Array.isArray(wrapper.rows[0])) {
+          logger.info({
+            headerCount: wrapper.rows[0].length,
+            dataRowCount: wrapper.rows.length - 1
+          }, '[transformMap] Detected 2D array in wrapper.rows - auto-converting to objects');
+
+          const headers = wrapper.rows[0] as string[];
+          const dataRows = wrapper.rows.slice(1);
+
+          const convertedRows = dataRows.map((row: any[]) => {
+            const obj: Record<string, any> = {};
+            headers.forEach((header: string, index: number) => {
+              // Normalize header names: trim whitespace, convert to lowercase for consistent key matching
+              const key = (header || `column_${index}`).toString().trim().toLowerCase();
+              obj[key] = row[index] !== undefined ? row[index] : null;
+            });
+            return obj;
+          });
+
+          // Return the full wrapper with converted rows
+          logger.info({
+            wrapperKeys: Object.keys(wrapper),
+            rowCount: convertedRows.length
+          }, '[transformMap] Returning wrapper object with converted rows');
+          return { ...wrapper, rows: convertedRows };
+        }
+
+        // Return the wrapper object as-is (rows are already objects or no rows field)
+        logger.info({
+          wrapperKeys: Object.keys(wrapper),
+          hasRows: Array.isArray(wrapper.rows),
+          rowCount: Array.isArray(wrapper.rows) ? wrapper.rows.length : 0
+        }, '[transformMap] Returning wrapper object');
+        return wrapper;
+      }
     }
 
     // Mode 4: output_schema with custom_code — auto-map fields by name matching
@@ -2861,11 +2989,16 @@ Respond ONLY with the JSON array. No markdown, no explanation, no code blocks.`;
           // Apply expression to each item individually
           const literalType = isPerItemArrayLiteral ? 'array' : 'object';
           console.log(`🔍 [transformMap] Detected per-item ${literalType} literal - applying to each row`);
+          // Phase 6 — Eval Audit Phase A: tag this log as an eval-path use so
+          // production telemetry can count how often the `expression` branch
+          // is hit. See: docs/workplans/audit-new-function-eval-usage.md
           logger.info({
-            expression: resolvedExpression.slice(0, 100),
+            mode: 'expression_per_item',
+            eval_path: true,
+            expression: resolvedExpression.slice(0, 200),
             itemCount: data.length,
             literalType
-          }, `Applying per-item ${literalType} literal expression to each row`);
+          }, `[transformMap] Using JS expression evaluation (per-item ${literalType} literal)`);
 
           return data.map(row => {
             const evalFn = new Function('item', `return ${resolvedExpression}`);
@@ -2874,6 +3007,16 @@ Respond ONLY with the JSON array. No markdown, no explanation, no code blocks.`;
         }
 
         // The expression operates on the whole array, so we evaluate it once
+        // Phase 6 — Eval Audit Phase A: telemetry for the whole-array eval path
+        // (previously had NO log, so production usage was invisible).
+        logger.info({
+          mode: 'expression_whole_array',
+          eval_path: true,
+          expression: resolvedExpression.slice(0, 200),
+          dataIsArray: Array.isArray(data),
+          dataLength: Array.isArray(data) ? data.length : undefined
+        }, '[transformMap] Using JS expression evaluation (whole-array)');
+
         const evalFn = new Function('item', `return ${resolvedExpression}`);
         const result = evalFn(data);
 
@@ -5864,8 +6007,8 @@ Respond with a JSON object containing the extracted field values.`;
     }
 
     // Get the execution summary collector from the pilot instance (if available)
-    // ExecutionContext does not declare executionSummaryCollector — it is dynamically attached by the Pilot engine at runtime, so `any` cast is required
-    const collector = (context as any).executionSummaryCollector as ExecutionSummaryCollector | null;
+    // Phase 6 — Tier 1 Fix #3: lives on context.scope (no more `as any` cast)
+    const collector = context.scope.executionSummaryCollector;
     logger.debug({ collectorAvailable: !!collector }, 'Checked for execution summary collector');
     if (!collector) {
       logger.debug('No execution summary collector found on context');

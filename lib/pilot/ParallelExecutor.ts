@@ -300,7 +300,26 @@ export class ParallelExecutor {
     // Gather: Aggregate only successful results
     const gatheredResult = this.gatherResults(successResults, gather.operation, gather.reduceExpression);
 
-    // Attach error metadata to the result for reporting
+    // Phase 6 — Post-audit cleanup (G2): scatter-failure metadata.
+    //
+    // Previously this attached `_scatter_metadata` as a non-numeric property on
+    // the gathered array. That property does NOT survive JSON.stringify, so
+    // the metadata was effectively lost when WorkflowPilot persisted the
+    // StepOutput to Supabase.
+    //
+    // Now: record the metadata on `context.scope.scatterPartialFailures`
+    // (which IS serialization-friendly and reachable by ExecutionSummaryCollector
+    // for calibration runs) AND keep the array-attached property for any
+    // existing in-process consumers that read it.
+    if (errorCount > 0) {
+      context.scope.scatterPartialFailures.push({
+        stepId: step.id,
+        totalItems,
+        successCount,
+        errorCount,
+        errors: errorResults.map(e => ({ error: e.error, item: e.item })),
+      });
+    }
     if (Array.isArray(gatheredResult)) {
       (gatheredResult as any)._scatter_metadata = {
         total_items: totalItems,
@@ -518,6 +537,47 @@ export class ParallelExecutor {
       // Without this merge, transform steps can't access both original and AI-extracted fields
       let mergedResult: any;
 
+      // ============================================================
+      // Phase 6 — Tier 2 Fix #3: explicit gather.shape (when declared)
+      // bypasses the heuristic entirely. See workplan:
+      // docs/workplans/explicit-scatter-gather-output-shape.md
+      // ============================================================
+      const explicitShape = scatterStep.gather?.shape;
+      const explicitShapeField = scatterStep.gather?.shapeField;
+
+      if (explicitShape) {
+        mergedResult = this.applyExplicitGatherShape(
+          explicitShape,
+          explicitShapeField,
+          item,
+          itemResults,
+          steps,
+          scatterStep
+        );
+        return {
+          result: mergedResult,
+          tokensUsed: itemContext.totalTokensUsed ?? 0,
+          executionTime: itemContext.totalExecutionTime ?? 0,
+          completedSteps: itemContext.completedSteps ?? [],
+        };
+      }
+
+      if (parentContext.isScatterExplicitShapeRequired()) {
+        throw new ExecutionError(
+          `Scatter-gather step ${scatterStep.id}: gather.shape is required but not specified. ` +
+          `Set one of: 'step_only', 'merge_with_item', 'merge_as_named_array', 'item_only'.`,
+          scatterStep.id,
+          { errorCode: 'SCATTER_SHAPE_REQUIRED' }
+        );
+      }
+
+      // ============================================================
+      // LEGACY HEURISTIC PATH — unchanged from before this fix.
+      // Runs only when gather.shape is absent AND the require-explicit
+      // flag is off (the default). When gather.shape IS declared, the
+      // block above already returned.
+      // ============================================================
+      //
       // WP-14 shared detection: an extraction-like step is one whose output_schema
       // carries structured extracted data that should stand alone (no merge with
       // intermediate fetch outputs or the original iteration item). Merging those
@@ -638,6 +698,25 @@ export class ParallelExecutor {
         completedSteps: itemContext.completedSteps ?? [],
       };
     } catch (error: any) {
+      // Phase 6 — Tier 2 Fix #4: honor runMode for scatter item failures.
+      // The documented contract is "production = stop on first error". The
+      // previous behavior silently swallowed item failures regardless of
+      // mode, hiding them in non-serializable _scatter_metadata.
+      //
+      // production           → re-throw, fail fast (matches the contract)
+      // calibration / batch  → swallow + tag (today's behavior preserved so
+      //                         calibration can surface as many issues as
+      //                         possible without halting)
+      //
+      // See workplan: docs/workplans/runmode-into-scatter-failure-handling.md
+      if (parentContext.runMode === 'production') {
+        logger.warn(
+          { itemIndex: index, error: error.message, runMode: parentContext.runMode },
+          'Scatter item failed in production mode — re-throwing to fail fast'
+        );
+        throw error;
+      }
+
       logger.warn({ itemIndex: index, error: error.message }, 'Scatter item failed');
       return {
         result: {
@@ -820,9 +899,19 @@ export class ParallelExecutor {
   }
 
   /**
-   * Execute single loop iteration
+   * Execute single loop iteration.
    *
-   * Wave 8 Fix: Returns token metrics for proper tracking
+   * Wave 8 Fix: Returns token metrics for proper tracking.
+   *
+   * Reference semantics for downstream steps after the loop completes
+   * (see Phase 6 — Tier 2 Fix #1):
+   *   • `{{loopId.data}}` — array of aggregated iteration results (always works).
+   *   • `{{innerStepId_iteration<N>.data}}` — that specific iteration's output
+   *     (canonical per-iteration namespace; always written, regardless of flag).
+   *   • `{{innerStepId.data}}` — DEPRECATED. Today, when
+   *     `pilot_loop_inner_step_overwrite_disabled` is OFF, it silently resolves
+   *     to the LAST iteration. When the flag is ON, it throws (the bug surfaces
+   *     instead of being papered over). Use one of the two forms above.
    */
   private async executeLoopIteration(
     item: any,
@@ -877,11 +966,22 @@ export class ParallelExecutor {
         // Collect result
         iterationResults[step.id] = output.data;
 
-        // Propagate step output to parent context so subsequent steps can reference it
-        // Store both the namespaced version (stepId_iterationN) and the latest version (stepId)
+        // Propagate step output to parent context so subsequent steps can reference it.
+        // The namespaced version (stepId_iterationN) is ALWAYS written — it is the
+        // canonical per-iteration reference.
         const namespacedStepId = `${step.id}_iteration${index}`;
         parentContext.setStepOutput(namespacedStepId, output);
-        parentContext.setStepOutput(step.id, output); // Latest iteration overwrites previous
+
+        if (parentContext.isLoopInnerOverwriteDisabled()) {
+          // Phase 6 — Tier 2 Fix #1: do NOT pollute parentContext.stepOutputs
+          // with the bare step.id (which would make {{innerStepId.data}} silently
+          // resolve to only the last iteration). Mark completion separately so
+          // UI status tracking still works.
+          parentContext.markStepCompletion(step.id, output.metadata.success);
+        } else {
+          // Legacy behavior preserved when the flag is off.
+          parentContext.setStepOutput(step.id, output); // Latest iteration overwrites previous
+        }
 
         // If step failed and continueOnError is false, break
         if (!output.metadata.success && !loopStep.continueOnError) {
@@ -952,6 +1052,98 @@ export class ParallelExecutor {
   /**
    * Chunk array for parallel execution with concurrency limit
    */
+  /**
+   * Apply an explicit gather.shape policy to produce the per-item output.
+   * Phase 6 — Tier 2 Fix #3. Deterministic: same inputs always produce the
+   * same shape regardless of step metadata (ai_type, output_schema, etc.).
+   *
+   * @param shape         — one of 'step_only' | 'merge_with_item' | 'merge_as_named_array' | 'item_only'
+   * @param shapeField    — required when shape === 'merge_as_named_array'
+   * @param item          — the original iteration item
+   * @param itemResults   — map of stepId → step's `output.data` for this iteration
+   * @param steps         — the scatter body steps (used to find the last one)
+   * @param scatterStep   — for error reporting
+   *
+   * See workplan: docs/workplans/explicit-scatter-gather-output-shape.md
+   */
+  private applyExplicitGatherShape(
+    shape: 'step_only' | 'merge_with_item' | 'merge_as_named_array' | 'item_only',
+    shapeField: string | undefined,
+    item: any,
+    itemResults: Record<string, any>,
+    steps: WorkflowStep[],
+    scatterStep: ScatterGatherStep
+  ): any {
+    const stepIds = Object.keys(itemResults);
+
+    // Pick the "primary" step data for shapes that operate on one step's output.
+    // For single-step bodies, that's the only step. For multi-step bodies,
+    // it's the LAST step in the declared order (the canonical terminal step).
+    const primaryStepId = steps.length > 0
+      ? steps[steps.length - 1].id
+      : stepIds[stepIds.length - 1];
+    const primaryStepData = primaryStepId != null ? itemResults[primaryStepId] : undefined;
+
+    switch (shape) {
+      case 'step_only':
+        // Drop the item, return only the (last) step's data.
+        return primaryStepData;
+
+      case 'merge_with_item': {
+        // {...item, ...all-object-step-outputs-in-order}. For single-step bodies,
+        // this is exactly {...item, ...stepData}. For multi-step bodies, it folds
+        // every object-shaped step output into the item (legacy multi-step flatten,
+        // but now opt-in via the explicit shape).
+        if (typeof item !== 'object' || item === null || Array.isArray(item)) {
+          // If item isn't a mergeable object, there's nothing meaningful to merge into.
+          // Return primary step data to avoid silently dropping it.
+          return primaryStepData;
+        }
+        let merged: Record<string, any> = { ...item };
+        for (const id of stepIds) {
+          const data = itemResults[id];
+          if (data && typeof data === 'object' && !Array.isArray(data)) {
+            merged = { ...merged, ...data };
+          }
+        }
+        return merged;
+      }
+
+      case 'merge_as_named_array': {
+        if (!shapeField) {
+          throw new ExecutionError(
+            `Scatter-gather step ${scatterStep.id}: gather.shape = 'merge_as_named_array' ` +
+            `requires gather.shapeField to be set (e.g. shapeField: "rows").`,
+            scatterStep.id,
+            { errorCode: 'SCATTER_SHAPE_FIELD_REQUIRED' }
+          );
+        }
+        const itemObj = (typeof item === 'object' && item !== null && !Array.isArray(item))
+          ? item
+          : {};
+        return {
+          ...itemObj,
+          [shapeField]: primaryStepData,
+        };
+      }
+
+      case 'item_only':
+        // Drop all step outputs; return the original item.
+        return item;
+
+      default: {
+        // Unreachable given the TS union, but defensive in case a hand-authored
+        // DSL slips through with a bad value.
+        const _exhaustive: never = shape;
+        throw new ExecutionError(
+          `Scatter-gather step ${scatterStep.id}: unknown gather.shape value: ${String(_exhaustive)}`,
+          scatterStep.id,
+          { errorCode: 'SCATTER_SHAPE_UNKNOWN' }
+        );
+      }
+    }
+  }
+
   private chunkArray<T>(array: T[], size: number): T[][] {
     const chunks: T[][] = [];
     for (let i = 0; i < array.length; i += size) {

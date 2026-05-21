@@ -23,7 +23,7 @@ import {
   fillParameterValues,
   Stage2CompleteWorkflow
 } from './stage2-parameter-filler';
-import { validateWorkflowStructure } from '../pilot/schema/runtime-validator';
+import { validateWorkflowStructure } from '../pilot/schema/workflow-structure-validator';
 import { PluginManagerV2 } from '../server/plugin-manager-v2';
 import { repairWorkflow } from './self-healing-repair';
 
@@ -629,7 +629,7 @@ async function validateStage2Parameters(
     }
   }
 
-  // 5. Use existing validateWorkflowStructure from runtime-validator
+  // 5. Use existing validateWorkflowStructure from workflow-structure-validator
   try {
     const validationResult = validateWorkflowStructure(complete.workflow_steps);
 

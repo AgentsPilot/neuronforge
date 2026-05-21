@@ -17,6 +17,7 @@ import type {
   Agent,
 } from './types';
 import { ExecutionContext } from './ExecutionContext';
+import { SystemConfigService } from '@/lib/services/SystemConfigService';
 import { ExecutionService } from '@/lib/services/ExecutionService';
 import { ExecutionResultsBuilder } from './ExecutionResultsBuilder';
 import { MetricsCollector } from './MetricsCollector';
@@ -752,6 +753,39 @@ export class StateManager {
     const runMode = (data.run_mode as 'calibration' | 'batch_calibration' | 'production') || 'production';
     const isBatchCalibration = runMode === 'batch_calibration';
 
+    // Phase 6 — Tier 1 Fix #2 + Tier 2 Fixes #1, #2 & #3: re-derive runtime
+    // behavior flags on resume so resumed executions continue with the same
+    // gating as the original. SystemConfig is the source of truth — flags
+    // aren't persisted per execution.
+    const [
+      strictVariableResolution,
+      loopInnerOverwriteDisabled,
+      conditionalCoercionEnabled,
+      scatterExplicitShapeRequired,
+    ] = await Promise.all([
+      SystemConfigService.getBoolean(
+        this.supabase,
+        'pilot_strict_variable_resolution_enabled',
+        false
+      ),
+      SystemConfigService.getBoolean(
+        this.supabase,
+        'pilot_loop_inner_step_overwrite_disabled',
+        false
+      ),
+      SystemConfigService.getBoolean(
+        this.supabase,
+        'pilot_conditional_type_coercion_enabled',
+        false
+      ),
+      SystemConfigService.getBoolean(
+        this.supabase,
+        'pilot_scatter_explicit_shape_required',
+        false
+      ),
+    ]);
+    const isStrictResolution = strictVariableResolution && runMode === 'production';
+
     // Reconstruct ExecutionContext from checkpoint
     const context = new ExecutionContext(
       data.id,
@@ -759,7 +793,12 @@ export class StateManager {
       data.user_id,
       data.session_id,
       data.input_values || {},
-      isBatchCalibration
+      isBatchCalibration,
+      isStrictResolution,
+      loopInnerOverwriteDisabled, // Phase 6 — Tier 2 Fix #1
+      conditionalCoercionEnabled, // Phase 6 — Tier 2 Fix #2
+      scatterExplicitShapeRequired, // Phase 6 — Tier 2 Fix #3
+      runMode // Phase 6 — Tier 2 Fix #4: resumed exec keeps its original runMode
     );
 
     // Restore state

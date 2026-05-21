@@ -551,7 +551,7 @@ export class ExecutionGraphCompiler {
     let pilotOperation = this.chooseTransformOperation(transform, formats, nodeId, ctx)
 
     // STEP 5: Validate against PILOT runtime-supported operations
-    // This list comes from lib/pilot/schema/runtime-validator.ts and lib/pilot/StepExecutor.ts
+    // This list comes from lib/pilot/schema/workflow-structure-validator.ts and lib/pilot/StepExecutor.ts
     const validPilotOps = [
       'select',  // D-B18: aliased to map at compile time
       'custom',  // D-B18: aliased to map at compile time

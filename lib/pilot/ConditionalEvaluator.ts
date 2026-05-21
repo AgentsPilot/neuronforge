@@ -30,27 +30,39 @@ import { ExecutionContext } from './ExecutionContext';
 
 export class ConditionalEvaluator {
   /**
-   * Evaluate condition against execution context
+   * Evaluate condition against execution context.
+   *
+   * Phase 6 — Tier 2 Fix #2: reads `context.isConditionalCoercionEnabled()`
+   * once at the top and threads the resulting `coerce` boolean through the
+   * private helper chain. When true, ordering operators (`>`, `>=`, `<`, `<=`)
+   * coerce numeric-looking strings to numbers and date-like strings to
+   * timestamps before comparing. Equality operators are unaffected.
+   *
+   * The flag is passed as a method-local parameter (not stored on the
+   * evaluator instance) so that a shared ConditionalEvaluator can serve
+   * multiple concurrent executions without state races.
    */
   evaluate(condition: Condition, context: ExecutionContext): boolean {
     if (!condition) {
       return true;  // No condition = always true
     }
 
+    const coerce = context.isConditionalCoercionEnabled();
+
     try {
       // Simple condition: { field: "step1.data.score", operator: ">", value: 70 }
       if (isSimpleCondition(condition)) {
-        return this.evaluateSimpleCondition(condition, context);
+        return this.evaluateSimpleCondition(condition, context, coerce);
       }
 
       // Complex condition: { and: [...], or: [...], not: {...} }
       if (isComplexCondition(condition)) {
-        return this.evaluateComplexCondition(condition, context);
+        return this.evaluateComplexCondition(condition, context, coerce);
       }
 
       // String expression: "step1.data.score > 70 && step2.success"
       if (typeof condition === 'string') {
-        return this.evaluateExpression(condition, context);
+        return this.evaluateExpression(condition, context, coerce);
       }
 
       throw new ConditionError(
@@ -70,10 +82,14 @@ export class ConditionalEvaluator {
 
   /**
    * Evaluate simple condition
+   *
+   * @param coerce - Phase 6 Tier 2 Fix #2: when true, ordering operators
+   *                 coerce numeric/date-like strings before comparing.
    */
   private evaluateSimpleCondition(
     condition: SimpleCondition,
-    context: ExecutionContext
+    context: ExecutionContext,
+    coerce: boolean = false
   ): boolean {
     // Resolve field value from context
     // Handle both wrapped ({{email.subject}}) and unwrapped (email.subject) formats
@@ -157,17 +173,23 @@ export class ConditionalEvaluator {
     return this.compareValues(
       actualValue,
       expectedValue,
-      condition.operator
+      condition.operator,
+      coerce
     );
   }
 
   /**
    * Evaluate complex condition (and/or/not)
-   * Uses conditionType discriminator for strict mode compatibility
+   * Uses conditionType discriminator for strict mode compatibility.
+   *
+   * Note: this method recurses via the public `evaluate()` entry point,
+   * which re-reads the coercion flag from context for each sub-condition.
+   * So no explicit `coerce` parameter is needed here.
    */
   private evaluateComplexCondition(
     condition: ComplexCondition,
-    context: ExecutionContext
+    context: ExecutionContext,
+    _coerce: boolean = false
   ): boolean {
     // AND: All conditions must be true
     if (condition.conditionType === 'complex_and' && condition.conditions) {
@@ -194,12 +216,16 @@ export class ConditionalEvaluator {
    *
    * Example: "step1.data.score > 70 && step2.success"
    */
-  private evaluateExpression(expression: string, context: ExecutionContext): boolean {
+  private evaluateExpression(
+    expression: string,
+    context: ExecutionContext,
+    coerce: boolean = false
+  ): boolean {
     // First, resolve all variable references
     const resolved = this.resolveVariablesInExpression(expression, context);
 
     // Parse and evaluate using safe parser
-    return this.safeEvaluate(resolved);
+    return this.safeEvaluate(resolved, coerce);
   }
 
   /**
@@ -293,7 +319,7 @@ export class ConditionalEvaluator {
    * - Logical: &&, ||, !
    * - Grouping: ( )
    */
-  private safeEvaluate(expression: string): boolean {
+  private safeEvaluate(expression: string, coerce: boolean = false): boolean {
     // Tokenize expression
     const tokens = this.tokenize(expression);
 
@@ -301,7 +327,7 @@ export class ConditionalEvaluator {
     const ast = this.parse(tokens);
 
     // Evaluate AST
-    return this.evaluateAST(ast);
+    return this.evaluateAST(ast, coerce);
   }
 
   /**
@@ -490,7 +516,7 @@ export class ConditionalEvaluator {
   /**
    * Evaluate AST
    */
-  private evaluateAST(node: any): boolean {
+  private evaluateAST(node: any, coerce: boolean = false): boolean {
     switch (node.type) {
       case 'literal':
         return Boolean(node.value);
@@ -499,17 +525,18 @@ export class ConditionalEvaluator {
         return this.compareValues(
           this.evaluateASTValue(node.left),
           this.evaluateASTValue(node.right),
-          node.operator as ComparisonOperator
+          node.operator as ComparisonOperator,
+          coerce
         );
 
       case 'and':
-        return this.evaluateAST(node.left) && this.evaluateAST(node.right);
+        return this.evaluateAST(node.left, coerce) && this.evaluateAST(node.right, coerce);
 
       case 'or':
-        return this.evaluateAST(node.left) || this.evaluateAST(node.right);
+        return this.evaluateAST(node.left, coerce) || this.evaluateAST(node.right, coerce);
 
       case 'not':
-        return !this.evaluateAST(node.operand);
+        return !this.evaluateAST(node.operand, coerce);
 
       default:
         throw new Error(`Unknown AST node type: ${node.type}`);
@@ -527,43 +554,130 @@ export class ConditionalEvaluator {
   }
 
   /**
-   * Compare two values using operator
+   * Strict numeric detection — Phase 6 Tier 2 Fix #2.
+   * Only treats finite numbers and clean numeric strings as numeric.
+   * Rejects "95abc", "1e10", "0x10", "", and "   ".
+   */
+  private looksLikeNumber(value: any): boolean {
+    if (typeof value === 'number') return Number.isFinite(value);
+    if (typeof value === 'string') {
+      const t = value.trim();
+      if (t === '') return false;
+      return /^-?\d+(\.\d+)?$/.test(t);
+    }
+    return false;
+  }
+
+  /**
+   * Strict date detection — Phase 6 Tier 2 Fix #2.
+   * Avoids the JS footgun where `new Date("95")` returns "1995-01-01" by
+   * requiring at least one date-like separator AND ensuring the string is
+   * NOT a bare numeric string.
+   */
+  private looksLikeDate(value: any): boolean {
+    if (value instanceof Date) return !isNaN(value.getTime());
+    if (typeof value === 'string') {
+      if (this.looksLikeNumber(value)) return false;
+      if (!/[\-\/T:]/.test(value)) return false;
+      return this.parseDate(value) !== null;
+    }
+    return false;
+  }
+
+  /**
+   * Coerce both operands for an ordering comparison (Phase 6 Tier 2 Fix #2).
+   *
+   * Rules (applied in order):
+   *   1. If BOTH sides look numeric → return [Number(left), Number(right)]
+   *   2. If BOTH sides look like dates → return [leftDate.getTime(), rightDate.getTime()]
+   *   3. Otherwise → return [left, right] unchanged (falls back to JS comparison)
+   *
+   * Numeric check runs first so that bare numeric strings like "95" are
+   * never misinterpreted as a date (1995-01-01).
+   */
+  private coerceForOrdering(left: any, right: any): [any, any] {
+    if (this.looksLikeNumber(left) && this.looksLikeNumber(right)) {
+      return [Number(left), Number(right)];
+    }
+    if (this.looksLikeDate(left) && this.looksLikeDate(right)) {
+      const ld = this.parseDate(left);
+      const rd = this.parseDate(right);
+      if (ld && rd) return [ld.getTime(), rd.getTime()];
+    }
+    return [left, right];
+  }
+
+  /**
+   * Compare two values using operator.
+   *
+   * @param coerce - Phase 6 Tier 2 Fix #2: when true, ordering operators
+   *                 (`>`, `>=`, `<`, `<=`) apply numeric / date coercion
+   *                 before comparing. Equality and all other operators are
+   *                 unaffected. Default `false` preserves legacy behavior.
    */
   private compareValues(
     left: any,
     right: any,
-    operator: ComparisonOperator
+    operator: ComparisonOperator,
+    coerce: boolean = false
   ): boolean {
+    // Coerce only when requested AND only for the four ordering operators.
+    // Loose equality (`==` / `!=`) already handles numeric-string coercion
+    // via JS semantics, and other operators have their own type handling.
+    let l = left;
+    let r = right;
+    if (coerce) {
+      switch (operator) {
+        case '>':
+        case 'greater_than':
+        case 'gt':
+        case '>=':
+        case 'greater_than_or_equal':
+        case 'gte':
+        case '<':
+        case 'less_than':
+        case 'lt':
+        case '<=':
+        case 'less_than_or_equal':
+        case 'lte':
+          [l, r] = this.coerceForOrdering(left, right);
+          break;
+        default:
+          // No coercion for equality, contains, exists, regex, date-window, etc.
+          break;
+      }
+    }
+
     switch (operator) {
       case '==':
       case 'equals':
       case 'eq':  // Alias for backward compatibility with system prompts
-        return left == right;
+        return l == r;
 
       case '!=':
       case 'not_equals':
       case 'ne':  // Alias for backward compatibility with system prompts
-        return left != right;
+        return l != r;
 
       case '>':
       case 'greater_than':
       case 'gt':  // Alias for backward compatibility with system prompts
-        return left > right;
+        return l > r;
 
       case '>=':
       case 'greater_than_or_equal':
       case 'gte':  // Alias for backward compatibility with system prompts
-        return left >= right;
+        return l >= r;
 
       case '<':
       case 'less_than':
       case 'lt':  // Alias for backward compatibility with system prompts
-        return left < right;
+        return l < r;
 
       case '<=':
       case 'less_than_or_equal':
       case 'lte':  // Alias for backward compatibility with system prompts
-        return left <= right;
+        return l <= r;
 
       case 'contains':
         // Null check: null/undefined never contains anything

@@ -9,9 +9,14 @@
  * 2. All dependencies reference existing steps
  * 3. No circular dependencies (DAG validation)
  * 4. Step dependencies only reference earlier steps
+ * 5. (Phase 6 — Tier 1 Fix #1) Field references against output schemas
+ * 6. (Phase 6 — Tier 3 Fix #11) Deep structural validation via
+ *    `workflow-structure-validator` when the flag is enabled
  *
  * @module lib/pilot/WorkflowValidator
  */
+
+import { validateWorkflowStructure } from './schema/workflow-structure-validator'
 
 export interface ValidationResult {
   valid: boolean
@@ -19,14 +24,77 @@ export interface ValidationResult {
   warnings?: string[]
 }
 
+/**
+ * Options for validatePreFlight.
+ *
+ * @property runMode - Execution mode. 'production' is strictest; 'calibration' and
+ *                     'batch_calibration' degrade high-confidence field-reference
+ *                     errors to warnings so calibration runs are not blocked.
+ * @property strictFieldValidation - Master switch for the field-reference / operation-field
+ *                                    validators. When false (default), any field-reference
+ *                                    issue is at most a warning regardless of confidence.
+ *                                    When true, high-confidence issues (>=0.95) in production
+ *                                    mode become blocking errors. Controlled at runtime by
+ *                                    the SystemConfig key `pilot_strict_field_validation_enabled`.
+ * @property structuralValidation - When true, run the deep workflow-structure validator
+ *                                   (per-type required fields, nesting depth ≤5, branch IDs,
+ *                                   AI-pattern warnings). In production mode, errors block;
+ *                                   in calibration/batch_calibration, they become warnings.
+ *                                   See Phase 6 — Tier 3 Fix #11. Controlled by
+ *                                   `pilot_structural_validation_enabled`.
+ */
+export interface ValidatePreFlightOptions {
+  runMode?: 'production' | 'calibration' | 'batch_calibration'
+  strictFieldValidation?: boolean
+  structuralValidation?: boolean
+}
+
+/**
+ * Internal union type for the issue objects returned by the existing
+ * validateFieldReferences() and validateOperationFields() functions.
+ */
+type FieldValidationIssue =
+  | {
+      kind: 'field_reference'
+      stepId: string
+      parameter: string
+      invalidReference: string
+      suggestedFix: string
+      confidence: number
+      upstreamStep: string
+      reason: string
+    }
+  | {
+      kind: 'operation_field'
+      stepId: string
+      operation: string
+      invalidField: string
+      suggestedField: string
+      context: 'filter' | 'flatten' | 'map' | 'transform' | 'action_param'
+      confidence: number
+      upstreamStep: string
+      reason: string
+    }
+
+// Confidence thresholds for field-reference validation severity mapping.
+// See workplan: wire-field-reference-validation-into-preflight.md (Design D1).
+const FIELD_REF_CONFIDENCE_BLOCK_THRESHOLD = 0.95
+const FIELD_REF_CONFIDENCE_WARN_THRESHOLD = 0.70
+
 export class WorkflowValidator {
   /**
    * Validate workflow structure before execution
    *
    * @param workflow - Array of workflow steps (PILOT DSL format)
+   * @param options  - Optional run-mode / strict-validation flags. See ValidatePreFlightOptions.
+   *                   When omitted, runMode defaults to 'production' and strictFieldValidation
+   *                   defaults to false (backward-compatible no-op for existing callers).
    * @returns Validation result with errors if invalid
    */
-  validatePreFlight(workflow: any[]): ValidationResult {
+  validatePreFlight(
+    workflow: any[],
+    options?: ValidatePreFlightOptions
+  ): ValidationResult {
     const errors: string[] = []
     const warnings: string[] = []
 
@@ -171,11 +239,178 @@ export class WorkflowValidator {
       }
     })
 
+    // 7. Field-reference validation (Phase 6)
+    // Catches the "valid JSON, broken data flow" class — references to upstream
+    // step outputs that don't actually exist in the producer's output_schema.
+    // See workplan: wire-field-reference-validation-into-preflight.md
+    //
+    // Behavior matrix (see Design D1 in workplan):
+    //   strict + production + confidence >= 0.95  → error (blocks execution)
+    //   anything else (warn-eligible)              → warning
+    //   confidence < 0.70                          → dropped (too noisy)
+    const runMode: 'production' | 'calibration' | 'batch_calibration' =
+      options?.runMode ?? 'production'
+    const strictFieldValidation = options?.strictFieldValidation ?? false
+
+    const fieldRefIssues: FieldValidationIssue[] = this.validateFieldReferences(workflow)
+      .map(i => ({ ...i, kind: 'field_reference' as const }))
+
+    const operationFieldIssues: FieldValidationIssue[] = this.validateOperationFields(workflow)
+      .map(i => ({ ...i, kind: 'operation_field' as const }))
+
+    const allFieldIssues: FieldValidationIssue[] = [
+      ...fieldRefIssues,
+      ...operationFieldIssues,
+    ]
+
+    for (const issue of allFieldIssues) {
+      // Drop low-confidence noise entirely
+      if (issue.confidence < FIELD_REF_CONFIDENCE_WARN_THRESHOLD) continue
+
+      const message = this.formatFieldValidationIssue(issue)
+
+      const shouldBlock =
+        strictFieldValidation &&
+        runMode === 'production' &&
+        issue.confidence >= FIELD_REF_CONFIDENCE_BLOCK_THRESHOLD
+
+      if (shouldBlock) {
+        errors.push(message)
+      } else {
+        warnings.push(message)
+      }
+    }
+
+    // 8. Aggregated warning for producer steps without an output_schema
+    // (see Design D2 in workplan). One warning per workflow, not per reference.
+    const unverifiableProducers = this.findStepsWithUnverifiableReferences(workflow)
+    if (unverifiableProducers.length > 0) {
+      const sample = unverifiableProducers.slice(0, 5)
+      const more = unverifiableProducers.length - sample.length
+      const suffix = more > 0 ? ` (+${more} more)` : ''
+      warnings.push(
+        `Field references could not be validated for these producer steps ` +
+        `(no output_schema present): ${sample.join(', ')}${suffix}. ` +
+        `Consider regenerating with an updated compiler.`
+      )
+    }
+
+    // 9. Deep structural validation (Phase 6 — Tier 3 Fix #11).
+    // Invokes the workflow-structure-validator module, which provides checks
+    // that this validator doesn't natively perform: per-type required fields
+    // (loop.iterateOver, switch.cases, etc.), nesting depth ≤5, branch/case
+    // step-id references, and AI-pattern warnings.
+    //
+    // Errors block in production mode; in calibration / batch_calibration
+    // they degrade to warnings so calibration can still surface issues
+    // without halting. The flag is plumbed in via WorkflowPilot from the
+    // SystemConfig key `pilot_structural_validation_enabled`.
+    if (options?.structuralValidation) {
+      const structuralResult = validateWorkflowStructure(workflow)
+
+      if (runMode === 'production') {
+        for (const err of structuralResult.errors) {
+          errors.push(`[structural] ${err}`)
+        }
+      } else {
+        for (const err of structuralResult.errors) {
+          warnings.push(`[structural] ${err}`)
+        }
+      }
+
+      for (const warn of structuralResult.warnings) {
+        warnings.push(`[structural] ${warn}`)
+      }
+    }
+
     return {
       valid: errors.length === 0,
       errors,
       warnings: warnings.length > 0 ? warnings : undefined
     }
+  }
+
+  /**
+   * Format a FieldValidationIssue into a human-readable pre-flight message.
+   * Both issue kinds share these fields: stepId, confidence, upstreamStep, reason.
+   */
+  private formatFieldValidationIssue(issue: FieldValidationIssue): string {
+    const confPct = (issue.confidence * 100).toFixed(0)
+    if (issue.kind === 'field_reference') {
+      return (
+        `Step '${issue.stepId}' references '${issue.invalidReference}' ` +
+        `at parameter '${issue.parameter}' — ${issue.reason}. ` +
+        `Suggested fix: '${issue.suggestedFix}' (confidence ${confPct}%).`
+      )
+    }
+    // operation_field
+    return (
+      `Step '${issue.stepId}' ${issue.operation} operation uses field ` +
+      `'${issue.invalidField}' — ${issue.reason}. ` +
+      `Suggested: '${issue.suggestedField}' (confidence ${confPct}%).`
+    )
+  }
+
+  /**
+   * Find producer step IDs that are referenced by other steps but emit no
+   * output_schema, so their consumers' field references cannot be validated.
+   *
+   * Returns a deduped, sorted list. Empty list if nothing to report.
+   */
+  private findStepsWithUnverifiableReferences(workflow: any[]): string[] {
+    // Reuse the same nested-collection logic the field-ref validator uses.
+    const allSteps: any[] = []
+    const collectSteps = (steps: any[]) => {
+      steps.forEach(step => {
+        allSteps.push(step)
+        if (step.type === 'scatter_gather' && step.scatter?.steps) {
+          collectSteps(step.scatter.steps)
+        }
+        if (step.type === 'conditional') {
+          if (step.steps) collectSteps(step.steps)
+          if (step.then) collectSteps(Array.isArray(step.then) ? step.then : [step.then])
+          if (step.else) collectSteps(Array.isArray(step.else) ? step.else : [step.else])
+        }
+        if (step.type === 'parallel' && step.steps) collectSteps(step.steps)
+        if (step.type === 'loop' && step.loopSteps) collectSteps(step.loopSteps)
+        if (step.type === 'sub_workflow' && step.steps) collectSteps(step.steps)
+      })
+    }
+    collectSteps(workflow)
+
+    // Step IDs / output_variables that DO have an output_schema.
+    const stepsWithSchema = new Set<string>()
+    for (const step of allSteps) {
+      if (!step.output_schema) continue
+      const stepId = step.step_id || step.id
+      if (stepId) stepsWithSchema.add(stepId)
+      if (step.output_variable) stepsWithSchema.add(step.output_variable)
+    }
+
+    // All upstream identifiers referenced by any {{variable.field}} pattern.
+    const referencedProducers = new Set<string>()
+    for (const step of allSteps) {
+      const config = step.config || step.params || {}
+      const refs = this.extractVariableReferences(config)
+      for (const ref of refs) {
+        if (ref.field && ref.variable) {
+          referencedProducers.add(ref.variable)
+        }
+      }
+    }
+
+    // Producers that ARE referenced but have NO schema.
+    // Exclude well-known synthetic roots that aren't step outputs.
+    const synthetic = new Set(['input', 'inputs', 'var', 'current', 'item', 'loop'])
+    const missing: string[] = []
+    referencedProducers.forEach(producer => {
+      if (synthetic.has(producer)) return
+      if (!stepsWithSchema.has(producer)) {
+        missing.push(producer)
+      }
+    })
+
+    return missing.sort()
   }
 
   /**

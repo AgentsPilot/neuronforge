@@ -182,6 +182,7 @@ export const AUDIT_EVENTS = {
   PILOT_STEP_RETRIED: 'PILOT_STEP_RETRIED', // Step retried after failure
   PILOT_DISABLED: 'PILOT_DISABLED', // Pilot disabled - execution blocked
   PILOT_CONFIG_UPDATED: 'PILOT_CONFIG_UPDATED', // Pilot settings changed
+  PILOT_STRUCTURAL_REPAIR_APPLIED: 'PILOT_STRUCTURAL_REPAIR_APPLIED', // Pre-execution auto-repair fired — indicates a generator bug
 
   // Per-Step Intelligent Routing events
   PILOT_ROUTING_DECISION: 'PILOT_ROUTING_DECISION', // Model selected for step
@@ -746,6 +747,17 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
     severity: 'info',
     complianceFlags: ['SOC2'],
     description: 'Workflow approval delegated to another user',
+  },
+
+  // Pre-execution auto-repair (Phase 6 — Tier 3 Fix #12)
+  // Fires when StructuralRepairEngine modified the workflow before execution.
+  // Indicates a generator bug — the agent's saved workflow was missing required
+  // fields or had structural issues that the repair engine had to patch.
+  // Operators should triage these to fix the upstream generator.
+  [AUDIT_EVENTS.PILOT_STRUCTURAL_REPAIR_APPLIED]: {
+    severity: 'warning',
+    complianceFlags: ['SOC2'],
+    description: 'Structural auto-repair fired on a workflow before execution',
   },
 };
 

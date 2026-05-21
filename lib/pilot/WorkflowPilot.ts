@@ -15,6 +15,7 @@
  */
 
 import { SupabaseClient, createClient } from '@supabase/supabase-js';
+import { createLogger } from '@/lib/logger';
 import type {
   Agent,
   WorkflowStep,
@@ -213,9 +214,11 @@ export class WorkflowPilot {
       console.log(`🐛 [WorkflowPilot] Debug mode is NOT enabled (debugMode=${debugMode})`);
     }
 
-    // Store stepEmitter and debugRunId in instance for use during execution
-    (this as any).stepEmitter = stepEmitter;
-    (this as any).debugRunId = debugRunId;
+    // Phase 6 — Tier 1 Fix #3: stepEmitter and debugRunId are per-execution
+    // resources. They will be written onto `context.scope` after the
+    // ExecutionContext is created (~line 401). We hold them locally until then.
+    // (Previously stuffed onto `(this as any)` here — that pattern was unsafe
+    // for concurrent execute() calls on a shared WorkflowPilot instance.)
 
     // 0a. Load Pilot configuration from database (with 5-min cache)
     const options = await this.loadConfig();
@@ -260,44 +263,77 @@ export class WorkflowPilot {
     console.log('✅ [WorkflowPilot] Pilot is enabled, proceeding with execution');
 
     // PHASE 0.5: Structural auto-repair (BEFORE parsing - modifies agent.pilot_steps in place)
-    console.log('🔧 [WorkflowPilot] CRITICAL: About to run structural auto-repair...');
-    console.log('🔧 [WorkflowPilot] Agent pilot_steps type:', typeof agent.pilot_steps, 'length:', Array.isArray(agent.pilot_steps) ? agent.pilot_steps.length : 'N/A');
+    //
+    // Phase 6 — Tier 3 Fix #12: persistence is now flag-gated and an audit
+    // event is emitted whenever repair fires (regardless of flag), so operators
+    // get visibility into which agents have generator bugs upstream.
+    // See workplan: docs/workplans/structural-repair-out-of-execution.md
+    const persistStructuralRepairs = await SystemConfigService.getBoolean(
+      this.supabase,
+      'pilot_structural_repair_persist_enabled',
+      true // Default: true — preserves today's behavior. Flip to false in
+            // environments that want loud-fail / no-silent-drift semantics.
+    );
 
     const repairEngine = new StructuralRepairEngine();
-    console.log('🔧 [WorkflowPilot] StructuralRepairEngine created, calling scanWorkflow...');
-
     const structuralIssues = await repairEngine.scanWorkflow(agent);
 
-    console.log('🔧 [WorkflowPilot] scanWorkflow returned:', structuralIssues.length, 'issues');
-
     if (structuralIssues.length > 0) {
-      console.log(`🔧 [WorkflowPilot] Found ${structuralIssues.length} structural issue(s), attempting auto-repair...`);
       const repairResults = await repairEngine.autoFixWorkflow(agent);
-
       const fixedCount = repairResults.filter(r => r.fixed).length;
       const failedCount = repairResults.filter(r => !r.fixed).length;
 
-      if (fixedCount > 0) {
-        console.log(`✅ [WorkflowPilot] Auto-repaired ${fixedCount} structural issue(s) silently`);
+      // Structured warn — always emitted when repair runs.
+      // Replaces the previous unstructured console.log lines so the issues
+      // are queryable in Pino-aware log infrastructure.
+      const repairLogger = createLogger({ module: 'WorkflowPilot', service: 'structural-repair' });
+      repairLogger.warn({
+        agent_id: agent.id,
+        agent_name: agent.agent_name,
+        issue_count: structuralIssues.length,
+        fixed_count: fixedCount,
+        failed_count: failedCount,
+        will_persist: persistStructuralRepairs && fixedCount > 0,
+        issues: structuralIssues,
+      }, 'Structural auto-repair fired on workflow before execution');
 
-        // Persist fixed workflow to database
+      // Always emit the audit event so operators can query repair history.
+      // Non-blocking — repair history shouldn't block execution.
+      this.auditTrail.log({
+        action: AUDIT_EVENTS.PILOT_STRUCTURAL_REPAIR_APPLIED,
+        entityType: 'agent',
+        entityId: agent.id,
+        userId,
+        resourceName: agent.agent_name,
+        details: {
+          issue_count: structuralIssues.length,
+          fixed_count: fixedCount,
+          failed_count: failedCount,
+          persisted: persistStructuralRepairs && fixedCount > 0,
+          issues: structuralIssues,
+        },
+        severity: 'warning',
+      }).catch(err => repairLogger.error({ err }, 'Audit trail logging failed (non-blocking)'));
+
+      // Persist only when the flag is on.
+      if (fixedCount > 0 && persistStructuralRepairs) {
         const { error: updateError } = await this.supabase
           .from('agents')
           .update({ pilot_steps: agent.pilot_steps })
           .eq('id', agent.id);
 
         if (updateError) {
-          console.error(`⚠️  [WorkflowPilot] Failed to persist auto-repairs to database:`, updateError);
+          repairLogger.error({ err: updateError, agent_id: agent.id },
+            'Failed to persist auto-repairs to database');
         } else {
-          console.log(`💾 [WorkflowPilot] Persisted ${fixedCount} auto-repair(s) to database`);
+          repairLogger.info({ agent_id: agent.id, fixed_count: fixedCount },
+            'Persisted auto-repairs to database');
         }
+      } else if (fixedCount > 0) {
+        // Flag is off — repair is in-memory only for this execution.
+        repairLogger.info({ agent_id: agent.id, fixed_count: fixedCount },
+          'Auto-repair applied in-memory only (persistence disabled by flag)');
       }
-
-      if (failedCount > 0) {
-        console.warn(`⚠️  [WorkflowPilot] ${failedCount} structural issue(s) could not be auto-repaired`);
-      }
-    } else {
-      console.log('✅ [WorkflowPilot] No structural issues found');
     }
 
     // 1. Parse workflow (AFTER auto-repair - uses fixed agent.pilot_steps)
@@ -324,7 +360,74 @@ export class WorkflowPilot {
 
     // PHASE 5: Pre-flight validation before execution
     console.log('🔍 [WorkflowPilot] Running pre-flight validation...');
-    const validation = this.workflowValidator.validatePreFlight(workflowSteps);
+
+    // PHASE 6: Field-reference validation gating.
+    // Reads the SystemConfig flag `pilot_strict_field_validation_enabled` (default false)
+    // to decide whether high-confidence (>=0.95) field-reference issues become blocking
+    // errors in production mode. When false, they remain warnings (current behavior).
+    // See workplan: docs/workplans/wire-field-reference-validation-into-preflight.md
+    //
+    // PHASE 6 — Tier 1 Fix #2: strict variable resolution at runtime.
+    // Reads the SystemConfig flag `pilot_strict_variable_resolution_enabled` (default false)
+    // and enables strict mode on ExecutionContext when both:
+    //   • flag is true, AND
+    //   • runMode === 'production' (calibration stays lenient to avoid hard-failing tests)
+    // See workplan: docs/workplans/strict-variable-resolution.md
+    // Phase 6 — Tier 2 Fix #1: also read the loop-inner-overwrite flag.
+    // When true, ParallelExecutor stops writing inner-step outputs to the parent
+    // stepOutputs under the bare step id (which today silently resolves to only
+    // the last iteration). See workplan: docs/workplans/loop-inner-step-output-namespacing.md
+    // Phase 6 — Tier 3 Fix #11: also read the structural-validation flag.
+    // When true, WorkflowValidator runs the deep workflow-structure-validator
+    // checks (per-type required fields, nesting depth, branch IDs, etc.)
+    // as part of pre-flight.
+    // See workplan: docs/workplans/output-validation-as-real-gate.md
+    // and the rename in: lib/pilot/schema/workflow-structure-validator.ts
+    const [
+      strictFieldValidation,
+      strictVariableResolution,
+      loopInnerOverwriteDisabled,
+      conditionalCoercionEnabled,
+      scatterExplicitShapeRequired,
+      structuralValidationEnabled,
+    ] = await Promise.all([
+      SystemConfigService.getBoolean(
+        this.supabase,
+        'pilot_strict_field_validation_enabled',
+        false // Default: off — warnings only, fully backward-compatible
+      ),
+      SystemConfigService.getBoolean(
+        this.supabase,
+        'pilot_strict_variable_resolution_enabled',
+        false // Default: off — lenient resolution, fully backward-compatible
+      ),
+      SystemConfigService.getBoolean(
+        this.supabase,
+        'pilot_loop_inner_step_overwrite_disabled',
+        false // Default: off — legacy "last iteration wins" preserved
+      ),
+      SystemConfigService.getBoolean(
+        this.supabase,
+        'pilot_conditional_type_coercion_enabled',
+        false // Default: off — legacy raw JS comparison preserved
+      ),
+      SystemConfigService.getBoolean(
+        this.supabase,
+        'pilot_scatter_explicit_shape_required',
+        false // Default: off — legacy heuristic preserved
+      ),
+      SystemConfigService.getBoolean(
+        this.supabase,
+        'pilot_structural_validation_enabled',
+        false // Default: off — fully backward-compatible
+      ),
+    ]);
+
+    const validation = this.workflowValidator.validatePreFlight(workflowSteps, {
+      runMode,
+      strictFieldValidation,
+      structuralValidation: structuralValidationEnabled, // Phase 6 — Tier 3 Fix #11
+    });
 
     if (!validation.valid) {
       const errorMessage = `Workflow pre-flight validation failed: ${validation.errors.join(', ')}`;
@@ -365,28 +468,56 @@ export class WorkflowPilot {
     // Determine if this is batch calibration mode
     const isBatchCalibration = runMode === 'batch_calibration';
 
+    // Phase 6 — Tier 1 Fix #2: enable strict resolution only when the flag is on
+    // AND we're in production mode. Calibration/batch-calibration stay lenient.
+    const isStrictResolution = strictVariableResolution && runMode === 'production';
+
+    // Phase 6 — Tier 2 Fix #4: pass the effective runMode through to context
+    // so nested executors (ParallelExecutor, etc.) can honor it for failure
+    // handling. Default 'production' matches execute()'s default.
+    const effectiveRunMode: 'production' | 'calibration' | 'batch_calibration' =
+      runMode ?? 'production';
+
     context = new ExecutionContext(
       executionId,
       agent,
       userId,
       finalSessionId,
       inputValues,
-      isBatchCalibration
+      isBatchCalibration,
+      isStrictResolution,
+      loopInnerOverwriteDisabled, // Phase 6 — Tier 2 Fix #1
+      conditionalCoercionEnabled, // Phase 6 — Tier 2 Fix #2
+      scatterExplicitShapeRequired, // Phase 6 — Tier 2 Fix #3
+      effectiveRunMode // Phase 6 — Tier 2 Fix #4
     );
 
-    // Register workflow data schema for runtime validation (Phase 5)
-    if ((agent as any).data_schema) {
-      context.registerDataSchema((agent as any).data_schema);
-      console.log(`📐 [WorkflowPilot] Registered data_schema with ${Object.keys((agent as any).data_schema.slots || {}).length} slots`);
+    // Phase 6 — Tier 1 Fix #3: deferred writes for resources received as
+    // method args. Writing onto `context.scope` instead of `(this as any)`
+    // keeps these per-execution rather than per-instance.
+    context.scope.stepEmitter = stepEmitter;
+    context.scope.debugRunId = debugRunId;
+
+    // Register workflow data schema for runtime validation (Phase 5).
+    // Phase 6 — Post-audit cleanup (G3): type-guarded access so a malformed
+    // agent record with `data_schema = null` or a non-object value can't
+    // silently corrupt context state.
+    const agentDataSchema = (agent as any).data_schema;
+    if (agentDataSchema && typeof agentDataSchema === 'object') {
+      context.registerDataSchema(agentDataSchema);
+      const slotCount = (agentDataSchema.slots && typeof agentDataSchema.slots === 'object')
+        ? Object.keys(agentDataSchema.slots).length
+        : 0;
+      console.log(`📐 [WorkflowPilot] Registered data_schema with ${slotCount} slots`);
     }
 
     // Initialize execution summary collector for calibration runs
     let executionSummaryCollector: ExecutionSummaryCollector | null = null;
     if (runMode === 'calibration' || runMode === 'batch_calibration') {
       executionSummaryCollector = new ExecutionSummaryCollector();
-      (this as any).executionSummaryCollector = executionSummaryCollector;
-      // Attach to context so StepExecutor can access it for nested steps
-      (context as any).executionSummaryCollector = executionSummaryCollector;
+      // Phase 6 — Tier 1 Fix #3: single canonical location on context.scope.
+      // StepExecutor + ParallelExecutor read this via context.scope.executionSummaryCollector.
+      context.scope.executionSummaryCollector = executionSummaryCollector;
       console.log(`📊 [WorkflowPilot] Execution summary collector initialized for ${runMode} mode`);
     }
 
@@ -406,8 +537,8 @@ export class WorkflowPilot {
       // Shadow init failure must NEVER block execution
       console.error('[ShadowAgent] Init failed (non-blocking):', shadowInitErr);
     }
-    // Store on instance for use in executeSingleStep
-    (this as any)._shadowAgent = shadowAgent;
+    // Phase 6 — Tier 1 Fix #3: per-execution reference on context.scope
+    context.scope.shadowAgent = shadowAgent;
 
     // 2c. Execution Protection: calibration guard rails (only when Shadow Agent is active)
     let executionProtection: import('./shadow/ExecutionProtection').ExecutionProtection | null = null;
@@ -419,7 +550,7 @@ export class WorkflowPilot {
         console.error('[ExecutionProtection] Init failed (non-blocking):', protErr);
       }
     }
-    (this as any)._executionProtection = executionProtection;
+    context.scope.executionProtection = executionProtection;
 
     // 2d. CheckpointManager + ResumeOrchestrator (Phase 2: Repair & Resume)
     if (shadowAgent) {
@@ -430,17 +561,17 @@ export class WorkflowPilot {
           checkpointManager,
           executionProtection
         );
-        (this as any)._checkpointManager = checkpointManager;
-        (this as any)._resumeOrchestrator = resumeOrchestrator;
+        context.scope.checkpointManager = checkpointManager;
+        context.scope.resumeOrchestrator = resumeOrchestrator;
         console.log(`[ResumeOrchestrator] Initialized for execution ${executionId}`);
       } catch (resumeErr) {
         console.error('[ResumeOrchestrator] Init failed (non-blocking):', resumeErr);
-        (this as any)._checkpointManager = null;
-        (this as any)._resumeOrchestrator = null;
+        context.scope.checkpointManager = null;
+        context.scope.resumeOrchestrator = null;
       }
     } else {
-      (this as any)._checkpointManager = null;
-      (this as any)._resumeOrchestrator = null;
+      context.scope.checkpointManager = null;
+      context.scope.resumeOrchestrator = null;
     }
 
     // 3. Load memory context and initialize orchestration IN PARALLEL
@@ -473,7 +604,15 @@ export class WorkflowPilot {
           }
         }
       } catch (error: any) {
-        if (error.message.includes('timeout')) {
+        // Phase 6 — Post-audit cleanup (G4): set an explicit signal on scope
+        // so downstream code can distinguish "memory not requested"
+        // (initial null state) from "memory failed to load."
+        const isTimeout = typeof error?.message === 'string' && error.message.includes('timeout');
+        context.scope.memoryLoadFailed = {
+          reason: isTimeout ? 'timeout' : 'error',
+          message: error?.message || 'unknown error',
+        };
+        if (isTimeout) {
           console.warn(`⏱️  [WorkflowPilot] Memory loading timed out - proceeding without memory`);
         } else {
           console.warn(`⚠️  [WorkflowPilot] Failed to load memory (non-critical):`, error.message);
@@ -550,8 +689,27 @@ export class WorkflowPilot {
       );
 
       if (!validationResult.valid) {
-        console.warn(`⚠️  [WorkflowPilot] Output validation failed:`, validationResult.errors);
-        // Don't fail execution, just log warning
+        // Phase 6 — Tier 3 Fix #9: in production mode, output-schema mismatches
+        // are blocking errors (not warnings). Calibration / batch_calibration
+        // preserve the legacy warn-only behavior so calibration runs can still
+        // surface issues without halting. See workplan:
+        // docs/workplans/output-validation-as-real-gate.md
+        if (context.runMode === 'production') {
+          throw new ValidationError(
+            `Workflow output failed schema validation: ${validationResult.errors.join('; ')}`,
+            undefined,
+            {
+              agent_id: agent.id,
+              execution_id: executionId,
+              validation_errors: validationResult.errors,
+              run_mode: context.runMode,
+            }
+          );
+        }
+        console.warn(
+          `⚠️  [WorkflowPilot] Output validation failed (runMode=${context.runMode}):`,
+          validationResult.errors
+        );
       }
 
       // 8. Summarize for memory (ASYNC - fire and forget, don't block response)
@@ -714,7 +872,8 @@ export class WorkflowPilot {
       }
 
       // Cleanup in-memory checkpoints
-      const cpManager = (this as any)._checkpointManager as CheckpointManager | null;
+      // Phase 6 — Tier 1 Fix #3: now lives on context.scope
+      const cpManager = context.scope.checkpointManager;
       if (cpManager) {
         cpManager.clear();
       }
@@ -833,7 +992,9 @@ export class WorkflowPilot {
       }
 
       // Cleanup in-memory checkpoints
-      const failCpManager = (this as any)._checkpointManager as CheckpointManager | null;
+      // Phase 6 — Tier 1 Fix #3: now lives on context.scope (context may
+      // be undefined if execute() failed before constructing it).
+      const failCpManager = context?.scope.checkpointManager ?? null;
       if (failCpManager) {
         failCpManager.clear();
       }
@@ -1079,9 +1240,9 @@ export class WorkflowPilot {
 
     console.log(`  → Executing: ${stepDef.id} (${stepDef.name})`);
 
-    // Get step emitter and debug runId references once at the beginning
-    const stepEmitter = (this as any).stepEmitter;
-    const debugRunId = (this as any).debugRunId;
+    // Phase 6 — Tier 1 Fix #3: per-execution resources now live on context.scope
+    const stepEmitter = context.scope.stepEmitter;
+    const debugRunId = context.scope.debugRunId;
 
     // Emit debug step_start event
     if (debugRunId) {
@@ -1418,7 +1579,8 @@ export class WorkflowPilot {
     }
 
     // Collect execution metadata for calibration summaries
-    const summaryCollector = (this as any).executionSummaryCollector as ExecutionSummaryCollector | null;
+    // Phase 6 — Tier 1 Fix #3: now lives on context.scope
+    const summaryCollector = context.scope.executionSummaryCollector;
     if (summaryCollector) {
       console.log(`📊 [WorkflowPilot] Step ${stepDef.id} completed - success: ${output.metadata.success}, type: ${stepDef.type}`);
       if (output.metadata.success) {
@@ -1432,7 +1594,8 @@ export class WorkflowPilot {
 
     // Checkpoint (metadata to DB + in-memory snapshot)
     await this.stateManager.checkpoint(context);
-    const checkpointManager = (this as any)._checkpointManager as CheckpointManager | null;
+    // Phase 6 — Tier 1 Fix #3: now lives on context.scope
+    const checkpointManager = context.scope.checkpointManager;
     if (checkpointManager && output.metadata.success) {
       checkpointManager.createStepCheckpoint(context, stepDef.id);
     }
@@ -1510,7 +1673,8 @@ export class WorkflowPilot {
 
       // ─── ResumeOrchestrator: capture + classify + repair + resume ───
       // Skip ResumeOrchestrator in batch calibration mode - StepExecutor handles issue collection
-      const resumeOrchestrator = (this as any)._resumeOrchestrator as ResumeOrchestrator | null;
+      // Phase 6 — Tier 1 Fix #3: now lives on context.scope
+      const resumeOrchestrator = context.scope.resumeOrchestrator;
       let repairSucceeded = false;
 
       if (resumeOrchestrator && !context.batchCalibrationMode) {
@@ -1740,7 +1904,7 @@ export class WorkflowPilot {
     // Checkpoint (metadata to DB + in-memory batch snapshot)
     await this.stateManager.checkpoint(context);
     // Note: Batch checkpointing disabled - createBatchCheckpoint method not implemented
-    // const batchCheckpointManager = (this as any)._checkpointManager as CheckpointManager | null;
+    // const batchCheckpointManager = context.scope.checkpointManager;
     // if (batchCheckpointManager) {
     //   const batchStepIds = steps.map(s => s.stepDefinition.id);
     //   batchCheckpointManager.createBatchCheckpoint(context, batchStepIds);
@@ -1823,13 +1987,21 @@ export class WorkflowPilot {
         parentContext.userId,
         parentContext.sessionId,
         {}, // Empty input values - we'll map them manually
-        parentContext.batchCalibrationMode // Inherit batch calibration mode
+        parentContext.batchCalibrationMode, // Inherit batch calibration mode
+        parentContext.isStrict(), // Phase 6 — Tier 1 Fix #2: inherit strict mode into sub-workflows
+        parentContext.isLoopInnerOverwriteDisabled(), // Phase 6 — Tier 2 Fix #1
+        parentContext.isConditionalCoercionEnabled(), // Phase 6 — Tier 2 Fix #2
+        parentContext.isScatterExplicitShapeRequired(), // Phase 6 — Tier 2 Fix #3
+        parentContext.runMode // Phase 6 — Tier 2 Fix #4: inherit runMode for failure handling
       );
 
-      // Inherit executionSummaryCollector reference from parent for nested metadata collection
-      if ((parentContext as any).executionSummaryCollector) {
-        (subContext as any).executionSummaryCollector = (parentContext as any).executionSummaryCollector;
-        console.log(`  → Inherited executionSummaryCollector from parent context`);
+      // Phase 6 — Tier 1 Fix #3: inherit the full execution scope (by reference)
+      // from the parent. Sub-workflow steps share stepEmitter, debugRunId,
+      // shadowAgent, checkpointManager, resumeOrchestrator, executionProtection,
+      // and executionSummaryCollector with the outer execution.
+      subContext.scope = parentContext.scope;
+      if (parentContext.scope.executionSummaryCollector) {
+        console.log(`  → Inherited execution scope (incl. executionSummaryCollector) from parent context`);
       }
 
       // 3. Map inputs from parent context to sub-workflow context
@@ -2539,18 +2711,24 @@ export class WorkflowPilot {
           checkpointManager,
           executionProtection
         );
-        (this as any)._checkpointManager = checkpointManager;
-        (this as any)._resumeOrchestrator = resumeOrchestrator;
+        // Phase 6 — Tier 1 Fix #3: per-execution refs on context.scope.
+        // Also populate shadowAgent / executionProtection so subsequent reads
+        // see the resumed execution's resources.
+        context.scope.shadowAgent = shadowAgent;
+        context.scope.executionProtection = executionProtection;
+        context.scope.checkpointManager = checkpointManager;
+        context.scope.resumeOrchestrator = resumeOrchestrator;
         console.log(`[ResumeOrchestrator] Initialized for resumed execution ${executionId} (${runMode === 'calibration' ? 'forced by calibration mode' : 'calibrating'})`);
       } else {
-        (this as any)._checkpointManager = null;
-        (this as any)._resumeOrchestrator = null;
+        context.scope.checkpointManager = null;
+        context.scope.resumeOrchestrator = null;
         console.log(`[ResumeOrchestrator] Not initialized - Shadow Agent is dormant (production ready)`);
       }
     } catch (resumeErr) {
       console.error('[ResumeOrchestrator] Init failed (non-blocking):', resumeErr);
-      (this as any)._checkpointManager = null;
-      (this as any)._resumeOrchestrator = null;
+      // Phase 6 — Tier 1 Fix #3: now lives on context.scope
+      context.scope.checkpointManager = null;
+      context.scope.resumeOrchestrator = null;
     }
 
     // 2. Parse workflow to get execution plan
@@ -2695,7 +2873,8 @@ export class WorkflowPilot {
             // Continue to next step - don't throw error
           } else {
             // Handle failure - call ResumeOrchestrator for parameter error detection
-            const resumeOrchestrator = (this as any)._resumeOrchestrator as any;
+            // Phase 6 — Tier 1 Fix #3: now lives on context.scope
+            const resumeOrchestrator = context.scope.resumeOrchestrator;
             if (resumeOrchestrator) {
               try {
                 const decision = await resumeOrchestrator.handleStepFailure(
@@ -2793,7 +2972,26 @@ export class WorkflowPilot {
       );
 
       if (!validationResult.valid) {
-        console.warn(`⚠️  [WorkflowPilot] Output validation failed:`, validationResult.errors);
+        // Phase 6 — Tier 3 Fix #9 (resume path): same runMode-gated semantics
+        // as the main execute() path. See workplan:
+        // docs/workplans/output-validation-as-real-gate.md
+        if (context.runMode === 'production') {
+          throw new ValidationError(
+            `Resumed workflow output failed schema validation: ${validationResult.errors.join('; ')}`,
+            undefined,
+            {
+              agent_id: agent.id,
+              execution_id: executionId,
+              validation_errors: validationResult.errors,
+              run_mode: context.runMode,
+              resumed: true,
+            }
+          );
+        }
+        console.warn(
+          `⚠️  [WorkflowPilot] Output validation failed (runMode=${context.runMode}):`,
+          validationResult.errors
+        );
       }
 
       // 10. Mark as completed

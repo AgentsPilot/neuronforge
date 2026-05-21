@@ -42,12 +42,16 @@ export class AgentIntensityService {
     user_id: string
   ): Promise<AgentIntensityMetrics | null> {
     try {
+      // Use UPSERT to handle race conditions (two calls for same agent_id)
       const { data, error } = await supabaseClient
         .from('agent_intensity_metrics')
-        .insert({
+        .upsert({
           agent_id,
           user_id,
           ...DEFAULT_INTENSITY_METRICS,
+        }, {
+          onConflict: 'agent_id',
+          ignoreDuplicates: false  // Return the existing record if conflict
         })
         .select()
         .single();

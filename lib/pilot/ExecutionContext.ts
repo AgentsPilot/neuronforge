@@ -20,9 +20,10 @@ import type {
   IOrchestrator,
   IExecutionContext,
   CollectedIssue,
+  ExecutionScope,
 } from './types';
 import type { WorkflowDataSchema, SchemaField } from '@/lib/agentkit/v6/logical-ir/schemas/workflow-data-schema';
-import { VariableResolutionError, getTokenTotal } from './types';
+import { VariableResolutionError, getTokenTotal, makeEmptyExecutionScope } from './types';
 import { createLogger } from '@/lib/logger';
 
 // Create module-level logger for structured logging
@@ -71,8 +72,61 @@ export class ExecutionContext implements IExecutionContext {
   public batchCalibrationMode: boolean = false;
   public collectedIssues: CollectedIssue[] = [];
 
+  // Execution mode (Phase 6 — Tier 2 Fix #4).
+  // Drives runMode-aware behaviors throughout the runtime — currently:
+  //   • Scatter-gather: 'production' re-throws on first item failure;
+  //     'calibration' / 'batch_calibration' keep today's swallow-and-tag behavior.
+  // Stored here so any nested executor (ParallelExecutor, StepExecutor) can
+  // read it without threading it through every method signature.
+  // See workplan: docs/workplans/runmode-into-scatter-failure-handling.md
+  public runMode: 'production' | 'calibration' | 'batch_calibration' = 'production';
+
   // Workflow data schema for runtime validation (Phase 5)
   private dataSchema: WorkflowDataSchema | null = null;
+
+  // Strict variable resolution mode (Phase 6 — Tier 1 Fix #2)
+  // When true, the forgiving resolution paths are disabled:
+  //   • Auto-`.data` navigation on step outputs is off
+  //   • Fuzzy snake↔camel key matching is off
+  //   • Missing keys throw VariableResolutionError instead of returning undefined
+  //   • Inline `{{...}}` substitution errors throw instead of being swallowed
+  // See workplan: docs/workplans/strict-variable-resolution.md
+  private strict: boolean = false;
+
+  // Loop inner-step output overwrite disabled (Phase 6 — Tier 2 Fix #1).
+  // When true, ParallelExecutor.executeLoopIteration does NOT pollute
+  // parentContext.stepOutputs with the inner step's id (which would
+  // silently resolve to only the last iteration's output). The namespaced
+  // `${innerStepId}_iteration${i}` outputs are still written. Use
+  // `{{loopId.data}}` for the aggregated array or
+  // `{{innerStepId_iteration<N>.data}}` for a specific iteration.
+  // See workplan: docs/workplans/loop-inner-step-output-namespacing.md
+  private loopInnerOverwriteDisabled: boolean = false;
+
+  // Conditional type coercion for ordering operators (Phase 6 — Tier 2 Fix #2).
+  // When true, ConditionalEvaluator coerces numeric-looking strings to numbers
+  // and date-like strings to Date timestamps before applying `>`, `>=`, `<`, `<=`.
+  // Fixes the silent bug where `"100" > 90` evaluates as `false` via lexical
+  // string comparison. Equality operators (`==`, `!=`) and other operators are
+  // unaffected. See workplan: docs/workplans/conditional-type-coercion.md
+  private conditionalCoercionEnabled: boolean = false;
+
+  // Scatter-gather explicit shape required (Phase 6 — Tier 2 Fix #3).
+  // When true, ParallelExecutor.executeScatterItem throws if a scatter step
+  // does not declare `gather.shape`. When false (default), missing `shape`
+  // falls back to today's isStepExtractLike heuristic. Either way, when a
+  // `gather.shape` IS declared, it is honored deterministically and the
+  // heuristic is skipped. See workplan:
+  // docs/workplans/explicit-scatter-gather-output-shape.md
+  private scatterExplicitShapeRequired: boolean = false;
+
+  // Per-execution resource bundle (Phase 6 — Tier 1 Fix #3).
+  // Holds stepEmitter, debugRunId, shadowAgent, checkpointManager, resumeOrchestrator,
+  // executionProtection, executionSummaryCollector. Previously stuffed onto
+  // WorkflowPilot via `(this as any).X`. Now request-scoped — concurrent
+  // executions cannot corrupt each other's resources.
+  // See workplan: docs/workplans/move-per-execution-state-off-pilot-instance.md
+  public scope: ExecutionScope;
 
   constructor(
     executionId: string,
@@ -80,7 +134,12 @@ export class ExecutionContext implements IExecutionContext {
     userId: string,
     sessionId: string,
     inputValues: Record<string, any> = {},
-    batchCalibrationMode: boolean = false
+    batchCalibrationMode: boolean = false,
+    strict: boolean = false,
+    loopInnerOverwriteDisabled: boolean = false,
+    conditionalCoercionEnabled: boolean = false,
+    scatterExplicitShapeRequired: boolean = false,
+    runMode: 'production' | 'calibration' | 'batch_calibration' = 'production'
   ) {
     this.executionId = executionId;
     this.agent = agent;
@@ -94,6 +153,12 @@ export class ExecutionContext implements IExecutionContext {
     this.startedAt = new Date();
     this.batchCalibrationMode = batchCalibrationMode;
     this.collectedIssues = [];
+    this.strict = strict;
+    this.loopInnerOverwriteDisabled = loopInnerOverwriteDisabled;
+    this.conditionalCoercionEnabled = conditionalCoercionEnabled;
+    this.scatterExplicitShapeRequired = scatterExplicitShapeRequired;
+    this.runMode = runMode;
+    this.scope = makeEmptyExecutionScope();
 
     logger.info({
       executionId,
@@ -101,8 +166,81 @@ export class ExecutionContext implements IExecutionContext {
       userId,
       sessionId,
       inputKeys: Object.keys(inputValues),
-      batchCalibrationMode
+      batchCalibrationMode,
+      strict,
+      loopInnerOverwriteDisabled,
+      conditionalCoercionEnabled,
+      scatterExplicitShapeRequired,
+      runMode
     }, 'ExecutionContext created');
+  }
+
+  /**
+   * Whether strict variable resolution is enabled on this context.
+   * Exposed primarily for tests and child contexts (clone preserves it).
+   */
+  isStrict(): boolean {
+    return this.strict;
+  }
+
+  /**
+   * Whether the loop-inner-step overwrite is disabled on this context
+   * (Phase 6 — Tier 2 Fix #1). When true, ParallelExecutor will skip writing
+   * an inner step's output to the parent stepOutputs under its bare id and
+   * only write the per-iteration namespaced key.
+   */
+  isLoopInnerOverwriteDisabled(): boolean {
+    return this.loopInnerOverwriteDisabled;
+  }
+
+  /**
+   * Whether conditional ordering comparisons should coerce numeric/date-like
+   * strings before applying `>`, `>=`, `<`, `<=` (Phase 6 — Tier 2 Fix #2).
+   */
+  isConditionalCoercionEnabled(): boolean {
+    return this.conditionalCoercionEnabled;
+  }
+
+  /**
+   * Whether scatter-gather steps must declare an explicit `gather.shape`
+   * (Phase 6 — Tier 2 Fix #3). When true, ParallelExecutor throws on
+   * scatter steps that don't declare a shape; when false, missing `shape`
+   * falls back to the legacy heuristic.
+   */
+  isScatterExplicitShapeRequired(): boolean {
+    return this.scatterExplicitShapeRequired;
+  }
+
+  /**
+   * Mark a step as completed (or failed) in the tracking arrays WITHOUT
+   * writing an output into `stepOutputs`. Used by ParallelExecutor when the
+   * loop-inner-overwrite flag is disabled — UI status tracking needs the
+   * step id in `completedSteps`/`failedSteps`, but we deliberately omit it
+   * from `stepOutputs` to prevent `{{innerStepId.data}}` from silently
+   * resolving to only the last iteration.
+   *
+   * Idempotent: re-marking the same id is a no-op if it's already tracked
+   * with the requested status.
+   */
+  markStepCompletion(stepId: string, success: boolean): void {
+    if (success) {
+      if (!this.completedSteps.includes(stepId)) {
+        this.completedSteps.push(stepId);
+      }
+      // If a prior failure-mark exists, drop it (latest call wins)
+      const failedIdx = this.failedSteps.indexOf(stepId);
+      if (failedIdx > -1) {
+        this.failedSteps.splice(failedIdx, 1);
+      }
+    } else {
+      if (!this.failedSteps.includes(stepId)) {
+        this.failedSteps.push(stepId);
+      }
+      const completedIdx = this.completedSteps.indexOf(stepId);
+      if (completedIdx > -1) {
+        this.completedSteps.splice(completedIdx, 1);
+      }
+    }
   }
 
   /**
@@ -311,6 +449,11 @@ export class ExecutionContext implements IExecutionContext {
           }
           return String(value);
         } catch (error) {
+          // STRICT MODE (Phase 6 — Tier 1 Fix #2): re-throw instead of silently
+          // leaving the unresolved `{{...}}` token in the output string.
+          if (this.strict) {
+            throw error;
+          }
           logger.warn({ err: error, variable: match, executionId: this.executionId }, 'Failed to resolve variable');
           return match;
         }
@@ -414,6 +557,18 @@ export class ExecutionContext implements IExecutionContext {
       return result;
     } catch (jsonError) {
       // If not valid JSON, try evaluating as JavaScript expression
+      //
+      // Phase 6 — Eval Audit Phase A: log this fallback eval site so production
+      // telemetry can count how often we fall through to `new Function()`.
+      // See: docs/workplans/audit-new-function-eval-usage.md
+      logger.info({
+        mode: 'literal_with_vars_eval',
+        eval_path: true,
+        expression: expression.slice(0, 200),
+        resolvedExpressionPreview: resolvedExpression.slice(0, 200),
+        executionId: this.executionId
+      }, 'Falling back to new Function() eval (literal-with-vars after JSON.parse failed)');
+
       try {
         const result = new Function(`return ${resolvedExpression}`)();
         logger.debug({
@@ -475,7 +630,12 @@ export class ExecutionContext implements IExecutionContext {
       // StepOutput structure is: { stepId, plugin, action, data, metadata }
       // If user writes {{step4.assigned}}, they likely mean {{step4.data.assigned}}
       // Only auto-navigate if the first property isn't 'data' or 'metadata'
-      if (remainingPath.length > 0) {
+      //
+      // STRICT MODE (Phase 6 — Tier 1 Fix #2): auto-navigation is disabled.
+      // References must explicitly say `{{stepN.data.field}}`. This surfaces
+      // workflows that depend on the implicit fallback so the compiler can
+      // be fixed at source instead of being papered over at runtime.
+      if (remainingPath.length > 0 && !this.strict) {
         const firstProp = remainingPath[0];
         const isDirectProperty = ['data', 'metadata', 'stepId', 'plugin', 'action'].includes(firstProp);
 
@@ -647,6 +807,14 @@ export class ExecutionContext implements IExecutionContext {
 
   /**
    * Get nested value from object using parsed path
+   *
+   * Strict mode (Phase 6 — Tier 1 Fix #2):
+   *   • Throws VariableResolutionError when a path segment is missing rather
+   *     than returning undefined silently.
+   *   • Skips the snake↔camel fuzzy fallback.
+   *   • Still honors explicit `null` values (legitimate API responses).
+   *   • Still honors explicit `undefined` values on declared keys
+   *     (distinguished via `part in current`).
    */
   private getNestedValue(obj: any, path: string[]): any {
     let current = obj;
@@ -658,6 +826,14 @@ export class ExecutionContext implements IExecutionContext {
       // undefined = key doesn't exist (resolution error)
       // null = key exists but value is explicitly null (preserve it)
       if (current === undefined) {
+        if (this.strict) {
+          throw new VariableResolutionError(
+            `Variable path '${path.join('.')}' could not be resolved: ` +
+            `segment '${path.slice(0, i).join('.') || '(root)'}' is undefined ` +
+            `before reaching '${part}'.`,
+            path.join('.')
+          );
+        }
         return undefined;  // Path doesn't exist
       }
 
@@ -725,10 +901,42 @@ export class ExecutionContext implements IExecutionContext {
         if (part in current) {
           current = current[part];
         }
+        // ✅ FIX: Handle numeric index access on objects (for rows_to_objects compatibility)
+        // After rows_to_objects converts 2D arrays to objects, filter conditions may still
+        // reference fields by numeric index (e.g., "0" for first column).
+        // Convert to positional access: item["0"] → Object.values(item)[0]
+        else if (/^\d+$/.test(part) && typeof current === 'object' && current !== null && !Array.isArray(current)) {
+          const numericIndex = parseInt(part, 10);
+          const values = Object.values(current);
+          if (numericIndex < values.length) {
+            logger.debug({
+              numericIndex,
+              availableKeys: Object.keys(current).slice(0, 5)
+            }, 'Converting numeric index access to positional access on object');
+            current = values[numericIndex];
+          } else {
+            current = undefined;
+          }
+        }
         // ✅ CRITICAL FIX: Smart field name resolution (snake_case ↔ camelCase)
         // Handles naming convention mismatches between schemas and plugin implementations
         // Example: attachment_id (schema) → attachmentId (runtime data)
+        //
+        // STRICT MODE (Phase 6 — Tier 1 Fix #2): fuzzy matching is bypassed.
+        // A missing key produces a VariableResolutionError with the available
+        // keys at this level, so the offending workflow can be fixed at source.
         else if (typeof current === 'object' && current !== null) {
+          if (this.strict) {
+            const available = Array.isArray(current)
+              ? `array[${current.length}]`
+              : Object.keys(current).slice(0, 8).join(', ');
+            throw new VariableResolutionError(
+              `Variable path '${path.join('.')}' could not be resolved: ` +
+              `key '${part}' not found at '${path.slice(0, i).join('.') || '(root)'}'. ` +
+              `Available keys: ${available || '(none)'}.`,
+              path.join('.')
+            );
+          }
           const matchingKey = this.findMatchingKey(current, part);
           if (matchingKey) {
             current = current[matchingKey];
@@ -736,6 +944,13 @@ export class ExecutionContext implements IExecutionContext {
             current = undefined;  // Key not found
           }
         } else {
+          if (this.strict) {
+            throw new VariableResolutionError(
+              `Variable path '${path.join('.')}' could not be resolved: ` +
+              `cannot access property '${part}' on ${typeof current}.`,
+              path.join('.')
+            );
+          }
           current = undefined;
         }
       }
@@ -804,7 +1019,12 @@ export class ExecutionContext implements IExecutionContext {
       this.userId,
       this.sessionId,
       { ...this.inputValues },
-      this.batchCalibrationMode
+      this.batchCalibrationMode,
+      this.strict, // Phase 6 — Tier 1 Fix #2: preserve strict mode across loop/scatter iterations
+      this.loopInnerOverwriteDisabled, // Phase 6 — Tier 2 Fix #1: preserve loop overwrite policy
+      this.conditionalCoercionEnabled, // Phase 6 — Tier 2 Fix #2: preserve coercion policy
+      this.scatterExplicitShapeRequired, // Phase 6 — Tier 2 Fix #3: preserve scatter shape policy
+      this.runMode // Phase 6 — Tier 2 Fix #4: preserve runMode for failure-handling semantics
     );
 
     cloned.status = this.status;
@@ -819,10 +1039,10 @@ export class ExecutionContext implements IExecutionContext {
     cloned.startedAt = this.startedAt;
     cloned.collectedIssues = [...this.collectedIssues];
 
-    // Copy executionSummaryCollector reference for calibration metadata collection
-    if ((this as any).executionSummaryCollector) {
-      (cloned as any).executionSummaryCollector = (this as any).executionSummaryCollector;
-    }
+    // Phase 6 — Tier 1 Fix #3: share the per-execution resource bundle by
+    // REFERENCE (shallow copy). Loop / scatter iterations use the same
+    // shadowAgent, checkpointManager, summaryCollector etc. as the parent.
+    cloned.scope = this.scope;
 
     // For parallel execution, reset metrics to 0 so only NEW tokens/time are tracked
     // This prevents double-counting when merging back to parent

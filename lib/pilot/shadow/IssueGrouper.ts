@@ -42,8 +42,9 @@ export class IssueGrouper {
         // Merge into existing group
         const existing = groups.get(groupKey)!;
 
-        // Add affected steps (avoid duplicates)
-        for (const affectedStep of issue.affectedSteps) {
+        // Add affected steps (avoid duplicates) - ensure affectedSteps is an array
+        const affectedStepsArray = Array.isArray(issue.affectedSteps) ? issue.affectedSteps : [];
+        for (const affectedStep of affectedStepsArray) {
           const isDuplicate = existing.affectedSteps.some(
             step => step.stepId === affectedStep.stepId
           );
@@ -59,10 +60,11 @@ export class IssueGrouper {
           mergedInto: existing.id
         }, 'Merged issue into existing group');
       } else {
-        // New group - clone the issue to avoid mutation
+        // New group - clone the issue to avoid mutation - ensure affectedSteps is an array
+        const affectedStepsArray = Array.isArray(issue.affectedSteps) ? issue.affectedSteps : [];
         groups.set(groupKey, {
           ...issue,
-          affectedSteps: [...issue.affectedSteps]
+          affectedSteps: [...affectedStepsArray]
         });
 
         logger.debug({

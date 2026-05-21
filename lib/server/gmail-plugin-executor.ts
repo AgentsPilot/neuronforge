@@ -500,15 +500,29 @@ export class GmailPluginExecutor extends GoogleBasePluginExecutor {
 
     let message = '';
 
+    // Helper to normalize recipient field to array (handles string or array input)
+    const normalizeRecipients = (field: any): string[] => {
+      if (!field) return [];
+      if (Array.isArray(field)) return field;
+      if (typeof field === 'string') {
+        // Handle comma-separated strings
+        return field.split(',').map((s: string) => s.trim()).filter(Boolean);
+      }
+      return [];
+    };
+
     // WP-8: All headers use mimeEncodeHeader for non-ASCII safety
-    if (recipients?.to?.length) {
-      message += `To: ${recipients.to.map((r: string) => this.mimeEncodeHeader(r)).join(', ')}\r\n`;
+    const toRecipients = normalizeRecipients(recipients?.to);
+    if (toRecipients.length) {
+      message += `To: ${toRecipients.map((r: string) => this.mimeEncodeHeader(r)).join(', ')}\r\n`;
     }
-    if (recipients?.cc?.length) {
-      message += `Cc: ${recipients.cc.map((r: string) => this.mimeEncodeHeader(r)).join(', ')}\r\n`;
+    const ccRecipients = normalizeRecipients(recipients?.cc);
+    if (ccRecipients.length) {
+      message += `Cc: ${ccRecipients.map((r: string) => this.mimeEncodeHeader(r)).join(', ')}\r\n`;
     }
-    if (recipients?.bcc?.length) {
-      message += `Bcc: ${recipients.bcc.map((r: string) => this.mimeEncodeHeader(r)).join(', ')}\r\n`;
+    const bccRecipients = normalizeRecipients(recipients?.bcc);
+    if (bccRecipients.length) {
+      message += `Bcc: ${bccRecipients.map((r: string) => this.mimeEncodeHeader(r)).join(', ')}\r\n`;
     }
     if (content?.subject) {
       message += `Subject: ${this.mimeEncodeHeader(content.subject)}\r\n`;

@@ -1,8 +1,15 @@
 /**
- * Runtime Validator for Pilot Workflow Structures
+ * Workflow Structure Validator (Phase 6 — Tier 3 Fix #11 rename).
  *
  * Validates workflow steps AFTER LLM generation but BEFORE saving to database.
- * This catches semantic errors that OpenAI's schema validation cannot detect.
+ * Catches semantic errors that OpenAI's schema validation alone cannot detect.
+ *
+ * Previously named `runtime-validator.ts` — the name was misleading because
+ * this module is invoked from generation pipelines (`twostage-agent-generator`
+ * Gate 2 and the legacy `/api/generate-agent-v2` route), not from the Pilot
+ * runtime. As of Phase 6, the Pilot runtime ALSO invokes these checks via
+ * `WorkflowValidator.validatePreFlight` when the SystemConfig flag
+ * `pilot_structural_validation_enabled` is true.
  *
  * Validation includes:
  * - Type-specific required fields (e.g., loop must have iterateOver and loopSteps)
@@ -10,8 +17,9 @@
  * - Nesting depth limits (≤ 5 levels)
  * - Duplicate step IDs
  * - Recursive structure validation
+ * - AI processing pattern warnings
  *
- * @module lib/pilot/schema/runtime-validator
+ * @module lib/pilot/schema/workflow-structure-validator
  */
 
 export interface ValidationResult {

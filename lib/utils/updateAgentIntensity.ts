@@ -34,21 +34,25 @@ export async function updateAgentIntensityMetrics(
     }
 
     if (!existing) {
-      // Initialize with defaults
-      const { error: insertError } = await supabase
+      // Initialize with defaults using UPSERT to handle race conditions
+      // (two executions for same agent starting simultaneously)
+      const { error: upsertError } = await supabase
         .from('agent_intensity_metrics')
-        .insert({
+        .upsert({
           agent_id: executionData.agent_id,
           user_id: executionData.user_id,
           ...DEFAULT_INTENSITY_METRICS,
+        }, {
+          onConflict: 'agent_id',
+          ignoreDuplicates: true  // If already exists, just skip the insert
         });
 
-      if (insertError) {
-        console.error('Error initializing intensity metrics:', insertError);
+      if (upsertError) {
+        console.error('Error initializing intensity metrics:', upsertError);
         return { success: false };
       }
 
-      // Fetch the newly created record
+      // Fetch the record (either newly created or existing from race condition)
       const { data: newMetrics } = await supabase
         .from('agent_intensity_metrics')
         .select('*')
@@ -57,7 +61,7 @@ export async function updateAgentIntensityMetrics(
 
       if (!newMetrics) return { success: false };
 
-      // Use the newly created record as existing
+      // Use the record as existing
       return await updateExistingMetrics(supabase, newMetrics as AgentIntensityMetrics, executionData);
     }
 

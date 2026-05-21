@@ -771,7 +771,7 @@ Loop output: "all_results"
 |------|---------|------------|----------------|---------|
 | `select` | Extract/rename fields from object | object | `fields` (object mapping) | `{"type": "select", "input": "{{email}}", "fields": {"sender": "{{email.from}}", "subject": "{{email.subject}}"}}` |
 | `filter` | Subset based on condition | array | `filter_expression` | `{"filter_expression": {"type": "simple", "variable": "item.status", "operator": "eq", "value": "active"}}` |
-| `map` | Transform each item | array | (optional `map_expression`) | `{"type": "map", "input": "{{items}}"}` |
+| `map` | Transform each item | array | **prefer** `field_mapping` / `field_path` / `field` / `column_index` over `map_expression` (see warning below) | `{"type": "map", "input": "{{items}}", "field_mapping": {"sender": "from", "subject": "subject"}}` |
 | `reduce` | Aggregate to single value | array | `reduce_operation` | `{"reduce_operation": "sum", "reduce_field": "amount"}` |
 | `sort` | Order by field | array | `sort_field` | `{"sort_field": "date", "sort_order": "asc"}` |
 | `group_by` | Group into object | array | `group_by_field` | `{"group_by_field": "category"}` |
@@ -779,6 +779,17 @@ Loop output: "all_results"
 | `flatten` | Flatten nested arrays | array | (none) | `{"type": "flatten", "input": "{{nested}}"}` |
 
 **CRITICAL:** Missing required fields will cause compilation failure.
+
+**AVOID `map_expression` — use structured modes instead.** `map_expression` is a free-text JavaScript string that the runtime evaluates via `new Function()`. Prefer one of:
+
+| Mode | When to use | Example |
+|---|---|---|
+| `field_mapping` | Renaming / selecting fields per a static dict | `{"field_mapping": {"sender": "from", "subject": "subject"}}` |
+| `field_path` | Extracting a single nested field | `{"field_path": "nested.id"}` |
+| `field` | Extracting a single top-level field | `{"field": "email"}` |
+| `column_index` | Extracting a positional element from 2D arrays | `{"column_index": 4}` |
+
+`map_expression` should be the **last resort** when none of the structured modes can express the transformation. The runtime tracks usage of `map_expression` via the `mode: 'expression_*'` log tag; expect this branch to be tightened or removed in a future revision.
 
 #### 6.1.3 AI Operation
 

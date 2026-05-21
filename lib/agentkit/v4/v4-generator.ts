@@ -285,7 +285,7 @@ export class V4WorkflowGenerator {
    * (Placeholder for now - would integrate with existing validator)
    */
   async validateWorkflow(workflow: any): Promise<{ valid: boolean; errors: string[] }> {
-    // TODO: Integrate with lib/pilot/schema/runtime-validator.ts
+    // TODO: Integrate with lib/pilot/schema/workflow-structure-validator.ts
     const errors: string[] = [];
 
     // Basic validation

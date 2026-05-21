@@ -1,5 +1,15 @@
 /**
- * StructuralRepairEngine - Auto-fix structural DSL issues during calibration
+ * StructuralRepairEngine — Pre-execution DSL structural auto-repair
+ *
+ * ⚠ DO NOT CONFUSE WITH `RepairEngine` (separate file in this dir).
+ *   • `StructuralRepairEngine` (this file) — workflow-DEFINITION repair.
+ *     Runs in `WorkflowPilot.execute()` BEFORE parsing/execution. Fixes compiler-emitted
+ *     DSL defects (missing fields, broken refs, etc.). May persist the repaired
+ *     `agent.pilot_steps` back to the database (gated by
+ *     `pilot_structural_repair_persist_enabled`; see Phase 6 — Tier 3 Fix #12).
+ *   • `RepairEngine` (sibling file) — per-failed-step DATA shape repair, used by
+ *     `ResumeOrchestrator` for live in-memory data fixes during execution.
+ *     Never modifies the agent definition.
  *
  * This engine fixes compiler bugs and structural issues in compiled DSL that prevent execution.
  * It addresses issues that are NOT the user's fault and that users cannot fix themselves.
@@ -135,6 +145,8 @@ export class StructuralRepairEngine {
     console.log('🔍 [StructuralRepairEngine] Starting to scan', steps.length, 'steps...');
 
     // Build step ID map for reference checking (including nested steps)
+    // CRITICAL: Include BOTH step IDs AND output_variable names as valid variable references
+    // This prevents false positives for references like {{sheet_read_result.values}}
     const stepIds = new Set<string>();
     const duplicateIds = new Set<string>();
     const allSteps = this.getAllStepsRecursive(steps);
@@ -161,6 +173,17 @@ export class StructuralRepairEngine {
           });
         }
         stepIds.add(stepId);
+      }
+
+      // Also add output_variable names as valid references
+      // These are alternative names for step outputs (e.g., "sheet_read_result" instead of "step1")
+      if (step.output_variable && typeof step.output_variable === 'string') {
+        stepIds.add(step.output_variable);
+      }
+
+      // Also add outputKey from gather config (for scatter-gather steps)
+      if (step.gather?.outputKey && typeof step.gather.outputKey === 'string') {
+        stepIds.add(step.gather.outputKey);
       }
     }
 
@@ -334,6 +357,25 @@ export class StructuralRepairEngine {
             description: `Transform step missing 'operation' field (transform type: ${step.config?.type || 'unknown'})`,
             severity: 'critical',
             autoFixable: false
+          });
+        }
+
+        // Check for missing input field on transform steps
+        // Transform steps need an 'input' field to know what data to transform
+        const hasInput = step.input || step.config?.input || step.params?.input;
+        if (!hasInput) {
+          // Try to infer input from dependencies or previous step
+          const stepIndex = allSteps.findIndex(s => (s.step_id || s.id) === stepId);
+          const previousStep = stepIndex > 0 ? allSteps[stepIndex - 1] : null;
+          const suggestedInput = previousStep?.output_variable ||
+            (previousStep?.step_id || previousStep?.id);
+
+          issues.push({
+            type: 'missing_input_declaration',
+            stepId,
+            description: `Transform step missing 'input' field - cannot determine what data to transform${suggestedInput ? `. Suggested: {{${suggestedInput}}}` : ''}`,
+            severity: 'critical',
+            autoFixable: !!suggestedInput
           });
         }
       }
@@ -770,8 +812,15 @@ export class StructuralRepairEngine {
         if (!match) return noFix;
 
         const brokenVar = match[1];
-        const stepIds = new Set(steps.map(s => s.step_id));
-        const suggestion = this.suggestVariableCorrection(brokenVar, stepIds);
+        // Build valid variable names from step IDs, output_variable, and gather.outputKey
+        const validVarNames = new Set<string>();
+        for (const s of allSteps) {
+          if (s.step_id) validVarNames.add(s.step_id);
+          if (s.id) validVarNames.add(s.id);
+          if (s.output_variable) validVarNames.add(s.output_variable);
+          if (s.gather?.outputKey) validVarNames.add(s.gather.outputKey);
+        }
+        const suggestion = this.suggestVariableCorrection(brokenVar, validVarNames);
 
         if (!suggestion) {
           return { ...noFix, description: `Cannot suggest correction for variable: ${brokenVar}` };
@@ -991,6 +1040,27 @@ export class StructuralRepairEngine {
           fix: {
             newField: bestField,
             availableFields
+          }
+        };
+      }
+
+      case 'missing_input_declaration': {
+        // Extract suggested input from description if available
+        const suggestedMatch = issue.description.match(/Suggested: \{\{([^}]+)\}\}/);
+        const suggestedInput = suggestedMatch ? suggestedMatch[1] : null;
+
+        if (!suggestedInput) {
+          return { ...noFix, description: 'Cannot determine input for transform step - no previous step found' };
+        }
+
+        return {
+          action: 'infer_inputs',
+          description: `Add input field "{{${suggestedInput}}}" to transform step`,
+          targetStepId: issue.stepId,
+          confidence: 0.85,
+          risk: 'low',
+          fix: {
+            input: `{{${suggestedInput}}}`
           }
         };
       }
@@ -1534,6 +1604,31 @@ export class StructuralRepairEngine {
           return { fixed: true, fixApplied: proposal };
         }
 
+        case 'infer_inputs': {
+          // Add missing input field to transform step
+          const inputValue = proposal.fix.input;
+
+          // Set input in the appropriate location (config or params)
+          if (step.config) {
+            step.config.input = inputValue;
+          } else if (step.params) {
+            step.params.input = inputValue;
+          } else {
+            // Create config if neither exists
+            step.config = { input: inputValue };
+          }
+
+          // Also set at step level for consistency
+          step.input = inputValue;
+
+          logger.info({
+            stepId: proposal.targetStepId,
+            input: inputValue
+          }, '[StructuralRepair] Added missing input field to transform step');
+
+          return { fixed: true, fixApplied: proposal };
+        }
+
         default:
           return { fixed: false, error: `Fix action '${proposal.action}' not implemented` };
       }
@@ -1908,17 +2003,30 @@ export class StructuralRepairEngine {
   ): string[] {
     const dependencies = new Set<string>();
     const stepId = step.step_id || step.id;
-    const stepIds = new Set(allSteps.map((s: any) => s.step_id || s.id));
+    const currentOutputVar = step.output_variable;
 
-    // Search for {{stepX}} references in step params
+    // Build map of variable name → step ID (for both step_id and output_variable)
+    const varToStepId = new Map<string, string>();
+    for (const s of allSteps) {
+      const sId = s.step_id || s.id;
+      if (sId) {
+        varToStepId.set(sId, sId);
+        if (s.output_variable) varToStepId.set(s.output_variable, sId);
+        if (s.gather?.outputKey) varToStepId.set(s.gather.outputKey, sId);
+      }
+    }
+
+    // Search for {{stepX}} or {{output_variable}} references in step params
     const searchInObject = (obj: any) => {
       if (typeof obj === 'string') {
         const regex = /\{\{([a-zA-Z_]\w*)\b/g;
         let match;
         while ((match = regex.exec(obj)) !== null) {
           const varName = match[1];
-          if (stepIds.has(varName) && varName !== stepId) {
-            dependencies.add(varName);
+          const producingStepId = varToStepId.get(varName);
+          // Add dependency if it's a valid step reference and not self-reference
+          if (producingStepId && producingStepId !== stepId && varName !== currentOutputVar) {
+            dependencies.add(producingStepId);
           }
         }
       } else if (Array.isArray(obj)) {

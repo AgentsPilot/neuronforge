@@ -30,7 +30,10 @@
       "Bash(curl:*)",
       "Bash(lsof:*)",
       "Bash(xargs kill -9)",
-      "Bash(ls:*)"
+      "Bash(ls:*)",
+      "Bash(echo \"=== Analyzing calibration log for issues ===\" echo \"\" echo \"1. LLM calls taking >10 seconds:\" grep \"executionTimeMs\" /tmp/neuronforge-calibration.log)",
+      "Bash(uniq -c echo \"\" echo \"5. Failed steps:\" grep \"Step execution failed\" /tmp/neuronforge-calibration.log)",
+      "Bash(uniq -c echo \"\" echo \"6. Final calibration status:\" grep -E \"Batch calibration|criticalIssues|calibration.*complete\" /tmp/neuronforge-calibration.log)"
     ]
   }
 }

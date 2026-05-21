@@ -1,8 +1,18 @@
 /**
- * RepairEngine - Auto-repair data shape mismatches during calibration
+ * RepairEngine — Per-step data-shape auto-repair during calibration
  *
- * When a step fails because its input has the wrong shape (object vs array),
- * the RepairEngine analyzes the upstream step's output and proposes a fix:
+ * ⚠ DO NOT CONFUSE WITH `StructuralRepairEngine` (separate file in this dir).
+ *   • `RepairEngine` (this file) — per-failed-step DATA shape repair. Used by
+ *     `ResumeOrchestrator` when a step fails because its input was the wrong
+ *     SHAPE (object passed where array expected, etc.). Operates on the LIVE
+ *     execution data in memory; the agent definition is NOT modified.
+ *   • `StructuralRepairEngine` (sibling file) — workflow-DEFINITION repair.
+ *     Runs pre-execution; fixes the agent's compiled DSL (missing fields,
+ *     broken refs, etc.) and may persist the result back to the agent record
+ *     (gated by `pilot_structural_repair_persist_enabled` since Phase 6 Tier 3 #12).
+ *
+ * When a step fails because its input has the wrong shape, this engine analyzes
+ * the upstream step's output and proposes a fix:
  *
  * 1. Object with single array field → extract that field
  * 2. Object with multiple array fields → extract best-match using SchemaAwareDataExtractor patterns

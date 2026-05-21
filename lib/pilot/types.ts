@@ -18,6 +18,89 @@
  * Base workflow step interface
  * All step types extend this base interface
  */
+// ============================================================================
+// ExecutionScope — per-execution resource bundle (Phase 6 — Tier 1 Fix #3)
+//
+// Owns the references that today are stuffed onto WorkflowPilot via
+// `(this as any).<field> = ...`. Moving them onto ExecutionContext.scope
+// makes the resources request-scoped and eliminates the concurrent-execution
+// corruption risk on a shared WorkflowPilot instance.
+//
+// All shadow-class imports use `import type` so this file adds zero runtime
+// dependencies on the shadow/ directory.
+//
+// See workplan: docs/workplans/move-per-execution-state-off-pilot-instance.md
+// ============================================================================
+
+import type { ShadowAgent } from './shadow/ShadowAgent';
+import type { ExecutionProtection } from './shadow/ExecutionProtection';
+import type { CheckpointManager } from './shadow/CheckpointManager';
+import type { ResumeOrchestrator } from './shadow/ResumeOrchestrator';
+import type { ExecutionSummaryCollector } from './shadow/ExecutionSummaryCollector';
+
+/**
+ * Caller-provided lifecycle callbacks fired by StepExecutor / ParallelExecutor
+ * during execution. Used by the SSE streaming route and the debug UI.
+ */
+export interface StepEmitter {
+  onStepStarted?: (stepId: string, stepName: string) => void;
+  onStepCompleted?: (stepId: string, stepName: string) => void;
+  onStepFailed?: (stepId: string, stepName: string, error: string) => void;
+}
+
+/**
+ * The bundle of per-execution resources that used to live on WorkflowPilot
+ * via `(this as any).<field>`. All fields are nullable / optional so a fresh
+ * ExecutionContext starts with an empty scope; the executor populates it
+ * during setup. Loop / scatter / sub-workflow contexts inherit the same
+ * scope by reference (shallow copy).
+ *
+ * Phase 6 post-audit additions:
+ *   - memoryLoadFailed (G4) — explicit signal when memory loading failed
+ *     (timeout, fetch error, etc.) so downstream code can distinguish
+ *     "memory not requested" (initial state) from "memory failed to load."
+ *   - scatterPartialFailure (G2) — explicit signal when a scatter step
+ *     had partial item failures in calibration mode, since the metadata
+ *     attached to the result array won't survive JSON serialization.
+ */
+export interface ExecutionScope {
+  stepEmitter?: StepEmitter;
+  debugRunId: string | null;
+  executionSummaryCollector: ExecutionSummaryCollector | null;
+  shadowAgent: ShadowAgent | null;
+  executionProtection: ExecutionProtection | null;
+  checkpointManager: CheckpointManager | null;
+  resumeOrchestrator: ResumeOrchestrator | null;
+  /** Set to a non-null value when memory loading failed / timed out. */
+  memoryLoadFailed: { reason: 'timeout' | 'error'; message: string } | null;
+  /** Accumulated per-step scatter-gather failure metadata (calibration only). */
+  scatterPartialFailures: Array<{
+    stepId: string;
+    totalItems: number;
+    successCount: number;
+    errorCount: number;
+    errors: Array<{ error: string; item: number }>;
+  }>;
+}
+
+/**
+ * Factory for an empty ExecutionScope. Used by the ExecutionContext
+ * constructor; the executor mutates members during execute() setup.
+ */
+export function makeEmptyExecutionScope(): ExecutionScope {
+  return {
+    stepEmitter: undefined,
+    debugRunId: null,
+    executionSummaryCollector: null,
+    shadowAgent: null,
+    executionProtection: null,
+    checkpointManager: null,
+    resumeOrchestrator: null,
+    memoryLoadFailed: null,
+    scatterPartialFailures: [],
+  };
+}
+
 export interface WorkflowStepBase {
   id: string;
   name: string;
@@ -183,6 +266,39 @@ export interface ScatterGatherStep extends WorkflowStepBase {
     operation: 'collect' | 'merge' | 'reduce' | 'flatten'; // How to aggregate results
     outputKey?: string; // Where to store aggregated results (default: step.id)
     reduceExpression?: string; // For 'reduce' operation
+    /**
+     * Phase 6 — Tier 2 Fix #3: explicit per-item output shape control.
+     *
+     * When present, ParallelExecutor.executeScatterItem uses this shape
+     * directly and skips the legacy `isStepExtractLike` heuristic. When
+     * absent and the SystemConfig flag `pilot_scatter_explicit_shape_required`
+     * is true, runtime throws. When absent and the flag is false (default),
+     * the heuristic runs as today (zero regression).
+     *
+     * Shapes:
+     *   - 'step_only'           — return inner-step's data only (no merge with item).
+     *                             For multi-step bodies, returns the LAST step's data.
+     *   - 'merge_with_item'     — `{...item, ...stepData}`. Multi-step bodies fold
+     *                             all object step outputs into the item.
+     *                             ⚠ WARNING: can produce token-bloat when an
+     *                             intermediate step has large payloads (see D-B25
+     *                             in ParallelExecutor.ts). Prefer 'step_only' for
+     *                             extract-like multi-step bodies.
+     *   - 'merge_as_named_array'— `{...item, [shapeField]: stepData}`. Requires
+     *                             `shapeField` to be set.
+     *   - 'item_only'           — return the original item, dropping all step outputs.
+     *
+     * See workplan: docs/workplans/explicit-scatter-gather-output-shape.md
+     */
+    shape?: 'step_only' | 'merge_with_item' | 'merge_as_named_array' | 'item_only';
+    /** Required iff shape === 'merge_as_named_array'. */
+    shapeField?: string;
+    /**
+     * Existing runtime field (previously accessed via `as any`) — when present,
+     * the gather returns ONLY this named variable's value from the item context
+     * instead of running the merge / shape logic. Declared here for type coverage.
+     */
+    from?: string;
   };
 }
 
