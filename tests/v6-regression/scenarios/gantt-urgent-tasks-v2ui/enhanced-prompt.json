@@ -1,0 +1,90 @@
+{
+  "plan_title": "Gantt Critical/High Tasks Due Soon Emailer",
+  "plan_description": "Reads a Gantt task list from Google Sheets and emails an HTML summary table of Critical/High priority tasks whose due date is within the next 3 days.",
+  "sections": {
+    "data": [
+      "- Read task rows from Google Sheets using spreadsheet_id \"1RHLbBXzrKv24gNgp7a4Lr7RlMIrP9fjacfGWjhPAbOE\".",
+      "- Read from the sheet tab named \"Gantt\".",
+      "- Read the range \"Gantt!A:G\" (columns A through G).",
+      "- Treat column A as the Task Name field.",
+      "- Treat column D as the Status field.",
+      "- Treat column F as the Due Date field.",
+      "- Treat column G as the Priority field.",
+      "- Treat the first row as a header row and ignore it when evaluating tasks (start evaluating from row 2)."
+    ],
+    "actions": [
+      "- For each task row (starting at row 2), extract Task Name (column A), Status (column D), Due Date (column F), and Priority (column G).",
+      "- For each task row, parse the Due Date value from column F into a date.",
+      "- Filter tasks to only those where Priority (column G) is exactly \"Critical\" or exactly \"High\".",
+      "- Filter the remaining tasks to only those whose Due Date is in the next 3 days (inclusive), relative to the agent run date.",
+      "- If a task's Due Date is blank or cannot be parsed as a date, exclude it from the due-soon list and include it in a separate \"Skipped (invalid due date)\" section in the email.",
+      "- Sort the final due-soon task list by Due Date ascending (earliest first)."
+    ],
+    "output": [
+      "- Generate a nice HTML summary table for the matching due-soon tasks.",
+      "- The HTML table must include columns in this order: Task Name, Priority, Due Date, Status.",
+      "- If there are matching tasks, include a short count summary above the table (e.g., \"X tasks due in the next 3 days\").",
+      "- If there are zero matching tasks, generate an email that clearly states there are no \"Critical\" or \"High\" tasks due in the next 3 days (and do not include an empty table).",
+      "- If any tasks were skipped due to invalid/missing Due Date, include a separate HTML section listing their Task Name and the raw Due Date cell value."
+    ],
+    "delivery": [
+      "- Send the email to \"meiribarak@gmail.com\".",
+      "- Use an email subject that indicates the time window and priority filter (e.g., \"Critical/High tasks due in the next 3 days\").",
+      "- Put the HTML summary table in the email html_body.",
+      "- If there are skipped tasks, include the skipped section in the same email html_body below the main table (or below the no-tasks message)."
+    ]
+  },
+  "specifics": {
+    "services_involved": [
+      "google-sheets",
+      "google-mail"
+    ],
+    "user_inputs_required": [],
+    "resolved_user_inputs": [
+      {
+        "key": "google-sheets__table/get__spreadsheet_id",
+        "value": "1RHLbBXzrKv24gNgp7a4Lr7RlMIrP9fjacfGWjhPAbOE"
+      },
+      {
+        "key": "google-sheets__table/get__range",
+        "value": "Gantt!A:G"
+      },
+      {
+        "key": "task_name_column",
+        "value": "A"
+      },
+      {
+        "key": "status_column",
+        "value": "D"
+      },
+      {
+        "key": "due_date_column",
+        "value": "F"
+      },
+      {
+        "key": "priority_column",
+        "value": "G"
+      },
+      {
+        "key": "priority_filter_values",
+        "value": "Critical, High"
+      },
+      {
+        "key": "finish_date_time_window",
+        "value": "next 3 days"
+      },
+      {
+        "key": "google-mail__email/send_message__recipients.to",
+        "value": "meiribarak@gmail.com"
+      },
+      {
+        "key": "no_matches_behavior",
+        "value": "send_no_tasks_email"
+      },
+      {
+        "key": "output_columns",
+        "value": "Task Name, Priority, Due Date, Status"
+      }
+    ]
+  }
+}

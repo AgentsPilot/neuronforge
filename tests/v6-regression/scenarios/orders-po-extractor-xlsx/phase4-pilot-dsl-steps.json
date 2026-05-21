@@ -1,0 +1,1197 @@
+[
+  {
+    "step_id": "step1",
+    "type": "action",
+    "description": "Search Gmail for emails with 'Orders' in subject from last 30 days, including attachment metadata",
+    "plugin": "google-mail",
+    "output_variable": "order_emails",
+    "output_schema": {
+      "type": "object",
+      "source": "plugin",
+      "description": "Search results with email details",
+      "properties": {
+        "emails": {
+          "type": "array",
+          "source": "plugin",
+          "description": "Array of matching emails",
+          "items": {
+            "type": "object",
+            "source": "plugin",
+            "semantic_type": "email_message",
+            "properties": {
+              "id": {
+                "type": "string",
+                "source": "plugin",
+                "description": "Gmail message ID"
+              },
+              "thread_id": {
+                "type": "string",
+                "source": "plugin",
+                "description": "Gmail thread ID"
+              },
+              "subject": {
+                "type": "string",
+                "source": "plugin",
+                "description": "Email subject"
+              },
+              "from": {
+                "type": "string",
+                "source": "plugin",
+                "description": "Sender address"
+              },
+              "to": {
+                "type": "string",
+                "source": "plugin",
+                "description": "Recipient addresses"
+              },
+              "date": {
+                "type": "string",
+                "source": "plugin",
+                "description": "Email date"
+              },
+              "snippet": {
+                "type": "string",
+                "source": "plugin",
+                "description": "Email preview snippet (first ~200 chars of email body - USE THIS for content matching/filtering)"
+              },
+              "labels": {
+                "type": "array",
+                "source": "plugin",
+                "description": "Gmail labels",
+                "items": {
+                  "type": "string",
+                  "source": "plugin"
+                }
+              },
+              "body": {
+                "type": "string",
+                "source": "plugin",
+                "description": "Email body text (NOTE: Usually empty in search results - use 'snippet' field instead for email content)"
+              },
+              "attachments": {
+                "type": "array",
+                "source": "plugin",
+                "description": "Attachment metadata (if include_attachments=true). Each item contains: filename, mimeType, size, attachment_id (use with get_email_attachment), message_id (email ID)",
+                "items": {
+                  "type": "object",
+                  "source": "plugin",
+                  "semantic_type": "file_attachment",
+                  "properties": {
+                    "filename": {
+                      "type": "string",
+                      "source": "plugin",
+                      "description": "Attachment filename"
+                    },
+                    "mimeType": {
+                      "type": "string",
+                      "source": "plugin",
+                      "description": "MIME type (application/pdf, image/png, etc.)"
+                    },
+                    "size": {
+                      "type": "number",
+                      "source": "plugin",
+                      "description": "File size in bytes"
+                    },
+                    "attachment_id": {
+                      "type": "string",
+                      "source": "plugin",
+                      "description": "Attachment ID (required for get_email_attachment action)"
+                    },
+                    "message_id": {
+                      "type": "string",
+                      "source": "plugin",
+                      "description": "Email message ID (required for get_email_attachment action)"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "total_found": {
+          "type": "number",
+          "source": "plugin",
+          "description": "Number of emails returned"
+        },
+        "total_available": {
+          "type": "number",
+          "source": "plugin",
+          "description": "Estimated total matching emails"
+        },
+        "search_query": {
+          "type": "string",
+          "source": "plugin",
+          "description": "The search query that was executed"
+        },
+        "searched_at": {
+          "type": "string",
+          "source": "plugin",
+          "description": "ISO 8601 timestamp of search"
+        }
+      }
+    },
+    "id": "step1",
+    "params": {
+      "query": "{{input.gmail_search_query}}",
+      "max_results": 50,
+      "include_attachments": true,
+      "content_level": "full"
+    },
+    "name": "Search Gmail for emails with 'Orders' in subject from last 30 days, including attachment metadata",
+    "action": "search_emails"
+  },
+  {
+    "step_id": "step2",
+    "type": "transform",
+    "operation": "flatten",
+    "input": "{{order_emails.emails}}",
+    "description": "Extract all attachments from all emails into a flat list, preserving parent email metadata (message_id, subject, from, date)",
+    "config": {
+      "type": "flatten",
+      "input": "order_emails.emails",
+      "custom_code": "Flatten attachments array from each email, carrying forward parent email fields (id, subject, from, date) onto each attachment record",
+      "output_schema": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "message_id": {
+              "type": "string"
+            },
+            "email_subject": {
+              "type": "string"
+            },
+            "email_from": {
+              "type": "string"
+            },
+            "email_date": {
+              "type": "string"
+            },
+            "filename": {
+              "type": "string"
+            },
+            "mimeType": {
+              "type": "string"
+            },
+            "size": {
+              "type": "integer"
+            },
+            "attachment_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "message_id",
+            "filename",
+            "attachment_id"
+          ]
+        }
+      },
+      "field": "attachments"
+    },
+    "output_variable": "all_attachments",
+    "output_schema": {
+      "type": "array",
+      "source": "ai_declared",
+      "items": {
+        "type": "object",
+        "source": "ai_declared",
+        "properties": {
+          "message_id": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "email_subject": {
+            "type": "string",
+            "source": "ai_declared"
+          },
+          "email_from": {
+            "type": "string",
+            "source": "ai_declared"
+          },
+          "email_date": {
+            "type": "string",
+            "source": "ai_declared"
+          },
+          "filename": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "mimeType": {
+            "type": "string",
+            "source": "ai_declared"
+          },
+          "size": {
+            "type": "number",
+            "source": "ai_declared"
+          },
+          "attachment_id": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          }
+        }
+      }
+    },
+    "id": "step2",
+    "_on_empty": "throw",
+    "name": "Extract all attachments from all emails into a flat list, preserving parent email metadata (message_id, subject, from, date)"
+  },
+  {
+    "step_id": "step3",
+    "type": "scatter_gather",
+    "description": "Loop over all_attachments",
+    "scatter": {
+      "input": "{{all_attachments}}",
+      "steps": [
+        {
+          "step_id": "step4",
+          "type": "action",
+          "description": "Download the attachment content (binary data) from Gmail",
+          "plugin": "google-mail",
+          "output_variable": "attachment_content",
+          "output_schema": {
+            "type": "object",
+            "source": "plugin",
+            "description": "Attachment content with metadata",
+            "properties": {
+              "filename": {
+                "type": "string",
+                "source": "plugin",
+                "description": "Attachment filename",
+                "required": true
+              },
+              "mimeType": {
+                "type": "string",
+                "source": "plugin",
+                "description": "MIME type (application/pdf, image/png, etc.)",
+                "required": true
+              },
+              "size": {
+                "type": "number",
+                "source": "plugin",
+                "description": "File size in bytes",
+                "required": true
+              },
+              "data": {
+                "type": "string",
+                "source": "plugin",
+                "description": "Base64-encoded file content for processing"
+              },
+              "extracted_text": {
+                "type": "string",
+                "source": "plugin",
+                "description": "Extracted text from PDF/document (if applicable)"
+              },
+              "is_image": {
+                "type": "boolean",
+                "source": "plugin",
+                "description": "True if attachment is an image"
+              }
+            }
+          },
+          "id": "step4",
+          "params": {
+            "message_id": "{{attachment_item.message_id}}",
+            "attachment_id": "{{attachment_item.attachment_id}}",
+            "filename": "{{attachment_item.filename}}"
+          },
+          "name": "Download the attachment content (binary data) from Gmail",
+          "action": "get_email_attachment"
+        },
+        {
+          "step_id": "step5",
+          "type": "ai_processing",
+          "input": "{{attachment_content}}",
+          "prompt": "Classify each item into one of these categories: purchase_order, not_purchase_order. Store the classification result in the 'document_type' field for each item.",
+          "description": "Determine whether this attachment is a purchase order document. Classify based on content analysis of the downloaded file.",
+          "config": {
+            "ai_type": "classify",
+            "output_schema": {
+              "fields": [
+                {
+                  "name": "document_type",
+                  "type": "string",
+                  "description": "Classification result (one of: purchase_order, not_purchase_order)"
+                }
+              ]
+            },
+            "type": "classify",
+            "instruction": "Classify each item into one of these categories: purchase_order, not_purchase_order. Store the classification result in the 'document_type' field for each item.",
+            "input": "{{attachment_content}}",
+            "labels": [
+              "purchase_order",
+              "not_purchase_order"
+            ]
+          },
+          "output_variable": "po_classification",
+          "id": "step5",
+          "name": "Determine whether this attachment is a purchase order document. Classify based on content analysis of the downloaded file."
+        },
+        {
+          "step_id": "step6",
+          "type": "conditional",
+          "description": "Conditional: node_5",
+          "condition": {
+            "conditionType": "simple",
+            "field": "po_classification.document_type",
+            "operator": "equals",
+            "value": "purchase_order"
+          },
+          "steps": [
+            {
+              "step_id": "step7",
+              "type": "action",
+              "description": "Extract purchase order line items from the attachment. One row per line item with fields: Order Date/Time, Order_ID, Vendor, QTY, Cost, Amount. Leave fields blank if not confidently extractable.",
+              "plugin": "document-extractor",
+              "output_variable": "raw_line_items",
+              "output_schema": {
+                "type": "object",
+                "properties": {
+                  "line_items": {
+                    "type": "array",
+                    "source": "ai_declared",
+                    "description": "Array of purchase order line items extracted from the document. One entry per line item.",
+                    "required": true,
+                    "items": {
+                      "type": "object",
+                      "source": "ai_declared",
+                      "properties": {
+                        "Order Date/Time": {
+                          "type": "string",
+                          "source": "ai_declared",
+                          "description": "Date and/or time of the order, normalized to consistent format"
+                        },
+                        "Order_ID": {
+                          "type": "string",
+                          "source": "ai_declared",
+                          "description": "Purchase order identifier or number"
+                        },
+                        "Vendor": {
+                          "type": "string",
+                          "source": "ai_declared",
+                          "description": "Vendor or supplier name"
+                        },
+                        "QTY": {
+                          "type": "number",
+                          "source": "ai_declared",
+                          "description": "Quantity ordered"
+                        },
+                        "Cost": {
+                          "type": "number",
+                          "source": "ai_declared",
+                          "description": "Unit cost or price per item"
+                        },
+                        "Amount": {
+                          "type": "number",
+                          "source": "ai_declared",
+                          "description": "Total amount for this line item (QTY * Cost or as stated)"
+                        }
+                      }
+                    }
+                  }
+                },
+                "source": "ai_declared"
+              },
+              "id": "step7",
+              "params": {
+                "file_content": "{{attachment_content}}",
+                "fields": [
+                  {
+                    "name": "line_items",
+                    "type": "array",
+                    "required": true
+                  }
+                ]
+              },
+              "name": "Extract purchase order line items from the attachment. One row per line item with fields: Order Date/Time, Order_ID, Vendor, QTY, Cost, Amount. Leave fields blank if not confidently extractable.",
+              "action": "extract_structured_data"
+            },
+            {
+              "step_id": "step8",
+              "type": "transform",
+              "operation": "flatten",
+              "input": "{{raw_line_items.line_items}}",
+              "description": "Flatten the extracted line_items array into individual row records",
+              "config": {
+                "type": "flatten",
+                "input": "raw_line_items.line_items",
+                "custom_code": "Extract the line_items array from the extraction result into a flat list of line item objects",
+                "output_schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "Order Date/Time": {
+                        "type": "string"
+                      },
+                      "Order_ID": {
+                        "type": "string"
+                      },
+                      "Vendor": {
+                        "type": "string"
+                      },
+                      "QTY": {
+                        "type": "number"
+                      },
+                      "Cost": {
+                        "type": "number"
+                      },
+                      "Amount": {
+                        "type": "number"
+                      }
+                    }
+                  }
+                }
+              },
+              "output_variable": "flat_line_items",
+              "output_schema": {
+                "type": "array",
+                "source": "ai_declared",
+                "items": {
+                  "type": "object",
+                  "source": "ai_declared",
+                  "properties": {
+                    "Order Date/Time": {
+                      "type": "string",
+                      "source": "ai_declared"
+                    },
+                    "Order_ID": {
+                      "type": "string",
+                      "source": "ai_declared"
+                    },
+                    "Vendor": {
+                      "type": "string",
+                      "source": "ai_declared"
+                    },
+                    "QTY": {
+                      "type": "number",
+                      "source": "ai_declared"
+                    },
+                    "Cost": {
+                      "type": "number",
+                      "source": "ai_declared"
+                    },
+                    "Amount": {
+                      "type": "number",
+                      "source": "ai_declared"
+                    }
+                  }
+                }
+              },
+              "id": "step8",
+              "_on_empty": "warn",
+              "name": "Flatten the extracted line_items array into individual row records"
+            },
+            {
+              "step_id": "step9",
+              "type": "transform",
+              "operation": "with_fields",
+              "input": "{{flat_line_items}}",
+              "description": "Add Status field: 'Complete' if all required fields present, otherwise 'Needs review: missing <field1>, <field2>'",
+              "config": {
+                "type": "with_fields",
+                "input": "flat_line_items",
+                "output_schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "Order Date/Time": {
+                        "type": "string"
+                      },
+                      "Order_ID": {
+                        "type": "string"
+                      },
+                      "Vendor": {
+                        "type": "string"
+                      },
+                      "QTY": {
+                        "type": "number"
+                      },
+                      "Cost": {
+                        "type": "number"
+                      },
+                      "Amount": {
+                        "type": "number"
+                      },
+                      "Status": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "Status"
+                    ]
+                  }
+                },
+                "fields": [
+                  {
+                    "name": "Status",
+                    "expression": {
+                      "kind": "if",
+                      "condition": {
+                        "operator": "eq",
+                        "value": true,
+                        "field": "unknown",
+                        "conditionType": "simple"
+                      },
+                      "then": {
+                        "kind": "literal",
+                        "value": "Complete"
+                      },
+                      "else": {
+                        "kind": "literal",
+                        "value": "Needs review"
+                      }
+                    }
+                  }
+                ]
+              },
+              "output_variable": "attachment_line_items",
+              "output_schema": {
+                "type": "object",
+                "source": "inferred",
+                "properties": {
+                  "message_id": {
+                    "type": "string",
+                    "source": "ai_declared",
+                    "required": true
+                  },
+                  "email_subject": {
+                    "type": "string",
+                    "source": "ai_declared"
+                  },
+                  "email_from": {
+                    "type": "string",
+                    "source": "ai_declared"
+                  },
+                  "email_date": {
+                    "type": "string",
+                    "source": "ai_declared"
+                  },
+                  "filename": {
+                    "type": "string",
+                    "source": "ai_declared",
+                    "required": true
+                  },
+                  "mimeType": {
+                    "type": "string",
+                    "source": "ai_declared"
+                  },
+                  "size": {
+                    "type": "number",
+                    "source": "ai_declared"
+                  },
+                  "attachment_id": {
+                    "type": "string",
+                    "source": "ai_declared",
+                    "required": true
+                  }
+                }
+              },
+              "id": "step9",
+              "name": "Add Status field: 'Complete' if all required fields present, otherwise 'Needs review: missing <field1>, <field2>'"
+            }
+          ],
+          "else_steps": [
+            {
+              "step_id": "step10",
+              "type": "transform",
+              "operation": "filter",
+              "input": "{{attachment_item}}",
+              "description": "Return empty array for non-purchase-order attachments so the loop collect produces no rows",
+              "config": {
+                "type": "filter",
+                "input": "attachment_item",
+                "custom_code": "Return empty result for non-PO attachment",
+                "condition": {
+                  "operator": "eq",
+                  "value": true,
+                  "field": "unknown",
+                  "conditionType": "simple"
+                }
+              },
+              "output_variable": "attachment_line_items",
+              "output_schema": {
+                "type": "object",
+                "source": "inferred",
+                "properties": {
+                  "message_id": {
+                    "type": "string",
+                    "source": "ai_declared",
+                    "required": true
+                  },
+                  "email_subject": {
+                    "type": "string",
+                    "source": "ai_declared"
+                  },
+                  "email_from": {
+                    "type": "string",
+                    "source": "ai_declared"
+                  },
+                  "email_date": {
+                    "type": "string",
+                    "source": "ai_declared"
+                  },
+                  "filename": {
+                    "type": "string",
+                    "source": "ai_declared",
+                    "required": true
+                  },
+                  "mimeType": {
+                    "type": "string",
+                    "source": "ai_declared"
+                  },
+                  "size": {
+                    "type": "number",
+                    "source": "ai_declared"
+                  },
+                  "attachment_id": {
+                    "type": "string",
+                    "source": "ai_declared",
+                    "required": true
+                  }
+                }
+              },
+              "id": "step10",
+              "_on_empty": "warn",
+              "name": "Return empty array for non-purchase-order attachments so the loop collect produces no rows"
+            }
+          ],
+          "id": "step6",
+          "name": "Conditional: node_5"
+        }
+      ],
+      "itemVariable": "attachment_item"
+    },
+    "gather": {
+      "operation": "collect"
+    },
+    "output_variable": "all_extracted_line_items",
+    "id": "step3",
+    "name": "Loop over all_attachments"
+  },
+  {
+    "step_id": "step11",
+    "type": "transform",
+    "operation": "flatten",
+    "input": "{{all_extracted_line_items}}",
+    "description": "Flatten the collected arrays of line items from all attachments into a single flat list of all line-item rows",
+    "config": {
+      "type": "flatten",
+      "input": "all_extracted_line_items",
+      "custom_code": "Flatten nested arrays from loop collection into a single flat array of line-item rows",
+      "output_schema": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "Order Date/Time": {
+              "type": "string"
+            },
+            "Order_ID": {
+              "type": "string"
+            },
+            "Vendor": {
+              "type": "string"
+            },
+            "QTY": {
+              "type": "number"
+            },
+            "Cost": {
+              "type": "number"
+            },
+            "Amount": {
+              "type": "number"
+            },
+            "Status": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "output_variable": "all_line_items_flat",
+    "output_schema": {
+      "type": "array",
+      "source": "ai_declared",
+      "items": {
+        "type": "object",
+        "source": "ai_declared",
+        "properties": {
+          "Order Date/Time": {
+            "type": "string",
+            "source": "ai_declared"
+          },
+          "Order_ID": {
+            "type": "string",
+            "source": "ai_declared"
+          },
+          "Vendor": {
+            "type": "string",
+            "source": "ai_declared"
+          },
+          "QTY": {
+            "type": "number",
+            "source": "ai_declared"
+          },
+          "Cost": {
+            "type": "number",
+            "source": "ai_declared"
+          },
+          "Amount": {
+            "type": "number",
+            "source": "ai_declared"
+          },
+          "Status": {
+            "type": "string",
+            "source": "ai_declared"
+          }
+        }
+      }
+    },
+    "id": "step11",
+    "_on_empty": "warn",
+    "name": "Flatten the collected arrays of line items from all attachments into a single flat list of all line-item rows"
+  },
+  {
+    "step_id": "step12",
+    "type": "ai_processing",
+    "input": "{{all_line_items_flat}}",
+    "prompt": "For each row in the input array: if Status is 'Complete', keep it as-is. If Status is 'Needs review', check which of the following fields are null, empty, or blank: 'Order Date/Time', 'Order_ID', 'Vendor', 'QTY', 'Cost', 'Amount'. Update the Status value to 'Needs review: missing <comma-separated list of missing field names>'. Return the full array with all fields preserved and only Status values updated where needed.",
+    "description": "For rows with Status='Needs review', append a note listing which specific fields are missing or blank (e.g., 'Needs review: missing Vendor, Cost'). Rows with Status='Complete' remain unchanged.",
+    "config": {
+      "ai_type": "generate",
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "rows": {
+            "type": "array",
+            "description": "All line-item rows with enhanced Status notes"
+          }
+        },
+        "required": [
+          "rows"
+        ]
+      },
+      "type": "generate",
+      "instruction": "For each row in the input array: if Status is 'Complete', keep it as-is. If Status is 'Needs review', check which of the following fields are null, empty, or blank: 'Order Date/Time', 'Order_ID', 'Vendor', 'QTY', 'Cost', 'Amount'. Update the Status value to 'Needs review: missing <comma-separated list of missing field names>'. Return the full array with all fields preserved and only Status values updated where needed.",
+      "input": "{{all_line_items_flat}}"
+    },
+    "output_variable": "line_items_with_status_notes",
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "rows": {
+          "type": "array",
+          "source": "ai_declared",
+          "description": "All line-item rows with enhanced Status notes",
+          "items": {
+            "type": "object",
+            "source": "ai_declared",
+            "properties": {
+              "Order Date/Time": {
+                "type": "string",
+                "source": "ai_declared"
+              },
+              "Order_ID": {
+                "type": "string",
+                "source": "ai_declared"
+              },
+              "Vendor": {
+                "type": "string",
+                "source": "ai_declared"
+              },
+              "QTY": {
+                "type": "number",
+                "source": "ai_declared"
+              },
+              "Cost": {
+                "type": "number",
+                "source": "ai_declared"
+              },
+              "Amount": {
+                "type": "number",
+                "source": "ai_declared"
+              },
+              "Status": {
+                "type": "string",
+                "source": "ai_declared"
+              }
+            }
+          }
+        }
+      },
+      "source": "ai_declared"
+    },
+    "input_schema": {
+      "type": "array",
+      "source": "ai_declared",
+      "items": {
+        "type": "object",
+        "source": "ai_declared",
+        "properties": {
+          "Order Date/Time": {
+            "type": "string",
+            "source": "ai_declared"
+          },
+          "Order_ID": {
+            "type": "string",
+            "source": "ai_declared"
+          },
+          "Vendor": {
+            "type": "string",
+            "source": "ai_declared"
+          },
+          "QTY": {
+            "type": "number",
+            "source": "ai_declared"
+          },
+          "Cost": {
+            "type": "number",
+            "source": "ai_declared"
+          },
+          "Amount": {
+            "type": "number",
+            "source": "ai_declared"
+          },
+          "Status": {
+            "type": "string",
+            "source": "ai_declared"
+          }
+        }
+      }
+    },
+    "id": "step12",
+    "name": "For rows with Status='Needs review', append a note listing which specific fields are missing or blank (e.g., 'Needs review: missing Vendor, Cost'). Rows with Status='Complete' remain unchanged."
+  },
+  {
+    "step_id": "step13",
+    "type": "transform",
+    "operation": "group",
+    "input": "{{line_items_with_status_notes.rows}}",
+    "description": "Group all line-item rows by Vendor field to create per-vendor groups",
+    "config": {
+      "type": "group",
+      "input": "line_items_with_status_notes.rows",
+      "custom_code": "Group rows by the Vendor field",
+      "output_schema": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "group_key": {
+              "type": "string",
+              "description": "The Vendor name for this group"
+            },
+            "items": {
+              "type": "array",
+              "description": "Line-item rows belonging to this Vendor",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "Order Date/Time": {
+                    "type": "string"
+                  },
+                  "Order_ID": {
+                    "type": "string"
+                  },
+                  "Vendor": {
+                    "type": "string"
+                  },
+                  "QTY": {
+                    "type": "number"
+                  },
+                  "Cost": {
+                    "type": "number"
+                  },
+                  "Amount": {
+                    "type": "number"
+                  },
+                  "Status": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          "required": [
+            "group_key",
+            "items"
+          ]
+        }
+      },
+      "rules": {
+        "group_by": "Vendor"
+      },
+      "output_format": "array",
+      "key_field": "group_key",
+      "items_field": "items"
+    },
+    "output_variable": "vendor_groups",
+    "output_schema": {
+      "type": "array",
+      "source": "ai_declared",
+      "items": {
+        "type": "object",
+        "source": "ai_declared",
+        "properties": {
+          "group_key": {
+            "type": "string",
+            "source": "ai_declared",
+            "description": "The Vendor name for this group",
+            "required": true
+          },
+          "items": {
+            "type": "array",
+            "source": "ai_declared",
+            "description": "Line-item rows belonging to this Vendor",
+            "items": {
+              "type": "object",
+              "source": "ai_declared",
+              "properties": {
+                "Order Date/Time": {
+                  "type": "string",
+                  "source": "ai_declared"
+                },
+                "Order_ID": {
+                  "type": "string",
+                  "source": "ai_declared"
+                },
+                "Vendor": {
+                  "type": "string",
+                  "source": "ai_declared"
+                },
+                "QTY": {
+                  "type": "number",
+                  "source": "ai_declared"
+                },
+                "Cost": {
+                  "type": "number",
+                  "source": "ai_declared"
+                },
+                "Amount": {
+                  "type": "number",
+                  "source": "ai_declared"
+                },
+                "Status": {
+                  "type": "string",
+                  "source": "ai_declared"
+                }
+              }
+            },
+            "required": true
+          }
+        }
+      }
+    },
+    "id": "step13",
+    "name": "Group all line-item rows by Vendor field to create per-vendor groups"
+  },
+  {
+    "step_id": "step14",
+    "type": "transform",
+    "operation": "reduce",
+    "input": "{{vendor_groups}}",
+    "description": "Count items for vendor_count",
+    "config": {
+      "type": "reduce",
+      "input": "vendor_groups",
+      "reduce_operation": "count",
+      "reducer": "count"
+    },
+    "output_variable": "vendor_count",
+    "output_schema": {
+      "type": "number",
+      "description": "Count of vendor_count",
+      "source": "inferred"
+    },
+    "id": "step14",
+    "name": "Count items for vendor_count"
+  },
+  {
+    "step_id": "step15",
+    "type": "transform",
+    "operation": "reduce",
+    "input": "{{line_items_with_status_notes.rows}}",
+    "description": "Count items for total_row_count",
+    "config": {
+      "type": "reduce",
+      "input": "line_items_with_status_notes.rows",
+      "reduce_operation": "count",
+      "reducer": "count"
+    },
+    "output_variable": "total_row_count",
+    "output_schema": {
+      "type": "number",
+      "description": "Count of total_row_count",
+      "source": "inferred"
+    },
+    "id": "step15",
+    "name": "Count items for total_row_count"
+  },
+  {
+    "step_id": "step16",
+    "type": "scatter_gather",
+    "description": "Loop over vendor_groups",
+    "scatter": {
+      "input": "{{vendor_groups}}",
+      "steps": [
+        {
+          "step_id": "step17",
+          "type": "ai_processing",
+          "input": "{{vendor_group}}",
+          "prompt": "Create an XLSX file (base64-encoded) for the vendor group. The spreadsheet must have columns in this exact order: Order Date/Time, Order_ID, Vendor, QTY, Cost, Amount, Status. Include a header row with these column names, then one data row per line item from the vendor_group.items array. Normalize date/time values to a consistent format (YYYY-MM-DD HH:MM). Format QTY as integer, Cost and Amount as decimal numbers with 2 decimal places. Return the file as base64-encoded XLSX content and a suggested filename using the vendor name.",
+          "description": "Generate an XLSX file for this Vendor containing a header row (Order Date/Time, Order_ID, Vendor, QTY, Cost, Amount, Status) followed by the Vendor's line-item rows",
+          "config": {
+            "ai_type": "generate",
+            "output_schema": {
+              "type": "object",
+              "properties": {
+                "xlsx_content": {
+                  "type": "string",
+                  "description": "Base64-encoded XLSX file content"
+                },
+                "xlsx_filename": {
+                  "type": "string",
+                  "description": "Suggested filename like 'Orders_Summary_VendorName.xlsx'"
+                },
+                "vendor_name": {
+                  "type": "string",
+                  "description": "The vendor name for use in email subject"
+                }
+              },
+              "required": [
+                "xlsx_content",
+                "xlsx_filename",
+                "vendor_name"
+              ]
+            },
+            "type": "generate",
+            "instruction": "Create an XLSX file (base64-encoded) for the vendor group. The spreadsheet must have columns in this exact order: Order Date/Time, Order_ID, Vendor, QTY, Cost, Amount, Status. Include a header row with these column names, then one data row per line item from the vendor_group.items array. Normalize date/time values to a consistent format (YYYY-MM-DD HH:MM). Format QTY as integer, Cost and Amount as decimal numbers with 2 decimal places. Return the file as base64-encoded XLSX content and a suggested filename using the vendor name.",
+            "input": "{{vendor_group}}"
+          },
+          "output_variable": "vendor_xlsx",
+          "output_schema": {
+            "type": "object",
+            "properties": {
+              "xlsx_content": {
+                "type": "string",
+                "source": "ai_declared",
+                "description": "Base64-encoded XLSX file content"
+              },
+              "xlsx_filename": {
+                "type": "string",
+                "source": "ai_declared",
+                "description": "Suggested filename like 'Orders_Summary_VendorName.xlsx'"
+              },
+              "vendor_name": {
+                "type": "string",
+                "source": "ai_declared",
+                "description": "The vendor name for use in email subject"
+              }
+            },
+            "source": "ai_declared"
+          },
+          "id": "step17",
+          "name": "Generate an XLSX file for this Vendor containing a header row (Order Date/Time, Order_ID, Vendor, QTY, Cost, Amount, Status) followed by the Vendor's line-item rows"
+        },
+        {
+          "step_id": "step18",
+          "type": "action",
+          "description": "Send email to recipient with the Vendor's XLSX attached, subject includes vendor name",
+          "plugin": "google-mail",
+          "id": "step18",
+          "params": {
+            "recipients": {
+              "to": [
+                "{{input.recipient_email}}"
+              ]
+            },
+            "content": {
+              "subject": "Orders summary – vendor_xlsx.vendor_name",
+              "body": "Please find attached the purchase order line-item summary for vendor_xlsx.vendor_name."
+            }
+          },
+          "name": "Send email to recipient with the Vendor's XLSX attached, subject includes vendor name",
+          "action": "send_email"
+        }
+      ],
+      "itemVariable": "vendor_group"
+    },
+    "gather": {
+      "operation": "collect"
+    },
+    "output_variable": "sent_vendor_emails",
+    "id": "step16",
+    "name": "Loop over vendor_groups"
+  },
+  {
+    "step_id": "step19",
+    "type": "ai_processing",
+    "input": {
+      "vendor_count": "{{vendor_count}}",
+      "total_row_count": "{{total_row_count}}"
+    },
+    "prompt": "Compose a short, professional confirmation email body. State: 'All purchase order summaries have been sent. Total vendors processed: <vendor_count>. Total line-item rows extracted: <total_row_count>.' Use the actual numeric values from the inputs.",
+    "description": "Compose the confirmation email body stating how many vendors were processed and how many total line-item rows were extracted",
+    "config": {
+      "ai_type": "generate",
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "body": {
+            "type": "string",
+            "description": "Confirmation email body text"
+          }
+        },
+        "required": [
+          "body"
+        ]
+      },
+      "type": "generate",
+      "instruction": "Compose a short, professional confirmation email body. State: 'All purchase order summaries have been sent. Total vendors processed: <vendor_count>. Total line-item rows extracted: <total_row_count>.' Use the actual numeric values from the inputs."
+    },
+    "output_variable": "confirmation_content",
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "body": {
+          "type": "string",
+          "source": "ai_declared",
+          "description": "Confirmation email body text"
+        }
+      },
+      "source": "ai_declared"
+    },
+    "input_schema": {
+      "type": "number",
+      "description": "Count of vendor_count",
+      "source": "inferred"
+    },
+    "id": "step19",
+    "name": "Compose the confirmation email body stating how many vendors were processed and how many total line-item rows were extracted"
+  },
+  {
+    "step_id": "step20",
+    "type": "action",
+    "description": "Send final confirmation email to recipient summarizing total vendors and rows processed",
+    "plugin": "google-mail",
+    "id": "step20",
+    "params": {
+      "recipients": {
+        "to": [
+          "{{input.recipient_email}}"
+        ]
+      },
+      "content": {
+        "subject": "Orders PO Extraction – Processing Complete",
+        "body": "{{confirmation_content.body}}"
+      }
+    },
+    "name": "Send final confirmation email to recipient summarizing total vendors and rows processed",
+    "action": "send_email"
+  }
+]

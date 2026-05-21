@@ -1,14 +1,14 @@
 {
   "name": "Customer Complaint Email Logger",
-  "description": "Gmail search for complaint keywords, AI-based dedup against existing sheet rows, append new complaints to Google Sheets",
+  "description": "Gmail search for complaint keywords, deterministic dedup via set_difference against existing Gmail message IDs already in the Sheet, append new complaint rows to Google Sheets (sender_email, subject, date, full_email_text, gmail_message_link_id). Tests the full Sheets read→filter→project→dedup→append cascade plus WP-24's content_level=full auto-application for body fetching. Prerequisite: destination sheet must have a header row in row 1 (workaround for WP-26 — auto-injected rows_to_objects consumes row 0 as header).",
   "created": "2026-03-26",
   "plugins": ["google-mail", "google-sheets"],
   "expected": {
-    "min_steps": 7,
-    "step_types": ["action", "ai_processing", "transform"],
+    "min_steps": 10,
+    "step_types": ["action", "transform"],
     "phase_a_checks": 14,
     "phase_d_success": true,
     "phase_e_success": true,
-    "phase_e_success_timestamp": "2026-04-10T00:00:00Z"
+    "phase_e_success_timestamp": "2026-05-11T02:16:01Z"
   }
 }

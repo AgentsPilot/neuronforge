@@ -1,0 +1,85 @@
+{
+  "name": "Gantt Critical/High Tasks Due Soon Emailer (V2-UI captured)",
+  "description": "Captured directly from the V2 UI agent-creation flow (agent dc04876c-ec1c-4e88-810a-7b5fe0999e09, 2026-05-17). Reads a Gantt sheet, builds a wrapper object around the rows array, filters to skip the header row, runs an AI step to filter to Critical/High priority tasks due in the next 3 days, and emails an HTML summary (or 'no tasks' email). First V2-UI-generated scenario in the regression suite — exists to lock the V2 UI ↔ V6 pipeline contract and serve as the live test bed for the WP-39 / WP-40 / WP-41 / WP-42 / WP-43 cascade. Phase E now passes end-to-end (7/7 steps, real email delivered with 3 real tasks in the body) after all five bugs were fixed in this branch.",
+  "created": "2026-05-17",
+  "source": {
+    "type": "v2-ui-capture",
+    "agent_id": "dc04876c-ec1c-4e88-810a-7b5fe0999e09",
+    "dev_log_lines": "7028-7117 (enhanced prompt), 7902-8281 (IR), DB pilot_steps (DSL)",
+    "branch": "feature/v6-v2-integration",
+    "ir_edits": "phase3-execution-graph-ir-v4.json edited 2026-05-17 to undo WP-40 corruption (step4 input restored from '{{sheet_rows_wrapper.rows.attachments}}' to LLM's intended '{{sheet_rows_wrapper.rows}}') so the file represents what the fixed IRFormalizer would emit."
+  },
+  "plugins": ["google-sheets", "google-mail"],
+  "expected": {
+    "min_steps": 6,
+    "step_types": ["action", "transform", "ai_processing", "conditional"],
+    "phase_a_checks": 14,
+    "phase_d_success": false,
+    "phase_e_success": true,
+    "phase_e_success_timestamp": "2026-05-17T17:08:14Z",
+    "phase_e_notes": "End-to-end pass: 7/7 steps, real email delivered to meiribarak@gmail.com with the 3 correct tasks in the body. Requires all FIVE runtime fixes from 2026-05-17: WP-39 (compiler operation/config alignment), WP-40 (IRFormalizer blind-guess removal), WP-41 (runtime case 'select' + compiler preserves type), WP-42 (gmail string-recipient tolerance), WP-43 (ai_processing data-shape + current-date preamble). KNOWN ISSUE (WP-44): the email body is plain-text formatted (ASCII-pipe table) despite the EP requesting HTML 6 times — V6 IRFormalizer dropped the format requirement. Content is correct; format is wrong. WP-44 is documented as a P1 Phase 3 prompt-fidelity follow-up. Run via Mode B: --use-db-dsl after pushing the recompiled DSL to the agent record."
+  },
+  "known_weaknesses": [
+    {
+      "id": "WP-39",
+      "step": "step3",
+      "symptom": "operation='select' at step root despite config.type='map' — runtime rejects with 'Unknown transform operation: select'",
+      "status": "fixed",
+      "fixed_date": "2026-05-17",
+      "note": "phase4-pilot-dsl-steps.json (the original DB snapshot) still has operation='select' — it was committed BEFORE the fix landed and is preserved as the historical bug evidence. The recompiled DSL (phase4-pilot-dsl-steps.recompiled.json) shows the post-fix state with operation='map'."
+    },
+    {
+      "id": "WP-40",
+      "step": "step4",
+      "symptom": "IRFormalizer auto-corrected step4 input from '{{sheet_rows_wrapper.rows}}' (correct) to '{{sheet_rows_wrapper.rows.attachments}}' (corrupt) via blind-guess heuristic that always picked the first field name from a hardcoded list",
+      "status": "fixed",
+      "fixed_date": "2026-05-17",
+      "note": "The original captured IR had the corrupted path baked in; it was edited on 2026-05-17 to restore the LLM's intended input (matches what the fixed IRFormalizer would now produce). See source.ir_edits."
+    },
+    {
+      "id": "WP-41",
+      "step": "step3",
+      "symptom": "D-B18 alias renames transform.type 'select' → 'map' but the two operations have different semantics. Runtime 'map' iterates the 57-row input array and produces 57 copies of the literal config object instead of a single wrapper {rows: <array>, row_count, ...} that the LLM intended.",
+      "status": "fixed",
+      "fixed_date": "2026-05-17",
+      "note": "Chose Option A — restored 'select' as a runtime transform op via new case in StepExecutor.executeTransform; compiler D-B18 alias split to preserve 'select' type label. step3 now produces a single wrapper object {rows, range, row_count, column_count, retrieved_at}."
+    },
+    {
+      "id": "WP-42",
+      "step": "step9",
+      "symptom": "gmail-plugin-executor.buildEmailMessage called .map() on recipients.to which was a string ('meiribarak@gmail.com'), not the schema-declared array. Threw TypeError; cascade aborted right before the final send. Secondary: countRecipients counted string LENGTH (20) instead of 1 recipient, silently inflating validation rule total_recipients > 10.",
+      "status": "fixed",
+      "fixed_date": "2026-05-17",
+      "note": "Runtime tolerance at the plugin-executor boundary (mirrors WP-21/22/25/28 pattern). toEmailArray() helper coerces string → [string]; countRecipients() now uses a typed counter. End-to-end Phase E pass after this fix."
+    },
+    {
+      "id": "WP-43",
+      "step": "step5",
+      "symptom": "After WP-39/40/41/42 fixed all runtime errors, AI step still returned {tasks: []} for two compounding reasons: (a) prompt referenced 'column A/D/F/G' but data was a post-rows_to_objects array of named-key objects (Tasks/Status/Due Date/Priority); (b) prompt said 'within the next 3 days relative to now' but no concrete date anchor was provided. Wrong conditional branch taken (no-tasks email sent despite 3 matching tasks in the data).",
+      "status": "fixed",
+      "fixed_date": "2026-05-17",
+      "note": "Option B runtime preamble in StepExecutor.executeLLMDecision — prepends two short anchors when ai_processing input is an array of objects: INPUT DATA SHAPE (named keys + column-letter positional aliases) and CURRENT DATE (today ISO + DD/MM/YYYY locale hint). ~150 tokens, no compiler change, no Phase 3 prompt change. AI step now extracts 3 real tasks; have-tasks email branch taken. Option A (formalization-system-v4.md prompt extension) queued as a Stage-1 follow-up."
+    },
+    {
+      "id": "WP-44",
+      "step": "step8 + step9",
+      "symptom": "V6 IRFormalizer dropped explicit EP format requirements. EP says 'HTML' 6 times across sections.output/delivery (including 'Put the HTML summary table in the email html_body'). IR authored: step8 prompt 'Create a concise plain-text email body...'; output_schema.body.description 'Plain-text email body'; step9 params content.body (NOT content.html_body). User received correct task data but in plain-text ASCII-pipe table format, not HTML. Old gantt-urgent-tasks scenario (via IC pipeline) handled this correctly.",
+      "status": "open",
+      "note": "Documented as P1 open item in V6_OPEN_ITEMS.md. Bundle with WP-43 Option A in a 'Phase 3 prompt-fidelity audit' follow-up session — same anti-pattern family (V6 formalization drops EP-level user requirements). Fix angle A: extend formalization-system-v4.md to preserve EP format keywords + plugin-param names. Angle B (compiler rewrite) not recommended — brittle."
+    },
+    {
+      "id": "WP-X-candidate-item-0-on-objects",
+      "step": "step4",
+      "symptom": "filter condition references field='item.0' to skip header row, but step2 (rows_to_objects) already mapped row arrays to objects with named keys — 'item.0' is meaningless on objects of shape {Tasks, RETAIL, Outsourced, ...}",
+      "status": "appears-harmless",
+      "note": "Live run showed step4 returning 57 items (all rows passed through), suggesting the condition evaluated as false-positive on every object row (item.0 is undefined, undefined !== 'Task Name' is true, so all rows pass the ne filter). The header row was already removed because step2's rows_to_objects skipped the header. Net: the filter is a no-op but doesn't break anything. Worth a Phase 1 prompt steering improvement to avoid emitting redundant header-skip filters when rows_to_objects is upstream."
+    },
+    {
+      "id": "WP-16",
+      "step": "step5",
+      "symptom": "AI step used for deterministic transformation (priority + date-range filtering)",
+      "status": "open-existing",
+      "note": "LLM-generated workflow uses AI for filtering that the compiler should handle with transform/filter. Tracked under existing WP-16; this scenario adds it to the WP-16 evidence list."
+    }
+  ]
+}

@@ -10,6 +10,24 @@ export interface ResolutionResult {
   unresolvedRefs: string[]
 }
 
+/**
+ * WP-35: Parse a single dotted-path segment for optional array-index syntax.
+ *
+ *   "files[0]"   → { name: "files",   index: 0 }
+ *   "files"      → { name: "files",   index: null }
+ *   "items[10]"  → { name: "items",   index: 10 }
+ *
+ * The runtime (`ExecutionContext.resolveVariable`) accepts `{{var.field[N].sub}}`
+ * for "Nth element then sub-access" — the simulator must do the same so it
+ * doesn't false-positive on this idiom (commonly used to pick the first
+ * match from a search result without an extra `project_column` step).
+ */
+export function parsePathSegment(segment: string): { name: string; index: number | null } {
+  const m = segment.match(/^([^[\]]+)\[(\d+)\]$/)
+  if (m) return { name: m[1], index: parseInt(m[2], 10) }
+  return { name: segment, index: null }
+}
+
 export class VariableStore {
   private config: Record<string, any>
   private stepOutputs: Map<string, any> = new Map()
@@ -127,6 +145,9 @@ export class VariableStore {
 
   /**
    * Look up a reference like "config.X", "stepOutput.field", "item.field".
+   *
+   * WP-35: each path segment may also include array-index syntax like
+   * "files[0]" or "items[3]" — resolved as property lookup then array index.
    */
   private _lookupRef(ref: string): any {
     const parts = ref.split('.')
@@ -140,25 +161,33 @@ export class VariableStore {
 
     // Check scoped vars first (scatter-gather itemVariable)
     if (this.scopedVars.has(parts[0])) {
-      let value = this.scopedVars.get(parts[0])
-      for (let i = 1; i < parts.length; i++) {
-        if (value === null || value === undefined) return undefined
-        value = value[parts[i]]
-      }
-      return value
+      return this._walkPath(this.scopedVars.get(parts[0]), parts.slice(1))
     }
 
     // Step output: "variableName" or "variableName.field.subfield"
     if (this.stepOutputs.has(parts[0])) {
-      let value = this.stepOutputs.get(parts[0])
-      for (let i = 1; i < parts.length; i++) {
-        if (value === null || value === undefined) return undefined
-        value = value[parts[i]]
-      }
-      return value
+      return this._walkPath(this.stepOutputs.get(parts[0]), parts.slice(1))
     }
 
     return undefined
+  }
+
+  /**
+   * Walk a sequence of path segments through a value, honoring `field[N]`
+   * array-index syntax on each segment (WP-35).
+   */
+  private _walkPath(start: any, segments: string[]): any {
+    let value = start
+    for (const segment of segments) {
+      if (value === null || value === undefined) return undefined
+      const { name, index } = parsePathSegment(segment)
+      value = value[name]
+      if (index !== null) {
+        if (value === null || value === undefined || !Array.isArray(value)) return undefined
+        value = value[index]
+      }
+    }
+    return value
   }
 
   /**

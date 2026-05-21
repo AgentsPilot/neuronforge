@@ -40,6 +40,18 @@ import { AUDIT_EVENTS } from '@/lib/audit/events';
 import { ConditionalEvaluator } from './ConditionalEvaluator';
 import { DataOperations } from './DataOperations';
 import { StepCache } from './StepCache';
+// W2 / WP-16: structured transform primitives. Pure functions, deliberately
+// extracted into their own module so they can be unit-tested without dragging
+// in StepExecutor's heavy import chain (OpenAI/uuid/runAgentKit).
+import {
+  transformWithFields as runWithFields,
+  transformProjectColumn as runProjectColumn,
+  transformSetDifference as runSetDifference,
+  StructuredTransformError,
+} from './transforms/StructuredTransforms';
+// WP-SR: rows_to_objects extracted into a pure module for the same
+// testability reason (no StepExecutor import chain in unit tests).
+import { rowsToObjects } from './transforms/RowsToObjects';
 import { AISConfigService } from '@/lib/services/AISConfigService';
 import { createLogger } from '@/lib/logger';
 import { schemaExtractor, analyzeOutputSchema } from './utils/SchemaAwareDataExtractor';
@@ -56,6 +68,43 @@ const logger = createLogger({ module: 'StepExecutor', service: 'workflow-pilot' 
 // TODO: Implement these classes for per-step routing
 // import { TaskComplexityAnalyzer } from './TaskComplexityAnalyzer';
 // import { PerStepModelRouter } from './PerStepModelRouter';
+
+/**
+ * WP-25: convert an Excel-style column letter ("A", "B", ..., "Z", "AA", ...)
+ * to a 0-indexed position. A=0, B=1, ..., Z=25, AA=26, AB=27, ...
+ */
+function letterToIndex(letters: string): number {
+  let idx = 0;
+  for (const c of letters) {
+    idx = idx * 26 + (c.charCodeAt(0) - 'A'.charCodeAt(0) + 1);
+  }
+  return idx - 1;
+}
+
+/**
+ * WP-23 / WP-25: parse a `field_mapping` target key as a positional column
+ * identifier. Returns the 0-indexed column position, or null if the key
+ * doesn't match any known positional pattern.
+ *
+ * Recognized patterns (all observed in LLM emissions for objects-to-2D-array):
+ *   "0", "1", "42"               → numeric index
+ *   "column_0", "column_1"       → numeric index from suffix
+ *   "A", "B", ..., "Z", "AA"     → Excel letter
+ *   "column_A", "column_B"       → Excel letter from suffix
+ *
+ * When `transformMap` Mode 0 sees a `field_mapping` whose target keys ALL
+ * parse positional via this helper, it emits a 2D array per row instead of
+ * an object. Otherwise it falls through to object-building (WP-4 behavior).
+ */
+function parsePositionalKey(key: string): number | null {
+  if (/^\d+$/.test(key)) return parseInt(key, 10);
+  let m = key.match(/^column_(\d+)$/);
+  if (m) return parseInt(m[1], 10);
+  if (/^[A-Z]+$/.test(key)) return letterToIndex(key);
+  m = key.match(/^column_([A-Z]+)$/);
+  if (m) return letterToIndex(m[1]);
+  return null;
+}
 
 export class StepExecutor {
   private supabase: SupabaseClient;
@@ -1546,6 +1595,59 @@ export class StepExecutor {
         promptString;
     }
 
+    // WP-43: Bridge the prompt-vs-data shape drift caused by upstream
+    // auto-injected `rows_to_objects`. The Phase 3 IR-author LLM often
+    // transcribes the user's column-letter wording verbatim (e.g. "Use column
+    // A as task_name") into ai_processing.instruction, not knowing that
+    // `rows_to_objects` will convert the 2D array into objects with header
+    // keys before the AI step runs. Without help, the AI takes the
+    // instruction's "2D array / column A" framing literally and either
+    // fabricates or returns empty results despite the data being right there.
+    //
+    // Fix: when the runtime detects ai_processing input is an array of
+    // objects, prepend a brief shape hint that maps positional column
+    // letters → the actual named keys. ~50 tokens; only fires on
+    // post-rows_to_objects shapes, so 2D-array and scalar inputs are
+    // unaffected.
+    if (step.type === 'ai_processing') {
+      // DataPreprocessor may unwrap `{ input: [...] }` into the array itself,
+      // so check both shapes: the unwrapped array OR `.input` nested inside a
+      // wrapper. Fall back to `enrichedParams.input` (pre-preprocess) if both
+      // miss — same data the prompt's "Data for Analysis" section will show.
+      const aiInput = Array.isArray(preprocessedParams)
+        ? preprocessedParams
+        : (preprocessedParams?.input ?? enrichedParams?.input);
+      let shapeHint = '';
+      if (Array.isArray(aiInput) && aiInput.length > 0) {
+        const firstObj = aiInput.find((it: any) => it && typeof it === 'object' && !Array.isArray(it));
+        if (firstObj) {
+          const keys = Object.keys(firstObj);
+          if (keys.length > 0) {
+            const positional = keys
+              .slice(0, 26)
+              .map((k, i) => `column ${String.fromCharCode(65 + i)} = ${JSON.stringify(k)}`)
+              .join(', ');
+            shapeHint =
+              `INPUT DATA SHAPE: The input below is an array of ${aiInput.length} object(s) with these named keys: ${JSON.stringify(keys)}. ` +
+              `If the instruction below references columns by letter or sheet position (e.g. "column A", "column G", or "2D array of rows"), ` +
+              `treat them as positional aliases for these keys (${positional}). Use the named keys directly when extracting values.\n\n`;
+          }
+        }
+      }
+      // WP-43 part 2: Many ai_processing instructions reference temporal terms
+      // ("now", "today", "the next 3 days"), but the prompt never anchored
+      // those to a concrete date — the LLM has no reliable "today" reference
+      // and conservatively returns nothing when asked to filter by date range.
+      // Always inject the current date so date-relative reasoning has a basis.
+      const today = new Date();
+      const todayISO = today.toISOString().slice(0, 10);
+      const todayHuman = today.toUTCString().slice(0, 16); // e.g. "Sun, 17 May 2026"
+      const datePreamble =
+        `CURRENT DATE: Today is ${todayISO} (${todayHuman}). When the instruction below references "today", "now", "the next N days", ` +
+        `"this week", or any other temporal anchor, use this date as the reference point. Dates in the input data may use formats like DD/MM/YYYY or D/M/YYYY — interpret them in that locale unless explicitly told otherwise.\n\n`;
+      promptString = shapeHint + datePreamble + promptString;
+    }
+
     // I3: Append JSON output instruction when output_schema is defined
     // This tells the LLM to respond with structured JSON instead of free-form text
     const outputSchema = (step as any).config?.output_schema || (step as any).output_schema;
@@ -2479,6 +2581,20 @@ Respond ONLY with the JSON array. No markdown, no explanation, no code blocks.`;
         }
         break;
 
+      case 'select':
+        // WP-41: `select` constructs ONE wrapper object from named fields. It is
+        // NOT a per-item transform like `map`. Field values are already resolved
+        // by `resolveAllVariables` at step entry, so `effectiveConfig.fields` is
+        // the post-resolution literal object — just shallow-clone it.
+        if (effectiveConfig?.fields && typeof effectiveConfig.fields === 'object' && !Array.isArray(effectiveConfig.fields)) {
+          result = { ...effectiveConfig.fields };
+        } else {
+          // No fields → identity passthrough of the input (lets downstream see
+          // the source value, mirrors `case 'set'` shape).
+          result = data;
+        }
+        break;
+
       case 'map':
       case 'select':  // 'select' is an alias for 'map' - commonly used for field extraction
         result = this.transformMap(data, effectiveConfig, context);
@@ -2549,6 +2665,41 @@ Respond ONLY with the JSON array. No markdown, no explanation, no code blocks.`;
         result = this.transformDedupe(data, effectiveConfig);
         break;
 
+      // W2 / WP-16: structured primitives delegating to StructuredTransforms.
+      // Wrap typed errors in ExecutionError to keep the existing error contract.
+      case 'with_fields':
+        try {
+          result = runWithFields(data, effectiveConfig, context as any, this.conditionalEvaluator);
+        } catch (e: any) {
+          if (e instanceof StructuredTransformError) {
+            throw new ExecutionError(e.message, e.code, step.id);
+          }
+          throw e;
+        }
+        break;
+
+      case 'project_column':
+        try {
+          result = runProjectColumn(data, effectiveConfig);
+        } catch (e: any) {
+          if (e instanceof StructuredTransformError) {
+            throw new ExecutionError(e.message, e.code, step.id);
+          }
+          throw e;
+        }
+        break;
+
+      case 'set_difference':
+        try {
+          result = runSetDifference(data, effectiveConfig, context as any, logger);
+        } catch (e: any) {
+          if (e instanceof StructuredTransformError) {
+            throw new ExecutionError(e.message, e.code, step.id);
+          }
+          throw e;
+        }
+        break;
+
       case 'render_table':
         result = this.transformRenderTable(data, effectiveConfig);
         break;
@@ -2609,10 +2760,89 @@ Respond ONLY with the JSON array. No markdown, no explanation, no code blocks.`;
     // Handles both array input (map each item) and single object input (inside scatter-gather).
     if (config && config.field_mapping && typeof config.field_mapping === 'object') {
       const mapping = config.field_mapping as Record<string, string>;
+      // WP-SR: support `column_N` source keys for positional access. The LLM
+      // sometimes invents `field_mapping: {Date: "column_0", "Lead Name": "column_1"}`
+      // for what semantically is a 2D-array → object conversion. By the time
+      // this map step runs, the auto-injected `rows_to_objects` has already
+      // converted the input to an array of objects with header keys (with
+      // `preserve_case: true` — see ExecutionGraphCompiler.normalizeDataFormats).
+      // Source-side positional handling lives in `applyMapping` below; it
+      // recognizes all 4 patterns via `parsePositionalKey()` (WP-28, mirrors
+      // WP-25 target-side). The alternative is silent empty objects → empty
+      // filter → empty email.
+
+      // WP-23 / WP-25: detect the "objects-to-2D-array" pattern. The LLM emits
+      // `field_mapping` with positional target keys to express "convert each
+      // object to an array where target N = sourceField". Multiple emission
+      // styles observed in the wild — all four mean the same thing:
+      //
+      //   {"0": "sender_email", "1": "subject"}              ← numeric (WP-23)
+      //   {"column_0": "sender_email", "column_1": "subject"} ← column_N
+      //   {"A": "sender_email", "B": "subject"}              ← Excel letter (WP-25)
+      //   {"column_A": "sender_email", "column_B": "subject"} ← column_letter (WP-25)
+      //
+      // `parsePositionalKey()` maps each pattern to its numeric index
+      // (Excel-style letter conversion: A=0, B=1, ..., Z=25, AA=26). When ALL
+      // target keys parse as positional, emit a 2D array per row; otherwise
+      // fall through to existing object-building behavior.
+      const targetKeys = Object.keys(mapping);
+      const positions: Array<[string, number]> = [];
+      let allPositional = targetKeys.length > 0;
+      for (const k of targetKeys) {
+        const idx = parsePositionalKey(k);
+        if (idx === null) { allPositional = false; break; }
+        positions.push([k, idx]);
+      }
+
+      if (allPositional) {
+        const len = Math.max(...positions.map(([, i]) => i)) + 1;
+        const applyToArray = (item: any) => {
+          const row = new Array(len).fill(null);
+          for (const [target, idx] of positions) {
+            const src = mapping[target];
+            const value = item ? item[src] : undefined;
+            row[idx] = value !== undefined ? value : null;
+          }
+          return row;
+        };
+        if (Array.isArray(data)) {
+          logger.info({ mapping, itemCount: data.length, rowLength: len }, '[transformMap] WP-23/25: field_mapping with positional keys → 2D array');
+          return data.map(applyToArray);
+        }
+        if (data && typeof data === 'object') {
+          return applyToArray(data);
+        }
+      }
+
+      // WP-28: extend source-side positional handling to all 4 patterns
+      // (mirrors WP-25 target-side broadening). Previously only matched
+      // `column_<digit>` via the COLUMN_N regex; now recognizes bare numeric
+      // ("0"), `column_<digit>`, Excel letter ("A"), and `column_<letter>`
+      // ("column_A") uniformly via parsePositionalKey().
+      //
+      // Important: when the literal property lookup would succeed (item has
+      // a key matching the source string), that takes priority — only fall
+      // back to positional access when the literal lookup is undefined AND
+      // the source string parses as a positional pattern. This preserves
+      // backward compat: if a real field happens to be named "0", the
+      // literal lookup still wins.
       const applyMapping = (item: any) => {
         const mapped: Record<string, any> = {};
         for (const [targetField, sourceField] of Object.entries(mapping)) {
-          mapped[targetField] = item[sourceField];
+          let value: any = item && typeof item === 'object' && sourceField in (item as Record<string, any>)
+            ? (item as Record<string, any>)[sourceField]
+            : undefined;
+          if (value === undefined && typeof sourceField === 'string') {
+            const posIdx = parsePositionalKey(sourceField);
+            if (posIdx !== null) {
+              if (Array.isArray(item)) {
+                value = item[posIdx];
+              } else if (item && typeof item === 'object') {
+                value = Object.values(item)[posIdx];
+              }
+            }
+          }
+          mapped[targetField] = value;
         }
         return mapped;
       };
@@ -2929,7 +3159,7 @@ Respond ONLY with the JSON array. No markdown, no explanation, no code blocks.`;
 
         if (incorrectVarMatches && incorrectVarMatches.length > 0) {
           // Extract unique variable names that need fixing
-          const varsToFix = [...new Set(incorrectVarMatches.map(m => m.slice(0, -1)))]; // Remove trailing dot
+          const varsToFix = [...new Set(incorrectVarMatches.map((m: string) => m.slice(0, -1)))]; // Remove trailing dot
           const beforeFix = resolvedExpression;
 
           // Replace all occurrences of each variable with 'item'
@@ -2940,7 +3170,6 @@ Respond ONLY with the JSON array. No markdown, no explanation, no code blocks.`;
 
           console.log(`✅ [transformMap] Auto-fixed expression: replaced ${varsToFix.join(', ')} with 'item'`);
           logger.info({
-            stepId: (step as any).id,
             varsReplaced: varsToFix,
             beforeFix: beforeFix.slice(0, 100),
             afterFix: resolvedExpression.slice(0, 100)
@@ -3433,6 +3662,20 @@ Respond ONLY with the JSON array. No markdown, no explanation, no code blocks.`;
     // Detect if 2D array pattern
     const is2DArray = Array.isArray(unwrappedData[0]);
 
+    // Data-quality guard (WP-SR follow-up): when an item's key field is
+    // missing/null/undefined/empty-string, we previously coerced it via
+    // String(null) = "null" and grouped under that literal — which then
+    // propagated downstream as a recipient string "null" in send_email
+    // (observed in the leads-per-salesperson Phase E run on Lead 5, whose
+    // sheet row was missing the Sales Person column).
+    //
+    // Default behavior: skip items with empty keys and log a single warning
+    // with the count. Opt-in `config.include_null_keys: true` preserves the
+    // legacy behavior for cases where the caller genuinely wants a "missing"
+    // bucket (e.g., reporting on data completeness).
+    const includeNullKeys = config.include_null_keys === true;
+    let skippedNullKeys = 0;
+
     // Build grouped object using generic extractValueByKey
     const grouped = unwrappedData.reduce((acc, item, index) => {
       // Skip header row for 2D arrays
@@ -3440,9 +3683,18 @@ Respond ONLY with the JSON array. No markdown, no explanation, no code blocks.`;
         return acc;
       }
 
-      const key = groupKey
-        ? String(this.extractValueByKey(item, groupKey, unwrappedData))
-        : String(item);
+      const rawKey = groupKey
+        ? this.extractValueByKey(item, groupKey, unwrappedData)
+        : item;
+
+      // Treat null / undefined / empty-string as "missing key" by default.
+      const isMissing = rawKey === null || rawKey === undefined || rawKey === '';
+      if (isMissing && !includeNullKeys) {
+        skippedNullKeys++;
+        return acc;
+      }
+
+      const key = String(rawKey);
 
       if (!acc[key]) {
         acc[key] = [];
@@ -3451,7 +3703,14 @@ Respond ONLY with the JSON array. No markdown, no explanation, no code blocks.`;
       return acc;
     }, {} as Record<string, any[]>);
 
-    logger.debug({ groupKey: groupKey || 'value', groupCount: Object.keys(grouped).length, is2DArray }, 'Grouped data');
+    if (skippedNullKeys > 0) {
+      logger.warn(
+        { groupKey: groupKey || 'value', skippedNullKeys, totalItems: unwrappedData.length },
+        `transformGroup: dropped ${skippedNullKeys} item(s) with empty/null group key. Set config.include_null_keys=true to preserve them.`
+      );
+    }
+
+    logger.debug({ groupKey: groupKey || 'value', groupCount: Object.keys(grouped).length, is2DArray, skippedNullKeys }, 'Grouped data');
 
     // Return both grouped object and array of groups for iteration
     const groups = Object.entries(grouped).map(([key, items]) => ({
@@ -3579,53 +3838,23 @@ Respond ONLY with the JSON array. No markdown, no explanation, no code blocks.`;
    * Output: [{id: "1", name: "John", email: "john@example.com"}, {id: "2", name: "Jane", email: "jane@example.com"}]
    */
   private transformRowsToObjects(data: any[], config: any): any[] {
-    if (!Array.isArray(data)) {
-      throw new ExecutionError('rows_to_objects operation requires array input', 'INVALID_INPUT_TYPE');
+    // Delegate to the pure helper in lib/pilot/transforms/RowsToObjects.ts —
+    // extracted so unit tests can import without pulling StepExecutor's heavy
+    // import chain (same pattern as StructuredTransforms for W2).
+    try {
+      const result = rowsToObjects(data, config || {});
+      logger.debug({
+        inputRows: data.length,
+        outputObjects: result.length,
+        preserveCase: config?.preserve_case === true,
+      }, 'rows_to_objects: Converted via pure helper');
+      return result;
+    } catch (e: any) {
+      if (e?.name === 'RowsToObjectsError') {
+        throw new ExecutionError(e.message, e.code);
+      }
+      throw e;
     }
-
-    if (data.length === 0) {
-      logger.debug({}, 'rows_to_objects: Empty input array, returning empty array');
-      return [];
-    }
-
-    // Check if this is a 2D array (array of arrays)
-    if (!Array.isArray(data[0])) {
-      // Already an array of objects or primitives - return as-is
-      logger.debug({}, 'rows_to_objects: Input is not a 2D array, returning as-is');
-      return data;
-    }
-
-    // Get headers from first row (or use config.headers if provided)
-    const headers: string[] = config?.headers || data[0];
-
-    // Skip first row if it was used as headers
-    const dataRows = config?.headers ? data : data.slice(1);
-
-    if (dataRows.length === 0) {
-      logger.debug({}, 'rows_to_objects: No data rows after header, returning empty array');
-      return [];
-    }
-
-    // Convert each row to an object using headers as keys
-    const result = dataRows.map((row: any[]) => {
-      const obj: Record<string, any> = {};
-      headers.forEach((header: string, index: number) => {
-        // Normalize header names: trim whitespace, handle empty headers
-        // ✅ CRITICAL FIX: Convert to lowercase for consistent key matching
-        // Sheet headers may be "Id" or "ID" but code expects "id"
-        const key = (header || `column_${index}`).toString().trim().toLowerCase();
-        obj[key] = row[index] !== undefined ? row[index] : null;
-      });
-      return obj;
-    });
-
-    logger.debug({
-      inputRows: data.length,
-      outputObjects: result.length,
-      headers: headers.slice(0, 5)
-    }, 'rows_to_objects: Converted 2D array to objects');
-
-    return result;
   }
 
   /**
@@ -3724,6 +3953,19 @@ Respond ONLY with the JSON array. No markdown, no explanation, no code blocks.`;
       unassigned
     };
   }
+
+  // ============================================================
+  // W2 / WP-16 — Structured primitives for deterministic operations.
+  // Implementation lives in `./transforms/StructuredTransforms.ts` for testability.
+  // The switch cases above delegate to those pure functions and re-wrap
+  // `StructuredTransformError` as `ExecutionError`.
+  // See: docs/v6/V6_WP16_INVENTORY.md.
+  // ============================================================
+
+  // (No inline implementations here — the switch cases above delegate to
+  // pure functions in transforms/StructuredTransforms.ts. That module is
+  // import-light and unit-tested directly.)
+
 
   /**
    * Render table transformation

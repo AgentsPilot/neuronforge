@@ -1,0 +1,490 @@
+{
+  "slots": {
+    "aliexpress_emails": {
+      "schema": {
+        "type": "object",
+        "source": "plugin",
+        "description": "Search results with email details",
+        "properties": {
+          "emails": {
+            "type": "array",
+            "source": "plugin",
+            "description": "Array of matching emails",
+            "items": {
+              "type": "object",
+              "source": "plugin",
+              "semantic_type": "email_message",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "Gmail message ID"
+                },
+                "thread_id": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "Gmail thread ID"
+                },
+                "subject": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "Email subject"
+                },
+                "from": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "Sender address"
+                },
+                "to": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "Recipient addresses"
+                },
+                "date": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "Email date"
+                },
+                "snippet": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "Email preview snippet (first ~200 chars of email body - USE THIS for content matching/filtering)"
+                },
+                "labels": {
+                  "type": "array",
+                  "source": "plugin",
+                  "description": "Gmail labels",
+                  "items": {
+                    "type": "string",
+                    "source": "plugin"
+                  }
+                },
+                "body": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "Email body text (NOTE: Usually empty in search results - use 'snippet' field instead for email content)"
+                },
+                "attachments": {
+                  "type": "array",
+                  "source": "plugin",
+                  "description": "Attachment metadata (if include_attachments=true). Each item contains: filename, mimeType, size, attachment_id (use with get_email_attachment), message_id (email ID)",
+                  "items": {
+                    "type": "object",
+                    "source": "plugin",
+                    "semantic_type": "file_attachment",
+                    "properties": {
+                      "filename": {
+                        "type": "string",
+                        "source": "plugin",
+                        "description": "Attachment filename"
+                      },
+                      "mimeType": {
+                        "type": "string",
+                        "source": "plugin",
+                        "description": "MIME type (application/pdf, image/png, etc.)"
+                      },
+                      "size": {
+                        "type": "number",
+                        "source": "plugin",
+                        "description": "File size in bytes"
+                      },
+                      "attachment_id": {
+                        "type": "string",
+                        "source": "plugin",
+                        "description": "Attachment ID (required for get_email_attachment action)"
+                      },
+                      "message_id": {
+                        "type": "string",
+                        "source": "plugin",
+                        "description": "Email message ID (required for get_email_attachment action)"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "total_found": {
+            "type": "number",
+            "source": "plugin",
+            "description": "Number of emails returned"
+          },
+          "total_available": {
+            "type": "number",
+            "source": "plugin",
+            "description": "Estimated total matching emails"
+          },
+          "search_query": {
+            "type": "string",
+            "source": "plugin",
+            "description": "The search query that was executed"
+          },
+          "searched_at": {
+            "type": "string",
+            "source": "plugin",
+            "description": "ISO 8601 timestamp of search"
+          }
+        }
+      },
+      "scope": "global",
+      "produced_by": "search_aliexpress_emails",
+      "consumed_by": [
+        "filter_delivery_keywords"
+      ]
+    },
+    "delivery_emails": {
+      "schema": {
+        "type": "array",
+        "source": "inferred",
+        "description": "Array of matching emails",
+        "items": {
+          "type": "object",
+          "source": "plugin",
+          "semantic_type": "email_message",
+          "properties": {
+            "id": {
+              "type": "string",
+              "source": "plugin",
+              "description": "Gmail message ID"
+            },
+            "thread_id": {
+              "type": "string",
+              "source": "plugin",
+              "description": "Gmail thread ID"
+            },
+            "subject": {
+              "type": "string",
+              "source": "plugin",
+              "description": "Email subject"
+            },
+            "from": {
+              "type": "string",
+              "source": "plugin",
+              "description": "Sender address"
+            },
+            "to": {
+              "type": "string",
+              "source": "plugin",
+              "description": "Recipient addresses"
+            },
+            "date": {
+              "type": "string",
+              "source": "plugin",
+              "description": "Email date"
+            },
+            "snippet": {
+              "type": "string",
+              "source": "plugin",
+              "description": "Email preview snippet (first ~200 chars of email body - USE THIS for content matching/filtering)"
+            },
+            "labels": {
+              "type": "array",
+              "source": "plugin",
+              "description": "Gmail labels",
+              "items": {
+                "type": "string",
+                "source": "plugin"
+              }
+            },
+            "body": {
+              "type": "string",
+              "source": "plugin",
+              "description": "Email body text (NOTE: Usually empty in search results - use 'snippet' field instead for email content)"
+            },
+            "attachments": {
+              "type": "array",
+              "source": "plugin",
+              "description": "Attachment metadata (if include_attachments=true). Each item contains: filename, mimeType, size, attachment_id (use with get_email_attachment), message_id (email ID)",
+              "items": {
+                "type": "object",
+                "source": "plugin",
+                "semantic_type": "file_attachment",
+                "properties": {
+                  "filename": {
+                    "type": "string",
+                    "source": "plugin",
+                    "description": "Attachment filename"
+                  },
+                  "mimeType": {
+                    "type": "string",
+                    "source": "plugin",
+                    "description": "MIME type (application/pdf, image/png, etc.)"
+                  },
+                  "size": {
+                    "type": "number",
+                    "source": "plugin",
+                    "description": "File size in bytes"
+                  },
+                  "attachment_id": {
+                    "type": "string",
+                    "source": "plugin",
+                    "description": "Attachment ID (required for get_email_attachment action)"
+                  },
+                  "message_id": {
+                    "type": "string",
+                    "source": "plugin",
+                    "description": "Email message ID (required for get_email_attachment action)"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "scope": "global",
+      "produced_by": "filter_delivery_keywords",
+      "consumed_by": [
+        "extract_delivery_details",
+        "mark_and_label_emails"
+      ]
+    },
+    "extracted_deliveries": {
+      "schema": {
+        "type": "object",
+        "properties": {
+          "deliveries": {
+            "type": "array",
+            "source": "ai_declared",
+            "description": "One entry per delivery email with extracted details",
+            "items": {
+              "type": "object",
+              "source": "ai_declared",
+              "properties": {
+                "email_id": {
+                  "type": "string",
+                  "source": "ai_declared",
+                  "description": "Gmail message ID for downstream labeling/marking"
+                },
+                "package_number": {
+                  "type": "string",
+                  "source": "ai_declared",
+                  "description": "Package or tracking number"
+                },
+                "products": {
+                  "type": "string",
+                  "source": "ai_declared",
+                  "description": "Comma-separated list of product names in the shipment"
+                },
+                "delivery_status": {
+                  "type": "string",
+                  "source": "ai_declared",
+                  "description": "Current delivery status (Shipped, In Transit, Out for Delivery, Delivered, etc.)"
+                },
+                "estimated_delivery_date": {
+                  "type": "string",
+                  "source": "ai_declared",
+                  "description": "Estimated delivery date if available, otherwise N/A"
+                }
+              }
+            }
+          }
+        },
+        "source": "ai_declared"
+      },
+      "scope": "global",
+      "produced_by": "extract_delivery_details",
+      "consumed_by": [
+        "compose_summary_email"
+      ]
+    },
+    "summary_email_content": {
+      "schema": {
+        "type": "object",
+        "properties": {
+          "html_body": {
+            "type": "string",
+            "source": "ai_declared",
+            "description": "Complete HTML email body with summary table"
+          }
+        },
+        "source": "ai_declared"
+      },
+      "scope": "global",
+      "produced_by": "compose_summary_email",
+      "consumed_by": [
+        "send_summary_email"
+      ]
+    },
+    "current_email": {
+      "schema": {
+        "type": "object",
+        "source": "inferred",
+        "semantic_type": "email_message",
+        "properties": {
+          "id": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Gmail message ID"
+          },
+          "thread_id": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Gmail thread ID"
+          },
+          "subject": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Email subject"
+          },
+          "from": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Sender address"
+          },
+          "to": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Recipient addresses"
+          },
+          "date": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Email date"
+          },
+          "snippet": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Email preview snippet (first ~200 chars of email body - USE THIS for content matching/filtering)"
+          },
+          "labels": {
+            "type": "array",
+            "source": "plugin",
+            "description": "Gmail labels",
+            "items": {
+              "type": "string",
+              "source": "plugin"
+            }
+          },
+          "body": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Email body text (NOTE: Usually empty in search results - use 'snippet' field instead for email content)"
+          },
+          "attachments": {
+            "type": "array",
+            "source": "plugin",
+            "description": "Attachment metadata (if include_attachments=true). Each item contains: filename, mimeType, size, attachment_id (use with get_email_attachment), message_id (email ID)",
+            "items": {
+              "type": "object",
+              "source": "plugin",
+              "semantic_type": "file_attachment",
+              "properties": {
+                "filename": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "Attachment filename"
+                },
+                "mimeType": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "MIME type (application/pdf, image/png, etc.)"
+                },
+                "size": {
+                  "type": "number",
+                  "source": "plugin",
+                  "description": "File size in bytes"
+                },
+                "attachment_id": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "Attachment ID (required for get_email_attachment action)"
+                },
+                "message_id": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "Email message ID (required for get_email_attachment action)"
+                }
+              }
+            }
+          }
+        }
+      },
+      "scope": "loop",
+      "produced_by": "mark_and_label_emails",
+      "consumed_by": [
+        "mark_read_and_label"
+      ]
+    },
+    "labeled_emails": {
+      "schema": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "source": "plugin",
+          "description": "Result of the email modification",
+          "properties": {
+            "message_id": {
+              "type": "string",
+              "source": "plugin",
+              "description": "The modified message ID",
+              "required": true
+            },
+            "labels_added": {
+              "type": "array",
+              "source": "plugin",
+              "description": "Labels that were added",
+              "items": {
+                "type": "string",
+                "source": "plugin"
+              },
+              "required": true
+            },
+            "labels_removed": {
+              "type": "array",
+              "source": "plugin",
+              "description": "Labels that were removed",
+              "items": {
+                "type": "string",
+                "source": "plugin"
+              },
+              "required": true
+            }
+          }
+        },
+        "source": "inferred"
+      },
+      "scope": "global",
+      "produced_by": "mark_and_label_emails"
+    },
+    "label_result": {
+      "schema": {
+        "type": "object",
+        "source": "plugin",
+        "description": "Result of the email modification",
+        "properties": {
+          "message_id": {
+            "type": "string",
+            "source": "plugin",
+            "description": "The modified message ID",
+            "required": true
+          },
+          "labels_added": {
+            "type": "array",
+            "source": "plugin",
+            "description": "Labels that were added",
+            "items": {
+              "type": "string",
+              "source": "plugin"
+            },
+            "required": true
+          },
+          "labels_removed": {
+            "type": "array",
+            "source": "plugin",
+            "description": "Labels that were removed",
+            "items": {
+              "type": "string",
+              "source": "plugin"
+            },
+            "required": true
+          }
+        }
+      },
+      "scope": "loop",
+      "produced_by": "mark_read_and_label",
+      "consumed_by": [
+        "mark_and_label_emails"
+      ]
+    }
+  }
+}

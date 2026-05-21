@@ -42,6 +42,30 @@ import { analyzeOutputSchema } from '@/lib/pilot/utils/SchemaAwareDataExtractor'
 const moduleLogger = createLogger({ module: 'V6', service: 'ExecutionGraphCompiler' })
 
 /**
+ * W2 / WP-16 Expression AST kinds used by `transform/with_fields`.
+ * The compiler's `resolveStructuredRefs` walker treats these as opaque —
+ * subtrees containing them are passed through unchanged so the runtime
+ * evaluator (lib/pilot/transforms/StructuredTransforms.ts:evaluateExpression)
+ * receives the full structured AST. Without this, atoms like
+ * `{kind: "ref", ref: "item", field: "Email"}` inside a `null_check.value`
+ * get rewritten to `"{{item.Email}}"` strings, and the evaluator throws
+ * "invalid expression" because it expects {kind, ...} objects.
+ *
+ * Note: `literal`, `ref`, `config` are NOT in this set — they're shared
+ * vocabulary with the existing Condition / ValueRef ASTs and the rewriter
+ * needs to handle them in their non-W2 contexts.
+ */
+const W2_EXPRESSION_OP_KINDS = new Set([
+  'concat',
+  'if',
+  'today',
+  'date_diff',
+  'date_add',
+  'null_check',
+  'all_not_null',
+])
+
+/**
  * Compilation Result
  */
 export interface CompilationResult {
@@ -273,7 +297,11 @@ export class ExecutionGraphCompiler {
       }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error)
+      const stack = error instanceof Error && error.stack ? error.stack : ''
       this.log(ctx, `Compilation failed: ${errorMessage}`)
+      // Surface the stack so we can diagnose generic-looking errors like
+      // "object is not iterable" without instrumenting the entire pipeline.
+      if (stack) this.log(ctx, `Stack:\n${stack}`)
 
       return {
         success: false,
@@ -563,7 +591,11 @@ export class ExecutionGraphCompiler {
       'rows_to_objects',  // For converting 2D arrays (like Sheets) to objects
       'map_headers',  // Normalize/rename headers in 2D arrays
       'render_table',  // For rendering data as HTML/formatted tables
-      'fetch_content'  // For fetching attachment/file content from plugins
+      'fetch_content',  // For fetching attachment/file content from plugins
+      // W2 / WP-16: structured primitives for deterministic operations.
+      // Runtime impls in lib/pilot/transforms/StructuredTransforms.ts; switch
+      // cases in lib/pilot/StepExecutor.ts.
+      'with_fields', 'project_column', 'set_difference'
     ]
 
     if (!validPilotOps.includes(pilotOperation)) {
@@ -648,13 +680,25 @@ export class ExecutionGraphCompiler {
         transformConfig.type = 'dedupe'
         transformedConfig.type = 'dedupe'
         this.log(ctx, `  → Aliased 'deduplicate' → 'dedupe'`)
-      } else if (transformConfig.type === 'select' || transformConfig.type === 'custom') {
-        // D-B18: Alias select/custom → map. Both were removed from the IntentContract
-        // schema (WP-4 mapping is the correct approach). This handles old ICs that still have them.
-        const originalType = transformConfig.type
+      } else if (transformConfig.type === 'select') {
+        // WP-41: `select` constructs ONE wrapper object from named fields and has
+        // DIFFERENT semantics from `map` (which iterates an array per-item).
+        // The previous D-B18 behaviour relabeled `select` → `map`, which caused
+        // the runtime's per-item `map` to produce N copies of the literal config
+        // instead of one wrapper object. The runtime now handles `select` natively
+        // (see `case 'select'` in `StepExecutor.executeTransform`). Preserve the
+        // type as-is; `pilotOperation` stays `'select'` (set at line ~579 from
+        // `transformConfig.type`).
+        this.log(ctx, `  → Preserving 'select' (WP-41: runtime now handles native select semantics)`)
+      } else if (transformConfig.type === 'custom') {
+        // D-B18 (partial): `custom` is still relabeled to `map`. Its IR-side use
+        // is "do something LLM-defined per item" — closer to map than select.
+        // If a real semantic gap shows up in a regression, split this branch the
+        // same way WP-41 split `select` out.
         transformConfig.type = 'map'
         transformedConfig.type = 'map'
-        this.log(ctx, `  → D-B18: Aliased '${originalType}' → 'map' (${originalType} removed from IC schema)`)
+        pilotOperation = 'map'
+        this.log(ctx, `  → D-B18: Aliased 'custom' → 'map' (custom removed from IC schema)`)
       } else if (transformConfig.type === 'map') {
         // IR field: map_expression → DSL field: expression
         if (transformConfig.map_expression) {
@@ -2484,7 +2528,19 @@ export class ExecutionGraphCompiler {
             continue
           }
 
-          // Case 1: 2D array → Insert rows_to_objects transform
+          // Case 1: 2D array → Insert rows_to_objects transform.
+          //
+          // WP-SR: set `preserve_case: true` so the runtime keeps the
+          // original Sheet header text (e.g. "Date", "Lead Name") rather
+          // than lowercasing it ("date", "lead name"). Reason: when the LLM
+          // emits a downstream `transform/map` step, it almost always
+          // references the original-case header in its `field_mapping`
+          // (e.g. `{date: "Date", lead_name: "Lead Name"}`). With the
+          // default lowercase behavior, `item["Date"]` is undefined, every
+          // row becomes `{}`, and downstream filters silently drop everything.
+          // This auto-inject path didn't fire at all for ~30 days
+          // (SchemaAwareDataExtractor was a stub — see f1804f4), so no
+          // existing caller depends on the default lowercase behavior here.
           const convertStepId = `step_${++ctx.stepCounter}`
           const normalizedVarName = `${step.output_variable}_objects`
 
@@ -2495,7 +2551,7 @@ export class ExecutionGraphCompiler {
             input: `{{${step.output_variable}.${detection.arrayFieldName}}}`,
             description: `Auto-normalize: Convert 2D array to objects`,
             output_variable: normalizedVarName,
-            config: {}
+            config: { preserve_case: true }
           }
 
           normalized.push(convertStep)
@@ -2991,6 +3047,17 @@ export class ExecutionGraphCompiler {
         // The IR converter's resolveValueRef() should convert these to strings,
         // but deeply nested values or edge cases may survive unresolved.
         if (typeof value.kind === 'string') {
+          // W2 / WP-16: preserve Expression AST subtrees as opaque. The runtime
+          // evaluator (lib/pilot/transforms/StructuredTransforms.ts:evaluateExpression)
+          // walks these structurally — if we resolve `{kind: "ref"}` atoms inside
+          // a `null_check`, `if`, `concat`, etc. to template strings, the evaluator
+          // throws "invalid expression" because it expects {kind, ...} objects.
+          // The W2 ops themselves are the marker: when we see one, return its
+          // subtree untouched so atoms inside it stay structured.
+          if (W2_EXPRESSION_OP_KINDS.has(value.kind)) {
+            return value
+          }
+
           count++
           switch (value.kind) {
             case 'config':
@@ -3840,10 +3907,17 @@ export class ExecutionGraphCompiler {
       for (const step of steps) {
         if (step.output_variable && step.output_schema) {
           const schema = step.output_schema
-          const requiredFields = new Set<string>(schema.required || [])
-          const allFields = new Set<string>(
-            Object.keys(schema.properties || schema.items?.properties || {})
-          )
+          // Defensive: JSON Schema convention has `required` as an array of
+          // field names. Some upstream emitters (LLM, DataSchemaBuilder) may
+          // produce a boolean (`required: true` meaning "this whole schema is
+          // required") which is non-standard. Coerce to empty array — the
+          // nullable-detection algorithm only cares about per-field required-ness.
+          const requiredArr = Array.isArray(schema.required) ? schema.required : []
+          const requiredFields = new Set<string>(requiredArr)
+          const propsSrc = (schema.properties && typeof schema.properties === 'object' ? schema.properties : null)
+            ?? (schema.items?.properties && typeof schema.items.properties === 'object' ? schema.items.properties : null)
+            ?? {}
+          const allFields = new Set<string>(Object.keys(propsSrc))
           // Nullable fields = all fields minus required fields
           outputFieldInfo.set(step.output_variable, { required: requiredFields, all: allFields })
         }
@@ -4461,15 +4535,42 @@ export class ExecutionGraphCompiler {
    */
   private async loadPluginAction(pluginKey: string, action: string): Promise<any> {
     try {
-      // Load plugin definition from lib/plugins/definitions/
+      // Load plugin definition from lib/plugins/definitions/.
+      // Plugin files use the canonical `${pluginKey}-plugin-v2.json` suffix
+      // (e.g., google-mail-plugin-v2.json). Fall back to the legacy short
+      // form `${pluginKey}.json` for older / future definitions.
       const fs = await import('fs/promises')
       const path = await import('path')
-      const pluginPath = path.join(process.cwd(), 'lib', 'plugins', 'definitions', `${pluginKey}.json`)
-      const pluginDef = JSON.parse(await fs.readFile(pluginPath, 'utf-8'))
 
-      // Find the action definition
-      const actionDef = pluginDef.actions?.find((a: any) => a.name === action)
-      return actionDef
+      const candidates = [
+        path.join(process.cwd(), 'lib', 'plugins', 'definitions', `${pluginKey}-plugin-v2.json`),
+        path.join(process.cwd(), 'lib', 'plugins', 'definitions', `${pluginKey}.json`),
+      ]
+
+      let pluginDef: any = null
+      for (const pluginPath of candidates) {
+        try {
+          pluginDef = JSON.parse(await fs.readFile(pluginPath, 'utf-8'))
+          break
+        } catch {
+          // try next candidate
+        }
+      }
+
+      if (!pluginDef) {
+        this.logger.warn(`Failed to load plugin definition for ${pluginKey} (tried: ${candidates.join(', ')})`)
+        return null
+      }
+
+      // Find the action definition. Modern definitions use `actions: { [name]: ActionDef }`;
+      // legacy ones use `actions: ActionDef[]` with `name` field. Handle both.
+      if (pluginDef.actions && typeof pluginDef.actions === 'object' && !Array.isArray(pluginDef.actions)) {
+        return pluginDef.actions[action] ?? null
+      }
+      if (Array.isArray(pluginDef.actions)) {
+        return pluginDef.actions.find((a: any) => a.name === action) ?? null
+      }
+      return null
     } catch (error) {
       this.logger.warn(`Failed to load plugin action ${pluginKey}.${action}: ${error}`)
       return null
@@ -4503,8 +4604,25 @@ export class ExecutionGraphCompiler {
 
     if (!actionDef) return formats
 
+    // Normalize parameters into a legacy array-of-{name, ...} form regardless
+    // of plugin file shape. V2 plugin definitions use JSON Schema:
+    //   parameters: { type: "object", required: [...], properties: {name: schema} }
+    // Legacy plugin definitions use an array:
+    //   parameters: [{name: "x", type: "string", items: ...}, ...]
+    const params = actionDef.parameters
+    let paramList: any[] = []
+    if (Array.isArray(params)) {
+      paramList = params
+    } else if (params && typeof params === 'object' && params.properties && typeof params.properties === 'object') {
+      // V2 form — flatten properties to {name, ...schema} entries
+      paramList = Object.entries(params.properties).map(([name, schema]) => ({
+        name,
+        ...(schema as any),
+      }))
+    }
+
     // Analyze parameter schemas
-    for (const param of actionDef.parameters || []) {
+    for (const param of paramList) {
       // Check for 2D array requirements (Sheets)
       if (param.type === 'array' && param.items?.type === 'array') {
         formats.needs2DArray = true
@@ -6881,26 +6999,41 @@ export class ExecutionGraphCompiler {
   /**
    * Validate AI output_schema depth — reject array without items, object without properties.
    * (Task 4.6)
+   *
+   * RETIRE-1 (2026-05-10): switched from warn-and-repair to throw-on-violation
+   * after CP-D verified 0/10 firings across the regression suite. The Q-A4
+   * sequencing gate was met: the LLM consistently emits depth-2+ shapes for
+   * array/object output declarations under the WP-15 prompt + grammar.
+   *
+   * If a future emission produces a shallow shape, this throws at compile
+   * time with a clear error instead of silently auto-filling `items:{type:"any"}`
+   * / `properties:{}` and producing surprising runtime behavior. Revert to
+   * warn-and-repair if the gate proves premature.
    */
   private validateAISchemaDepth(graph: ExecutionGraph, ctx: CompilerContext): void {
     const dataSchema = graph.data_schema
     if (!dataSchema) return
 
+    const violations: string[] = []
     for (const [slotName, slot] of Object.entries(dataSchema.slots)) {
       if (slot.schema.source !== 'ai_declared') continue
 
       if (slot.schema.type === 'array' && !slot.schema.items) {
-        this.warn(ctx,
-          `AI-declared slot "${slotName}" is type "array" but missing "items" schema. ` +
-          `Auto-repairing with items: { type: "any" }`)
-        slot.schema.items = { type: 'any', source: 'ai_declared' }
+        violations.push(`slot "${slotName}": type "array" without "items"`)
       }
 
       if (slot.schema.type === 'object' && !slot.schema.properties) {
-        this.warn(ctx,
-          `AI-declared slot "${slotName}" is type "object" but missing "properties". ` +
-          `This may cause runtime issues.`)
+        violations.push(`slot "${slotName}": type "object" without "properties"`)
       }
+    }
+
+    if (violations.length > 0) {
+      throw new Error(
+        `AI-declared schema depth violation (RETIRE-1, was warn-and-repair until 2026-05-10): ${violations.join('; ')}. ` +
+        `The LLM should declare element shape via 'items' for arrays and 'properties' for objects ` +
+        `(see Phase 1 system prompt section 6.4.1 — WP-15). If this is a regression in LLM output, ` +
+        `consider reverting RETIRE-1 by restoring the warn-and-repair behavior in this method.`
+      )
     }
   }
 

@@ -50,7 +50,9 @@ import { createTimedThinkingWordCycler } from '@/lib/ui/thinking-words'
 // ============================================================================
 
 /**
- * V6 API Response structure from /api/v6/generate-ir-semantic
+ * V6 API Response structure from /api/v6/generate-ir-intent-contract.
+ * (Same shape was previously returned by the now-retired Pipeline B endpoint
+ * /api/v6/generate-ir-semantic — both endpoints share the response contract.)
  */
 interface V6GenerateResponse {
   success: boolean
@@ -178,7 +180,7 @@ function extractInputSchema(workflowSteps: any[], enhancedPromptData?: any): Inp
 /**
  * Map V6 API response to V4-compatible agent object
  *
- * @param v6Response - Response from /api/v6/generate-ir-semantic
+ * @param v6Response - Response from /api/v6/generate-ir-intent-contract
  * @param context - Additional context for agent creation
  * @returns Agent data compatible with /api/create-agent
  */
@@ -989,20 +991,33 @@ function V2AgentBuilderContent() {
       // Check if V6 generation is enabled
       const useV6 = useV6AgentGeneration()
       let agentData: CreateAgentData
+      // WP-47: captured from v6Data.ir.config_defaults inside the V6 block,
+      // read after the V4/V6 branches merge to pre-populate resolvedInputs.
+      let v6IrConfigDefaults: Array<{ key?: string; default?: any }> | undefined
 
       if (useV6) {
         // ================================================================
-        // V6 FLOW: 5-Phase Semantic Pipeline (Single API Call)
+        // V6 FLOW — IntentContract pipeline (single LLM call, regression-tested).
+        // Endpoint: /api/v6/generate-ir-intent-contract
+        // Code path: generateGenericIntentContractV1 → CapabilityBinderV2 →
+        // IntentToIRConverter → ExecutionGraphCompiler.
+        //
+        // P6 (2026-05-20): the previous dual-pipeline branching (Pipeline A
+        // vs Pipeline B / `useV6PipelineA()` flag) was retired after Pipeline
+        // A landed end-to-end across 3 regression scenarios. The Pipeline B
+        // endpoints (`/api/v6/generate-ir-semantic` et al.) remain in code
+        // and continue to back the diagnostic test pages, but the V2 UI no
+        // longer uses them. See docs/v6/V6_PIPELINE_A_MIGRATION.md § P6.
         // ================================================================
-        console.log('🚀 Using V6 5-phase semantic pipeline...')
+        console.log('🚀 Using V6 (IntentContract pipeline)...')
 
         // Show rotating thinking words during V6 generation
         startThinkingWords()
 
         const v6StartTime = Date.now()
 
-        // Single API call - runs all 5 phases
-        const v6Response = await fetch('/api/v6/generate-ir-semantic', {
+        // Single API call - runs all pipeline phases
+        const v6Response = await fetch('/api/v6/generate-ir-intent-contract', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -1031,6 +1046,11 @@ function V2AgentBuilderContent() {
         if (!v6Data.success) {
           throw new Error('V6 generation returned unsuccessful response')
         }
+
+        // WP-47: capture IR's config_defaults for the post-branch resolvedInputs
+        // pre-population. Pipeline A returns ir.config_defaults; Pipeline B may
+        // not, in which case this stays undefined and the merge is a no-op.
+        v6IrConfigDefaults = (v6Data as any)?.ir?.config_defaults
 
         console.log('✅ V6 generation complete:', {
           steps: v6Data.metadata.steps_generated,
@@ -1171,6 +1191,25 @@ function V2AgentBuilderContent() {
         enhancedPromptData.specifics.resolved_user_inputs.forEach((input: { key: string; value: string }) => {
           resolvedInputs[input.key] = input.value
         })
+      }
+      // WP-47: Pipeline A's IR carries `config_defaults` whose keys match the
+      // DSL's {{input.X}} refs and whose `default` values are the EP's
+      // resolved_user_inputs transcribed by the IC LLM. Without merging these,
+      // the requiredParams filter below treats IC keys (e.g. "spreadsheet_id")
+      // as missing because resolved_user_inputs uses the EP-Key-Hint format
+      // (e.g. "google-sheets__table/get__spreadsheet_id") — the two sets never
+      // intersect, so the user gets re-prompted for values they already gave.
+      // Pipeline B (semantic) doesn't have this issue because its compiler
+      // inlines values into DSL params and there are no {{input.X}} refs at
+      // all; ir.config_defaults is absent or unused. Safe no-op for Pipeline B.
+      if (v6IrConfigDefaults && Array.isArray(v6IrConfigDefaults)) {
+        for (const entry of v6IrConfigDefaults) {
+          if (entry?.key && entry.default !== undefined && !(entry.key in resolvedInputs)) {
+            resolvedInputs[entry.key] = entry.default
+          }
+        }
+      }
+      if (Object.keys(resolvedInputs).length > 0) {
         setInputParameterValues(prev => ({ ...prev, ...resolvedInputs }))
       }
 

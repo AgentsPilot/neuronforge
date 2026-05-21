@@ -277,12 +277,30 @@ Ask the user:
 - [ ] Plugin OAuth connections are active for all plugins in the DSL
 - [ ] Real test data exists (emails in inbox, Google Sheet with data, etc.)
 
-Run the live execution:
+Run the live execution. **Two modes** depending on where the DSL lives:
 
 ```bash
+# Mode A — DSL from file (default; matches regression-scenario workflow):
+#   Loads DSL from output/vocabulary-pipeline/phase4-pilot-dsl-steps.json (or --dsl <path>)
+#   then OVERWRITES the agent's DB pilot_steps with the file content before running.
 npx tsx --import ./scripts/env-preload.ts scripts/test-live-agent-execution.ts \
   --agent-id <agent-uuid>
+
+# Mode B — DSL from agent's DB record (use for V2-UI-generated agents):
+#   Loads DSL + workflow_config directly from the agent record.
+#   Skips the agent-update step (DSL already in DB — no clobbering).
+npx tsx --import ./scripts/env-preload.ts scripts/test-live-agent-execution.ts \
+  --agent-id <agent-uuid> --use-db-dsl
 ```
+
+**When to use which:**
+
+| Use case | Mode |
+|---|---|
+| Testing a regression scenario (DSL in `tests/v6-regression/scenarios/<scenario>/`) | Mode A — point `--dsl`/`--config` or `--input-dir` at the scenario folder |
+| Testing a V2-UI-generated agent (DSL lives only in DB) | Mode B (`--use-db-dsl`) |
+| Iterating on a hand-edited DSL file against an existing agent record | Mode A (default) — script will write your edits back to DB |
+| Running a saved agent that's been deployed via the V2 flow | Mode B (`--use-db-dsl`) |
 
 **Expected output:**
 
@@ -477,7 +495,8 @@ git commit -m "test(v6-regression): add <scenario-name> scenario"
 | Pipeline Compiler | 0–4 | `npx tsx --import ./scripts/env-preload.ts scripts/test-complete-pipeline-with-vocabulary.ts <prompt> [--intent-contract <path>]` | Full V6 pipeline | Nothing |
 | DSL Simulator | A | `npx tsx scripts/test-dsl-execution-simulator/index.ts` | Static validation | All data |
 | WorkflowPilot Mock | D | `npx tsx --import ./scripts/env-preload.ts scripts/test-workflowpilot-execution.ts` | Full WorkflowPilot engine | Plugins, DB, LLM |
-| Live Execution | E | `npx tsx --import ./scripts/env-preload.ts scripts/test-live-agent-execution.ts --agent-id <UUID>` | Everything | Nothing |
+| Live Execution (file DSL) | E | `npx tsx --import ./scripts/env-preload.ts scripts/test-live-agent-execution.ts --agent-id <UUID>` | Everything | Nothing |
+| Live Execution (DB DSL) | E | `npx tsx --import ./scripts/env-preload.ts scripts/test-live-agent-execution.ts --agent-id <UUID> --use-db-dsl` | Everything; uses agent's DB pilot_steps as-is | Nothing |
 | Regression Suite | All | `npx tsx --import ./scripts/env-preload.ts tests/v6-regression/run-regression.ts` | Compile + A + D for all scenarios | Plugins, DB, LLM |
 
 ### CLI Arguments Reference
@@ -491,6 +510,10 @@ git commit -m "test(v6-regression): add <scenario-name> scenario"
 | WorkflowPilot | `--input-dir <path>` | `output/vocabulary-pipeline/` | Input directory |
 | WorkflowPilot | `--output-dir <path>` | Same as `--input-dir` | Output directory for report/log |
 | Live Execution | `--agent-id <UUID>` | **required** | Agent ID in Supabase |
+| Live Execution | `--input-dir <path>` | `output/vocabulary-pipeline/` | Directory containing `phase4-pilot-dsl-steps.json` + `phase4-workflow-config.json` (Mode A only) |
+| Live Execution | `--dsl <path>` | `<input-dir>/phase4-pilot-dsl-steps.json` | Explicit DSL file path (Mode A only) |
+| Live Execution | `--config <path>` | `<input-dir>/phase4-workflow-config.json` | Explicit workflow_config file path (Mode A only) |
+| Live Execution | `--use-db-dsl` | off | **Mode B.** Load DSL + workflow_config from the agent record in DB instead of from file. Skips the agent-update step that would otherwise overwrite the agent's pilot_steps. Use for V2-UI-generated agents whose DSL only exists in DB. |
 
 ---
 
@@ -515,3 +538,4 @@ git commit -m "test(v6-regression): add <scenario-name> scenario"
 |------|--------|---------|
 | 2026-03-23 | Initial version | Documented all 5 testing scripts with usage, arguments, I/O files |
 | 2026-03-26 | Rewritten as QA manual | Step-by-step testing flow, EP key hints validation, QA verdict format, regression suite integration |
+| 2026-05-17 | Phase E: `--use-db-dsl` flag added | New Mode B for `test-live-agent-execution.ts`: load DSL + workflow_config from agent's DB record instead of file; skips the agent-update step. Required for testing V2-UI-generated agents whose DSL only lives in DB. Step 7 expanded with mode-selection table; Quick Reference + CLI Arguments tables updated. Branch: `feature/v6-v2-integration`. |

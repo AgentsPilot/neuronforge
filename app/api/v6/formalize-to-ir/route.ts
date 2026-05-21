@@ -1,4 +1,13 @@
 /**
+ * @deprecated Pipeline B endpoint — retired from the V2 UI on 2026-05-20 (P6 of
+ * the Pipeline A migration). Production agent creation now uses Pipeline A via
+ * `/api/v6/generate-ir-intent-contract`. This route has no known production
+ * callers; documented references only in `docs/v6/V6_DEVELOPER_GUIDE.md` as a
+ * step-by-step example. Scheduled for deletion in the Pipeline B retirement
+ * cleanup pass. Do NOT extend or wire new callers to this endpoint. See
+ * `docs/v6/V6_PIPELINE_A_MIGRATION.md` § P6 + `docs/v6/V6_OPEN_ITEMS.md`
+ * "Cleanup tasks (Pipeline B retirement follow-ups)".
+ *
  * API Endpoint: Formalize to IR
  *
  * POST /api/v6/formalize-to-ir

@@ -595,7 +595,12 @@ function validateTransformOperation(operation: string): string[] {
     'rows_to_objects',  // For converting 2D arrays (like Sheets) to objects
     'map_headers',  // Normalize/rename headers in 2D arrays
     'render_table',  // For rendering data as HTML/formatted tables
-    'fetch_content'  // For fetching attachment/file content from plugins
+    'fetch_content',  // For fetching attachment/file content from plugins
+    // W2 / WP-16: structured primitives for deterministic operations.
+    // Runtime impls in lib/pilot/transforms/StructuredTransforms.ts.
+    'with_fields',     // augment items with computed fields (10-op Expression AST)
+    'project_column',  // extract single column/field from rows
+    'set_difference'   // anti-join — keep items NOT in reference array
   ];
 
   if (!SUPPORTED_OPERATIONS.includes(operation)) {

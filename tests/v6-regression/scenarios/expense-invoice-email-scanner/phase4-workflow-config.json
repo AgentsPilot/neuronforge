@@ -1,0 +1,20 @@
+{
+  "gmail_search_query": "subject:(Invoice OR Expenses OR Bill) has:attachment filename:pdf newer_than:7d",
+  "recipient_email": "meiribarak@gmail.com",
+  "drive_base_folder_id": "1BoYgIIQj5QB6F0mWLzD_0-2pMLoxHVp-",
+  "spreadsheet_id": "1RHLbBXzrKv24gNgp7a4Lr7RlMIrP9fjacfGWjhPAbOE",
+  "sheet_tab_name": "Invoices",
+  "amount_threshold": 50,
+  "gmail__send_message__recipient": "meiribarak@gmail.com",
+  "gmail__search__filter_criteria": "subject include: Invoice or Expenses or Bill and has:attachment filename:pdf",
+  "gmail__search__time_window": "last 7 days",
+  "gmail__search__attachment_type": "PDF attachments",
+  "google_drive__create__base_folder_url": "https://drive.google.com/drive/u/0/folders/1BoYgIIQj5QB6F0mWLzD_0-2pMLoxHVp-",
+  "google_drive__create__storage_rule": "attachments only; create a folder per vendor and store the attachment in it",
+  "google_sheets__create__sheet_id": "1RHLbBXzrKv24gNgp7a4Lr7RlMIrP9fjacfGWjhPAbOE",
+  "google_sheets__create__tab_name": "Invoices, Expenses",
+  "google_sheets__create__write_rule": "append only if amount is greater than 50 in the document currency",
+  "gmail__send_message__delivery_style": "single digest email",
+  "summary_columns": "Type, Vendor / merchant, Date, Amount, Invoice/receipt #, Category, Drive link",
+  "missing_amount_handling": "email + store; skip Sheet"
+}

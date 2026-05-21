@@ -1,6 +1,6 @@
 {
   "version": "intent.v1",
-  "goal": "Read leads from Google Sheets, filter for Stage = 4, generate HTML summary table, and email to recipients",
+  "goal": "Read leads from a Google Sheets tab, filter for Stage = 4, render an HTML summary table, and email it to recipients (or send a 'none found' email if no matches)",
   "unit_of_work": {
     "entity": "lead",
     "parent_entity": "spreadsheet"
@@ -9,48 +9,56 @@
     {
       "key": "spreadsheet_id",
       "type": "string",
-      "description": "Google Sheets spreadsheet ID",
+      "description": "Google Sheets spreadsheet ID containing the leads data",
       "default": "1RHLbBXzrKv24gNgp7a4Lr7RlMIrP9fjacfGWjhPAbOE"
     },
     {
       "key": "sheet_tab_name",
       "type": "string",
       "description": "Name of the sheet tab containing leads",
-      "default": "Leads Tab"
+      "default": "Leads"
     },
     {
-      "key": "stage_threshold",
-      "type": "number",
-      "description": "Stage value to filter for (qualification rule)",
-      "default": 4
-    },
-    {
-      "key": "email_recipients",
-      "type": "json",
-      "description": "List of email recipients",
-      "default": [
-        "meiribarak@gmail.com",
-        "eomer3@gmail.com",
-        "offir.omer@gmail.com"
-      ]
-    },
-    {
-      "key": "email_subject",
+      "key": "qualification_stage",
       "type": "string",
-      "description": "Email subject line",
-      "default": "High-qualified leads (Stage = 4)"
+      "description": "Stage value to filter leads by",
+      "default": "4"
+    },
+    {
+      "key": "recipients",
+      "type": "string",
+      "description": "Comma-separated list of email recipients",
+      "default": "meiribarak@gmail.com, eomer3@gmail.com, offir.omer@gmail.com"
+    },
+    {
+      "key": "user_email",
+      "type": "string",
+      "description": "Sender email address",
+      "default": "meiribarak@gmail.com"
+    }
+  ],
+  "invariants": [
+    {
+      "description": "Only leads with Stage = 4 should be included in the email table"
+    },
+    {
+      "description": "Each recipient email address must appear only once"
+    },
+    {
+      "description": "If no leads match Stage = 4, a 'none found' email must still be sent"
+    },
+    {
+      "description": "The HTML table columns must be in order: Date, Lead Name, Company, Email, Phone, Stage, Notes, Sales Person"
     }
   ],
   "required_outcomes": [
-    "Leads with Stage = 4 are identified",
-    "HTML table is generated with correct columns",
-    "Email is sent to all recipients"
+    "An email is sent to all deduplicated recipients containing either an HTML table of Stage 4 leads or a 'none found' message"
   ],
   "steps": [
     {
       "id": "read_leads_data",
       "kind": "data_source",
-      "summary": "Read all lead rows from Google Sheets tab",
+      "summary": "Read all lead rows from the Leads tab of the specified Google Sheets spreadsheet",
       "uses": [
         {
           "capability": "get",
@@ -60,7 +68,7 @@
           }
         }
       ],
-      "output": "raw_leads",
+      "output": "raw_leads_data",
       "source": {
         "domain": "table",
         "intent": "read_range"
@@ -87,44 +95,51 @@
       }
     },
     {
-      "id": "filter_qualified_leads",
+      "id": "parse_leads_with_headers",
       "kind": "transform",
-      "summary": "Filter leads where Stage = 4",
+      "summary": "Map raw 2D array rows into objects using the first row as header names (Date, Lead Name, Company, Email, Phone, Stage, Notes, Sales Person), excluding the header row itself",
       "inputs": [
-        "raw_leads"
+        "raw_leads_data"
       ],
-      "output": "qualified_leads",
+      "output": "lead_records",
       "transform": {
-        "op": "filter",
-        "input": "raw_leads",
-        "description": "Keep only leads where Stage column equals 4",
-        "where": {
-          "op": "and",
-          "conditions": [
-            {
-              "op": "test",
-              "left": {
-                "kind": "ref",
-                "ref": "raw_leads",
-                "field": "Stage"
-              },
-              "comparator": "eq",
-              "right": {
-                "kind": "config",
-                "key": "stage_threshold"
-              }
-            },
-            {
-              "op": "test",
-              "left": {
-                "kind": "ref",
-                "ref": "raw_leads",
-                "field": "Stage"
-              },
-              "comparator": "exists"
-            }
-          ]
-        },
+        "op": "map",
+        "input": "raw_leads_data",
+        "description": "Convert 2D values array to array of objects using first row as headers. First row contains: Date, Lead Name, Company, Email, Phone, Stage, Notes, Sales Person. Each subsequent row becomes an object with those keys.",
+        "mapping": [
+          {
+            "to": "Date",
+            "from": "0"
+          },
+          {
+            "to": "Lead Name",
+            "from": "1"
+          },
+          {
+            "to": "Company",
+            "from": "2"
+          },
+          {
+            "to": "Email",
+            "from": "3"
+          },
+          {
+            "to": "Phone",
+            "from": "4"
+          },
+          {
+            "to": "Stage",
+            "from": "5"
+          },
+          {
+            "to": "Notes",
+            "from": "6"
+          },
+          {
+            "to": "Sales Person",
+            "from": "7"
+          }
+        ],
         "output_schema": {
           "type": "array",
           "items": {
@@ -146,7 +161,7 @@
                 "type": "string"
               },
               "Stage": {
-                "type": "number"
+                "type": "string"
               },
               "Notes": {
                 "type": "string"
@@ -170,9 +185,36 @@
       }
     },
     {
-      "id": "calculate_lead_count",
+      "id": "filter_stage_4_leads",
+      "kind": "transform",
+      "summary": "Filter lead records to only include rows where Stage equals 4 (excluding blank or missing Stage values)",
+      "inputs": [
+        "lead_records"
+      ],
+      "output": "qualified_leads",
+      "transform": {
+        "op": "filter",
+        "input": "lead_records",
+        "description": "Keep only leads where Stage column value equals the configured qualification stage",
+        "where": {
+          "op": "test",
+          "left": {
+            "kind": "ref",
+            "ref": "lead_records",
+            "field": "Stage"
+          },
+          "comparator": "eq",
+          "right": {
+            "kind": "config",
+            "key": "qualification_stage"
+          }
+        }
+      }
+    },
+    {
+      "id": "count_qualified_leads",
       "kind": "aggregate",
-      "summary": "Count qualified leads to determine if any exist",
+      "summary": "Count the number of qualified leads to determine whether to send a table or a 'none found' message",
       "inputs": [
         "qualified_leads"
       ],
@@ -181,169 +223,106 @@
         "input": "qualified_leads",
         "outputs": [
           {
-            "name": "total_qualified_count",
+            "name": "qualified_count",
             "type": "count"
           }
         ]
       }
     },
     {
-      "id": "check_if_leads_exist",
-      "kind": "decide",
-      "summary": "Branch based on whether qualified leads exist",
+      "id": "generate_email_content",
+      "kind": "generate",
+      "summary": "Generate HTML email body: if qualified leads exist, render them as a styled HTML table with columns Date, Lead Name, Company, Email, Phone, Stage, Notes, Sales Person; if none found, generate a message stating no Stage 4 leads were found",
       "inputs": [
-        "total_qualified_count"
+        "qualified_leads",
+        "qualified_count"
       ],
-      "decide": {
-        "condition": {
-          "op": "test",
-          "left": {
-            "kind": "ref",
-            "ref": "total_qualified_count"
-          },
-          "comparator": "gt",
-          "right": {
-            "kind": "literal",
-            "value": 0
-          }
-        },
-        "then": [
+      "output": "email_content",
+      "uses": [
+        {
+          "capability": "generate",
+          "domain": "internal"
+        }
+      ],
+      "generate": {
+        "input": "qualified_leads",
+        "format": "html",
+        "instruction": "Generate an HTML email body for a leads summary report. Check the qualified_count: if it is 0, produce a professional HTML message stating 'No high-qualified leads (Stage = 4) were found at this time.' with no data table. If qualified_count is greater than 0, produce a professional HTML table with the following columns in this exact order: Date, Lead Name, Company, Email, Phone, Stage, Notes, Sales Person. The table must have: a styled header row with a background color (#4472C4 blue with white text), borders on all cells (1px solid #ddd), cell padding (8px), alternating row colors for readability, and a professional font (Arial/sans-serif). Include a heading above the table: 'High-Qualified Leads (Stage = 4)'. Each qualified lead becomes one row in the table. Do NOT include any markdown — output raw HTML only.",
+        "reason": "Free-form HTML email body composition with conditional content (table vs none-found message) based on data shape — requires semantic formatting decisions for professional email layout",
+        "outputs": [
           {
-            "id": "generate_html_table",
-            "kind": "generate",
-            "summary": "Generate HTML table with qualified leads",
-            "inputs": [
-              "qualified_leads",
-              "total_qualified_count"
-            ],
-            "output": "email_content",
-            "uses": [
-              {
-                "capability": "generate",
-                "domain": "internal"
-              }
-            ],
-            "generate": {
-              "input": "qualified_leads",
-              "format": "html",
-              "instruction": "Create a professional HTML email body with an HTML table displaying all qualified leads. Include a header row with columns: Date, Lead Name, Company, Email, Phone, Stage, Notes, Sales Person. Style the table with borders, header background color, and proper padding. Include a brief introduction stating the number of high-qualified (Stage = 4) leads found.",
-              "outputs": [
-                {
-                  "name": "html_body",
-                  "type": "string",
-                  "description": "Complete HTML email body with styled table"
-                }
-              ]
-            }
+            "name": "subject",
+            "type": "string",
+            "description": "Email subject line"
           },
           {
-            "id": "send_leads_email",
-            "kind": "notify",
-            "summary": "Send email with qualified leads table",
-            "inputs": [
-              "email_content"
-            ],
-            "uses": [
-              {
-                "capability": "send_message",
-                "domain": "email",
-                "preferences": {
-                  "provider_family": "google"
-                }
-              }
-            ],
-            "notify": {
-              "channel": "email",
-              "recipients": {
-                "to": [
-                  {
-                    "kind": "config",
-                    "key": "email_recipients"
-                  }
-                ]
-              },
-              "content": {
-                "subject": {
-                  "kind": "config",
-                  "key": "email_subject"
-                },
-                "body": {
-                  "kind": "ref",
-                  "ref": "email_content",
-                  "field": "html_body"
-                },
-                "format": "html"
-              }
-            }
-          }
-        ],
-        "else": [
-          {
-            "id": "generate_no_results_message",
-            "kind": "generate",
-            "summary": "Generate email body stating no qualified leads found",
-            "output": "no_results_content",
-            "uses": [
-              {
-                "capability": "generate",
-                "domain": "internal"
-              }
-            ],
-            "generate": {
-              "format": "html",
-              "instruction": "Create a professional HTML email body stating that no high-qualified (Stage = 4) leads were found in the current data. Keep the message brief and professional.",
-              "outputs": [
-                {
-                  "name": "html_body",
-                  "type": "string",
-                  "description": "HTML email body for no results case"
-                }
-              ]
-            }
-          },
-          {
-            "id": "send_no_results_email",
-            "kind": "notify",
-            "summary": "Send email stating no qualified leads found",
-            "inputs": [
-              "no_results_content"
-            ],
-            "uses": [
-              {
-                "capability": "send_message",
-                "domain": "email",
-                "preferences": {
-                  "provider_family": "google"
-                }
-              }
-            ],
-            "notify": {
-              "channel": "email",
-              "recipients": {
-                "to": [
-                  {
-                    "kind": "config",
-                    "key": "email_recipients"
-                  }
-                ]
-              },
-              "content": {
-                "subject": {
-                  "kind": "config",
-                  "key": "email_subject"
-                },
-                "body": {
-                  "kind": "ref",
-                  "ref": "no_results_content",
-                  "field": "html_body"
-                },
-                "format": "html"
-              }
-            }
+            "name": "body",
+            "type": "string",
+            "description": "Complete HTML email body with either a styled leads table or a none-found message"
           }
         ]
       }
+    },
+    {
+      "id": "send_leads_email",
+      "kind": "notify",
+      "summary": "Send the HTML leads summary email to all deduplicated recipients",
+      "inputs": [
+        "email_content"
+      ],
+      "uses": [
+        {
+          "capability": "send_message",
+          "domain": "email",
+          "preferences": {
+            "provider_family": "google"
+          }
+        }
+      ],
+      "notify": {
+        "channel": "email",
+        "recipients": {
+          "to": [
+            {
+              "kind": "literal",
+              "value": "meiribarak@gmail.com"
+            },
+            {
+              "kind": "literal",
+              "value": "eomer3@gmail.com"
+            },
+            {
+              "kind": "literal",
+              "value": "offir.omer@gmail.com"
+            }
+          ]
+        },
+        "content": {
+          "subject": {
+            "kind": "ref",
+            "ref": "email_content",
+            "field": "subject"
+          },
+          "body": {
+            "kind": "ref",
+            "ref": "email_content",
+            "field": "body"
+          },
+          "format": "html"
+        }
+      }
     }
   ],
-  "confidence": 0.95
+  "confidence": 0.93,
+  "meta": {
+    "estimated_steps": 6,
+    "primary_domains": [
+      "table",
+      "email",
+      "internal"
+    ],
+    "data_flow": "spreadsheet → parse → filter → count → generate HTML → send email",
+    "idempotency": "Safe for re-runs — reads data and sends email, no persistent artifacts created",
+    "no_results_handling": "Conditional email body: HTML table when leads exist, 'none found' message otherwise"
+  }
 }

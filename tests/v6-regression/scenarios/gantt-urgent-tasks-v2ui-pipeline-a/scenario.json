@@ -1,0 +1,64 @@
+{
+  "name": "Gantt Critical/High Tasks Due Soon Emailer (V2-UI captured via Pipeline A)",
+  "description": "Captured from the V2 UI agent-creation flow on 2026-05-17 AFTER the pivot from Pipeline B to Pipeline A (commit pending — feature/v6-v2-integration branch). Same user prompt as `gantt-urgent-tasks-v2ui` (which captured Pipeline B output), so the two scenarios serve as a direct A-vs-B comparison: same EP → different IRs → different DSLs. Pipeline A produces an 11-step deterministic workflow (vs Pipeline B's 6 with AI-heavy filtering) and runs end-to-end with correct HTML output. Locked here as the first V2-UI + Pipeline A regression scenario.",
+  "created": "2026-05-17",
+  "source": {
+    "type": "v2-ui-capture",
+    "pipeline": "A",
+    "endpoint": "/api/v6/generate-ir-intent-contract",
+    "agent_id": "4c74a248-6f33-485f-bffa-2d5649309f99",
+    "branch": "feature/v6-v2-integration",
+    "phase_e_execution_id": "8e981101-3d6f-4bfb-b01b-c6d187a0c64b",
+    "phase_e_timestamp": "2026-05-17T20:54:00Z",
+    "feature_flags": {
+      "NEXT_PUBLIC_USE_V6_AGENT_GENERATION": "true",
+      "NEXT_PUBLIC_USE_V6_PIPELINE_A": "true"
+    }
+  },
+  "plugins": ["google-sheets", "google-mail"],
+  "expected": {
+    "min_steps": 11,
+    "step_types": ["action", "transform", "conditional", "llm_decision"],
+    "phase_a_checks": 14,
+    "phase_d_success": false,
+    "phase_e_success": true,
+    "phase_e_notes": "End-to-end pass: 12/12 steps, real email delivered to meiribarak@gmail.com with 3 Critical/High priority tasks due in the next 3 days. Requires all five runtime fixes from 2026-05-17 to be in place: WP-39/40/41/42/43 (committed in 33474bb) AND WP-45/46 (in the same commit as this scenario). Run via Mode B: --use-db-dsl. Note: agent_configurations.input_values must be populated for `{{input.X}}` config refs to resolve at runtime."
+  },
+  "comparison_with_pipeline_b": {
+    "sibling_scenario": "tests/v6-regression/scenarios/gantt-urgent-tasks-v2ui/",
+    "steps_count": { "pipeline_a": 11, "pipeline_b": 6 },
+    "tokens_used": { "pipeline_a": 2602, "pipeline_b": 5375 },
+    "tokens_reduction": "52%",
+    "ai_steps": { "pipeline_a": 1, "pipeline_b": 3 },
+    "deterministic_steps": { "pipeline_a": 10, "pipeline_b": 3 },
+    "email_format": { "pipeline_a": "HTML (content.html_body)", "pipeline_b": "plain text (content.body) — WP-44" },
+    "date_filtering": { "pipeline_a": "structured: with_fields → date_window → filter gte/lte", "pipeline_b": "AI-driven via ai_processing/extract instruction" },
+    "key_takeaway": "Pipeline A produces a more deterministic, cheaper, format-correct workflow with the same input. WP-43, WP-44 are entirely sidestepped by Pipeline A's IC prompt fidelity. Surfaced WP-45 + WP-46 in shared runtime — fixed defensively (also benefit Pipeline B)."
+  },
+  "known_weaknesses": [
+    {
+      "id": "WP-45",
+      "step": "step6 (date-range filter)",
+      "symptom": "ConditionalEvaluator's `gte`/`lte` did not (a) defensively resolve bare-string variable references (e.g. `\"date_window.window_start\"` was treated as a literal), or (b) perform date-aware comparison (lexicographic string compare across DD/MM/YYYY vs ISO date string). Two independent gaps in `lib/pilot/ConditionalEvaluator.ts` — WP-29/30/31 hardened the W2 expression evaluator's parser but did not touch ConditionalEvaluator's own private parser.",
+      "status": "fixed",
+      "fixed_date": "2026-05-17",
+      "note": "Three-part fix: looksLikeBareVariableRef() helper generalizes WP-22's defensive wrap to all comparison operators; compareAsDates() makes gte/lte/gt/lt date-aware via the canonical WP-29 parseDate; private parseDate delegates to the shared parser. Surfaces a new anti-pattern: 'runtime helpers that look the same should BE the same' — duplicate parseDate implementations diverged."
+    },
+    {
+      "id": "WP-46",
+      "step": "step4 (with_fields → date_window)",
+      "symptom": "Pipeline A's IC LLM emitted `transform/with_fields` with all field expressions being constants (no `item.*` refs) — intent: 'compute these named constants'. But `with_fields` is documented as per-item augmentation: input array of 57 → output array of 57 each augmented with the same constants. Downstream filter expected `date_window` to be a singleton object — got an array, `.window_start` access returned undefined, filter dropped all rows silently. Same anti-pattern shape as WP-41 (LLM picked transform whose semantics don't match the intended use).",
+      "status": "fixed",
+      "fixed_date": "2026-05-17",
+      "note": "Runtime tolerance: when ALL field expressions are constant (walked via isConstantExpression() helper), emit singleton object regardless of input array length. Per-item behavior unchanged when any field references item.*."
+    },
+    {
+      "id": "test-script-id-bug",
+      "step": "test-live-agent-execution.ts E6",
+      "symptom": "INSERT into agent_configurations was missing explicit `id` field; the NOT NULL constraint silently failed, causing every --use-db-dsl run to wipe the table without repopulating it.",
+      "status": "fixed",
+      "fixed_date": "2026-05-17",
+      "note": "Added crypto.randomUUID() for the id field on insert. Pre-existing latent bug — hidden until Pipeline A's config-refs design exposed the dependency."
+    }
+  ]
+}

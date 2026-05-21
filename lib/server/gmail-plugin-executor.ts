@@ -500,29 +500,32 @@ export class GmailPluginExecutor extends GoogleBasePluginExecutor {
 
     let message = '';
 
-    // Helper to normalize recipient field to array (handles string or array input)
+    // WP-42: tolerate LLM emitting a single-email string for to/cc/bcc instead of
+    // the schema-declared array. Coerce string → [string], pass arrays through,
+    // Also handles comma-separated strings like "a@b.com, c@d.com"
     const normalizeRecipients = (field: any): string[] => {
       if (!field) return [];
-      if (Array.isArray(field)) return field;
-      if (typeof field === 'string') {
+      if (Array.isArray(field)) return field.filter((e) => typeof e === 'string' && e.length > 0);
+      if (typeof field === 'string' && field.length > 0) {
         // Handle comma-separated strings
         return field.split(',').map((s: string) => s.trim()).filter(Boolean);
       }
       return [];
     };
 
+    const toList = normalizeRecipients(recipients?.to);
+    const ccList = normalizeRecipients(recipients?.cc);
+    const bccList = normalizeRecipients(recipients?.bcc);
+
     // WP-8: All headers use mimeEncodeHeader for non-ASCII safety
-    const toRecipients = normalizeRecipients(recipients?.to);
-    if (toRecipients.length) {
-      message += `To: ${toRecipients.map((r: string) => this.mimeEncodeHeader(r)).join(', ')}\r\n`;
+    if (toList.length) {
+      message += `To: ${toList.map((r) => this.mimeEncodeHeader(r)).join(', ')}\r\n`;
     }
-    const ccRecipients = normalizeRecipients(recipients?.cc);
-    if (ccRecipients.length) {
-      message += `Cc: ${ccRecipients.map((r: string) => this.mimeEncodeHeader(r)).join(', ')}\r\n`;
+    if (ccList.length) {
+      message += `Cc: ${ccList.map((r) => this.mimeEncodeHeader(r)).join(', ')}\r\n`;
     }
-    const bccRecipients = normalizeRecipients(recipients?.bcc);
-    if (bccRecipients.length) {
-      message += `Bcc: ${bccRecipients.map((r: string) => this.mimeEncodeHeader(r)).join(', ')}\r\n`;
+    if (bccList.length) {
+      message += `Bcc: ${bccList.map((r) => this.mimeEncodeHeader(r)).join(', ')}\r\n`;
     }
     if (content?.subject) {
       message += `Subject: ${this.mimeEncodeHeader(content.subject)}\r\n`;

@@ -1,0 +1,942 @@
+{
+  "slots": {
+    "order_emails": {
+      "schema": {
+        "type": "object",
+        "source": "plugin",
+        "description": "Search results with email details",
+        "properties": {
+          "emails": {
+            "type": "array",
+            "source": "plugin",
+            "description": "Array of matching emails",
+            "items": {
+              "type": "object",
+              "source": "plugin",
+              "semantic_type": "email_message",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "Gmail message ID"
+                },
+                "thread_id": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "Gmail thread ID"
+                },
+                "subject": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "Email subject"
+                },
+                "from": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "Sender address"
+                },
+                "to": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "Recipient addresses"
+                },
+                "date": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "Email date"
+                },
+                "snippet": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "Email preview snippet (first ~200 chars of email body - USE THIS for content matching/filtering)"
+                },
+                "labels": {
+                  "type": "array",
+                  "source": "plugin",
+                  "description": "Gmail labels",
+                  "items": {
+                    "type": "string",
+                    "source": "plugin"
+                  }
+                },
+                "body": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "Email body text (NOTE: Usually empty in search results - use 'snippet' field instead for email content)"
+                },
+                "attachments": {
+                  "type": "array",
+                  "source": "plugin",
+                  "description": "Attachment metadata (if include_attachments=true). Each item contains: filename, mimeType, size, attachment_id (use with get_email_attachment), message_id (email ID)",
+                  "items": {
+                    "type": "object",
+                    "source": "plugin",
+                    "semantic_type": "file_attachment",
+                    "properties": {
+                      "filename": {
+                        "type": "string",
+                        "source": "plugin",
+                        "description": "Attachment filename"
+                      },
+                      "mimeType": {
+                        "type": "string",
+                        "source": "plugin",
+                        "description": "MIME type (application/pdf, image/png, etc.)"
+                      },
+                      "size": {
+                        "type": "number",
+                        "source": "plugin",
+                        "description": "File size in bytes"
+                      },
+                      "attachment_id": {
+                        "type": "string",
+                        "source": "plugin",
+                        "description": "Attachment ID (required for get_email_attachment action)"
+                      },
+                      "message_id": {
+                        "type": "string",
+                        "source": "plugin",
+                        "description": "Email message ID (required for get_email_attachment action)"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "total_found": {
+            "type": "number",
+            "source": "plugin",
+            "description": "Number of emails returned"
+          },
+          "total_available": {
+            "type": "number",
+            "source": "plugin",
+            "description": "Estimated total matching emails"
+          },
+          "search_query": {
+            "type": "string",
+            "source": "plugin",
+            "description": "The search query that was executed"
+          },
+          "searched_at": {
+            "type": "string",
+            "source": "plugin",
+            "description": "ISO 8601 timestamp of search"
+          }
+        }
+      },
+      "scope": "global",
+      "produced_by": "search_order_emails",
+      "consumed_by": [
+        "flatten_attachments"
+      ]
+    },
+    "all_attachments": {
+      "schema": {
+        "type": "array",
+        "source": "ai_declared",
+        "items": {
+          "type": "object",
+          "source": "ai_declared",
+          "properties": {
+            "message_id": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "email_subject": {
+              "type": "string",
+              "source": "ai_declared"
+            },
+            "email_from": {
+              "type": "string",
+              "source": "ai_declared"
+            },
+            "email_date": {
+              "type": "string",
+              "source": "ai_declared"
+            },
+            "filename": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "mimeType": {
+              "type": "string",
+              "source": "ai_declared"
+            },
+            "size": {
+              "type": "number",
+              "source": "ai_declared"
+            },
+            "attachment_id": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            }
+          }
+        }
+      },
+      "scope": "global",
+      "produced_by": "flatten_attachments",
+      "consumed_by": [
+        "process_each_attachment"
+      ]
+    },
+    "attachment_item": {
+      "schema": {
+        "type": "object",
+        "source": "inferred",
+        "properties": {
+          "message_id": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "email_subject": {
+            "type": "string",
+            "source": "ai_declared"
+          },
+          "email_from": {
+            "type": "string",
+            "source": "ai_declared"
+          },
+          "email_date": {
+            "type": "string",
+            "source": "ai_declared"
+          },
+          "filename": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "mimeType": {
+            "type": "string",
+            "source": "ai_declared"
+          },
+          "size": {
+            "type": "number",
+            "source": "ai_declared"
+          },
+          "attachment_id": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          }
+        }
+      },
+      "scope": "loop",
+      "produced_by": "process_each_attachment",
+      "consumed_by": [
+        "download_attachment",
+        "skip_non_po"
+      ]
+    },
+    "all_extracted_line_items": {
+      "schema": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "source": "inferred",
+          "properties": {
+            "message_id": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "email_subject": {
+              "type": "string",
+              "source": "ai_declared"
+            },
+            "email_from": {
+              "type": "string",
+              "source": "ai_declared"
+            },
+            "email_date": {
+              "type": "string",
+              "source": "ai_declared"
+            },
+            "filename": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "mimeType": {
+              "type": "string",
+              "source": "ai_declared"
+            },
+            "size": {
+              "type": "number",
+              "source": "ai_declared"
+            },
+            "attachment_id": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            }
+          }
+        },
+        "source": "inferred"
+      },
+      "scope": "global",
+      "produced_by": "process_each_attachment",
+      "consumed_by": [
+        "flatten_collected_line_items"
+      ]
+    },
+    "attachment_content": {
+      "schema": {
+        "type": "object",
+        "source": "plugin",
+        "description": "Attachment content with metadata",
+        "properties": {
+          "filename": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Attachment filename",
+            "required": true
+          },
+          "mimeType": {
+            "type": "string",
+            "source": "plugin",
+            "description": "MIME type (application/pdf, image/png, etc.)",
+            "required": true
+          },
+          "size": {
+            "type": "number",
+            "source": "plugin",
+            "description": "File size in bytes",
+            "required": true
+          },
+          "data": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Base64-encoded file content for processing"
+          },
+          "extracted_text": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Extracted text from PDF/document (if applicable)"
+          },
+          "is_image": {
+            "type": "boolean",
+            "source": "plugin",
+            "description": "True if attachment is an image"
+          }
+        }
+      },
+      "scope": "loop",
+      "produced_by": "download_attachment",
+      "consumed_by": [
+        "classify_purchase_order",
+        "extract_po_line_items"
+      ]
+    },
+    "raw_line_items": {
+      "schema": {
+        "type": "object",
+        "properties": {
+          "line_items": {
+            "type": "array",
+            "source": "ai_declared",
+            "description": "Array of purchase order line items extracted from the document. One entry per line item.",
+            "required": true,
+            "items": {
+              "type": "object",
+              "source": "ai_declared",
+              "properties": {
+                "Order Date/Time": {
+                  "type": "string",
+                  "source": "ai_declared",
+                  "description": "Date and/or time of the order, normalized to consistent format"
+                },
+                "Order_ID": {
+                  "type": "string",
+                  "source": "ai_declared",
+                  "description": "Purchase order identifier or number"
+                },
+                "Vendor": {
+                  "type": "string",
+                  "source": "ai_declared",
+                  "description": "Vendor or supplier name"
+                },
+                "QTY": {
+                  "type": "number",
+                  "source": "ai_declared",
+                  "description": "Quantity ordered"
+                },
+                "Cost": {
+                  "type": "number",
+                  "source": "ai_declared",
+                  "description": "Unit cost or price per item"
+                },
+                "Amount": {
+                  "type": "number",
+                  "source": "ai_declared",
+                  "description": "Total amount for this line item (QTY * Cost or as stated)"
+                }
+              }
+            }
+          }
+        },
+        "source": "ai_declared"
+      },
+      "scope": "loop",
+      "produced_by": "extract_po_line_items",
+      "consumed_by": [
+        "flatten_line_items"
+      ]
+    },
+    "flat_line_items": {
+      "schema": {
+        "type": "array",
+        "source": "ai_declared",
+        "items": {
+          "type": "object",
+          "source": "ai_declared",
+          "properties": {
+            "Order Date/Time": {
+              "type": "string",
+              "source": "ai_declared"
+            },
+            "Order_ID": {
+              "type": "string",
+              "source": "ai_declared"
+            },
+            "Vendor": {
+              "type": "string",
+              "source": "ai_declared"
+            },
+            "QTY": {
+              "type": "number",
+              "source": "ai_declared"
+            },
+            "Cost": {
+              "type": "number",
+              "source": "ai_declared"
+            },
+            "Amount": {
+              "type": "number",
+              "source": "ai_declared"
+            }
+          }
+        }
+      },
+      "scope": "loop",
+      "produced_by": "flatten_line_items",
+      "consumed_by": [
+        "add_status_field"
+      ]
+    },
+    "attachment_line_items": {
+      "schema": {
+        "type": "object",
+        "source": "inferred",
+        "properties": {
+          "message_id": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "email_subject": {
+            "type": "string",
+            "source": "ai_declared"
+          },
+          "email_from": {
+            "type": "string",
+            "source": "ai_declared"
+          },
+          "email_date": {
+            "type": "string",
+            "source": "ai_declared"
+          },
+          "filename": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "mimeType": {
+            "type": "string",
+            "source": "ai_declared"
+          },
+          "size": {
+            "type": "number",
+            "source": "ai_declared"
+          },
+          "attachment_id": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          }
+        }
+      },
+      "scope": "loop",
+      "produced_by": "skip_non_po",
+      "consumed_by": [
+        "process_each_attachment"
+      ]
+    },
+    "all_line_items_flat": {
+      "schema": {
+        "type": "array",
+        "source": "ai_declared",
+        "items": {
+          "type": "object",
+          "source": "ai_declared",
+          "properties": {
+            "Order Date/Time": {
+              "type": "string",
+              "source": "ai_declared"
+            },
+            "Order_ID": {
+              "type": "string",
+              "source": "ai_declared"
+            },
+            "Vendor": {
+              "type": "string",
+              "source": "ai_declared"
+            },
+            "QTY": {
+              "type": "number",
+              "source": "ai_declared"
+            },
+            "Cost": {
+              "type": "number",
+              "source": "ai_declared"
+            },
+            "Amount": {
+              "type": "number",
+              "source": "ai_declared"
+            },
+            "Status": {
+              "type": "string",
+              "source": "ai_declared"
+            }
+          }
+        }
+      },
+      "scope": "global",
+      "produced_by": "flatten_collected_line_items",
+      "consumed_by": [
+        "enhance_status_with_missing_notes"
+      ]
+    },
+    "line_items_with_status_notes": {
+      "schema": {
+        "type": "object",
+        "properties": {
+          "rows": {
+            "type": "array",
+            "source": "ai_declared",
+            "description": "All line-item rows with enhanced Status notes",
+            "items": {
+              "type": "object",
+              "source": "ai_declared",
+              "properties": {
+                "Order Date/Time": {
+                  "type": "string",
+                  "source": "ai_declared"
+                },
+                "Order_ID": {
+                  "type": "string",
+                  "source": "ai_declared"
+                },
+                "Vendor": {
+                  "type": "string",
+                  "source": "ai_declared"
+                },
+                "QTY": {
+                  "type": "number",
+                  "source": "ai_declared"
+                },
+                "Cost": {
+                  "type": "number",
+                  "source": "ai_declared"
+                },
+                "Amount": {
+                  "type": "number",
+                  "source": "ai_declared"
+                },
+                "Status": {
+                  "type": "string",
+                  "source": "ai_declared"
+                }
+              }
+            }
+          }
+        },
+        "source": "ai_declared"
+      },
+      "scope": "global",
+      "produced_by": "enhance_status_with_missing_notes",
+      "consumed_by": [
+        "group_by_vendor",
+        "compute_totals"
+      ]
+    },
+    "vendor_groups": {
+      "schema": {
+        "type": "array",
+        "source": "ai_declared",
+        "items": {
+          "type": "object",
+          "source": "ai_declared",
+          "properties": {
+            "group_key": {
+              "type": "string",
+              "source": "ai_declared",
+              "description": "The Vendor name for this group",
+              "required": true
+            },
+            "items": {
+              "type": "array",
+              "source": "ai_declared",
+              "description": "Line-item rows belonging to this Vendor",
+              "items": {
+                "type": "object",
+                "source": "ai_declared",
+                "properties": {
+                  "Order Date/Time": {
+                    "type": "string",
+                    "source": "ai_declared"
+                  },
+                  "Order_ID": {
+                    "type": "string",
+                    "source": "ai_declared"
+                  },
+                  "Vendor": {
+                    "type": "string",
+                    "source": "ai_declared"
+                  },
+                  "QTY": {
+                    "type": "number",
+                    "source": "ai_declared"
+                  },
+                  "Cost": {
+                    "type": "number",
+                    "source": "ai_declared"
+                  },
+                  "Amount": {
+                    "type": "number",
+                    "source": "ai_declared"
+                  },
+                  "Status": {
+                    "type": "string",
+                    "source": "ai_declared"
+                  }
+                }
+              },
+              "required": true
+            }
+          }
+        }
+      },
+      "scope": "global",
+      "produced_by": "group_by_vendor",
+      "consumed_by": [
+        "compute_totals",
+        "send_vendor_emails"
+      ]
+    },
+    "vendor_count": {
+      "schema": {
+        "type": "number",
+        "description": "Count of vendor_count",
+        "source": "inferred"
+      },
+      "scope": "global",
+      "produced_by": "compute_totals",
+      "consumed_by": [
+        "generate_confirmation_body"
+      ]
+    },
+    "total_row_count": {
+      "schema": {
+        "type": "number",
+        "description": "Count of total_row_count",
+        "source": "inferred"
+      },
+      "scope": "global",
+      "produced_by": "compute_totals",
+      "consumed_by": [
+        "generate_confirmation_body"
+      ]
+    },
+    "totals_meta": {
+      "schema": {
+        "type": "object",
+        "properties": {
+          "vendor_count": {
+            "type": "number",
+            "description": "Count of vendor_count",
+            "source": "inferred"
+          },
+          "total_row_count": {
+            "type": "number",
+            "description": "Count of total_row_count",
+            "source": "inferred"
+          }
+        },
+        "source": "inferred"
+      },
+      "scope": "global",
+      "produced_by": "compute_totals"
+    },
+    "vendor_group": {
+      "schema": {
+        "type": "object",
+        "source": "inferred",
+        "properties": {
+          "group_key": {
+            "type": "string",
+            "source": "ai_declared",
+            "description": "The Vendor name for this group",
+            "required": true
+          },
+          "items": {
+            "type": "array",
+            "source": "ai_declared",
+            "description": "Line-item rows belonging to this Vendor",
+            "items": {
+              "type": "object",
+              "source": "ai_declared",
+              "properties": {
+                "Order Date/Time": {
+                  "type": "string",
+                  "source": "ai_declared"
+                },
+                "Order_ID": {
+                  "type": "string",
+                  "source": "ai_declared"
+                },
+                "Vendor": {
+                  "type": "string",
+                  "source": "ai_declared"
+                },
+                "QTY": {
+                  "type": "number",
+                  "source": "ai_declared"
+                },
+                "Cost": {
+                  "type": "number",
+                  "source": "ai_declared"
+                },
+                "Amount": {
+                  "type": "number",
+                  "source": "ai_declared"
+                },
+                "Status": {
+                  "type": "string",
+                  "source": "ai_declared"
+                }
+              }
+            },
+            "required": true
+          }
+        }
+      },
+      "scope": "loop",
+      "produced_by": "send_vendor_emails",
+      "consumed_by": [
+        "generate_vendor_xlsx"
+      ]
+    },
+    "sent_vendor_emails": {
+      "schema": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "source": "plugin",
+          "description": "Confirmation of sent email with identifiers",
+          "properties": {
+            "message_id": {
+              "type": "string",
+              "source": "plugin",
+              "description": "Gmail message ID",
+              "required": true
+            },
+            "thread_id": {
+              "type": "string",
+              "source": "plugin",
+              "description": "Gmail thread ID",
+              "required": true
+            },
+            "sent_at": {
+              "type": "string",
+              "source": "plugin",
+              "description": "ISO 8601 timestamp when email was sent",
+              "required": true
+            },
+            "recipient_count": {
+              "type": "number",
+              "source": "plugin",
+              "description": "Total number of recipients (to + cc + bcc)"
+            },
+            "recipients": {
+              "type": "object",
+              "source": "plugin",
+              "description": "Recipient addresses",
+              "properties": {
+                "to": {
+                  "type": "array",
+                  "source": "plugin",
+                  "items": {
+                    "type": "string",
+                    "source": "plugin"
+                  }
+                },
+                "cc": {
+                  "type": "array",
+                  "source": "plugin",
+                  "items": {
+                    "type": "string",
+                    "source": "plugin"
+                  }
+                },
+                "bcc": {
+                  "type": "array",
+                  "source": "plugin",
+                  "items": {
+                    "type": "string",
+                    "source": "plugin"
+                  }
+                }
+              }
+            },
+            "subject": {
+              "type": "string",
+              "source": "plugin",
+              "description": "Email subject line"
+            }
+          }
+        },
+        "source": "inferred"
+      },
+      "scope": "global",
+      "produced_by": "send_vendor_emails",
+      "consumed_by": [
+        "send_confirmation_email"
+      ]
+    },
+    "vendor_xlsx": {
+      "schema": {
+        "type": "object",
+        "properties": {
+          "xlsx_content": {
+            "type": "string",
+            "source": "ai_declared",
+            "description": "Base64-encoded XLSX file content"
+          },
+          "xlsx_filename": {
+            "type": "string",
+            "source": "ai_declared",
+            "description": "Suggested filename like 'Orders_Summary_VendorName.xlsx'"
+          },
+          "vendor_name": {
+            "type": "string",
+            "source": "ai_declared",
+            "description": "The vendor name for use in email subject"
+          }
+        },
+        "source": "ai_declared"
+      },
+      "scope": "loop",
+      "produced_by": "generate_vendor_xlsx",
+      "consumed_by": [
+        "send_vendor_email"
+      ]
+    },
+    "vendor_email_sent": {
+      "schema": {
+        "type": "object",
+        "source": "plugin",
+        "description": "Confirmation of sent email with identifiers",
+        "properties": {
+          "message_id": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Gmail message ID",
+            "required": true
+          },
+          "thread_id": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Gmail thread ID",
+            "required": true
+          },
+          "sent_at": {
+            "type": "string",
+            "source": "plugin",
+            "description": "ISO 8601 timestamp when email was sent",
+            "required": true
+          },
+          "recipient_count": {
+            "type": "number",
+            "source": "plugin",
+            "description": "Total number of recipients (to + cc + bcc)"
+          },
+          "recipients": {
+            "type": "object",
+            "source": "plugin",
+            "description": "Recipient addresses",
+            "properties": {
+              "to": {
+                "type": "array",
+                "source": "plugin",
+                "items": {
+                  "type": "string",
+                  "source": "plugin"
+                }
+              },
+              "cc": {
+                "type": "array",
+                "source": "plugin",
+                "items": {
+                  "type": "string",
+                  "source": "plugin"
+                }
+              },
+              "bcc": {
+                "type": "array",
+                "source": "plugin",
+                "items": {
+                  "type": "string",
+                  "source": "plugin"
+                }
+              }
+            }
+          },
+          "subject": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Email subject line"
+          }
+        }
+      },
+      "scope": "loop",
+      "produced_by": "send_vendor_email",
+      "consumed_by": [
+        "send_vendor_emails"
+      ]
+    },
+    "confirmation_content": {
+      "schema": {
+        "type": "object",
+        "properties": {
+          "body": {
+            "type": "string",
+            "source": "ai_declared",
+            "description": "Confirmation email body text"
+          }
+        },
+        "source": "ai_declared"
+      },
+      "scope": "global",
+      "produced_by": "generate_confirmation_body",
+      "consumed_by": [
+        "send_confirmation_email"
+      ]
+    }
+  }
+}

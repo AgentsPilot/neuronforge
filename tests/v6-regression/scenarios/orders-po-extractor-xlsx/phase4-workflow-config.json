@@ -1,0 +1,21 @@
+{
+  "gmail_search_query": "subject:Orders newer_than:30d",
+  "recipient_email": "meiribarak@gmail.com",
+  "required_fields": [
+    "Order Date/Time",
+    "Order_ID",
+    "Vendor",
+    "QTY",
+    "Cost",
+    "Amount"
+  ],
+  "google_mail__email_send__recipients": "meiribarak@gmail.com",
+  "google_mail__email_search__query": "subject:Orders newer_than:30d",
+  "attachment_types": "any (process only those that appear to be purchase orders)",
+  "output_format": "XLSX attachment",
+  "delivery_grouping": "one email per Vendor (supplier)",
+  "mixed_attachments_handling": "process purchase-order attachments only",
+  "missing_fields_handling": "leave blanks; Status includes missing-field note when Needs review",
+  "status_rule": "Complete if all required fields present; otherwise Needs review with missing-field note",
+  "row_granularity": "one row per line item"
+}

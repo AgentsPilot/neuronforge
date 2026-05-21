@@ -507,7 +507,15 @@ export type ComparisonOperator =
   | 'greater_than_or_equal'
   | 'less_than'
   | 'less_than_or_equal'
+  // Short aliases for backward compatibility
+  | 'eq'   // alias for equals
+  | 'ne'   // alias for not_equals
+  | 'gt'   // alias for greater_than
+  | 'gte'  // alias for greater_than_or_equal
+  | 'lt'   // alias for less_than
+  | 'lte'  // alias for less_than_or_equal
   | 'contains'
+  | 'contains_any'  // W2: substring/array element matches any of [v1, v2, ...] (case-insensitive)
   | 'not_contains'
   | 'in'
   | 'not_in'

@@ -1,0 +1,27 @@
+{
+  "name": "Qualified Leads (Stage 4) Email Summary Agent (V2-UI captured via Pipeline A)",
+  "description": "Captured from the V2 UI agent-creation flow via Pipeline A (`/api/v6/generate-ir-intent-contract`). Reads a Google Sheets leads tracker, filters to Stage=4 qualified leads, uses ai_processing to generate per-lead notes summaries, assembles an HTML summary table with ai_processing, and sends a single email to meiribarak@gmail.com + offir.omer@gmail.com. If zero qualified leads, sends a 'no qualified leads' message instead. Second V2-UI + Pipeline A regression scenario after `gantt-urgent-tasks-v2ui-pipeline-a`. Useful because it exercises a chain of two `ai_processing` steps (notes summarisation + email-body composition) that the gantt scenario doesn't.",
+  "created": "2026-05-18",
+  "source": {
+    "type": "v2-ui-capture",
+    "pipeline": "A",
+    "endpoint": "/api/v6/generate-ir-intent-contract",
+    "agent_id": "670cac2a-7e49-4a5b-9556-ae641570d873",
+    "branch": "feature/v6-v2-integration",
+    "feature_flags": {
+      "NEXT_PUBLIC_USE_V6_AGENT_GENERATION": "true",
+      "NEXT_PUBLIC_USE_V6_PIPELINE_A": "true"
+    }
+  },
+  "plugins": ["google-sheets", "google-mail"],
+  "expected": {
+    "min_steps": 5,
+    "step_types": ["action", "transform", "conditional", "ai_processing"],
+    "phase_a_checks": 14,
+    "phase_d_success": false,
+    "phase_e_success": true,
+    "phase_e_success_timestamp": "2026-05-19T13:00:00Z",
+    "phase_e_notes": "End-to-end pass: 8/8 steps, real HTML email delivered to both recipients (meiribarak@gmail.com + offir.omer@gmail.com) with a styled HTML table containing 3 Stage=4 leads, each with a 2-bullet AI-generated notes summary. 5,188 tokens (two AI steps: notes-summary + email-body composition). Sheet had 6 raw rows → 5 lead objects after rows_to_objects → 3 qualified after Stage=4 filter. Run via Mode B: --use-db-dsl. Requires agent_configurations.input_values populated (spreadsheet_id + tab_name). All five runtime fixes from 2026-05-17 (WP-39 through WP-46) were in place; none of them activated for this scenario except the WP-42-family array-recipients tolerance."
+  },
+  "known_weaknesses": []
+}

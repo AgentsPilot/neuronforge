@@ -1,0 +1,504 @@
+[
+  {
+    "step_id": "step1",
+    "type": "action",
+    "description": "Search Gmail inbox for emails from the last 30 days that have not yet been processed (excluding tracking label)",
+    "plugin": "google-mail",
+    "output_variable": "candidate_emails",
+    "output_schema": {
+      "type": "object",
+      "source": "plugin",
+      "description": "Search results with email details",
+      "properties": {
+        "emails": {
+          "type": "array",
+          "source": "plugin",
+          "description": "Array of matching emails",
+          "items": {
+            "type": "object",
+            "source": "plugin",
+            "semantic_type": "email_message",
+            "properties": {
+              "id": {
+                "type": "string",
+                "source": "plugin",
+                "description": "Gmail message ID"
+              },
+              "thread_id": {
+                "type": "string",
+                "source": "plugin",
+                "description": "Gmail thread ID"
+              },
+              "subject": {
+                "type": "string",
+                "source": "plugin",
+                "description": "Email subject"
+              },
+              "from": {
+                "type": "string",
+                "source": "plugin",
+                "description": "Sender address"
+              },
+              "to": {
+                "type": "string",
+                "source": "plugin",
+                "description": "Recipient addresses"
+              },
+              "date": {
+                "type": "string",
+                "source": "plugin",
+                "description": "Email date"
+              },
+              "snippet": {
+                "type": "string",
+                "source": "plugin",
+                "description": "Email preview snippet (first ~200 chars of email body - USE THIS for content matching/filtering)"
+              },
+              "labels": {
+                "type": "array",
+                "source": "plugin",
+                "description": "Gmail labels",
+                "items": {
+                  "type": "string",
+                  "source": "plugin"
+                }
+              },
+              "body": {
+                "type": "string",
+                "source": "plugin",
+                "description": "Email body text (NOTE: Usually empty in search results - use 'snippet' field instead for email content)"
+              },
+              "attachments": {
+                "type": "array",
+                "source": "plugin",
+                "description": "Attachment metadata (if include_attachments=true). Each item contains: filename, mimeType, size, attachment_id (use with get_email_attachment), message_id (email ID)",
+                "items": {
+                  "type": "object",
+                  "source": "plugin",
+                  "semantic_type": "file_attachment",
+                  "properties": {
+                    "filename": {
+                      "type": "string",
+                      "source": "plugin",
+                      "description": "Attachment filename"
+                    },
+                    "mimeType": {
+                      "type": "string",
+                      "source": "plugin",
+                      "description": "MIME type (application/pdf, image/png, etc.)"
+                    },
+                    "size": {
+                      "type": "number",
+                      "source": "plugin",
+                      "description": "File size in bytes"
+                    },
+                    "attachment_id": {
+                      "type": "string",
+                      "source": "plugin",
+                      "description": "Attachment ID (required for get_email_attachment action)"
+                    },
+                    "message_id": {
+                      "type": "string",
+                      "source": "plugin",
+                      "description": "Email message ID (required for get_email_attachment action)"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "total_found": {
+          "type": "number",
+          "source": "plugin",
+          "description": "Number of emails returned"
+        },
+        "total_available": {
+          "type": "number",
+          "source": "plugin",
+          "description": "Estimated total matching emails"
+        },
+        "search_query": {
+          "type": "string",
+          "source": "plugin",
+          "description": "The search query that was executed"
+        },
+        "searched_at": {
+          "type": "string",
+          "source": "plugin",
+          "description": "ISO 8601 timestamp of search"
+        }
+      }
+    },
+    "id": "step1",
+    "params": {
+      "query": "{{input.gmail_search_query}}",
+      "max_results": 100,
+      "include_attachments": false,
+      "content_level": "full"
+    },
+    "name": "Search Gmail inbox for emails from the last 30 days that have not yet been processed (excluding tracking label)",
+    "action": "search_emails"
+  },
+  {
+    "step_id": "step2",
+    "type": "ai_processing",
+    "input": "{{candidate_emails.emails}}",
+    "prompt": "Classify each item into one of these categories: urgent, not_urgent. Store the classification result in the 'urgency_classification' field for each item.",
+    "description": "Classify each email as urgent or not-urgent by checking if subject or body contains any of the configured urgency keywords (case-insensitive)",
+    "config": {
+      "ai_type": "classify",
+      "output_schema": {
+        "fields": [
+          {
+            "name": "urgency_classification",
+            "type": "string",
+            "description": "Classification result (one of: urgent, not_urgent)"
+          }
+        ]
+      },
+      "type": "classify",
+      "instruction": "Classify each item into one of these categories: urgent, not_urgent. Store the classification result in the 'urgency_classification' field for each item.",
+      "input": "{{candidate_emails.emails}}",
+      "labels": [
+        "urgent",
+        "not_urgent"
+      ]
+    },
+    "output_variable": "classified_emails",
+    "id": "step2",
+    "name": "Classify each email as urgent or not-urgent by checking if subject or body contains any of the configured urgency keywords (case-insensitive)"
+  },
+  {
+    "step_id": "step3",
+    "type": "transform",
+    "operation": "filter",
+    "input": "{{classified_emails}}",
+    "description": "Filter subset for urgent_emails",
+    "config": {
+      "type": "filter",
+      "input": "classified_emails",
+      "condition": {
+        "operator": "eq",
+        "value": "urgent",
+        "field": "item.urgency_classification",
+        "conditionType": "simple"
+      }
+    },
+    "output_variable": "urgent_emails",
+    "output_schema": {
+      "type": "array",
+      "source": "inferred"
+    },
+    "id": "step3",
+    "_on_empty": "warn",
+    "name": "Filter subset for urgent_emails"
+  },
+  {
+    "step_id": "step4",
+    "type": "transform",
+    "operation": "reduce",
+    "input": "{{urgent_emails}}",
+    "description": "Count items for urgent_count",
+    "config": {
+      "type": "reduce",
+      "input": "urgent_emails",
+      "reduce_operation": "count",
+      "reducer": "count"
+    },
+    "output_variable": "urgent_count",
+    "output_schema": {
+      "type": "number",
+      "description": "Count of urgent_count",
+      "source": "inferred"
+    },
+    "id": "step4",
+    "name": "Count items for urgent_count"
+  },
+  {
+    "step_id": "step5",
+    "type": "scatter_gather",
+    "description": "Loop over urgent_emails",
+    "scatter": {
+      "input": "{{urgent_emails}}",
+      "steps": [
+        {
+          "step_id": "step6",
+          "type": "action",
+          "description": "Mark the urgent email as important in Gmail",
+          "plugin": "google-mail",
+          "output_variable": "importance_result",
+          "output_schema": {
+            "type": "object",
+            "source": "plugin",
+            "description": "Result of the email modification",
+            "properties": {
+              "message_id": {
+                "type": "string",
+                "source": "plugin",
+                "description": "The modified message ID",
+                "required": true
+              },
+              "labels_added": {
+                "type": "array",
+                "source": "plugin",
+                "description": "Labels that were added",
+                "items": {
+                  "type": "string",
+                  "source": "plugin"
+                },
+                "required": true
+              },
+              "labels_removed": {
+                "type": "array",
+                "source": "plugin",
+                "description": "Labels that were removed",
+                "items": {
+                  "type": "string",
+                  "source": "plugin"
+                },
+                "required": true
+              }
+            }
+          },
+          "id": "step6",
+          "params": {
+            "message_id": "{{urgent_email.id}}",
+            "mark_important": true
+          },
+          "name": "Mark the urgent email as important in Gmail",
+          "action": "modify_email"
+        },
+        {
+          "step_id": "step7",
+          "type": "action",
+          "description": "Apply the AgentsPilot tracking label to the urgent email so it is excluded from future runs",
+          "plugin": "google-mail",
+          "output_variable": "label_result",
+          "output_schema": {
+            "type": "object",
+            "source": "plugin",
+            "description": "Result of the email modification",
+            "properties": {
+              "message_id": {
+                "type": "string",
+                "source": "plugin",
+                "description": "The modified message ID",
+                "required": true
+              },
+              "labels_added": {
+                "type": "array",
+                "source": "plugin",
+                "description": "Labels that were added",
+                "items": {
+                  "type": "string",
+                  "source": "plugin"
+                },
+                "required": true
+              },
+              "labels_removed": {
+                "type": "array",
+                "source": "plugin",
+                "description": "Labels that were removed",
+                "items": {
+                  "type": "string",
+                  "source": "plugin"
+                },
+                "required": true
+              }
+            }
+          },
+          "id": "step7",
+          "params": {
+            "message_id": "{{urgent_email.id}}",
+            "add_labels": [
+              "{{input.tracking_label_name}}"
+            ]
+          },
+          "name": "Apply the AgentsPilot tracking label to the urgent email so it is excluded from future runs",
+          "action": "modify_email"
+        }
+      ],
+      "itemVariable": "urgent_email"
+    },
+    "gather": {
+      "operation": "collect"
+    },
+    "output_variable": "processed_urgent_emails",
+    "id": "step5",
+    "name": "Loop over urgent_emails"
+  },
+  {
+    "step_id": "step8",
+    "type": "transform",
+    "operation": "map",
+    "input": "{{urgent_emails}}",
+    "description": "Map urgent emails to summary rows with sender, subject, date, and matched keyword info",
+    "config": {
+      "type": "map",
+      "input": "urgent_emails",
+      "output_schema": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "sender": {
+              "type": "string"
+            },
+            "subject": {
+              "type": "string"
+            },
+            "received_date": {
+              "type": "string"
+            },
+            "urgency_classification": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "sender",
+            "subject",
+            "received_date"
+          ]
+        }
+      },
+      "field_mapping": {
+        "sender": "from",
+        "subject": "subject",
+        "received_date": "date",
+        "urgency_classification": "urgency_classification"
+      }
+    },
+    "output_variable": "summary_rows",
+    "output_schema": {
+      "type": "array",
+      "source": "ai_declared",
+      "items": {
+        "type": "object",
+        "source": "ai_declared",
+        "properties": {
+          "sender": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "subject": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "received_date": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "urgency_classification": {
+            "type": "string",
+            "source": "ai_declared"
+          }
+        }
+      }
+    },
+    "id": "step8",
+    "_on_empty": "warn",
+    "name": "Map urgent emails to summary rows with sender, subject, date, and matched keyword info"
+  },
+  {
+    "step_id": "step9",
+    "type": "ai_processing",
+    "input": "{{summary_rows}}",
+    "prompt": "Generate a professional HTML email summarizing the urgent emails that were flagged in this run. Use the urgent_count to determine the content: If urgent_count is 0, write a clear message stating 'No urgent emails were found in this scan.' If urgent_count > 0, create an HTML table with columns: Sender, Subject, Received Date, and Matched Keywords. Use the summary_rows data to populate the table. Each row should show the sender (from field), subject, received_date, and urgency_classification. Style the table with borders, a colored header row (#4a90d9 background, white text), and alternating row colors for readability. Add padding to cells. Include a header line like 'Urgent Email Summary — [count] email(s) flagged as important'. At the bottom, add a note explaining that these emails were marked as Important and labeled AgentsPilot in Gmail.",
+    "description": "Generate an HTML summary email body listing all urgent emails that were flagged, or stating none were found",
+    "config": {
+      "ai_type": "generate",
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "subject": {
+            "type": "string",
+            "description": "Email subject line for the summary"
+          },
+          "body": {
+            "type": "string",
+            "description": "Full HTML body of the summary email"
+          }
+        },
+        "required": [
+          "subject",
+          "body"
+        ]
+      },
+      "type": "generate",
+      "instruction": "Generate a professional HTML email summarizing the urgent emails that were flagged in this run. Use the urgent_count to determine the content: If urgent_count is 0, write a clear message stating 'No urgent emails were found in this scan.' If urgent_count > 0, create an HTML table with columns: Sender, Subject, Received Date, and Matched Keywords. Use the summary_rows data to populate the table. Each row should show the sender (from field), subject, received_date, and urgency_classification. Style the table with borders, a colored header row (#4a90d9 background, white text), and alternating row colors for readability. Add padding to cells. Include a header line like 'Urgent Email Summary — [count] email(s) flagged as important'. At the bottom, add a note explaining that these emails were marked as Important and labeled AgentsPilot in Gmail.",
+      "input": "{{summary_rows}}"
+    },
+    "output_variable": "summary_email_content",
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "subject": {
+          "type": "string",
+          "source": "ai_declared",
+          "description": "Email subject line for the summary"
+        },
+        "body": {
+          "type": "string",
+          "source": "ai_declared",
+          "description": "Full HTML body of the summary email"
+        }
+      },
+      "source": "ai_declared"
+    },
+    "input_schema": {
+      "type": "array",
+      "source": "ai_declared",
+      "items": {
+        "type": "object",
+        "source": "ai_declared",
+        "properties": {
+          "sender": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "subject": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "received_date": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "urgency_classification": {
+            "type": "string",
+            "source": "ai_declared"
+          }
+        }
+      }
+    },
+    "id": "step9",
+    "name": "Generate an HTML summary email body listing all urgent emails that were flagged, or stating none were found"
+  },
+  {
+    "step_id": "step10",
+    "type": "action",
+    "description": "Send the urgency summary email to the configured recipient",
+    "plugin": "google-mail",
+    "id": "step10",
+    "params": {
+      "recipients": {
+        "to": [
+          "{{input.summary_recipient}}"
+        ]
+      },
+      "content": {
+        "subject": "{{summary_email_content.subject}}",
+        "html_body": "{{summary_email_content.body}}"
+      }
+    },
+    "name": "Send the urgency summary email to the configured recipient",
+    "action": "send_email"
+  }
+]

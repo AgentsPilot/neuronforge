@@ -1,10 +1,163 @@
 # V6 Agent Creation Integration Plan
 
-> **Status**: Implementation In Progress - Phase A6 (Testing)
-> **Created**: January 17, 2026
-> **Updated**: January 21, 2026 - Added V6WorkflowPreview component for visual workflow approval UI.
+> **Status**: ARCHITECTURAL PIVOT (2026-05-16) — split-API + Review UI design **ABANDONED**. Current direction: **single-API V6, no Review UI** (Path A). Migration in progress on `feature/v6-v2-integration`.
+> **Created**: 2026-01-17
+> **Updated**: 2026-05-16 — Status Update + Revised 5-Stage Migration plan added; original Phase A/B/C content demoted to "Historical Plan" section below.
 
-This document outlines the implementation plan for integrating V6 agent generation with Intent Validation into the existing agent creation flow. When V6 is enabled, it **always** includes the full Intent Validation flow with Review & Customize UI.
+This document is the **single source of truth** for migrating V2 agent creation from V4 (current production default) to V6. The original design (split-API + Review & Customize UI) was abandoned in February — see Status Update below for full context. The current plan is much smaller in scope: flip the feature flag, validate end-to-end, retire V4.
+
+---
+
+## Status Update (2026-05-16) — Architectural Pivot
+
+### What changed
+
+The **original split-API + Review UI architecture has been abandoned.** Specifically:
+
+- `/api/v6/compile-with-decisions` endpoint was created Jan 21 (commit `0f95dbc`) and **DELETED** Feb 8 (commit `e2957d0`).
+- `useV6ReviewMode` feature flag was added Feb 8 but is **dead code** — defaults true and has no effect on runtime behavior.
+- `V6ReviewCustomizeUI` component (`components/v6/V6ReviewCustomizeUI.tsx`, ~27KB) **exists but is orphaned** — only referenced from `/test-plugins-v2` Tab 3, never from production agent creation flow.
+- 5-Layer Ambiguity Detection module (`lib/agentkit/v6/ambiguity-detection/`, 8 files) **still runs** inside the single-API path internally — but no UI surfaces its findings to users.
+
+The current production V6 path is **single-API**: when `useV6AgentGeneration()` is true, [`app/v2/agents/new/page.tsx`](../../app/v2/agents/new/page.tsx) line ~993 calls [`/api/v6/generate-ir-semantic`](../../app/api/v6/generate-ir-semantic/route.ts) which runs all 5 V6 phases end-to-end in one request.
+
+### User decision (2026-05-16)
+
+After reviewing the abandoned architecture and the current production wiring, the decision is to **continue with single-API V6** — no Review UI integration into the production flow. Rationale: users prefer "create the agent, then move to the next screen (run/edit)" over an intermediate confirmation step. The grounding + ambiguity detection still runs internally; just doesn't surface as a UI step.
+
+### Implication
+
+Most of the original plan (Phase A6 test-page validation of split flow, Phase B1-B5 production wiring of Review UI, several open questions around Review UX) **is no longer relevant**. The actual remaining work is much smaller — see Revised Plan below.
+
+---
+
+## Revised Plan — 5-Stage Migration (Current Direction)
+
+> **Branch:** `feature/v6-v2-integration`
+> **Approach:** Path A — single-API V6, no Review UI. Adopt what already exists.
+
+### Stage 1 — Validate the existing single-API V6 path
+
+Goal: confirm the V2 UI → `/api/v6/generate-ir-semantic` integration works end-to-end on real scenarios before any production change.
+
+| Task | Detail | Status |
+|---|---|---|
+| 1.1 | Set `NEXT_PUBLIC_USE_V6_AGENT_GENERATION=true` in `.env.local` | ⬜ Todo |
+| 1.2 | Drive V2 UI through `gantt-urgent-tasks` scenario (smallest, recently verified Phase E) | ⬜ Todo |
+| 1.3 | Compare generated `pilot_steps` to `tests/v6-regression/scenarios/gantt-urgent-tasks/phase4-pilot-dsl-steps.json` | ⬜ Todo |
+| 1.4 | Repeat for `expense-invoice-email-scanner` (WP-32/33 verified) | ⬜ Todo |
+| 1.5 | Repeat for `contract-enddate-summary` (WP-35/36 verified) | ⬜ Todo |
+| 1.6 | Confirm Section 19.2 bug status (IR Formalization schema strict; LLM prompt may not match) | ✅ Done (2026-05-16) — **OBSOLETE.** The strict schema (`extended-ir-schema.ts` `EXTENDED_IR_JSON_SCHEMA`) is for IR **v2.0** (`ir_version: "2.0"`). Production uses IR **v4.0** (`declarative-ir-types-v4.ts`, `declarative-ir-schema-strict-v4.ts`) — no `normalization` field at all. `IRFormalizer` validates `ir_version === '4.0'` and uses `validateExecutionGraph()` against a different schema. v4 prompt (`formalization-system-v4.md`) explicitly produces v4.0 IR. Grep confirms `EXTENDED_IR_JSON_SCHEMA` has zero production consumers — dead code. Stage 5 cleanup candidate (low priority). |
+| 1.7 | Document delta between V4-generated and V6-generated agent JSON (missing fields, schema mismatches) | ⬜ Todo |
+
+**Exit criteria:** all 3 scenarios produce agents whose `pilot_steps` match the regression snapshots (modulo timestamps + IDs). Any failure escalates to Stage 2.
+
+### Stage 2 — Fix anything Stage 1 surfaces
+
+Goal: address blockers found during Stage 1 verification.
+
+| Task | Detail | Status |
+|---|---|---|
+| 2.1 | Section 19.2 fix: update Phase 3 LLM prompt to match tightened `DeclarativeLogicalIR` schema (no extra `description` / `fields` properties on `normalization`) — only if Stage 1 confirms it still fires | ⬜ Conditional |
+| 2.2 | Any V6 ↔ V2 field-mapping deltas in `mapV6ResponseToAgent()` (e.g., missing `inputs_schema`, `description`, scheduling fields) | ⬜ Conditional |
+| 2.3 | Any new WPs discovered during Stage 1 — document in `V6_OPEN_ITEMS.md` per V6 Work Protocol | ⬜ Conditional |
+
+### Stage 3 — Decide the navigation target after agent save
+
+Goal: confirm where the user lands after agent creation completes.
+
+| Task | Detail | Status |
+|---|---|---|
+| 3.1 | Verify what `/v2/sandbox/{agentId}` page does today — is it the run/edit screen? | ⬜ Todo |
+| 3.2 | If yes: change navigation in `executeAgentCreation()` (~line 1216) from `/agents/{id}` to `/v2/sandbox/{id}` | ⬜ Todo |
+| 3.3 | If no: identify the correct run/edit page and route there | ⬜ Todo |
+
+### Stage 4 — Rollout
+
+Goal: flip the production flag with monitoring + rollback safety.
+
+| Task | Detail | Status |
+|---|---|---|
+| 4.1 | Deploy `feature/v6-v2-integration` to production with `NEXT_PUBLIC_USE_V6_AGENT_GENERATION` still **false** (no user-visible change) | ⬜ Todo |
+| 4.2 | Enable flag for own account first — manual end-to-end creation of 2-3 real-data agents | ⬜ Todo |
+| 4.3 | Define kill-switch — confirm `NEXT_PUBLIC_USE_V6_AGENT_GENERATION` is runtime-readable (no rebuild required to flip back) | ⬜ Todo |
+| 4.4 | Flip flag for all users; communicate via release notes if applicable | ⬜ Todo |
+| 4.5 | Stabilization (~1-2 weeks): monitor for failed agent creations, failed Phase E executions, user-reported issues | ⬜ Todo |
+| 4.6 | Document any new WPs / open items uncovered during stabilization | ⬜ Todo |
+
+### Stage 5 — Cleanup
+
+Goal: retire V4 and remove dead code from the abandoned split-API design.
+
+| Task | Detail | Status |
+|---|---|---|
+| 5.1 | Remove `app/api/generate-agent-v4/route.ts` (~547 lines) | ⬜ Todo |
+| 5.2 | Remove V4 `else` branch in `app/v2/agents/new/page.tsx` around line 993 | ⬜ Todo |
+| 5.3 | Remove `useV6AgentGeneration()` from `lib/utils/featureFlags.ts` + env var docs | ⬜ Todo |
+| 5.4 | Remove `useV6ReviewMode()` from `lib/utils/featureFlags.ts` (dead code from abandoned design) | ⬜ Todo |
+| 5.5 | **Decide:** delete or keep `components/v6/V6ReviewCustomizeUI.tsx`. If `/test-plugins-v2` still uses it, keep + leave a comment; otherwise delete | ⬜ Decision needed |
+| 5.6 | **Decide:** keep or remove `app/api/v6/generate-semantic-grounded` endpoint. If test-page-only, retire alongside test page or move under `app/api/v6/test/`. | ⬜ Decision needed |
+| 5.7 | **Decide:** keep or remove `lib/agentkit/v6/ambiguity-detection/` module. It runs inside the single-API path internally (its findings are computed and discarded). Suggest **keep** — preserves optionality for future Review UI revival; cost is just code presence. | ⬜ Decision needed |
+| 5.8 | Update CLAUDE.md Key Documentation if any links break after cleanup | ⬜ Todo |
+| 5.9 | **Delete dead v2 IR schema** — `lib/agentkit/v6/logical-ir/schemas/extended-ir-schema.ts` (`EXTENDED_IR_JSON_SCHEMA`) has zero production consumers (verified Stage 1.6). Production uses IR v4.0 schemas. Also consider archiving `docs/extended-ir-architecture/` directory (referenced only by stale doc files). | ⬜ Todo |
+| 5.10 | Update this doc's status to "✅ Migration Complete" + final Change History entry | ⬜ Todo |
+
+---
+
+## Risks
+
+| Risk | Probability | Mitigation |
+|---|---|---|
+| Bug §19.2 (IR schema mismatch) still fires in production V6 path | Medium | Stage 1 task 1.6 verifies; Stage 2 task 2.1 fixes if needed |
+| V6 output JSON missing fields V4 produced (causing broken agents) | Medium | Stage 1 task 1.7 documents delta; Stage 2 task 2.2 addresses |
+| `/v2/sandbox/{agentId}` is not the right next-screen | Low | Stage 3 verifies + redirects to correct target |
+| Flag flip causes regression for specific user/plugin combos not covered by 10 regression scenarios | Medium | Stage 4.5 stabilization window + kill switch (Stage 4.3) |
+| Removing V4 breaks an unknown caller (admin tools, batch scripts, etc.) | Low | Stage 5 task: grep `generate-agent-v4` AND `useV6AgentGeneration` repo-wide before any deletion |
+| 5-Layer Ambiguity Detection deletion (Stage 5.7) removes useful telemetry | Low | Defer the decision; recommendation is keep |
+
+## Open Questions
+
+| # | Question | Why it matters | Resolution path |
+|---|---|---|---|
+| Q1 | Why was split-API + Review UI abandoned in Feb? | Could inform whether to revisit later | Check commit `e2957d0` message + any retrospective notes; ask original author |
+| Q2 | Does `/v2/sandbox/{agentId}` exist and is it the run/edit page? | Determines Stage 3 outcome | Read the route file directly in Stage 3 |
+| Q3 | Are there any callers of `/api/generate-agent-v4` outside `app/v2/agents/new/page.tsx`? | Risk of breaking unknown consumers in Stage 5 | Repo-wide grep before Stage 5 deletion |
+| Q4 | Should the 5-Layer Detection module surface findings to users in a non-UI way (e.g., log/audit trail)? | Could preserve some of the abandoned design's value without UI cost | Stage 5 decision; default is "no, leave as-is" |
+| Q5 | Does the existing `mapV6ResponseToAgent()` cover all fields the `agents` table expects? | Could surface during Stage 1.7 | Verify against `AgentRepository` schema during Stage 1 |
+
+## Progress Log
+
+| Date | Stage | What happened |
+|---|---|---|
+| 2026-05-16 | Planning | Architectural pivot documented; original Phase A/B/C demoted to Historical Plan section below |
+| 2026-05-16 | Stage 1.6 ✅ | §19.2 verified OBSOLETE — strict schema was for IR v2.0; production uses v4.0 (no `normalization` field). `EXTENDED_IR_JSON_SCHEMA` is dead code (zero production consumers). Added Stage 5.9 cleanup task. One blocker pre-emptively cleared before UI testing. |
+| 2026-05-16 | Stage 1 pre-flight | **EP Key Hints implementation verified live** (Phases 1-4 ✅ of EP_KEY_HINTS workplan). Confirmed: (1) `parsePrefixedKey` / `buildGroupedUserContext` / `buildFlatUserContext` in `intent-system-prompt-v2.ts` (L1840-L1983), (2) `toActionSummaryContext()` / `toActionSummaryText()` on `PluginDefinitionContext` (L221, L284), (3) `plugin_action_summary` injected into Phase 1/2/3 messages in `process-message/route.ts` (L161, L224-225, L335/346/356), (4) `aiAgentPromptTemplate = "Workflow-Agent-Creation-Prompt-v14-chatgpt"` in `init-thread/route.ts:21` (v14 template file present). EP_KEY_HINTS Phase 5 (T1-T10) remains formally untested, but Stage 1.2-1.5 UI runs effectively serve as partial validation. |
+| 2026-05-17 | Stage 1.2 (UI run #1) | Drove V2 UI through "Read the Gantt sheet..." prompt with `NEXT_PUBLIC_USE_V6_AGENT_GENERATION=true`. V6 endpoint `/api/v6/generate-ir-semantic` returned 200 in 72.5s; agent `dc04876c-ec1c-4e88-810a-7b5fe0999e09` created. Static analysis of the generated `pilot_steps` found 3 suspected issues: (a) IRFormalizer auto-corrected filter input `{{rows}}` → `{{rows.attachments}}` based on a plugin-pattern heuristic (Bug B); (b) Phase 4 auto-injected `rows_to_objects` mismatches the LLM-emitted `item.0` positional filter (Bug C); (c) WP-16 still firing — single `ai_processing/extract` step doing what should be deterministic transforms. |
+| 2026-05-17 | Stage 1.2b (live Phase E) | Ran Phase E live execution on the V2-UI-generated agent via `test-live-agent-execution.ts --agent-id dc04876c --use-db-dsl` (`--use-db-dsl` flag added on this branch). step1+step2 succeeded with real Gantt data (58 rows → 57 objects with correct columns including `Tasks`, `Priority`, `Due Date`). **step3 failed with `Unknown transform operation: select`** — a NEW bug (WP-39, not the predicted `.attachments` issue). ExecutionGraphCompiler's D-B18 alias updates `config.type` but not `step.operation`. Bugs B+C remain latent (would surface if step3 weren't blocking). |
+| 2026-05-17 | WP-39 fixed | One-line `pilotOperation = 'map'` added to D-B18 alias block at `ExecutionGraphCompiler.ts:683-689`. Documented in WEAK_POINTS Section 19 + summary table + Change History; added as evidence to DESIGN_PRINCIPLES Principle 11. Stage 1.2b retry needed to confirm fix unblocks step3 — Bug B (`.attachments`) likely surfaces next. |
+| 2026-05-17 | Regression scenario `gantt-urgent-tasks-v2ui` captured | New scenario folder under `tests/v6-regression/scenarios/` with 5 files mined from dev.log (enhanced prompt, IR, Phase4 DSL) + DB (pilot_steps + agent_configurations.input_values). First V2-UI-source scenario. Acts as the live test bed for the WP-39 → WP-40 → WP-41 cascade. Note: regression runner currently requires `intent-contract.json` (intent.v1 format) — this scenario uses IR v4.0; runner adaptation deferred. |
+| 2026-05-17 | Stage 1.2c (recompile + live re-test) | Recompiled the captured IR with the WP-39-patched `ExecutionGraphCompiler` using a one-off `verify-wp39-fix.ts` helper (later removed). step3.operation correctly emitted as `"map"` — WP-39 fix verified at compile time. Pushed clean DSL to DB and re-ran Phase E live: step3 now executes (Transform: map runs successfully); step4 (Transform: filter) fails with `Transform step step4 has no input data` — IRFormalizer auto-corrupted the input path. WP-40 surfaced as predicted (the `.attachments` artifact from Stage 1.2 static analysis is real). |
+| 2026-05-17 | WP-40 fixed | `IRFormalizer.validateIRStructure` blind-guess loop removed (`['attachments', 'items', 'results', 'data', 'list', 'records']` hardcoded list + first-match-wins). Replaced with a nested-access check: if `transform.input` already accesses a nested field of the input variable, trust the LLM and skip the type check. Filters still pushing a bare wrapper get a clear validation error pointing at the right shape. Documented in WEAK_POINTS § WP-40 + summary table + Change History; added to DESIGN_PRINCIPLES Principle 11 Evidence. The captured IR file in the scenario folder edited to undo the corruption (matches what the fixed IRFormalizer would now emit). |
+| 2026-05-17 | Stage 1.2c retry + WP-41 discovered | Recompiled the cleaned IR with both WP-39 and WP-40 patches in place; pushed DSL to DB; ran Phase E live. step3 still produces wrong-shape output: 57 copies of the literal config (`{type:"map", input:"...", fields:{...}}`) instead of a single wrapper object. Root cause: D-B18 alias `select → map` is **syntactic only** — the two operations have different semantics (`select` constructs ONE object from source-level refs; `map` iterates an array and produces one element per item). Documented as **WP-41** in WEAK_POINTS + V6_OPEN_ITEMS (new P0 entry, top of list) + DESIGN_PRINCIPLES Principle 11 Evidence (surfaces a new anti-pattern: "backwards-compat aliases must be semantic, not syntactic"). Three intervention options documented in the WP body. Per user decision: chose **Option A** (restore `select` as runtime op) — fastest, schema-faithful. Implemented immediately rather than deferred. |
+| 2026-05-17 | WP-41 fixed | New `case 'select'` in `StepExecutor.executeTransform` builds a single wrapper object from `effectiveConfig.fields` (post-resolveAllVariables — shallow clone). Compiler D-B18 alias split: `select` arm preserves the type label and `pilotOperation`; `custom` arm still aliases to `map`. Recompiled the captured IR and verified at compile time: step3 emits `operation: "select"`, `config.type: "select"`, name "Transform: select". Live Phase E re-run progressed 3/6 → 7/8 steps (step3 produces the correct wrapper, step4 filters cleanly, step5 AI extracts 3 tasks). Then died at step9 (send-email) with WP-42 (gmail string-recipient bug). |
+| 2026-05-17 | Stage 1.2d + WP-42 fixed | Live Phase E reached step9 (`google-mail.send_email`) and crashed with `TypeError: recipients.to.map is not a function`. LLM emitted `recipients.to: "meiribarak@gmail.com"` (string) but plugin executor calls `.map()` expecting the schema-declared array. Same emission-style/runtime-contract mismatch family as WP-21/22/25/28. **Two-part runtime tolerance:** (a) new `toEmailArray()` helper at top of `buildEmailMessage()` coerces string → `[string]`; applied uniformly to to/cc/bcc. (b) `countRecipients()` in `base-plugin-executor.ts` patched to count `1` for a string (was returning the string's character length, silently inflating `total_recipients > 10` validation rule). Documented in WEAK_POINTS WP-42 + Change History. |
+| 2026-05-17 | **Stage 1.2d — Runtime cascade success, but empty results** | Re-ran Phase E (Mode B `--use-db-dsl`) with all four runtime fixes (WP-39 + WP-40 + WP-41 + WP-42). **7/7 steps passed structurally**, real email delivered to meiribarak@gmail.com — but the email said "No tasks matched the criteria" despite 3 visible tasks in the sheet matching Critical/High priority + due in next 3 days. AI extract step (step5) returned `{tasks: []}` silently. Investigation surfaced **WP-43**. |
+| 2026-05-17 | WP-43 fix + Stage 1.2e end-to-end | WP-43: TWO compounding gaps in `ai_processing` prompt context — (a) column-letter references vs post-`rows_to_objects` named-key data; (b) no concrete "now" anchor for "next 3 days relative to now". Both fixed in `StepExecutor.executeLLMDecision` via a runtime preamble that prepends `INPUT DATA SHAPE` (named keys + positional aliases like `column A = "Tasks"`) and `CURRENT DATE` (today ISO + DD/MM/YYYY locale hint). ~30 LOC in StepExecutor, fires only when ai_processing input is an array of objects. **Validation:** Phase E re-run extracted 3 real tasks (Employee signature - Marketing mail / Social – linkedin and Facebook pages / Global market research), email routed to have-tasks branch with the actual data in the body. Documented in WEAK_POINTS WP-43 + DESIGN_PRINCIPLES Principle 11 evidence + scenario known_weaknesses. **Option A (formalization-system-v4.md prompt extension)** queued as a Stage-1 follow-up — runtime preamble is defense in depth; ideally the Phase 3 LLM never authors column-letter language in `ai_processing.instruction` to begin with. |
+| 2026-05-17 | **Stage 1.2 ✅ — END-TO-END SUCCESS WITH CORRECT CONTENT** | Five runtime bugs fixed in this branch (WP-39 / WP-40 / WP-41 / WP-42 / WP-43). Phase E on V2-UI agent: 7/7 steps, real email with 3 correctly-extracted tasks. The V2 UI → V6 pipeline → DB → live execution path is verified end-to-end with correct content for the gantt-urgent-tasks prompt. Stage 1.4 (expense-invoice-email-scanner) and 1.5 (contract-enddate-summary) ready to proceed. |
+| 2026-05-17 | Stage 1.2f — WP-44 documented (format-fidelity regression) | User reported the delivered email had the right 3 tasks but in plain-text ASCII-pipe format despite the EP saying "HTML" 6 times and naming `html_body` explicitly. Root cause: V6 IRFormalizer authored step8 prompt as "plain-text email body" + step9 params as `content.body` instead of `content.html_body`. The previous gantt-urgent-tasks (IC pipeline) scenario handled this correctly — V6 regressed. Same Phase 3 prompt-fidelity family as WP-43 (Phase 3 LLM dropping EP-level user requirements). Documented as **WP-44** in WEAK_POINTS + V6_OPEN_ITEMS (P1) + scenario known_weaknesses; bundled with WP-43 Option A for the next "Phase 3 prompt-fidelity audit" follow-up session. Not blocking Stage 1.4 / 1.5 — Stage 1.2 plumbing remains verified end-to-end. |
+| 2026-05-17 | **🔁 ARCHITECTURAL PIVOT — V2 UI is on the WRONG pipeline** | While diagnosing WP-44, discovered that the V2 UI calls `/api/v6/generate-ir-semantic` (Pipeline B — `SemanticPlanGenerator` → `GroundingEngine` → `IRFormalizer` → `ExecutionGraphCompiler`, two LLM calls, prompts in `semantic-plan-system.md` + `formalization-system-v4.md`). **The regression suite uses Pipeline A — `generateGenericIntentContractV1` → `CapabilityBinderV2` → `IntentToIRConverter` → `ExecutionGraphCompiler` (one LLM call, prompt in `intent-system-prompt-v2.ts`).** All 10 regression scenarios + WP-1 through WP-38 fixes were authored/validated against Pipeline A. Pipeline B has its own (different) LLM prompts that lack the WP-28 / `html_body` / named-keys guidance Pipeline A's prompt accumulated — hence WP-43 (column-letter drift) and WP-44 (HTML drop) are NEW gaps unique to Pipeline B's prompt history. **Pipeline A has no HTTP endpoint today** — only reachable from `scripts/test-complete-pipeline-with-vocabulary.ts`. The V2 UI ended up on Pipeline B because that was the only HTTP-exposed V6 path when V2 UI integration started. **Decision (user 2026-05-17):** expose Pipeline A as a new endpoint (`/api/v6/generate-ir-intent-contract`), switch the V2 UI fetch call, retire Pipeline B from V2 UI flow. Pipeline B's `/api/v6/*` endpoints stay in code (not used by V2 UI) until we audit any other consumers. **5 runtime fixes + WP-44 doc from this session remain valuable** — 5 of 6 live in shared runtime/compiler/plugin code that BOTH pipelines use. Committing the runtime hardening now; pivot work begins in next session. **Pivot plan + investigation: see [V6_PIPELINE_A_MIGRATION.md](./V6_PIPELINE_A_MIGRATION.md).** |
+
+---
+
+# Historical Plan — Original Design (Superseded 2026-05-16)
+
+> **Status:** SUPERSEDED. The content below describes the original split-API + Review & Customize UI design that was abandoned in February. Preserved as historical record of the design exploration. **Do not implement from this section** — follow the Revised Plan above.
+>
+> Key superseded items:
+> - The split-API architecture (Phase A1-A6 + B1-B6) — single-API is the chosen direction
+> - The Review & Customize UI in production flow — orphaned, may be retired in Stage 5
+> - The `useV6ReviewMode` feature flag — dead code, to be removed in Stage 5
+> - Sections 1-18 describe the abandoned design and should not be used for implementation. Section 19 (known bugs) is still authoritative.
 
 ---
 
@@ -1758,13 +1911,14 @@ export class AmbiguityDetector {
 
 ## 19. Known Issues / Bugs Identified
 
-> **Note**: Issues discovered during testing that need to be addressed separately from this integration. Review after implementation to validate if still relevant.
+> **Note**: Issues discovered during testing that need to be addressed separately from this integration. Statuses verified against current code 2026-05-16.
 
 ### 19.1 Scatter-Gather After Group Transform - Wrong Variable Reference
 
-**Status**: Identified, Not Fixed
-**Severity**: High (causes runtime failure)
-**Discovered**: January 18, 2026
+**Status**: ✅ **FIXED** (verified 2026-05-16 against `lib/agentkit/v6/compiler/ExecutionGraphCompiler.ts:2830-2842`)
+**Severity**: ~~High (causes runtime failure)~~ Historical
+**Discovered**: 2026-01-18
+**Resolved**: Fix in `ExecutionGraphCompiler.ts` detects group transforms and rewrites scatter-input variable reference to `.groups` (instead of `.data`). Comment in code confirms: "group transform legacy object → groups array".
 
 **Problem**:
 When a `scatter_gather` step follows a `group` transform, the LLM compiler generates `{{stepX.data}}` but the group transform outputs an **object**, not an array. The scatter_gather expects an array to iterate over.
@@ -1825,9 +1979,10 @@ When scatter_gather follows a group transform step:
 
 ### 19.2 IR Formalization Schema Mismatch
 
-**Status**: Identified, Not Fixed
-**Severity**: High (causes IR validation failure, blocks compilation)
-**Discovered**: January 18, 2026
+**Status**: ✅ **OBSOLETE** (verified 2026-05-16 — Stage 1 task 1.6 result) — The strict schema described here (`EXTENDED_IR_JSON_SCHEMA` in `extended-ir-schema.ts:79-99` with `additionalProperties: false` on `normalization`) is for IR **v2.0** (`ir_version: "2.0"`). Production V6 uses IR **v4.0** (`declarative-ir-types-v4.ts` + `declarative-ir-schema-strict-v4.ts`), validated via `validateExecutionGraph()` in `IRFormalizer.ts` against `ir.ir_version === '4.0'`. The v4 schema has no `normalization` / `required_headers` / `case_sensitive` / `missing_header_action` / `per_group_delivery` fields — different architecture. The active prompt `formalization-system-v4.md` explicitly produces `ir_version: "4.0"` IR. Grep confirms `EXTENDED_IR_JSON_SCHEMA` has **zero production consumers** — pure dead code. Stage 5 cleanup candidate (low priority, no functional impact).
+**Severity**: ~~High (causes IR validation failure, blocks compilation)~~ Historical
+**Discovered**: 2026-01-18
+**Resolved by:** architectural shift from IR v2.0 to v4.0 (predates this verification; exact commit not traced but the v4 schema files + IRFormalizer's `ir_version === '4.0'` checks confirm the transition was complete by 2026-05-16).
 
 **Problem**:
 The Phase 3 IR Formalizer (LLM) generates IR structures that don't conform to the `DeclarativeLogicalIR` schema. The IR validation fails before compilation can begin.

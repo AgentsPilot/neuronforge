@@ -1,0 +1,18 @@
+{
+  "spreadsheet_id": "1RHLbBXzrKv24gNgp7a4Lr7RlMIrP9fjacfGWjhPAbOE",
+  "sheet_tab_name": "Gantt",
+  "task_name_column_header": "Tasks",
+  "urgent_priority_values": "Critical, High",
+  "date_window_days": 3,
+  "recipient_email": "meiribarak@gmail.com",
+  "google_mail__email_send__recipients": "meiribarak@gmail.com",
+  "google_sheets__table_read__spreadsheet_id": "1RHLbBXzrKv24gNgp7a4Lr7RlMIrP9fjacfGWjhPAbOE",
+  "google_sheets__table_read__sheet_tab_name": "Gantt",
+  "task_name_column": "A",
+  "finish_date_column": "F",
+  "priority_column": "G",
+  "date_window_interpretation": "next_3_full_days_excluding_today",
+  "timezone_choice": "use_my_timezone",
+  "email_format": "table",
+  "no_results_behavior": "send_none_email"
+}

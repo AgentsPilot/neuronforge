@@ -3,7 +3,7 @@
 > **Last Updated**: 2026-04-08
 > **Status**: All three Directions implemented — Direction #1 ✅, Direction #2 ✅, Direction #3 ✅
 > **Branch**: `feature/v6-intent-contract-data-schema`
-> **Parent docs**: [V6_WORKFLOW_DATA_SCHEMA_DESIGN.md](./V6_WORKFLOW_DATA_SCHEMA_DESIGN.md) · [V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_WEAK_POINTS.md](./V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_WEAK_POINTS.md)
+> **Parent docs**: [v6-archive/V6_WORKFLOW_DATA_SCHEMA_DESIGN.md](./v6-archive/V6_WORKFLOW_DATA_SCHEMA_DESIGN.md) (this doc supersedes it) · [V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_WEAK_POINTS.md](./V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_WEAK_POINTS.md)
 
 ## Overview
 
@@ -48,7 +48,7 @@ The document proceeds in two parts:
 **What the design said:**
 
 > *"The schema is the contract. Fail loud, not silent. When runtime data doesn't match the declared schema, execution stops with a descriptive error showing expected vs. received shape. No silent degradation."*
-> — V6_WORKFLOW_DATA_SCHEMA_DESIGN.md §2
+> — [v6-archive/V6_WORKFLOW_DATA_SCHEMA_DESIGN.md](./v6-archive/V6_WORKFLOW_DATA_SCHEMA_DESIGN.md) §2
 
 **What the implementation does:**
 
@@ -803,7 +803,7 @@ This is worth a separate deep dive but explicitly out of scope for Direction #2.
 | 4 | Wire validation + repair into `executeLLMDecision` I3 path — replace alias-wrapper fallback with `extractValidateAndReturn()` + `handleSchemaFailure()` | `lib/pilot/StepExecutor.ts` | ✅ Done (2026-04-08) |
 | 5 | Memory-dump detection converted from silent null-fill to extraction failure → repair → SchemaViolationError | `lib/pilot/StepExecutor.ts` (inside `extractValidateAndReturn`) | ✅ Done (2026-04-08) |
 | 6 | Backward compat: steps without `output_schema` keep alias wrapper path | `lib/pilot/StepExecutor.ts` | ✅ Done (2026-04-08) |
-| 7 | Surface `SchemaViolationError` in execution result | `lib/pilot/WorkflowPilot.ts` error path | ⬜ Future (see V6_WORKFLOW_DATA_SCHEMA_DESIGN.md §11) |
+| 7 | Surface `SchemaViolationError` in execution result | `lib/pilot/WorkflowPilot.ts` error path | ⬜ Future (see [v6-archive/V6_WORKFLOW_DATA_SCHEMA_DESIGN.md](./v6-archive/V6_WORKFLOW_DATA_SCHEMA_DESIGN.md) §11) |
 | 8 | Unit tests for `AIOutputValidator` | `lib/pilot/__tests__/AIOutputValidator.test.ts` | ⬜ Deferred |
 | 9 | Metrics: repair attempts, success rate, hard failures | `lib/pilot/MetricsCollector.ts` | ⬜ Deferred |
 

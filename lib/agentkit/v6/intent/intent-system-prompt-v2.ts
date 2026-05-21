@@ -232,7 +232,27 @@ Every step MUST have:
 }
 
 **Filters use Comparator:**
-Use standard comparison operators: "eq", "ne", "gt", "gte", "lt", "lte", "contains", "exists", "in", "starts_with", "ends_with", "matches", etc. Choose the operator that best expresses the filter condition.
+Use standard comparison operators: "eq", "ne", "gt", "gte", "lt", "lte", "contains", "contains_any", "exists", "in", "starts_with", "ends_with", "matches", etc. Choose the operator that best expresses the filter condition.
+
+**\`contains_any\`** — substring match against ANY of a list of values (case-insensitive). Use this for keyword-filter patterns instead of writing OR-of-contains trees:
+\`\`\`json
+✅ CORRECT — single contains_any
+{
+  "op": "test",
+  "left": { "kind": "ref", "ref": "<input_slot>", "field": "subject" },
+  "comparator": "contains_any",
+  "right": { "kind": "literal", "value": ["complaint", "refund", "angry", "not working"] }
+}
+\`\`\`
+\`\`\`json
+❌ AVOID — verbose OR tree of contains
+{ "op": "or", "conditions": [
+  { "op": "test", "left": {...}, "comparator": "contains", "right": {"kind":"literal","value":"complaint"} },
+  { "op": "test", "left": {...}, "comparator": "contains", "right": {"kind":"literal","value":"refund"} },
+  // ...
+]}
+\`\`\`
+The right side of \`contains_any\` MUST be an array literal.
 
 **CRITICAL: Parameter Structure Rules:**
 - Use **payload** for ANY structured parameters that identify resources or configure the data fetch
@@ -289,7 +309,7 @@ Use standard comparison operators: "eq", "ne", "gt", "gte", "lt", "lte", "contai
   "output": "filtered_items",
 
   "transform": {
-    "op": string,  // "filter", "map", "reduce", "group", "sort", "flatten", "merge", or "dedupe"
+    "op": string,  // "filter", "map", "reduce", "group", "sort", "flatten", "merge", "dedupe", "with_fields", "project_column", or "set_difference"
     "input": "data_items",  // RefName
     "description"?: "human-readable transform description",
     "rules"?: JsonObject,  // optional structured rules (compiler interprets)
@@ -297,7 +317,7 @@ Use standard comparison operators: "eq", "ne", "gt", "gte", "lt", "lte", "contai
   }
 }
 
-Common transform operations include filter (subset), map (transform items with structured mapping), reduce (aggregate), group (by field), sort (order), flatten (nested arrays), merge (combine inputs), dedupe (remove duplicates by field). NOTE: To pick/rename fields, use map with structured mapping. Do NOT use "select" or "custom" — they are not supported at runtime.
+Common transform operations include filter (subset), map (transform items with structured mapping), reduce (aggregate), group (by field), sort (order), flatten (nested arrays), merge (combine inputs), dedupe (remove duplicates by field). **Structured primitives for deterministic operations:** with_fields (augment items with computed fields), project_column (extract single column/field from rows), set_difference (anti-join — keep items NOT in a reference array). See "Structured Primitives" section below. NOTE: To pick/rename fields, use map with structured mapping. Do NOT use "select" or "custom" — they are not supported at runtime.
 
 NOTE: For splitting data into named subsets (e.g., valid vs invalid), prefer AggregateStep with subset outputs instead of TransformStep with group, as this creates explicit symbolic refs for each subset.
 
@@ -336,6 +356,27 @@ Simple transformations — field rename/select (NO conditional logic, NO lookups
   }
 - ❌ FORBIDDEN: transform op="map" with only description/custom_code and no mapping
 
+**Mapping \`from\` field — canonical form (WP-28):**
+
+When the upstream step's output is an array of OBJECTS (the usual case — Sheets data after \`rows_to_objects\`, API results, etc.), the \`from\` field must be the **exact field name** the producer emits:
+
+✅ **CANONICAL: use field names** (matching the producer's output_schema):
+\`\`\`json
+"mapping": [
+  { "to": "date",        "from": "Date" },
+  { "to": "lead_name",   "from": "Lead Name" },
+  { "to": "stage",       "from": "Stage" }
+]
+\`\`\`
+
+❌ **DO NOT USE** positional source descriptors when the producer emits named fields. These all "work" via runtime tolerance (WP-SR / WP-28), but they obscure intent and break when the producer's column order changes:
+- \`"from": "0"\` (bare numeric position)
+- \`"from": "column_0"\` (column_<digit>)
+- \`"from": "A"\` (Excel letter)
+- \`"from": "column_A"\` (column_<letter>)
+
+The producer's output schema is shown in the upstream step's \`output_schema\`. Read it and use those exact field names for \`from\`. Positional source descriptors should ONLY be used when consuming a raw 2D array that has NOT been converted to objects (uncommon — the compiler auto-injects \`rows_to_objects\` for Sheets-style inputs).
+
 Complex transformations (HAS conditional logic, lookups, or config-based decisions):
 - ❌ FORBIDDEN: transform op="map" with description only
 - ✅ USE GENERATE step instead with clear instruction
@@ -361,8 +402,251 @@ If you cannot express the transformation with structured fields/conditions/rules
 2. Use a GENERATE step with clear instruction (for complex transformations)
 
 **When to Decompose vs Use GENERATE:**
-- Decompose: When logic can be expressed as sequence of filters, maps, merges
-- Use GENERATE: When transformation requires conditional logic, lookups, or complex computation that cannot be declaratively expressed
+- Decompose: When logic can be expressed as sequence of filters, maps, merges, **structured primitives** (see below)
+- Use GENERATE: ONLY when transformation requires SEMANTIC reasoning over unstructured text (classification, summarization, free-form synthesis). For DETERMINISTIC operations on structured data, use the structured primitives below — they are cheaper, faster, and validatable.
+
+### 6.3.1) STRUCTURED PRIMITIVES (W2 / WP-16) — Use these BEFORE falling back to GENERATE
+
+The following \`transform\` ops cover deterministic operations that previously required \`generate/internal\` because no structured grammar existed. **You MUST use these primitives instead of \`generate/internal\` whenever the operation is rule-based and the rule can be expressed in structured config.** AI steps for these operations are cost/latency overhead AND introduce fabrication risk — the runtime cannot validate AI-produced data the same way it validates structured-transform output.
+
+#### \`transform/with_fields\` — Augment items with computed fields
+
+Use when you need to ADD one or more new fields to each item in an array (or to a single object), computed from existing fields, config values, or constants. Existing input fields are preserved; new fields are added on top.
+
+\`\`\`
+{
+  "kind": "transform",
+  "transform": {
+    "op": "with_fields",
+    "input": "<input_slot>",
+    "fields": [
+      { "name": "<new_field_name>", "expression": <Expression> },
+      ...
+    ],
+    "output_schema": { ... }  // strongly recommended — declare new fields' types
+  }
+}
+\`\`\`
+
+**Expression vocabulary (CLOSED — exactly these 10 kinds):**
+
+| Kind | Shape | Use for |
+|---|---|---|
+| \`literal\` | \`{ kind: "literal", value: any }\` | Constants |
+| \`ref\` | \`{ kind: "ref", ref: "<input_slot>"\|"item", field?: string }\` | Field on the current item being processed (use \`ref: "<input_slot>"\` — compiler rewrites to \`item\` for per-iteration scope) |
+| \`config\` | \`{ kind: "config", key: string }\` | Config value |
+| \`concat\` | \`{ kind: "concat", args: Expression[] }\` | String concatenation (subsumes template substitution: \`"Order " + order_id\`) |
+| \`if\` | \`{ kind: "if", condition: Condition, then: Expression, else: Expression }\` | Conditional value (status reasoning, threshold-based defaults) |
+| \`today\` | \`{ kind: "today" }\` | Current date as ISO 8601 string |
+| \`date_diff\` | \`{ kind: "date_diff", left: Expression, right: Expression, unit: "days" }\` | Day difference (e.g., \`days_remaining = end_date - today\`) |
+| \`date_add\` | \`{ kind: "date_add", date: Expression, days: Expression }\` | Date arithmetic (e.g., \`date_window_end = today + 3 days\`) |
+| \`null_check\` | \`{ kind: "null_check", value: Expression, invert?: boolean }\` | Boolean: is null? Or with \`invert: true\` — is NOT null? |
+| \`all_not_null\` | \`{ kind: "all_not_null", refs: string[] }\` | Boolean: are ALL these fields non-null on the current item? |
+
+**Examples of patterns that REQUIRE \`with_fields\` (NOT \`generate/internal\`):**
+
+✅ **Computed boolean** — e.g., \`has_valid_amount = amount != null\`:
+\`\`\`
+{
+  "op": "with_fields",
+  "input": "extracted_invoices",
+  "fields": [
+    {
+      "name": "has_valid_amount",
+      "expression": {
+        "kind": "null_check",
+        "invert": true,
+        "value": { "kind": "ref", "ref": "extracted_invoices", "field": "amount" }
+      }
+    }
+  ]
+}
+\`\`\`
+
+✅ **Status with conditional logic** — e.g., \`Status = "Complete" if all required fields present, else "Needs review"\`:
+\`\`\`
+{
+  "op": "with_fields",
+  "input": "line_items",
+  "fields": [
+    {
+      "name": "status",
+      "expression": {
+        "kind": "if",
+        "condition": {
+          "op": "test",
+          "left": { "kind": "computed", "op": "all_not_null", "args": [] },
+          "comparator": "eq",
+          "right": { "kind": "literal", "value": true }
+        },
+        "then": { "kind": "literal", "value": "Complete" },
+        "else": { "kind": "literal", "value": "Needs review" }
+      }
+    }
+  ]
+}
+\`\`\`
+
+✅ **Cross-source merge with computed field** — e.g., combine extracted_fields + uploaded_file.web_view_link, add \`drive_link\`:
+\`\`\`
+{
+  "op": "with_fields",
+  "input": "extracted_invoices",
+  "fields": [
+    {
+      "name": "drive_link",
+      "expression": { "kind": "ref", "ref": "uploaded_file", "field": "web_view_link" }
+    }
+  ]
+}
+\`\`\`
+
+✅ **Date arithmetic** — e.g., \`days_remaining = end_date - today\`:
+\`\`\`
+{
+  "op": "with_fields",
+  "input": "contracts",
+  "fields": [
+    {
+      "name": "days_remaining",
+      "expression": {
+        "kind": "date_diff",
+        "unit": "days",
+        "left": { "kind": "ref", "ref": "contracts", "field": "end_date" },
+        "right": { "kind": "today" }
+      }
+    }
+  ]
+}
+\`\`\`
+
+✅ **String composition** — e.g., \`spreadsheet_url = "https://..." + id + "/edit"\`:
+\`\`\`
+{
+  "op": "with_fields",
+  "input": "<input_slot>",
+  "fields": [
+    {
+      "name": "spreadsheet_url",
+      "expression": {
+        "kind": "concat",
+        "args": [
+          { "kind": "literal", "value": "https://docs.google.com/spreadsheets/d/" },
+          { "kind": "config", "key": "spreadsheet_id" },
+          { "kind": "literal", "value": "/edit" }
+        ]
+      }
+    }
+  ]
+}
+\`\`\`
+
+❌ **WRONG — falling back to \`generate/internal\` for deterministic computed fields:**
+\`\`\`
+{
+  "kind": "generate",
+  "uses": [{ "capability": "generate", "domain": "internal" }],
+  "generate": {
+    "instruction": "For each item, set has_valid_amount to true if amount is not null, else false."
+  }
+}
+\`\`\`
+This wastes tokens, adds latency, and the runtime can't validate the AI's output. Use \`with_fields\` with \`null_check\` instead.
+
+#### \`transform/project_column\` — Extract a single column/field from rows
+
+Use when you need to extract ONE column from each row of a 2D array, or ONE field from each object in an array, returning a flat array of values.
+
+\`\`\`
+{
+  "kind": "transform",
+  "transform": {
+    "op": "project_column",
+    "input": "<input_slot>",
+    "column": <ColumnConfig>
+  }
+}
+\`\`\`
+
+**ColumnConfig (one of):**
+- \`{ "kind": "by_index", "index": <number> }\` — for 2D arrays, 0-based column index (e.g., Sheets \`values\` arrays)
+- \`{ "kind": "by_field", "field": "<field_name>" }\` — for arrays of objects, top-level field
+- \`{ "kind": "by_field_path", "path": "<dot.notation.path>" }\` — for arrays of objects, nested field
+
+✅ **Example — extract column 5 (Gmail message links) from sheet rows:**
+\`\`\`
+{
+  "op": "project_column",
+  "input": "existing_sheet_rows",
+  "column": { "kind": "by_index", "index": 4 }
+}
+\`\`\`
+
+❌ **WRONG — \`generate/internal\` for column extraction:**
+\`\`\`
+{
+  "kind": "generate",
+  "generate": {
+    "instruction": "Extract the values from the fifth column of the sheet rows..."
+  }
+}
+\`\`\`
+Use \`project_column\` instead — it's deterministic, doesn't burn tokens, and returns exactly what you want.
+
+#### \`transform/set_difference\` — Anti-join (keep items NOT in a reference array)
+
+Use when you need to KEEP items from an input array whose key is NOT present in another (reference) array. Common pattern: deduplication against an "already-processed" list.
+
+\`\`\`
+{
+  "kind": "transform",
+  "transform": {
+    "op": "set_difference",
+    "input": "<input_slot>",
+    "reference": "<reference_slot>",       // RefName of the slot containing items to exclude
+    "key_field": "<field_name>",            // Field name in INPUT items to compare on
+    "reference_key_field"?: "<field_name>"  // Field name in REFERENCE items if different (defaults to key_field)
+  }
+}
+\`\`\`
+
+✅ **Example — keep candidate emails NOT already in the existing message-id list:**
+\`\`\`
+{
+  "op": "set_difference",
+  "input": "candidate_complaints",
+  "reference": "existing_message_ids",
+  "key_field": "gmail_message_link_id",
+  "reference_key_field": "message_id"
+}
+\`\`\`
+
+❌ **WRONG — \`generate/internal\` for anti-join:**
+\`\`\`
+{
+  "kind": "generate",
+  "generate": {
+    "instruction": "Compare each prepared record against the existing message-id list. Keep only records whose gmail_message_link_id is not already present..."
+  }
+}
+\`\`\`
+Use \`set_difference\` instead — the LLM cannot reliably do exact anti-join over many items, and the runtime cannot validate the AI's output.
+
+#### Decision heuristic — when do I use the structured primitives?
+
+| If your operation is... | Use |
+|---|---|
+| Adding a computed field (boolean, status, date arithmetic, string composition) | \`with_fields\` |
+| Combining fields from multiple input slots into one row + adding computed fields | \`with_fields\` (use \`ref: "<other_slot>"\` for cross-source) |
+| Extracting one column/field from each row | \`project_column\` |
+| Removing items already present in another list | \`set_difference\` |
+| Filtering by a structured rule (eq, contains, gt, etc.) | \`filter\` (existing) |
+| Renaming/projecting fields | \`map\` with \`mapping\` (existing) |
+| Counting / summing / aggregating to a scalar | \`aggregate\` step (existing) |
+| Free-form text classification / summarization / synthesis | \`generate\` step or \`classify\` step (legitimate AI use) |
+| Extracting structured data from unstructured text (PDF, email body) | \`extract\` step (legitimate AI use) |
+
+If you find yourself writing \`instruction: "extract column 5 from rows"\` or \`instruction: "remove rows already in the existing list"\` in a \`generate\` step → STOP and use the corresponding structured primitive instead.
 
 **CRITICAL: output_schema Rules for Transform Steps**
 
@@ -540,6 +824,122 @@ If you claim "filtering for X" in the description, you must either:
 **Field types:**
 "string" | "number" | "boolean" | "date" | "currency" | "object" | "array" | "unknown"
 
+### 6.4.1) NESTED FIELD SHAPE (WP-15) — REQUIRED for arrays/objects
+
+This rule applies to BOTH \`extract.fields[]\` and \`generate.outputs[]\` (sections 6.4 and 6.7).
+
+**THE RULE:**
+- When you declare \`type: "array"\`, you MUST include \`items\` describing the element shape.
+- When you declare \`type: "object"\`, you MUST include \`properties\` describing each field.
+- The fields you mention in your \`instruction\` text MUST appear here as structured \`properties\` — do not leave them only in prose.
+
+**Why this matters:** the data_schema for downstream steps is built from these declarations. If you declare \`type: "array"\` without \`items\`, downstream steps see a bag-of-things with no field names — references like \`{{candidate_rows.rows[0].sender_email}}\` cannot be validated and cross-step type checking fails open. The \`instruction\` text is for the AI's eyes; the structured shape is for the compiler's.
+
+**Vocabulary** (recursive):
+
+\`\`\`
+NestedFieldSpec = {
+  type: "string" | "number" | "boolean" | "date" | "currency" | "object" | "array" | "unknown"
+  required?: boolean
+  description?: string
+  // when type="array":
+  items?: NestedFieldSpec
+  // when type="object":
+  properties?: Record<string, NestedFieldSpec>
+}
+\`\`\`
+
+#### ✅ CORRECT — array of objects with item shape declared
+
+Scenario: a \`generate\` step produces \`candidate_rows\` containing the per-email columns to append (canonical \`complaint-email-logger\` shape). The instruction enumerates 5 fields, so all 5 MUST appear in \`outputs\`:
+
+\`\`\`json
+{
+  "kind": "generate",
+  "generate": {
+    "instruction": "For each complaint email, build a row with sender email, subject, date, full email text, and the Gmail message link/id.",
+    "outputs": [
+      {
+        "name": "rows",
+        "type": "array",
+        "description": "One row per complaint email",
+        "items": {
+          "type": "object",
+          "properties": {
+            "sender_email":         { "type": "string", "description": "Email of the complainer" },
+            "subject":              { "type": "string", "description": "Email subject line" },
+            "date":                 { "type": "date",   "description": "Date received" },
+            "full_email_text":      { "type": "string", "description": "Full plain-text body" },
+            "gmail_message_link_id":{ "type": "string", "description": "Gmail message id (used to build a link)" }
+          }
+        }
+      }
+    ]
+  }
+}
+\`\`\`
+
+#### ❌ WRONG — depth-1 declaration (REJECTED by WP-15)
+
+Same scenario, but \`items\` is missing. Even though the \`instruction\` lists 5 fields, the structured shape declares only an unnamed array:
+
+\`\`\`json
+{
+  "kind": "generate",
+  "generate": {
+    "instruction": "For each complaint email, build a row with sender email, subject, date, full email text, and the Gmail message link/id.",
+    "outputs": [
+      { "name": "rows", "type": "array", "description": "One row per complaint email" }
+    ]
+  }
+}
+\`\`\`
+
+This produces a slot with shape \`{rows: array<unknown>}\` — downstream references to \`rows[i].sender_email\` cannot be validated, and \`DataSchemaBuilder\` is forced to emit a depth-1 fallback. The compiler logs a warning and auto-fills \`items: {type: "any"}\` as a safety net, but you should never rely on this — declare \`items\` explicitly.
+
+#### ✅ CORRECT — extract step with nested object array
+
+\`\`\`json
+{
+  "kind": "extract",
+  "extract": {
+    "input": "invoice_pdf",
+    "fields": [
+      { "name": "invoice_number", "type": "string", "required": true },
+      { "name": "total_amount",   "type": "currency", "required": true },
+      {
+        "name": "line_items",
+        "type": "array",
+        "required": false,
+        "description": "Each line on the invoice",
+        "items": {
+          "type": "object",
+          "properties": {
+            "sku":      { "type": "string" },
+            "qty":      { "type": "number" },
+            "unit_price": { "type": "currency" },
+            "subtotal":   { "type": "currency" }
+          }
+        }
+      }
+    ]
+  }
+}
+\`\`\`
+
+#### Producing-slot rule — use the EXACT field names from upstream
+
+If your \`instruction\` reads fields from an upstream slot (e.g., \`from\`, \`subject\`, \`body\`), the producing slot's schema is shown above in the vocabulary section. **Use those exact field names in your output \`properties\`.** Do not invent new names.
+
+| Upstream emits  | ✅ Use this in \`properties\` | ❌ Do not invent |
+|---|---|---|
+| \`from\`         | \`from\`         | \`sender\`, \`sender_email\` |
+| \`subject\`      | \`subject\`      | \`title\`, \`email_title\` |
+| \`internalDate\` | \`internalDate\` | \`date\`, \`received_at\` |
+| \`id\`           | \`id\`           | \`message_id\`, \`email_id\` |
+
+If your output renames a field intentionally (e.g., projection to a destination schema like Sheets columns), name the OUTPUT field after the destination column — but the field on the right-hand side of the mapping must match the upstream exactly. Cross-step type validation will flag mismatches.
+
 ### 6.5) CLASSIFY - Categorize items
 
 {
@@ -639,6 +1039,10 @@ CORRECT approach - First check if field_x exists:
     "input"?: "summary_text",  // optional
     "format"?: "html",
     "instruction": "Create content with summary and metrics",
+    "reason"?: "Required when domain=\"internal\" — see W2 nudge below",
+    // Each output is a NestedFieldSpec with a top-level "name". When type is
+    // "array" you MUST declare "items"; when "object" you MUST declare
+    // "properties". See section 6.4.1 for the full rule + worked examples.
     "outputs"?: [
       {
         "name": "title",
@@ -646,15 +1050,55 @@ CORRECT approach - First check if field_x exists:
         "description": "content title"
       },
       {
-        "name": "body",
-        "type": "string",
-        "description": "content body"
+        "name": "rows",
+        "type": "array",
+        "description": "structured rows the next step will append",
+        "items": {
+          "type": "object",
+          "properties": {
+            "id":      { "type": "string" },
+            "subject": { "type": "string" },
+            "date":    { "type": "date"   }
+          }
+        }
       }
     ]
   }
 }
 
 **IMPORTANT**: The inputs array MUST include ALL data the generate step will reference. If your instruction mentions aggregates, metrics, or computed values, include those variables in inputs. This ensures they're available to the AI and avoids recomputation.
+
+**W2 / WP-16 — required \`reason\` for \`domain: "internal"\`:**
+
+When you pick \`uses: [{ capability: "generate", domain: "internal" }]\`, you are routing the operation to an LLM at runtime. This is the right choice for SEMANTIC reasoning over unstructured text (HTML email synthesis, classification, summarization, free-form composition) — but it is the WRONG choice for deterministic data manipulation (computed fields, column projection, anti-join, filtering, mapping).
+
+Before choosing \`generate/internal\`, check whether a structured \`transform\` primitive expresses the same operation:
+
+| If the operation is... | Use |
+|---|---|
+| Adding a computed field (boolean, status, date arithmetic, string composition, template substitution) | \`transform/with_fields\` |
+| Combining fields from multiple input slots into one row + computed fields | \`transform/with_fields\` (cross-source via \`{kind: "ref", ref: "<other_slot>"}\`) |
+| Extracting one column/field from each row | \`transform/project_column\` |
+| Removing items already present in another list | \`transform/set_difference\` |
+| Filtering by a structured rule (eq, contains, gt, contains_any, etc.) | \`transform/filter\` |
+| Renaming/projecting fields | \`transform/map\` with \`mapping\` |
+| Counting / summing / aggregating to a scalar | \`aggregate\` step |
+
+If a structured primitive fits, use it — your IntentContract will be cheaper, faster, and validatable at runtime.
+
+**If a structured primitive does NOT fit, you MUST include a \`reason\` field on the generate step explaining why.** Examples of valid reasons:
+- \`reason: "Free-form HTML email body composition with conditional content based on data shape — no template structure available"\`
+- \`reason: "Classifying email content by tone — requires semantic reasoning, not rule-based"\`
+- \`reason: "Summarizing meeting transcript — semantic compression, no deterministic equivalent"\`
+
+Examples of INVALID reasons (these mean you should be using a transform primitive instead):
+- ❌ \`reason: "Compute has_valid_amount from amount field"\` — use \`with_fields\` with a \`null_check\` expression
+- ❌ \`reason: "Filter rows where status equals 'active'"\` — use \`transform/filter\` with a structured \`where\`
+- ❌ \`reason: "Combine extracted_fields with uploaded_file.web_view_link"\` — use \`with_fields\` with cross-source \`ref\`s
+
+Without a \`reason\` field on \`generate/internal\`, the IR converter will log a warning. This warning is a signal that the LLM (you) defaulted to AI when a structured alternative existed. The W5 measurement task counts these as residual deterministic-AI fallbacks across the regression suite.
+
+For \`generate\` with non-internal domains (e.g., \`domain: "email-content"\`, \`domain: "document"\`), \`reason\` is NOT required — those are inherently AI uses.
 
 **HTML FORMAT PREFERENCE**: When a generate or summarize step produces content that will be delivered via email (i.e., the output feeds into a send_email/notify step):
 - Default to format: "html" and instruct the AI to produce an HTML table for structured/tabular data
@@ -837,6 +1281,36 @@ NOTE: For persistent destinations (structured storage, databases, etc):
 - If you need to CREATE or GET_OR_CREATE a container (folder, sheet tab, database table), use an ArtifactStep with appropriate strategy
 - If you're using an EXISTING resource with ID/path from config, NO artifact step is needed - pass the config reference directly to the deliver operation
 - Example: For appending to an existing spreadsheet with known ID and tab name, pass spreadsheet_id and tab_name directly to the append action (no artifact step)
+
+**Mapping \`to\` field — canonical form (WP-25):**
+
+For ROW-ORIENTED destinations (e.g., Google Sheets \`append_rows\`, BigQuery \`append_rows\`, any plugin where rows are appended to a 2D table), the mapping \`to\` field is a **column position** — the index of the destination column.
+
+✅ **CANONICAL: use numeric string indices** (\`"0"\`, \`"1"\`, \`"2"\`, ...):
+\`\`\`json
+"mapping": [
+  { "from": { "ref": "complaint_rows", "field": "sender_email" }, "to": "0" },
+  { "from": { "ref": "complaint_rows", "field": "subject" }, "to": "1" },
+  { "from": { "ref": "complaint_rows", "field": "date" }, "to": "2" },
+  { "from": { "ref": "complaint_rows", "field": "full_email_text" }, "to": "3" },
+  { "from": { "ref": "complaint_rows", "field": "gmail_message_link_id" }, "to": "4" }
+]
+\`\`\`
+
+❌ **DO NOT USE** these equivalent-but-non-canonical forms — they all express the same intent but increase pipeline variance:
+- \`"to": "A"\` (Excel-style letter)
+- \`"to": "column_A"\` (column_<letter>)
+- \`"to": "column_0"\` (column_<digit>)
+
+The runtime tolerates all four forms today (WP-23 + WP-25), but the canonical numeric-string form keeps IRs predictable and lets the runtime tolerance be retired in the future.
+
+For NAMED-FIELD destinations (e.g., CRM record-create, key-value store \`set\`), use the destination's actual field name instead:
+\`\`\`json
+"mapping": [
+  { "from": { "ref": "lead", "field": "email" }, "to": "Email" },           // Salesforce field name
+  { "from": { "ref": "lead", "field": "lead_name" }, "to": "Full Name" }
+]
+\`\`\`
 }
 
 ### 6.12) NOTIFY - Send notification/message

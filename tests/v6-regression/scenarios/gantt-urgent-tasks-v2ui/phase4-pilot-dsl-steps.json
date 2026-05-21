@@ -1,0 +1,213 @@
+[
+  {
+    "id": "step1",
+    "name": "Fetch data using google-sheets",
+    "type": "action",
+    "action": "read_range",
+    "params": {
+      "range": "Gantt!A:G",
+      "spreadsheet_id": "1RHLbBXzrKv24gNgp7a4Lr7RlMIrP9fjacfGWjhPAbOE"
+    },
+    "plugin": "google-sheets",
+    "step_id": "step1",
+    "description": "Fetch data using google-sheets",
+    "output_variable": "sheet_read_result"
+  },
+  {
+    "id": "step2",
+    "name": "Auto-normalize: Convert 2D array to objects",
+    "type": "transform",
+    "input": "{{sheet_read_result.values}}",
+    "config": {
+      "preserve_case": true
+    },
+    "step_id": "step2",
+    "operation": "rows_to_objects",
+    "description": "Auto-normalize: Convert 2D array to objects",
+    "output_variable": "sheet_read_result_objects"
+  },
+  {
+    "id": "step3",
+    "name": "Transform: select",
+    "type": "transform",
+    "input": "{{sheet_read_result_objects}}",
+    "config": {
+      "type": "map",
+      "input": "sheet_read_result_objects",
+      "fields": {
+        "rows": "{{sheet_read_result_objects}}",
+        "range": "{{sheet_read_result.range}}",
+        "row_count": "{{sheet_read_result.row_count}}",
+        "column_count": "{{sheet_read_result.column_count}}",
+        "retrieved_at": "{{sheet_read_result.retrieved_at}}"
+      }
+    },
+    "step_id": "step3",
+    "_on_empty": "warn",
+    "operation": "select",
+    "description": "Transform: select",
+    "output_variable": "sheet_rows_wrapper"
+  },
+  {
+    "id": "step4",
+    "name": "Transform: filter",
+    "type": "transform",
+    "input": "{{sheet_rows_wrapper.rows.attachments}}",
+    "config": {
+      "type": "filter",
+      "input": "sheet_rows_wrapper.rows.attachments",
+      "condition": {
+        "field": "item.0",
+        "value": "Task Name",
+        "operator": "ne",
+        "conditionType": "simple"
+      }
+    },
+    "step_id": "step4",
+    "_on_empty": "warn",
+    "operation": "filter",
+    "description": "Transform: filter",
+    "output_variable": "data_rows_no_header"
+  },
+  {
+    "id": "step5",
+    "name": "AI: undefined",
+    "type": "ai_processing",
+    "input": "{{data_rows_no_header}}",
+    "config": {
+      "input": "{{data_rows_no_header}}",
+      "ai_type": "extract",
+      "instruction": "Convert the provided 2D array of Google Sheets rows into an array of task objects. Each row corresponds to columns A:G. Use column A as task_name, column D as status, column F as due_date, and column G as priority. Return only tasks where priority is exactly 'Critical' or 'High' (case-insensitive match allowed). Also return only tasks whose due_date is within the next 3 days relative to now. If due_date is missing or cannot be interpreted as a date, exclude the task. Output an array of objects with fields: task_name, priority, due_date, status.",
+      "output_schema": {
+        "type": "object",
+        "required": [
+          "tasks"
+        ],
+        "properties": {
+          "tasks": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "task_name",
+                "priority",
+                "due_date",
+                "status"
+              ],
+              "properties": {
+                "status": {
+                  "type": "string",
+                  "description": "Status from column D"
+                },
+                "due_date": {
+                  "type": "string",
+                  "description": "Due date from column F (as provided or normalized)"
+                },
+                "priority": {
+                  "type": "string",
+                  "description": "Priority from column G"
+                },
+                "task_name": {
+                  "type": "string",
+                  "description": "Task name from column A"
+                }
+              }
+            },
+            "description": "Filtered tasks meeting priority and due date window criteria"
+          }
+        }
+      }
+    },
+    "prompt": "Convert the provided 2D array of Google Sheets rows into an array of task objects. Each row corresponds to columns A:G. Use column A as task_name, column D as status, column F as due_date, and column G as priority. Return only tasks where priority is exactly 'Critical' or 'High' (case-insensitive match allowed). Also return only tasks whose due_date is within the next 3 days relative to now. If due_date is missing or cannot be interpreted as a date, exclude the task. Output an array of objects with fields: task_name, priority, due_date, status.",
+    "step_id": "step5",
+    "description": "AI: undefined",
+    "output_variable": "filtered_tasks_result"
+  },
+  {
+    "id": "step6",
+    "name": "Conditional: check_any_tasks",
+    "type": "conditional",
+    "steps": [
+      {
+        "id": "step7",
+        "name": "Deliver using google-mail",
+        "type": "action",
+        "action": "send_email",
+        "params": {
+          "content": {
+            "body": "No tasks matched the criteria (Priority: Critical or High; Due Date: within the next 3 days).",
+            "subject": "No Critical/High tasks due in the next 3 days"
+          },
+          "recipients": {
+            "to": "meiribarak@gmail.com"
+          }
+        },
+        "plugin": "google-mail",
+        "step_id": "step7",
+        "description": "Deliver using google-mail",
+        "output_variable": "sent_no_tasks_email_result"
+      }
+    ],
+    "step_id": "step6",
+    "condition": {
+      "field": "filtered_tasks_result.tasks",
+      "value": true,
+      "operator": "is_empty",
+      "conditionType": "simple"
+    },
+    "else_steps": [
+      {
+        "id": "step8",
+        "name": "AI: undefined",
+        "type": "ai_processing",
+        "input": "{{filtered_tasks_result.tasks}}",
+        "config": {
+          "input": "{{filtered_tasks_result.tasks}}",
+          "ai_type": "generate",
+          "instruction": "Create a concise plain-text email body listing the tasks in a readable table-like format with columns in this exact order: Task Name, Priority, Due Date, Status. Include a short intro line stating these are Critical/High priority tasks due in the next 3 days. If there are many tasks, list them all.",
+          "output_schema": {
+            "type": "object",
+            "required": [
+              "subject",
+              "body"
+            ],
+            "properties": {
+              "body": {
+                "type": "string",
+                "description": "Plain-text email body"
+              },
+              "subject": {
+                "type": "string",
+                "description": "Email subject line"
+              }
+            }
+          }
+        },
+        "prompt": "Create a concise plain-text email body listing the tasks in a readable table-like format with columns in this exact order: Task Name, Priority, Due Date, Status. Include a short intro line stating these are Critical/High priority tasks due in the next 3 days. If there are many tasks, list them all.",
+        "step_id": "step8",
+        "description": "AI: undefined",
+        "output_variable": "tasks_email_content"
+      },
+      {
+        "id": "step9",
+        "name": "Deliver using google-mail",
+        "type": "action",
+        "action": "send_email",
+        "params": {
+          "content": {
+            "body": "{{tasks_email_content.body}}",
+            "subject": "{{tasks_email_content.subject}}"
+          },
+          "recipients": {
+            "to": "meiribarak@gmail.com"
+          }
+        },
+        "plugin": "google-mail",
+        "step_id": "step9",
+        "description": "Deliver using google-mail",
+        "output_variable": "sent_email_result"
+      }
+    ],
+    "description": "Conditional: check_any_tasks"
+  }
+]

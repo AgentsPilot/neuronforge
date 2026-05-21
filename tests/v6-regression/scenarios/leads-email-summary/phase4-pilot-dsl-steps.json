@@ -1,0 +1,407 @@
+[
+  {
+    "step_id": "step1",
+    "type": "action",
+    "description": "Read all lead rows from the Leads tab of the specified Google Sheets spreadsheet",
+    "plugin": "google-sheets",
+    "output_variable": "raw_leads_data",
+    "output_schema": {
+      "type": "object",
+      "source": "plugin",
+      "properties": {
+        "range": {
+          "type": "string",
+          "source": "plugin",
+          "description": "The actual range that was read (may differ from requested)",
+          "required": true
+        },
+        "values": {
+          "type": "array",
+          "source": "plugin",
+          "description": "2D array of cell values (rows of cells)",
+          "items": {
+            "type": "array",
+            "source": "plugin",
+            "items": {
+              "type": "string",
+              "source": "plugin"
+            }
+          },
+          "required": true
+        },
+        "row_count": {
+          "type": "number",
+          "source": "plugin",
+          "description": "Number of rows returned",
+          "required": true
+        },
+        "column_count": {
+          "type": "number",
+          "source": "plugin",
+          "description": "Number of columns returned"
+        },
+        "major_dimension": {
+          "type": "string",
+          "source": "plugin",
+          "description": "How data is organized (ROWS or COLUMNS)"
+        },
+        "retrieved_at": {
+          "type": "string",
+          "source": "plugin",
+          "description": "Timestamp when data was retrieved (ISO 8601)"
+        }
+      }
+    },
+    "id": "step1",
+    "params": {
+      "spreadsheet_id": "{{input.spreadsheet_id}}",
+      "range": "{{input.sheet_tab_name}}!A:H"
+    },
+    "name": "Read all lead rows from the Leads tab of the specified Google Sheets spreadsheet",
+    "action": "read_range"
+  },
+  {
+    "step_id": "step2",
+    "type": "transform",
+    "operation": "rows_to_objects",
+    "input": "{{raw_leads_data.values}}",
+    "description": "Auto-normalize: Convert 2D array to objects",
+    "output_variable": "raw_leads_data_objects",
+    "config": {
+      "preserve_case": true
+    },
+    "id": "step2",
+    "name": "Auto-normalize: Convert 2D array to objects"
+  },
+  {
+    "step_id": "step3",
+    "type": "transform",
+    "operation": "map",
+    "input": "{{raw_leads_data_objects}}",
+    "description": "Map raw 2D array rows into objects using the first row as header names (Date, Lead Name, Company, Email, Phone, Stage, Notes, Sales Person), excluding the header row itself",
+    "config": {
+      "type": "map",
+      "input": "raw_leads_data_objects",
+      "output_schema": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "Date": {
+              "type": "string"
+            },
+            "Lead Name": {
+              "type": "string"
+            },
+            "Company": {
+              "type": "string"
+            },
+            "Email": {
+              "type": "string"
+            },
+            "Phone": {
+              "type": "string"
+            },
+            "Stage": {
+              "type": "string"
+            },
+            "Notes": {
+              "type": "string"
+            },
+            "Sales Person": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "Date",
+            "Lead Name",
+            "Company",
+            "Email",
+            "Phone",
+            "Stage",
+            "Notes",
+            "Sales Person"
+          ]
+        }
+      },
+      "field_mapping": {
+        "Date": "0",
+        "Lead Name": "1",
+        "Company": "2",
+        "Email": "3",
+        "Phone": "4",
+        "Stage": "5",
+        "Notes": "6",
+        "Sales Person": "7"
+      }
+    },
+    "output_variable": "lead_records",
+    "output_schema": {
+      "type": "array",
+      "source": "ai_declared",
+      "items": {
+        "type": "object",
+        "source": "ai_declared",
+        "properties": {
+          "Date": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "Lead Name": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "Company": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "Email": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "Phone": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "Stage": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "Notes": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "Sales Person": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          }
+        }
+      }
+    },
+    "id": "step3",
+    "_on_empty": "warn",
+    "name": "Map raw 2D array rows into objects using the first row as header names (Date, Lead Name, Company, Email, Phone, Stage, Notes, Sales Person), excluding the header row itself"
+  },
+  {
+    "step_id": "step4",
+    "type": "transform",
+    "operation": "filter",
+    "input": "{{lead_records}}",
+    "description": "Filter lead records to only include rows where Stage equals 4 (excluding blank or missing Stage values)",
+    "config": {
+      "type": "filter",
+      "input": "lead_records",
+      "custom_code": "Keep only leads where Stage column value equals the configured qualification stage",
+      "condition": {
+        "operator": "eq",
+        "value": "{{input.qualification_stage}}",
+        "field": "item.Stage",
+        "conditionType": "simple"
+      }
+    },
+    "output_variable": "qualified_leads",
+    "output_schema": {
+      "type": "array",
+      "source": "inferred",
+      "items": {
+        "type": "object",
+        "source": "ai_declared",
+        "properties": {
+          "Date": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "Lead Name": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "Company": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "Email": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "Phone": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "Stage": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "Notes": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "Sales Person": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          }
+        }
+      }
+    },
+    "id": "step4",
+    "_on_empty": "warn",
+    "name": "Filter lead records to only include rows where Stage equals 4 (excluding blank or missing Stage values)"
+  },
+  {
+    "step_id": "step5",
+    "type": "transform",
+    "operation": "reduce",
+    "input": "{{qualified_leads}}",
+    "description": "Count items for qualified_count",
+    "config": {
+      "type": "reduce",
+      "input": "qualified_leads",
+      "reduce_operation": "count",
+      "reducer": "count"
+    },
+    "output_variable": "qualified_count",
+    "output_schema": {
+      "type": "number",
+      "description": "Count of qualified_count",
+      "source": "inferred"
+    },
+    "id": "step5",
+    "name": "Count items for qualified_count"
+  },
+  {
+    "step_id": "step6",
+    "type": "ai_processing",
+    "input": "{{qualified_leads}}",
+    "prompt": "Generate an HTML email body for a leads summary report. Check the qualified_count: if it is 0, produce a professional HTML message stating 'No high-qualified leads (Stage = 4) were found at this time.' with no data table. If qualified_count is greater than 0, produce a professional HTML table with the following columns in this exact order: Date, Lead Name, Company, Email, Phone, Stage, Notes, Sales Person. The table must have: a styled header row with a background color (#4472C4 blue with white text), borders on all cells (1px solid #ddd), cell padding (8px), alternating row colors for readability, and a professional font (Arial/sans-serif). Include a heading above the table: 'High-Qualified Leads (Stage = 4)'. Each qualified lead becomes one row in the table. Do NOT include any markdown — output raw HTML only.",
+    "description": "Generate HTML email body: if qualified leads exist, render them as a styled HTML table with columns Date, Lead Name, Company, Email, Phone, Stage, Notes, Sales Person; if none found, generate a message stating no Stage 4 leads were found",
+    "config": {
+      "ai_type": "generate",
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "subject": {
+            "type": "string",
+            "description": "Email subject line"
+          },
+          "body": {
+            "type": "string",
+            "description": "Complete HTML email body with either a styled leads table or a none-found message"
+          }
+        },
+        "required": [
+          "subject",
+          "body"
+        ]
+      },
+      "type": "generate",
+      "instruction": "Generate an HTML email body for a leads summary report. Check the qualified_count: if it is 0, produce a professional HTML message stating 'No high-qualified leads (Stage = 4) were found at this time.' with no data table. If qualified_count is greater than 0, produce a professional HTML table with the following columns in this exact order: Date, Lead Name, Company, Email, Phone, Stage, Notes, Sales Person. The table must have: a styled header row with a background color (#4472C4 blue with white text), borders on all cells (1px solid #ddd), cell padding (8px), alternating row colors for readability, and a professional font (Arial/sans-serif). Include a heading above the table: 'High-Qualified Leads (Stage = 4)'. Each qualified lead becomes one row in the table. Do NOT include any markdown — output raw HTML only.",
+      "input": "{{qualified_leads}}"
+    },
+    "output_variable": "email_content",
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "subject": {
+          "type": "string",
+          "source": "ai_declared",
+          "description": "Email subject line"
+        },
+        "body": {
+          "type": "string",
+          "source": "ai_declared",
+          "description": "Complete HTML email body with either a styled leads table or a none-found message"
+        }
+      },
+      "source": "ai_declared"
+    },
+    "input_schema": {
+      "type": "array",
+      "source": "inferred",
+      "items": {
+        "type": "object",
+        "source": "ai_declared",
+        "properties": {
+          "Date": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "Lead Name": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "Company": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "Email": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "Phone": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "Stage": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "Notes": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          },
+          "Sales Person": {
+            "type": "string",
+            "source": "ai_declared",
+            "required": true
+          }
+        }
+      }
+    },
+    "id": "step6",
+    "name": "Generate HTML email body: if qualified leads exist, render them as a styled HTML table with columns Date, Lead Name, Company, Email, Phone, Stage, Notes, Sales Person; if none found, generate a message stating no Stage 4 leads were found"
+  },
+  {
+    "step_id": "step7",
+    "type": "action",
+    "description": "Send the HTML leads summary email to all deduplicated recipients",
+    "plugin": "google-mail",
+    "id": "step7",
+    "params": {
+      "recipients": {
+        "to": [
+          "meiribarak@gmail.com",
+          "eomer3@gmail.com",
+          "offir.omer@gmail.com"
+        ]
+      },
+      "content": {
+        "subject": "{{email_content.subject}}",
+        "html_body": "{{email_content.body}}"
+      }
+    },
+    "name": "Send the HTML leads summary email to all deduplicated recipients",
+    "action": "send_email"
+  }
+]

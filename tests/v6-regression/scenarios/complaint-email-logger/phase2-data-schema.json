@@ -1,0 +1,527 @@
+{
+  "slots": {
+    "candidate_emails": {
+      "schema": {
+        "type": "object",
+        "source": "plugin",
+        "description": "Search results with email details",
+        "properties": {
+          "emails": {
+            "type": "array",
+            "source": "plugin",
+            "description": "Array of matching emails",
+            "items": {
+              "type": "object",
+              "source": "plugin",
+              "semantic_type": "email_message",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "Gmail message ID"
+                },
+                "thread_id": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "Gmail thread ID"
+                },
+                "subject": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "Email subject"
+                },
+                "from": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "Sender address"
+                },
+                "to": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "Recipient addresses"
+                },
+                "date": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "Email date"
+                },
+                "snippet": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "Email preview snippet (first ~200 chars of email body - USE THIS for content matching/filtering)"
+                },
+                "labels": {
+                  "type": "array",
+                  "source": "plugin",
+                  "description": "Gmail labels",
+                  "items": {
+                    "type": "string",
+                    "source": "plugin"
+                  }
+                },
+                "body": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "Email body text (NOTE: Usually empty in search results - use 'snippet' field instead for email content)"
+                },
+                "attachments": {
+                  "type": "array",
+                  "source": "plugin",
+                  "description": "Attachment metadata (if include_attachments=true). Each item contains: filename, mimeType, size, attachment_id (use with get_email_attachment), message_id (email ID)",
+                  "items": {
+                    "type": "object",
+                    "source": "plugin",
+                    "semantic_type": "file_attachment",
+                    "properties": {
+                      "filename": {
+                        "type": "string",
+                        "source": "plugin",
+                        "description": "Attachment filename"
+                      },
+                      "mimeType": {
+                        "type": "string",
+                        "source": "plugin",
+                        "description": "MIME type (application/pdf, image/png, etc.)"
+                      },
+                      "size": {
+                        "type": "number",
+                        "source": "plugin",
+                        "description": "File size in bytes"
+                      },
+                      "attachment_id": {
+                        "type": "string",
+                        "source": "plugin",
+                        "description": "Attachment ID (required for get_email_attachment action)"
+                      },
+                      "message_id": {
+                        "type": "string",
+                        "source": "plugin",
+                        "description": "Email message ID (required for get_email_attachment action)"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "total_found": {
+            "type": "number",
+            "source": "plugin",
+            "description": "Number of emails returned"
+          },
+          "total_available": {
+            "type": "number",
+            "source": "plugin",
+            "description": "Estimated total matching emails"
+          },
+          "search_query": {
+            "type": "string",
+            "source": "plugin",
+            "description": "The search query that was executed"
+          },
+          "searched_at": {
+            "type": "string",
+            "source": "plugin",
+            "description": "ISO 8601 timestamp of search"
+          }
+        }
+      },
+      "scope": "global",
+      "produced_by": "search_complaint_emails",
+      "consumed_by": [
+        "filter_by_complaint_keywords"
+      ]
+    },
+    "sheet_tab": {
+      "schema": {
+        "type": "object",
+        "source": "plugin",
+        "properties": {
+          "spreadsheet_id": {
+            "type": "string",
+            "source": "plugin",
+            "description": "ID of the spreadsheet",
+            "required": true
+          },
+          "sheet_id": {
+            "type": "number",
+            "source": "plugin",
+            "description": "Unique numeric ID of the sheet tab"
+          },
+          "sheet_name": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Name of the sheet tab",
+            "required": true
+          },
+          "tab_name": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Name of the sheet tab (alias for sheet_name)",
+            "required": true
+          },
+          "existed": {
+            "type": "boolean",
+            "source": "plugin",
+            "description": "True if tab already existed, false if newly created"
+          }
+        }
+      },
+      "scope": "global",
+      "produced_by": "ensure_sheet_tab",
+      "consumed_by": [
+        "read_existing_rows",
+        "append_new_complaints"
+      ]
+    },
+    "existing_sheet_data": {
+      "schema": {
+        "type": "object",
+        "source": "plugin",
+        "properties": {
+          "range": {
+            "type": "string",
+            "source": "plugin",
+            "description": "The actual range that was read (may differ from requested)",
+            "required": true
+          },
+          "values": {
+            "type": "array",
+            "source": "plugin",
+            "description": "2D array of cell values (rows of cells)",
+            "items": {
+              "type": "array",
+              "source": "plugin",
+              "items": {
+                "type": "string",
+                "source": "plugin"
+              }
+            },
+            "required": true
+          },
+          "row_count": {
+            "type": "number",
+            "source": "plugin",
+            "description": "Number of rows returned",
+            "required": true
+          },
+          "column_count": {
+            "type": "number",
+            "source": "plugin",
+            "description": "Number of columns returned"
+          },
+          "major_dimension": {
+            "type": "string",
+            "source": "plugin",
+            "description": "How data is organized (ROWS or COLUMNS)"
+          },
+          "retrieved_at": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Timestamp when data was retrieved (ISO 8601)"
+          }
+        }
+      },
+      "scope": "global",
+      "produced_by": "read_existing_rows",
+      "consumed_by": [
+        "extract_existing_message_ids"
+      ]
+    },
+    "existing_message_ids": {
+      "schema": {
+        "type": "object",
+        "source": "inferred",
+        "properties": {
+          "range": {
+            "type": "string",
+            "source": "plugin",
+            "description": "The actual range that was read (may differ from requested)",
+            "required": true
+          },
+          "values": {
+            "type": "array",
+            "source": "plugin",
+            "description": "2D array of cell values (rows of cells)",
+            "items": {
+              "type": "array",
+              "source": "plugin",
+              "items": {
+                "type": "string",
+                "source": "plugin"
+              }
+            },
+            "required": true
+          },
+          "row_count": {
+            "type": "number",
+            "source": "plugin",
+            "description": "Number of rows returned",
+            "required": true
+          },
+          "column_count": {
+            "type": "number",
+            "source": "plugin",
+            "description": "Number of columns returned"
+          },
+          "major_dimension": {
+            "type": "string",
+            "source": "plugin",
+            "description": "How data is organized (ROWS or COLUMNS)"
+          },
+          "retrieved_at": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Timestamp when data was retrieved (ISO 8601)"
+          }
+        }
+      },
+      "scope": "global",
+      "produced_by": "extract_existing_message_ids",
+      "consumed_by": [
+        "deduplicate_against_existing"
+      ]
+    },
+    "complaint_emails": {
+      "schema": {
+        "type": "array",
+        "source": "inferred",
+        "description": "Array of matching emails",
+        "items": {
+          "type": "object",
+          "source": "plugin",
+          "semantic_type": "email_message",
+          "properties": {
+            "id": {
+              "type": "string",
+              "source": "plugin",
+              "description": "Gmail message ID"
+            },
+            "thread_id": {
+              "type": "string",
+              "source": "plugin",
+              "description": "Gmail thread ID"
+            },
+            "subject": {
+              "type": "string",
+              "source": "plugin",
+              "description": "Email subject"
+            },
+            "from": {
+              "type": "string",
+              "source": "plugin",
+              "description": "Sender address"
+            },
+            "to": {
+              "type": "string",
+              "source": "plugin",
+              "description": "Recipient addresses"
+            },
+            "date": {
+              "type": "string",
+              "source": "plugin",
+              "description": "Email date"
+            },
+            "snippet": {
+              "type": "string",
+              "source": "plugin",
+              "description": "Email preview snippet (first ~200 chars of email body - USE THIS for content matching/filtering)"
+            },
+            "labels": {
+              "type": "array",
+              "source": "plugin",
+              "description": "Gmail labels",
+              "items": {
+                "type": "string",
+                "source": "plugin"
+              }
+            },
+            "body": {
+              "type": "string",
+              "source": "plugin",
+              "description": "Email body text (NOTE: Usually empty in search results - use 'snippet' field instead for email content)"
+            },
+            "attachments": {
+              "type": "array",
+              "source": "plugin",
+              "description": "Attachment metadata (if include_attachments=true). Each item contains: filename, mimeType, size, attachment_id (use with get_email_attachment), message_id (email ID)",
+              "items": {
+                "type": "object",
+                "source": "plugin",
+                "semantic_type": "file_attachment",
+                "properties": {
+                  "filename": {
+                    "type": "string",
+                    "source": "plugin",
+                    "description": "Attachment filename"
+                  },
+                  "mimeType": {
+                    "type": "string",
+                    "source": "plugin",
+                    "description": "MIME type (application/pdf, image/png, etc.)"
+                  },
+                  "size": {
+                    "type": "number",
+                    "source": "plugin",
+                    "description": "File size in bytes"
+                  },
+                  "attachment_id": {
+                    "type": "string",
+                    "source": "plugin",
+                    "description": "Attachment ID (required for get_email_attachment action)"
+                  },
+                  "message_id": {
+                    "type": "string",
+                    "source": "plugin",
+                    "description": "Email message ID (required for get_email_attachment action)"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "scope": "global",
+      "produced_by": "filter_by_complaint_keywords",
+      "consumed_by": [
+        "prepare_complaint_rows"
+      ]
+    },
+    "complaint_rows": {
+      "schema": {
+        "type": "array",
+        "source": "ai_declared",
+        "items": {
+          "type": "object",
+          "source": "ai_declared",
+          "properties": {
+            "sender_email": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "subject": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "date": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "full_email_text": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "gmail_message_link_id": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            }
+          }
+        }
+      },
+      "scope": "global",
+      "produced_by": "prepare_complaint_rows",
+      "consumed_by": [
+        "deduplicate_against_existing"
+      ]
+    },
+    "new_complaint_rows": {
+      "schema": {
+        "type": "array",
+        "source": "inferred",
+        "items": {
+          "type": "object",
+          "source": "ai_declared",
+          "properties": {
+            "sender_email": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "subject": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "date": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "full_email_text": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "gmail_message_link_id": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            }
+          }
+        }
+      },
+      "scope": "global",
+      "produced_by": "deduplicate_against_existing",
+      "consumed_by": [
+        "append_new_complaints"
+      ]
+    },
+    "append_result": {
+      "schema": {
+        "type": "object",
+        "source": "plugin",
+        "properties": {
+          "updated_range": {
+            "type": "string",
+            "source": "plugin",
+            "description": "The range where data was appended",
+            "required": true
+          },
+          "appended_rows": {
+            "type": "number",
+            "source": "plugin",
+            "description": "Number of rows appended",
+            "required": true
+          },
+          "appended_columns": {
+            "type": "number",
+            "source": "plugin",
+            "description": "Number of columns in appended data"
+          },
+          "appended_cells": {
+            "type": "number",
+            "source": "plugin",
+            "description": "Total number of cells appended"
+          },
+          "table_range": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Full range of the table including appended data"
+          },
+          "sheet_name": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Name of the sheet where data was appended"
+          },
+          "values": {
+            "type": "array",
+            "source": "plugin",
+            "description": "The values that were appended"
+          },
+          "appended_at": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Timestamp when data was appended (ISO 8601)"
+          }
+        }
+      },
+      "scope": "global",
+      "produced_by": "append_new_complaints"
+    }
+  }
+}

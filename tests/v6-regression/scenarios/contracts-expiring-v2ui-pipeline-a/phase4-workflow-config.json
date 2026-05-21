@@ -1,0 +1,7 @@
+{
+  "spreadsheet_id": "1RHLbBXzrKv24gNgp7a4Lr7RlMIrP9fjacfGWjhPAbOE",
+  "range": "contracts!A:Z",
+  "expiration_window_days": 10,
+  "email_subject": "Contracts expiring in the next 10 days",
+  "recipient_email": "meiribarak@gmail.com"
+}

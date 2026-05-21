@@ -29,7 +29,13 @@ Before doing anything else:
 1. Read the requirement MD from `docs/requirements/[feature-slug].md`
 2. Read `CLAUDE.md` for project-wide code standards and conventions
 3. Read relevant existing files to understand the current implementation
-4. If anything in the requirement is unclear, ask the BA before proceeding
+4. **Check for an applicable skill.** Before scaffolding any of the following, read the matching `SKILL.md` and follow its checklist exactly:
+   - New API route under `app/api/` → `.claude/skills/new-api-route/SKILL.md`
+   - New repository under `lib/repositories/` → `.claude/skills/new-repository/SKILL.md`
+   - New plugin (or new actions on an existing plugin) → `.claude/skills/new-plugin/SKILL.md`
+
+   The skill is the source of truth for these scaffolds. Do not improvise from existing code — many older files in this repo predate the current standard.
+5. If anything in the requirement is unclear, ask the BA before proceeding
 
 ## Step 2: Create the Workplan MD
 

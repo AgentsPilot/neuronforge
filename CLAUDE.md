@@ -173,7 +173,45 @@ The following documents define **mandatory development standards** for this proj
 5. No hardcoded model names — use provider factory + feature flags
 6. TypeScript strict mode — no implicit `any`; if `any` is unavoidable, add a comment explaining why
 7. No new patterns introduced without SA review
-8. When working on the V6 pipeline or plugin system — read the Platform Design Principles section before making any changes
+8. When working on the V6 pipeline (`lib/agentkit/v6/`, `lib/pilot/`, `scripts/test-dsl-execution-simulator/`) or plugin system — read the Platform Design Principles section above AND follow the V6 Work Protocol below.
+
+---
+
+## V6 Work Protocol
+
+The V6 semantic agent generation pipeline has its own docs and process. Follow this protocol whenever you touch V6 code.
+
+### Before starting any V6 work
+
+1. **Open [V6_DOCS_INDEX.md](/docs/v6/V6_DOCS_INDEX.md)** — it gives the Tier 1 reading order. At minimum:
+   - [V6_DESIGN_PRINCIPLES.md](/docs/v6/V6_DESIGN_PRINCIPLES.md) — 12 prescriptive rules synthesized from 38 prior bugs. **Required** before adding new runtime guards, validators, IR converters, or grammar shapes. If you find yourself writing code that matches one of the anti-patterns in Section 2, it's a probable bug.
+   - [V6_OPEN_ITEMS.md](/docs/v6/V6_OPEN_ITEMS.md) — consolidated backlog. Check if your problem is already a known open item before treating it as new.
+
+2. **Check the active workplans** for the area you're touching:
+   - [V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_INTENT_CONTRACT.md](/docs/v6/V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_INTENT_CONTRACT.md) — grammar, IR converter, compiler
+   - [V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION.md](/docs/v6/V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION.md) — execution simulator + Phase A/B/D/E
+   - [V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_SCRIPTS.md](/docs/v6/V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_SCRIPTS.md) — QA testing manual (use for every new regression scenario)
+
+### After fixing a V6 bug
+
+1. Update the WP entry in [V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_WEAK_POINTS.md](/docs/v6/V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_WEAK_POINTS.md): mark status as ✅ Fixed with commit ref + date in the summary table. Add a Change History entry at the bottom.
+2. Remove the entry from V6_OPEN_ITEMS.md (don't double-track).
+3. If a **new pattern** emerged that future code should avoid: extend V6_DESIGN_PRINCIPLES.md — either add the new WP to an existing principle's Evidence list, or add a new principle following the same structure (Rule / Why / Evidence / How to apply / Anti-rule).
+4. If a new anti-pattern code shape surfaced, add it to V6_DESIGN_PRINCIPLES.md § Section 2.
+
+### When deferring a bug
+
+1. Add a new WP entry to WEAK_POINTS.md with full diagnosis (problem, evidence, fix shape, why-this-wasn't-caught-earlier).
+2. Add a one-line entry to V6_OPEN_ITEMS.md pointing at the WP.
+3. Update V6_DOCS_INDEX.md "Open work" snapshot if priority changes.
+
+### When adding a new regression scenario
+
+Follow the step-by-step procedure in [V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_SCRIPTS.md](/docs/v6/V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_SCRIPTS.md). After Phase E verification, commit the scenario snapshot (scenario.json + intent-contract.json + phase2/phase4 JSON files) and update `scenario.json`'s `phase_e_success` / `phase_e_caveat` fields.
+
+### Single-source-of-truth principle
+
+Every open item must have exactly **one authoritative source** (WEAK_POINTS for WPs, INTENT_CONTRACT for grammar tasks, scenario.json for untested-scenario notes). V6_OPEN_ITEMS.md is a pointer index — never write full detail there; always link to the source.
 
 ---
 
@@ -698,6 +736,9 @@ npm run lint       # ESLint
 | Document | Purpose | Last Updated |
 |----------|---------|--------------|
 | [feature_flags.md](/docs/feature_flags.md) | Complete feature flag reference (env + database flags) | 2026-02-08 |
+| [V6_DOCS_INDEX.md](/docs/v6/V6_DOCS_INDEX.md) | **V6 documentation index — read FIRST for any V6 work.** Tier 1 / Tier 2 reading order, marks current/stale/archived. | 2026-05-15 |
+| [V6_DESIGN_PRINCIPLES.md](/docs/v6/V6_DESIGN_PRINCIPLES.md) | **V6 design do's and don'ts synthesized from 38 WPs.** 12 principles + 7 anti-patterns + decision checklist. Required reading before adding new V6 runtime guards, validators, or grammar shapes. | 2026-05-15 |
+| [V6_OPEN_ITEMS.md](/docs/v6/V6_OPEN_ITEMS.md) | **V6 consolidated backlog.** Open WPs (by priority), workplan tasks, untested scenario logic, doc-maintenance debt. Start here when picking up new V6 work. | 2026-05-15 |
 | [V6_OVERVIEW.md](/docs/v6/V6_OVERVIEW.md) | V6 agent generation system overview and documentation guide | 2026-01-16 |
 | [V6_AGENT_CREATION_INTEGRATION_PLAN.md](/docs/v6/V6_AGENT_CREATION_INTEGRATION_PLAN.md) | V6 integration with Intent Validation and Review UI | 2026-01-21 |
 | [V2_Thread-Based-Agent-Creation-Flow.md](/docs/V2_Thread-Based-Agent-Creation-Flow.md) | Thread-based agent creation flow diagram | 2026-01-16 |

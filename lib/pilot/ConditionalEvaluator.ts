@@ -27,6 +27,77 @@ import {
   isComplexCondition,
 } from './types';
 import { ExecutionContext } from './ExecutionContext';
+// WP-45: delegate date parsing to WP-29's canonical, locale-aware parser
+// (handles DD/MM/YYYY, MM/DD/YYYY disambiguation via unambiguous detection
+// + user-timezone fallback). Previously this file had its own weaker parser
+// that only matched fixed-format regexes and relied on `new Date(value)`,
+// which silently rejected DD/M/YYYY shapes the IC LLM emits in date filters.
+import { parseDate as parseDateShared } from './transforms/StructuredTransforms';
+
+/**
+ * WP-21: tolerate set-membership operators (`contains_any`, `in`, `not_in`)
+ * receiving a comma-separated string instead of an array.
+ *
+ * Why: the LLM frequently emits keyword-list config values as a single
+ * comma-separated string in `workflow_config` because that's how users
+ * write keyword lists in prose ("complaint, refund, angry, not working").
+ * The runtime contract requires an array. Rather than failing, we split
+ * on comma and trim whitespace — same philosophy as WP-SR's `column_N`
+ * tolerance and WP-20's object-row tolerance.
+ *
+ * Returns `null` when the value is neither array nor string — caller
+ * should throw with a meaningful error in that case.
+ */
+function coerceToArray(value: any): any[] | null {
+  if (Array.isArray(value)) return value;
+  if (typeof value === 'string') {
+    return value.split(',').map(s => s.trim()).filter(s => s.length > 0);
+  }
+  return null;
+}
+
+/**
+ * WP-45: Detect whether a string looks like a variable reference path
+ * ("date_window.window_start", "existing_message_ids") versus a literal
+ * value the user actually wants to compare against ("Critical", "Done").
+ *
+ * Heuristic: identifier characters + dots/brackets, no whitespace, no
+ * common literal indicators. Variable paths in this codebase use
+ * snake_case / camelCase identifiers separated by `.` (and sometimes
+ * `[N]` for array indexes). Literal values almost always contain
+ * spaces, punctuation, or non-identifier characters.
+ *
+ * False positives are benign: `resolveVariable` returns the input
+ * unchanged when a path doesn't resolve, so a literal that happens to
+ * look like a path stays as itself.
+ */
+function looksLikeBareVariableRef(value: string): boolean {
+  if (value.length === 0 || value.length > 200) return false;
+  // Match: starts with letter or underscore, then identifier chars + . [N]
+  return /^[a-zA-Z_$][\w$]*(\.[a-zA-Z_$][\w$]*|\[\d+\])*$/.test(value);
+}
+
+/**
+ * WP-45: Date-aware ordered comparison. Returns -1, 0, 1 if both sides
+ * parse as dates; null when at least one side is not a date (caller
+ * falls back to native comparison). Both sides must look "date-like"
+ * (string or Date) — pure-number comparisons stay numeric so that
+ * existing scenarios comparing scalar fields (counts, IDs, etc.) keep
+ * native numeric semantics.
+ */
+function compareAsDates(left: any, right: any): -1 | 0 | 1 | null {
+  if (left === null || left === undefined || right === null || right === undefined) return null;
+  const dateLike = (v: any) => v instanceof Date || (typeof v === 'string' && v.length > 0);
+  if (!dateLike(left) || !dateLike(right)) return null;
+  const l = parseDateShared(left);
+  const r = parseDateShared(right);
+  if (!l || !r) return null;
+  const lt = l.getTime();
+  const rt = r.getTime();
+  if (lt < rt) return -1;
+  if (lt > rt) return 1;
+  return 0;
+}
 
 export class ConditionalEvaluator {
   /**
@@ -151,18 +222,24 @@ export class ConditionalEvaluator {
 
     const actualValue = context.resolveVariable(fieldRef);
 
-    // ✅ CRITICAL FIX: Resolve condition.value if it contains variable references
-    // Example: condition.value = "{{existing_sheet_data.values[*][4]}}" needs to be resolved
-    // O26: Also resolve bare variable names (e.g., "existing_message_ids") for in/not_in operators
-    // These are step output variables referenced without {{}} in filter conditions
+    // ✅ Resolve condition.value if it contains variable references.
+    //   - {{var.path}} → resolveVariable always.
+    //   - bare var path (e.g. "date_window.window_start") → defensive wrap
+    //     before resolveVariable, then keep the resolved value only if it
+    //     actually changed (avoids accidentally swallowing literal strings
+    //     that happen to look like a path). Same family as WP-22.
+    // WP-45 (2026-05-17): previously this bare-string resolution only fired
+    //   for the in/not_in operators (O26). Pipeline A's IntentToIRConverter
+    //   emits date-range filter conditions like
+    //     { field: "item.Due Date", value: "date_window.window_start", operator: "gte" }
+    //   — bare-string refs with gte/lte. Without this generalisation the
+    //   runtime treats "date_window.window_start" as a literal string and
+    //   the comparison always fails (lexicographic, "19/5/2026" >= "date_window…").
     let expectedValue = condition.value;
     if (typeof expectedValue === 'string') {
       if (expectedValue.includes('{{')) {
         expectedValue = context.resolveVariable(expectedValue);
-      } else if (condition.operator === 'in' || condition.operator === 'not_in') {
-        // O26: Resolve bare variable names for in/not_in operators
-        // Filter conditions may reference step output variables without {{}} wrapper
-        // e.g., value: "existing_message_ids" should resolve to the array from step 3
+      } else if (looksLikeBareVariableRef(expectedValue)) {
         const resolved = context.resolveVariable(`{{${expectedValue}}}`);
         if (resolved !== undefined && resolved !== `{{${expectedValue}}}`) {
           expectedValue = resolved;
@@ -659,25 +736,40 @@ export class ConditionalEvaluator {
       case 'ne':  // Alias for backward compatibility with system prompts
         return l != r;
 
+      // WP-45: Ordered comparisons are date-aware when both sides parse as
+      // dates. The IntentContract LLM commonly emits date-range filters via
+      // gte/lte (e.g. `Due Date >= window_start && Due Date <= window_end`).
+      // Without this, the comparison falls through to lexicographic
+      // string compare and "19/5/2026" >= "2026-05-17" is always false.
+      // Non-date sides keep the native > / >= / < / <= behaviour, so
+      // numeric and string comparisons in existing scenarios are unaffected.
       case '>':
       case 'greater_than':
-      case 'gt':  // Alias for backward compatibility with system prompts
-        return l > r;
+      case 'gt': {
+        const cmp = compareAsDates(left, right);
+        return cmp !== null ? cmp > 0 : left > right;
+      }
 
       case '>=':
       case 'greater_than_or_equal':
-      case 'gte':  // Alias for backward compatibility with system prompts
-        return l >= r;
+      case 'gte': {
+        const cmp = compareAsDates(left, right);
+        return cmp !== null ? cmp >= 0 : left >= right;
+      }
 
       case '<':
       case 'less_than':
-      case 'lt':  // Alias for backward compatibility with system prompts
-        return l < r;
+      case 'lt': {
+        const cmp = compareAsDates(left, right);
+        return cmp !== null ? cmp < 0 : left < right;
+      }
 
       case '<=':
       case 'less_than_or_equal':
-      case 'lte':  // Alias for backward compatibility with system prompts
-        return l <= r;
+      case 'lte': {
+        const cmp = compareAsDates(left, right);
+        return cmp !== null ? cmp <= 0 : left <= right;
+      }
 
       case 'contains':
         // Null check: null/undefined never contains anything
@@ -710,11 +802,47 @@ export class ConditionalEvaluator {
         // String not_contains: case-insensitive check
         return !String(left).toLowerCase().includes(String(right).toLowerCase());
 
-      case 'in':
-        return Array.isArray(right) && right.includes(left);
+      case 'contains_any': {
+        // W2: keyword-filter shorthand — `left` contains ANY of the values in `right` (case-insensitive).
+        // `right` is normally an array. WP-21: also accept comma-separated string
+        // (LLM emits keyword lists this way to mirror user prose).
+        if (left === null || left === undefined) return false;
+        const rightArr = coerceToArray(right);
+        if (rightArr === null) {
+          throw new ConditionError(
+            `contains_any requires an array or comma-separated string on the right side, got ${typeof right}`,
+            undefined,
+            { right }
+          );
+        }
+        if (Array.isArray(left)) {
+          // Array left: any element matches any value in right (case-insensitive for strings)
+          return left.some(leftItem =>
+            rightArr.some(rightItem => {
+              if (typeof leftItem === 'string' && typeof rightItem === 'string') {
+                return leftItem.toLowerCase() === rightItem.toLowerCase();
+              }
+              return leftItem === rightItem;
+            })
+          );
+        }
+        // String left: substring contains any of the values in right (case-insensitive)
+        return rightArr.some(v =>
+          String(left).toLowerCase().includes(String(v).toLowerCase())
+        );
+      }
 
-      case 'not_in':
-        return Array.isArray(right) && !right.includes(left);
+      case 'in': {
+        // WP-21: accept array OR comma-separated string on the RHS.
+        const rightArr = coerceToArray(right);
+        return rightArr !== null && rightArr.includes(left);
+      }
+
+      case 'not_in': {
+        // WP-21: accept array OR comma-separated string on the RHS.
+        const rightArr = coerceToArray(right);
+        return rightArr !== null && !rightArr.includes(left);
+      }
 
       case 'exists':
         return left !== undefined && left !== null;
@@ -792,36 +920,25 @@ export class ConditionalEvaluator {
   }
 
   /**
-   * Parse date from various formats
-   * Returns null if parsing fails
+   * Parse date from various formats. Delegates to the shared WP-29 parser
+   * in `StructuredTransforms.ts` so this file and the W2 expression
+   * evaluator agree on disambiguation (ISO → unambiguous one-side-over-12
+   * → user-timezone fallback, defaulting to DD/MM/YYYY for ~85% of the
+   * world). The earlier private implementation here only matched fixed-
+   * format regexes (MM/DD/YYYY hard-coded) and accepted `new Date(value)`
+   * for anything else — silently rejecting `19/5/2026`-shape inputs the
+   * IC LLM commonly emits.
+   *
+   * WP-45 (2026-05-17).
    */
   private parseDate(value: any): Date | null {
-    if (value instanceof Date) {
-      return isNaN(value.getTime()) ? null : value;
-    }
     if (typeof value === 'number') {
-      // Unix timestamp (seconds or milliseconds)
+      // Preserve the prior behaviour for numeric (Unix-timestamp) inputs:
+      // values < 1e11 are seconds since epoch, larger are milliseconds.
       const date = new Date(value > 1e11 ? value : value * 1000);
       return isNaN(date.getTime()) ? null : date;
     }
-    if (typeof value === 'string') {
-      // Try ISO format first
-      const date = new Date(value);
-      if (!isNaN(date.getTime())) return date;
-      // Try common date formats
-      const formats = [
-        /^\d{4}-\d{2}-\d{2}$/,  // YYYY-MM-DD
-        /^\d{2}\/\d{2}\/\d{4}$/,  // MM/DD/YYYY
-        /^\d{2}-\d{2}-\d{4}$/,  // DD-MM-YYYY
-      ];
-      for (const format of formats) {
-        if (format.test(value)) {
-          const parsed = new Date(value);
-          if (!isNaN(parsed.getTime())) return parsed;
-        }
-      }
-    }
-    return null;
+    return parseDateShared(value);
   }
 
   /**
