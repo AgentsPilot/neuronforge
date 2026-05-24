@@ -29,7 +29,7 @@ import {
   isControlStep,
   isForEachControl,
   isIfControl,
-} from '@/lib/validation/phase4-schema';
+} from '@/lib/agentkit/v4/technical-workflow-schema';
 
 /**
  * Input for building DSL from technical workflow

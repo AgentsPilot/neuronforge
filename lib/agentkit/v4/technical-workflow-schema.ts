@@ -3,9 +3,12 @@ import {
   AnalysisObjectSchema,
   EnhancedPromptSchema,
   Phase3MetadataSchema
-} from './phase3-schema';
+} from '@/lib/validation/phase3-schema';
 
-// ===== PHASE 4 SPECIFIC SCHEMAS =====
+// ===== TECHNICAL WORKFLOW SCHEMAS =====
+// Originally named phase4-schema.ts (R1 cleanup renamed to technical-workflow-schema.ts).
+// Used by the V4/V5 generator pipeline (DSLBuilder, V4WorkflowGenerator, V5WorkflowGenerator)
+// and the technical reviewer. Not used by the V2 thread-based agent-creation flow anymore.
 
 /**
  * Input source types for technical workflow steps

@@ -16,8 +16,6 @@ import type {
   UserContext
 } from '@/components/agent-creation/types/agent-prompt-threads';
 import { validatePhase3Response } from '@/lib/validation/phase3-schema';
-import { validatePhase4Response } from '@/lib/validation/phase4-schema';
-import { generateSchemaServices, getSchemaServicesSummary } from '@/lib/utils/schema-services-generator';
 import { ProviderFactory } from '@/lib/ai/providerFactory';
 import { validateContextUsage } from '@/lib/ai/context-limits';
 
@@ -44,7 +42,7 @@ const logger = createLogger({ module: 'API', route: '/api/agent-creation/process
 /**
  * POST /api/agent-creation/process-message
  *
- * Processes a user message within an existing thread for any phase (1, 2, or 3).
+ * Processes a user message within an existing thread for phases 1, 2, or 3.
  * Uses the same thread for all phases to leverage OpenAI's prompt caching.
  */
 export async function POST(request: NextRequest) {
@@ -113,11 +111,11 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (!phase || ![1, 2, 3, 4].includes(phase)) {
+    if (!phase || ![1, 2, 3].includes(phase)) {
       return NextResponse.json(
         {
           success: false,
-          error: 'phase must be 1, 2, 3, or 4',
+          error: 'phase must be 1, 2, or 3',
           phase
         } as ThreadErrorResponse,
         { status: 400 }
@@ -355,65 +353,6 @@ export async function POST(request: NextRequest) {
         enhanced_prompt: enhanced_prompt || null,     // V10: for refinement cycles
         plugin_action_summary: plugin_action_summary_text || undefined  // EP Key Hints (O8)
       };
-    } else if (phase === 4) {
-      // Phase 4: Technical Workflow Generation
-      // Get services_involved from the last Phase 3 iteration or from request
-      let servicesInvolved: string[] = [];
-
-      // Try to get services_involved from enhanced_prompt in request
-      if (enhanced_prompt?.specifics?.services_involved) {
-        servicesInvolved = enhanced_prompt.specifics.services_involved;
-      } else {
-        // Fall back to finding the last Phase 3 response in iterations
-        const iterations = threadRecord.metadata?.iterations || [];
-        const lastPhase3 = [...iterations].reverse().find((iter: any) => iter.phase === 3);
-        if (lastPhase3?.response?.enhanced_prompt?.specifics?.services_involved) {
-          servicesInvolved = lastPhase3.response.enhanced_prompt.specifics.services_involved;
-        }
-      }
-
-      // Generate schema_services from services_involved
-      let schemaServices = {};
-      if (servicesInvolved.length > 0) {
-        try {
-          schemaServices = await generateSchemaServices(servicesInvolved);
-          requestLogger.debug({
-            servicesInvolved,
-            schemaServicesSummary: getSchemaServicesSummary(schemaServices)
-          }, 'Schema services generated for Phase 4');
-        } catch (schemaError: any) {
-          requestLogger.error({ err: schemaError }, 'Failed to generate schema_services');
-        }
-      } else {
-        requestLogger.warn('No services_involved found for Phase 4 - schema_services will be empty');
-      }
-
-      // Get enhanced_prompt from request or fall back to last Phase 3 iteration
-      let phase4EnhancedPrompt = enhanced_prompt;
-      if (!phase4EnhancedPrompt) {
-        const iterations = threadRecord.metadata?.iterations || [];
-        const lastPhase3 = [...iterations].reverse().find((iter: any) => iter.phase === 3);
-        if (lastPhase3?.response?.enhanced_prompt) {
-          phase4EnhancedPrompt = lastPhase3.response.enhanced_prompt;
-        }
-      }
-
-      userMessage = {
-        phase: 4,
-        connected_services: connected_services || threadRecord.metadata?.phase1_connected_services || [],
-        declined_services: declined_services || [],
-        schema_services: schemaServices,
-        enhanced_prompt: phase4EnhancedPrompt // Include enhanced_prompt with resolved_user_inputs for re-runs
-      };
-
-      // Log resolved_user_inputs if present (for re-run debugging)
-      const resolvedInputs = phase4EnhancedPrompt?.specifics?.resolved_user_inputs;
-      if (resolvedInputs && resolvedInputs.length > 0) {
-        requestLogger.info({
-          resolvedUserInputsCount: resolvedInputs.length,
-          resolvedUserInputs: resolvedInputs
-        }, 'Phase 4 re-run with resolved_user_inputs');
-      }
     }
 
     requestLogger.debug({ phase, userMessage }, 'User message constructed');
@@ -625,39 +564,6 @@ export async function POST(request: NextRequest) {
 
         requestLogger.debug('Phase 3 response validated successfully');
         aiResponse = validation.data as ProcessMessageResponse;
-      } else if (phase === 4) {
-        // Strict validation for Phase 4 responses
-        requestLogger.debug('Validating Phase 4 response structure');
-
-        // Log raw Phase 4 response before validation for debugging
-        requestLogger.debug({
-          rawPhase4Response: parsedJson,
-          hasMetadata: !!parsedJson.metadata,
-          hasPhase4Metadata: !!parsedJson.metadata?.phase4,
-          technicalWorkflowCount: parsedJson.technical_workflow?.length || 0,
-          technicalInputsCount: parsedJson.technical_inputs_required?.length || 0
-        }, 'Phase 4 raw response before validation');
-
-        const validation = validatePhase4Response(parsedJson);
-
-        if (!validation.success) {
-          requestLogger.error({
-            validationErrors: validation.errors,
-            phase
-          }, 'Phase 4 response validation failed');
-          return NextResponse.json(
-            {
-              success: false,
-              error: 'Invalid Phase 4 response structure from AI',
-              phase,
-              details: validation.errors?.join('; ') || 'Unknown validation error'
-            } as ThreadErrorResponse,
-            { status: 500 }
-          );
-        }
-
-        requestLogger.debug('Phase 4 response validated successfully');
-        aiResponse = validation.data as ProcessMessageResponse;
       } else {
         // Phase 1 & 2: No strict validation yet
         aiResponse = parsedJson;
@@ -687,21 +593,6 @@ export async function POST(request: NextRequest) {
           declinedPluginsBlocking: aiResponse.metadata?.declined_plugins_blocking,
           hasError: !!aiResponse.error
         }, 'Phase 3 - OAuth gate check complete');
-      }
-
-      // Step 12.7: Log Phase 4 technical workflow details
-      if (phase === 4) {
-        const phase4Metadata = aiResponse.metadata as any;
-        requestLogger.info({
-          technicalWorkflowSteps: aiResponse.technical_workflow?.length || 0,
-          technicalInputsRequired: aiResponse.technical_inputs_required?.length || 0,
-          canExecute: aiResponse.feasibility?.can_execute,
-          blockingIssues: aiResponse.feasibility?.blocking_issues?.length || 0,
-          warnings: aiResponse.feasibility?.warnings?.length || 0,
-          readyForGeneration: phase4Metadata?.ready_for_generation,
-          needsTechnicalInputs: phase4Metadata?.phase4?.needs_technical_inputs,
-          needsUserFeedback: phase4Metadata?.phase4?.needs_user_feedback
-        }, 'Phase 4 - Technical workflow generation complete');
       }
 
     } catch (parseError: any) {
@@ -744,14 +635,8 @@ export async function POST(request: NextRequest) {
 
     // Determine thread status based on phase and response
     let newStatus: 'active' | 'completed' = 'active';
-    if (phase === 4) {
-      // Phase 4: only mark completed if ready_for_generation is true
-      const phase4Metadata = aiResponse.metadata as any;
-      if (phase4Metadata?.ready_for_generation === true) {
-        newStatus = 'completed';
-      }
-    } else if (phase === 3) {
-      // Phase 3: mark completed (legacy behavior, will transition to Phase 4)
+    if (phase === 3) {
+      // Phase 3 is the final phase post-R1 cleanup — mark thread completed on success.
       newStatus = 'completed';
     }
 

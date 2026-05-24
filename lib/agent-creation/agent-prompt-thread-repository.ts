@@ -6,14 +6,14 @@
  */
 
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
-import { createLogger } from '@/lib/logger';
+import { createLogger, type Logger } from '@/lib/logger';
 import type {
   AgentPromptThread,
   CreateAgentPromptThread,
   UpdateAgentPromptThread
 } from '@/components/agent-creation/types/agent-prompt-threads';
 
-const logger = createLogger({ module: 'Repository', component: 'AgentPromptThreadRepository' });
+const logger = createLogger({ service: 'AgentPromptThreadRepository' });
 
 export class AgentPromptThreadRepository {
   private supabase: SupabaseClient;
@@ -24,6 +24,38 @@ export class AgentPromptThreadRepository {
       process.env.SUPABASE_URL!,
       process.env.SUPABASE_SERVICE_ROLE_KEY!
     );
+  }
+
+  /**
+   * Defensive coercion for legacy threads that still have `current_phase = 4` in the DB.
+   *
+   * Phase 4 was removed from the agent-creation flow in R1 (see
+   * V2_AGENT_CREATION_R1_PHASE4_CLEANUP_REQUIREMENT.md FR10-12). The `ThreadPhase`
+   * union is now `1 | 2 | 3`, but the database column can still contain `4` for rows
+   * created against the v14 prompt. We coerce those rows to `current_phase = 3,
+   * status = 'completed'` on read so downstream code only ever sees the new contract.
+   *
+   * The cast on `current_phase as number` is necessary because narrowing the TS union
+   * does not retroactively narrow the underlying DB column.
+   *
+   * NOTE: The DB migration is intentionally deferred per R1 requirement Q3 — the read
+   * path is the SOLE owner of this coercion. Do NOT write a migration to rewrite
+   * legacy `current_phase = 4` rows without re-reading R1 (Q3) and consulting SA;
+   * that decision was deliberate to avoid touching production data.
+   */
+  private coerceLegacyPhase4<T extends AgentPromptThread | null>(
+    thread: T,
+    repoLogger: Logger
+  ): T {
+    if (!thread) return thread;
+    if ((thread.current_phase as number) === 4) {
+      repoLogger.info(
+        { threadId: thread.id, originalPhase: 4 },
+        'Legacy phase-4 thread coerced to phase-3 completed'
+      );
+      return { ...thread, current_phase: 3, status: 'completed' } as T;
+    }
+    return thread;
   }
 
   /**
@@ -113,7 +145,7 @@ export class AgentPromptThreadRepository {
         'Thread fetched'
       );
 
-      return record as AgentPromptThread;
+      return this.coerceLegacyPhase4(record as AgentPromptThread, repoLogger);
     } catch (error: any) {
       const duration = Date.now() - startTime;
       if (error instanceof RepositoryError) throw error;
@@ -154,7 +186,7 @@ export class AgentPromptThreadRepository {
         'Thread fetched by ID'
       );
 
-      return record as AgentPromptThread;
+      return this.coerceLegacyPhase4(record as AgentPromptThread, repoLogger);
     } catch (error: any) {
       const duration = Date.now() - startTime;
       if (error instanceof RepositoryError) throw error;

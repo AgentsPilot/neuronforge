@@ -18,7 +18,7 @@ import type {
 import { PROVIDERS } from '@/lib/ai/providerFactory';
 import { resolveThreadProviderConfig } from '@/lib/agent-creation/thread-provider-config';
 
-const aiAgentPromptTemplate = "Workflow-Agent-Creation-Prompt-v14-chatgpt";
+const aiAgentPromptTemplate = "Workflow-Agent-Creation-Prompt-v15-chatgpt";
 
 // Initialize Supabase client (still needed for AIAnalyticsService)
 const supabase = createClient(
@@ -43,7 +43,7 @@ const logger = createLogger({ module: 'API', route: '/api/agent-creation/init-th
  * POST /api/agent-creation/init-thread
  *
  * Creates a new OpenAI thread with system prompt injected once for agent creation.
- * This thread will be used for phases 1-4 (analyze, clarify, enhance, technical workflow).
+ * This thread will be used for phases 1-3 (analyze, clarify, enhance).
  */
 export async function POST(request: NextRequest) {
   // Generate or extract correlation ID for request tracing

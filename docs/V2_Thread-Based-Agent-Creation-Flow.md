@@ -1,6 +1,6 @@
 # Thread-Based Agent Creation Flow Diagram
 
-> **Last Updated**: 2026-04-01
+> **Last Updated**: 2026-05-24
 
 ## Overview
 This diagram shows the complete user journey through the V2 agent creation page (`app/v2/agents/new/page.tsx`).
@@ -37,7 +37,7 @@ This diagram shows the complete user journey through the V2 agent creation page 
 │    │                                                                │
 │    ├─► POST /api/agent-creation/init-thread                         │
 │    │   • Creates OpenAI thread                                      │
-│    │   • Injects system prompt (Workflow-Agent-Creation-Prompt-v14)  │
+│    │   • Injects system prompt (Workflow-Agent-Creation-Prompt-v15)  │
 │    │   • Stores in agent_prompt_threads table                       │
 │    │   • Returns: { thread_id: "thread_abc123" }                    │
 │    │                                                                │
@@ -303,67 +303,10 @@ This diagram shows the complete user journey through the V2 agent creation page 
 │     • Redirect to /agents/{id}                                      │
 │                                                                     │
 └─────────────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────────────┐
-│  Phase 4 - Technical Workflow Generation (NOT WIRED IN FRONTEND)    │
-│  ─────────────────────────────────────────────────────────────────  │
-│                                                                     │
-│  NOTE: Phase 4 backend support exists in process-message route,     │
-│  but the V2 frontend does NOT call it. After Phase 3, the flow     │
-│  goes directly to agent generation (V6 or V4, see above).           │
-│                                                                     │
-│  To enable Phase 4, frontend would need to:                         │
-│  1. Add processPhase4() function                                    │
-│  2. Call it after Phase 3 approval                                  │
-│  3. Display technical_workflow steps                                │
-│  4. Collect technical_inputs_required values                        │
-│                                                                     │
-│  Backend Phase 4 Request (if wired):                                │
-│    │                                                                │
-│    ├─► POST /api/agent-creation/process-message                     │
-│    │   Body: {                                                      │
-│    │     thread_id: "thread_abc123",                                │
-│    │     phase: 4,                                                  │
-│    │     enhanced_prompt: { /* from Phase 3 */ },                   │
-│    │     schema_services: { /* auto-generated from services */ }    │
-│    │   }                                                            │
-│    │                                                                │
-│    │   Backend Processing:                                          │
-│    │   • Generates schema_services from services_involved           │
-│    │   • Builds Phase 4 user message with full plugin definitions   │
-│    │   • Calls AI provider to compile functional spec → tech steps  │
-│    │   • Validates response with Phase 4 Zod schema                 │
-│    │   • Stores AI response in thread                               │
-│    │                                                                │
-│    └─► Returns: {                                                   │
-│          technical_workflow: [                                      │
-│            { id: "step1", kind: "operation",                        │
-│              plugin: "google-mail", action: "searchMessages", ... },│
-│            { id: "step2", kind: "transform",                        │
-│              operation: { type: "summarize_with_llm" }, ... },      │
-│            ...                                                      │
-│          ],                                                         │
-│          technical_inputs_required: [                               │
-│            { key: "slack_channel_id", plugin: "slack",              │
-│              description: "Slack channel to post to" }              │
-│          ],                                                         │
-│          feasibility: {                                             │
-│            can_execute: true,                                       │
-│            blocking_issues: [],                                     │
-│            warnings: [{ type: "assumption", description: "..." }]   │
-│          },                                                         │
-│          metadata: {                                                │
-│            ready_for_generation: true,                              │
-│            phase4: {                                                │
-│              can_execute: true,                                     │
-│              needs_technical_inputs: true,                          │
-│              needs_user_feedback: false                             │
-│            }                                                        │
-│          }                                                          │
-│        }                                                            │
-│                                                                     │
-└─────────────────────────────────────────────────────────────────────┘
 ```
+
+> **Note (R1 cleanup, 2026-05-24):** Phase 4 ("Technical Workflow Generation") has been removed from the agent-creation flow. The V2 frontend only ever orchestrates Phases 1-3 (Describe → Clarify → Enhance → Approve), after which agent generation runs via V6 or V4 directly. Phase 4 was never wired into the production frontend; the supporting backend branch, validation schema, and helper utility were removed in R1.
+
 
 ---
 
@@ -396,14 +339,6 @@ This diagram shows the complete user journey through the V2 agent creation page 
 | `clarificationAnswers`   | `{}`      | `{}`               | `{q1: "..."}` | `{q1: "...", q2: "..."}` |
 | `enhancedPrompt`         | `""`      | `""`               | `""`               | `"Plan description..."` |
 | `enhancementComplete`    | `false`   | `false`            | `false`            | `true`             |
-
-### Phase 4 State (NOT IMPLEMENTED IN FRONTEND)
-
-| State Variable           | Description |
-|--------------------------|-------------|
-| `technicalWorkflow`      | Would hold `[{id, kind, plugin, action, ...}]` |
-| `technicalInputsRequired`| Would hold `[{key, plugin, description, ...}]` |
-| `feasibility`            | Would hold `{can_execute, blocking_issues, warnings}` |
 
 ---
 
@@ -550,8 +485,8 @@ API Calls (V4):  init-thread + process-message × 3 + generate-agent-v4 + create
 
 | Route | Purpose |
 |-------|---------|
-| `init-thread/route.ts` | Creates OpenAI thread with v14 system prompt |
-| `process-message/route.ts` | Handles Phases 1-4 message processing |
+| `init-thread/route.ts` | Creates OpenAI thread with v15 system prompt |
+| `process-message/route.ts` | Handles Phases 1-3 message processing |
 | `thread/[id]/route.ts` | Resume existing thread with full history |
 
 ### Agent Generation APIs
@@ -566,7 +501,6 @@ API Calls (V4):  init-thread + process-message × 3 + generate-agent-v4 + create
 | File | Purpose |
 |------|---------|
 | `phase3-schema.ts` | Zod validation for Phase 3 responses |
-| `phase4-schema.ts` | Zod validation for Phase 4 responses |
 
 ---
 
@@ -656,5 +590,6 @@ Try-Catch Boundaries:
 
 | Date | Change | Details |
 |------|--------|---------|
+| 2026-05-24 | R1 Phase 4 cleanup | Removed Phase 4 documentation as part of R1 cleanup (Phase 4 was never wired in the production frontend). System prompt bumped to v15; `process-message` now handles Phases 1-3 only; `phase4-schema.ts` no longer exists at that path; `schema-services-generator.ts` deleted. |
 | 2026-04-01 | Updated for V6 pipeline + accurate line refs | Documented V6/V4 branching in agent generation, updated system prompt to v14, fixed all line number references, added `ai_provider`/`ai_model` to thread schema, added agent generation APIs table |
 | 2026-01-16 | Initial document | Original thread-based flow diagram with Phases 1-4 |
