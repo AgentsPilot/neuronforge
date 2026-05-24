@@ -18,7 +18,7 @@ import { createLogger } from '@/lib/logger';
 
 import { StepPlan, StepPlanExtractor } from './core/step-plan-extractor';
 import { DSLBuilder, TechnicalWorkflowBuildInput } from './core/dsl-builder';
-import type { TechnicalWorkflowStep } from '@/lib/validation/phase4-schema';
+import type { TechnicalWorkflowStep } from '@/lib/agentkit/v4/technical-workflow-schema';
 
 /**
  * Input structure for technical workflow

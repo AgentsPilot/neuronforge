@@ -20,7 +20,7 @@ import { IPluginContext } from '@/lib/types/plugin-definition-context';
 import { createLogger } from '@/lib/logger';
 import { PromptLoader } from '@/app/api/types/PromptLoader';
 import { ProviderFactory, ProviderName } from '@/lib/ai/providerFactory';
-import type { TechnicalWorkflowStep } from '@/lib/validation/phase4-schema';
+import type { TechnicalWorkflowStep } from '@/lib/agentkit/v4/technical-workflow-schema';
 import { jsonrepair } from 'jsonrepair';
 import {
   validateTechnicalReviewerResponse,

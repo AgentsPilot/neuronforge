@@ -37,6 +37,17 @@ Before doing anything else:
    The skill is the source of truth for these scaffolds. Do not improvise from existing code — many older files in this repo predate the current standard.
 5. If anything in the requirement is unclear, ask the BA before proceeding
 
+### Branch Setup (mandatory before writing any code)
+
+All development MUST happen on a dedicated `feature/...` (or `fix/...`) branch. **You are NEVER permitted to commit to `main` directly, and you do NOT create branches — the Release Manager (RM) does that.** Before writing your first line of code:
+
+1. Confirm the current branch with `git branch --show-current`.
+2. The branch should already exist (RM creates it at cycle kickoff before you are invoked). It must match the branch name in the requirement MD's FR section (e.g. `feature/v2-agent-creation-r1-phase4-cleanup`).
+3. If you find yourself on `main` or any other branch, **stop and escalate to TL** — something is wrong upstream. Do NOT create the branch yourself.
+4. Record the branch name in the workplan MD's header.
+
+Merging the feature branch into `main` is also the RM's job — and only after SA approval ✅, QA pass ✅, and explicit user approval in the same session.
+
 ## Step 2: Create the Workplan MD
 
 Save to `docs/workplans/[feature-slug]-workplan.md` **before writing a single line of code**:
@@ -136,8 +147,11 @@ If you find yourself writing `if plugin === 'gmail'` anywhere in the compiler, s
 
 ## What You Must NOT Do
 
+- **Never work on `main` — every change starts on a `feature/...` (or `fix/...`) branch.** Confirm with `git branch --show-current` before your first edit.
+- **Never create the branch yourself — RM creates it at cycle kickoff.** If the expected branch doesn't exist, escalate to TL.
 - Never start coding before the workplan is written
 - Never skip Zod validation on API boundaries
 - Never use `console.log` in production paths — use Pino
 - Never commit directly — that is the RM's responsibility
+- Never merge into `main` yourself — only RM merges, and only after SA + QA + user approval
 - Never modify database migrations without SA approval

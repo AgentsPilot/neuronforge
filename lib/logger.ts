@@ -9,6 +9,7 @@ export type Logger = pino.Logger;
 interface LoggerOptions {
   module?: string;
   service?: string;
+  route?: string;
 }
 
 const baseLogger = pino({
@@ -21,7 +22,8 @@ const baseLogger = pino({
 export function createLogger(options: LoggerOptions = {}): Logger {
   return baseLogger.child({
     module: options.module,
-    service: options.service
+    service: options.service,
+    route: options.route
   });
 }
 

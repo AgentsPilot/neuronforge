@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { TechnicalWorkflowStepSchema } from './phase4-schema';
+import { TechnicalWorkflowStepSchema } from '@/lib/agentkit/v4/technical-workflow-schema';
 
 // ===== TECHNICAL REVIEWER RESPONSE SCHEMAS =====
 
