@@ -4,7 +4,7 @@
 **Requirement:** [V2_AGENT_CREATION_R1_PHASE4_CLEANUP_REQUIREMENT.md](/docs/requirements/V2_AGENT_CREATION_R1_PHASE4_CLEANUP_REQUIREMENT.md)
 **Date:** 2026-05-24
 **Branch:** `feature/v2-agent-creation-r1-phase4-cleanup` (confirmed via `git branch --show-current`; branched off local `main`, which was 2 commits behind `origin/main` at branching time — see Open Questions §1)
-**Status:** Code Complete
+**Status:** Committed + Merged
 
 ---
 
@@ -402,7 +402,23 @@ Time:        96.826 s
 
 ## Commit Info
 
-[RM will populate this section]
+**Status:** Committed + Merged to `main`
+**Date:** 2026-05-24
+**Feature branch:** `feature/v2-agent-creation-r1-phase4-cleanup` (pushed to origin; retained post-merge — candidate for deletion once R2 has cut its branch)
+**Merge strategy:** `--no-ff` per FR17 (zero conflicts; v4/v5 generator files auto-merged with incoming `main` calibration changes)
+**Rebase before merge:** Skipped — FR17's `--no-ff` produces a merge commit regardless, so the pre-merge rebase step was not adding value. Captured as a process-improvement note in the R1 retrospective so this is the default for R2/R3.
+
+**Merge commit on `main`:** `ed79428`
+
+**Feature commits (chronological):**
+
+| Commit | Subject |
+|---|---|
+| `b18f939` | `feat(v2-agent-creation): R1 — remove Phase 4 from agent creation flow (prompt v15)` |
+| `0f4c04f` | `docs(v2-agent-creation): R2 + R3 requirement MDs + agent branch-ownership clarification` |
+| `568d288` | `chore(logger): add optional route field to LoggerOptions` |
+
+**Post-merge verification:** `npx tsc --noEmit` clean for R1 (only the 20 pre-existing archive-file errors remain).
 
 ---
 

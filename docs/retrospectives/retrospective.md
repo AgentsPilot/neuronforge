@@ -37,6 +37,8 @@
 - `tsc --noEmit` clean for all R1-touched files
 - BA requirement captured the full Q&A trail (Q1-Q4 plus the versioning + branching FRs added later), which gave Dev and SA an unambiguous specification
 - Per-FR verification by SA in code review -- all 13 acceptance criteria PASS
+- Merge to `main` completed cleanly with `--no-ff` per FR17 -- zero conflicts; v4/v5 generator files auto-merged with incoming main calibration changes
+- Post-merge `tsc --noEmit` confirmed clean for R1 (only the 20 pre-existing archive-file errors remain)
 
 ### What did not go well
 - Number of Dev to SA back-and-forths: 0 (workplan approved with minor revisions, no implementation rework needed; code review approved on first pass)
@@ -49,13 +51,15 @@
   2. Stepper rendering verified by source grep only -- no browser smoke test
   3. Legacy phase4 coercion verified at the mock layer only -- no end-to-end DB integration test
 - V4/V5 architecture doc stragglers (mentions of removed/renamed Phase 4 modules in older design docs) were noted by SA and deferred to a follow-up documentation PR
+- **Rebase-before-merge policy ambiguity surfaced at merge time:** SA's workplan-review note recommended rebase-before-merge as a default. During the actual merge, the user correctly pointed out that FR17's `--no-ff` produces a merge commit anyway, so rebasing first does not materially improve the history. The rebase step was therefore skipped in favour of a direct `--no-ff` merge. Process change captured under Conclusions below so this isn't relitigated at R2/R3 merge time.
 
 ### Conclusions & process improvements
 - **Branch ownership going forward:** For R2 and R3, TL must invoke RM first to create the feature branch *before* Dev is invoked. This aligns with the updated team-leader handshake table and prevents the R1 branch-creation ambiguity from recurring.
+- **Merge strategy going forward:** For R2 and R3, SA and TL should default to a direct `--no-ff` merge (no preceding rebase) unless there is a specific conflict-resolution reason that makes a rebase materially better than letting `--no-ff` produce the merge commit. Captured here so the R1 merge-time conversation does not repeat.
 - **Live-environment verification policy:** Discuss before R2 kickoff whether QA's "live environment verification" steps (browser smoke for UI flow, DB integration test for coercion, logger-spy for versioning) should be promoted to first-class acceptance criteria or remain deferred to manual QA. Recommend deciding the policy once and applying consistently across R2/R3.
 - **Follow-up tracking:** Two explicit non-R1 follow-ups recorded so they are not lost:
   - `chore/reinit-next-lint` -- initialise `next lint` config so ESLint runs in CI
   - Documentation PR -- sweep V4/V5 architecture docs for stale Phase 4 references
 - **Workplan-quality reinforcement:** The Gmail `modify_email` cycle (0 rework) and R1 (0 rework after SA workplan review) both confirm that investing in a thorough workplan up front consistently eliminates Dev/SA back-and-forth during implementation. Continue this pattern.
 
-### Status: PENDING USER APPROVAL -- COMMITTED -- feature/v2-agent-creation-r1-phase4-cleanup -- [hash pending]
+**Status:** COMMITTED -- `feature/v2-agent-creation-r1-phase4-cleanup` -- merge commit `ed79428` on `main` -- feature commits `b18f939` + `0f4c04f` + `568d288` -- merged 2026-05-24
