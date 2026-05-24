@@ -574,6 +574,29 @@ export async function POST(request: NextRequest) {
 
       requestLogger.debug({ phase }, 'AI response parsed successfully');
 
+      // FR12 (R2 tone-down): emit ONE structured Pino log per Phase 2 session.
+      // Used to verify the < 10 cumulative cap and observe which carve-outs fired,
+      // without any DB schema or UI work (deferred to R3+ per requirement Q12).
+      // carveOutFired is typed explicitly as Record<string, boolean> so TS strict
+      // catches field-name typos (SA Q4 nuance).
+      if (phase === 2) {
+        const questionCount: number = Array.isArray((aiResponse as any).questionsSequence)
+          ? (aiResponse as any).questionsSequence.length
+          : 0;
+
+        const carveOutFired: Record<string, boolean> = {
+          refinementMode: !!enhanced_prompt,                     // mini-cycle vs initial Phase 2
+          declinedServices: (declined_services?.length ?? 0) > 0,
+          userFeedback: !!user_feedback,
+          zeroQuestions: questionCount === 0,
+        };
+
+        requestLogger.info(
+          { carveOutFired, questionCount, correlationId, phase: 2 },
+          'R2 phase-2 tone-down telemetry'
+        );
+      }
+
       // Step 12.4: Enrich Phase 1 response with connectedPlugins
       if (phase === 1) {
         // Return the list of connected plugin keys to frontend (already strings)

@@ -1,0 +1,53 @@
+{
+  "name": "R2 Tone-Down Validation — Phase 2 carve-out enforcement (V2-UI Pipeline A)",
+  "description": "PHASE-2-ONLY SCENARIO. Validates the R2 prompt tone-down (v16): the Phase 2 enhanced-prompt MUST emit fewer questions when carve-outs apply. Two-variant test:\n\nVariant A (sparse prompt) — 'Summarize my last 10 Gmail emails and email me a recap.' — should trigger only allowlist categories #1 (trigger source) and #3 (failure-action target). Expected: questionsSequence.length <= 3.\n\nVariant B (rich prompt) — 'Every morning, summarize my last 10 Gmail emails and email me a recap. If none, skip.' — both carve-outs satisfied by user wording. Expected: questionsSequence.length <= 1.\n\nIntentionally does NOT exercise Phase 3 / Phase 4 / DSL compilation — see scope flags below. This scenario's purpose is purely to assert the v16 tone-down behaviour against the v15 baseline. Question-count deltas (v15 vs v16) for both variants are captured in the workplan's QA Testing Report § 'Question Count Deltas' table.\n\nSibling files (enhanced-prompt.json, phase4-*.json) intentionally omitted per SA Q3 decision (lean scenario.json-only shape). If the regression harness rejects the lean shape, fall back to empty {} sibling files with _skip: true markers per the workplan.",
+  "created": "2026-05-24",
+  "scope": "phase-2-only",
+  "source": {
+    "type": "v2-ui-capture",
+    "pipeline": "A",
+    "endpoint": "/api/agent-creation/process-message",
+    "branch": "feature/v2-agent-creation-r2-prompt-tone-down",
+    "prompt_template": "Workflow-Agent-Creation-Prompt-v16-chatgpt",
+    "feature_flags": {
+      "NEXT_PUBLIC_USE_V6_AGENT_GENERATION": "true",
+      "NEXT_PUBLIC_USE_V6_PIPELINE_A": "true"
+    }
+  },
+  "plugins": ["google-mail"],
+  "variants": [
+    {
+      "id": "variant-a-sparse",
+      "user_prompt": "Summarize my last 10 Gmail emails and email me a recap.",
+      "expected_question_count_max": 3,
+      "expected_carve_outs_fired": {
+        "refinementMode": false,
+        "declinedServices": false,
+        "userFeedback": false,
+        "zeroQuestions": false
+      },
+      "notes": "Allowlist #1 (trigger) + #3 (failure path) should fire. Allowlist #2 (resource identifier) SHOULD NOT enumerate — 'last 10 emails' is a window filter, not a bounded list."
+    },
+    {
+      "id": "variant-b-rich",
+      "user_prompt": "Every morning, summarize my last 10 Gmail emails and email me a recap. If none, skip.",
+      "expected_question_count_max": 1,
+      "expected_carve_outs_fired": {
+        "refinementMode": false,
+        "declinedServices": false,
+        "userFeedback": false,
+        "zeroQuestions": true
+      },
+      "notes": "'every morning' resolves allowlist #1; 'if none' matches the deterministic failure-skip phrase list and resolves allowlist #3. Allowlist #2 not applicable (same as Variant A). Expected zero or one question."
+    }
+  ],
+  "expected": {
+    "phase_a_checks": 0,
+    "phase_d_success": null,
+    "phase_e_success": null,
+    "phase_e_notes": "Phase-2-only scenario. Phase D/E intentionally not exercised — see scope flag and the Description block above. The success criterion for this scenario is solely that v16's questionsSequence.length is within the per-variant cap AND visibly lower than v15's baseline."
+  },
+  "known_weaknesses": [
+    "carveOutFired in the actual Pino log is a coarse heuristic and may not perfectly match expected_carve_outs_fired in edge cases (e.g., model returns 0 questions for Variant A due to over-suppression). QA should diff actual vs expected during their pass."
+  ]
+}

@@ -1,0 +1,4 @@
+{
+  "_skip": true,
+  "_note": "Phase-2-only scenario; sibling intentionally empty. Required by harness loader at run-regression.ts:595 — does not represent real expected data."
+}
