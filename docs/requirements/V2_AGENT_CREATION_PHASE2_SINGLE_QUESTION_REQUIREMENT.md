@@ -102,14 +102,16 @@ If a proposed change touches Phase 2 question-selection rules, carve-outs, allow
     - `correlationId`
 23. No per-iteration logs. No DB schema changes. No UI dashboards.
 
-### FR9 — UI hook — V2 conversational builder is the only Phase 2 path
-24. The new Phase 2 flow lives in the **V2 conversational builder** (`ConversationalAgentBuilderV2` → `useConversationalFlow.ts`).
-25. `AgentBuilderParent.tsx` is changed to **hardcode** the V2 conversational builder for the chat-creation path. The `useNewAgentCreationUI()` flag helper is removed.
-26. The legacy `useConversationalBuilder.ts` / `ConversationalAgentBuilder.tsx` remain in the codebase for any other callers but are not reachable from the chat-creation entrypoint. Their formal deprecation/removal is a follow-up cleanup.
+### FR9 — UI surface — the primary V2 agent-creation page
+24. The new Phase 2 flow lives in the **primary V2 agent-creation page**: the route **`/v2/agents/new`**, served by **`app/v2/agents/new/page.tsx`**. This is the page users actually reach when they create an agent in the V2 product (per CLAUDE.md, `/app/v2/` is "V2 Dashboard and Sandbox (primary UI)").
+25. The page's Phase 2 orchestration — `processPhase2()`, the question-render `useEffect`, the answer-submission handler, and the auto-advance `useEffect` — is reworked for single-question mode: render ONE question, wait for the user's answer, send it back via a fresh `phase: 2` call with `phase2_user_answer`, render the next question, and only advance to Phase 3 (`processPhase3`) when the response sets `phase2_done: true`.
+26. The page currently uses a **batch `questionsSequence` model**: it reads `data.questionsSequence` and, when empty, auto-advances to Phase 3 via `setTimeout(() => processPhase3(tid), 1500)`. Because the new server response carries `{ question, phase2_done }` and NO `questionsSequence`, this batch path reads "0 questions" and skips straight to Phase 3 — this is the exact bug the rework must fix.
+27. **Other agent-creation surfaces are out of scope.** `components/agent-creation/conversational/` (`ConversationalAgentBuilderV2` / `useConversationalFlow.ts`, reached via `/agents/new/chat` → `AgentBuilderParent`) and the legacy `useConversationalBuilder.ts` are NOT the primary V2 path and are NOT modified by this requirement. (An earlier draft of this requirement incorrectly named `ConversationalAgentBuilderV2`/`useConversationalFlow.ts` as the target — see the Process Guardrails note on the entry-point audit.)
 
 ### FR10 — No feature flags
-27. **No new feature flag is introduced.** The existing `NEXT_PUBLIC_USE_NEW_AGENT_CREATION_UI` flag is **removed** from the codebase (`lib/utils/featureFlags.ts`, `docs/FEATURE_FLAGS.md`, `CLAUDE.md`).
-28. Any pre-existing flag entries in `.env.local` (e.g., `NEXT_PUBLIC_USE_PHASE2_SINGLE_QUESTION_MODE`, `NEXT_PUBLIC_USE_NEW_AGENT_CREATION_UI`) should be removed; they have no effect after this requirement ships.
+28. **No new feature flag is introduced.** The single-question behavior is the unconditional Phase 2 behavior of `app/v2/agents/new/page.tsx`. Rollback is `git revert`.
+29. `app/v2/agents/new/page.tsx` does NOT consume `NEXT_PUBLIC_USE_NEW_AGENT_CREATION_UI` (that flag only gated the separate `/agents/new/chat` route, which is out of scope here). No flag is added or removed by this requirement.
+30. Any pre-existing flag entries in `.env.local` (e.g., `NEXT_PUBLIC_USE_PHASE2_SINGLE_QUESTION_MODE`) should be removed; they have no effect after this requirement ships.
 
 ### FR11 — Branching & merge workflow
 29. All development on the dedicated feature branch. No direct commits to `main`.
@@ -117,7 +119,7 @@ If a proposed change touches Phase 2 question-selection rules, carve-outs, allow
 31. Merge strategy: `--no-ff`.
 
 ### FR12 — Mandatory live dev-server smoke matrix before "Code Complete"
-32. Before the Dev marks the workplan "Code Complete", **Dev runs the dev server locally and walks through Phase 2 end-to-end** in a browser for these two scenarios:
+32. Before the Dev marks the workplan "Code Complete", **Dev runs the dev server locally and walks through Phase 2 end-to-end in a browser at the real URL `/v2/agents/new`** for these two scenarios:
     1. **Happy path** — sparse prompt, cooperative answers, terminates in `phase2_done` within a small number of turns.
     2. **Explicit "build it"** — user types "build it" at iteration 2, terminates as `phase2_done` (server-side keyword detection — no LLM call on that turn), Phase 3 fires.
 33. This is **not optional** and is **not deferred to QA**. Source-inspection review alone is insufficient — Phase 2's failure mode is "rendered nothing on screen", which only a browser walkthrough catches. The smoke matrix outcome (PASS/FAIL with one-line note + the actual rendered questions captured) goes into the workplan before SA review begins.
@@ -149,10 +151,10 @@ If a proposed change touches Phase 2 question-selection rules, carve-outs, allow
 - [ ] Server-side "done" keyword check implemented. On match: loop terminates as `phase2_done` without making an LLM call for that turn. On no-match: user reply forwarded to LLM as normal. No other enums, no other server-side intent handling.
 - [ ] Empty / whitespace-only input is prevented at the UI level (send button is `disabled` when the input is empty). Verified by manual smoke test.
 - [ ] Loop controller has exactly 2 termination reasons: `phase2_done` and `cap_hit`. Both reachable per unit tests.
-- [ ] Chat UI shows the question as a single bubble, optional soft inline hint, no numeric counter. The string "10" never appears in any user-facing Phase 2 copy (grep gate).
+- [ ] `app/v2/agents/new/page.tsx` renders one question per turn, collects the answer, sends it back as `phase2_user_answer`, and only advances to `processPhase3` when the response sets `phase2_done: true`. No numeric counter; the string "10" never appears in any user-facing Phase 2 copy (grep gate).
 - [ ] Single Pino termination log per session with `iteration_count`, `termination_reason`, `correlationId`.
-- [ ] `useNewAgentCreationUI()` helper deleted from `lib/utils/featureFlags.ts`; `AgentBuilderParent.tsx` hardcoded to V2 conversational builder; flag docs cleaned up in `FEATURE_FLAGS.md` and `CLAUDE.md`.
-- [ ] **Mandatory live dev-server smoke matrix** (FR12) is run by Dev, results captured in the workplan, PASS for all two scenarios, BEFORE the workplan is marked "Code Complete."
+- [ ] No feature flag added or removed. `app/v2/agents/new/page.tsx` does not gate the new behavior behind any flag. The separate `/agents/new/chat` route and `components/agent-creation/conversational/` are untouched.
+- [ ] **Mandatory live dev-server smoke matrix** (FR12) is run by Dev **against the real URL `/v2/agents/new`**, results captured in the workplan, PASS for both scenarios, BEFORE the workplan is marked "Code Complete."
 - [ ] Prior Phase 2 prompt-related requirement MDs (the two currently in `docs/requirements/` referring to the prior consolidation effort) moved to `docs/requirements/archive/` with a one-line "Superseded by" header.
 - [ ] All commits on the feature branch. No commits to `main` outside the final approved merge.
 - [ ] Merge to `main` happens only after SA + QA + explicit user approval, using `--no-ff`.
@@ -171,8 +173,9 @@ If a proposed change touches Phase 2 question-selection rules, carve-outs, allow
 - Updating the legacy `useConversationalBuilder.ts` to understand the new response shape.
 - Per-iteration telemetry / dashboards / DB-backed analytics.
 - Plugin-specific question logic — explicitly prohibited under [Platform Design Principles / No Hardcoding in System Prompts](/CLAUDE.md).
-- Deleting `useConversationalBuilder.ts` / `ConversationalAgentBuilder.tsx` (left in place; deprecation is a follow-up).
-- Altering the `processMessageInThread` signature in a way that breaks Phase 1 or Phase 3 callers. (The signature refactor in scope — collapsing trailing positional args to an options object — preserves Phase 1/3 caller behavior.)
+- Touching `components/agent-creation/conversational/**`, `AgentBuilderParent.tsx`, the `/agents/new/chat` route, or the legacy `useConversationalBuilder.ts` — none of these is the primary V2 path.
+- Any feature-flag changes (`useNewAgentCreationUI` and `NEXT_PUBLIC_USE_NEW_AGENT_CREATION_UI` are left exactly as they are).
+- Breaking the Phase 1 or Phase 3 behavior of `app/v2/agents/new/page.tsx` while reworking Phase 2 — the rework is confined to the Phase 2 path.
 
 ---
 
@@ -186,18 +189,12 @@ If a proposed change touches Phase 2 question-selection rules, carve-outs, allow
 | `lib/validation/phase2-schema.ts` | New Zod schema (named in parallel to existing `phase3-schema.ts`, no version in the symbol name). |
 | `lib/agent-creation/phase2-done-detector.ts` | New ~15-line helper exporting `isDoneIntent(text: string): boolean` and the `DONE_KEYWORDS` array. Replaces the prior 5-enum classifier idea. |
 | `lib/agent-creation/phase2-loop-controller.ts` | New pure state machine. 2 termination reasons (`phase2_done`, `cap_hit`). |
-| `components/agent-creation/conversational/hooks/useConversationalFlow.ts` | Phase 2 path rewritten for per-turn round-trips. Each user reply fires a fresh `processMessageInThread(2, ...)` call with the new `phase2_user_answer` field, renders the next single question. |
-| `components/agent-creation/conversational/hooks/useThreadManagement.ts` | Add `phase2UserAnswer?: string` parameter to `processMessageInThread()`; forward to API as a top-level body field. |
-| `components/agent-creation/conversational/components/messages/Phase2DisclosureBanner.tsx` | New small component for the single terminal path that surfaces a soft banner (`cap_hit`). |
-| `components/agent-creation/conversational/components/messages/AIMessage.tsx` | Two new `messageType` branches: `phase2_question`, `phase2_disclosure_banner`. |
-| `components/agent-creation/conversational/types.ts` | Extend `messageType` union with the two new values above. |
-| `components/agent-creation/types/agent-prompt-threads.ts` | Add response fields (`question`, `phase2_done`, `inline_hint`, `disclosure_banner`, `termination_reason`) to `ProcessMessageResponse`; add `phase2_user_answer` to `ProcessMessageRequest`. |
-| Chat input component (in V2 UI) | Verify (or add) `disabled` on the send button when the input is empty or whitespace-only. Specific component path located during Step 1 of the workplan. |
-| `components/agent-creation/AgentBuilderParent.tsx` | Hardcode the V2 conversational builder for the chat-creation path. Remove the `useNewAgentCreationUI()` call. |
-| `lib/utils/featureFlags.ts` | Delete `useNewAgentCreationUI()`; remove its entry from `getFeatureFlags()`. |
-| `docs/FEATURE_FLAGS.md` | Remove the `NEXT_PUBLIC_USE_NEW_AGENT_CREATION_UI` section + table row. |
-| `CLAUDE.md` | Remove the row referencing `NEXT_PUBLIC_USE_NEW_AGENT_CREATION_UI` from the Feature Flags table. |
-| `docs/requirements/archive/` | Move any prior Phase 2 prompt-related requirement MDs here, with a one-line "Superseded by" header. |
+| **`app/v2/agents/new/page.tsx`** | **THE primary UI surface.** Rework `processPhase2()` + the question-render `useEffect` + the answer handler + the auto-advance `useEffect`: detect the `{ question, phase2_done }` response shape, render ONE question, wait for the answer, send it back via a fresh `phase: 2` fetch with `phase2_user_answer`, render the next question, advance to `processPhase3` only on `phase2_done: true`. Render the `cap_hit` disclosure banner before advancing. Remove/replace the batch `data.questionsSequence` auto-advance. |
+| V2 chat input (within the `/v2/agents/new` page's component tree) | Confirm the send button is `disabled` when the input is empty/whitespace. Exact path located in the Step 1 audit. |
+| `components/agent-creation/types/agent-prompt-threads.ts` | Add response fields (`question`, `phase2_done`, `inline_hint`, `disclosure_banner`, `termination_reason`) to `ProcessMessageResponse`; add `phase2_user_answer` to `ProcessMessageRequest`. (Already applied — these are additive optional fields used by the route and consumable by the page.) |
+| `components/agent-creation/conversational/**` and `/agents/new/chat` route | **NOT touched.** This is the separate, non-primary agent-creation surface. The earlier draft incorrectly targeted it. |
+| `lib/utils/featureFlags.ts`, `docs/FEATURE_FLAGS.md`, `CLAUDE.md` | **NOT touched.** No flag added or removed. (The earlier draft's `useNewAgentCreationUI` removal was based on the wrong entry point and has been reverted.) |
+| `docs/requirements/archive/` | Move prior Phase 2 prompt-related requirement MDs here, with a one-line "Superseded by" header. |
 | `tests/v6-regression/scenarios/` | One new phase-2-only scenario `phase2-single-question-v2ui-pipeline-a` covering happy-path + explicit-build-it variants. |
 
 ---
@@ -206,7 +203,7 @@ If a proposed change touches Phase 2 question-selection rules, carve-outs, allow
 
 These guardrails exist because prior Phase 2 implementation work passed source-inspection review and unit tests but broke the live UI silently. They are first-class requirements, not suggestions.
 
-1. **The active UI hook is determined by `AgentBuilderParent.tsx`.** Step 1 of the workplan is a live audit to confirm which builder the chat-creation path renders. No code-writing begins until this audit is documented in the workplan.
+1. **The entry point MUST be confirmed by the actual URL, not by assumption.** The first attempt failed because the Step 1 audit named `ConversationalAgentBuilderV2`/`useConversationalFlow.ts` (reached via `/agents/new/chat`) as the target, but the URL users actually open is **`/v2/agents/new`**, served by `app/v2/agents/new/page.tsx` — a different implementation. Step 1 of the workplan MUST: open the real URL, trace Next.js routing to the served `page.tsx`, and name the exact file + functions that orchestrate Phase 2, BEFORE any code. Naming a component from memory or a prior investigation does not satisfy this guardrail.
 2. **The route mutates `parsedJson` before validation.** The Phase 2 response handler in `process-message/route.ts` injects `success: true, phase: 2` into the parsed payload BEFORE downstream validators see it. The new `.strict()` Zod schema will reject those injected keys and fail. The fix is to snapshot the raw `parsedJson` before the mutation and validate the snapshot — NOT to relax the schema.
 3. **Source-inspection review by SA/QA is insufficient on its own.** The mandatory live dev-server smoke matrix (FR12) is a hard gate before SA review. Dev runs two scenarios in a real browser, captures the rendered output, and pastes it into the workplan.
 4. **No feature flag for this behavior change.** Avoids the dual-path dead code that hides which branch is actually wired. Rollback is `git revert`, not a flag flip.
@@ -219,4 +216,5 @@ These guardrails exist because prior Phase 2 implementation work passed source-i
 
 | Date | Change | Details |
 |------|--------|---------|
-| 2026-05-27 | Initial draft | BA scoped the single-question + audience-note Phase 2 behavior as one cohesive requirement. Question-selection logic from v15 carries over verbatim; only the interaction process and a top-of-prompt audience note are added. No feature flags. V2 conversational builder is the only Phase 2 path. Server-side intent handling minimized to a single "done" keyword check; empty input prevented at the UI level. Live dev-server smoke matrix is mandatory before Code Complete. |
+| 2026-05-27 | Initial draft | BA scoped the single-question + audience-note Phase 2 behavior as one cohesive requirement. Question-selection logic from v15 carries over verbatim; only the interaction process and a top-of-prompt audience note are added. No feature flags. Server-side intent handling minimized to a single "done" keyword check; empty input prevented at the UI level. Live dev-server smoke matrix is mandatory before Code Complete. |
+| 2026-05-28 | **Entry-point correction (gap fix)** | First implementation wired the UI into `ConversationalAgentBuilderV2`/`useConversationalFlow.ts` (reached via `/agents/new/chat`). Live testing at the real URL **`/v2/agents/new`** showed Phase 2 jumped straight to the plugin gate — because that page (`app/v2/agents/new/page.tsx`) is a separate implementation using the batch `questionsSequence` model and auto-advances when no `questionsSequence` is returned. The backend (v16 prompt, route, schema, done-detector, loop-controller) was proven correct by dev.log and kept. The mis-targeted UI changes were reverted. FR9/FR10, integration points, ACs, and Process Guardrail #1 rewritten to target `app/v2/agents/new/page.tsx` and to require URL-verified entry-point auditing. No flags changed. |

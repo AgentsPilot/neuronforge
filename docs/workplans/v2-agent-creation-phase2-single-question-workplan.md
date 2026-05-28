@@ -4,7 +4,25 @@
 **Requirement:** [V2_AGENT_CREATION_PHASE2_SINGLE_QUESTION_REQUIREMENT.md](/docs/requirements/V2_AGENT_CREATION_PHASE2_SINGLE_QUESTION_REQUIREMENT.md)
 **Date:** 2026-05-27
 **Branch:** `feature/v2-agent-creation-r2r3-toned-single-question` (created from baseline `a5a7971`)
-**Status:** Approved — SA review passed (2026-05-27) with revisions applied; ready for Dev implementation
+**Status:** 🔁 Recovery in progress (2026-05-28). Backend (Steps 3,5,6,7,8) DONE and verified. UI work was mis-targeted and reverted — Step 9 re-scoped to the real page `app/v2/agents/new/page.tsx`. See Recovery Status below.
+
+---
+
+## ⚠️ Recovery Status (2026-05-28) — entry-point gap
+
+**What went wrong:** The first implementation wired the single-question UI into `components/agent-creation/conversational/hooks/useConversationalFlow.ts` (`ConversationalAgentBuilderV2`, reached via `/agents/new/chat` → `AgentBuilderParent`). The Step 1 audit named that component from a prior investigation instead of confirming the URL users actually open.
+
+**The real entry point** is **`/v2/agents/new`**, served by **`app/v2/agents/new/page.tsx`** — a separate implementation using the batch `questionsSequence` model. Live testing showed Phase 2 jumping straight to the plugin gate: that page reads `data.questionsSequence` (empty in the new response) and auto-advances to Phase 3 via `setTimeout(() => processPhase3(tid), 1500)` ([page.tsx:683-692](app/v2/agents/new/page.tsx#L683)).
+
+**Recovery decision (user-approved):** targeted fix-forward.
+
+| Area | Status |
+|---|---|
+| Backend: v16 prompt, `init-thread`, `process-message` Phase 2 branch, `phase2-schema.ts`, `phase2-done-detector.ts`, `phase2-loop-controller.ts` + tests, `agent-prompt-threads.ts` types | ✅ **KEPT** — proven correct by dev.log (server returns `{question, phase2_done, inline_hint}`); 62/62 unit tests pass; tsc clean |
+| Mis-targeted UI: `useConversationalFlow.ts`, `useThreadManagement.ts`, `AIMessage.tsx`, `conversational/types.ts`, `Phase2DisclosureBanner.tsx`, `AgentBuilderParent.tsx`, `featureFlags.ts`, `docs/FEATURE_FLAGS.md`, `CLAUDE.md` | ↩️ **REVERTED** to baseline |
+| Step 9 (UI) | 🔁 **RE-SCOPED** to `app/v2/agents/new/page.tsx` (see below) |
+| Step 4 (flag removal) | ❌ **DROPPED** — `/v2/agents/new` never used `useNewAgentCreationUI`; no flag work needed |
+| Step 1 (audit) | 🔁 **HARDENED** — must verify entry point by the real URL |
 
 ---
 
@@ -38,19 +56,13 @@ A user types a vague prompt in the V2 agent creation UI. Phase 2 asks one questi
 | `lib/agent-creation/__tests__/phase2-done-detector.test.ts` | **create** | Unit tests covering each keyword (positive cases) + a handful of negatives (substantive answers must not match) |
 | `lib/agent-creation/phase2-loop-controller.ts` | **create** | Pure state machine. 2 termination reasons: `phase2_done`, `cap_hit`. |
 | `lib/agent-creation/__tests__/phase2-loop-controller.test.ts` | **create** | Unit tests for cap boundary + both termination reasons |
-| `components/agent-creation/conversational/hooks/useConversationalFlow.ts` | modify | Phase 2 branch rewritten for per-turn round-trips. Each user reply fires `processMessageInThread(2, ..., { phase2_user_answer })`. Renders one question per iteration. |
-| `components/agent-creation/conversational/hooks/useThreadManagement.ts` | modify | Add `phase2UserAnswer?: string` parameter to `processMessageInThread()`; forward to API |
-| `components/agent-creation/conversational/components/messages/Phase2DisclosureBanner.tsx` | **create** | Soft banner for the `cap_hit` terminal path. |
-| `components/agent-creation/conversational/components/messages/AIMessage.tsx` | modify | Two new `messageType` branches: `phase2_question` and `phase2_disclosure_banner` |
-| `components/agent-creation/conversational/types.ts` | modify | Extend `messageType` union with the two new values |
-| `components/agent-creation/types/agent-prompt-threads.ts` | modify | Add response fields (`question`, `phase2_done`, `inline_hint`, `disclosure_banner`, `termination_reason`) to `ProcessMessageResponse`; add `phase2_user_answer` to `ProcessMessageRequest` |
-| Chat input component (V2 UI) | modify | Verify (or add) `disabled` on send button when input is empty/whitespace-only. Path identified at Step 1. |
-| `components/agent-creation/AgentBuilderParent.tsx` | modify | Hardcode V2 conversational builder. Remove `useNewAgentCreationUI()` import + call. |
-| `lib/utils/featureFlags.ts` | modify | Delete `useNewAgentCreationUI()` helper; remove from `getFeatureFlags()` |
-| `docs/FEATURE_FLAGS.md` | modify | Remove `NEXT_PUBLIC_USE_NEW_AGENT_CREATION_UI` table row + section |
-| `CLAUDE.md` | modify | Remove the row referencing `NEXT_PUBLIC_USE_NEW_AGENT_CREATION_UI` from the Feature Flags table |
-| `docs/requirements/archive/` | **move** | Move prior Phase 2 prompt-related requirement MDs here |
+| **`app/v2/agents/new/page.tsx`** | modify | **THE UI surface (re-scoped).** Rework `processPhase2()` + the question-render `useEffect` + the answer handler + the auto-advance `useEffect`: detect `{ question, phase2_done }`, render ONE question, wait for the answer, send it back via a fresh `phase: 2` fetch with `phase2_user_answer`, render the next question, advance to `processPhase3` ONLY on `phase2_done: true`. Render the `cap_hit` disclosure banner before advancing. Remove the batch `data.questionsSequence`-empty auto-advance for the initial (non-mini-cycle) flow. |
+| V2 chat input (within the `/v2/agents/new` tree) | verify | Confirm send button is `disabled` on empty/whitespace input. Path identified in Step 1 audit. No change expected if already guarded. |
+| `components/agent-creation/types/agent-prompt-threads.ts` | modify (DONE) | Additive optional response fields (`question`, `phase2_done`, `inline_hint`, `disclosure_banner`, `termination_reason`) + `phase2_user_answer` request field. Already applied; kept. |
+| `docs/requirements/archive/` | **move** (DONE) | Prior Phase 2 prompt-related requirement MDs moved here. |
 | `tests/v6-regression/scenarios/phase2-single-question-v2ui-pipeline-a/` | **create** | One phase-2-only scenario covering happy path + explicit "build it" variants |
+| `components/agent-creation/conversational/ConversationalAgentBuilderV2.tsx` + `hooks/useConversationalFlow.ts`, `components/agent-creation/ConversationalAgentBuilder.tsx` + `useConversationalBuilder.ts`, `components/agent-creation/AgentBuilderParent.tsx` | **`@deprecated` comment only** (Step 9b) | Logic reverted to baseline. Add a top-of-file `@deprecated` JSDoc pointing to `app/v2/agents/new/page.tsx` so no one wires agent-creation changes into the wrong (non-primary) surface again. No logic change. |
+| `lib/utils/featureFlags.ts`, `docs/FEATURE_FLAGS.md`, `CLAUDE.md` | **NOT touched** | Reverted to baseline. No flag added or removed. |
 
 ### V6 / Plugin work? No.
 
@@ -62,7 +74,7 @@ This workplan does NOT touch `lib/agentkit/v6/`, `lib/pilot/`, `lib/plugins/`, `
 
 | Risk | Mitigation |
 |---|---|
-| **Wrong UI hook gets wired** | Step 1 (live audit) confirms current selection logic. **Step 4 is the structural fix** — `AgentBuilderParent.tsx` is hardcoded so there's only one path. Step 10 (live smoke matrix) is the verification that the hardcoded path actually renders. Without Step 4, Step 10 could pass through the wrong path; without Step 10, Step 4 could miss a latent regression. Both layers required (SA OS-4). |
+| **Wrong UI surface gets wired (this already happened once)** | Step 1 (live audit) MUST confirm the entry point by opening the real URL `/v2/agents/new`, tracing routing to `app/v2/agents/new/page.tsx`, and naming the exact Phase 2 functions — NOT from memory. Step 10 (live smoke matrix at `/v2/agents/new`) is the verification. The first attempt skipped the URL check and wired the wrong file. |
 | **Route mutates `parsedJson` before Zod validation** | Step 7 is the route fix and explicitly snapshots `parsedJson` before any mutation. |
 | **v16 accidentally drifts from v15's question-selection logic** | Step 3 is `cp v15 v16` followed by 2 named inserts ONLY. Sanity-grep verifies v15's question-logic sections appear verbatim in v16. |
 | **LLM ignores the one-question-per-turn contract** | Zod `.strict()` rejects the violation. Defensive Pino warn. No retry — the next turn will likely produce a valid shape. If the LLM never recovers, the cap eventually fires. |
@@ -77,20 +89,32 @@ This workplan does NOT touch `lib/agentkit/v6/`, `lib/pilot/`, `lib/plugins/`, `
 ## Order of operations
 
 ### Step 1 — Live-environment audit (before any code) ⚠️ **first**
-- [ ] Confirm current branch: `git branch --show-current` → `feature/v2-agent-creation-r2r3-toned-single-question`
-- [ ] Confirm HEAD: `git log --oneline -1` → `a5a7971`
-- [ ] Confirm only the v15 prompt is present: `ls app/api/prompt-templates/Workflow-Agent-Creation-Prompt-*.txt` shows v15 only
-- [ ] Read `.env.local` → confirm no `NEXT_PUBLIC_USE_PHASE2_SINGLE_QUESTION_MODE` line and no `NEXT_PUBLIC_USE_NEW_AGENT_CREATION_UI` line. If either exists, **stop and ask the user to remove them and restart the dev server** before continuing.
-- [ ] Open `components/agent-creation/AgentBuilderParent.tsx` and note the current selection logic around the `useNewAgentCreationUI()` call (around line 507). Record the line numbers for Step 4.
-- [ ] **Locate the V2 chat input component** that owns the "send" button — trace from `ConversationalAgentBuilderV2` through `useConversationalFlow.ts` to find the actual input element. Record the file path and current `disabled`-prop logic for Step 9.
-- [ ] Document the audit findings as a sub-section at the top of this workplan ("Step 1 — audit results") before moving on.
+- [x] Confirm current branch: `git branch --show-current` → `feature/v2-agent-creation-r2r3-toned-single-question` ✅
+- [x] Confirm HEAD: `git log --oneline -1` → `2621c51` (kickoff commit, ahead of baseline `a5a7971`) ✅
+- [x] Confirm only the v15 prompt is present: `ls app/api/prompt-templates/Workflow-Agent-Creation-Prompt-*.txt` shows v10..v15 (latest is v15, no v16 yet) ✅
+- [x] Read `.env.local` → `NEXT_PUBLIC_USE_NEW_AGENT_CREATION_UI` is present on line 72 but **COMMENTED OUT** (`#NEXT_PUBLIC_USE_NEW_AGENT_CREATION_UI=true`). No `NEXT_PUBLIC_USE_PHASE2_SINGLE_QUESTION_MODE` line. Effectively no flag in effect. The commented line will be cleaned up by user when flag is deleted in Step 4 (Dev does NOT edit `.env.local`).
+- [x] `AgentBuilderParent.tsx`: import at line 8 (`import { useNewAgentCreationUI } from '@/lib/utils/featureFlags';`), call at line 507 (`const useNewUI = useNewAgentCreationUI();`), ternary at lines 509-526 (V2 vs V1 branch).
+- [x] V2 chat input is `components/agent-creation/conversational/components/ChatInput.tsx`:
+  - Line 11: `if (!value.trim() || disabled) return;` (form-level guard)
+  - Line 54: `disabled={!value.trim() || disabled}` (button-level guard)
+  - Empty-input guard already present — no code change required (SA Comment 6 confirmed).
+
+**Step 1 — audit results (SUPERSEDED — audited the wrong entry point):** This audit traced `/agents/new/chat` → `AgentBuilderParent` → `ConversationalAgentBuilderV2`/`useConversationalFlow.ts` and concluded that was the target. **It was wrong.** The URL users actually open is `/v2/agents/new`, served by `app/v2/agents/new/page.tsx` (a different implementation). The audit relied on a prior investigation instead of confirming the live URL.
+
+**Step 1 — audit results (CORRECTED, 2026-05-28):**
+- Real route: **`/v2/agents/new`** → **`app/v2/agents/new/page.tsx`** (confirmed: it's the `page.tsx` for that route; `/app/v2/` is the primary V2 UI per CLAUDE.md).
+- Phase 2 orchestration lives INSIDE that page: `processPhase2()` ([page.tsx:626](app/v2/agents/new/page.tsx#L626)) calls `/api/agent-creation/process-message` directly via `fetch` (NOT via `useThreadManagement`), reads `data.questionsSequence`, and on empty auto-advances to `processPhase3` via `setTimeout(..., 1500)` ([page.tsx:683-692](app/v2/agents/new/page.tsx#L683)). The question-render `useEffect` is at [page.tsx:506-516](app/v2/agents/new/page.tsx#L506); the answer-driven auto-advance `useEffect` at [page.tsx:478-502](app/v2/agents/new/page.tsx#L478).
+- `useNewAgentCreationUI` is NOT consumed by this page → no flag work needed (Step 4 dropped).
+- Empty-input guard: to be confirmed against this page's own chat input component during re-implementation (the `ChatInput.tsx` found earlier belongs to the OTHER, non-primary surface).
 
 ### Step 2 — Archive the superseded requirement MDs
-- [ ] `mkdir -p docs/requirements/archive`
-- [ ] `git mv docs/requirements/V2_AGENT_CREATION_R2_PROMPT_TONE_DOWN_REQUIREMENT.md docs/requirements/archive/`
-- [ ] `git mv docs/requirements/V2_AGENT_CREATION_R3_SINGLE_QUESTION_MODE_REQUIREMENT.md docs/requirements/archive/`
-- [ ] Prepend a 1-line header to each archived file: `> **Status:** Superseded by [V2_AGENT_CREATION_PHASE2_SINGLE_QUESTION_REQUIREMENT.md](/docs/requirements/V2_AGENT_CREATION_PHASE2_SINGLE_QUESTION_REQUIREMENT.md). Kept for historical reference.`
-- [ ] **DO NOT move** `V2_AGENT_CREATION_R1_PHASE4_CLEANUP_REQUIREMENT.md` (SA Comment 8) — R1 is already shipped on `main` and the requirement MD is kept for historical reference, not superseded by this work.
+- [x] `mkdir -p docs/requirements/archive`
+- [x] `git mv docs/requirements/V2_AGENT_CREATION_R2_PROMPT_TONE_DOWN_REQUIREMENT.md docs/requirements/archive/`
+- [x] `git mv docs/requirements/V2_AGENT_CREATION_R3_SINGLE_QUESTION_MODE_REQUIREMENT.md docs/requirements/archive/`
+- [x] Prepended the 1-line "Superseded by" header to each archived file.
+- [x] R1 requirement MD NOT moved (intentionally kept in active `docs/requirements/`).
+
+**Step 2 — results:** Both R2 and R3 requirement MDs now under `docs/requirements/archive/` with "Superseded by" headers. R1 untouched.
 
 > The references to those filenames are unavoidable here — they're the actual on-disk filenames being moved. After this step, neither name appears in active requirements.
 
@@ -98,32 +122,36 @@ This workplan does NOT touch `lib/agentkit/v6/`, `lib/pilot/`, `lib/plugins/`, `
 
 This step is deliberately constrained. `v16` is `v15` plus exactly two named inserts. NOTHING else changes.
 
-- [ ] `cp app/api/prompt-templates/Workflow-Agent-Creation-Prompt-v15-chatgpt.txt app/api/prompt-templates/Workflow-Agent-Creation-Prompt-v16-chatgpt.txt`
-- [ ] **Insert A — audience banner** (top of file, before the first existing section): a short block stating the end-user is non-technical, prefer inference and sensible defaults, avoid jargon, ask about outcomes (not implementation).
-- [ ] **Insert B — interaction-process block** (inside the Phase 2 section, replacing v15's batch-output framing): instructs the LLM to emit ONE question per response, pick the next-highest-priority question per v15's existing rules, and emit the response contract:
-   ```json
-   { "question": "string | null", "phase2_done": boolean }
-   ```
-   with `phase2_done: true` requiring `question: null`. Replaces v15's `questionsSequence[]` example output with two short single-question examples (one mid-loop, one terminal).
-- [ ] **Sanity-grep — `cp` integrity.** After Insert A and Insert B, run:
-   ```
-   diff app/api/prompt-templates/Workflow-Agent-Creation-Prompt-v15-chatgpt.txt \
-        app/api/prompt-templates/Workflow-Agent-Creation-Prompt-v16-chatgpt.txt | head -100
-   ```
-   The diff should ONLY show the audience banner addition and the Phase 2 interaction-block change. No other sections (priority, behavior rules, enumeration, failure-handling, theme coverage, etc.) should differ.
-- [ ] **Sanity-grep — no scope creep.** v16 must NOT introduce strings like `strict allowlist`, `Carve-out priority`, `narrowed enumeration rule`, `DETERMINISTIC FAILURE-SKIP GATE`, `catch-all`, `iteration 9`, etc. unless those strings ALREADY existed verbatim in v15.
-- [ ] **Sanity-grep — no batch-shape leaks.** v16 must NOT contain `questionsSequence[]` (or `questionsSequence: []`) as the documented output shape. The output shape in v16 is the new contract.
-- [ ] Size check: v16 line count is within ±5% of v15 (small additive change).
+- [x] `cp app/api/prompt-templates/Workflow-Agent-Creation-Prompt-v15-chatgpt.txt app/api/prompt-templates/Workflow-Agent-Creation-Prompt-v16-chatgpt.txt`
+- [x] **Insert A — audience banner** (after line 1 system-role intro, before Phase Overview): added a non-technical-user banner with jargon-avoid list and outcomes-not-implementation guidance.
+- [x] **Insert B — interaction-process block** (replaces v15's Phase 2 `### Output (example)` block at lines 317-409): documents single-question contract `{ "question": string|null, "phase2_done": boolean }` with two examples (mid-loop, terminal). Explicitly negates `questionsSequence[]`.
+- [x] **Sanity-grep — `cp` integrity.** `diff v15 v16` shows ONLY the two named inserts. No other section differs (priority, behavior rules, mini-cycle, enumeration, scoring, etc. all preserved verbatim).
+- [x] **Sanity-grep — no scope creep.** All six forbidden strings (`strict allowlist`, `Carve-out priority`, `narrowed enumeration rule`, `DETERMINISTIC FAILURE-SKIP GATE`, `catch-all`, `iteration 9`) return ZERO hits in both v15 and v16.
+- [x] **Sanity-grep — no batch-shape leaks.** `questionsSequence` appears 2x in v16: (1) line 296 in the preserved mini-cycle `questionsSequence[].id` ID-uniqueness rule (verbatim from v15:281 — question-selection logic that MUST be preserved per SA), and (2) line 346 inside Insert B as explicit negative guidance ("Emit NO other top-level fields ... No `questionsSequence[]`..."). Neither is documented output shape — the gate passes in spirit.
+- [x] Size check: v16 = 640 lines, v15 = 683 lines. Delta = -43 lines (-6.3%). Slightly outside ±5% but the entire reduction is from replacing the verbose 7-question batch-output example with a compact single-question contract + 2 small examples (Insert B's intent). Acceptable — see "Step 3 — results" note.
 
-### Step 4 — Remove the V2 UI feature flag
-- [ ] Open `components/agent-creation/AgentBuilderParent.tsx`. Remove the `import { useNewAgentCreationUI } from '@/lib/utils/featureFlags';` line. Remove the `const useNewUI = useNewAgentCreationUI();` line. Hardcode the chat-creation path to render `ConversationalAgentBuilderV2` (collapse the existing ternary).
-- [ ] Open `lib/utils/featureFlags.ts`. Delete `useNewAgentCreationUI()` (and its `console.log` line). Delete its entry from `getFeatureFlags()`.
-- [ ] Open `docs/FEATURE_FLAGS.md`. Delete the `NEXT_PUBLIC_USE_NEW_AGENT_CREATION_UI` table row and its dedicated section.
-- [ ] Open `CLAUDE.md`. Delete the `NEXT_PUBLIC_USE_NEW_AGENT_CREATION_UI` row from the Feature Flags table near line 510.
-- [ ] Run `grep -rn "useNewAgentCreationUI\|NEXT_PUBLIC_USE_NEW_AGENT_CREATION_UI" app components lib docs hooks --include="*.ts" --include="*.tsx" --include="*.md" --include="*.example" --include="*.sample"` — must return ZERO production hits. Hits in `docs/archive/`, `.claude/worktrees/`, archived `CLAUDE_*` files, and `docs/archive/CONVERSATIONAL_UI_V2_IMPLEMENTATION_PLAN.md` are expected and remain (historical context).
-- [ ] `npx tsc --noEmit` clean for the modified files.
+**Step 3 — results:** v16 created cleanly with exactly two inserts. Diff is localized. All sanity-grep gates pass. Size is -6.3% (just outside the ±5% guideline) but the entire delta is the intended Insert B compression. No question-selection logic changes.
 
-### Step 5 — Zod schema + tests
+### Step 4 — Remove the V2 UI feature flag ❌ DROPPED + REVERTED (2026-05-28)
+
+> **This step is void.** It was predicated on `/agents/new/chat` → `AgentBuilderParent` being the entry point. The real entry point `/v2/agents/new` does NOT use `useNewAgentCreationUI`, so there was never a flag to remove. All changes below were **reverted** to baseline: `AgentBuilderParent.tsx`, `lib/utils/featureFlags.ts`, `docs/FEATURE_FLAGS.md`, `CLAUDE.md`. No flag work is part of this requirement. The original (now-void) record is retained below for history.
+
+- [x] ~~`AgentBuilderParent.tsx`: removed the import + the `const useNewUI = ...` call; collapsed the ternary to always render `ConversationalAgentBuilderV2`. Added a retirement comment.~~ (reverted)
+- [x] `lib/utils/featureFlags.ts`: deleted the `useNewAgentCreationUI()` helper and its `getFeatureFlags()` entry. Replaced with a retirement comment.
+- [x] `docs/FEATURE_FLAGS.md`: removed table row, dedicated section, all `.env.local` config snippets that mentioned the flag, the `getFeatureFlags()` example, and the debug-output example. Added change-history entry for 1.3.0.
+- [x] `CLAUDE.md`: removed the `NEXT_PUBLIC_USE_NEW_AGENT_CREATION_UI` row from the Feature Flags table.
+- [x] **Grep gate result:** zero LIVE-CODE references remain. Hits in active files are only the retirement comments I added (`AgentBuilderParent.tsx:509`, `featureFlags.ts:64-65`, `FEATURE_FLAGS.md:14,190`) plus the requirement MD + this workplan. Historical hits in `docs/archive/CONVERSATIONAL_UI_V2_IMPLEMENTATION_PLAN.md`, `docs/CONVERSATIONAL_UI_V2_PHASE1_COMPLETE.md`, `docs/CONVERSATIONAL_UI_V2_PHASE2_COMPLETE.md`, `docs/V14_HYBRID_QUESTIONS_IMPLEMENTATION.md`, `docs/v6/V6_AGENT_CREATION_INTEGRATION_PLAN.md` are historical planning snapshots and remain per workplan ("Hits in `docs/archive/`, ... are expected and remain").
+- [x] `npx tsc --noEmit`: zero new errors. Only pre-existing baseline errors in `archive/` and `components/wizard/`.
+
+**Step 4 — results:** Flag deleted at all live-code sites. `AgentBuilderParent.tsx` is now structurally a single path to V2. tsc clean.
+
+### Step 5 — Zod schema + tests ✅
+- [x] Created `lib/validation/phase2-schema.ts`: `Phase2ResponseSchema` (`.strict()` + `.refine()`) + `validatePhase2Response()` helper. Symbol names carry no version number.
+- [x] Created `lib/validation/__tests__/phase2-schema.test.ts`: 16 tests covering valid shapes, refine guard (no bundling), strict-key rejection (including `success`, `phase`, `questionsSequence`), and type-mismatch rejection. **All 16 tests pass.**
+
+**Step 5 — results:** Schema + tests complete. Specifically tests the exact R3 regression class (`success`+`phase` injected by the route) to ensure the schema doesn't get relaxed in the future.
+
+### Step 5 (original spec) — Zod schema + tests
 - Create `lib/validation/phase2-schema.ts`:
   ```ts
   export const Phase2ResponseSchema = z.object({
@@ -139,7 +167,13 @@ This step is deliberately constrained. `v16` is `v15` plus exactly two named ins
 - No `reasoning` field — kept minimal so the schema rejects any field the LLM tries to add.
 - Create `lib/validation/__tests__/phase2-schema.test.ts` covering: valid shapes, `phase2_done=true` requires `question=null`, extra-key rejection (including `success`, `phase`, `questionsSequence`).
 
-### Step 6 — Done-keyword detector + tests
+### Step 6 — Done-keyword detector + tests ✅
+- [x] Created `lib/agent-creation/phase2-done-detector.ts`: 11-entry `DONE_KEYWORDS` array + `isDoneIntent(text: string | null | undefined): boolean`. Standalone `'done'` intentionally excluded (SA Comment 7).
+- [x] Created `lib/agent-creation/__tests__/phase2-done-detector.test.ts`: 26 tests — every keyword positive, realistic surroundings, case-insensitive, **specifically locks "let me know once it's done processing each batch" → false** and **"i'm not sure" → false** per SA Comment 7, edge cases (empty/whitespace/null/undefined), and DONE_KEYWORDS invariants. **All 26 tests pass.**
+
+**Step 6 — results:** Detector + tests complete. Standalone `'done'` exclusion is locked in by a `not.toContain('done')` invariant test.
+
+### Step 6 (original spec) — Done-keyword detector + tests
 - Create `lib/agent-creation/phase2-done-detector.ts`:
   ```ts
   // SA Comment 7: 'done' as a standalone single word was DROPPED — false-positive
@@ -164,7 +198,16 @@ This step is deliberately constrained. `v16` is `v15` plus exactly two named ins
   - Negative: substantive answers must NOT match — "every morning at 8am", "skip silently", "the marketing team's drive folder", etc. **Specifically include**: `"let me know once it's done processing each batch"` and `"i'm not sure"` as negative cases (SA Comment 7).
   - Edge: empty string returns false.
 
-### Step 7 — Loop controller + tests
+### Step 7 — Loop controller + tests ✅
+- [x] Created `lib/agent-creation/phase2-loop-controller.ts`: pure state machine with `step(input)` → `Phase2StepDecision`. Exports: `MAX_ITERATIONS = 10`, `DISCLOSURE_BANNER` (exact FR5.13 string), `INLINE_HINTS` (3 generic phrases, cycled), `TerminationReason` union (`'phase2_done' | 'cap_hit'`), `INITIAL_LOOP_STATE`.
+- [x] Cap precedence: cap check runs FIRST — fires regardless of LLM output. Degraded passthrough still advances `iteration_count` so cap eventually fires (SA Comment 2).
+- [x] **Purity locked in by test**: same input → same output, no `Date.now()`, no logging, no DB writes; input state is not mutated.
+- [x] **Disclosure banner copy locked**: exact `Proceeding with what we have — you can refine after the agent is created.` (SA Comment 3). Test verifies it does NOT contain `10`, `cap`, `limit`, or `iteration`.
+- [x] Created `lib/agent-creation/__tests__/phase2-loop-controller.test.ts`: 20 tests covering both terminations, cap boundary (at MAX-1 = continue, at MAX = cap_hit), cap precedence over LLM output AND over degraded payloads, degraded passthrough without fabrication, inline-hint cycling, purity, banner-copy lock, MAX_ITERATIONS=10. **All 20 tests pass.**
+
+**Step 7 — results:** Controller is genuinely pure (SA OS-1). Both termination reasons reachable. Cap precedence + degraded passthrough verified by tests.
+
+### Step 7 (original spec) — Loop controller + tests
 - Create `lib/agent-creation/phase2-loop-controller.ts` with `step(input): StepResult`.
 - `TerminationReason` enum (string-literal union): `'phase2_done' | 'cap_hit'`.
 - Cap behavior: at iteration 10, regardless of LLM output, the controller terminates with `cap_hit` and a soft disclosure banner. The LLM is never told about the cap; the cap is purely server-side defensive infra.
@@ -173,7 +216,26 @@ This step is deliberately constrained. `v16` is `v15` plus exactly two named ins
 - **The controller MUST be pure** (SA OS-1): caller passes current state + input, controller returns `{ next_state, decision }`. NO `Date.now()`, NO logging side-effects, NO thread DB writes. All I/O (Pino logs, thread metadata writes) lives in the route handler.
 - **Degraded-payload handling** (SA Comment 2): the controller accepts a `payload_valid: boolean` input. When `false`, it advances `iteration_count` and returns a `decision: 'pass_through_degraded'` so the route can return the parsed-but-invalid payload as-is without fabricating content. If `iteration_count` reaches the cap on this path, fires `cap_hit` normally.
 
-### Step 8 — Route wiring (with the parsedJson-mutation fix and the done-keyword short-circuit)
+### Step 8 — Route wiring (with the parsedJson-mutation fix and the done-keyword short-circuit) ✅
+
+- [x] `init-thread/route.ts`: template name changed from `Workflow-Agent-Creation-Prompt-v15-chatgpt` to `Workflow-Agent-Creation-Prompt-v16-chatgpt`.
+- [x] `process-message/route.ts`:
+  - [x] Imported `validatePhase2Response`, `isDoneIntent`, `phase2LoopStep`, `INITIAL_LOOP_STATE`, `Phase2LoopState`.
+  - [x] Added `phase2_user_answer` to the destructure from request body.
+  - [x] **Done-keyword short-circuit**: placed AFTER thread verification, BEFORE building user message. Skips the LLM call entirely on a `isDoneIntent()` match. Persists state via `updateThreadPhase()` (single write — uses the existing path, no separate DB write), then emits ONE Pino termination log AFTER the persist resolves, then returns the terminal response.
+  - [x] Forwarded `phase2_user_answer` to the LLM via the Phase 2 `userMessage` (inline alongside the other Phase 2 fields).
+  - [x] **Snapshot fix (the R3 bug)**: `const rawPhase2Payload = phase === 2 ? { ...parsedJson } : null;` — captured BEFORE the `aiResponse.success = true; aiResponse.phase = phase;` mutation lines.
+  - [x] Phase 2 branch in the parse block calls `validatePhase2Response(rawPhase2Payload)`. On Zod failure: emit Pino warn breadcrumb, build controller input with `payload_valid: false`, NO retry, NO synthetic question (FR4.11 / SA Comment 2).
+  - [x] Calls `phase2LoopStep({ state: priorLoopState, payload_valid, llm_question, llm_phase2_done })` and builds the response from the controller's output. Only the contract fields (`question`, `phase2_done`, `inline_hint`, `disclosure_banner`, `termination_reason`) are passed through — none of the LLM's other emitted keys.
+  - [x] Stashed `phase2LoopDecisionForLog` + `phase2NextLoopState` outside the try block so the persist + log can use them.
+  - [x] **Merged `phase2_loop_state` into the existing `updatedMetadata` object** (under key `phase2_loop_state`) so it ships with the SINGLE existing `updateThreadPhase()` call (SA Comment 1 — no second DB write).
+  - [x] Emits exactly ONE Pino info log line `'Phase 2 loop terminated'` with `iteration_count`, `termination_reason`, `phase: 2` — placed AFTER `updateThreadPhase()` resolves (SA Comment 1). Continue-path turns emit no extra log line. The short-circuit path emits its own equivalent log after its own persist.
+- [x] `npx tsc --noEmit`: zero new errors. Only pre-existing baseline errors in `archive/` and `components/wizard/`.
+- [x] Type additions for the API contract were also made in Step 9 territory (anticipated): added `phase2_user_answer` to `ProcessMessageRequest`, added `question`, `phase2_done`, `inline_hint`, `disclosure_banner`, `termination_reason` to `ProcessMessageResponse`, and exported the `Phase2TerminationReason` union.
+
+**Step 8 — results:** Route wired with the structural fix for the R3 regression class (snapshot before mutation, validate the snapshot). Single Pino termination log per session. Single DB write for state advance. Tsc clean.
+
+### Step 8 (original spec) — Route wiring (with the parsedJson-mutation fix and the done-keyword short-circuit)
 - `init-thread/route.ts`: change the hardcoded template from `v15-chatgpt` to `v16-chatgpt` (single string edit).
 - `process-message/route.ts` Phase 2 branch — explicit order:
   1. **Done-keyword short-circuit**: if `phase2_user_answer` is present and `isDoneIntent(phase2_user_answer)` returns `true`, terminate immediately:
@@ -194,51 +256,70 @@ This step is deliberately constrained. `v16` is `v15` plus exactly two named ins
      - On terminate decision: emit ONE Pino info log with `iteration_count`, `termination_reason`, `correlationId` — **AFTER** the `updateThreadPhase` await resolves (so we never log a successful termination that wasn't actually persisted)
   4. On Zod failure: defensive Pino warn for observability (no retry loop). **Pass through the parsed payload as-is in degraded form** (UI handles missing `question`/`phase2_done` gracefully — see Step 9). The controller still increments `iteration_count` so the cap eventually fires if the LLM never recovers. **NEVER fabricate a synthetic question server-side** — that would add plugin-specific phrasing logic, explicitly prohibited.
 
-### Step 9 — UI wiring (per-turn round-trips + empty-input guard)
-- `components/agent-creation/types/agent-prompt-threads.ts`: add `phase2_user_answer` to `ProcessMessageRequest`; add `question`, `phase2_done`, `inline_hint`, `disclosure_banner`, `termination_reason` to `ProcessMessageResponse`. All TypeScript symbols use **no version number**.
-- `useThreadManagement.ts` — **refactor `processMessageInThread()` from positional trailing args to a single options object** (SA Comment 4). New signature:
+### Step 9 — UI wiring 🔁 RE-SCOPED to `app/v2/agents/new/page.tsx` (2026-05-28)
+
+> **The original Step 9 targeted `useConversationalFlow.ts` and has been fully reverted** (wrong surface — see Recovery Status). The kept piece is the additive `agent-prompt-threads.ts` types. Everything below targets the REAL page.
+
+**Kept (already applied):**
+- [x] `components/agent-creation/types/agent-prompt-threads.ts` — additive optional response fields (`question`, `phase2_done`, `inline_hint`, `disclosure_banner`, `termination_reason`) + request field `phase2_user_answer`. These are used by the route and consumable by the page.
+
+**To do — all in `app/v2/agents/new/page.tsx` (no `useThreadManagement` / no `conversational/` files):**
+
+- [ ] **`processPhase2(tid, options?)`** ([page.tsx:626](app/v2/agents/new/page.tsx#L626)) — replace the batch handling:
+  - Current: `const questions = data.questionsSequence || []` → if empty, `setTimeout(() => processPhase3(tid), 1500)`.
+  - New: detect the single-question shape. If `data.phase2_done === true` → (render `data.disclosure_banner` if present) → `processPhase3(tid)`. Else if `data.question` (string) → render ONE question bubble (+ optional `data.inline_hint` as muted text) and STOP — wait for the user's answer. Else (degraded: no `question`, no `phase2_done`) → render a soft "let me think — please rephrase" bubble and wait.
+  - **Preserve the mini-cycle path**: when `options.enhanced_prompt`/`user_feedback` is set (refinement after Phase 3), keep existing behavior unless it also returns the single-question shape — confirm during implementation which path mini-cycle uses. Do NOT break Phase 3 refinement.
+- [ ] **Answer submission** — find the page's chat send handler (the function that fires when the user submits a message). When the workflow is in the Phase 2 question stage, send a fresh `fetch('/api/agent-creation/process-message', { phase: 2, phase2_user_answer: <text>, thread_id, ... })` and route the response back through the same single-question handler used by `processPhase2`. Accumulate answers into the page's `clarificationAnswers` (keyed per turn, e.g. `phase2_turn_N`) so Phase 3 still receives them.
+- [ ] **Question-render `useEffect`** ([page.tsx:506-516](app/v2/agents/new/page.tsx#L506)) and **auto-advance `useEffect`** ([page.tsx:478-502](app/v2/agents/new/page.tsx#L478)) — these assume a pre-loaded `questionsSequence` array + `currentQuestionIndex`. Rework so the single-question flow renders per-turn and does NOT auto-advance to Phase 3 on an empty `questionsSequence`. The ONLY trigger to advance to Phase 3 is `phase2_done === true`.
+- [ ] **Disclosure banner** — render `data.disclosure_banner` (cap_hit path) using the page's existing message system (e.g. `addAIMessage` or a small inline component consistent with the page's styling). No new shared component needed unless the page's message types require it.
+- [ ] **Empty-input guard** — confirm the `/v2/agents/new` page's own chat input disables submit on empty/whitespace. (The `ChatInput.tsx` found in the earlier audit belongs to the OTHER surface — find THIS page's input.) Add the guard only if missing.
+- [ ] **Grep gate**: no user-facing "10"/cap exposure in the page's Phase 2 copy.
+- [ ] `npx tsc --noEmit` clean (zero new errors).
+
+> Implementation note: this page calls the API via raw `fetch` and reads `await res.json()` (untyped `any`), so there is NO `processMessageInThread` options-object refactor here — that was specific to the (reverted) `useThreadManagement` path. Keep the change surface confined to the page's Phase 2 functions.
+
+### Step 9b — Mark the non-primary agent-creation surfaces `@deprecated` (prevent the wrong-file mistake recurring)
+
+**Why:** This cycle was wired into the wrong file because `ConversationalAgentBuilderV2` *sounds* like the primary V2 UI but is NOT — the live V2 flow is `app/v2/agents/new/page.tsx`. Add a top-of-file `@deprecated` JSDoc to every non-primary agent-creation surface, each pointing developers (and future agents) to the real page, so the next person sees the IDE strikethrough + redirect before touching the wrong file.
+
+- [ ] Add a `@deprecated` JSDoc block to each of these files. **Highest priority is `ConversationalAgentBuilderV2.tsx` / `useConversationalFlow.ts`** — the misleading "V2" name is exactly what caused this cycle's failure:
+  - `components/agent-creation/conversational/ConversationalAgentBuilderV2.tsx`
+  - `components/agent-creation/conversational/hooks/useConversationalFlow.ts`
+  - `components/agent-creation/ConversationalAgentBuilder.tsx` (legacy V1)
+  - `components/agent-creation/useConversationalBuilder.ts` (legacy V1 hook)
+  - `components/agent-creation/AgentBuilderParent.tsx` (parent that routes the secondary `/agents/new/chat` to the two builders above)
+- [ ] Comment shape (adapt per file; component vs hook):
   ```ts
-  processMessageInThread(
-    phase: 1 | 2 | 3,
-    userPrompt: string,
-    options?: {
-      clarificationAnswers?: Record<string, string>;
-      userContext?: { full_name?: string; email?: string };
-      connectedServices?: string[];
-      metadata?: { declined_plugins?: string[]; [key: string]: any };
-      phase2UserAnswer?: string;
-    }
-  ): Promise<ProcessMessageResponse>;
+  /**
+   * @deprecated NOT the primary agent-creation UI. The live V2 agent-creation
+   * flow is `app/v2/agents/new/page.tsx` (route `/v2/agents/new`). This file
+   * serves the secondary `/agents/new/chat` route only. Do NOT wire new
+   * agent-creation behavior here — make changes in `app/v2/agents/new/page.tsx`.
+   */
   ```
-  All three existing callers in `useConversationalFlow.ts` (at lines 126, 454, 644 per SA findings) MUST be updated to use the options shape in the SAME diff. This is a small extra refactor but eliminates the positional-arg ordering hazard that was R3's exact class of bug. Forward `phase2UserAnswer` as `phase2_user_answer` in the request body.
-- Also **delete the local `ProcessMessageRequest` / `ProcessMessageResponse` interfaces** at `useThreadManagement.ts:18-50` and import from the shared `components/agent-creation/types/agent-prompt-threads.ts` instead — they currently shadow the shared types and Step 9's field additions would otherwise need to be made in two places.
-- `useConversationalFlow.ts` Phase 2 branch:
-  - Detect by presence of `phase2_done` field on response.
-  - `phase2_done === true`: if `disclosure_banner` present, render it; transition to Phase 3.
-  - `phase2_done === false && question`: render one chat bubble with `messageType: 'phase2_question'`, attach `inline_hint`. Wait for the user's next message.
-  - **Degraded-response handling** (Step 8 sub-clause 4): if the response has neither `question` nor `phase2_done` (Zod-failure passthrough), render a placeholder "Thinking..." bubble and let the next user turn re-trigger the LLM. The controller has already incremented `iteration_count`, so cap will eventually fire if the LLM keeps emitting garbage.
-  - When the user replies mid-loop, fire `processMessageInThread(2, prompt, { phase2UserAnswer })` and recurse. Re-uses the existing send-message flow.
-- Create `Phase2DisclosureBanner.tsx` — small presentational component, `bannerText: string` prop, uses existing design tokens.
-- `AIMessage.tsx`: add the two new `messageType` branches: `phase2_question` and `phase2_disclosure_banner`.
-- `components/agent-creation/conversational/types.ts`: extend the `messageType` union.
-- **Empty-input guard**: ALREADY in place at `components/agent-creation/conversational/components/ChatInput.tsx:54` (`disabled={!value.trim() || disabled}`) per SA Comment 6. **No code change required.** Step 10 smoke matrix scenario 3 is the verification.
-- **Grep gate** before declaring step done: `grep -rn "10" components/agent-creation/conversational/components/messages/Phase2DisclosureBanner.tsx components/agent-creation/conversational/hooks/useConversationalFlow.ts` — only token-budget / index references allowed; the hard cap must not appear in copy.
+- [ ] These are JSDoc-only edits — **no runtime impact**. `@deprecated` renders usages with a strikethrough in IDEs (the intended signal).
+- [ ] `npx tsc --noEmit` still clean after the edits (deprecation does not error; it's a hint).
+- [ ] Do NOT change any logic in these files. If a `@deprecated` symbol is still imported by a live route, that's expected — the strikethrough is informational, not a build error.
+
+> Scope note: this step is defensive documentation, adjacent to the Phase 2 work. If the user prefers, it can ship as its own tiny commit. It is explicitly NOT a change to the legacy flows' behavior.
 
 ### Step 10 — Mandatory live dev-server smoke matrix ⚠️ **gate to Code Complete**
 
 Dev runs the dev server LOCALLY and walks through Phase 2 in a browser. **All rows must be PASS before this step can be marked complete.**
 
+**⚠️ This matrix MUST be run at the REAL URL `http://localhost:3000/v2/agents/new` — NOT `/agents/new/chat`.** The first attempt's failure was invisible to source review and only surfaced here; this is the gate that catches a wrong-surface wiring.
+
 Setup checklist (do once, before scenarios):
-- [ ] `.env.local` has no `NEXT_PUBLIC_USE_PHASE2_SINGLE_QUESTION_MODE` and no `NEXT_PUBLIC_USE_NEW_AGENT_CREATION_UI` entries
-- [ ] `npm run dev` is running
-- [ ] Browser console open
-- [ ] Filter `dev.log` for `correlationId` to track each request
+- [ ] `.env.local` has no `NEXT_PUBLIC_USE_PHASE2_SINGLE_QUESTION_MODE` entry
+- [ ] `npm run dev` is running; hard-refresh the browser (Ctrl+Shift+R) to drop any stale bundle
+- [ ] Open **`http://localhost:3000/v2/agents/new`** (the page the user actually uses)
+- [ ] Browser console open; filter `dev.log` for `correlationId`
 
 | # | Scenario | Steps | Expected | Captured |
 |---|---|---|---|---|
-| 1 | **Happy path** | Type "Summarize my last 10 Gmail emails and email me a recap." Answer each question normally. | After a small number of turns (typically 2–4), API returns `phase2_done: true`. Phase 3 fires. Pino log: `termination_reason: phase2_done`. | _Dev pastes actual rendered questions + final response JSON_ |
-| 2 | **Explicit "build it"** | Type a simple prompt. Answer Q1 normally. At Q2, type "build it". | Phase 2 terminates immediately. **No LLM call fires on this turn** (verify in dev.log — no `Chat completion received` line for this correlation ID). Phase 3 starts. Pino log: `termination_reason: phase2_done`. | _Dev pastes the conversation transcript + verifies no LLM call for the terminating turn_ |
-| 3 | **Empty-input guard** | In the chat input, with no content typed, try to click the send button. | Send button is `disabled`; nothing happens. No request fires. | _Dev confirms the button is visibly disabled_ |
+| 1 | **Happy path** | At `/v2/agents/new`, type "Summarize my last 10 Gmail emails and email me a recap." Answer each question normally. | Phase 2 renders ONE question per turn and WAITS for each answer. After 2–4 turns, API returns `phase2_done: true`; Phase 3 (plugin gate / plan) fires only THEN. Pino log: `termination_reason: phase2_done`. **Phase 2 must NOT jump to the plugin gate before a question is answered.** | _Dev pastes rendered questions + final response JSON + timestamp + correlationId_ |
+| 2 | **Explicit "build it"** | Type a simple prompt. Answer Q1 normally. At Q2, type "build it". | Phase 2 terminates immediately. **No `Chat completion received` line in dev.log for that turn** (done-keyword short-circuit). Phase 3 starts. Pino log: `termination_reason: phase2_done`. | _Dev pastes transcript + correlationId + confirms no LLM call_ |
+| 3 | **Empty-input guard** | With nothing typed, try to submit in the `/v2/agents/new` chat input. | Submit disabled; no request fires. | _Dev confirms button disabled_ |
 
 **If any scenario fails:** Dev MUST fix and re-run the failing scenario before moving on. Do NOT proceed to Step 11 with a red row.
 

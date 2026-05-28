@@ -1,5 +1,7 @@
 # Requirement: V2 Agent Creation — R3 Phase 2 Single-Question Mode (Experimental)
 
+> **Status:** Superseded by [V2_AGENT_CREATION_PHASE2_SINGLE_QUESTION_REQUIREMENT.md](/docs/requirements/V2_AGENT_CREATION_PHASE2_SINGLE_QUESTION_REQUIREMENT.md). Kept for historical reference.
+
 > **Last Updated**: 2026-05-24
 
 **Created by:** BA

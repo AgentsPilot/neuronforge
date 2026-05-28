@@ -102,6 +102,14 @@ export interface ProcessMessageRequest {
   enhanced_prompt?: EnhancedPrompt | null; // Phase 2/3: Previous Phase 3 output for refinement
   declined_services?: string[]; // V10: Services user explicitly refused to connect (top-level)
   user_feedback?: string; // V10: Free-form user feedback for refinement (mini-cycle mode)
+  /**
+   * Phase 2 single-question mode (2026-05-27): the user's free-text reply
+   * to the current Phase 2 question. Forwarded to the LLM as the answer
+   * unless the server-side `isDoneIntent()` check matches, in which case
+   * the route short-circuits the loop without an LLM call. Only meaningful
+   * when `phase === 2`.
+   */
+  phase2_user_answer?: string;
   ai_provider?: ProviderName; // Optional, override thread's provider for this call
   ai_model?: string; // Optional, override thread's model for this call
   metadata?: {
@@ -109,6 +117,17 @@ export interface ProcessMessageRequest {
     [key: string]: any; // Allow additional metadata
   };
 }
+
+/**
+ * Phase 2 single-question mode termination reason (2026-05-27). String-literal
+ * union — kept in lock-step with `TerminationReason` in
+ * `lib/agent-creation/phase2-loop-controller.ts`. Two reasons:
+ *   - `'phase2_done'`: LLM emitted `phase2_done: true`, OR the user typed
+ *     a "done" keyword (server-side short-circuit).
+ *   - `'cap_hit'`: defensive iteration cap fired. Soft disclosure banner
+ *     surfaced. The cap is NEVER exposed to the user in any other way.
+ */
+export type Phase2TerminationReason = 'phase2_done' | 'cap_hit';
 
 export interface ProcessMessageResponse {
   success: boolean;
@@ -137,6 +156,41 @@ export interface ProcessMessageResponse {
 
   // Phase 2 specific fields
   workflow_refined_preview?: string[];
+
+  /**
+   * Phase 2 single-question mode (2026-05-27). The one question the LLM
+   * chose to ask this turn. `null` when the loop is terminating
+   * (`phase2_done === true`).
+   */
+  question?: string | null;
+
+  /**
+   * Phase 2 single-question mode (2026-05-27). `true` when no further
+   * clarification is needed — advance to Phase 3. Mutually exclusive with
+   * `question` (terminal turns send `question: null, phase2_done: true`).
+   */
+  phase2_done?: boolean;
+
+  /**
+   * Phase 2 single-question mode (2026-05-27). Optional soft hint surfaced
+   * with the question (e.g. "A few more details to refine your agent.").
+   * Generic, never mentions the cap or any number. Controller-cycled.
+   */
+  inline_hint?: string;
+
+  /**
+   * Phase 2 single-question mode (2026-05-27). Soft banner surfaced ONLY
+   * when `termination_reason === 'cap_hit'`. The cap itself is never
+   * mentioned in the banner copy.
+   */
+  disclosure_banner?: string;
+
+  /**
+   * Phase 2 single-question mode (2026-05-27). Set on the terminal turn
+   * (`phase2_done === true`) so the UI / telemetry can distinguish a
+   * normal LLM-driven termination from a defensive cap-hit termination.
+   */
+  termination_reason?: Phase2TerminationReason;
 
   // Phase 3 specific fields
   enhanced_prompt?: EnhancedPrompt;
