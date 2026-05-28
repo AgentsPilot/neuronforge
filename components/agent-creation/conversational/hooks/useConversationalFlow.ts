@@ -3,6 +3,13 @@
  *
  * Main state management hook for the conversational agent builder.
  * Handles message flow, plugin connections, questions, and enhancement.
+ *
+ * @deprecated NOT the primary agent-creation flow. The live V2 agent-creation
+ * flow is `app/v2/agents/new/page.tsx` (route `/v2/agents/new`), which has its
+ * own inline Phase 1-3 orchestration and does NOT use this hook. This hook
+ * backs `ConversationalAgentBuilderV2`, reached only via the secondary
+ * `/agents/new/chat` route. Do NOT wire new agent-creation behavior here —
+ * make changes in `app/v2/agents/new/page.tsx`.
  */
 
 import { useState, useCallback, useEffect, useRef } from 'react';

@@ -1,3 +1,11 @@
+/**
+ * @deprecated Legacy V1 conversational agent builder. NOT the primary
+ * agent-creation UI. The live V2 agent-creation flow is
+ * `app/v2/agents/new/page.tsx` (route `/v2/agents/new`). This component is
+ * reached only via the secondary `/agents/new/chat` route (via
+ * `AgentBuilderParent`). Do NOT wire new agent-creation behavior here —
+ * make changes in `app/v2/agents/new/page.tsx`.
+ */
 import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import {
   Bot,

@@ -1,5 +1,13 @@
 // components/agent-creation/AgentBuilderParent.tsx
 
+/**
+ * @deprecated NOT the primary agent-creation entry point. This parent routes
+ * the secondary `/agents/new/chat` route between the legacy V1
+ * (`ConversationalAgentBuilder`) and `ConversationalAgentBuilderV2` builders.
+ * The live V2 agent-creation flow is `app/v2/agents/new/page.tsx` (route
+ * `/v2/agents/new`), which is independent of this parent. Do NOT wire new
+ * agent-creation behavior here — make changes in `app/v2/agents/new/page.tsx`.
+ */
 import React, { useState, useEffect, useCallback } from 'react';
 import ConversationalAgentBuilder from './ConversationalAgentBuilder';
 import { ConversationalAgentBuilderV2 } from './conversational';
