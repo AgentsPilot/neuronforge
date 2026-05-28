@@ -368,6 +368,18 @@ Setup checklist (do once, before scenarios):
 
 ---
 
+## Side fix (2026-05-28) — mandatory `processing_steps` (separate from the Phase 2 single-question scope)
+
+Surfaced during live testing: V6 agent generation (Pipeline A) crashed with `TypeError: Cannot read properties of undefined (reading 'map')` at `lib/agentkit/v6/intent/intent-user-prompt.ts` because the Phase 3 `enhanced_prompt.sections.processing_steps` was absent — in v15/v16 that field was documented as **optional** ("Optionally include `processing_steps`…"), so the LLM sometimes omitted it while the V6 code assumed it was always present. This is a latent pre-existing bug, unrelated to the Phase 2 single-question work, exposed by a Phase 3 response that legitimately had no `processing_steps`.
+
+**Two-layer fix (committed separately from the Phase 2 work):**
+- **Code (robust crash-fix):** `lib/agentkit/v6/intent/intent-user-prompt.ts` — `processing_steps?: string[]` made optional in the `EnhancedPrompt` type, and the consumer guards it (`processing_steps && length > 0 ? …map : '(none)'`). V6 no longer crashes when it is missing.
+- **Prompt (completeness):** v16 Phase 3 now **mandates** `processing_steps` — the two "Optionally include `processing_steps`" lines (Mapping logic + General Constraints item 12) became "ALWAYS include `processing_steps` … REQUIRED". The Phase 3 output example already includes it.
+
+> Note: this is the one **deliberate** divergence of v16's Phase 3 from v15 (v15 had `processing_steps` optional). It is justified (fixes the V6 crash + improves agent-definition completeness) and should NOT be reverted if v16 is ever re-synced to v15.
+
+---
+
 ## SA Review
 
 **Reviewed by SA — 2026-05-27**

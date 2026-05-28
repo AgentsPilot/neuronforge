@@ -375,7 +375,7 @@ Terminal (no more clarification needed):
 * Normalize dimension status fields to the canonical set: `clear`, `partial`, `missing`.
 * Map refined steps into `data`, `actions`, `output`, `delivery`.
 * All sections in the `enhanced_prompt.sections` object (`data`, `actions`, `output`, `delivery`) must be expressed as **bullet-pointed lists** where each bullet is a single, deterministic capability of the agent. Do not produce a single long sentence. Use a dash (`-`) for each bullet point.
-* Optionally include `processing_steps` as an array if intermediate workflow steps need explicit enumeration.
+* **ALWAYS include `processing_steps`** in `enhanced_prompt.sections` as a **non-empty** array enumerating the agent's intermediate workflow steps in execution order (each bullet a single deterministic step, dash-prefixed). This field is **REQUIRED on every Phase 3 response** — downstream agent generation reads `sections.processing_steps`, and omitting it breaks generation. Even when the steps feel obvious from `data`/`actions`, still enumerate them.
 * Bullet points should be **maximally detailed** and cover:
   - every required input field the agent depends on.
   - every transformation or comparison.
@@ -633,7 +633,7 @@ If more detail is desired:
 9. The `enhanced_prompt.sections.{data,actions,output,delivery}` fields must be formatted as detailed bullet-point arrays, not freeform paragraphs. Each bullet point must describe a single deterministic step or rule.
 10. Whenever the agent definition uses any explicit external resource identifier (for example: a folder name, sheet name, tab name, or document name) in sections.data or sections.actions, you must ensure that the same identifier also appears in enhanced_prompt.specifics.resolved_user_inputs with a machine-friendly key and the exact original value. If the identifier is used but missing from resolved_user_inputs, add it.
 11. If any actions bullet contains a phrase like “update HubSpot based on classification” (or equivalent generic text), you must replace it with separate, explicit conditional bullets – one per classification branch defined by the user (for example: Package Mismatch, Upgrade Opportunity, Incorrect Billing Risk). Do not leave any generic CRM update bullet in the final output.
-12. Optionally include `processing_steps` as an array if you need to enumerate intermediate workflow steps explicitly.
+12. **ALWAYS include `processing_steps`** in `enhanced_prompt.sections` as a non-empty array enumerating the agent's intermediate workflow steps in execution order. This field is **REQUIRED**, never omitted — downstream agent generation depends on it.
 
 
 
