@@ -48,6 +48,13 @@ interface DashboardStats {
   recentRuns: RecentRun[]
   tokensPerCredit: number
   maxCredits: number
+  // Cross-agent metrics
+  totalRuns30d: number
+  successfulRuns30d: number
+  successRate: number
+  totalTimeSavedSeconds: number
+  moneySavedPerWeek: number
+  activeInsightsCount: number
 }
 
 export default function V2DashboardPage() {
@@ -62,7 +69,14 @@ export default function V2DashboardPage() {
     agentStats: [],
     recentRuns: [],
     tokensPerCredit: 10,
-    maxCredits: 100000
+    maxCredits: 100000,
+    // Cross-agent metrics
+    totalRuns30d: 0,
+    successfulRuns30d: 0,
+    successRate: 0,
+    totalTimeSavedSeconds: 0,
+    moneySavedPerWeek: 0,
+    activeInsightsCount: 0
   })
   // Voice input state
   const [isListening, setIsListening] = useState(false)
@@ -77,6 +91,8 @@ export default function V2DashboardPage() {
   const [showIdeas, setShowIdeas] = useState(false)
   const [accountFrozen, setAccountFrozen] = useState(false)
   const textareaRef = React.useRef<HTMLTextAreaElement>(null)
+  const [systemStatusTimeFilter, setSystemStatusTimeFilter] = useState<7 | 30 | 90 | 'all'>(30)
+  const [recentActivityTimeFilter, setRecentActivityTimeFilter] = useState<7 | 30 | 90 | 'all'>(30)
 
   const fetchDashboardData = async () => {
     if (!user) return
@@ -89,6 +105,14 @@ export default function V2DashboardPage() {
       // Calculate dynamic max credits based on subscription tier
       const maxCredits = 100000 // This could be fetched from subscription tier settings
 
+      // Date range based on selected time filter for System Status
+      const systemStatusDaysBack = systemStatusTimeFilter === 'all' ? 365 * 10 : systemStatusTimeFilter
+      const systemStatusFilterDate = new Date(Date.now() - systemStatusDaysBack * 24 * 60 * 60 * 1000).toISOString()
+
+      // Date range based on selected time filter for Recent Activity
+      const recentActivityDaysBack = recentActivityTimeFilter === 'all' ? 365 * 10 : recentActivityTimeFilter
+      const recentActivityFilterDate = new Date(Date.now() - recentActivityDaysBack * 24 * 60 * 60 * 1000).toISOString()
+
       // Optimize: Fetch all data in parallel with a single Promise.all
       const [
         { data: agentStatsData },
@@ -99,7 +123,9 @@ export default function V2DashboardPage() {
         { data: recentRunsData },
         { data: agentExecutionCounts },
         { data: profileData },
-        { data: promptIdeasData }
+        { data: promptIdeasData },
+        { data: executions30d },
+        { count: activeInsightsCount }
       ] = await Promise.all([
         supabase
           .from('agent_stats')
@@ -133,14 +159,17 @@ export default function V2DashboardPage() {
           .from('agent_logs')
           .select('id, agent_id, status, created_at, agents (agent_name)')
           .eq('user_id', user.id)
-          .gte('created_at', new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString())
+          .gte('created_at', recentActivityFilterDate)
           .order('created_at', { ascending: false })
           .limit(200),
-        // Get actual execution counts from agent_executions table
+        // Get actual execution counts from agent_executions table (filtered by time for Recent Activity)
         supabase
           .from('agent_executions')
           .select('agent_id, started_at, agents!inner (agent_name, status)')
+          .eq('user_id', user.id)
           .eq('agents.status', 'active')
+          .neq('run_mode', 'calibration')
+          .gte('started_at', recentActivityFilterDate)
           .order('started_at', { ascending: false }),
         // Get user profile for full name
         supabase
@@ -153,7 +182,20 @@ export default function V2DashboardPage() {
           .from('onboarding_prompt_ideas')
           .select('ideas')
           .eq('user_id', user.id)
-          .single()
+          .single(),
+        // Get all executions with logs for money saved calculation (filtered by time for System Status)
+        supabase
+          .from('agent_executions')
+          .select('id, status, logs')
+          .eq('user_id', user.id)
+          .neq('run_mode', 'calibration')
+          .gte('started_at', systemStatusFilterDate),
+        // Get active insights count (status = 'new' or 'viewed')
+        supabase
+          .from('execution_insights')
+          .select('*', { count: 'exact', head: true })
+          .eq('user_id', user.id)
+          .in('status', ['new', 'viewed'])
       ])
 
       // Set user name from profile
@@ -215,17 +257,72 @@ export default function V2DashboardPage() {
       const totalSpentTokens = subscriptionData?.total_spent || 0
       const totalSpentCredits = Math.floor(totalSpentTokens / tokensPerCredit)
 
+      // Calculate cross-agent metrics from filtered time period
+      const totalRunsFiltered = executions30d?.length || 0
+
+      const successfulRuns = executions30d?.filter((e: any) =>
+        e.status === 'completed' || e.status === 'success'
+      ).length || 0
+
+      const successRate = totalRunsFiltered > 0 ? Math.round((successfulRuns / totalRunsFiltered) * 100) : 0
+
+      // Calculate total time saved and money saved from execution logs
+      const DEFAULT_HOURLY_RATE = 50 // Default $50/hour
+      const MINUTES_PER_STEP = 5 // Estimate: each workflow step saves 5 minutes of manual work
+      let totalTimeSavedSeconds = 0
+
+      executions30d?.forEach((execution: any) => {
+        const logs = execution.logs as any
+
+        // Try to get time_saved_seconds from metrics (if available)
+        const timeSaved = logs?.metrics?.time_saved_seconds
+
+        if (timeSaved !== null && timeSaved !== undefined && timeSaved > 0) {
+          // Use actual metric if available
+          totalTimeSavedSeconds += timeSaved
+        } else {
+          // Fallback estimation based on available data
+          // 1. Try items processed (2 minutes per item)
+          const itemsProcessed = logs?.metrics?.total_items ||
+                                logs?.itemsProcessed ||
+                                logs?.items_processed ||
+                                0
+
+          if (itemsProcessed > 0) {
+            totalTimeSavedSeconds += itemsProcessed * 120 // 2 minutes per item
+          } else {
+            // 2. Estimate based on workflow steps completed
+            const stepsCompleted = logs?.stepsCompleted || 0
+            if (stepsCompleted > 0) {
+              totalTimeSavedSeconds += stepsCompleted * (MINUTES_PER_STEP * 60) // 5 minutes per step
+            }
+          }
+        }
+      })
+
+      // Calculate money saved per week (average from 30 days data)
+      const timeSavedHours = totalTimeSavedSeconds / 3600
+      const moneySaved30d = timeSavedHours * DEFAULT_HOURLY_RATE
+      const moneySavedPerWeek = Math.round((moneySaved30d / 30) * 7)
+
       // Update all stats at once
       setStats({
         creditBalance: pilotCredits,
         totalSpent: totalSpentCredits,
         scheduledCount: scheduledAgentsCount || 0,
-        alertsCount: failedCount || 0,
+        alertsCount: failedCount || 0, // Keep using agent_logs for 24h failures (existing alerts)
         totalMemories: memoriesCount || 0,
         agentStats: parsedStats,
         recentRuns: parsedRecentRuns,
         tokensPerCredit,
-        maxCredits
+        maxCredits,
+        // Cross-agent metrics (filtered by time period)
+        totalRuns30d: totalRunsFiltered,
+        successfulRuns30d: successfulRuns,
+        successRate,
+        totalTimeSavedSeconds,
+        moneySavedPerWeek,
+        activeInsightsCount: activeInsightsCount || 0
       })
 
       setLastUpdated(new Date())
@@ -242,7 +339,7 @@ export default function V2DashboardPage() {
     // Auto-refresh every 5 minutes
     const interval = setInterval(fetchDashboardData, 5 * 60 * 1000)
     return () => clearInterval(interval)
-  }, [user])
+  }, [user, systemStatusTimeFilter, recentActivityTimeFilter])
 
   // Initialize Speech Recognition
   useEffect(() => {
@@ -532,17 +629,9 @@ export default function V2DashboardPage() {
 
               {stats.agentStats.length > 0 ? (
                 <div className="pt-0 space-y-3">
-                  {/* Total Executions */}
-                  <div className="flex items-center justify-between pb-2 border-b border-gray-200 dark:border-gray-700">
-                    <div className="text-xs text-[var(--v2-text-muted)]">Total Executions</div>
-                    <div className="text-2xl font-bold text-[var(--v2-text-primary)]">
-                      {totalRuns.toLocaleString()}
-                    </div>
-                  </div>
-
                   {/* Agent List */}
                   <div className="space-y-2">
-                    {stats.agentStats.slice(0, 3).map((agent, index) => (
+                    {stats.agentStats.slice(0, 4).map((agent, index) => (
                       <div
                         key={index}
                         onClick={(e) => {
@@ -566,13 +655,6 @@ export default function V2DashboardPage() {
                         </div>
                       </div>
                     ))}
-                    {stats.agentStats.length > 3 && (
-                      <div className="text-center pt-1">
-                        <span className="text-xs text-[var(--v2-text-muted)]">
-                          +{stats.agentStats.length - 3} more
-                        </span>
-                      </div>
-                    )}
                   </div>
                 </div>
               ) : (
@@ -584,29 +666,110 @@ export default function V2DashboardPage() {
               </div>
             </Card>
 
-          {/* Client Risk Alerts Card */}
+          {/* System Status Card */}
           <Card
             hoverable
             onClick={() => router.push('/v2/analytics')}
             className="cursor-pointer !p-3 sm:!p-4 !h-[280px] overflow-hidden !box-border active:scale-[0.98] transition-transform"
           >
-              <div className="space-y-2">
-              <div className="flex items-center gap-2">
-                <AlertCircle className="w-6 h-6 sm:w-7 sm:h-7 text-[#06B6D4]" />
-                <h3 className="text-lg sm:text-xl font-semibold text-[var(--v2-text-primary)]">
-                  System Alerts
-                </h3>
+              <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <AlertCircle className="w-6 h-6 sm:w-7 sm:h-7 text-[#06B6D4]" />
+                  <h3 className="text-lg sm:text-xl font-semibold text-[var(--v2-text-primary)]">
+                    System Status
+                  </h3>
+                </div>
+                <select
+                  value={systemStatusTimeFilter}
+                  onChange={(e) => {
+                    e.stopPropagation()
+                    setSystemStatusTimeFilter(e.target.value === 'all' ? 'all' : parseInt(e.target.value) as 7 | 30 | 90)
+                  }}
+                  onClick={(e) => e.stopPropagation()}
+                  className="text-xs px-3 py-1.5 rounded-lg bg-gradient-to-b from-[var(--v2-surface)] to-[var(--v2-surface-hover)] border border-[var(--v2-border)] text-[var(--v2-text-primary)] font-medium cursor-pointer hover:border-[var(--v2-primary)] hover:shadow-sm focus:outline-none focus:ring-2 focus:ring-[var(--v2-primary)]/20 transition-all duration-200"
+                >
+                  <option value="7">7 days</option>
+                  <option value="30">30 days</option>
+                  <option value="90">90 days</option>
+                  <option value="all">All time</option>
+                </select>
               </div>
               <p className="text-sm text-[var(--v2-text-secondary)]">
-                Monitor potential issues and failures
+                Overall health and performance
               </p>
-              <div className="pt-0">
-                <div className={`text-2xl sm:text-3xl font-bold ${stats.alertsCount > 0 ? 'text-red-500' : 'text-green-500'}`}>
-                  {stats.alertsCount}
+
+              {/* Top Metrics Row */}
+              <div className="grid grid-cols-3 gap-2 pt-1">
+                {/* Failures */}
+                <div className="text-center p-2 rounded-lg bg-[var(--v2-surface)] border border-[var(--v2-border)]">
+                  <div className={`text-xl font-bold ${stats.alertsCount > 0 ? 'text-red-500' : 'text-green-500'}`}>
+                    {stats.alertsCount}
+                  </div>
+                  <div className="text-[10px] text-[var(--v2-text-muted)] mt-0.5">
+                    Failed (24h)
+                  </div>
                 </div>
-                <div className="text-xs text-[var(--v2-text-muted)] mt-0.5">
-                  {stats.alertsCount > 0 ? 'failures in last 24h' : 'all systems operational'}
+
+                {/* Success Rate */}
+                <div className="text-center p-2 rounded-lg bg-[var(--v2-surface)] border border-[var(--v2-border)]">
+                  <div className={`text-xl font-bold ${
+                    stats.successRate >= 95 ? 'text-green-500' :
+                    stats.successRate >= 90 ? 'text-yellow-500' : 'text-red-500'
+                  }`}>
+                    {stats.successRate}%
+                  </div>
+                  <div className="text-[10px] text-[var(--v2-text-muted)] mt-0.5">
+                    Success
+                  </div>
                 </div>
+
+                {/* Money Saved */}
+                <div className="text-center p-2 rounded-lg bg-[var(--v2-surface)] border border-[var(--v2-border)]">
+                  {stats.moneySavedPerWeek > 0 ? (
+                    <>
+                      <div className="text-xl font-bold text-green-500">
+                        ${stats.moneySavedPerWeek.toLocaleString()}
+                      </div>
+                      <div className="text-[10px] text-[var(--v2-text-muted)] mt-0.5">
+                        Saved/Week
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="text-xl font-bold text-[var(--v2-text-muted)]">
+                        —
+                      </div>
+                      <div className="text-[10px] text-[var(--v2-text-muted)] mt-0.5">
+                        Calculating
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
+
+              {/* Summary Stats */}
+              <div className="space-y-1.5 pt-1">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-[var(--v2-text-muted)]">
+                    Total runs ({systemStatusTimeFilter === 'all' ? 'all time' : `${systemStatusTimeFilter}d`})
+                  </span>
+                  <span className="font-medium text-[var(--v2-text-primary)]">{stats.totalRuns30d.toLocaleString()}</span>
+                </div>
+                {stats.totalTimeSavedSeconds > 0 && (
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-[var(--v2-text-muted)]">Hours saved</span>
+                    <span className="font-medium text-[var(--v2-text-primary)]">
+                      {Math.round(stats.totalTimeSavedSeconds / 3600).toLocaleString()}
+                    </span>
+                  </div>
+                )}
+                {stats.activeInsightsCount > 0 && (
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-[var(--v2-text-muted)]">Active insights</span>
+                    <span className="font-medium text-orange-500">{stats.activeInsightsCount}</span>
+                  </div>
+                )}
               </div>
               </div>
             </Card>
@@ -616,11 +779,25 @@ export default function V2DashboardPage() {
             className="!p-3 sm:!p-4 !h-[280px] overflow-hidden !box-border"
           >
               <div className="space-y-2">
-              <div className="flex items-center gap-2">
-                <Activity className="w-6 h-6 sm:w-7 sm:h-7 text-[#8B5CF6]" />
-                <h3 className="text-lg sm:text-xl font-semibold text-[var(--v2-text-primary)]">
-                  Recent Activity
-                </h3>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Activity className="w-6 h-6 sm:w-7 sm:h-7 text-[#8B5CF6]" />
+                  <h3 className="text-lg sm:text-xl font-semibold text-[var(--v2-text-primary)]">
+                    Recent Activity
+                  </h3>
+                </div>
+                <select
+                  value={recentActivityTimeFilter}
+                  onChange={(e) => {
+                    setRecentActivityTimeFilter(e.target.value === 'all' ? 'all' : parseInt(e.target.value) as 7 | 30 | 90)
+                  }}
+                  className="text-xs px-3 py-1.5 rounded-lg bg-gradient-to-b from-[var(--v2-surface)] to-[var(--v2-surface-hover)] border border-[var(--v2-border)] text-[var(--v2-text-primary)] font-medium cursor-pointer hover:border-[var(--v2-primary)] hover:shadow-sm focus:outline-none focus:ring-2 focus:ring-[var(--v2-primary)]/20 transition-all duration-200"
+                >
+                  <option value="7">7 days</option>
+                  <option value="30">30 days</option>
+                  <option value="90">90 days</option>
+                  <option value="all">All time</option>
+                </select>
               </div>
               <p className="text-sm text-[var(--v2-text-secondary)]">
                 Top 3 most active agents
@@ -728,87 +905,91 @@ export default function V2DashboardPage() {
                   </div>
                 </div>
 
-                {/* Right side - Speedometer Gauge - Responsive sizing */}
-                <div className="flex-shrink-0 w-full sm:w-[240px] md:w-[260px] max-w-[280px]">
-                  <div className="relative" style={{ height: '165px' }}>
-                    {/* Recharts Gauge Arc */}
-                    <ResponsiveContainer width="100%" height={165}>
-                      <PieChart margin={{ top: 0, right: 0, bottom: 0, left: 0 }}>
-                        <Pie
-                          data={[
-                            { value: 33.33 },
-                            { value: 33.33 },
-                            { value: 33.34 }
-                          ]}
-                          cx="50%"
-                          cy="70%"
-                          startAngle={180}
-                          endAngle={0}
-                          innerRadius="85%"
-                          outerRadius="100%"
-                          dataKey="value"
-                          stroke="none"
-                        >
-                          <Cell fill="#10B981" />
-                          <Cell fill="#F59E0B" />
-                          <Cell fill="#EF4444" />
-                        </Pie>
-                      </PieChart>
-                    </ResponsiveContainer>
+                {/* Right side - Modern Speedometer Gauge */}
+                <div className="flex-shrink-0 w-full sm:w-auto flex justify-center">
+                  <div className="relative w-48">
+                    {/* Gauge container */}
+                    <div className="relative h-28">
+                      {/* Modern SVG Gauge Arc - Three color segments */}
+                      <svg className="w-full h-full" viewBox="0 0 200 110">
+                        {/* Green segment (0-33%) */}
+                        <path
+                          d="M 20 100 A 80 80 0 0 1 73.5 36.5"
+                          fill="none"
+                          stroke="#10B981"
+                          strokeWidth="14"
+                          strokeLinecap="round"
+                        />
+                        {/* Yellow segment (33-66%) */}
+                        <path
+                          d="M 73.5 36.5 A 80 80 0 0 1 126.5 36.5"
+                          fill="none"
+                          stroke="#F59E0B"
+                          strokeWidth="14"
+                          strokeLinecap="round"
+                        />
+                        {/* Red segment (66-100%) */}
+                        <path
+                          d="M 126.5 36.5 A 80 80 0 0 1 180 100"
+                          fill="none"
+                          stroke="#EF4444"
+                          strokeWidth="14"
+                          strokeLinecap="round"
+                        />
+                      </svg>
 
-                    {/* Needle pointer - Correctly points to usage % */}
-                    <div
-                      className="absolute"
-                      style={{
-                        left: '50%',
-                        bottom: '30%',
-                        width: '2px',
-                        height: '70px',
-                        backgroundColor: '#DC2626',
-                        transformOrigin: 'bottom center',
-                        transform: (() => {
-                          const totalCredits = stats.creditBalance + stats.totalSpent
-                          const percentage = totalCredits > 0 ? (stats.totalSpent / totalCredits) * 100 : 0
-                          // Correct angle: 0% = -90deg (left/9 o'clock), 100% = 90deg (right/3 o'clock)
-                          const angle = -90 + (percentage * 1.8)
-                          return `translateX(-50%) rotate(${angle}deg)`
-                        })(),
-                        transition: 'transform 0.8s cubic-bezier(0.4, 0.0, 0.2, 1)',
-                        filter: 'drop-shadow(0 2px 3px rgba(0,0,0,0.4))',
-                        zIndex: 10
-                      }}
-                    >
-                      {/* Needle tip - pointing upward */}
-                      <div className="absolute -top-1 left-1/2 -translate-x-1/2 w-0 h-0 border-l-[4px] border-r-[4px] border-b-[6px] border-l-transparent border-r-transparent border-b-[#DC2626]" />
-                    </div>
-
-                    {/* Center dot */}
-                    <div
-                      className="absolute w-[16px] h-[16px] bg-[#DC2626] rounded-full border-2 border-white dark:border-slate-800"
-                      style={{
-                        left: '50%',
-                        bottom: '30%',
-                        transform: 'translate(-50%, 50%)',
-                        zIndex: 12,
-                        boxShadow: '0 2px 4px rgba(0,0,0,0.2)'
-                      }}
-                    />
-
-                    {/* Percentage Display */}
-                    <div className="absolute inset-0 flex flex-col items-center justify-center" style={{ top: '0' }}>
-                      <div className="text-2xl font-bold text-[var(--v2-text-primary)]">
-                        {(() => {
-                          const totalCredits = stats.creditBalance + stats.totalSpent
-                          return Math.round(totalCredits > 0 ? (stats.totalSpent / totalCredits) * 100 : 0)
-                        })()}%
+                      {/* Clean Needle */}
+                      <div
+                        className="absolute"
+                        style={{
+                          left: '50%',
+                          bottom: '10px',
+                          width: '3px',
+                          height: '60px',
+                          backgroundColor: 'var(--v2-text-primary)',
+                          transformOrigin: 'bottom center',
+                          transform: (() => {
+                            const totalCredits = stats.creditBalance + stats.totalSpent
+                            const percentage = totalCredits > 0 ? (stats.totalSpent / totalCredits) * 100 : 0
+                            const angle = -90 + (percentage * 1.8)
+                            return `translateX(-50%) rotate(${angle}deg)`
+                          })(),
+                          transition: 'transform 0.8s cubic-bezier(0.4, 0.0, 0.2, 1)',
+                          borderRadius: '2px',
+                          zIndex: 10
+                        }}
+                      >
+                        {/* Needle tip */}
+                        <div className="absolute -top-1.5 left-1/2 -translate-x-1/2 w-0 h-0 border-l-[5px] border-r-[5px] border-b-[8px] border-l-transparent border-r-transparent border-b-[var(--v2-text-primary)]" />
                       </div>
-                      <div className="text-[10px] text-[var(--v2-text-muted)] mt-0.5">used</div>
+
+                      {/* Center pivot */}
+                      <div
+                        className="absolute w-4 h-4 rounded-full bg-[var(--v2-text-primary)] border-2 border-[var(--v2-surface)]"
+                        style={{
+                          left: '50%',
+                          bottom: '10px',
+                          transform: 'translate(-50%, 50%)',
+                          zIndex: 12
+                        }}
+                      />
+
+                      {/* Percentage Display - Clean style */}
+                      <div className="absolute inset-0 flex items-center justify-center pt-8">
+                        <div className="text-xl font-semibold text-[var(--v2-text-primary)]">
+                          {(() => {
+                            const totalCredits = stats.creditBalance + stats.totalSpent
+                            return Math.round(totalCredits > 0 ? (stats.totalSpent / totalCredits) * 100 : 0)
+                          })()}%
+                        </div>
+                      </div>
                     </div>
 
-                    {/* 0% and 100% Labels - Below gauge arc */}
-                    <div className="absolute bottom-1 left-0 right-0 flex justify-between text-xs text-[var(--v2-text-muted)] px-3">
-                      <span>0%</span>
-                      <span>100%</span>
+                    {/* Labels below chart */}
+                    <div className="flex items-center justify-between px-2 mt-2">
+                      <div className="text-xs text-[var(--v2-text-muted)]">0</div>
+                      <div className="text-[10px] text-[var(--v2-text-muted)] uppercase tracking-wide">used</div>
+                      <div className="text-xs text-[var(--v2-text-muted)]">100</div>
                     </div>
                   </div>
                 </div>

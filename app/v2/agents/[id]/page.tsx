@@ -55,7 +55,21 @@ import {
   SiNotion,
   SiGithub
 } from 'react-icons/si'
-import { Mail, Phone, Cloud, Database, Globe, Puzzle, RefreshCw } from 'lucide-react'
+import { Mail, Phone, Cloud, Database, Globe, Puzzle, RefreshCw, DollarSign, Timer, Filter, Layers, Cpu, Lightbulb, TrendingDown, Wrench } from 'lucide-react'
+import {
+  LineChart,
+  Line,
+  BarChart,
+  Bar,
+  AreaChart,
+  Area,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+  Legend
+} from 'recharts'
 import { PluginIcon } from '@/components/PluginIcon'
 import { AgentIntensityCardV2 } from '@/components/v2/agents/AgentIntensityCardV2'
 import { formatScheduleDisplay, formatNextRun } from '@/lib/utils/scheduleFormatter'
@@ -64,6 +78,19 @@ import { clientLogger } from '@/lib/logger/client'
 import { MiniInsightCard, HealthStatus, NoIssuesState } from '@/components/v2/execution/MiniInsightCard'
 import { InsightsList } from '@/components/v2/insights/InsightsList'
 import { AgentInputFields } from '@/components/v2/AgentInputFields'
+import { motion, AnimatePresence } from 'framer-motion'
+
+// Import new redesigned components
+import {
+  AgentHeader,
+  PerformanceTrends,
+  LatestRunCard,
+  RunHistoryTable,
+  ExecutionDetailPanel,
+  InsightPreview,
+  normalizeInsights,
+  ExecutionModal
+} from '@/components/v2/agent'
 
 // PERFORMANCE: Lazy load heavy components that may not be used immediately
 const DraftAgentTour = lazy(() => import('@/components/agents/DraftAgentTour'))
@@ -105,6 +132,43 @@ export default function V2AgentDetailPage() {
   const [totalExecutionCount, setTotalExecutionCount] = useState<number>(0)
   const [selectedExecution, setSelectedExecution] = useState<Execution | null>(null)
   const [executionResults, setExecutionResults] = useState<any | null>(null) // Structured execution results
+  const [executionDetails, setExecutionDetails] = useState<{
+    metrics: {
+      total_items: number;
+      duration_ms: number;
+      has_empty_results: boolean;
+      failed_step_count: number;
+      field_names: string[];
+      items_by_field: Record<string, number>;
+      step_metrics: Array<{
+        plugin: string;
+        action: string;
+        step_name: string;
+        count: number;
+        fields?: string[];
+        step_type?: string;
+        metadata?: {
+          filter_criteria?: string;
+          items_filtered_out?: number;
+          percentage_kept?: number;
+          categories?: Record<string, number>;
+        };
+      }>;
+    } | null;
+    insights: any[];
+    roi: {
+      items_processed: number;
+      time_saved_seconds: number;
+      time_saved_hours: number;
+      cost_saved_usd: number;
+      manual_time_per_item_seconds: number;
+    } | null;
+    agent: {
+      business_entity_type: string | null;
+      entity_desirability: string | null;
+    } | null;
+  } | null>(null)
+  const [loadingExecutionDetails, setLoadingExecutionDetails] = useState(false)
   const [loading, setLoading] = useState(true)
   const [refreshingExecutions, setRefreshingExecutions] = useState(false)
   const [executing, setExecuting] = useState(false)
@@ -115,14 +179,32 @@ export default function V2AgentDetailPage() {
   const [executionPage, setExecutionPage] = useState(1)
   const [actionLoading, setActionLoading] = useState<string | null>(null)
 
-  // NEW: Drawer and modal state
+  // NEW: Advanced mode and slide-out panel for redesigned layout
+  const [advancedMode, setAdvancedMode] = useState(false)
+  const [showDetailPanel, setShowDetailPanel] = useState(false)
+
+  // Drawer and modal state
   const [showSettingsDrawer, setShowSettingsDrawer] = useState(false)
   const [showInsightsModal, setShowInsightsModal] = useState(false)
+  const [insightsTab, setInsightsTab] = useState<'business' | 'technical'>('business')
+  const [metricsData, setMetricsData] = useState<any>(null)
+  const [loadingMetrics, setLoadingMetrics] = useState(false)
+  const [metricsRange, setMetricsRange] = useState<'7d' | '30d' | '90d'>('7d')
 
   // Modals
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [showShareConfirm, setShowShareConfirm] = useState(false)
   const [showShareSuccess, setShowShareSuccess] = useState(false)
+  const [showHourlyRateDialog, setShowHourlyRateDialog] = useState(false)
+
+  // Execution Modal state (Run Now)
+  const [showExecutionModal, setShowExecutionModal] = useState(false)
+  const [executionResult, setExecutionResult] = useState<any>(null)
+  const [executionError, setExecutionError] = useState<string | null>(null)
+  const [hourlyRateInput, setHourlyRateInput] = useState<string>('50')
+  const [savingHourlyRate, setSavingHourlyRate] = useState(false)
+  const [userHourlyRate, setUserHourlyRate] = useState<number | null>(null) // null = not fetched yet
+  const [pendingInsightsToggle, setPendingInsightsToggle] = useState(false) // True when waiting to enable insights after hourly rate dialog
 
   // Sharing data
   const [shareCreditsAwarded, setShareCreditsAwarded] = useState(0)
@@ -169,6 +251,37 @@ export default function V2AgentDetailPage() {
   const [executionTimeFilter, setExecutionTimeFilter] = useState<'7days' | '30days' | 'all'>('all')
   const [showTimeFilterDropdown, setShowTimeFilterDropdown] = useState(false)
 
+  // Load advanced mode from localStorage on mount
+  useEffect(() => {
+    const stored = localStorage.getItem('agent-detail-advanced-mode')
+    if (stored === 'true') {
+      setAdvancedMode(true)
+    }
+  }, [])
+
+  // Persist advanced mode to localStorage
+  const handleAdvancedModeToggle = useCallback(() => {
+    setAdvancedMode(prev => {
+      const newValue = !prev
+      localStorage.setItem('agent-detail-advanced-mode', String(newValue))
+      return newValue
+    })
+  }, [])
+
+  // Handle execution selection for slide-out panel (new design)
+  const handleSelectExecutionForPanel = useCallback((execution: Execution) => {
+    setSelectedExecution(execution)
+    setShowDetailPanel(true)
+
+    if (execution.logs?.pilot) {
+      fetchExecutionResults(execution.id)
+      fetchExecutionDetails(execution.id)
+    } else {
+      setExecutionResults(null)
+      setExecutionDetails(null)
+    }
+  }, [])
+
   // IMPROVED: Batched data fetch wrapped in useCallback to prevent unnecessary re-fetches
   const fetchAllData = useCallback(async () => {
     if (!user || !agentId) return
@@ -178,14 +291,15 @@ export default function V2AgentDetailPage() {
       // Parallel fetch all data
       // PERFORMANCE: Limit to 50 executions and skip token enrichment for faster load
       // Also pre-fetch form metadata and global schema metadata for input config drawer
-      const [agentResult, executionsResult, configResult, rewardStatus, insightsResult, formMetadataResult, globalSchemaResult] = await Promise.all([
+      const [agentResult, executionsResult, configResult, rewardStatus, insightsResult, formMetadataResult, globalSchemaResult, profileResult] = await Promise.all([
         agentApi.getById(agentId, user.id),
         agentApi.getExecutions(agentId, user.id, { limit: 50, includeTokens: false }),
         systemConfigApi.getByKeys(['tokens_per_pilot_credit', 'agent_sharing_reward_amount']),
         fetch('/api/admin/reward-config').then(r => r.json()).catch(() => ({ success: false })),
         fetch(`/api/v6/insights?agentId=${agentId}&status=new,viewed`).then(r => r.json()).catch(() => ({ success: false, data: [] })),
         fetch(`/api/v2/agents/${agentId}/form-metadata`).then(r => r.json()).catch(() => ({ metadata: [] })),
-        fetch('/api/plugins/schema-metadata').then(r => r.json()).catch(() => ({ data: { metadata: {} } }))
+        fetch('/api/plugins/schema-metadata').then(r => r.json()).catch(() => ({ data: { metadata: {} } })),
+        supabase.from('profiles').select('hourly_rate_usd').eq('id', user.id).single()
       ])
 
       // Process agent
@@ -267,6 +381,11 @@ export default function V2AgentDetailPage() {
         setInputConfigMetadata(metadataMap)
       }
 
+      // Process user's hourly rate for ROI calculations
+      if (profileResult.data?.hourly_rate_usd) {
+        setUserHourlyRate(profileResult.data.hourly_rate_usd)
+      }
+
       // PERFORMANCE: Defer non-critical data until after initial render
       // This reduces blocking time and improves perceived performance
       setTimeout(() => {
@@ -306,11 +425,74 @@ export default function V2AgentDetailPage() {
     }
   }, [user?.id, agentId])
 
+  // Handle "Run Now" - Execute agent and show modal with results
+  // Open the execution modal (confirmation step)
+  const handleRunNow = useCallback(() => {
+    setExecutionResult(null)
+    setExecutionError(null)
+    setShowExecutionModal(true)
+  }, [])
+
+  // Execute the agent after confirmation
+  const handleConfirmExecution = useCallback(async () => {
+    if (!agent || !user) return
+
+    // Use inputConfigValues if available, otherwise fall back to agent.input_config
+    const configToUse = Object.keys(inputConfigValues).length > 0
+      ? inputConfigValues
+      : (agent.input_config || {})
+
+    // Start execution
+    setExecuting(true)
+
+    try {
+      const sessionId = crypto.randomUUID()
+      const response = await fetch('/api/run-agent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          agent_id: agent.id,
+          input_variables: configToUse,
+          execution_type: 'run',
+          session_id: sessionId,
+        }),
+      })
+
+      const result = await response.json()
+
+      if (!response.ok || !result.success) {
+        throw new Error(result.error || result.message || 'Execution failed')
+      }
+
+      setExecutionResult(result)
+    } catch (error: any) {
+      setExecutionError(error.message || 'Execution failed')
+    } finally {
+      setExecuting(false)
+    }
+  }, [agent, user, inputConfigValues])
+
+  // Handle closing execution modal and refreshing data
+  const handleCloseExecutionModal = useCallback(() => {
+    setShowExecutionModal(false)
+    setExecutionResult(null)
+    setExecutionError(null)
+    // Refresh page data to show latest execution
+    handleRefresh()
+  }, [handleRefresh])
+
   // Batched data fetching - IMPROVEMENT
   useEffect(() => {
     if (user && agentId) {
       const pageLogger = clientLogger.child({ component: 'V2AgentDetailPage', agentId, userId: user.id })
       pageLogger.info({ agentId }, 'Agent detail page mounted')
+
+      // Check if returning from calibration on initial mount
+      const calibrationFlag = localStorage.getItem(`calibration-completed-${agentId}`)
+      if (calibrationFlag === 'true') {
+        console.log('[Agent Page] Detected calibration completion on mount, clearing flag')
+        localStorage.removeItem(`calibration-completed-${agentId}`)
+      }
 
       fetchAllData()
 
@@ -378,13 +560,16 @@ export default function V2AgentDetailPage() {
       // Fetch results if it's a Pilot execution, otherwise clear results
       if (firstExec.logs?.pilot) {
         fetchExecutionResults(firstExec.id)
+        fetchExecutionDetails(firstExec.id) // Also fetch detailed metrics
       } else {
         setExecutionResults(null)
+        setExecutionDetails(null)
       }
     }
   }, [executions, executionTimeFilter]) // Remove selectedExecution?.id from deps to avoid infinite loop
 
   // Auto-refresh executions when page becomes visible after being away for a while
+  // OR when returning from calibration (indicated by localStorage flag)
   useEffect(() => {
     let lastVisibleTime = Date.now()
     const REFRESH_THRESHOLD = 60000 // Only refresh if away for more than 60 seconds
@@ -397,6 +582,16 @@ export default function V2AgentDetailPage() {
         // Page is becoming visible
         const timeAway = Date.now() - lastVisibleTime
 
+        // Check if returning from calibration (always refresh in this case)
+        const calibrationFlag = localStorage.getItem(`calibration-completed-${agentId}`)
+        if (calibrationFlag === 'true') {
+          console.log('[Agent Page] Detected calibration completion, refreshing data')
+          localStorage.removeItem(`calibration-completed-${agentId}`)
+          requestDeduplicator.clear(`executions-${agentId}-false-50`)
+          fetchAllData()
+          return
+        }
+
         // Only refresh if user was away for more than the threshold
         if (timeAway > REFRESH_THRESHOLD) {
           requestDeduplicator.clear(`executions-${agentId}-false-50`)
@@ -407,6 +602,25 @@ export default function V2AgentDetailPage() {
 
     document.addEventListener('visibilitychange', handleVisibilityChange)
     return () => document.removeEventListener('visibilitychange', handleVisibilityChange)
+  }, [agentId, fetchAllData])
+
+  // Check for calibration completion flag when window receives focus
+  // This catches the case when user navigates back from calibration via router.push
+  useEffect(() => {
+    const handleFocus = () => {
+      if (!agentId) return
+
+      const calibrationFlag = localStorage.getItem(`calibration-completed-${agentId}`)
+      if (calibrationFlag === 'true') {
+        console.log('[Agent Page] Detected calibration completion on focus, refreshing data')
+        localStorage.removeItem(`calibration-completed-${agentId}`)
+        requestDeduplicator.clear(`executions-${agentId}-false-50`)
+        fetchAllData()
+      }
+    }
+
+    window.addEventListener('focus', handleFocus)
+    return () => window.removeEventListener('focus', handleFocus)
   }, [agentId, fetchAllData])
 
   const fetchMemoryCount = async () => {
@@ -468,6 +682,132 @@ export default function V2AgentDetailPage() {
     } catch (error) {
       console.error('[fetchExecutionResults] ❌ Exception:', error)
       setExecutionResults(null)
+    }
+  }
+
+  // Fetch detailed execution metrics, insights, and ROI data
+  const fetchExecutionDetails = async (executionId: string) => {
+    if (!agentId) return
+
+    setLoadingExecutionDetails(true)
+    try {
+      const response = await fetch(`/api/v6/agents/${agentId}/executions/${executionId}`)
+      const data = await response.json()
+
+      if (data.success && data.data) {
+        console.log('[fetchExecutionDetails] ✅ Loaded execution details:', {
+          hasMetrics: !!data.data.metrics,
+          stepMetricsCount: data.data.metrics?.step_metrics?.length || 0,
+          insightsCount: data.data.insights?.length || 0,
+          hasRoi: !!data.data.roi,
+        })
+        setExecutionDetails({
+          metrics: data.data.metrics,
+          insights: data.data.insights || [],
+          roi: data.data.roi,
+          agent: data.data.agent,
+        })
+      } else {
+        console.log('[fetchExecutionDetails] ⚠️ No execution details found')
+        setExecutionDetails(null)
+      }
+    } catch (error) {
+      console.error('[fetchExecutionDetails] ❌ Exception:', error)
+      setExecutionDetails(null)
+    } finally {
+      setLoadingExecutionDetails(false)
+    }
+  }
+
+  const fetchMetrics = async (range: '7d' | '30d' | '90d' = '7d') => {
+    if (!agentId) return
+
+    setLoadingMetrics(true)
+    try {
+      const response = await fetch(`/api/v6/agents/${agentId}/metrics?range=${range}`)
+      const data = await response.json()
+
+      if (data.success) {
+        setMetricsData(data.data)
+      } else {
+        clientLogger.error('Failed to fetch metrics', new Error(data.error))
+      }
+    } catch (error) {
+      clientLogger.error('Error fetching metrics', error as Error)
+    } finally {
+      setLoadingMetrics(false)
+    }
+  }
+
+  // Handle opening insights modal - directly open the modal
+  const handleOpenInsights = (insight?: any) => {
+    setShowInsightsModal(true)
+
+    // Set the appropriate tab based on the insight category
+    if (insight?.category === 'growth') {
+      setInsightsTab('business')
+    } else if (insight?.category) {
+      setInsightsTab('technical')
+    } else if (insight === undefined) {
+      // When no insight is passed (e.g., "View All" button), default to business tab
+      setInsightsTab('business')
+    }
+    // Otherwise keep the current tab
+  }
+
+  // Save hourly rate and continue to insights (or enable insights if pending)
+  const saveHourlyRateAndContinue = async () => {
+    if (!user?.id) return
+
+    const rate = parseFloat(hourlyRateInput)
+    if (isNaN(rate) || rate <= 0) {
+      alert('Please enter a valid hourly rate')
+      return
+    }
+
+    setSavingHourlyRate(true)
+    try {
+      const { error } = await supabase
+        .from('profiles')
+        .update({ hourly_rate_usd: rate })
+        .eq('id', user.id)
+
+      if (error) throw error
+
+      setUserHourlyRate(rate)
+      setShowHourlyRateDialog(false)
+
+      // If we're enabling insights via the toggle, complete that action
+      if (pendingInsightsToggle && agent) {
+        console.log('[saveHourlyRateAndContinue] Completing pending insights toggle')
+        setPendingInsightsToggle(false)
+
+        // Enable insights on the agent
+        setAgent({ ...agent, insights_enabled: true })
+
+        const result = await agentApi.update(agent.id, user.id, {
+          insights_enabled: true
+        })
+
+        if (result.success && result.data) {
+          setAgent(result.data as Agent)
+          clientLogger.info('Insights enabled after hourly rate confirmation', { agentId: agent.id })
+          console.log('✅ Insights enabled successfully')
+        } else {
+          // Revert on failure
+          setAgent({ ...agent, insights_enabled: false })
+          clientLogger.error('Failed to enable insights', new Error(result.error || 'Unknown error'))
+          console.error('❌ Failed to enable insights:', result.error)
+        }
+      } else {
+        // Normal flow: open the insights modal
+        setShowInsightsModal(true)
+      }
+    } catch (error) {
+      console.error('Error saving hourly rate:', error)
+      alert('Failed to save hourly rate. Please try again.')
+    } finally {
+      setSavingHourlyRate(false)
     }
   }
 
@@ -539,6 +879,13 @@ export default function V2AgentDetailPage() {
       loadInputConfiguration()
     }
   }, [inputConfigExpanded, agent?.id, loadInputConfiguration])
+
+  // Fetch metrics when insights modal opens
+  useEffect(() => {
+    if (showInsightsModal && agentId) {
+      fetchMetrics(metricsRange)
+    }
+  }, [showInsightsModal, metricsRange, agentId])
 
   // Save input configuration
   const saveInputConfiguration = async () => {
@@ -824,6 +1171,34 @@ export default function V2AgentDetailPage() {
       fullAgent: agent
     })
 
+    // If enabling insights, show hourly rate dialog first
+    if (newInsightsEnabled) {
+      console.log('[handleToggleInsights] Enabling insights - showing hourly rate dialog')
+      // Store the pending toggle so we can complete it after dialog
+      setPendingInsightsToggle(true)
+
+      // Fetch current hourly rate and show dialog
+      try {
+        const { data, error } = await supabase
+          .from('profiles')
+          .select('hourly_rate_usd')
+          .eq('id', user.id)
+          .single()
+
+        console.log('[handleToggleInsights] Profile response:', { data, error })
+        const rate = data?.hourly_rate_usd ?? 50
+        setUserHourlyRate(rate)
+        setHourlyRateInput(rate.toString())
+        setShowHourlyRateDialog(true)
+      } catch (error) {
+        console.error('[handleToggleInsights] Error fetching hourly rate:', error)
+        setHourlyRateInput('50')
+        setShowHourlyRateDialog(true)
+      }
+      return // Don't toggle yet - will be done after dialog
+    }
+
+    // If disabling, just toggle directly
     // Optimistic update - update UI immediately
     setAgent({ ...agent, insights_enabled: newInsightsEnabled })
 
@@ -1406,14 +1781,24 @@ export default function V2AgentDetailPage() {
         />
       </Suspense>
 
-      <div className="max-w-[1400px] mx-auto p-4">
+      {/* NEW SINGLE-COLUMN LAYOUT */}
+      <div className="max-w-[1000px] mx-auto p-4">
         {/* Logo */}
-        <div className="mb-3">
+        <motion.div
+          initial={{ opacity: 0, y: -10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="mb-3"
+        >
           <V2Logo />
-        </div>
+        </motion.div>
 
-        {/* Back Button + Controls */}
-        <div className="flex items-center justify-between mb-4">
+        {/* Top Bar: Back Button + Controls */}
+        <motion.div
+          initial={{ opacity: 0, y: -10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.05 }}
+          className="flex items-center justify-between mb-4"
+        >
           <button
             onClick={() => router.push('/v2/agent-list')}
             className="inline-flex items-center gap-2 px-4 py-2.5 bg-[var(--v2-surface)] text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] transition-all duration-200 text-sm font-medium shadow-[var(--v2-shadow-card)]"
@@ -1423,869 +1808,68 @@ export default function V2AgentDetailPage() {
             Back to Agents
           </button>
           <V2Controls />
+        </motion.div>
+
+        {/* NEW: Redesigned Agent Header with same design patterns */}
+        <AgentHeader
+          agent={agent}
+          stats={{
+            runCount: totalExecutionCount || allExecutions.length,
+            successRate: health.percentage
+          }}
+          isExecuting={executing}
+          advancedMode={advancedMode}
+          onRun={handleRunNow}
+          onSettingsClick={() => {
+            setInputConfigExpanded(false)
+            setShowSettingsDrawer(true)
+          }}
+          onAnalyticsClick={handleOpenInsights}
+          onAdvancedModeToggle={handleAdvancedModeToggle}
+        />
+
+        {/* Performance Trends + Latest Run - Side by Side */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4">
+          <PerformanceTrends
+            executions={allExecutions}
+            hourlyRate={userHourlyRate ?? undefined}
+          />
+          <LatestRunCard
+            execution={selectedExecution}
+            isRunning={executing}
+            advancedMode={advancedMode}
+            hourlyRate={userHourlyRate ?? undefined}
+          />
         </div>
 
-        {/* Header Section with Health Bar */}
-        <Card className="!p-5 mb-4">
-          <div className="flex items-start justify-between mb-4 gap-4">
-            <div className="flex items-center gap-3 flex-1 min-w-0 pr-4">
-              <Bot className="w-9 h-9 text-[#10B981] flex-shrink-0" />
-              <div className="flex-1 min-w-0">
-                <h1 className="text-xl font-semibold text-[var(--v2-text-primary)] mb-1">
-                  {agent.agent_name}
-                </h1>
-                <p className="text-[var(--v2-text-secondary)] text-sm">
-                  {agent.description || 'No description'}
-                </p>
-              </div>
-            </div>
-            <div className="flex items-center gap-2 flex-wrap flex-shrink-0">
-              <div
-                data-tour="status-badge"
-                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border shadow-sm ${
-                  agent.status === 'active'
-                    ? 'bg-gradient-to-r from-green-50 to-emerald-50 dark:from-green-900/20 dark:to-emerald-900/20 border-green-200 dark:border-green-700'
-                    : agent.status === 'draft'
-                    ? 'bg-gradient-to-r from-amber-50 to-yellow-50 dark:from-amber-900/20 dark:to-yellow-900/20 border-amber-200 dark:border-amber-700'
-                    : 'bg-gradient-to-r from-gray-50 to-slate-50 dark:from-gray-900/20 dark:to-slate-900/20 border-gray-200 dark:border-gray-700'
-                }`}
-              >
-                <div className={`w-2 h-2 rounded-full ${
-                  agent.status === 'active' ? 'bg-green-500' : agent.status === 'draft' ? 'bg-amber-500' : 'bg-gray-400'
-                }`}></div>
-                <span className={`font-semibold text-sm ${
-                  agent.status === 'active'
-                    ? 'text-green-700 dark:text-green-300'
-                    : agent.status === 'draft'
-                    ? 'text-amber-700 dark:text-amber-300'
-                    : 'text-gray-700 dark:text-gray-300'
-                }`}>
-                  {agent.status === 'active' ? 'Active' : agent.status === 'draft' ? 'Draft' : 'Inactive'}
-                </span>
-              </div>
-              <div className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border shadow-sm ${
-                agent.mode === 'scheduled'
-                  ? 'bg-gradient-to-r from-indigo-50 to-violet-50 dark:from-indigo-900/20 dark:to-violet-900/20 border-indigo-200 dark:border-indigo-700'
-                  : 'bg-gradient-to-r from-slate-50 to-gray-50 dark:from-slate-900/20 dark:to-gray-900/20 border-slate-200 dark:border-slate-700'
-              }`}>
-                {agent.mode === 'scheduled' ? (
-                  <Calendar className="h-4 w-4 text-indigo-600 dark:text-indigo-400" />
-                ) : (
-                  <Zap className="h-4 w-4 text-slate-600 dark:text-slate-400" />
-                )}
-                <span className={`font-semibold text-sm ${
-                  agent.mode === 'scheduled'
-                    ? 'text-indigo-700 dark:text-indigo-300'
-                    : 'text-slate-700 dark:text-slate-300'
-                }`}>
-                  {agent.mode === 'scheduled' ? 'Scheduled' : 'On Demand'}
-                </span>
-              </div>
-              {memoryCount > 0 && (
-                <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-gradient-to-r from-purple-50 to-indigo-50 dark:from-purple-900/20 dark:to-indigo-900/20 border border-purple-200 dark:border-purple-700 shadow-sm">
-                  <Brain className="h-4 w-4 text-purple-600 dark:text-purple-400" />
-                  <span className="font-semibold text-purple-700 dark:text-purple-300 text-sm">
-                    Learning Active
-                  </span>
-                </div>
-              )}
-              {(totalExecutionCount > 0 || allExecutions.length > 0) && (
-                <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-gradient-to-r from-blue-50 to-cyan-50 dark:from-blue-900/20 dark:to-cyan-900/20 border border-blue-200 dark:border-blue-700 shadow-sm">
-                  <Activity className="h-4 w-4 text-blue-600 dark:text-blue-400" />
-                  <span className="font-semibold text-blue-700 dark:text-blue-300 text-sm">
-                    {totalExecutionCount || allExecutions.length} {(totalExecutionCount || allExecutions.length) === 1 ? 'Run' : 'Runs'}
-                  </span>
-                </div>
-              )}
-            </div>
-          </div>
+        {/* Insight Preview */}
+        {insights.length > 0 && (
+          <InsightPreview
+            insights={normalizeInsights(insights)}
+            onViewAll={handleOpenInsights}
+            className="mt-4"
+          />
+        )}
 
-          {/* Health Bar */}
-          <div className="mb-4">
-            <div className="flex justify-between items-center mb-1.5">
-              <span className="text-xs font-medium text-[var(--v2-text-secondary)]">System Health</span>
-              <span className={`text-xs font-semibold ${
-                health.percentage >= 80 ? 'text-green-600 dark:text-green-400' :
-                health.percentage >= 60 ? 'text-yellow-600 dark:text-yellow-400' :
-                'text-red-600 dark:text-red-400'
-              }`}>
-                {health.percentage.toFixed(0)}% Healthy
-              </span>
-            </div>
-            <div className="w-full h-1.5 bg-[var(--v2-border)] rounded-full overflow-hidden">
-              <div
-                className={`h-full transition-all duration-500 ${getHealthColor()}`}
-                style={{ width: `${health.percentage}%` }}
-              />
-            </div>
-          </div>
-
-          {/* Quick Actions */}
-          <div className="flex gap-2 flex-wrap">
-            <button
-              onClick={() => router.push(`/v2/agents/${agent.id}/run`)}
-              disabled={agent.status !== 'active'}
-              className="inline-flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-[var(--v2-primary)] to-[var(--v2-secondary)] text-white hover:opacity-90 transition-opacity font-medium text-sm disabled:opacity-50 disabled:cursor-not-allowed"
-              style={{ borderRadius: 'var(--v2-radius-button)' }}
-              title={agent.status !== 'active' ? 'Agent must be activated before running' : 'Run this agent'}
-            >
-              <Play className="w-4 h-4" />
-              Run Now
-            </button>
-            <button
-              data-tour="edit-button"
-              onClick={() => {
-                setInputConfigExpanded(false)
-                setShowSettingsDrawer(true)
-              }}
-              className="inline-flex items-center gap-2 px-4 py-2 bg-[var(--v2-surface)] text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] border border-gray-200 dark:border-slate-700 hover:bg-gray-100 dark:hover:bg-slate-600/40 transition-colors font-medium text-sm"
-              style={{ borderRadius: 'var(--v2-radius-button)' }}
-            >
-              <Settings className="w-4 h-4" />
-              Settings
-            </button>
-            {!agent.production_ready && (
-              <button
-                onClick={handleSandboxClick}
-                className="inline-flex items-center gap-2 px-4 py-2 bg-[var(--v2-surface)] text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] border border-gray-200 dark:border-slate-700 hover:bg-gray-100 dark:hover:bg-slate-600/40 transition-colors font-medium text-sm"
-                style={{ borderRadius: 'var(--v2-radius-button)' }}
-              >
-                <Gauge className="w-4 h-4" />
-                Calibrate
-              </button>
-            )}
-          </div>
-        </Card>
-
-        {/* Insights Banner - Shows when there are any insights */}
-        {(() => {
-          if (insights.length === 0) return null
-
-          const highSeverityInsights = insights.filter((i: any) =>
-            i.severity === 'high' || i.severity === 'critical'
-          )
-          const lowSeverityInsights = insights.filter((i: any) =>
-            i.severity === 'low' || i.severity === 'medium'
-          )
-
-          const isCritical = highSeverityInsights.some((i: any) => i.severity === 'critical')
-          const isHighSeverity = highSeverityInsights.length > 0
-
-          // Determine banner style based on highest severity
-          const bannerStyle = isCritical
-            ? 'bg-gradient-to-r from-red-50 to-rose-50 dark:from-red-900/20 dark:to-rose-900/20 border-red-500'
-            : isHighSeverity
-            ? 'bg-gradient-to-r from-amber-50 to-yellow-50 dark:from-amber-900/20 dark:to-yellow-900/20 border-amber-500'
-            : 'bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-900/20 dark:to-indigo-900/20 border-blue-500'
-
-          return (
-            <div className={`rounded-lg p-3 mb-4 flex items-center justify-between shadow-sm border-l-4 ${bannerStyle}`}>
-              <div className="flex items-center gap-3">
-                {isCritical ? (
-                  <AlertOctagon className="w-5 h-5 text-red-600 dark:text-red-400 flex-shrink-0" />
-                ) : isHighSeverity ? (
-                  <AlertTriangle className="w-5 h-5 text-amber-600 dark:text-amber-400 flex-shrink-0" />
-                ) : (
-                  <svg className="w-5 h-5 text-blue-600 dark:text-blue-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
-                )}
-                <div>
-                  <h3 className={`text-sm font-semibold mb-0.5 ${
-                    isCritical
-                      ? 'text-red-900 dark:text-red-200'
-                      : isHighSeverity
-                      ? 'text-amber-900 dark:text-amber-200'
-                      : 'text-blue-900 dark:text-blue-200'
-                  }`}>
-                    {insights.length} {insights.length === 1 ? 'Insight Available' : 'Insights Available'}
-                  </h3>
-                  <p className={`text-xs ${
-                    isCritical
-                      ? 'text-red-800 dark:text-red-300'
-                      : isHighSeverity
-                      ? 'text-amber-800 dark:text-amber-300'
-                      : 'text-blue-800 dark:text-blue-300'
-                  }`}>
-                    {isCritical
-                      ? 'Critical issues detected that require immediate action'
-                      : isHighSeverity
-                      ? 'Issues detected that may need attention'
-                      : 'Business insights and performance updates available'
-                    }
-                  </p>
-                </div>
-              </div>
-              <button
-                onClick={() => setShowInsightsModal(true)}
-                className="inline-flex items-center gap-2 px-3 py-1.5 bg-gradient-to-r from-[var(--v2-primary)] to-[var(--v2-secondary)] text-white hover:opacity-90 transition-opacity font-medium text-xs flex-shrink-0"
-                style={{ borderRadius: 'var(--v2-radius-button)' }}
-              >
-                View Insights
-              </button>
-            </div>
-          )
-        })()}
-
-        {/* Main 2-Column Layout */}
-        <div className="grid grid-cols-1 lg:grid-cols-[400px_1fr] gap-3">
-          {/* Left Column - Execution Timeline */}
-          <Card className="!p-3 flex flex-col">
-            <div className="mb-2">
-              <div className="flex items-center justify-between mb-1.5">
-                <h2 className="text-sm font-semibold text-[var(--v2-text-primary)]">
-                  Recent Activity
-                </h2>
-                <div className="flex items-center gap-2">
-                  {/* Time filter dropdown */}
-                  <div className="relative time-filter-dropdown">
-                    <button
-                      onClick={() => setShowTimeFilterDropdown(!showTimeFilterDropdown)}
-                      className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium bg-[var(--v2-surface)] text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] border border-gray-200 dark:border-slate-700 transition-all"
-                      style={{ borderRadius: 'var(--v2-radius-button)' }}
-                    >
-                      {executionTimeFilter === '7days' && 'Last 7 days'}
-                      {executionTimeFilter === '30days' && 'Last 30 days'}
-                      {executionTimeFilter === 'all' && 'All time'}
-                      <ChevronDown className="w-3 h-3" />
-                    </button>
-
-                    {/* Dropdown menu */}
-                    {showTimeFilterDropdown && (
-                      <div className="absolute top-full mt-1 right-0 bg-[var(--v2-surface)] border border-[var(--v2-border)] shadow-lg z-10 min-w-[140px]"
-                        style={{ borderRadius: 'var(--v2-radius-button)' }}
-                      >
-                        <button
-                          onClick={() => {
-                            setExecutionTimeFilter('7days')
-                            setExecutionPage(1)
-                            setShowTimeFilterDropdown(false)
-                          }}
-                          className={`w-full text-left px-3 py-2 text-sm font-medium transition-colors ${
-                            executionTimeFilter === '7days'
-                              ? 'bg-[var(--v2-primary)] text-white'
-                              : 'text-[var(--v2-text-secondary)] hover:bg-gray-100 dark:hover:bg-slate-700/40 hover:text-[var(--v2-text-primary)]'
-                          }`}
-                        >
-                          Last 7 days
-                        </button>
-                        <button
-                          onClick={() => {
-                            setExecutionTimeFilter('30days')
-                            setExecutionPage(1)
-                            setShowTimeFilterDropdown(false)
-                          }}
-                          className={`w-full text-left px-3 py-2 text-sm font-medium transition-colors ${
-                            executionTimeFilter === '30days'
-                              ? 'bg-[var(--v2-primary)] text-white'
-                              : 'text-[var(--v2-text-secondary)] hover:bg-gray-100 dark:hover:bg-slate-700/40 hover:text-[var(--v2-text-primary)]'
-                          }`}
-                        >
-                          Last 30 days
-                        </button>
-                        <button
-                          onClick={() => {
-                            setExecutionTimeFilter('all')
-                            setExecutionPage(1)
-                            setShowTimeFilterDropdown(false)
-                          }}
-                          className={`w-full text-left px-3 py-2 text-sm font-medium transition-colors ${
-                            executionTimeFilter === 'all'
-                              ? 'bg-[var(--v2-primary)] text-white'
-                              : 'text-[var(--v2-text-secondary)] hover:bg-gray-100 dark:hover:bg-slate-700/40 hover:text-[var(--v2-text-primary)]'
-                          }`}
-                        >
-                          All time
-                        </button>
-                      </div>
-                    )}
-                  </div>
-
-                  <button
-                    onClick={handleRefresh}
-                    disabled={refreshingExecutions}
-                    className="p-2 hover:bg-gray-100 dark:hover:bg-slate-700/40 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                    title="Refresh executions"
-                  >
-                    <RefreshCw className={`w-4 h-4 text-[var(--v2-text-muted)] ${refreshingExecutions ? 'animate-spin' : ''}`} />
-                  </button>
-                  <TrendingUp className="w-5 h-5 text-[var(--v2-text-muted)]" />
-                </div>
-              </div>
-            </div>
-
-            <div className="space-y-2 flex-1 overflow-hidden">
-              {(() => {
-                // Filter executions by time range
-                const now = new Date()
-                const filteredExecutions = executions.filter(exec => {
-                  if (executionTimeFilter === 'all') return true
-
-                  const executionDate = new Date(exec.started_at)
-                  const daysDiff = Math.floor((now.getTime() - executionDate.getTime()) / (1000 * 60 * 60 * 24))
-
-                  if (executionTimeFilter === '7days') return daysDiff <= 7
-                  if (executionTimeFilter === '30days') return daysDiff <= 30
-                  return true
-                })
-
-                const totalPages = Math.ceil(filteredExecutions.length / EXECUTIONS_PER_PAGE)
-                const startIndex = (executionPage - 1) * EXECUTIONS_PER_PAGE
-                const endIndex = startIndex + EXECUTIONS_PER_PAGE
-                const paginatedExecutions = filteredExecutions.slice(startIndex, endIndex)
-
-                return (
-                  <>
-                    {paginatedExecutions.map((exec) => (
-                      <button
-                        key={exec.id}
-                        onClick={() => {
-                          console.log('[onClick] Execution selected:', {
-                            id: exec.id,
-                            isPilot: exec.logs?.pilot,
-                            hasLogs: !!exec.logs
-                          })
-                          setSelectedExecution(exec)
-                          // Fetch execution_results for Pilot executions
-                          if (exec.logs?.pilot) {
-                            console.log('[onClick] This is a Pilot execution, fetching results...')
-                            fetchExecutionResults(exec.id)
-                          } else {
-                            console.log('[onClick] Not a Pilot execution, clearing results')
-                            setExecutionResults(null)
-                          }
-                        }}
-                        className={`w-full p-2 transition-all text-left border-2 ${
-                          selectedExecution?.id === exec.id
-                            ? 'border-[var(--v2-primary)]'
-                            : 'bg-[var(--v2-surface)] hover:bg-gray-100 dark:hover:bg-slate-700/40 border-transparent'
-                        }`}
-                        style={{ borderRadius: 'var(--v2-radius-button)' }}
-                      >
-                        <div className="flex items-start justify-between mb-1">
-                          <span className="text-xs text-[var(--v2-text-muted)]">
-                            {formatDate(exec.started_at)}
-                          </span>
-                          <span className={`text-xs px-2 py-0.5 rounded-full font-semibold ${
-                            exec.status === 'completed' || exec.status === 'success'
-                              ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400'
-                              : 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400'
-                          }`}>
-                            {exec.status === 'completed' || exec.status === 'success' ? '✓ Success' : '✗ Failed'}
-                          </span>
-                        </div>
-                        <div className="text-xs font-semibold text-[var(--v2-text-primary)] mb-0.5 line-clamp-1">
-                          Run #{exec.id.slice(0, 8)}
-                        </div>
-                        <div className="flex items-center gap-1.5 text-xs text-[var(--v2-text-muted)]">
-                          <span>⏱ {formatDuration(exec.execution_duration_ms ?? undefined)}</span>
-                        </div>
-                      </button>
-                    ))}
-
-                    {filteredExecutions.length === 0 && (
-                      <div className="text-center py-12 text-sm text-[var(--v2-text-muted)]">
-                        No executions found for this time range
-                      </div>
-                    )}
-
-                    {totalPages > 1 && (
-                      <div className="mt-3 pt-3 pb-2 border-t border-[var(--v2-border)] space-y-2">
-                        {/* Row 1: Showing X-Y of Z text */}
-                        <div className="text-xs text-[var(--v2-text-muted)] text-center">
-                          Showing {startIndex + 1}-{Math.min(endIndex, filteredExecutions.length)} of {filteredExecutions.length}
-                        </div>
-
-                        {/* Row 2: Pagination controls */}
-                        <div className="flex items-center justify-center gap-0.5 scale-90">
-                          <button
-                            onClick={() => setExecutionPage(prev => Math.max(1, prev - 1))}
-                            disabled={executionPage === 1}
-                            className="flex items-center justify-center p-1.5 text-xs font-medium text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] disabled:opacity-50 disabled:cursor-not-allowed transition-all bg-[var(--v2-surface)] border border-gray-200 dark:border-slate-700"
-                            style={{ borderRadius: 'var(--v2-radius-button)' }}
-                            title="Previous"
-                          >
-                            <ChevronLeft className="w-3.5 h-3.5" />
-                          </button>
-
-                          {/* Page number buttons with smart pagination */}
-                          {(() => {
-                            const maxVisible = 9;
-                            const pages = [];
-
-                            if (totalPages <= maxVisible) {
-                              // Show all pages if total is small
-                              for (let i = 1; i <= totalPages; i++) {
-                                pages.push(i);
-                              }
-                            } else {
-                              // Smart pagination: always show first, last, and pages around current
-                              pages.push(1);
-
-                              let start = Math.max(2, executionPage - 2);
-                              let end = Math.min(totalPages - 1, executionPage + 2);
-
-                              // Adjust range if we're near the start or end
-                              if (executionPage <= 4) {
-                                end = Math.min(totalPages - 1, 7);
-                              } else if (executionPage >= totalPages - 3) {
-                                start = Math.max(2, totalPages - 6);
-                              }
-
-                              if (start > 2) pages.push('...');
-
-                              for (let i = start; i <= end; i++) {
-                                pages.push(i);
-                              }
-
-                              if (end < totalPages - 1) pages.push('...');
-                              pages.push(totalPages);
-                            }
-
-                            return pages.map((page, idx) => {
-                              if (page === '...') {
-                                return (
-                                  <span
-                                    key={`ellipsis-${idx}`}
-                                    className="px-2.5 py-1.5 text-xs text-[var(--v2-text-muted)]"
-                                  >
-                                    ...
-                                  </span>
-                                );
-                              }
-
-                              return (
-                                <button
-                                  key={page}
-                                  onClick={() => setExecutionPage(page as number)}
-                                  className={`min-w-[28px] px-2 py-1.5 text-xs font-medium transition-all ${
-                                    executionPage === page
-                                      ? 'bg-[var(--v2-primary)] text-white'
-                                      : 'bg-[var(--v2-surface)] text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] border border-gray-200 dark:border-slate-700'
-                                  }`}
-                                  style={{ borderRadius: 'var(--v2-radius-button)' }}
-                                >
-                                  {page}
-                                </button>
-                              );
-                            });
-                          })()}
-
-                          <button
-                            onClick={() => setExecutionPage(prev => Math.min(totalPages, prev + 1))}
-                            disabled={executionPage === totalPages}
-                            className="flex items-center justify-center p-1.5 text-xs font-medium text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] disabled:opacity-50 disabled:cursor-not-allowed transition-all bg-[var(--v2-surface)] border border-gray-200 dark:border-slate-700"
-                            style={{ borderRadius: 'var(--v2-radius-button)' }}
-                            title="Next"
-                          >
-                            <ChevronRight className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      </div>
-                    )}
-                  </>
-                )
-              })()}
-            </div>
-          </Card>
-
-          {/* Right Column - Execution Details */}
-          <Card className="!p-3 flex flex-col">
-            <div className="flex items-center justify-between mb-3">
-              <h2 className="text-sm font-semibold text-[var(--v2-text-primary)]">
-                Latest Execution
-              </h2>
-              {/* Smart Pilot Badge */}
-              {selectedExecution && (selectedExecution.logs?.pilot || selectedExecution.logs?.agentkit) && (
-                <span className={`text-xs px-2.5 py-1 rounded-full font-semibold ${
-                  selectedExecution.logs.pilot
-                    ? 'bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-400'
-                    : 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400'
-                }`}>
-                  {selectedExecution.logs.pilot ? 'Smart Pilot' : 'AgentKit'}
-                </span>
-              )}
-            </div>
-
-            {selectedExecution ? (
-              <div className="space-y-3">
-                {/* Metrics Grid */}
-                <div className="grid grid-cols-3 gap-2">
-                  <div className="bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg p-2">
-                    <div className="text-xs text-[var(--v2-text-muted)] uppercase tracking-wide mb-1">Duration</div>
-                    <div className="text-xl font-semibold text-[var(--v2-text-primary)]">
-                      {formatDuration(selectedExecution.execution_duration_ms ?? undefined)}
-                    </div>
-                  </div>
-                  <div className="bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg p-2">
-                    <div className="text-xs text-[var(--v2-text-muted)] uppercase tracking-wide mb-1">
-                      {selectedExecution.logs?.pilot ? 'Steps' : 'Status'}
-                    </div>
-                    <div className="text-xl font-semibold text-[var(--v2-text-primary)] capitalize">
-                      {selectedExecution.logs?.pilot
-                        ? (() => {
-                            const completed = selectedExecution.logs.stepsCompleted || 0
-                            const failed = selectedExecution.logs.stepsFailed || 0
-                            const skipped = selectedExecution.logs.stepsSkipped || 0
-                            const total = selectedExecution.logs.totalSteps || (completed + failed + skipped)
-                            return `${completed}/${total}`
-                          })()
-                        : selectedExecution.status}
-                    </div>
-                  </div>
-                  <div className="bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg p-2">
-                    <div className="text-xs text-[var(--v2-text-muted)] uppercase tracking-wide mb-1">Pilot Credits</div>
-                    <div className="text-xl font-semibold text-[var(--v2-text-primary)]">
-                      {(() => {
-                        const adjusted = selectedExecution.logs?.tokensUsed?.adjusted
-                        const total = selectedExecution.logs?.tokensUsed?.total
-                        const llmTokens = adjusted || total || 0
-                        const pilotTokens = Math.ceil(llmTokens / tokensPerPilotCredit)
-                        return pilotTokens.toLocaleString()
-                      })()}
-                    </div>
-                  </div>
-                </div>
-
-
-                {/* Execution Details - Timeline Card */}
-                <div className="bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg p-3">
-                  {/* Timeline */}
-                  <div>
-                    <div className="text-xs font-medium text-[var(--v2-text-muted)] mb-2">Timeline</div>
-                    <div className="relative">
-                      {/* Timeline events */}
-                      <div className="flex justify-between items-start relative">
-                        {/* Horizontal line - positioned to connect the dots */}
-                        {selectedExecution.completed_at && (
-                          <div className="absolute left-[6.75px] right-[6.75px] top-[6.75px] h-0.5 bg-gradient-to-r from-blue-600 via-blue-400 to-green-600 dark:from-blue-400 dark:via-blue-300 dark:to-green-400"></div>
-                        )}
-
-                        {/* Started event */}
-                        <div className="relative flex flex-col items-center gap-1 text-xs">
-                          <div className="w-3.5 h-3.5 rounded-full bg-blue-600 dark:bg-blue-400 border-2 border-white dark:border-slate-900 z-10"></div>
-                          <div className="text-center mt-1">
-                            <div className="text-[var(--v2-text-muted)]">Started</div>
-                            <div className="text-[var(--v2-text-primary)] font-medium">
-                              {new Date(selectedExecution.started_at).toLocaleTimeString()}
-                            </div>
-                          </div>
-                        </div>
-
-                        {/* Completed event */}
-                        {selectedExecution.completed_at && (
-                          <div className="relative flex flex-col items-center gap-1 text-xs">
-                            <div className="w-3.5 h-3.5 rounded-full bg-green-600 dark:bg-green-400 border-2 border-white dark:border-slate-900 z-10"></div>
-                            <div className="text-center mt-1">
-                              <div className="text-[var(--v2-text-muted)]">Completed</div>
-                              <div className="text-[var(--v2-text-primary)] font-medium">
-                                {new Date(selectedExecution.completed_at).toLocaleTimeString()}
-                              </div>
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Execution Summary - User-friendly metadata */}
-                {((selectedExecution as any).output || (selectedExecution as any).final_output) && (
-                  <div className="bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg p-4">
-                    <h4 className="text-xs font-semibold text-[var(--v2-text-primary)] mb-2">
-                      📊 Execution Summary
-                    </h4>
-                    <div className="space-y-2">
-                      {(() => {
-                        const output = ((selectedExecution as any).output || (selectedExecution as any).final_output) as Record<string, any>
-                        const summaryItems: Array<{ label: string; value: string | number; icon?: string }> = []
-
-                        // Parse output by steps
-                        Object.keys(output).forEach(stepKey => {
-                          const stepData = output[stepKey]
-
-                          if (stepData && typeof stepData === 'object') {
-                            // Check each field in the step data
-                            Object.keys(stepData).forEach(key => {
-                              const value = stepData[key]
-
-                              // Handle sanitized metadata format (new format after privacy fix)
-                              if (value && typeof value === 'object' && 'count' in value && value.type === 'array') {
-                                const label = key.charAt(0).toUpperCase() + key.slice(1).replace(/_/g, ' ')
-                                summaryItems.push({
-                                  label: `${label} processed`,
-                                  value: value.count,
-                                  icon: '📝'
-                                })
-                              }
-                              // Legacy format: actual arrays (for backward compatibility)
-                              else if (Array.isArray(value)) {
-                                const label = key.charAt(0).toUpperCase() + key.slice(1).replace(/_/g, ' ')
-                                summaryItems.push({
-                                  label: `${label} processed`,
-                                  value: value.length,
-                                  icon: '📝'
-                                })
-                              }
-                              // Numbers
-                              else if (typeof value === 'number') {
-                                const label = key.charAt(0).toUpperCase() + key.slice(1).replace(/_/g, ' ')
-                                summaryItems.push({
-                                  label,
-                                  value,
-                                  icon: '🔢'
-                                })
-                              }
-                              // Short strings
-                              else if (typeof value === 'string' && value.length < 100) {
-                                const label = key.charAt(0).toUpperCase() + key.slice(1).replace(/_/g, ' ')
-                                summaryItems.push({
-                                  label,
-                                  value,
-                                  icon: '📄'
-                                })
-                              }
-                            })
-                          }
-                        })
-
-                        if (summaryItems.length === 0) {
-                          return (
-                            <p className="text-xs text-[var(--v2-text-muted)]">
-                              No summary data available
-                            </p>
-                          )
-                        }
-
-                        return summaryItems.slice(0, 5).map((item, idx) => (
-                          <div key={idx} className="flex justify-between items-center text-xs">
-                            <span className="text-[var(--v2-text-muted)] flex items-center gap-1.5">
-                              <span>{item.icon}</span>
-                              {item.label}:
-                            </span>
-                            <span className="text-[var(--v2-text-primary)] font-semibold">
-                              {typeof item.value === 'number' ? item.value.toLocaleString() : item.value}
-                            </span>
-                          </div>
-                        ))
-                      })()}
-                    </div>
-                  </div>
-                )}
-
-                {/* Execution Results - Enhanced with Business Context */}
-                <div>
-                  <h3 className="text-xs font-semibold text-[var(--v2-text-primary)] mb-2">
-                    What Happened
-                  </h3>
-
-                  {executionResults ? (
-                    <div className="space-y-2">
-                      {(() => {
-                        // Get meaningful operations (non-system steps)
-                        const meaningfulOps = executionResults.items.filter((item: any) =>
-                          item.plugin !== 'system'
-                        )
-
-                        // If no meaningful operations, show generic success message
-                        if (meaningfulOps.length === 0) {
-                          return (
-                            <div
-                              className="p-2 border border-[var(--v2-border)]"
-                              style={{
-                                background: 'linear-gradient(135deg, var(--v2-surface) 0%, var(--v2-surface-hover) 100%)',
-                                borderRadius: 'var(--v2-radius-card)'
-                              }}
-                            >
-                              <div className="flex items-center gap-2">
-                                <CheckCircle2 className="w-4 h-4 text-green-600" />
-                                <p className="text-xs text-[var(--v2-text-primary)]">
-                                  Workflow completed successfully
-                                </p>
-                              </div>
-                            </div>
-                          )
-                        }
-
-                        // Get icon based on plugin type
-                        const getIconComponent = (plugin: string) => {
-                          if (plugin === 'google-mail') return Mail
-                          if (plugin === 'google-sheets') return Database
-                          if (plugin === 'google-drive') return Cloud
-                          if (plugin === 'quickbooks') return Database
-                          if (plugin === 'airtable') return Database
-                          if (plugin === 'anthropic') return Brain
-                          return Settings
-                        }
-
-                        // Enhanced description with business context
-                        const getEnhancedDescription = (item: any) => {
-                          // Use the friendlyMessage as base
-                          const baseMessage = item.friendlyMessage ||
-                            (item.itemCount > 0
-                              ? `Processed ${item.itemCount} ${item.itemCount === 1 ? 'item' : 'items'}`
-                              : 'Completed')
-
-                          // Add field context if available (what kind of data)
-                          if (item.sampleKeys && item.sampleKeys.length > 0) {
-                            const keyHints = item.sampleKeys.slice(0, 3)
-                            const hasUrgent = keyHints.some((k: string) =>
-                              k.toLowerCase().includes('urgent') ||
-                              k.toLowerCase().includes('priority')
-                            )
-                            const hasStatus = keyHints.some((k: string) =>
-                              k.toLowerCase().includes('status')
-                            )
-
-                            // Add context badges
-                            let context = ''
-                            if (hasUrgent && item.itemCount > 0) {
-                              context = ' (including priority items)'
-                            } else if (hasStatus) {
-                              context = ' with status tracking'
-                            }
-
-                            return baseMessage + context
-                          }
-
-                          return baseMessage
-                        }
-
-                        // Only show first (input) and last (output) operations if there are multiple
-                        const opsToShow = meaningfulOps.length > 2
-                          ? [meaningfulOps[0], meaningfulOps[meaningfulOps.length - 1]]
-                          : meaningfulOps
-
-                        // Calculate total items processed for context
-                        const totalItems = executionResults.totalItems || 0
-
-                        return (
-                          <div className="space-y-2">
-                            {/* Business Story - Step by Step Flow */}
-                            {meaningfulOps.length > 0 && (
-                              <div className="p-3 bg-[var(--v2-surface-hover)] border border-[var(--v2-border)] rounded-lg">
-                                <div className="space-y-2.5">
-                                  {/* Show complete workflow story */}
-                                  {meaningfulOps.map((op: any, idx: number) => {
-                                    const IconComponent = getIconComponent(op.plugin)
-                                    const isLast = idx === meaningfulOps.length - 1
-
-                                    return (
-                                      <div key={idx} className="flex items-center gap-3">
-                                        {/* Step number badge */}
-                                        <div className="flex-shrink-0 w-5 h-5 rounded-full bg-[var(--v2-surface)] border border-[var(--v2-border)] flex items-center justify-center">
-                                          <span className="text-[10px] font-semibold text-[var(--v2-text-muted)]">{idx + 1}</span>
-                                        </div>
-
-                                        {/* Plugin icon */}
-                                        <div className="flex-shrink-0 w-6 h-6 rounded bg-[var(--v2-surface)] border border-[var(--v2-border)] flex items-center justify-center">
-                                          <IconComponent className="w-3 h-3 text-[var(--v2-text-muted)]" />
-                                        </div>
-
-                                        {/* Count and description */}
-                                        <div className="flex-1 min-w-0">
-                                          <div className="flex items-baseline gap-2">
-                                            <span className={`font-bold ${isLast ? 'text-[var(--v2-primary)]' : 'text-[var(--v2-text-primary)]'}`}>
-                                              {op.itemCount}
-                                            </span>
-                                            <span className="text-xs text-[var(--v2-text-secondary)] truncate">
-                                              {getEnhancedDescription(op)}
-                                            </span>
-                                          </div>
-                                        </div>
-                                      </div>
-                                    )
-                                  })}
-
-                                  {/* Execution time footer */}
-                                  {executionResults.metadata?.executionTime && (
-                                    <div className="pt-2 mt-2 border-t border-[var(--v2-border)] flex items-center gap-2">
-                                      <Clock className="w-3 h-3 text-[var(--v2-text-muted)]" />
-                                      <p className="text-xs text-[var(--v2-text-muted)]">
-                                        {(executionResults.metadata.executionTime / 1000).toFixed(1)}s total
-                                      </p>
-                                    </div>
-                                  )}
-                                </div>
-                              </div>
-                            )}
-                          </div>
-                        )
-                      })()}
-                    </div>
-                  ) : (
-                    // Fallback: show user-friendly summary from logs
-                    <div className="p-3 bg-[var(--v2-surface-hover)] border border-[var(--v2-border)] rounded-lg">
-                      {(() => {
-                        const logs = selectedExecution.logs as any
-                        const hasError = selectedExecution.error_message || selectedExecution.status === 'failed'
-                        const stepsCompleted = logs?.stepsCompleted || 0
-                        const stepsFailed = logs?.stepsFailed || 0
-                        const executionTime = logs?.executionTime
-
-                        // Error state
-                        if (hasError) {
-                          return (
-                            <div className="flex items-start gap-2">
-                              <AlertCircle className="w-4 h-4 text-red-500 flex-shrink-0 mt-0.5" />
-                              <div>
-                                <p className="text-sm font-medium text-red-600 dark:text-red-400">
-                                  Workflow failed
-                                </p>
-                                <p className="text-xs text-[var(--v2-text-secondary)] mt-1">
-                                  {selectedExecution.error_message || `${stepsFailed} step${stepsFailed !== 1 ? 's' : ''} failed`}
-                                </p>
-                              </div>
-                            </div>
-                          )
-                        }
-
-                        // Success state
-                        if (logs?.success || selectedExecution.status === 'completed') {
-                          return (
-                            <div className="space-y-2">
-                              <div className="flex items-center gap-2">
-                                <CheckCircle2 className="w-4 h-4 text-green-600" />
-                                <p className="text-sm text-[var(--v2-text-primary)]">
-                                  Workflow completed successfully
-                                </p>
-                              </div>
-                              {(stepsCompleted > 0 || executionTime) && (
-                                <div className="flex items-center gap-4 text-xs text-[var(--v2-text-secondary)]">
-                                  {stepsCompleted > 0 && (
-                                    <span>{stepsCompleted} step{stepsCompleted !== 1 ? 's' : ''} completed</span>
-                                  )}
-                                  {executionTime && (
-                                    <span>{(executionTime / 1000).toFixed(1)}s</span>
-                                  )}
-                                </div>
-                              )}
-                            </div>
-                          )
-                        }
-
-                        // No data
-                        return (
-                          <p className="text-sm text-[var(--v2-text-secondary)]">
-                            No execution details available
-                          </p>
-                        )
-                      })()}
-                    </div>
-                  )}
-                </div>
-              </div>
-            ) : (
-              <div className="flex flex-col items-center justify-center py-20 text-center">
-                <Clock className="w-16 h-16 text-[var(--v2-text-muted)] opacity-20 mb-4" />
-                <p className="text-[var(--v2-text-muted)]">
-                  Select an execution to view details
-                </p>
-              </div>
-            )}
-          </Card>
-        </div>
+        {/* Run History Table */}
+        <RunHistoryTable
+          executions={allExecutions}
+          onSelectExecution={handleSelectExecutionForPanel}
+          selectedExecutionId={selectedExecution?.id}
+          className="mt-4"
+          hourlyRate={userHourlyRate ?? undefined}
+        />
       </div>
+
+      {/* Execution Detail Slide-out Panel */}
+      <ExecutionDetailPanel
+        execution={selectedExecution}
+        isOpen={showDetailPanel}
+        onClose={() => setShowDetailPanel(false)}
+        advancedMode={advancedMode}
+        executionDetails={executionDetails}
+        hourlyRate={userHourlyRate ?? undefined}
+      />
 
       {/* Settings Drawer Overlay */}
       {showSettingsDrawer && (
@@ -2318,13 +1902,15 @@ export default function V2AgentDetailPage() {
         </div>
 
         <div className="p-6 space-y-8">
-          {/* AIS Complexity */}
-          <div className="rounded-xl p-5 border-l-4 border-indigo-500 dark:border-indigo-400 bg-[var(--v2-surface)]">
-            <AgentIntensityCardV2
-              agentId={agentId}
-              latestExecutionTime={executions[0]?.started_at ? new Date(executions[0].started_at).getTime() : undefined}
-            />
-          </div>
+          {/* AIS Complexity - Only visible in Advanced Mode */}
+          {advancedMode && (
+            <div className="rounded-xl p-5 border-l-4 border-indigo-500 dark:border-indigo-400 bg-[var(--v2-surface)]">
+              <AgentIntensityCardV2
+                agentId={agentId}
+                latestExecutionTime={executions[0]?.started_at ? new Date(executions[0].started_at).getTime() : undefined}
+              />
+            </div>
+          )}
 
           {/* Agent Details Section */}
           <div>
@@ -2359,7 +1945,7 @@ export default function V2AgentDetailPage() {
                     </code>
                     <button
                       onClick={copyAgentId}
-                      className="p-1.5 hover:bg-gray-100 dark:hover:bg-slate-700/40 transition-colors"
+                      className="p-1.5 hover:bg-[var(--v2-border)] transition-colors"
                       style={{ borderRadius: 'var(--v2-radius-button)' }}
                     >
                       {copiedId ? (
@@ -2388,7 +1974,7 @@ export default function V2AgentDetailPage() {
                 )}
                 <button
                   onClick={handleEditClick}
-                  className="inline-flex items-center gap-2 px-3 py-2 text-xs font-medium text-[var(--v2-primary)] hover:bg-gray-100 dark:hover:bg-slate-700/40 rounded-lg transition-colors border border-[var(--v2-border)]"
+                  className="inline-flex items-center gap-2 px-3 py-2 text-xs font-medium text-[var(--v2-primary)] hover:bg-[var(--v2-border)] rounded-lg transition-colors border border-[var(--v2-border)]"
                   style={{ borderRadius: 'var(--v2-radius-button)' }}
                 >
                   <Edit className="w-3.5 h-3.5" />
@@ -2405,7 +1991,7 @@ export default function V2AgentDetailPage() {
                     type="text"
                     value={editedName}
                     onChange={(e) => setEditedName(e.target.value)}
-                    className="w-full text-sm text-[var(--v2-text-primary)] bg-white dark:bg-slate-800 border border-[var(--v2-border)] rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[var(--v2-primary)]"
+                    className="w-full text-sm text-[var(--v2-text-primary)] bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[var(--v2-primary)]"
                     placeholder="Agent name"
                     autoFocus
                   />
@@ -2417,7 +2003,7 @@ export default function V2AgentDetailPage() {
                   <textarea
                     value={editedDescription}
                     onChange={(e) => setEditedDescription(e.target.value)}
-                    className="w-full text-sm text-[var(--v2-text-primary)] bg-white dark:bg-slate-800 border border-[var(--v2-border)] rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[var(--v2-primary)] resize-none"
+                    className="w-full text-sm text-[var(--v2-text-primary)] bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[var(--v2-primary)] resize-none"
                     placeholder="Agent description"
                     rows={3}
                   />
@@ -2444,7 +2030,7 @@ export default function V2AgentDetailPage() {
                   <button
                     onClick={handleCancelEditDetails}
                     disabled={isSaving}
-                    className="inline-flex items-center gap-2 px-4 py-2 text-xs font-medium text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] hover:bg-gray-100 dark:hover:bg-slate-700/40 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed border border-[var(--v2-border)]"
+                    className="inline-flex items-center gap-2 px-4 py-2 text-xs font-medium text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] hover:bg-[var(--v2-border)] rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed border border-[var(--v2-border)]"
                     style={{ borderRadius: 'var(--v2-radius-button)' }}
                   >
                     <X className="w-3.5 h-3.5" />
@@ -2550,7 +2136,7 @@ export default function V2AgentDetailPage() {
                   style={{ borderRadius: 'var(--v2-radius-button)' }}
                 >
                   <div
-                    className={`w-4 h-4 bg-white dark:bg-slate-200 rounded-full absolute top-1 transition-transform ${
+                    className={`w-4 h-4 bg-white dark:bg-white rounded-full absolute top-1 transition-transform ${
                       agent.status === 'active' ? 'translate-x-7' : 'translate-x-1'
                     }`}
                     style={{ boxShadow: '0 1px 3px rgba(0, 0, 0, 0.1)' }}
@@ -2607,7 +2193,7 @@ export default function V2AgentDetailPage() {
                         className={`p-3 border transition-all ${
                           scheduleMode === 'manual'
                             ? 'border-[var(--v2-primary)] bg-[var(--v2-primary)]/10'
-                            : 'border-[var(--v2-border)] hover:border-[var(--v2-primary)] hover:bg-gray-100 dark:hover:bg-slate-700/40'
+                            : 'border-[var(--v2-border)] hover:border-[var(--v2-primary)] hover:bg-[var(--v2-border)]'
                         }`}
                         style={{ borderRadius: 'var(--v2-radius-button)' }}
                       >
@@ -2625,7 +2211,7 @@ export default function V2AgentDetailPage() {
                         className={`p-3 border transition-all ${
                           scheduleMode === 'scheduled'
                             ? 'border-[var(--v2-primary)] bg-[var(--v2-primary)]/10'
-                            : 'border-[var(--v2-border)] hover:border-[var(--v2-primary)] hover:bg-gray-100 dark:hover:bg-slate-700/40'
+                            : 'border-[var(--v2-border)] hover:border-[var(--v2-primary)] hover:bg-[var(--v2-border)]'
                         }`}
                         style={{ borderRadius: 'var(--v2-radius-button)' }}
                       >
@@ -2803,7 +2389,7 @@ export default function V2AgentDetailPage() {
                     <button
                       onClick={handleCancelEditSchedule}
                       disabled={isSaving}
-                      className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-[var(--v2-surface)] text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] border border-gray-200 dark:border-slate-700 hover:bg-gray-100 dark:hover:bg-slate-700/40 transition-colors font-medium text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-[var(--v2-surface)] text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] border border-[var(--v2-border)] hover:bg-[var(--v2-border)] transition-colors font-medium text-sm disabled:opacity-50 disabled:cursor-not-allowed"
                       style={{ borderRadius: 'var(--v2-radius-button)' }}
                     >
                       <X className="w-4 h-4" />
@@ -2834,7 +2420,7 @@ export default function V2AgentDetailPage() {
                   style={{ borderRadius: 'var(--v2-radius-button)' }}
                 >
                   <div
-                    className={`w-4 h-4 bg-white dark:bg-slate-200 rounded-full absolute top-1 transition-transform ${
+                    className={`w-4 h-4 bg-white dark:bg-white rounded-full absolute top-1 transition-transform ${
                       (agent.insights_enabled ?? false) ? 'translate-x-7' : 'translate-x-1'
                     }`}
                     style={{ boxShadow: '0 1px 3px rgba(0, 0, 0, 0.1)' }}
@@ -2853,7 +2439,7 @@ export default function V2AgentDetailPage() {
               <button
                 onClick={handleDuplicateAgent}
                 disabled={actionLoading === 'duplicate'}
-                className="w-full flex items-center gap-3 p-4 bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg hover:bg-gray-100 dark:hover:bg-slate-600/50 transition-all disabled:opacity-50"
+                className="w-full flex items-center gap-3 p-4 bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg hover:bg-[var(--v2-border)] transition-all disabled:opacity-50"
               >
                 {actionLoading === 'duplicate' ? <Loader2 className="w-5 h-5 animate-spin text-[var(--v2-text-secondary)]" /> : <Copy className="w-5 h-5 text-[var(--v2-text-secondary)]" />}
                 <div className="text-left flex-1">
@@ -2865,7 +2451,7 @@ export default function V2AgentDetailPage() {
               <button
                 onClick={handleShareAgentClick}
                 disabled={agent.status !== 'active' || actionLoading === 'share'}
-                className="w-full flex items-center gap-3 p-4 bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg hover:bg-gray-100 dark:hover:bg-slate-600/50 transition-all disabled:opacity-50"
+                className="w-full flex items-center gap-3 p-4 bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg hover:bg-[var(--v2-border)] transition-all disabled:opacity-50"
               >
                 {actionLoading === 'share' ? <Loader2 className="w-5 h-5 animate-spin text-[var(--v2-text-secondary)]" /> : <Share2 className="w-5 h-5 text-[var(--v2-text-secondary)]" />}
                 <div className="text-left flex-1">
@@ -2876,7 +2462,7 @@ export default function V2AgentDetailPage() {
 
               <button
                 onClick={handleExportConfiguration}
-                className="w-full flex items-center gap-3 p-4 bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg hover:bg-gray-100 dark:hover:bg-slate-600/50 transition-all"
+                className="w-full flex items-center gap-3 p-4 bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg hover:bg-[var(--v2-border)] transition-all"
               >
                 <Download className="w-5 h-5 text-[var(--v2-text-secondary)]" />
                 <div className="text-left flex-1">
@@ -2929,7 +2515,7 @@ export default function V2AgentDetailPage() {
                 e.stopPropagation()
                 setInputConfigExpanded(false)
               }}
-              className="p-1.5 text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)] hover:bg-gray-100 dark:hover:bg-slate-700/40 rounded-lg transition-colors"
+              className="p-1.5 text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)] hover:bg-[var(--v2-border)] rounded-lg transition-colors"
             >
               <X className="w-5 h-5" />
             </button>
@@ -2983,7 +2569,7 @@ export default function V2AgentDetailPage() {
                   e.stopPropagation()
                   setInputConfigExpanded(false)
                 }}
-                className="px-4 py-2.5 text-sm font-medium text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] hover:bg-gray-100 dark:hover:bg-slate-700/40 transition-colors border border-[var(--v2-border)]"
+                className="px-4 py-2.5 text-sm font-medium text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] hover:bg-[var(--v2-border)] transition-colors border border-[var(--v2-border)]"
                 style={{ borderRadius: 'var(--v2-radius-button)' }}
               >
                 Close
@@ -2999,7 +2585,7 @@ export default function V2AgentDetailPage() {
       {/* Delete Confirmation Modal */}
       {showDeleteConfirm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-          <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-2xl max-w-md w-full p-6 border border-[var(--v2-border)]">
+          <div className="bg-[var(--v2-surface)] rounded-2xl shadow-2xl max-w-md w-full p-6 border border-[var(--v2-border)]">
             <div className="flex items-center gap-3 mb-4">
               <div className="w-12 h-12 bg-red-100 dark:bg-red-900/30 rounded-full flex items-center justify-center">
                 <Trash2 className="w-6 h-6 text-red-600 dark:text-red-400" />
@@ -3017,7 +2603,7 @@ export default function V2AgentDetailPage() {
             <div className="flex gap-3">
               <button
                 onClick={() => setShowDeleteConfirm(false)}
-                className="flex-1 px-4 py-2.5 bg-[var(--v2-surface)] text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] border border-gray-200 dark:border-slate-700 hover:bg-gray-100 dark:hover:bg-slate-700/40 transition-colors font-medium text-sm"
+                className="flex-1 px-4 py-2.5 bg-[var(--v2-surface)] text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] border border-[var(--v2-border)] hover:bg-[var(--v2-border)] transition-colors font-medium text-sm"
                 style={{ borderRadius: 'var(--v2-radius-button)' }}
               >
                 Cancel
@@ -3116,7 +2702,7 @@ export default function V2AgentDetailPage() {
             <div className="flex gap-3">
               <button
                 onClick={() => setShowShareConfirm(false)}
-                className="flex-1 px-4 py-2.5 bg-[var(--v2-surface)] text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] border border-gray-200 dark:border-slate-700 hover:bg-gray-100 dark:hover:bg-slate-700/40 transition-colors font-medium text-sm"
+                className="flex-1 px-4 py-2.5 bg-[var(--v2-surface)] text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] border border-[var(--v2-border)] hover:bg-[var(--v2-border)] transition-colors font-medium text-sm"
                 style={{ borderRadius: 'var(--v2-radius-button)' }}
               >
                 {(hasBeenShared || sharingValidation?.details?.alreadyShared) ? 'Close' : 'Cancel'}
@@ -3175,104 +2761,525 @@ export default function V2AgentDetailPage() {
         </div>
       )}
 
+      {/* Hourly Rate Dialog */}
+      {showHourlyRateDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+          <div className="bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-2xl shadow-2xl max-w-md w-full overflow-hidden">
+            <div className="p-6">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="w-10 h-10 rounded-full bg-gradient-to-br from-emerald-500 to-green-600 flex items-center justify-center">
+                  <DollarSign className="w-5 h-5 text-white" />
+                </div>
+                <div>
+                  <h2 className="text-lg font-semibold text-[var(--v2-text-primary)]">Confirm Your Hourly Rate</h2>
+                  <p className="text-sm text-[var(--v2-text-secondary)]">
+                    For accurate cost savings calculations
+                  </p>
+                </div>
+              </div>
+
+              <p className="text-sm text-[var(--v2-text-secondary)] mb-4">
+                Your hourly rate is used to calculate the business value of your automations.
+                Confirm or update it below to see accurate cost savings in your insights.
+              </p>
+
+              <div className="mb-6">
+                <label className="block text-sm font-medium text-[var(--v2-text-primary)] mb-2">
+                  Your hourly rate (USD)
+                </label>
+                <div className="relative">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--v2-text-muted)]">$</span>
+                  <input
+                    type="number"
+                    value={hourlyRateInput}
+                    onChange={(e) => setHourlyRateInput(e.target.value)}
+                    placeholder="50"
+                    min="1"
+                    step="1"
+                    className="w-full pl-8 pr-4 py-2.5 text-lg font-semibold bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent text-[var(--v2-text-primary)]"
+                  />
+                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-[var(--v2-text-muted)]">/hour</span>
+                </div>
+                <p className="text-xs text-[var(--v2-text-muted)] mt-2">
+                  This is used to calculate cost savings (e.g., 2 hours saved × $50/hr = $100 value)
+                </p>
+              </div>
+
+              <div className="flex gap-3">
+                <button
+                  onClick={async () => {
+                    setShowHourlyRateDialog(false)
+
+                    // If we're enabling insights via the toggle, complete that action
+                    if (pendingInsightsToggle && agent && user) {
+                      console.log('[Use Current] Completing pending insights toggle')
+                      setPendingInsightsToggle(false)
+
+                      // Enable insights on the agent
+                      setAgent({ ...agent, insights_enabled: true })
+
+                      const result = await agentApi.update(agent.id, user.id, {
+                        insights_enabled: true
+                      })
+
+                      if (result.success && result.data) {
+                        setAgent(result.data as Agent)
+                        console.log('✅ Insights enabled successfully')
+                      } else {
+                        setAgent({ ...agent, insights_enabled: false })
+                        console.error('❌ Failed to enable insights:', result.error)
+                      }
+                    } else {
+                      // Normal flow: open the insights modal
+                      setShowInsightsModal(true)
+                    }
+                  }}
+                  className="flex-1 px-4 py-2.5 text-sm font-medium text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] transition-colors"
+                >
+                  Use Current (${hourlyRateInput}/hr)
+                </button>
+                <button
+                  onClick={saveHourlyRateAndContinue}
+                  disabled={savingHourlyRate}
+                  className="flex-1 px-4 py-2.5 text-sm font-semibold text-white bg-gradient-to-r from-emerald-500 to-green-600 rounded-lg hover:from-emerald-600 hover:to-green-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                >
+                  {savingHourlyRate ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Saving...
+                    </>
+                  ) : (
+                    'Update & Continue'
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Insights Modal */}
       {showInsightsModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-          <div className="bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-2xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-hidden">
+          <div className="bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-2xl shadow-2xl max-w-6xl w-full max-h-[90vh] overflow-hidden flex flex-col">
             {/* Header */}
             <div className="flex items-center justify-between p-6 border-b border-[var(--v2-border)]">
               <div>
-                <h2 className="text-xl font-semibold text-[var(--v2-text-primary)]">Recommendations</h2>
+                <h2 className="text-xl font-semibold text-[var(--v2-text-primary)]">Agent Analytics & Insights</h2>
                 <p className="text-sm text-[var(--v2-text-secondary)] mt-1">
-                  Business insights and optimization opportunities
+                  Performance metrics, trends, and recommendations
                 </p>
               </div>
               <button
                 onClick={() => setShowInsightsModal(false)}
-                className="text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)] transition-colors p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-700/40"
+                className="text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)] transition-colors p-2 rounded-lg hover:bg-[var(--v2-border)]"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
+            {/* Tabs */}
+            <div className="flex border-b border-[var(--v2-border)] px-6">
+              <button
+                onClick={() => setInsightsTab('business')}
+                className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
+                  insightsTab === 'business'
+                    ? 'border-[var(--v2-success)] text-[var(--v2-success)]'
+                    : 'border-transparent text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)]'
+                }`}
+              >
+                <span className="flex items-center gap-2">
+                  <TrendingUp className="w-4 h-4" />
+                  Business Insights
+                </span>
+              </button>
+              <button
+                onClick={() => setInsightsTab('technical')}
+                className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
+                  insightsTab === 'technical'
+                    ? 'border-[var(--v2-info)] text-[var(--v2-info)]'
+                    : 'border-transparent text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)]'
+                }`}
+              >
+                <span className="flex items-center gap-2">
+                  <Wrench className="w-4 h-4" />
+                  Technical Issues
+                </span>
+              </button>
+            </div>
+
             {/* Content */}
-            <div className="overflow-y-auto max-h-[calc(90vh-120px)] p-6">
-              <InsightsList
-                insights={insights}
-                onDismiss={async (id) => {
-                  try {
-                    await fetch(`/api/v6/insights/${id}`, {
-                      method: 'PATCH',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ status: 'dismissed' })
-                    })
-                    // Refresh insights
-                    const result = await fetch(`/api/v6/insights?agentId=${agentId}&status=new,viewed`)
-                    const data = await result.json()
-                    if (data.success) {
-                      setInsights(data.data)
-                    }
-                  } catch (error) {
-                    clientLogger.error('Error dismissing insight', error as Error)
-                  }
-                }}
-                onApply={async (id) => {
-                  try {
-                    await fetch(`/api/v6/insights/${id}`, {
-                      method: 'PATCH',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ status: 'applied' })
-                    })
-                    // Refresh insights
-                    const result = await fetch(`/api/v6/insights?agentId=${agentId}&status=new,viewed`)
-                    const data = await result.json()
-                    if (data.success) {
-                      setInsights(data.data)
-                    }
-                  } catch (error) {
-                    clientLogger.error('Error applying insight', error as Error)
-                  }
-                }}
-                onSnooze={async (id, days) => {
-                  try {
-                    const snoozedUntil = new Date()
-                    snoozedUntil.setDate(snoozedUntil.getDate() + days)
+            <div className="overflow-y-auto flex-1 p-6">
+              {insightsTab === 'business' ? (
+                (() => {
+                  const businessInsights = insights.filter((i: any) => i.category === 'growth')
+                  return (
+                    <div className="space-y-6">
+                      {/* Business Metrics Charts */}
+                      {businessInsights.length > 0 && (
+                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
+                          {/* Volume Trend Chart */}
+                          <div className="bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-xl p-4">
+                            <h3 className="text-sm font-semibold text-[var(--v2-success)] mb-3 flex items-center gap-2">
+                              <TrendingUp className="w-4 h-4" />
+                              Volume Trend (Last 7 Days)
+                            </h3>
+                            <div className="h-48">
+                              {loadingMetrics ? (
+                                <div className="flex items-center justify-center h-full">
+                                  <div className="text-sm text-[var(--v2-text-muted)]">Loading metrics...</div>
+                                </div>
+                              ) : metricsData?.chartData ? (
+                                <ResponsiveContainer width="100%" height="100%">
+                                  <AreaChart data={metricsData.chartData.map((d: any) => ({
+                                    date: new Date(d.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+                                    items: d.items
+                                  }))}>
+                                    <defs>
+                                      <linearGradient id="volumeGradient" x1="0" y1="0" x2="0" y2="1">
+                                        <stop offset="5%" stopColor="var(--v2-success)" stopOpacity={0.6}/>
+                                        <stop offset="95%" stopColor="var(--v2-success)" stopOpacity={0.1}/>
+                                      </linearGradient>
+                                    </defs>
+                                    <CartesianGrid strokeDasharray="3 3" stroke="var(--v2-border)" />
+                                    <XAxis dataKey="date" tick={{ fontSize: 12, fill: 'var(--v2-text-muted)' }} stroke="var(--v2-border)" />
+                                    <YAxis tick={{ fontSize: 12, fill: 'var(--v2-text-muted)' }} stroke="var(--v2-border)" />
+                                    <Tooltip
+                                      contentStyle={{
+                                        backgroundColor: 'var(--v2-surface)',
+                                        border: '1px solid var(--v2-border)',
+                                        borderRadius: '8px',
+                                        fontSize: '12px',
+                                        color: 'var(--v2-text-primary)'
+                                      }}
+                                      labelStyle={{
+                                        color: 'var(--v2-text-primary)'
+                                      }}
+                                      labelFormatter={(value) => `Date: ${value}`}
+                                      formatter={(value: any) => [`${value} items`, 'Volume']}
+                                    />
+                                    <Area
+                                      type="monotone"
+                                      dataKey="items"
+                                      stroke="var(--v2-success)"
+                                      fillOpacity={1}
+                                      fill="url(#volumeGradient)"
+                                      strokeWidth={2}
+                                    />
+                                  </AreaChart>
+                                </ResponsiveContainer>
+                              ) : (
+                                <div className="flex items-center justify-center h-full">
+                                  <div className="text-sm text-[var(--v2-text-muted)]">No metrics data available</div>
+                                </div>
+                              )}
+                            </div>
+                          </div>
 
-                    await fetch(`/api/v6/insights/${id}`, {
-                      method: 'PATCH',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({
-                        status: 'snoozed',
-                        snoozed_until: snoozedUntil.toISOString()
-                      })
-                    })
-                    // Refresh insights
-                    const result = await fetch(`/api/v6/insights?agentId=${agentId}&status=new,viewed`)
-                    const data = await result.json()
-                    if (data.success) {
-                      setInsights(data.data)
-                    }
-                  } catch (error) {
-                    clientLogger.error('Error snoozing insight', error as Error)
-                  }
-                }}
-              />
+                          {/* ROI Metrics */}
+                          <div className="bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-xl p-4">
+                            <h3 className="text-sm font-semibold text-[var(--v2-success)] mb-3 flex items-center gap-2">
+                              <Gauge className="w-4 h-4" />
+                              ROI Metrics
+                            </h3>
+                            <div className="space-y-3">
+                              {businessInsights[0]?.time_saved_hours_per_week && (
+                                <div className="bg-[var(--v2-bg)] rounded-lg p-3">
+                                  <div className="text-xs text-[var(--v2-success)] font-medium mb-1">Time Saved</div>
+                                  <div className="text-2xl font-bold text-[var(--v2-success)]">
+                                    {businessInsights[0].time_saved_hours_per_week.toFixed(1)} hrs/week
+                                  </div>
+                                </div>
+                              )}
+                              {businessInsights[0]?.cost_saved_usd_per_week && (
+                                <div className="bg-[var(--v2-bg)] rounded-lg p-3">
+                                  <div className="text-xs text-[var(--v2-success)] font-medium mb-1">Cost Saved</div>
+                                  <div className="text-2xl font-bold text-[var(--v2-success)]">
+                                    ${businessInsights[0].cost_saved_usd_per_week.toFixed(2)}/week
+                                  </div>
+                                </div>
+                              )}
+                              {businessInsights[0]?.automation_potential_percentage && (
+                                <div className="bg-[var(--v2-bg)] rounded-lg p-3">
+                                  <div className="text-xs text-[var(--v2-success)] font-medium mb-1">Automation Potential</div>
+                                  <div className="text-2xl font-bold text-[var(--v2-success)]">
+                                    {businessInsights[0].automation_potential_percentage.toFixed(0)}%
+                                  </div>
+                                </div>
+                              )}
+                              {/* Pilot Credits (LLM usage for insight generation) */}
+                              {(() => {
+                                const patternData = (businessInsights[0]?.pattern_data || {}) as any
+                                const tokenUsage = patternData.llm_token_usage
+                                if (tokenUsage?.total_tokens) {
+                                  const pilotCredits = Math.ceil(tokenUsage.total_tokens / tokensPerPilotCredit)
+                                  return (
+                                    <div className="bg-[var(--v2-bg)] rounded-lg p-3">
+                                      <div className="text-xs text-[var(--v2-success)] font-medium mb-1 flex items-center gap-1.5">
+                                        <Cpu className="w-3 h-3" />
+                                        Pilot Credits
+                                      </div>
+                                      <div className="text-lg font-bold text-[var(--v2-success)]">
+                                        {pilotCredits.toLocaleString()}
+                                      </div>
+                                      <div className="text-xs text-[var(--v2-text-muted)] mt-1">
+                                        {tokenUsage.total_tokens.toLocaleString()} tokens
+                                        {tokenUsage.latency_ms && ` • ${(tokenUsage.latency_ms / 1000).toFixed(1)}s`}
+                                      </div>
+                                    </div>
+                                  )
+                                }
+                                return null
+                              })()}
+                            </div>
+                          </div>
+                        </div>
+                      )}
 
-              {insights.length === 0 && (
-                <div className="text-center py-12">
-                  <div className="w-16 h-16 bg-[var(--v2-surface-hover)] rounded-full flex items-center justify-center mx-auto mb-4">
-                    <CheckCircle2 className="w-8 h-8 text-green-500" />
-                  </div>
-                  <h3 className="text-lg font-semibold text-[var(--v2-text-primary)] mb-2">No Recommendations</h3>
-                  <p className="text-sm text-[var(--v2-text-secondary)]">
-                    Your workflow is running smoothly with no issues detected.
-                  </p>
-                </div>
+                      {/* Business Insights List */}
+                      {businessInsights.length > 0 ? (
+                        <div>
+                          <InsightsList
+                            insights={businessInsights}
+                            onDismiss={async (id) => {
+                              try {
+                                await fetch(`/api/v6/insights/${id}`, {
+                                  method: 'PATCH',
+                                  headers: { 'Content-Type': 'application/json' },
+                                  body: JSON.stringify({ status: 'dismissed' })
+                                })
+                                const result = await fetch(`/api/v6/insights?agentId=${agentId}&status=new,viewed`)
+                                const data = await result.json()
+                                if (data.success) setInsights(data.data)
+                              } catch (error) {
+                                clientLogger.error('Error dismissing insight', error as Error)
+                              }
+                            }}
+                            onApply={async (id) => {
+                              try {
+                                await fetch(`/api/v6/insights/${id}`, {
+                                  method: 'PATCH',
+                                  headers: { 'Content-Type': 'application/json' },
+                                  body: JSON.stringify({ status: 'applied' })
+                                })
+                                const result = await fetch(`/api/v6/insights?agentId=${agentId}&status=new,viewed`)
+                                const data = await result.json()
+                                if (data.success) setInsights(data.data)
+                              } catch (error) {
+                                clientLogger.error('Error applying insight', error as Error)
+                              }
+                            }}
+                            onSnooze={async (id, days) => {
+                              try {
+                                const snoozedUntil = new Date()
+                                snoozedUntil.setDate(snoozedUntil.getDate() + days)
+                                await fetch(`/api/v6/insights/${id}`, {
+                                  method: 'PATCH',
+                                  headers: { 'Content-Type': 'application/json' },
+                                  body: JSON.stringify({ status: 'snoozed', snoozed_until: snoozedUntil.toISOString() })
+                                })
+                                const result = await fetch(`/api/v6/insights?agentId=${agentId}&status=new,viewed`)
+                                const data = await result.json()
+                                if (data.success) setInsights(data.data)
+                              } catch (error) {
+                                clientLogger.error('Error snoozing insight', error as Error)
+                              }
+                            }}
+                            showFilters={false}
+                            tokensPerPilotCredit={tokensPerPilotCredit}
+                          />
+                        </div>
+                      ) : (
+                        <div className="text-center py-12">
+                          <div className="w-16 h-16 bg-[var(--v2-success-bg)] border border-[var(--v2-success-border)] rounded-full flex items-center justify-center mx-auto mb-4">
+                            <TrendingUp className="w-8 h-8 text-[var(--v2-success)]" />
+                          </div>
+                          <h3 className="text-lg font-semibold text-[var(--v2-text-primary)] mb-2">No Business Insights Yet</h3>
+                          <p className="text-sm text-[var(--v2-text-secondary)]">
+                            Run your agent a few more times to generate business intelligence and ROI metrics.
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  )
+                })()
+              ) : (
+                (() => {
+                  const technicalInsights = insights.filter((i: any) => i.category !== 'growth')
+                  return (
+                    <div className="space-y-6">
+                      {/* Technical Performance Charts */}
+                      {technicalInsights.length > 0 && (
+                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
+                          {/* Performance Trend */}
+                          <div className="bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-xl p-4">
+                            <h3 className="text-sm font-semibold text-[var(--v2-primary)] mb-3 flex items-center gap-2">
+                              <Activity className="w-4 h-4" />
+                              Performance Trend
+                            </h3>
+                            <div className="h-48">
+                              {loadingMetrics ? (
+                                <div className="flex items-center justify-center h-full">
+                                  <div className="text-sm text-[var(--v2-text-muted)]">Loading metrics...</div>
+                                </div>
+                              ) : metricsData?.chartData ? (
+                                <ResponsiveContainer width="100%" height="100%">
+                                  <LineChart data={metricsData.chartData.map((d: any) => ({
+                                    date: new Date(d.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+                                    duration: d.avgDuration
+                                  }))}>
+                                    <CartesianGrid strokeDasharray="3 3" stroke="var(--v2-border)" />
+                                    <XAxis dataKey="date" tick={{ fontSize: 12, fill: 'var(--v2-text-muted)' }} stroke="var(--v2-border)" />
+                                    <YAxis tick={{ fontSize: 12, fill: 'var(--v2-text-muted)' }} stroke="var(--v2-border)" />
+                                    <Tooltip
+                                      contentStyle={{
+                                        backgroundColor: 'var(--v2-surface)',
+                                        border: '1px solid var(--v2-border)',
+                                        borderRadius: '8px',
+                                        fontSize: '12px',
+                                        color: 'var(--v2-text-primary)'
+                                      }}
+                                      labelStyle={{
+                                        color: 'var(--v2-text-primary)'
+                                      }}
+                                      labelFormatter={(value) => `Date: ${value}`}
+                                      formatter={(value: any) => [`${value}ms`, 'Duration']}
+                                    />
+                                    <Line
+                                      type="monotone"
+                                      dataKey="duration"
+                                      stroke="var(--v2-primary)"
+                                      strokeWidth={2}
+                                      dot={{ fill: 'var(--v2-primary)', r: 4 }}
+                                    />
+                                  </LineChart>
+                                </ResponsiveContainer>
+                              ) : (
+                                <div className="flex items-center justify-center h-full">
+                                  <div className="text-sm text-[var(--v2-text-muted)]">No metrics data available</div>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Success/Failure Stats */}
+                          <div className="bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-xl p-4">
+                            <h3 className="text-sm font-semibold text-[var(--v2-primary)] mb-3 flex items-center gap-2">
+                              <CheckCircle className="w-4 h-4" />
+                              Reliability Metrics
+                            </h3>
+                            <div className="space-y-3">
+                              <div className="bg-[var(--v2-bg)] rounded-lg p-3">
+                                <div className="text-xs text-[var(--v2-success)] font-medium mb-1">Success Rate</div>
+                                <div className="text-2xl font-bold text-[var(--v2-success)]">
+                                  {executions.length > 0
+                                    ? ((executions.filter(e => e.status === 'success').length / executions.length) * 100).toFixed(1)
+                                    : '0'
+                                  }%
+                                </div>
+                              </div>
+                              <div className="bg-[var(--v2-bg)] rounded-lg p-3">
+                                <div className="text-xs text-[var(--v2-primary)] font-medium mb-1">Total Executions</div>
+                                <div className="text-2xl font-bold text-[var(--v2-primary)]">
+                                  {executions.length}
+                                </div>
+                              </div>
+                              <div className="bg-[var(--v2-bg)] rounded-lg p-3">
+                                <div className="text-xs text-[var(--v2-error)] font-medium mb-1">Failures</div>
+                                <div className="text-2xl font-bold text-[var(--v2-error)]">
+                                  {executions.filter(e => e.status === 'failed' || e.status === 'error').length}
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Technical Insights List */}
+                      {technicalInsights.length > 0 ? (
+                        <div>
+                          <h3 className="text-sm font-semibold text-[var(--v2-text-primary)] mb-3">Technical Recommendations</h3>
+                          <InsightsList
+                            insights={technicalInsights}
+                            onDismiss={async (id) => {
+                              try {
+                                await fetch(`/api/v6/insights/${id}`, {
+                                  method: 'PATCH',
+                                  headers: { 'Content-Type': 'application/json' },
+                                  body: JSON.stringify({ status: 'dismissed' })
+                                })
+                                const result = await fetch(`/api/v6/insights?agentId=${agentId}&status=new,viewed`)
+                                const data = await result.json()
+                                if (data.success) setInsights(data.data)
+                              } catch (error) {
+                                clientLogger.error('Error dismissing insight', error as Error)
+                              }
+                            }}
+                            onApply={async (id) => {
+                              try {
+                                await fetch(`/api/v6/insights/${id}`, {
+                                  method: 'PATCH',
+                                  headers: { 'Content-Type': 'application/json' },
+                                  body: JSON.stringify({ status: 'applied' })
+                                })
+                                const result = await fetch(`/api/v6/insights?agentId=${agentId}&status=new,viewed`)
+                                const data = await result.json()
+                                if (data.success) setInsights(data.data)
+                              } catch (error) {
+                                clientLogger.error('Error applying insight', error as Error)
+                              }
+                            }}
+                            onSnooze={async (id, days) => {
+                              try {
+                                const snoozedUntil = new Date()
+                                snoozedUntil.setDate(snoozedUntil.getDate() + days)
+                                await fetch(`/api/v6/insights/${id}`, {
+                                  method: 'PATCH',
+                                  headers: { 'Content-Type': 'application/json' },
+                                  body: JSON.stringify({ status: 'snoozed', snoozed_until: snoozedUntil.toISOString() })
+                                })
+                                const result = await fetch(`/api/v6/insights?agentId=${agentId}&status=new,viewed`)
+                                const data = await result.json()
+                                if (data.success) setInsights(data.data)
+                              } catch (error) {
+                                clientLogger.error('Error snoozing insight', error as Error)
+                              }
+                            }}
+                            showFilters={false}
+                            tokensPerPilotCredit={tokensPerPilotCredit}
+                          />
+                        </div>
+                      ) : (
+                        <div className="text-center py-12">
+                          <div className="w-16 h-16 bg-[var(--v2-info-bg)] border border-[var(--v2-info-border)] rounded-full flex items-center justify-center mx-auto mb-4">
+                            <Zap className="w-8 h-8 text-[var(--v2-info)]" />
+                          </div>
+                          <h3 className="text-lg font-semibold text-[var(--v2-text-primary)] mb-2">No Technical Issues</h3>
+                          <p className="text-sm text-[var(--v2-text-secondary)]">
+                            Your workflow is running smoothly with no technical issues detected.
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  )
+                })()
               )}
             </div>
           </div>
         </div>
       )}
+
+      {/* Execution Modal - Run Now */}
+      <ExecutionModal
+        isOpen={showExecutionModal}
+        onClose={handleCloseExecutionModal}
+        onConfirm={handleConfirmExecution}
+        executing={executing}
+        result={executionResult}
+        error={executionError}
+        agentName={agent?.agent_name}
+        onGoToBilling={() => router.push('/v2/settings?tab=billing')}
+      />
 
     </div>
   )
