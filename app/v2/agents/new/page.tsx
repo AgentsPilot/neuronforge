@@ -356,6 +356,28 @@ function V2AgentBuilderContent() {
   const [isInMiniCycle, setIsInMiniCycle] = useState(false)
   const [pendingEnhancedPrompt, setPendingEnhancedPrompt] = useState<any>(null)
 
+  // Phase 2 single-question mode (2026-05-28): the backend now asks ONE question
+  // per turn ({ question, phase2_done }) instead of returning a batch
+  // `questionsSequence`. `phase2AwaitingAnswer` is true while we are waiting for
+  // the user's free-text reply to the current single question; `handleSend`
+  // uses it to route the reply back as `phase2_user_answer`. `phase2TurnRef`
+  // keys each answer into `clarificationAnswers` (e.g. `phase2_turn_1`) so
+  // Phase 3 still receives the collected answers.
+  const [phase2AwaitingAnswer, setPhase2AwaitingAnswer] = useState(false)
+  const phase2TurnRef = useRef(0)
+
+  // Staleness-proof mirror of the Phase 2 single-question answers (2026-05-29).
+  // `builderState.clarificationAnswers` is updated via setState (async), so the
+  // LAST answer submitted on the turn the backend returns `phase2_done` has not
+  // flushed into builderState by the time the Phase 3 transition fires (it runs
+  // in the same call chain via `setTimeout(processPhase3, …)`, whose closure
+  // captured the pre-answer builderState). That dropped the last answer (e.g. the
+  // marketing-manager email) from the Phase 3 `clarification_answers` payload, so
+  // Phase 3 saw the input as unresolved and re-asked it (mini-cycle + phase
+  // entrenchment). This ref is written synchronously in `submitPhase2Answer`, so
+  // Phase 3 always sees every answer including the just-submitted one.
+  const clarificationAnswersRef = useRef<Record<string, string>>({})
+
   // V10: Edit flow state (for "Need changes" button)
   const [isAwaitingFeedback, setIsAwaitingFeedback] = useState(false)
 
@@ -475,6 +497,15 @@ function V2AgentBuilderContent() {
       return false;
     };
 
+    // NOTE (2026-05-28): legacy batch auto-advance. Single-question mode DOES
+    // now populate `questionsSequence` (with exactly one live question per
+    // turn), BUT this effect stays inert for it because it additionally
+    // requires `workflowPhase === 'enhancement'` AND `currentQuestionIndex === -1`
+    // — neither of which the single-question path ever sets (the answer
+    // round-trip never reaches `proceedToNextQuestion`, the only code that sets
+    // those). The single-question advance to Phase 3 happens explicitly in
+    // `processPhase2` on `phase2_done === true`. Kept untouched so any residual
+    // batch flow keeps working.
     const allQuestionsAnswered = builderState.questionsSequence.length > 0 &&
       builderState.questionsSequence.every(q => isAnswerValid(builderState.clarificationAnswers[q.id]))
 
@@ -503,6 +534,13 @@ function V2AgentBuilderContent() {
 
   // Display current question when index changes
   // V10: Use addAIQuestion for question variant styling (cyan HelpCircle icon)
+  // NOTE (2026-05-28): batch question-render path. Single-question mode now
+  // populates `questionsSequence` (one question per turn) too, but it ALSO
+  // renders the question bubble imperatively in `processPhase2` via
+  // `addAIQuestion(data.question.question, data.question.id)` BEFORE this effect
+  // runs. The `messages.find(...)` guard below therefore finds the existing
+  // bubble and skips, so there is no double-render. This effect remains the
+  // render path for any residual multi-question batch flow.
   useEffect(() => {
     if (builderState.workflowPhase === 'questions' &&
         builderState.currentQuestionIndex >= 0 &&
@@ -623,17 +661,44 @@ function V2AgentBuilderContent() {
     }
   }
 
-  // Phase 2: Questions (supports mini-cycle mode with enhanced_prompt)
+  // Phase 2: Single-question mode (2026-05-28)
+  //
+  // The backend now drives Phase 2 one question at a time. Every `phase: 2`
+  // call returns `{ question, phase2_done, inline_hint?, disclosure_banner?,
+  // termination_reason? }` and NO `questionsSequence`. We render ONE question
+  // per turn and wait for the user's free-text answer (collected by
+  // `handleSend`, which calls back into here with `phase2_user_answer`). We
+  // advance to Phase 3 ONLY when the response sets `phase2_done === true` —
+  // never on an empty `questionsSequence` (that batch auto-advance was the
+  // R3 bug that skipped straight to the plugin gate).
+  //
+  // Mini-cycle refinement (Phase 3 → user_inputs_required, or the "Need
+  // changes" edit flow) shares this same path because the route's Phase 2
+  // branch is unconditional. We preserve the mini-cycle's distinguishing
+  // behavior via `isInMiniCycle` / `pendingEnhancedPrompt`: when a mini-cycle
+  // Phase 2 session terminates, we re-run Phase 3 WITH the pending
+  // `enhanced_prompt` for refinement (matching the prior batch behavior).
   const processPhase2 = async (
     tid: string,
     options?: {
-      enhanced_prompt?: any;  // V10: For mini-cycle refinement
-      user_feedback?: string; // V10: For edit flow refinement
+      enhanced_prompt?: any;       // V10: For mini-cycle refinement
+      user_feedback?: string;      // V10: For edit flow refinement
+      phase2_user_answer?: string; // Single-question mode: user's reply this turn
     }
   ) => {
     try {
-      const isMiniCycle = !!options?.enhanced_prompt || !!options?.user_feedback
-      console.log('🔄 Phase 2: Questions...', isMiniCycle ? '(mini-cycle mode)' : '')
+      const isMiniCycleStart = !!options?.enhanced_prompt || !!options?.user_feedback
+      console.log('🔄 Phase 2: Single-question...', isMiniCycleStart ? '(mini-cycle start)' : '')
+
+      // V10: Track mini-cycle state at the START of a refinement session so the
+      // subsequent answer round-trips (which carry only `phase2_user_answer`)
+      // still terminate into the refinement Phase 3 path below.
+      if (isMiniCycleStart) {
+        setIsInMiniCycle(true)
+        if (options?.enhanced_prompt) {
+          setPendingEnhancedPrompt(options.enhanced_prompt)
+        }
+      }
 
       const res = await fetch('/api/agent-creation/process-message', {
         method: 'POST',
@@ -646,9 +711,10 @@ function V2AgentBuilderContent() {
         body: JSON.stringify({
           thread_id: tid,
           phase: 2,
-          enhanced_prompt: options?.enhanced_prompt || null,  // V10: Pass for mini-cycle
-          user_feedback: options?.user_feedback || null,      // V10: Pass for edit flow
-          declined_services: declinedPlugins                  // V10: Maintain declined services
+          enhanced_prompt: options?.enhanced_prompt || null,        // V10: Pass for mini-cycle
+          user_feedback: options?.user_feedback || null,            // V10: Pass for edit flow
+          phase2_user_answer: options?.phase2_user_answer ?? null,  // Single-question: user's reply
+          declined_services: declinedPlugins                        // V10: Maintain declined services
         })
       })
 
@@ -660,36 +726,86 @@ function V2AgentBuilderContent() {
       // Stop thinking words
       stopThinkingWords()
 
-      // Display conversational summary
+      // Display conversational summary (if the backend sent one)
       if (data.conversationalSummary) {
         addAIMessage(data.conversationalSummary)
       }
 
-      // Extract questions
-      const questions = data.questionsSequence || []
-      if (questions.length > 0) {
-        // Store questions and trigger first question display
-        setQuestionsSequence(questions)
+      // Read whether we are (or were) refining an existing plan. We snapshot
+      // `isInMiniCycle` here because the state setter above is async; for the
+      // first turn of a mini-cycle we rely on `isMiniCycleStart`.
+      const refiningPlan = isMiniCycleStart || isInMiniCycle
 
-        // V10: Track mini-cycle state - when these questions are answered, re-run Phase 3
-        if (isMiniCycle) {
-          setIsInMiniCycle(true)
-          // Store the enhanced_prompt for Phase 3 refinement
-          if (options?.enhanced_prompt) {
-            setPendingEnhancedPrompt(options.enhanced_prompt)
-          }
+      // ── Single-question response handling ──────────────────────────────
+      if (data.phase2_done === true) {
+        // Loop complete — advance to Phase 3. Surface the cap-hit disclosure
+        // banner first if the backend included one (cap_hit termination).
+        setPhase2AwaitingAnswer(false)
+
+        if (data.disclosure_banner) {
+          addAIMessage(data.disclosure_banner)
         }
-        // First question will be displayed by useEffect
-      } else {
-        // No questions needed - proceed to Phase 3
-        if (isMiniCycle) {
-          // V10: Mini-cycle complete, no more questions - show the plan
+
+        if (refiningPlan && pendingEnhancedPrompt) {
+          // Mini-cycle complete — re-run Phase 3 WITH the pending enhanced
+          // prompt so the plan is refined (not regenerated from scratch).
           setIsInMiniCycle(false)
-          startThinkingWords('Finalizing your agent plan...')
+          startThinkingWords('Updating your agent plan with new details...')
+          const refinementPrompt = pendingEnhancedPrompt
+          setPendingEnhancedPrompt(null)
+          setTimeout(() => {
+            processPhase3(tid, undefined, { enhanced_prompt: refinementPrompt })
+          }, 1200)
         } else {
+          // Initial Phase 2 complete — build the plan. This `else` is ALSO the
+          // intentional regenerate fallback for a mini-cycle that has no pending
+          // enhanced prompt (e.g. a `user_feedback`-only edit that set
+          // `isInMiniCycle` but left `pendingEnhancedPrompt` null): we rebuild from
+          // scratch rather than refine. Matches the pre-existing batch fallback.
           startThinkingWords('Creating your agent plan...')
+          setTimeout(() => processPhase3(tid), 1200)
         }
-        setTimeout(() => processPhase3(tid), 1500)
+      } else if (data.question && typeof data.question === 'object' && typeof data.question.question === 'string' && data.question.question.trim()) {
+        // Render exactly ONE STRUCTURED question (2026-05-28). The backend now
+        // sends the v15 `ClarificationQuestion` shape ({ id, question, type,
+        // options?, allowCustom?, theme? }) so the user gets clickable option
+        // buttons (select/multi_select) or a free-text prompt — never
+        // "pick a number" prose. We reuse the EXISTING option-button render
+        // UI by pushing the single incoming question into `questionsSequence`
+        // (which sets `currentQuestionIndex: 0` and `workflowPhase: 'questions'`).
+        //
+        // IMPORTANT: this REPLACES the array each turn — the single-question
+        // loop holds exactly one live question at a time. Per-turn answers are
+        // accumulated separately in `clarificationAnswers` (keyed `phase2_turn_N`
+        // by `submitPhase2Answer`), so replacing the array loses no history.
+        // The batch advance machinery stays inert because we never set
+        // `workflowPhase: 'enhancement'` / `currentQuestionIndex: -1` here.
+        setQuestionsSequence([data.question])
+
+        // Render the question bubble so its content matches the current
+        // question (the option-button render gate keys off
+        // `currentQuestion.question === message.content`).
+        addAIQuestion(data.question.question, data.question.id)
+
+        // Optional soft inline hint, rendered as muted text. Generic only —
+        // never references the cap or any number (FR7.19/20).
+        if (data.inline_hint) {
+          addSystemMessage(data.inline_hint)
+        }
+
+        setPhase2AwaitingAnswer(true)
+      } else {
+        // Degraded turn — the backend passed through a payload with neither a
+        // question nor `phase2_done` (LLM emitted a bad shape; FR4.11). Do NOT
+        // advance to Phase 3 and do NOT fabricate a question. Clear the prior
+        // question first so its stale option buttons don't remain clickable next
+        // to the rephrase prompt (the option-button render gate keys off a live
+        // `questionsSequence` entry). Then ask the user to rephrase and keep
+        // waiting for input so the next turn can recover.
+        setQuestionsSequence([])
+        setBuilderState(prev => ({ ...prev, workflowPhase: 'questions' }))
+        addAIMessage("Let me think about that — could you rephrase or add a little more detail?")
+        setPhase2AwaitingAnswer(true)
       }
 
     } catch (error) {
@@ -737,7 +853,11 @@ function V2AgentBuilderContent() {
         body: JSON.stringify({
           thread_id: currentThreadId,
           phase: 3,
-          clarification_answers: builderState.clarificationAnswers,
+          // Merge the staleness-proof ref over builderState so the just-submitted
+          // Phase 2 answer (which may not have flushed into builderState yet) is
+          // always present. Without this the last answer is dropped and Phase 3
+          // re-asks it. The ref wins on key collisions (it is the latest value).
+          clarification_answers: { ...builderState.clarificationAnswers, ...clarificationAnswersRef.current },
           connected_services: pluginsToSend,
           declined_services: options?.declined_services || [],
           enhanced_prompt: options?.enhanced_prompt || null  // V10: For mini-cycle refinement
@@ -771,32 +891,42 @@ function V2AgentBuilderContent() {
         return // Stop here, wait for user to connect/skip plugins
       }
 
-      // V10: Check for user_inputs_required - trigger mini-cycle if needed
+      // Phase 3 → mini-cycle SAFETY NET (single-question-aware, 2026-05-28).
+      // With the recognition fix in place — Phase 2 answers are keyed by qId, and
+      // the v16 Phase 3 prompt resolves user_inputs_required against the full Phase 2
+      // conversation — Phase 3 should resolve every input the loop already gathered,
+      // leaving `user_inputs_required` empty in the normal case. So this block fires
+      // ONLY when an input is GENUINELY still missing; it is a safety net, not the
+      // primary gathering mechanism (that's the single-question loop).
+      // The `!isInMiniCycle` guard makes it fire at most ONCE per session: the
+      // mini-cycle's own Phase 2 round-trips set isInMiniCycle, so when Phase 3 runs
+      // again afterward it falls through to the cleanup below and shows the plan —
+      // no infinite Phase 3 ↔ Phase 2 loop.
       const userInputsRequired = data.enhanced_prompt?.specifics?.user_inputs_required || []
       if (userInputsRequired.length > 0 && !isInMiniCycle) {
-        console.log('🔄 Phase 3: user_inputs_required detected, triggering mini-cycle:', userInputsRequired)
+        console.log('🔄 Phase 3: genuinely-missing inputs — mini-cycle safety net:', userInputsRequired)
 
-        // Store the enhanced_prompt for refinement
+        // Store the enhanced_prompt so the mini-cycle terminates back into a
+        // refinement Phase 3 (not a from-scratch regeneration).
         setPendingEnhancedPrompt(data.enhanced_prompt)
-
-        // V10: Reset enhancement state so Phase 3 can be re-triggered after mini-cycle questions
         resetForRefinement()
 
-        // Show message about needing more information
-        addAIMessage(`I need a few more details to complete your agent. Let me ask some quick questions about: ${userInputsRequired.join(', ')}`)
+        // Soft, non-technical message — do NOT echo raw input labels (they can be
+        // jargon-y like "sender email address to filter on"). The actual question
+        // follows one at a time via the single-question loop.
+        addAIMessage('Just one or two more details to finish your agent.')
 
-        // Trigger mini-cycle Phase 2 with the enhanced_prompt
-        startThinkingWords('Generating clarification questions...')
+        startThinkingWords('One more question…')
         setTimeout(() => {
           processPhase2(currentThreadId, { enhanced_prompt: data.enhanced_prompt })
         }, 1000)
 
-        return // Stop here, wait for mini-cycle to complete
+        return // wait for the mini-cycle single-question loop to complete
       }
 
-      // V10: If we were in mini-cycle, clear the state
+      // Clear mini-cycle / edit-flow state once Phase 3 has run after a refinement.
       if (isInMiniCycle) {
-        console.log('✅ Mini-cycle complete, all inputs resolved')
+        console.log('✅ Mini-cycle / refinement complete')
         setIsInMiniCycle(false)
         setPendingEnhancedPrompt(null)
       }
@@ -1333,6 +1463,79 @@ function V2AgentBuilderContent() {
 
   // ==================== HANDLERS ====================
 
+  // Phase 2 single-question mode (2026-05-28): dedicated answer handler.
+  //
+  // This is the ONLY path a Phase 2 answer takes in single-question mode —
+  // for ALL three question types (text via the chat input, select option
+  // clicks, multi_select "Done", and the "Other"/custom text submit). It
+  // deliberately does NOT call the batch answer functions
+  // (`answerSelectOption` / `submitMultiSelectAnswer` / `answerQuestion` /
+  // `submitCustomAnswer`), all of which schedule `proceedToNextQuestion` —
+  // which, with a single question in `questionsSequence`, would mark "all
+  // answered" → set `workflowPhase: 'enhancement'` / `currentQuestionIndex: -1`
+  // → fire the batch auto-advance `useEffect` → jump to Phase 3 after every
+  // answer (the bug this round-trip prevents).
+  //
+  // Instead we round-trip the answer to the backend as `phase2_user_answer`
+  // and let `processPhase2` decide whether to render the next question or
+  // advance to Phase 3 on `phase2_done`.
+  const submitPhase2Answer = async (answerText: string) => {
+    const answer = (answerText ?? '').trim()
+    // Guard: only act while we are awaiting a Phase 2 answer, and only with a
+    // live thread. Flip the flag off immediately to prevent a double-send
+    // (e.g. a fast double-click on an option button).
+    if (!answer || !phase2AwaitingAnswer || !threadId) return
+    setPhase2AwaitingAnswer(false)
+
+    try {
+      // Add the user's answer (human-readable label/text) to the transcript.
+      addUserMessage(answer)
+
+      // Accumulate into clarificationAnswers KEYED BY THE QUESTION'S id (2026-05-28).
+      // Phase 3 resolves `user_inputs_required` → `resolved_user_inputs` by reading
+      // `clarification_answers[qId]` (the v16 Phase 3 resolution rules expect a
+      // qId-keyed map; a plain-string value is treated as a free-text/custom
+      // answer). The earlier `phase2_turn_N` keying had NO link to the question,
+      // so Phase 3 could not tell an input had been answered and re-listed it in
+      // `user_inputs_required` (which then re-triggered the mini-cycle and asked
+      // the same thing again). Keying by qId lets Phase 3 recognise the answer.
+      // Fallback to a per-turn key only if the question somehow has no id.
+      const answeredQ = builderState.questionsSequence[builderState.currentQuestionIndex]
+      phase2TurnRef.current += 1
+      const answerKey = answeredQ?.id || `phase2_turn_${phase2TurnRef.current}`
+      // Write the staleness-proof ref FIRST (synchronous) so the Phase 3 transition
+      // — which may fire in this same call chain when the backend returns
+      // `phase2_done` — sees this answer. Then mirror into builderState for render.
+      clarificationAnswersRef.current = {
+        ...clarificationAnswersRef.current,
+        [answerKey]: answer
+      }
+      setBuilderState(prev => ({
+        ...prev,
+        clarificationAnswers: {
+          ...prev.clarificationAnswers,
+          [answerKey]: answer
+        }
+      }))
+
+      // Show thinking words while the backend picks the next question.
+      startThinkingWords('Got it — one moment...')
+
+      // Round-trip the answer. Preserve mini-cycle refinement state so a
+      // terminating mini-cycle still refines (not regenerates) the plan.
+      await processPhase2(threadId, {
+        phase2_user_answer: answer,
+        enhanced_prompt: isInMiniCycle ? (pendingEnhancedPrompt || undefined) : undefined
+      })
+    } catch (error) {
+      console.error('❌ Phase 2 answer error:', error)
+      stopThinkingWords()
+      addSystemMessage('Error sending message')
+      // Re-open input so the user can retry this turn.
+      setPhase2AwaitingAnswer(true)
+    }
+  }
+
   // Handle sending messages/answers
   const handleSend = async () => {
     if (!inputValue.trim() || isSending) return
@@ -1367,7 +1570,20 @@ function V2AgentBuilderContent() {
         return
       }
 
-      // If we're in questions phase, treat as answer
+      // Phase 2 single-question mode (2026-05-28): the user typed a free-text
+      // answer to the current question (the `text`-type path, or a typed reply
+      // to any question). Delegate to the shared single-question handler, which
+      // records the answer, accumulates it per-turn, and round-trips it to the
+      // backend as `phase2_user_answer`. The reworked `processPhase2` decides
+      // whether to ask the next question or advance to Phase 3 (`phase2_done`).
+      if (phase2AwaitingAnswer && threadId) {
+        await submitPhase2Answer(answer)
+        return
+      }
+
+      // Legacy batch questions path (kept for safety; no longer populated by
+      // the single-question backend, but harmless if questionsSequence is ever
+      // set by another flow).
       if (builderState.workflowPhase === 'questions' &&
           builderState.currentQuestionIndex >= 0 &&
           builderState.questionsSequence.length > 0) {
@@ -1923,8 +2139,11 @@ function V2AgentBuilderContent() {
                       Clarification Questions
                     </p>
                     <p className="text-xs text-[var(--v2-text-muted)]">
+                      {/* NOTE (2026-05-28): no count shown. Single-question mode asks one
+                          question at a time with no known total, so an "X/Y" progress
+                          fraction would be meaningless and leak a count (FR7 grep gate). */}
                       {builderState.workflowPhase === 'questions'
-                        ? `Answering questions (${Object.keys(builderState.clarificationAnswers).length}/${builderState.questionsSequence.length})`
+                        ? 'Answering a few quick questions'
                         : 'Answer clarifying questions'
                       }
                     </p>
@@ -2310,11 +2529,18 @@ function V2AgentBuilderContent() {
                             </p>
                           </div>
 
-                          {/* Question Progress Indicator - shown for AI questions during Phase 2 */}
+                          {/* Question Progress Indicator - shown for AI questions during Phase 2.
+                              NOTE (2026-05-28): suppressed in single-question mode. The
+                              single-question loop holds exactly ONE question in
+                              `questionsSequence` per turn, so showing "Question 1 of 1" every
+                              turn would both be meaningless and leak a question count to the
+                              user (FR7 grep gate forbids count exposure). The `length > 1` gate
+                              means this indicator only renders for a genuine multi-question
+                              batch (legacy flow), never for the single-question loop. */}
                           {message.role === 'assistant' &&
                            message.variant === 'question' &&
                            builderState.workflowPhase === 'questions' &&
-                           builderState.questionsSequence.length > 0 &&
+                           builderState.questionsSequence.length > 1 &&
                            builderState.currentQuestionIndex >= 0 &&
                            builderState.questionsSequence[builderState.currentQuestionIndex]?.question === message.content && (
                             <div
@@ -2328,13 +2554,24 @@ function V2AgentBuilderContent() {
                             </div>
                           )}
 
-                          {/* V14: Hybrid Question Options - Select/Multi-Select with option buttons */}
+                          {/* V14: Hybrid Question Options - Select/Multi-Select with option buttons.
+                              NOTE (2026-05-28): in single-question mode the answer is NOT written
+                              to `clarificationAnswers[currentQ.id]` (it is keyed `phase2_turn_N`),
+                              so the batch "answered" gate below never hides the buttons. Instead we
+                              gate on `phase2AwaitingAnswer`: the buttons show only while we are
+                              awaiting THIS turn's answer, and hide the instant the user submits
+                              (the handler flips `phase2AwaitingAnswer` false), preventing a
+                              double-submit during the round-trip. The legacy batch flow leaves
+                              `phase2AwaitingAnswer` false, so the original `clarificationAnswers`
+                              gate governs there. */}
                           {message.role === 'assistant' &&
                            message.variant === 'question' &&
                            builderState.workflowPhase === 'questions' &&
                            builderState.currentQuestionIndex >= 0 &&
                            builderState.questionsSequence[builderState.currentQuestionIndex]?.question === message.content &&
-                           !builderState.clarificationAnswers[builderState.questionsSequence[builderState.currentQuestionIndex]?.id] && (
+                           (builderState.questionsSequence.length === 1
+                             ? phase2AwaitingAnswer  // single-question mode: visible only while awaiting this turn
+                             : !builderState.clarificationAnswers[builderState.questionsSequence[builderState.currentQuestionIndex]?.id]) && (
                             (() => {
                               const currentQ = builderState.questionsSequence[builderState.currentQuestionIndex];
                               const qType = currentQ?.type;
@@ -2355,9 +2592,17 @@ function V2AgentBuilderContent() {
                                             key={opt.value}
                                             onClick={() => {
                                               if (isMulti) {
+                                                // Multi-select: toggling is pure checkbox UI state in
+                                                // both modes; the actual answer is submitted by "Done".
                                                 toggleMultiSelectOption(opt.value);
+                                              } else if (phase2AwaitingAnswer) {
+                                                // Single-question mode: route the human-readable label
+                                                // through the round-trip handler — NOT the batch
+                                                // `answerSelectOption` (which would trigger
+                                                // `proceedToNextQuestion` → premature Phase 3 jump).
+                                                submitPhase2Answer(opt.label);
                                               } else {
-                                                // Single select - record answer and proceed
+                                                // Legacy batch select - record answer and proceed
                                                 answerSelectOption(currentQ.id, opt.value);
                                                 // Add to messages
                                                 addUserMessage(opt.label);
@@ -2401,8 +2646,19 @@ function V2AgentBuilderContent() {
                                             .map(v => options.find(o => o.value === v)?.label)
                                             .filter(Boolean)
                                             .join(', ');
-                                          submitMultiSelectAnswer(currentQ.id);
-                                          addUserMessage(selectedLabels);
+                                          if (phase2AwaitingAnswer) {
+                                            // Single-question mode: send the joined labels via the
+                                            // round-trip handler. Reset the checkbox UI state here
+                                            // (the batch `submitMultiSelectAnswer` we skip would
+                                            // normally do that, but it also schedules the batch
+                                            // auto-advance we must avoid).
+                                            setBuilderState(prev => ({ ...prev, selectedMultiOptions: [] }));
+                                            submitPhase2Answer(selectedLabels);
+                                          } else {
+                                            // Legacy batch multi-select submit.
+                                            submitMultiSelectAnswer(currentQ.id);
+                                            addUserMessage(selectedLabels);
+                                          }
                                         }}
                                         className="w-full px-3 py-2 bg-gradient-to-r from-[var(--v2-primary)] to-[var(--v2-secondary)] text-white font-medium text-sm hover:opacity-90 transition-opacity"
                                         style={{ borderRadius: 'var(--v2-radius-button)' }}
@@ -2437,8 +2693,24 @@ function V2AgentBuilderContent() {
                                         <div className="flex gap-2">
                                           <button
                                             onClick={() => {
-                                              submitCustomAnswer();
-                                              addUserMessage(builderState.customInputValue.trim());
+                                              const customText = builderState.customInputValue.trim();
+                                              if (phase2AwaitingAnswer) {
+                                                // Single-question mode: route the typed custom text
+                                                // through the round-trip handler. Reset the custom-input
+                                                // UI state here (the batch `submitCustomAnswer` we skip
+                                                // would do that, but also schedules the batch advance).
+                                                setBuilderState(prev => ({
+                                                  ...prev,
+                                                  showingCustomInput: false,
+                                                  customInputValue: '',
+                                                  customInputQuestionId: null
+                                                }));
+                                                submitPhase2Answer(customText);
+                                              } else {
+                                                // Legacy batch custom answer submit.
+                                                submitCustomAnswer();
+                                                addUserMessage(customText);
+                                              }
                                             }}
                                             disabled={!builderState.customInputValue.trim()}
                                             className="flex-1 px-3 py-2 bg-gradient-to-r from-[var(--v2-primary)] to-[var(--v2-secondary)] text-white font-medium text-sm hover:opacity-90 transition-opacity disabled:opacity-50"

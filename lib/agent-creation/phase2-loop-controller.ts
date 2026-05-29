@@ -17,9 +17,14 @@
  *     user-facing copy except via this banner.
  *
  * The defensive cap is `MAX_ITERATIONS = 10`. The cap is purely server-side
- * — the LLM is never told about it. The bound is "< 10 LLM round-trips per
- * session" per FR5.12: the controller terminates on the 10th iteration
- * regardless of LLM output.
+ * — the LLM is never told about it. The FR5.12 bound is "< 10 LLM round-trips
+ * per session". That bound is enforced PRE-CALL by the route: once
+ * `MAX_ITERATIONS - 1` round-trips are done it terminates as `cap_hit` BEFORE
+ * making another completion (true worst case = 9 round-trips / 9 questions).
+ * `step()`'s own cap below — terminate when `iteration_count + 1 >=
+ * MAX_ITERATIONS` — is the BACKSTOP: it only fires if some path reaches `step()`
+ * without the route's pre-call guard, and is what the controller unit tests
+ * exercise in isolation.
  *
  * Decision shapes (returned by `step()`):
  *   - `{ decision: 'continue', next_state, response }` — emit the LLM's
@@ -43,6 +48,9 @@ export const MAX_ITERATIONS = 10;
  * '10' never appears in user-facing copy") can verify against a known
  * fixture.
  */
+
+import type { Phase2Question } from '@/lib/validation/phase2-schema';
+
 export const DISCLOSURE_BANNER =
   'Proceeding with what we have — you can refine after the agent is created.';
 
@@ -91,10 +99,13 @@ export interface Phase2StepInput {
   payload_valid: boolean;
 
   /**
-   * The LLM-emitted question text. May be `null` (terminal payload) or
-   * `undefined` (degraded passthrough where the field was missing).
+   * The LLM-emitted structured question object (v15 `ClarificationQuestion`
+   * shape — see `Phase2Question`). May be `null` (terminal payload) or
+   * `undefined` (degraded passthrough where the field was missing). On a
+   * degraded turn it may also be a malformed value; the controller passes
+   * whatever it received straight through and the UI handles it gracefully.
    */
-  llm_question: string | null | undefined;
+  llm_question: Phase2Question | null | undefined;
 
   /**
    * The LLM-emitted `phase2_done` flag. May be `undefined` for degraded
@@ -107,7 +118,7 @@ export interface Phase2StepInput {
  * Response payload the route ships back to the UI for this turn.
  */
 export interface Phase2StepResponse {
-  question: string | null;
+  question: Phase2Question | null;
   phase2_done: boolean;
   inline_hint?: string;
   disclosure_banner?: string;
@@ -173,8 +184,10 @@ export function step(input: Phase2StepInput): Phase2StepDecision {
       decision: 'pass_through_degraded',
       next_state,
       response: {
-        question:
-          typeof input.llm_question === 'string' ? input.llm_question : null,
+        // Degraded: pass through whatever structured question the LLM emitted
+        // (or null). The UI's degraded handling renders a "please rephrase"
+        // prompt when this isn't a usable structured question.
+        question: input.llm_question ?? null,
         phase2_done:
           typeof input.llm_phase2_done === 'boolean'
             ? input.llm_phase2_done

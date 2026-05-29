@@ -1,18 +1,29 @@
 /**
  * Phase 2 single-question response schema.
  *
- * Validates the LLM's Phase 2 response contract: each Phase 2 LLM call must
+ * Validates the LLM's Phase 2 response contract. Each Phase 2 LLM call must
  * return ONE of:
- *   - mid-loop:  { "question": "<text>", "phase2_done": false }
- *   - terminal:  { "question": null, "phase2_done": true }
+ *   - mid-loop:  { "question": <structured question object>, "phase2_done": false }
+ *   - terminal:  { "question": null,                          "phase2_done": true  }
  *
- * `.strict()` rejects any extra keys (including the legacy `questionsSequence[]`
- * batch shape and any server-side injected fields like `success` or `phase` —
- * the route MUST snapshot the parsed payload BEFORE the success/phase mutation
- * before calling `validatePhase2Response()`).
+ * `question` is a STRUCTURED question object — the same shape v15 uses for each
+ * `questionsSequence[]` item, but ONE per turn — so the UI can render `select` /
+ * `multi_select` as clickable option buttons and `text` as a free-text answer.
+ * (An earlier version of this contract used a plain `string`, which made the LLM
+ * emit "pick a number 1/2/3" prose questions — a regression from v15. Fixed
+ * 2026-05-28.) Question `type` is restricted to exactly `select`, `multi_select`,
+ * `text` — the three the V2 page's option-button UI supports.
  *
- * `.refine()` enforces the invariant that `phase2_done=true` MUST come with
- * `question=null` (no bundling).
+ * The OUTER object is `.strict()` — it rejects extra top-level keys (the legacy
+ * `questionsSequence[]` batch array, and the server-injected `success`/`phase`
+ * fields — the route MUST snapshot the parsed payload BEFORE the success/phase
+ * mutation before calling `validatePhase2Response()`). The INNER question object
+ * is non-strict on purpose: it strips any extra v15 fields the LLM might include
+ * (e.g. `required`, `placeholder`, `dimension`) rather than failing.
+ *
+ * `.refine()` enforces:
+ *   1. `phase2_done=true` MUST come with `question=null` (no bundling).
+ *   2. `select` / `multi_select` questions MUST carry a non-empty `options[]`.
  *
  * Symbol names intentionally carry no version number — version numbers belong
  * to the prompt template file, not to TypeScript symbols.
@@ -20,15 +31,39 @@
 
 import { z } from 'zod';
 
-// ===== SCHEMA =====
+// ===== STRUCTURED QUESTION =====
+
+export const Phase2QuestionOptionSchema = z.object({
+  value: z.string().min(1),
+  label: z.string().min(1),
+  description: z.string().optional(),
+});
+
+/**
+ * One structured question (v15 `ClarificationQuestion` shape, restricted to the
+ * three UI-supported types). Non-strict: unknown keys are stripped, not rejected.
+ */
+export const Phase2QuestionSchema = z.object({
+  id: z.string().min(1),
+  question: z.string().min(1),
+  type: z.enum(['select', 'multi_select', 'text']),
+  options: z.array(Phase2QuestionOptionSchema).optional(),
+  allowCustom: z.boolean().optional(),
+  theme: z.string().optional(),
+});
+
+export type Phase2QuestionOption = z.infer<typeof Phase2QuestionOptionSchema>;
+export type Phase2Question = z.infer<typeof Phase2QuestionSchema>;
+
+// ===== RESPONSE =====
 
 export const Phase2ResponseSchema = z
   .object({
     /**
-     * The single question to ask the user on this turn. `null` only when
+     * The single structured question to ask on this turn. `null` ONLY when
      * `phase2_done` is `true`.
      */
-    question: z.string().min(1).nullable(),
+    question: Phase2QuestionSchema.nullable(),
 
     /**
      * `true` when no further clarification is needed and the flow should
@@ -42,6 +77,22 @@ export const Phase2ResponseSchema = z
     {
       message: 'phase2_done=true must come with question=null',
       path: ['question'],
+    }
+  )
+  .refine(
+    (d) => {
+      if (
+        d.question &&
+        (d.question.type === 'select' || d.question.type === 'multi_select')
+      ) {
+        return Array.isArray(d.question.options) && d.question.options.length > 0;
+      }
+      return true;
+    },
+    {
+      message:
+        'select/multi_select questions must include a non-empty options array',
+      path: ['question', 'options'],
     }
   );
 

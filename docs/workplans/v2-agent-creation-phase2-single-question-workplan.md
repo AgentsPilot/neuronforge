@@ -26,6 +26,24 @@
 
 ---
 
+## ⚠️ Structured-question contract correction (2026-05-28, second live test)
+
+After the UI was retargeted to `app/v2/agents/new/page.tsx`, live testing surfaced a second defect: Phase 2 rendered plain-text "pick a number (1/2/3)" questions instead of v15's `select`/`multi_select` option buttons. **Root cause:** the single-question contract collapsed `question` to a plain `string`, and v16's Insert B explicitly forbade `type`/`options` — contradicting v15's still-present question-type rules.
+
+**Fix (user-approved), across three layers — supersedes the earlier "plain string" contract:**
+
+| Layer | Correction |
+|---|---|
+| **v16 prompt Insert B** | `question` is ONE **structured** question object per turn (v15's `ClarificationQuestion` shape): `{ id, question, type, options?, allowCustom?, theme? }`. `type` restricted to `select` \| `multi_select` \| `text` (nothing else). Remove the "no `type`, no `options`" line; reconcile with v15's preserved rules (lines 227-296). |
+| **`lib/validation/phase2-schema.ts`** | `question` becomes the structured object schema (nullable), `type` = `z.enum(['select','multi_select','text'])`, optional `options[]` (`{value,label,description}`), `allowCustom`, `theme`. Keep the `phase2_done=true ⇒ question=null` refine + `.strict()`. Update the schema unit tests. |
+| **`app/v2/agents/new/page.tsx`** | Render the single structured question through the **existing** `questionsSequence`/`currentQuestionIndex` option-button UI (push the one incoming question into `questionsSequence`, let the existing render + option-button JSX fire) instead of `addAIQuestion(plainText)`. On answer, resolve the selection/text and send as `phase2_user_answer`, then fetch next. The batch auto-advance `useEffect` stays inert (it requires `workflowPhase==='enhancement'` + `currentQuestionIndex===-1`, which the loop never sets mid-flight). |
+
+The backend route, done-detector, loop-controller, and cap are **unchanged** — they're agnostic to the question's shape.
+
+**Follow-on fix (2026-05-28, third live test) — recognize answered inputs; mini-cycle restored as a safety net; Phase 3 crash hardened.** Live testing showed duplicate questions and a Phase 3 schema-validation crash. The duplicate was the tell: the user PROVIDED the AliExpress sender email during the loop, yet Phase 3 returned `user_inputs_required: ["AliExpress sender email address to filter on"]` (resolved_user_inputs had the recipient + time window but not the sender email) — so the mini-cycle re-asked it, and the Phase 2 churn left the LLM in Phase 2 mode → a later `phase: 3` call returned a Phase 2 payload → crash. **Real root cause:** Phase 2 answers were keyed `phase2_turn_N` as plain strings, with no link to the input they resolve, so Phase 3 (which resolves via `clarification_answers[qId]`) couldn't recognise them as answered. **Three-part fix (no Phase 3 prompt changes):** (1) `submitPhase2Answer` keys answers by the question's `id`, restoring the exact v15 `clarification_answers[qId]` contract that v15's intact Phase 3 resolution already handles; (2) the Phase 3 → mini-cycle re-trigger is **restored** as a safety net (`!isInMiniCycle` guard → fires at most once, only for genuinely-missing inputs, soft non-technical message); (3) the route retries the Phase 3 completion once on a wrong-shaped response instead of 500-ing. **Verified by diff that v16's Phase 3 section is byte-identical to v15** — no core Phase 3 element changed. Two interim Phase 3 *prompt* additions (response-shape + resolve-from-conversation reminders) were reverted, since they only compensated for the keying regression. The initial "delete the mini-cycle" reaction was also reverted once the real cause (answer-keying) was found.
+
+---
+
 ## Goal
 
 Ship one cohesive Phase 2 behavior: **single question per turn, LLM aware of non-technical audience, otherwise question-selection logic unchanged from v15**. One new prompt, one code path, V2 UI only, no feature flags.
@@ -265,29 +283,27 @@ This step is deliberately constrained. `v16` is `v15` plus exactly two named ins
 
 **To do — all in `app/v2/agents/new/page.tsx` (no `useThreadManagement` / no `conversational/` files):**
 
-- [ ] **`processPhase2(tid, options?)`** ([page.tsx:626](app/v2/agents/new/page.tsx#L626)) — replace the batch handling:
-  - Current: `const questions = data.questionsSequence || []` → if empty, `setTimeout(() => processPhase3(tid), 1500)`.
-  - New: detect the single-question shape. If `data.phase2_done === true` → (render `data.disclosure_banner` if present) → `processPhase3(tid)`. Else if `data.question` (string) → render ONE question bubble (+ optional `data.inline_hint` as muted text) and STOP — wait for the user's answer. Else (degraded: no `question`, no `phase2_done`) → render a soft "let me think — please rephrase" bubble and wait.
-  - **Preserve the mini-cycle path**: when `options.enhanced_prompt`/`user_feedback` is set (refinement after Phase 3), keep existing behavior unless it also returns the single-question shape — confirm during implementation which path mini-cycle uses. Do NOT break Phase 3 refinement.
-- [ ] **Answer submission** — find the page's chat send handler (the function that fires when the user submits a message). When the workflow is in the Phase 2 question stage, send a fresh `fetch('/api/agent-creation/process-message', { phase: 2, phase2_user_answer: <text>, thread_id, ... })` and route the response back through the same single-question handler used by `processPhase2`. Accumulate answers into the page's `clarificationAnswers` (keyed per turn, e.g. `phase2_turn_N`) so Phase 3 still receives them.
-- [ ] **Question-render `useEffect`** ([page.tsx:506-516](app/v2/agents/new/page.tsx#L506)) and **auto-advance `useEffect`** ([page.tsx:478-502](app/v2/agents/new/page.tsx#L478)) — these assume a pre-loaded `questionsSequence` array + `currentQuestionIndex`. Rework so the single-question flow renders per-turn and does NOT auto-advance to Phase 3 on an empty `questionsSequence`. The ONLY trigger to advance to Phase 3 is `phase2_done === true`.
-- [ ] **Disclosure banner** — render `data.disclosure_banner` (cap_hit path) using the page's existing message system (e.g. `addAIMessage` or a small inline component consistent with the page's styling). No new shared component needed unless the page's message types require it.
-- [ ] **Empty-input guard** — confirm the `/v2/agents/new` page's own chat input disables submit on empty/whitespace. (The `ChatInput.tsx` found in the earlier audit belongs to the OTHER surface — find THIS page's input.) Add the guard only if missing.
-- [ ] **Grep gate**: no user-facing "10"/cap exposure in the page's Phase 2 copy.
-- [ ] `npx tsc --noEmit` clean (zero new errors).
+- [x] **`processPhase2(tid, options?)`** — batch handling replaced with single-question handling. `phase2_done === true` → render `disclosure_banner` (if present) → advance to Phase 3 (mini-cycle aware, see below). `typeof data.question === 'string'` → set `workflowPhase: 'questions'`, render ONE `addAIQuestion(data.question)` bubble + optional `inline_hint` (muted, via `addSystemMessage`), set `phase2AwaitingAnswer = true`, STOP. Degraded (neither `question` nor `phase2_done`) → soft "Let me think about that — could you rephrase…" bubble, keep `phase2AwaitingAnswer = true`, NO Phase 3 advance, NO fabricated question. The empty-`questionsSequence` `setTimeout(processPhase3, 1500)` auto-advance is GONE.
+  - **Mini-cycle preserved + clarified:** the route's `phase === 2` branch is **unconditional** — it returns the single-question shape for mini-cycle (`enhanced_prompt`/`user_feedback`) calls too (NO `questionsSequence` for any phase-2 call). So the mini-cycle now rides the same single-question path. Distinguishing behavior preserved via `isInMiniCycle`/`pendingEnhancedPrompt`: on `phase2_done` while refining, we re-run `processPhase3(tid, undefined, { enhanced_prompt: pendingEnhancedPrompt })` (refine, not regenerate) — matching the prior batch behavior. Phase 3 refinement is NOT broken. (This entanglement is the one place the page differs from the Step 9 bullet's assumption; surfaced in the Step 1 audit. Single-question-for-all is the only consistent option given the frozen backend.)
+- [x] **Answer submission** — new branch in `handleSend` (placed before the legacy batch `workflowPhase==='questions'` branch, after the `isAwaitingFeedback` mini-cycle-start branch): when `phase2AwaitingAnswer && threadId`, `addUserMessage(answer)`, accumulate into `clarificationAnswers` under per-turn key `phase2_turn_N` (via `phase2TurnRef`), then `await processPhase2(threadId, { phase2_user_answer: answer, enhanced_prompt: isInMiniCycle ? pendingEnhancedPrompt : undefined })`. Response routes back through the same single-question handler.
+- [x] **Question-render `useEffect`** + **auto-advance `useEffect`** — left in place (both gated on `questionsSequence.length > 0`, which single-question mode never sets, so both are inert). Added clarifying NOTE comments to each marking them legacy/inert and pointing at `processPhase2` for the single-question advance. The ONLY Phase 3 trigger is now `phase2_done === true` inside `processPhase2`.
+- [x] **Disclosure banner** — rendered via `addAIMessage(data.disclosure_banner)` immediately before advancing to Phase 3 on the `phase2_done`/cap_hit path. No new shared component needed.
+- [x] **Empty-input guard** — CONFIRMED already present on THIS page's own inline chat input (not the wrong-surface `ChatInput.tsx`): `handleSend` line ~1401 `if (!inputValue.trim() || isSending) return` AND send button line ~3253 `disabled={isSending || !inputValue.trim() || …}`. No code change required (FR6.17/FR7.21).
+- [x] **Grep gate**: zero user-facing "10"/cap/iteration/limit exposure in any `addAIMessage`/`addAIQuestion`/`addSystemMessage` Phase 2 copy. Legacy "Question N of M" indicator + "Answering questions (X/Y)" middle-panel text are gated on `questionsSequence.length > 0` → never render in single-question mode.
+- [x] `npx tsc --noEmit` clean — still exactly the 20 pre-existing baseline errors (4 `archive/test-dsl-wrapper.ts`, 16 `components/wizard/systemOutputs.ts`). ZERO new errors; none in `page.tsx`.
 
-> Implementation note: this page calls the API via raw `fetch` and reads `await res.json()` (untyped `any`), so there is NO `processMessageInThread` options-object refactor here — that was specific to the (reverted) `useThreadManagement` path. Keep the change surface confined to the page's Phase 2 functions.
+> Implementation note: this page calls the API via raw `fetch` and reads `await res.json()` (untyped `any`), so there is NO `processMessageInThread` options-object refactor here — that was specific to the (reverted) `useThreadManagement` path. Change surface confined to the page's Phase 2 functions (`processPhase2`, `handleSend`) + 2 new state vars (`phase2AwaitingAnswer`, `phase2TurnRef`) + clarifying comments on the 2 legacy `useEffect`s. Phase 1, Phase 3, input-parameters, and scheduling flows untouched.
 
 ### Step 9b — Mark the non-primary agent-creation surfaces `@deprecated` (prevent the wrong-file mistake recurring)
 
 **Why:** This cycle was wired into the wrong file because `ConversationalAgentBuilderV2` *sounds* like the primary V2 UI but is NOT — the live V2 flow is `app/v2/agents/new/page.tsx`. Add a top-of-file `@deprecated` JSDoc to every non-primary agent-creation surface, each pointing developers (and future agents) to the real page, so the next person sees the IDE strikethrough + redirect before touching the wrong file.
 
-- [ ] Add a `@deprecated` JSDoc block to each of these files. **Highest priority is `ConversationalAgentBuilderV2.tsx` / `useConversationalFlow.ts`** — the misleading "V2" name is exactly what caused this cycle's failure:
-  - `components/agent-creation/conversational/ConversationalAgentBuilderV2.tsx`
-  - `components/agent-creation/conversational/hooks/useConversationalFlow.ts`
-  - `components/agent-creation/ConversationalAgentBuilder.tsx` (legacy V1)
-  - `components/agent-creation/useConversationalBuilder.ts` (legacy V1 hook)
-  - `components/agent-creation/AgentBuilderParent.tsx` (parent that routes the secondary `/agents/new/chat` to the two builders above)
+- [x] Added a `@deprecated` JSDoc block to each of these files (highest-priority two done first). Each points to `app/v2/agents/new/page.tsx` (route `/v2/agents/new`) as the live surface. For the two files with an existing top-of-file JSDoc, the `@deprecated` tag was appended to that block; for the three starting with imports, a new JSDoc block was prepended:
+  - [x] `components/agent-creation/conversational/ConversationalAgentBuilderV2.tsx` (notes the misleading "V2" name explicitly)
+  - [x] `components/agent-creation/conversational/hooks/useConversationalFlow.ts`
+  - [x] `components/agent-creation/ConversationalAgentBuilder.tsx` (legacy V1)
+  - [x] `components/agent-creation/useConversationalBuilder.ts` (legacy V1 hook)
+  - [x] `components/agent-creation/AgentBuilderParent.tsx` (parent that routes the secondary `/agents/new/chat` to the two builders above)
 - [ ] Comment shape (adapt per file; component vs hook):
   ```ts
   /**
@@ -297,9 +313,9 @@ This step is deliberately constrained. `v16` is `v15` plus exactly two named ins
    * agent-creation behavior here — make changes in `app/v2/agents/new/page.tsx`.
    */
   ```
-- [ ] These are JSDoc-only edits — **no runtime impact**. `@deprecated` renders usages with a strikethrough in IDEs (the intended signal).
-- [ ] `npx tsc --noEmit` still clean after the edits (deprecation does not error; it's a hint).
-- [ ] Do NOT change any logic in these files. If a `@deprecated` symbol is still imported by a live route, that's expected — the strikethrough is informational, not a build error.
+- [x] JSDoc-only edits — **no runtime impact**. `@deprecated` renders usages with a strikethrough in IDEs (the intended signal).
+- [x] `npx tsc --noEmit` still clean after the edits (20 baseline errors, zero new). Deprecation tags render as Hints, not errors.
+- [x] No logic changed in any of these five files — only JSDoc added.
 
 > Scope note: this step is defensive documentation, adjacent to the Phase 2 work. If the user prefers, it can ship as its own tiny commit. It is explicitly NOT a change to the legacy flows' behavior.
 
@@ -368,6 +384,66 @@ Setup checklist (do once, before scenarios):
 
 ---
 
+## Enhancement E1 (2026-05-29) — stop re-sending heavy context on mid-loop Phase 2 turns
+
+**Problem:** In single-question mode Phase 2 makes N LLM round-trips (vs 1 in the old batch flow). The route put the **full `plugin_action_summary`** (a large blob: every connected plugin's actions + key params) AND `connected_services` into the Phase 2 user message on **every** turn ([process-message/route.ts](app/api/agent-creation/process-message/route.ts) Phase 2 branch, lines ~429 + ~434). Because the OpenAI thread accumulates messages and each completion re-sends the whole thread, that blob ends up duplicated once per turn — context cost grows ~O(N²) across the loop. Phase 1 already places both in the thread, so the Phase 2 repeats are pure waste.
+
+**Fix:**
+- **Route:** on a **mid-loop** Phase 2 turn (signalled by a non-null `phase2_user_answer` — i.e. the user is answering a prior question), OMIT `plugin_action_summary` and `connected_services` from the user message. Still send them on the **first** Phase 2 turn (no `phase2_user_answer`) so they're present even if Phase 1 was skipped (resumed thread), and to seed EP Key Hints for the first question. They persist in the thread for the rest of the loop.
+- **Prompt (v16):** `connected_services` omission is already handled (line 269: "reference the latest known values from Phase 1 in the same thread"). `plugin_action_summary` is NOT — the prompt treats "not in this message" as "not available" and falls back to generic keys (line 135). Add a one-line clarification that a `plugin_action_summary` (and `connected_services`) provided **earlier in the thread** remains authoritative on later single-question turns even when omitted from the current message.
+
+**Scope:** part of the Phase 2 single-question requirement (it optimizes the multi-turn loop that single-question introduced) — ships with the Phase 2 work, not as a separate commit. No DB / no UI changes.
+
+**Status:** implemented 2026-05-29 (route + v16 one-line clarification). `tsc` clean.
+
+---
+
+## Enhancement E2 (2026-05-29) — phase-confusion crash fix (RESPONSE-SHAPE reinforcement + corrective retry)
+
+**Problem (live test 2026-05-29):** Phase 3 validation 500'd. The `phase: 3` request came back as a **Phase 2 single-question payload** (`{ "question": { "id": "q9", … }, "phase2_done": false }`), and the route's one-shot Phase 3 retry produced the same → `analysis: Required, enhanced_prompt: Required, …` validation failure.
+
+**Root cause:** After ~9 single-question Phase 2 turns, the OpenAI thread is saturated with `{question, phase2_done}` responses, so the model is **entrenched in the Phase 2 pattern**. When the cap fires and the page issues the `phase: 3` request, the model keeps emitting a question instead of switching to the Phase 3 enhanced-prompt shape. v15 batch mode never hit this — it had a single Phase 2 turn, so there was no pattern to entrench. Two gaps made it fatal: (a) v16's Phase 3 currently has **no instruction to switch shape on a phase-3 request** — the "RESPONSE-SHAPE" reinforcement was reverted on 2026-05-28 in the mistaken belief it only compensated for the (now-removed) mini-cycle churn; (b) the route's Phase 3 retry re-sends the **identical entrenched conversation** with no corrective signal, so it just re-rolls the same dice.
+
+**Fix:**
+- **#1 — Re-add a tightened RESPONSE-SHAPE reinforcement** to v16's Phase 3 section: when the incoming message is `phase: 3`, the model MUST return the Phase 3 enhanced-prompt object and NEVER a `{question, phase2_done}` payload, even after many Phase 2 single-question turns. This is a **justified, single-question-specific divergence from v15** (v15 batch never entrenched the pattern) — recorded alongside the `processing_steps` divergence so a future v16↔v15 re-sync does not silently drop it. NOTE: only the RESPONSE-SHAPE reinforcement returns; the separate "resolve from conversation" addition stays reverted (it was genuinely redundant with the qId keying fix).
+- **#2 — Make the route's Phase 3 retry corrective.** Before the single retry completion, append a one-line corrective turn (e.g. "Your previous reply was a Phase 2 question; this is a phase-3 request — return ONLY the Phase 3 enhanced_prompt JSON object now, not a question.") so the backstop can actually recover when #1 isn't enough. Still bounded to one retry.
+
+**Status:** implemented 2026-05-29. #1 = v16 Phase 3 RESPONSE-SHAPE block ([Workflow-Agent-Creation-Prompt-v16-chatgpt.txt](app/api/prompt-templates/Workflow-Agent-Creation-Prompt-v16-chatgpt.txt) line 416). #2 = `correctiveTurn` appended before the single Phase 3 retry ([process-message/route.ts](app/api/agent-creation/process-message/route.ts) ~line 702). `tsc` clean. Awaiting user's live re-test at `/v2/agents/new`.
+
+---
+
+## Enhancement E3 (2026-05-29) — move `inline_hint` to client-side `thinking-words` infrastructure (documented; implement AFTER E2 re-test)
+
+**Context:** The V2 page renders a small per-turn hint bubble between Phase 2 questions, populated by `inline_hint` coming back in the server response (`addSystemMessage(data.inline_hint)` in [app/v2/agents/new/page.tsx](app/v2/agents/new/page.tsx) ~line 777). The hint is server-generated and **iteration-cycled** by the loop controller: `INLINE_HINTS` is a hardcoded 3-phrase array in [lib/agent-creation/phase2-loop-controller.ts](lib/agent-creation/phase2-loop-controller.ts), indexed `(nextIteration - 1) % INLINE_HINTS.length`.
+
+**Problem:** This duplicates an existing, richer client-side system. The `thinking-words` infrastructure ([lib/ui/thinking-words.ts](lib/ui/thinking-words.ts) + `thinking-words-dictionary.json` + loader, documented in [docs/THINKING_WORDS.md](docs/THINKING_WORDS.md)) already provides JSON-configurable phrase categories, role mapping, and sequential/timed cyclers — but `inline_hint` ignores it and reimplements a worse version:
+- **Not extensible:** adding/editing phrases means editing a TS array + redeploying, instead of editing the shared JSON dictionary.
+- **Server round-trip cost:** the hint is computed server-side and shipped on every Phase 2 response, bloating the contract for a purely-cosmetic, client-renderable string. It does not need the server at all.
+- **Architectural split:** two parallel "status phrase" mechanisms. THINKING_WORDS.md explicitly owns this class of transient UI copy.
+
+**Chosen approach (option a, user-confirmed 2026-05-29) — client-side generation via `thinking-words`:**
+1. Add a new `clarification_hints` category to `thinking-words-dictionary.json` with the converging-tone phrases (seed from the current 3: "A few more details to refine your agent.", "Let's narrow this down a bit more.", "Just a couple more questions and we can build it." — and allow extending beyond 3).
+2. Generate the hint **client-side** in the page when rendering each Phase 2 question (cycle through the `clarification_hints` category via the existing thinking-words cycler), instead of reading `data.inline_hint`.
+3. **Drop `inline_hint` from the server contract** entirely: remove `INLINE_HINTS` + the `inline_hint` field from [lib/agent-creation/phase2-loop-controller.ts](lib/agent-creation/phase2-loop-controller.ts), from the route's Phase 2 response payload ([app/api/agent-creation/process-message/route.ts](app/api/agent-creation/process-message/route.ts)), and from the response type ([components/agent-creation/types/agent-prompt-threads.ts](components/agent-creation/types/agent-prompt-threads.ts)).
+
+**Constraint preserved:** FR7's "no cap number / no question count surfaced to the user" still holds — the client cycles phrases by turn index but MUST NOT render any "N of M" / countdown text. Phrases stay qualitative ("a few more…"), never quantitative.
+
+**Files affected (~5):** `thinking-words-dictionary.json` (+ category), `app/v2/agents/new/page.tsx` (client hint generation, drop `data.inline_hint` read), `lib/agent-creation/phase2-loop-controller.ts` (remove `INLINE_HINTS` + `inline_hint`), `app/api/agent-creation/process-message/route.ts` (drop from payload), `components/agent-creation/types/agent-prompt-threads.ts` (drop from response type).
+
+**Sequencing:** documented now; **implement only AFTER the user's E2 live re-test** confirms the core single-question + phase-3-handoff flow works. The hint is cosmetic, so it must not perturb the flow under test. No DB changes. `tsc` + a thinking-words unit check after implementation.
+
+**Status:** documented 2026-05-29 — implementation deferred until post-E2-re-test.
+
+---
+
+## Open item OI1 (2026-05-29) — Phase 2 question pacing / wrap-up signal (deferred)
+
+**Observation:** in the failing test the loop asked **9 questions** before the defensive cap fired. That is (a) too many for a non-technical user — it cuts against the requirement's core tone-down goal — and (b) the amplifier for E2: the more Phase 2 turns, the deeper the pattern entrenchment that triggers the phase-confusion crash. In single-question mode the model receives **no sense of how many questions it has asked** (the per-turn iteration signal was deliberately dropped for minimalism), so it keeps asking until the cap.
+
+**Possible direction (not yet decided):** give the model a gentle pacing/wrap-up cue (e.g. a soft per-turn hint that it should converge, or surfacing a coarse "you've gathered enough" signal) so it emits `phase2_done` earlier on its own. Adjacent to T2 (`conversationalSummary`). Deferred — decide after E2 lands and is re-tested.
+
+---
+
 ## Side fix (2026-05-28) — mandatory `processing_steps` (separate from the Phase 2 single-question scope)
 
 Surfaced during live testing: V6 agent generation (Pipeline A) crashed with `TypeError: Cannot read properties of undefined (reading 'map')` at `lib/agentkit/v6/intent/intent-user-prompt.ts` because the Phase 3 `enhanced_prompt.sections.processing_steps` was absent — in v15/v16 that field was documented as **optional** ("Optionally include `processing_steps`…"), so the LLM sometimes omitted it while the V6 code assumed it was always present. This is a latent pre-existing bug, unrelated to the Phase 2 single-question work, exposed by a Phase 3 response that legitimately had no `processing_steps`.
@@ -377,6 +453,26 @@ Surfaced during live testing: V6 agent generation (Pipeline A) crashed with `Typ
 - **Prompt (completeness):** v16 Phase 3 now **mandates** `processing_steps` — the two "Optionally include `processing_steps`" lines (Mapping logic + General Constraints item 12) became "ALWAYS include `processing_steps` … REQUIRED". The Phase 3 output example already includes it.
 
 > Note: this is the one **deliberate** divergence of v16's Phase 3 from v15 (v15 had `processing_steps` optional). It is justified (fixes the V6 crash + improves agent-definition completeness) and should NOT be reverted if v16 is ever re-synced to v15.
+
+---
+
+## Fix F1 (2026-05-29) — last Phase 2 answer dropped from `clarification_answers` (React state-staleness race) — ROOT CAUSE of repeated questions
+
+**Symptom (live test 2026-05-29):** Phase 2 asked for the marketing-manager email and the user answered it (`offir.omer@gmail.com`), yet the agent re-asked the same question **5+ times** across the run (q6 → mini-cycle `c2_q1` → `q7` → `c2_q1` again → `c2_q7`). Phase 3 validation also logged repeated WARNs (`analysis: Required`, `enhanced_prompt: Required`, …) — the model returned a Phase 2 `{question, phase2_done}` payload on a `phase: 3` request.
+
+**Root cause (confirmed from dev.log):** The Phase 3 request payload's `clarification_answers` was built from `builderState.clarificationAnswers`, which is updated via `setBuilderState` (**async**). The **last** answer is submitted on the very turn the backend returns `phase2_done: true`, and the Phase 3 transition fires in the **same call chain** (`setTimeout(() => processPhase3(tid), 1200)` in `processPhase2`). That `processPhase3` closure captured the **pre-answer** `builderState`, so the last answer had not flushed yet and was **omitted** from the payload. dev.log proof:
+- 1st Phase 3 request: `clarification_answers = {q1,q2,q3,q4,q5}` — **q6 (the email) missing**, fired right after the user answered q6.
+- 2nd Phase 3 request (after re-asks): `{q1…q5, q6, c2_q1}` — q6 had flushed by then, but only because the user was forced to answer the email two more times.
+
+Because the v16 Phase 3 prompt resolves `user_inputs_required` against `clarification_answers`, the missing email read as **unresolved** → Phase 3 re-listed it → mini-cycle + phase-entrenchment re-asked it. This is the **same class** of bug as the earlier `phase2_turn_N`→qId keying fix, but a different mechanism: there the key didn't link to the question; here the value never reached the payload. **It always strikes the LAST answer** (the only one whose `setState` races the Phase 3 transition).
+
+**Link to the Phase 3 validation WARNs (E2):** the missing-input signal is exactly what pulls the model back into question-asking mode on a `phase: 3` request — i.e. Fix F1 is the **amplifier** behind E2's entrenchment. The E2 corrective-retry backstop *did* recover (dev.log: "Phase 3 retry returned a valid response"), so it no longer crashes — but F1 removes the upstream cause, so the WARN/retry should stop firing.
+
+**Fix ([app/v2/agents/new/page.tsx](app/v2/agents/new/page.tsx)):** add a synchronous, staleness-proof `clarificationAnswersRef` (mirrors `phase2TurnRef`, empty on each mount). `submitPhase2Answer` writes the ref **before** `setBuilderState` (synchronous). `processPhase3` sends `{ ...builderState.clarificationAnswers, ...clarificationAnswersRef.current }` (ref wins on collisions) so every answer — including the just-submitted one — is always present. Covers all paths to `processPhase3` (the `phase2_done` setTimeout, the mini-cycle setTimeout, and the all-answered `useEffect`). The post-creation metadata sends (`creation_metadata.clarification_answers` in the V4/V6 generate blocks) are unchanged — they run after state has fully settled, so no race.
+
+**Scope:** part of the Phase 2 single-question requirement (the multi-turn loop is what introduced the race). No DB / no contract change. `tsc` clean (no errors in the edited file).
+
+**Status:** implemented 2026-05-29 — awaiting user's live re-test at `/v2/agents/new`.
 
 ---
 
@@ -476,6 +572,59 @@ These are minor wording tightenings to the requirement, not behavioural changes.
 - **Out of Scope**: add bullet "Altering the `processMessageInThread` signature in a way that breaks Phase 1 or Phase 3 callers." (matches PG-7)
 - **Process Guardrails**: append guardrail #6 — smoke matrix evidence must include timestamps and correlation IDs that resolve back to `dev.log`. (matches PG-6)
 
+
+## SA Code Review (post-implementation) — 2026-05-29
+
+**Verdict: Approved-with-fixes.** The feature is correct, well-scoped, and standards-compliant. All findings below are Medium/Low — none block the cycle. Safe to commit after the two Medium items are either fixed or explicitly accepted by TL/user. The 75 unit tests + live smoke matrix did their job; the structural fixes (snapshot-before-mutation, pure controller, qId keying, F1 ref) are all sound.
+
+### What I verified independently
+
+- **v16 Phase 3 divergence audit (the most important gate):** `diff v15 v16` confirms the ONLY Phase 3 differences are the two declared, justified ones — (a) mandatory `processing_steps` (prompt line 421 + General-Constraints item 12) and (b) the `RESPONSE SHAPE (critical)` reinforcement (line 416-417). No other Phase 3 drift. The audience banner (Insert A) and the E1 single-question context-authority note are in non-Phase-3 sections. **Clean — no unauthorized Phase 3 changes.**
+- **Loop controller purity:** `lib/agent-creation/phase2-loop-controller.ts` `step()` is genuinely pure — no `Date.now()`, no logging, no IO; it does not mutate `input.state` (builds a fresh `next_state`). All side effects (Pino log, thread persist) live in the route. Confirmed.
+- **Cap precedence:** cap check runs first and fires regardless of `payload_valid` or LLM output. Both termination reasons reachable. Degraded passthrough still advances `iteration_count` so the cap eventually fires. Correct.
+- **Tests:** re-ran the 3 Phase 2 suites — 69/69 pass (schema 23, done-detector, controller). `tsc --noEmit` shows ZERO errors in any touched file.
+- **No R3/v17/flag artifacts** in this branch's source: no `phase2-v17-schema`, no `phase2-intent-classifier`, no `USE_PHASE2_SINGLE_QUESTION_MODE`. (The `r3-*` scenarios / `v17` files in the session-start git snapshot belong to a different branch and are absent here.)
+- **Standards:** Zod `.strict()` at the Phase 2 boundary (validated on the pre-mutation snapshot ✅); structured Pino via `requestLogger = logger.child({ correlationId })` so the single termination log inherits `correlationId` ✅; thread access via repository ✅ (the module-scope `createClient` at route line 31 is pre-existing, for `AIAnalyticsService` only, not introduced here); no hardcoded model names (done-detector is keyword-only) ✅.
+
+### Findings — High
+
+_None._
+
+### Findings — Medium
+
+1. **`app/api/agent-creation/process-message/route.ts:707` — Phase 3 corrective-retry uses `messages: [...conversationMessages, correctiveTurn]` but the corrective turn is never persisted to the OpenAI thread; the *bad* assistant message IS still in the thread.** On the retry the model sees: [...history including the bad Phase-2-shaped assistant reply] + a one-off user nudge. That's the intended design and it worked in the live test. But note an asymmetry: when the retry *succeeds* you `addMessageToThread(assistant, retryText)` (line 735) yet you do NOT add the `correctiveTurn` user message, so the thread now has `assistant(bad-question) → assistant(good-phase3)` with no intervening user turn — a malformed turn sequence that a *subsequent* mini-cycle/refine call will replay. **Suggested fix:** either (a) also persist the `correctiveTurn` user message before the assistant retry text, or (b) leave a one-line comment documenting that the bad assistant turn is intentionally left in the thread and the sequence anomaly is tolerated because Phase 3 is terminal (`newStatus = 'completed'`). Low blast radius given Phase 3 completes the thread, but document the intent.
+
+2. **`lib/agent-creation/phase2-loop-controller.ts:160` — cap is reached on the 10th LLM round-trip, so the 10th LLM call still fires and its result is discarded.** When `iteration_count === 9`, the route makes the LLM call (the request is sent *before* `step()` runs), the LLM returns Q10, then `step()` computes `nextIteration = 10 >= MAX_ITERATIONS` and replaces it with `cap_hit`. Net: worst case = **10** LLM round-trips with the 10th wasted, and 9 questions surfaced. FR5.12 says "**< 10** LLM round-trips." This is a spec-literal off-by-one (a wasted call + token cost), not a safety bug — the loop always terminates. **Suggested fix (pick one):** (a) accept it and tighten FR5.12 wording to "at most 10 round-trips, max 9 questions surfaced"; or (b) change the guard to `nextIteration > MAX_ITERATIONS` / set `MAX_ITERATIONS = 9` only if you want the literal "< 10". Recommend (a) — the current behavior is safe and the test suite already locks `>= MAX_ITERATIONS`. Either way, reconcile the code comment ("terminates on the 10th iteration") with FR5.12's "< 10".
+
+### Findings — Low
+
+3. **`app/v2/agents/new/page.tsx:217-225` (degraded FR4.11 path) — stale option buttons remain visible on a degraded turn.** When the backend passes through a payload with neither `question` nor `phase2_done`, the page shows a "could you rephrase…" message and sets `phase2AwaitingAnswer = true`, but it does NOT clear the previous turn's single-question `questionsSequence`. Because the option-button render gate is `length === 1 ? phase2AwaitingAnswer : …`, the *prior* question's option buttons stay rendered and clickable beside the rephrase prompt. **Suggested fix:** on the degraded branch, `setQuestionsSequence([])` (or set `currentQuestionIndex: -1`) before the rephrase message so only the free-text input is offered. Degraded turns are rare (Zod failure), so Low.
+
+4. **`app/v2/agents/new/page.tsx:171` — mini-cycle `phase2_done` with `refiningPlan === true` but `pendingEnhancedPrompt === null` silently regenerates from scratch.** The `user_feedback`-only edit flow (no `enhanced_prompt`) sets `isInMiniCycle` but may leave `pendingEnhancedPrompt` null; on `phase2_done` it falls to the `else` and calls `processPhase3(tid)` (regenerate) instead of refine. This matches the pre-existing batch fallback, so it's not a new regression — but the comment block (lines 171-186) implies refine is guaranteed when `refiningPlan`. **Suggested fix:** add a one-line comment that the `else` is the intentional regenerate fallback when no pending prompt exists, so a future reader doesn't treat it as a bug.
+
+5. **`app/api/agent-creation/process-message/route.ts:707-714` — `retryParams: any` / `retryErr: any`.** Consistent with the pre-existing `completionParams: any` at line 571, so not a *new* anti-pattern, but neither is typed. Non-blocking; if the provider exposes a params type, prefer it. (Pre-existing debt — out of scope to fix here.)
+
+6. **`app/v2/agents/new/page.tsx:362` — `pendingEnhancedPrompt: any`.** Pre-existing page convention (the page treats `EnhancedPrompt` as `any` throughout); not introduced by this feature. Noted only for completeness.
+
+### Optimisation Suggestions (non-blocking)
+
+- The E1 mid-loop context omission keys off `phase2_user_answer !== undefined && !== null`. The page always sends `phase2_user_answer: options?.phase2_user_answer ?? null` (page line ~714), so the *first* Phase 2 turn correctly sends `null` → heavy context included; mid-loop sends the answer string → omitted. Logic is correct, but it's load-bearing and implicit — a one-line invariant comment ("first turn ⇒ phase2_user_answer is null") at the route's `isMidLoopPhase2Turn` would harden it against a future page change that defaults the field differently.
+- E3 (move `inline_hint` to client `thinking-words`) is correctly deferred; the current server-side `inline_hint` path is harmless and FR-compliant. No action needed this cycle.
+
+### Code Approved for QA: Yes
+
+The two Medium items are documentation/spec-reconciliation in nature (item 1 = comment or persist-symmetry; item 2 = spec wording vs a wasted call). Neither is a correctness or security defect. **Safe to commit.** Recommend TL accept items 1 & 2 as-is or apply the trivial fixes, then proceed to QA regression.
+
+### Resolution (2026-05-29) — applied fixes (chose to fix, not just accept)
+
+- **Medium 1 (retry thread symmetry) — FIXED** in [process-message/route.ts](app/api/agent-creation/process-message/route.ts). On a successful Phase 3 corrective retry the route now persists the corrective USER turn to the thread *before* the good assistant reply, so the sequence is `…→ assistant[bad] → user[corrective] → assistant[good]` (no two-consecutive-assistant anomaly for a later mini-cycle replay). Inaccurate "Replace the bad message" comment corrected.
+- **Medium 2 (cap off-by-one / FR5.12) — FIXED** by enforcing the cap **PRE-CALL** in the route, merged into the existing done-keyword short-circuit (`if (phase === 2) { … capReachedPreCall || doneKeywordHit … }`). Once `MAX_ITERATIONS - 1` round-trips are done the route terminates `cap_hit` BEFORE making another LLM completion → true worst case is now **9 round-trips / 9 questions**, honoring FR5.12's "< 10" literally (no wasted 10th call, ~$0.07 saved per cap-fire). Cap takes precedence over the done-keyword. The loop controller's post-call `step()` cap is retained as a backstop (and is what the controller unit tests still exercise); its docstring was updated to say so.
+- **Low 3 (stale option buttons on degraded turn) — FIXED** in [app/v2/agents/new/page.tsx](app/v2/agents/new/page.tsx): the FR4.11 degraded branch now `setQuestionsSequence([])` before the rephrase prompt, so the prior question's option buttons don't stay clickable.
+- **Low 4 (regenerate-fallback) & E1-invariant optimisation — DOCUMENTED** with clarifying comments (page mini-cycle `else`; route `isMidLoopPhase2Turn`).
+- **Low 5 & 6 (`any` types) — NOT changed**: pre-existing debt, out of scope per SA.
+- **Verification:** `tsc --noEmit` zero errors in all edited files; 75/75 Phase 2 unit tests pass.
+
+---
 
 ## QA Testing Report
 

@@ -21,7 +21,10 @@ import { isDoneIntent } from '@/lib/agent-creation/phase2-done-detector';
 import {
   step as phase2LoopStep,
   INITIAL_LOOP_STATE,
+  MAX_ITERATIONS,
+  DISCLOSURE_BANNER,
   type Phase2LoopState,
+  type TerminationReason,
 } from '@/lib/agent-creation/phase2-loop-controller';
 import { ProviderFactory } from '@/lib/ai/providerFactory';
 import { validateContextUsage } from '@/lib/ai/context-limits';
@@ -328,80 +331,100 @@ export async function POST(request: NextRequest) {
     requestLogger.debug({ aiProvider, aiModel }, 'AI provider verified for chat completion');
 
     // -----------------------------------------------------------------------
-    // Phase 2 single-question mode (2026-05-27): done-keyword short-circuit
+    // Phase 2 single-question mode: PRE-CALL terminations (no LLM call this turn)
     //
-    // If the user's reply matches the "I want to stop" intent (case-insensitive
-    // substring match against the small `DONE_KEYWORDS` list), terminate the
-    // loop immediately as `phase2_done` WITHOUT making an LLM call for this
-    // turn. This is the deterministic server-side intent handling required by
-    // FR6. The LLM handles every other case (substantive answers, "skip"-like
-    // replies, ambiguous input, etc.) naturally on the next turn.
+    // Two server-side terminations need NO LLM call for the current turn:
     //
-    // We persist the loop state advance using the SAME `updateThreadPhase()`
-    // call the route already makes at the bottom (no extra DB write) — so this
-    // short-circuit returns its own response and exits the handler entirely.
-    // The Pino termination log is emitted AFTER the `updateThreadPhase` await
-    // resolves, mirroring the post-LLM path (so we never log a successful
-    // termination that wasn't actually persisted).
+    //   • cap_hit — the defensive iteration cap (SA Medium 2 / FR5.12). Once
+    //     `MAX_ITERATIONS - 1` round-trips are already done, terminate BEFORE
+    //     making another call. The post-call cap in the loop controller's
+    //     `step()` would still fire the Nth completion and then discard it —
+    //     wasting an LLM call and making the worst case 10 round-trips, which
+    //     violates FR5.12's "< 10 round-trips" bound. This pre-call guard makes
+    //     the true worst case 9 round-trips / 9 questions. `step()`'s cap stays
+    //     as a backstop for any path that bypasses this check.
+    //
+    //   • phase2_done — the user's reply matches the "I want to stop" intent
+    //     (case-insensitive match against the small `DONE_KEYWORDS` list). FR6
+    //     deterministic server-side intent handling; the LLM handles every other
+    //     reply (substantive answers, "skip"-like replies, ambiguity) next turn.
+    //
+    // Cap takes precedence over the done-keyword (mirrors `step()`'s "cap fires
+    // regardless of what the LLM said"). Both persist the loop-state advance via
+    // the SAME `updateThreadPhase()` shape the route uses elsewhere (no extra DB
+    // write), return their own response, and exit the handler. The single Pino
+    // termination log is emitted AFTER the `updateThreadPhase` await resolves, so
+    // we never log a termination that wasn't actually persisted.
     // -----------------------------------------------------------------------
-    if (phase === 2 && typeof phase2_user_answer === 'string' && isDoneIntent(phase2_user_answer)) {
+    if (phase === 2) {
       const priorLoopState: Phase2LoopState =
         (threadRecord.metadata?.phase2_loop_state as Phase2LoopState | undefined) ?? INITIAL_LOOP_STATE;
-      const nextLoopState: Phase2LoopState = {
-        iteration_count: priorLoopState.iteration_count + 1,
-      };
+      const capReachedPreCall = priorLoopState.iteration_count >= MAX_ITERATIONS - 1;
+      const doneKeywordHit =
+        typeof phase2_user_answer === 'string' && isDoneIntent(phase2_user_answer);
 
-      const shortCircuitResponse: ProcessMessageResponse = {
-        success: true,
-        phase: 2,
-        question: null,
-        phase2_done: true,
-        termination_reason: 'phase2_done',
-      };
+      if (capReachedPreCall || doneKeywordHit) {
+        const terminationReason: TerminationReason = capReachedPreCall ? 'cap_hit' : 'phase2_done';
+        const shortCircuitKind = capReachedPreCall ? 'cap_pre_call' : 'done_keyword';
+        const nextLoopState: Phase2LoopState = {
+          iteration_count: priorLoopState.iteration_count + 1,
+        };
 
-      const updatedMetadataDone = {
-        ...threadRecord.metadata,
-        last_phase: 2,
-        last_updated: new Date().toISOString(),
-        phase2_loop_state: nextLoopState,
-        iterations: [
-          ...(threadRecord.metadata?.iterations || []),
+        const shortCircuitResponse: ProcessMessageResponse = {
+          success: true,
+          phase: 2,
+          question: null,
+          phase2_done: true,
+          // Only cap_hit surfaces the soft disclosure banner; a user-initiated
+          // "done" needs no "we're proceeding with what we have" notice.
+          ...(capReachedPreCall ? { disclosure_banner: DISCLOSURE_BANNER } : {}),
+          termination_reason: terminationReason,
+        };
+
+        const updatedMetadataDone = {
+          ...threadRecord.metadata,
+          last_phase: 2,
+          last_updated: new Date().toISOString(),
+          phase2_loop_state: nextLoopState,
+          iterations: [
+            ...(threadRecord.metadata?.iterations || []),
+            {
+              phase: 2,
+              timestamp: new Date().toISOString(),
+              request: { phase: 2, phase2_user_answer, server_short_circuit: shortCircuitKind },
+              response: shortCircuitResponse,
+            },
+          ],
+        };
+
+        try {
+          await threadRepository.updateThreadPhase(
+            threadRecord.id,
+            2,
+            'active',
+            updatedMetadataDone
+          );
+        } catch (updateError: any) {
+          requestLogger.warn(
+            { err: updateError, dbRecordId: threadRecord.id },
+            'Failed to persist Phase 2 pre-call short-circuit (non-critical)'
+          );
+          // We still return a terminating response — UI advances to Phase 3.
+        }
+
+        // Single Pino termination log line (FR8). Emitted post-persist.
+        requestLogger.info(
           {
             phase: 2,
-            timestamp: new Date().toISOString(),
-            request: { phase: 2, phase2_user_answer, server_short_circuit: 'done_keyword' },
-            response: shortCircuitResponse,
+            iteration_count: nextLoopState.iteration_count,
+            termination_reason: terminationReason,
+            server_short_circuit: shortCircuitKind,
           },
-        ],
-      };
+          'Phase 2 loop terminated'
+        );
 
-      try {
-        await threadRepository.updateThreadPhase(
-          threadRecord.id,
-          2,
-          'active',
-          updatedMetadataDone
-        );
-      } catch (updateError: any) {
-        requestLogger.warn(
-          { err: updateError, dbRecordId: threadRecord.id },
-          'Failed to persist Phase 2 done-keyword short-circuit (non-critical)'
-        );
-        // We still return a terminating response — UI advances to Phase 3.
+        return NextResponse.json(shortCircuitResponse);
       }
-
-      // Single Pino termination log line (FR8). Emitted post-persist.
-      requestLogger.info(
-        {
-          phase: 2,
-          iteration_count: nextLoopState.iteration_count,
-          termination_reason: 'phase2_done',
-          server_short_circuit: 'done_keyword',
-        },
-        'Phase 2 loop terminated'
-      );
-
-      return NextResponse.json(shortCircuitResponse);
     }
 
     // Step 6: Build user message based on phase
@@ -424,14 +447,37 @@ export async function POST(request: NextRequest) {
       // so the LLM has the user's reply to the previous question in the same
       // message payload (the OpenAI thread already carries history, but
       // including it inline keeps the prompt structure explicit).
+      //
+      // E1 (2026-05-29): on a MID-LOOP turn (the user is answering a prior
+      // question, signalled by a non-null `phase2_user_answer`), OMIT the heavy
+      // `plugin_action_summary` blob and `connected_services`. Both were already
+      // sent on Phase 1 and the first Phase 2 turn and persist in the OpenAI
+      // thread, so re-sending them every turn duplicates a large payload N times
+      // in the context (~O(N^2) growth). The v16 prompt treats earlier-thread
+      // copies as authoritative on later turns. We still send them on the FIRST
+      // Phase 2 turn (no `phase2_user_answer`) so they're present even if Phase 1
+      // was skipped (resumed thread) and to seed EP Key Hints for question #1.
+      // INVARIANT: the FIRST Phase 2 turn sends `phase2_user_answer: null` (the
+      // page sends `phase2_user_answer ?? null`, and there is no answer yet on the
+      // first turn); every MID-LOOP turn sends the user's answer string. So a
+      // non-null answer reliably distinguishes mid-loop from first turn. If the
+      // page is ever changed to default this field differently, revisit this gate.
+      const isMidLoopPhase2Turn =
+        phase2_user_answer !== undefined && phase2_user_answer !== null;
       userMessage = {
         phase: 2,
-        connected_services: connected_services || threadRecord.metadata?.phase1_connected_services || null,
         enhanced_prompt: enhanced_prompt || null,
         declined_services: declined_services || [],   // V10: services user refused to connect
         user_feedback: user_feedback || null,         // V10: refinement feedback for mini-cycle
         phase2_user_answer: phase2_user_answer ?? null,
-        plugin_action_summary: plugin_action_summary_text || undefined  // EP Key Hints (O8)
+        // Heavy context only on the first Phase 2 turn (omitted mid-loop — E1):
+        ...(isMidLoopPhase2Turn
+          ? {}
+          : {
+              connected_services:
+                connected_services || threadRecord.metadata?.phase1_connected_services || null,
+              plugin_action_summary: plugin_action_summary_text || undefined, // EP Key Hints (O8)
+            }),
       };
     } else if (phase === 3) {
       // V10: Phase 3 needs connected_services for OAuth gate re-call, declined_services, and enhanced_prompt for refinement
@@ -658,14 +704,86 @@ export async function POST(request: NextRequest) {
       if (phase === 3) {
         requestLogger.debug('Validating Phase 3 response structure');
 
-        const validation = validatePhase3Response(parsedJson);
+        let validation = validatePhase3Response(parsedJson);
+
+        // Crash hardening (2026-05-28, strengthened 2026-05-29 — E2): a phase:3 call
+        // can come back shaped like a Phase 2 single-question payload
+        // (`{ question, phase2_done }`) when the LLM is entrenched in single-question
+        // mode after many Phase 2 turns. Rather than 500 the whole flow, retry the
+        // Phase 3 completion ONCE. The retry appends an explicit CORRECTIVE turn
+        // (E2 #2) — re-sending the identical entrenched conversation alone just
+        // re-rolls the same dice, so the corrective nudge tells the model to switch
+        // to the enhanced-prompt shape. Bounded to a single extra call.
+        if (!validation.success) {
+          const looksLikePhase2 =
+            parsedJson && typeof parsedJson === 'object' &&
+            ('phase2_done' in parsedJson || 'question' in parsedJson);
+          requestLogger.warn({
+            validationErrors: validation.errors,
+            looksLikePhase2,
+            phase,
+          }, 'Phase 3 response failed validation — retrying the Phase 3 completion once (with corrective nudge)');
+
+          try {
+            // E2 #2: corrective turn so the retry isn't just a re-roll of the same
+            // (entrenched) context. Phrased as a user turn the model must obey.
+            const correctiveTurn = {
+              role: 'user' as const,
+              content:
+                'Your previous reply was a Phase 2 single-question payload (it contained "question"/"phase2_done"). This is a PHASE 3 request. Respond NOW with ONLY the Phase 3 enhanced-prompt JSON object (analysis, enhanced_prompt, requiredServices, missingPlugins, pluginWarning, clarityScore, conversationalSummary, metadata). Do NOT ask another question and do NOT include "question" or "phase2_done".',
+            };
+            const retryParams: any = {
+              model: aiModel,
+              messages: [...conversationMessages, correctiveTurn],
+              temperature: 0.1,
+              max_tokens: maxOutputTokens,
+            };
+            if (chatProvider.supportsResponseFormat) {
+              retryParams.response_format = { type: 'json_object' };
+            }
+            const retryCompletion = await chatProvider.chatCompletion(retryParams, {
+              userId: user.id,
+              feature: 'agent_creation',
+              component: 'process-message',
+              category: 'agent_workflow',
+              activity_type: 'agent_creation',
+              activity_name: 'Process agent creation phase 3 (retry)',
+              activity_step: 'phase_3_retry',
+              workflow_step: 'phase_3_retry',
+            });
+            const retryText = retryCompletion.choices[0]?.message?.content;
+            if (retryText) {
+              const retryParsed = JSON.parse(retryText);
+              const retryValidation = validatePhase3Response(retryParsed);
+              if (retryValidation.success) {
+                requestLogger.info({ phase }, 'Phase 3 retry returned a valid response');
+                validation = retryValidation;
+                // The bad assistant reply is already in the thread (stored at Step
+                // 11 before validation). Persist the corrective USER turn first, then
+                // the good assistant reply, so the thread keeps a well-formed
+                // alternating sequence (…→ assistant[bad] → user[corrective] →
+                // assistant[good]). Appending only the assistant reply would leave
+                // two consecutive assistant turns, which a later mini-cycle Phase 3
+                // replay would resend verbatim. Order matters; await sequentially.
+                await openaiProvider
+                  .addMessageToThread(thread_id, { role: 'user', content: correctiveTurn.content })
+                  .catch((err: any) => requestLogger.warn({ err }, 'Failed to store Phase 3 corrective turn (non-critical)'));
+                await openaiProvider
+                  .addMessageToThread(thread_id, { role: 'assistant', content: retryText })
+                  .catch((err: any) => requestLogger.warn({ err }, 'Failed to store Phase 3 retry response (non-critical)'));
+              }
+            }
+          } catch (retryErr: any) {
+            requestLogger.warn({ err: retryErr, phase }, 'Phase 3 retry threw');
+          }
+        }
 
         if (!validation.success) {
           requestLogger.error({
             validationErrors: validation.errors,
             phase,
             fullResponse: aiResponseText
-          }, 'Phase 3 response validation failed');
+          }, 'Phase 3 response validation failed (after one retry)');
           return NextResponse.json(
             {
               success: false,

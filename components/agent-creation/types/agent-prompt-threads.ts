@@ -158,11 +158,13 @@ export interface ProcessMessageResponse {
   workflow_refined_preview?: string[];
 
   /**
-   * Phase 2 single-question mode (2026-05-27). The one question the LLM
-   * chose to ask this turn. `null` when the loop is terminating
-   * (`phase2_done === true`).
+   * Phase 2 single-question mode (2026-05-27). The one STRUCTURED question the
+   * LLM chose to ask this turn (v15 `ClarificationQuestion` shape — type is one
+   * of `select`/`multi_select`/`text`). `null` when the loop is terminating
+   * (`phase2_done === true`). Structured so the page renders option buttons,
+   * not options-in-prose (corrected 2026-05-28).
    */
-  question?: string | null;
+  question?: ClarificationQuestion | null;
 
   /**
    * Phase 2 single-question mode (2026-05-27). `true` when no further

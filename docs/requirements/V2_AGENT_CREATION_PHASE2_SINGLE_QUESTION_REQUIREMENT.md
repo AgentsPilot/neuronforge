@@ -65,17 +65,30 @@ If a proposed change touches Phase 2 question-selection rules, carve-outs, allow
 7. Insert a single block in v16's Phase 2 section that instructs the LLM:
    - Emit at most ONE question per LLM call.
    - Pick the highest-priority next question per v15's existing rules.
+   - **The question MUST be a STRUCTURED question object in the same shape v15 uses for each `questionsSequence[]` item** (see FR4) — NOT a plain text string. This preserves v15's `select` / `multi_select` / `text` question types and their `options` so the UI renders selectable option buttons, not options crammed into prose. (The first implementation collapsed this to a plain string, which made the LLM emit "pick a number" text questions — a regression from v15. See Change History.)
    - When the question count is sufficient to produce a deterministic enhanced prompt, emit `phase2_done: true` with `question: null`.
-   - Output strictly conforms to the response contract: `{ "question": string | null, "phase2_done": boolean }`.
-8. This block replaces v15's batch-emission framing (e.g. `questionsSequence[]` output shape) in the Phase 2 section. The question-selection rules elsewhere in v15 (priority, what to ask, what NOT to ask, phrasing, "what" vs "when", etc.) are preserved verbatim.
+8. This block replaces v15's **batch** framing (a `questionsSequence[]` ARRAY) with **one** question object per turn. The per-question shape and ALL question-selection rules in v15 (priority, what to ask, what NOT to ask, phrasing, `select`/`multi_select`/`text` typing rules, `options`, `allowCustom`, "what" vs "when", etc.) are preserved verbatim — only the array → single-object framing changes.
 
 ### FR4 — Response contract validated server-side
 9. Each Phase 2 LLM response MUST conform to:
-    ```json
-    { "question": "string | null", "phase2_done": boolean }
+    ```jsonc
+    {
+      "question": {                       // null only when phase2_done is true
+        "id": "string",                   // globally unique across the run/thread
+        "question": "string",             // the human-readable question text
+        "type": "select" | "multi_select" | "text",   // ONLY these three types
+        "options": [                      // required for select/multi_select; omitted for text
+          { "value": "string", "label": "string", "description": "string (optional)" }
+        ],
+        "allowCustom": true,              // select/multi_select: offer a "none fit / my answer" escape
+        "theme": "string (optional)"
+      } | null,
+      "phase2_done": boolean
+    }
     ```
+   - **Question types are restricted to exactly `select`, `multi_select`, `text`** — nothing else (no `email`/`number`/etc.). This matches what the V2 page's option-button UI renders.
 10. `phase2_done: true` MUST come with `question: null` (no bundling).
-11. Zod-validated server-side with `.strict()` (rejects extra keys, including batch-shape leaks). Validation failures are logged as a Pino warn breadcrumb; the loop does NOT retry the LLM call. On Zod failure, the route returns the parsed payload as-is in degraded form (the controller still increments `iteration_count`); the cap will eventually fire if the LLM never recovers. The route MUST NOT fabricate a synthetic question server-side.
+11. Zod-validated server-side with `.strict()` (rejects extra keys, including the legacy batch `questionsSequence[]` array). Validation failures are logged as a Pino warn breadcrumb; the loop does NOT retry the LLM call. On Zod failure, the route returns the parsed payload as-is in degraded form (the controller still increments `iteration_count`); the cap will eventually fire if the LLM never recovers. The route MUST NOT fabricate a synthetic question server-side.
 
 ### FR5 — Defensive iteration cap (server-side only)
 12. Iteration cap = **< 10 LLM round-trips** per Phase 2 session. Purely defensive (in case the LLM never emits `phase2_done`).
@@ -90,7 +103,7 @@ If a proposed change touches Phase 2 question-selection rules, carve-outs, allow
 17. **Empty / whitespace-only input is prevented at the UI level** — the chat send button is already disabled when the input box is empty or contains only whitespace (existing guard at `components/agent-creation/conversational/components/ChatInput.tsx:54`). The server never sees an empty Phase 2 user message and does not need to handle that case.
 
 ### FR7 — UX presentation
-18. Each iteration renders as a single chat bubble in the V2 conversational UI.
+18. Each iteration renders ONE question in the V2 page using its **existing structured-question UI** — i.e. `select`/`multi_select` render as clickable option buttons (with the `allowCustom` escape) and `text` renders as a free-text answer, exactly as v15's batch flow rendered each question. Reuse the page's existing `questionsSequence` / `currentQuestionIndex` rendering rather than printing the question as plain prose.
 19. Each assistant message MAY include a soft inline hint (e.g., "A few more details to refine your agent") — phrased to avoid exposing the hard cap. Hints are server-controlled (controller-cycled from a fixed list).
 20. No progress bar / numeric counter shown to the user. The hard cap is NEVER exposed in user-facing copy.
 21. The chat send button is `disabled` when the input box is empty or whitespace-only (see FR6.17).
@@ -146,12 +159,12 @@ If a proposed change touches Phase 2 question-selection rules, carve-outs, allow
 - [ ] `Workflow-Agent-Creation-Prompt-v16-chatgpt.txt` exists. Diff vs v15 = audience banner insert + Phase 2 interaction-process block insert. Nothing else changes.
 - [ ] `init-thread` selects v16 unconditionally for the V2 flow. No flag gate.
 - [ ] v16 includes the audience banner (FR2) and the single-question response contract block (FR3 sub-clause 7).
-- [ ] LLM response Zod-validated server-side with `.strict()`. `phase2_done=true` only with `question=null` — enforced by `.refine()`. Schema, code, and tests use **no version number** in their names.
+- [ ] LLM response Zod-validated server-side with `.strict()`. `question` is the **structured object** (`{ id, question, type, options?, allowCustom?, theme? }`) with `type` constrained to `select` | `multi_select` | `text`; `null` only when `phase2_done=true` (enforced by `.refine()`). Schema, code, and tests use **no version number** in their names.
 - [ ] Defensive iteration cap < 10 implemented server-side. Cap-hit termination uses `termination_reason: cap_hit` and surfaces a soft disclosure banner. Cap is NOT referenced in v16 or in any user-facing copy.
 - [ ] Server-side "done" keyword check implemented. On match: loop terminates as `phase2_done` without making an LLM call for that turn. On no-match: user reply forwarded to LLM as normal. No other enums, no other server-side intent handling.
 - [ ] Empty / whitespace-only input is prevented at the UI level (send button is `disabled` when the input is empty). Verified by manual smoke test.
 - [ ] Loop controller has exactly 2 termination reasons: `phase2_done` and `cap_hit`. Both reachable per unit tests.
-- [ ] `app/v2/agents/new/page.tsx` renders one question per turn, collects the answer, sends it back as `phase2_user_answer`, and only advances to `processPhase3` when the response sets `phase2_done: true`. No numeric counter; the string "10" never appears in any user-facing Phase 2 copy (grep gate).
+- [ ] `app/v2/agents/new/page.tsx` renders one **structured** question per turn through its existing `questionsSequence`/option-button UI (`select`/`multi_select` → clickable options with `allowCustom`; `text` → free text), collects the answer, sends it back as `phase2_user_answer`, and only advances to `processPhase3` when the response sets `phase2_done: true`. No options crammed into prose; no numeric counter; the string "10" never appears in any user-facing Phase 2 copy (grep gate).
 - [ ] Single Pino termination log per session with `iteration_count`, `termination_reason`, `correlationId`.
 - [ ] No feature flag added or removed. `app/v2/agents/new/page.tsx` does not gate the new behavior behind any flag. The separate `/agents/new/chat` route and `components/agent-creation/conversational/` are untouched.
 - [ ] **Mandatory live dev-server smoke matrix** (FR12) is run by Dev **against the real URL `/v2/agents/new`**, results captured in the workplan, PASS for both scenarios, BEFORE the workplan is marked "Code Complete."
@@ -176,6 +189,7 @@ If a proposed change touches Phase 2 question-selection rules, carve-outs, allow
 - Touching `components/agent-creation/conversational/**`, `AgentBuilderParent.tsx`, the `/agents/new/chat` route, or the legacy `useConversationalBuilder.ts` — none of these is the primary V2 path.
 - Any feature-flag changes (`useNewAgentCreationUI` and `NEXT_PUBLIC_USE_NEW_AGENT_CREATION_UI` are left exactly as they are).
 - Breaking the Phase 1 or Phase 3 behavior of `app/v2/agents/new/page.tsx` while reworking Phase 2 — the rework is confined to the Phase 2 path.
+- The automatic Phase 3 → Phase 2 "mini-cycle" re-trigger on `user_inputs_required` is **retained as a safety net** (v15 behavior), but it fires only for inputs that are GENUINELY still missing. The duplicate-question + phase-confusion crash it previously caused were NOT the mini-cycle's fault — they were caused by Phase 2 answers being keyed `phase2_turn_N` (unrecognizable to Phase 3), so Phase 3 re-listed already-answered inputs. With answers keyed by question id + Phase 3 resolving from the conversation, the mini-cycle stays silent when the loop did its job. User-initiated refinement via "Need changes" is also retained.
 
 ---
 
@@ -218,3 +232,7 @@ These guardrails exist because prior Phase 2 implementation work passed source-i
 |------|--------|---------|
 | 2026-05-27 | Initial draft | BA scoped the single-question + audience-note Phase 2 behavior as one cohesive requirement. Question-selection logic from v15 carries over verbatim; only the interaction process and a top-of-prompt audience note are added. No feature flags. Server-side intent handling minimized to a single "done" keyword check; empty input prevented at the UI level. Live dev-server smoke matrix is mandatory before Code Complete. |
 | 2026-05-28 | **Entry-point correction (gap fix)** | First implementation wired the UI into `ConversationalAgentBuilderV2`/`useConversationalFlow.ts` (reached via `/agents/new/chat`). Live testing at the real URL **`/v2/agents/new`** showed Phase 2 jumped straight to the plugin gate — because that page (`app/v2/agents/new/page.tsx`) is a separate implementation using the batch `questionsSequence` model and auto-advances when no `questionsSequence` is returned. The backend (v16 prompt, route, schema, done-detector, loop-controller) was proven correct by dev.log and kept. The mis-targeted UI changes were reverted. FR9/FR10, integration points, ACs, and Process Guardrail #1 rewritten to target `app/v2/agents/new/page.tsx` and to require URL-verified entry-point auditing. No flags changed. |
+| 2026-05-28 | **Structured-question contract correction (FR3/FR4)** | After the UI was retargeted, live testing showed Phase 2 emitting plain-text "pick a number 1/2/3" questions instead of v15's `select`/`multi_select` option buttons. Root cause: the single-question contract had collapsed `question` to a plain `string`, and v16's Insert B explicitly forbade `type`/`options` — contradicting v15's still-present question-type rules. FR3/FR4 (+ FR7 and ACs) corrected so `question` carries ONE **structured** `ClarificationQuestion` object per turn (`type` ∈ `select`/`multi_select`/`text` only), and the page reuses its existing structured-question/option-button rendering. This realigns the contract with the requirement's own "question types preserved verbatim" scope statement. |
+| 2026-05-28 | ~~Removed the Phase 3 → mini-cycle auto-re-trigger~~ (superseded same day — see next row) | Initial reaction to the duplicate-question + crash was to delete the mini-cycle. Further diagnosis showed the mini-cycle was a symptom, not the cause — see the next row. The mini-cycle has been RESTORED. |
+| 2026-05-29 | **Phase-confusion crash fix (E2): re-add RESPONSE-SHAPE reinforcement + corrective retry** | Live test: a `phase: 3` request came back as a Phase 2 single-question payload (`{ question: { id: "q9", … }, phase2_done: false }`) and the one-shot retry produced the same → Phase 3 validation 500. Cause: after ~9 single-question Phase 2 turns the model is entrenched in the `{question, phase2_done}` pattern and keeps emitting questions when the cap-triggered `phase: 3` request arrives; v16's Phase 3 had no instruction to switch shape (the RESPONSE-SHAPE reinforcement was over-eagerly reverted on 2026-05-28), and the retry re-sent the identical entrenched context. **Fix:** (1) re-add a tightened RESPONSE-SHAPE reinforcement to v16 Phase 3 — a justified single-question-specific divergence from v15 (v15 batch never entrenched the pattern), recorded alongside the `processing_steps` divergence; (2) make the route's Phase 3 retry corrective (append a one-line "this is phase 3, return enhanced_prompt not a question" nudge before the single retry). The separate "resolve from conversation" addition stays reverted (genuinely redundant with the qId keying fix). Open item OI1 logged: the loop asked 9 questions (over-asking + entrenchment amplifier) — pacing/wrap-up cue deferred. |
+| 2026-05-28 | **Root-cause fix: recognize answered inputs (keying); mini-cycle restored as safety net; Phase 3 crash hardened — NO Phase 3 prompt changes** | Diagnosis: the user provided a value (e.g. the AliExpress sender email) during the single-question loop, yet Phase 3 still listed it in `user_inputs_required` (resolved_user_inputs had the recipient + time window but NOT the sender email) — so the mini-cycle re-asked it, and the resulting Phase 2 churn left the LLM in Phase 2 mode, so a later `phase: 3` call returned a Phase 2 payload → Phase 3 validation crash. Real cause: a regression in the **page** — Phase 2 answers were keyed `phase2_turn_N` as plain strings with NO link to the input, so v15's (intact) Phase 3 resolution, which reads `clarification_answers[qId]`, couldn't see them as answered. Confirmed by diff that **v16's Phase 3 section is byte-identical to v15** (no core Phase 3 element changed). **Fixes:** (1) the page now keys answers by the question's `id`, restoring the exact v15 `clarification_answers` contract that v15's intact Phase 3 logic already resolves; (2) the Phase 3 → mini-cycle re-trigger is **restored** as a genuine safety net (fires only for truly-missing inputs, at most once per session); (3) the route retries the Phase 3 completion once if it comes back wrong-shaped, instead of 500-ing the flow. Two interim Phase 3 *prompt* additions (a "response shape" reminder and a "resolve from conversation" reminder) were **reverted** — they were compensating for the keying regression, not for any Phase 3 change, so v16 Phase 3 == v15 Phase 3 exactly. |

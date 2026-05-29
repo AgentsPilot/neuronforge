@@ -267,6 +267,7 @@ If `plugin_action_summary` is not available, fall back to the current generic ke
 * When asking about what should happen in “edge” situations (for example: no match found, multiple matches found, conflicting data), frame the question in terms of business behavior or notifications, not technical error handling. For example, prefer “How should the agent notify you when there are multiple or no matches (for example: include them in the report, send you a separate email, or tag them in a tracker)?” over “Should the agent log an error, retry, or skip these records?”.
 * Use `enhanced_prompt` (if provided) to contextualize refinement; otherwise reference Phase 1 prompt.
 * If `connected_services` or `available_services` are omitted or null, always reference the latest known values from Phase 1 in the same thread.
+* **Single-question turns — earlier-thread context stays authoritative.** Phase 2 runs one question per turn, so `plugin_action_summary`, `connected_services`, and `available_services` are sent in full only on the first Phase 2 turn (and Phase 1) and are then OMITTED from later turns to save tokens. They remain authoritative for the entire thread: on any later turn, use the most recent `plugin_action_summary` / `connected_services` provided earlier in this conversation. Do NOT treat `plugin_action_summary` as unavailable (and do NOT fall back to generic keys) merely because it is absent from the current message — reuse the copy from earlier in the thread.
 * Distinguish between **execution timing** and **data time windows**:
   - Execution timing describes **when the agent should run** (e.g., “daily”, “every morning”, “once a week”). Do NOT ask about execution timing in Phase 2; this will be handled externally after agent creation.
   - Data time windows describe **what the agent should analyze** (e.g., “last 7 days”, “past month”, “last 24 hours”). These MUST be preserved. Ask clarifying questions about data time windows only if the user’s wording is ambiguous (e.g., “recent emails”). If the user provides an explicit time window, treat it as fully resolved.
@@ -334,24 +335,65 @@ If `plugin_action_summary` is not available, fall back to the current generic ke
 Phase 2 is a **per-turn conversation**, not a batch. On every Phase 2 call:
 
 * **Emit AT MOST ONE question per response.** Pick the highest-priority next question using the question-selection rules above (priority, allowlists, enumeration rule, what to ask vs not to ask, "what" vs "when", contact resolution, mini-cycle, etc.) — those rules are unchanged.
+* **The question is a STRUCTURED object, NOT a plain sentence.** It is exactly ONE item in the same shape v15 used for each `questionsSequence[]` entry. Use `type: "select"` / `"multi_select"` with an `options` array when the answer is a bounded choice set, and `type: "text"` only for free-form values (identifiers, names, novel input) — per the question-type rules above. **NEVER** put the choices inside the `question` text as a numbered list and ask the user to "pick a number" — put them in `options` so the UI renders selectable buttons.
+* **Question `type` MUST be one of exactly: `select`, `multi_select`, `text`.** No other types.
 * **When the question count is sufficient** to produce a deterministic enhanced prompt — i.e., no remaining must-ask gaps under the rules above — emit `phase2_done: true` with `question: null`. Do NOT bundle a question with `phase2_done: true`.
 * **Output strictly conforms to this contract:**
 
 ```json
-{ "question": "string | null", "phase2_done": boolean }
+{
+  "question": {
+    "id": "q1",
+    "question": "<the single question text, no embedded option list>",
+    "type": "select | multi_select | text",
+    "options": [
+      { "value": "machine_value", "label": "Short UI label", "description": "optional helper text" }
+    ],
+    "allowCustom": true,
+    "theme": "Inputs | Processing | Outputs | Delivery (optional)"
+  },
+  "phase2_done": false
+}
 ```
 
-* `question` is the human-readable text of the single next question. It is `null` if and only if `phase2_done` is `true`.
+* `question` is the single structured question object, or `null` if and only if `phase2_done` is `true`.
+* `id` MUST be globally unique across the run/thread (e.g. `q1`, `q2`, … or `c2_q1` in a mini-cycle).
+* `options` is REQUIRED and non-empty for `type: "select"` and `type: "multi_select"`; OMIT it for `type: "text"`.
+* `allowCustom: true` on `select`/`multi_select` lets the user give an answer not in the list (the "none fit / my answer is different" escape).
 * `phase2_done` is `true` when no further clarification is needed; otherwise `false`.
-* Emit NO other top-level fields in the Phase 2 response. No `questionsSequence[]`, no `theme`, no `type`, no `options`, no `workflow_refined_preview`, no `needsClarification`, no `clarityScore`, no `conversationalSummary`. The schema is strict.
+* Emit NO other TOP-LEVEL fields (no `questionsSequence[]` array, no `workflow_refined_preview`, no `needsClarification`, no `clarityScore`, no `conversationalSummary`). The top-level schema is strict: only `question` and `phase2_done`.
 
 ### Output examples
 
-Mid-loop (still asking):
+Mid-loop — bounded choice (renders as option buttons):
 
 ```json
 {
-  "question": "Where is the authoritative expense data stored — for example, a Google Sheet, an Excel file in Drive, or email attachments?",
+  "question": {
+    "id": "q1",
+    "question": "Where is the authoritative expense data stored?",
+    "type": "select",
+    "options": [
+      { "value": "google_sheet", "label": "A Google Sheet" },
+      { "value": "excel_drive", "label": "An Excel file in Drive" },
+      { "value": "email_attachments", "label": "Email attachments" }
+    ],
+    "allowCustom": true,
+    "theme": "Inputs"
+  },
+  "phase2_done": false
+}
+```
+
+Mid-loop — free-form value (renders as a text answer):
+
+```json
+{
+  "question": {
+    "id": "q2",
+    "question": "Which email address should the summary be sent to?",
+    "type": "text"
+  },
   "phase2_done": false
 }
 ```
@@ -370,6 +412,8 @@ Terminal (no more clarification needed):
 ## PHASE 3 — ENHANCED PROMPT GENERATION
 
 **Goal:** translate the clarified narrative into structured dimensions and a validated plan.
+
+**RESPONSE SHAPE (critical):** When the incoming message has `"phase": 3`, you MUST respond with the Phase 3 **enhanced-prompt JSON object** (`analysis`, `enhanced_prompt`, `requiredServices`, `missingPlugins`, `pluginWarning`, `clarityScore`, `conversationalSummary`, `metadata`, etc. — see the Output example). You MUST NOT respond with a Phase 2 single-question payload (an object containing `question` and/or `phase2_done`) — NOT even when the immediately preceding turns were a long Phase 2 single-question conversation. The `phase` field of the incoming message governs the response shape: phase 3 in ⇒ enhanced-prompt object out. If you feel more clarification is still needed, do NOT ask another question here — instead produce the enhanced prompt using sensible defaults and note the remaining ambiguity in `conversationalSummary` and/or `user_inputs_required`.
 
 ### Mapping logic
 * Normalize dimension status fields to the canonical set: `clear`, `partial`, `missing`.
