@@ -3,13 +3,16 @@
  *
  * Coverage:
  *   - both termination reasons (`phase2_done`, `cap_hit`) reachable
- *   - cap boundary: at iteration 9 → 10 the controller terminates with cap_hit
- *     regardless of LLM output
+ *   - cap boundary: up to MAX_ITERATIONS (10) questions inclusive; the cap fires
+ *     once iteration_count == MAX_ITERATIONS, regardless of LLM output
  *   - degraded passthrough (Zod failure) returns pass_through_degraded WITHOUT
  *     fabricating a question
- *   - continue path attaches a cycled `inline_hint`
  *   - disclosure banner copy is locked to the exported constant (SA Comment 3)
  *   - controller is pure: same input → same output, no Date.now / side effects
+ *
+ * NOTE (E3, 2026-05-29): the inter-question hint was moved out of this controller
+ * to client-side generation, so there are no `inline_hint` / `INLINE_HINTS`
+ * assertions here anymore.
  */
 
 import {
@@ -18,7 +21,6 @@ import {
   INITIAL_LOOP_STATE,
   MAX_ITERATIONS,
   DISCLOSURE_BANNER,
-  INLINE_HINTS,
 } from '@/lib/agent-creation/phase2-loop-controller';
 
 function input(overrides: Partial<Phase2StepInput> = {}): Phase2StepInput {
@@ -49,18 +51,6 @@ describe('phase2-loop-controller — continue path', () => {
     expect(result.response.question).toBe('Anything else?');
     expect(result.response.phase2_done).toBe(false);
     expect(result.response.termination_reason).toBeUndefined();
-  });
-
-  it('attaches a cycled inline_hint on continue', () => {
-    const r1 = step(input({ state: { iteration_count: 0 } })); // iter 1 → hint[0]
-    const r2 = step(input({ state: { iteration_count: 1 } })); // iter 2 → hint[1]
-    const r3 = step(input({ state: { iteration_count: 2 } })); // iter 3 → hint[2]
-    const r4 = step(input({ state: { iteration_count: 3 } })); // iter 4 → hint[0] (cycled)
-
-    expect(r1.response.inline_hint).toBe(INLINE_HINTS[0]);
-    expect(r2.response.inline_hint).toBe(INLINE_HINTS[1]);
-    expect(r3.response.inline_hint).toBe(INLINE_HINTS[2]);
-    expect(r4.response.inline_hint).toBe(INLINE_HINTS[0]);
   });
 });
 
@@ -97,11 +87,12 @@ describe('phase2-loop-controller — termination: phase2_done', () => {
 });
 
 describe('phase2-loop-controller — termination: cap_hit', () => {
-  it('terminates as cap_hit on the iteration that would equal MAX_ITERATIONS', () => {
-    // iteration_count starts at 9, this turn would advance to 10 (== cap).
+  it('terminates as cap_hit once MAX_ITERATIONS questions have been asked', () => {
+    // iteration_count == MAX_ITERATIONS (10) means 10 questions were already
+    // asked, so this turn caps before an 11th. Up to 10 questions inclusive.
     const result = step(
       input({
-        state: { iteration_count: MAX_ITERATIONS - 1 },
+        state: { iteration_count: MAX_ITERATIONS },
         llm_question: 'still asking?',
         llm_phase2_done: false,
       })
@@ -119,7 +110,7 @@ describe('phase2-loop-controller — termination: cap_hit', () => {
   it('cap fires regardless of LLM output (LLM says phase2_done=false)', () => {
     const result = step(
       input({
-        state: { iteration_count: MAX_ITERATIONS - 1 },
+        state: { iteration_count: MAX_ITERATIONS },
         llm_question: 'something',
         llm_phase2_done: false,
       })
@@ -134,7 +125,7 @@ describe('phase2-loop-controller — termination: cap_hit', () => {
     // SA Comment 2 / FR4.11 — degraded passthrough does NOT skip the cap.
     const result = step(
       input({
-        state: { iteration_count: MAX_ITERATIONS - 1 },
+        state: { iteration_count: MAX_ITERATIONS },
         payload_valid: false,
         llm_question: undefined,
         llm_phase2_done: undefined,
@@ -146,16 +137,18 @@ describe('phase2-loop-controller — termination: cap_hit', () => {
     }
   });
 
-  it('does NOT cap at iteration_count = MAX_ITERATIONS - 2 (one short of cap)', () => {
+  it('does NOT cap at iteration_count = MAX_ITERATIONS - 1 (asks the 10th question)', () => {
+    // 9 questions asked so far → this turn asks the 10th (next_state = 10) and
+    // does NOT cap. The cap fires on the NEXT turn (iteration_count == 10).
     const result = step(
       input({
-        state: { iteration_count: MAX_ITERATIONS - 2 },
+        state: { iteration_count: MAX_ITERATIONS - 1 },
         llm_question: 'still going',
         llm_phase2_done: false,
       })
     );
     expect(result.decision).toBe('continue');
-    expect(result.next_state.iteration_count).toBe(MAX_ITERATIONS - 1);
+    expect(result.next_state.iteration_count).toBe(MAX_ITERATIONS);
   });
 });
 
@@ -252,14 +245,6 @@ describe('phase2-loop-controller — disclosure banner & constants', () => {
     expect(DISCLOSURE_BANNER.toLowerCase()).not.toContain('cap');
     expect(DISCLOSURE_BANNER.toLowerCase()).not.toContain('limit');
     expect(DISCLOSURE_BANNER.toLowerCase()).not.toContain('iteration');
-  });
-
-  it('INLINE_HINTS does not contain numbers or cap-related copy', () => {
-    INLINE_HINTS.forEach((hint) => {
-      expect(hint).not.toMatch(/\b10\b/);
-      expect(hint.toLowerCase()).not.toContain('limit');
-      expect(hint.toLowerCase()).not.toContain('cap');
-    });
   });
 
   it('MAX_ITERATIONS is 10 per FR5.12', () => {

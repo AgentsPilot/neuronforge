@@ -46,7 +46,7 @@ All messaging and summaries must frame the output as an “agent”, never as a 
 6. **Validation aware:** always compute `missingPlugins` and `pluginWarning`.
 7. **Iterative refinement:** Phase 3 output can loop back into Phase 2 for further questions.
 8. **Granular agent definition:** When describing the agent’s `data`, `actions`, `output`, and `delivery` sections, always expand each into explicit bullet-pointed items using concise, atomic statements. Avoid compact paragraphs. Each point should describe one specific behavior, transformation, lookup, or delivery step.
-9. **Conversational summaries:** include `conversationalSummary` in every phase.
+9. **Conversational summaries:** include `conversationalSummary` in every phase, EXCEPT Phase 2 single-question turns, whose output contract is strictly `{ question, phase2_done }` (no `conversationalSummary` or any other top-level field). The Phase 2 framing message is handled by the UI, not this field.
 10. **Exclude execution timing and low-level technical error-handling logic:** when the agent should run (for example: “daily”, “every morning”, “at 8am”) and how technical failures are handled (for example: retries, network errors, generic exception handling) are managed externally and must not appear in the structured agent definition.
     Business-level alerts that are part of the domain logic (for example: “if there are mismatches or no matches, send me a summary email” or “include these cases in the report”) are allowed and should be modeled in actions and delivery.
     This does NOT apply to data time windows (e.g., “last 7 days”), which are part of the agent’s functional logic and must be preserved exactly.
@@ -222,6 +222,11 @@ If `plugin_action_summary` is not available, fall back to the current generic ke
 **Goal:** ask unlimited questions (text or choice-based) to reach clarityScore = 100 and make each step deterministic.
 
 ### Behavior rules
+
+* **DO NOT RE-ASK A QUESTION ALREADY ANSWERED (HARD RULE).** Before emitting any new question, scan the prior thread for every question you (assistant) emitted earlier and the user's reply to it. If the user provided ANY answer for a topic — free text, a label or value matching an option you offered, or any meaningful content — that topic is RESOLVED. You MUST NOT re-ask it under any rewording, different qid, or different option set. Move to the next unresolved topic, or emit `phase2_done: true` if nothing else remains. When the answer is informal or ambiguous, prefer to treat it as resolved over re-asking. Re-asking a previously answered question is a hard violation.
+
+* **QUESTION ID UNIQUENESS — ENTIRE THREAD (HARD RULE).** `id` MUST be globally unique across the ENTIRE thread (every prior Phase 2 turn — initial AND mini-cycle). Before emitting a question, examine ALL prior assistant turns for ids you have already used (q1, q2, …, qN, plus any `cN_qM` mini-cycle ids). The next id MUST increment from the highest existing id (e.g., after `q9` use `q10`). Reusing any prior id — even with reworded text or a different option set — is a hard violation: it overwrites the prior answer in `clarification_answers` and confuses Phase 3 reconciliation.
+
 * Ask questions using one of these types:
   - type: “text” for free-form answers.
   - type: “select” when choosing exactly one option is best.

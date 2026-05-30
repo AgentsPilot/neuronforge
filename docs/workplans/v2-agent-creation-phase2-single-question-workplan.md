@@ -412,27 +412,39 @@ Setup checklist (do once, before scenarios):
 
 ---
 
-## Enhancement E3 (2026-05-29) — move `inline_hint` to client-side `thinking-words` infrastructure (documented; implement AFTER E2 re-test)
+## Enhancement E3 (2026-05-29) — move `inline_hint` to client-side `thinking-words` + add a Phase 2 opening message (also resolves T2)
 
-**Context:** The V2 page renders a small per-turn hint bubble between Phase 2 questions, populated by `inline_hint` coming back in the server response (`addSystemMessage(data.inline_hint)` in [app/v2/agents/new/page.tsx](app/v2/agents/new/page.tsx) ~line 777). The hint is server-generated and **iteration-cycled** by the loop controller: `INLINE_HINTS` is a hardcoded 3-phrase array in [lib/agent-creation/phase2-loop-controller.ts](lib/agent-creation/phase2-loop-controller.ts), indexed `(nextIteration - 1) % INLINE_HINTS.length`.
+**Context:** The V2 page renders a small per-turn hint bubble between Phase 2 questions, populated by `inline_hint` from the server response (`addSystemMessage(data.inline_hint)` in [app/v2/agents/new/page.tsx](app/v2/agents/new/page.tsx)). The hint is server-generated and iteration-cycled by the loop controller: `INLINE_HINTS` is a hardcoded 3-phrase array in [lib/agent-creation/phase2-loop-controller.ts](lib/agent-creation/phase2-loop-controller.ts), indexed `(nextIteration - 1) % INLINE_HINTS.length`. Separately, **there is no opening message before the first question** — Phase 1's `conversationalSummary` (a recap of the user's request) renders, then Q1 appears directly. That gap is the symptom of **T2** (rule #9 "include `conversationalSummary` in every phase" vs the Phase 2 strict contract that forbids it).
 
-**Problem:** This duplicates an existing, richer client-side system. The `thinking-words` infrastructure ([lib/ui/thinking-words.ts](lib/ui/thinking-words.ts) + `thinking-words-dictionary.json` + loader, documented in [docs/THINKING_WORDS.md](docs/THINKING_WORDS.md)) already provides JSON-configurable phrase categories, role mapping, and sequential/timed cyclers — but `inline_hint` ignores it and reimplements a worse version:
-- **Not extensible:** adding/editing phrases means editing a TS array + redeploying, instead of editing the shared JSON dictionary.
-- **Server round-trip cost:** the hint is computed server-side and shipped on every Phase 2 response, bloating the contract for a purely-cosmetic, client-renderable string. It does not need the server at all.
-- **Architectural split:** two parallel "status phrase" mechanisms. THINKING_WORDS.md explicitly owns this class of transient UI copy.
+**Problem:** The server-side hint duplicates a richer client system. The `thinking-words` infrastructure ([lib/ui/thinking-words.ts](lib/ui/thinking-words.ts) + `thinking-words-dictionary.json` + loader, see [docs/THINKING_WORDS.md](docs/THINKING_WORDS.md)) already provides JSON-configurable phrase categories and cyclers — but `inline_hint` reimplements a worse version: not extensible (TS array, not JSON), needless server round-trip cost (shipped on every turn for a purely client-renderable string), and a second parallel "status phrase" mechanism. Plus the user sees only 3 phrases, repeating across turns.
 
-**Chosen approach (option a, user-confirmed 2026-05-29) — client-side generation via `thinking-words`:**
-1. Add a new `clarification_hints` category to `thinking-words-dictionary.json` with the converging-tone phrases (seed from the current 3: "A few more details to refine your agent.", "Let's narrow this down a bit more.", "Just a couple more questions and we can build it." — and allow extending beyond 3).
-2. Generate the hint **client-side** in the page when rendering each Phase 2 question (cycle through the `clarification_hints` category via the existing thinking-words cycler), instead of reading `data.inline_hint`.
-3. **Drop `inline_hint` from the server contract** entirely: remove `INLINE_HINTS` + the `inline_hint` field from [lib/agent-creation/phase2-loop-controller.ts](lib/agent-creation/phase2-loop-controller.ts), from the route's Phase 2 response payload ([app/api/agent-creation/process-message/route.ts](app/api/agent-creation/process-message/route.ts)), and from the response type ([components/agent-creation/types/agent-prompt-threads.ts](components/agent-creation/types/agent-prompt-threads.ts)).
+**Chosen approach (user-confirmed 2026-05-29):**
 
-**Constraint preserved:** FR7's "no cap number / no question count surfaced to the user" still holds — the client cycles phrases by turn index but MUST NOT render any "N of M" / countdown text. Phrases stay qualitative ("a few more…"), never quantitative.
+1. **New `clarification_hints` dictionary category** in `thinking-words-dictionary.json` — **10** converging-tone phrases (qualitative, never numeric):
+   1. A few more details to refine your agent.
+   2. Let's narrow this down a bit more.
+   3. Just a couple more questions and we can build it.
+   4. Thanks — that helps shape your agent.
+   5. Almost there; a little more context helps.
+   6. Got it. Let's fine-tune a couple of things.
+   7. Good — a few specifics and we're set.
+   8. Helpful! Let's lock in the details.
+   9. Nice — just clarifying a few things.
+   10. Great; pinning down the last details.
 
-**Files affected (~5):** `thinking-words-dictionary.json` (+ category), `app/v2/agents/new/page.tsx` (client hint generation, drop `data.inline_hint` read), `lib/agent-creation/phase2-loop-controller.ts` (remove `INLINE_HINTS` + `inline_hint`), `app/api/agent-creation/process-message/route.ts` (drop from payload), `components/agent-creation/types/agent-prompt-threads.ts` (drop from response type).
+2. **Loader `excludeFromGeneric` flag.** `getAllWords()` ([thinking-words-loader.ts](lib/ui/thinking-words-loader.ts)) sweeps *every* category, so a raw new category would leak these full sentences into the generic pool (`getRandomThinkingWord`/`createThinkingWordCycler`/`getShuffledThinkingWords`/the exported `THINKING_WORDS` constant). Add an optional `excludeFromGeneric: true` flag on a category; `initialize()` skips flagged categories when building `allWords`. Explicit `getWordsForCategory('clarification_hints')` still returns them. Mark `clarification_hints` flagged. (No current consumer of the generic pool — the page spinner uses the timed cycler with explicit categories — so this seals a *latent* leak; it does not change any active behavior. `long_wait` is left as-is to avoid altering existing behavior.) Add `'clarification_hints'` to the `ThinkingCategory` union.
 
-**Sequencing:** documented now; **implement only AFTER the user's E2 live re-test** confirms the core single-question + phase-3-handoff flow works. The hint is cosmetic, so it must not perturb the flow under test. No DB changes. `tsc` + a thinking-words unit check after implementation.
+3. **Client-side hint generation, no-repeat.** On the page, build a **shuffled** copy of `getWordsForCategories(['clarification_hints'])` once per session (a ref) and walk it sequentially via an index ref; render the hint on each Phase 2 question (from Q2). Shuffle + sequential ⇒ **no repeat within a session** (10 phrases > 9 max questions) and a randomized order across sessions ("user doesn't see the same one each time"). **(E3.5, 2026-05-29:)** the hint renders as a **native AI chat bubble** via `addAIMessage(nextHint)` — NOT `addSystemMessage` (the centered `var(--v2-primary)` "comment" pill) — and is placed **before** the question as a lead-in, mirroring the Q1 opening message. So each Q2+ turn shows two consecutive bot bubbles (hint → question), consistent with the Q1 (opening → question) pattern.
 
-**Status:** documented 2026-05-29 — implementation deferred until post-E2-re-test.
+4. **Opening message before Q1 (resolves T2's UX gap).** On the **first** Phase 2 question only, render a static client-side AI bubble *before* the question: **"I need a few quick details before I can build your agent."** (`addAIMessage`, not muted micro-copy). Converging **hints start from Q2** (a "narrow this down" hint on Q1 is incongruous). Arc: `intro → Q1 → [hint] Q2 → [hint] Q3 …`. This is purely client-side — **no prompt or contract change**, so the Phase 2 strict schema is untouched.
+
+5. **Drop `inline_hint` from the server contract.** Remove `INLINE_HINTS` + the `inline_hint` field + its assignment from [phase2-loop-controller.ts](lib/agent-creation/phase2-loop-controller.ts); remove the response-build spread in [process-message/route.ts](app/api/agent-creation/process-message/route.ts); remove `inline_hint` from `ProcessMessageResponse` in [agent-prompt-threads.ts](components/agent-creation/types/agent-prompt-threads.ts); update the controller test (its `inline_hint` / `INLINE_HINTS` assertions are removed — the hint logic no longer lives in the controller). `DISCLOSURE_BANNER` stays (cap-hit banner is still server-driven).
+
+**FR7 preserved:** no count/number/cap ever surfaced — phrases stay qualitative.
+
+**Files affected (~6):** `lib/ui/thinking-words-dictionary.json` (+ category, 10 phrases), `lib/ui/thinking-words-loader.ts` (`excludeFromGeneric` + type union), `app/v2/agents/new/page.tsx` (opening message + client hint cycler; drop `data.inline_hint`), `lib/agent-creation/phase2-loop-controller.ts` (remove `INLINE_HINTS` + `inline_hint`), `lib/agent-creation/__tests__/phase2-loop-controller.test.ts` (drop hint assertions), `app/api/agent-creation/process-message/route.ts` + `components/agent-creation/types/agent-prompt-threads.ts` (drop `inline_hint`). No DB changes. Verify: `tsc` clean + Phase 2 unit suites green + a quick loader check that `clarification_hints` is excluded from `getAllWords()`.
+
+**Status:** documented 2026-05-29; ready to implement (E2 re-test passed). **T2 is resolved by step 4** — see the T2 entry below.
 
 ---
 
@@ -440,7 +452,19 @@ Setup checklist (do once, before scenarios):
 
 **Observation:** in the failing test the loop asked **9 questions** before the defensive cap fired. That is (a) too many for a non-technical user — it cuts against the requirement's core tone-down goal — and (b) the amplifier for E2: the more Phase 2 turns, the deeper the pattern entrenchment that triggers the phase-confusion crash. In single-question mode the model receives **no sense of how many questions it has asked** (the per-turn iteration signal was deliberately dropped for minimalism), so it keeps asking until the cap.
 
-**Possible direction (not yet decided):** give the model a gentle pacing/wrap-up cue (e.g. a soft per-turn hint that it should converge, or surfacing a coarse "you've gathered enough" signal) so it emits `phase2_done` earlier on its own. Adjacent to T2 (`conversationalSummary`). Deferred — decide after E2 lands and is re-tested.
+**Possible direction (not yet decided):** give the model a gentle pacing/wrap-up cue (e.g. a soft per-turn hint that it should converge, or surfacing a coarse "you've gathered enough" signal) so it emits `phase2_done` earlier on its own. Adjacent to [T2](#t2-2026-05-29--conversationalsummary-every-phase-vs-phase-2-strict-contract--resolved). Deferred — decide after E2 lands and is re-tested.
+
+---
+
+## T2 (2026-05-29) — `conversationalSummary` "every phase" vs the Phase 2 strict contract — RESOLVED
+
+**Contradiction:** v16 global rule #9 ([prompt line 49](app/api/prompt-templates/Workflow-Agent-Creation-Prompt-v16-chatgpt.txt)) says "include `conversationalSummary` in every phase," but the Phase 2 single-question output contract ([prompt line 364](app/api/prompt-templates/Workflow-Agent-Creation-Prompt-v16-chatgpt.txt)) forbids any top-level field other than `question` + `phase2_done` (and the Zod schema is `.strict()`). Net effect: Phase 2 emits no `conversationalSummary`, so the user gets **no warm intro / framing before the first question** — Phase 1's recap renders, then Q1 appears directly.
+
+**Decision — resolve via a client-side opening message, NOT a prompt change.** Keeping the Phase 2 contract strict is correct (the loop wants exactly one structured question per turn; re-allowing `conversationalSummary` would reopen the strict-schema design and add per-turn LLM text we don't want). Instead, **E3 step 4** renders a static client-side AI bubble — "I need a few quick details before I can build your agent." — before Q1 only. This fills the UX gap with zero prompt/contract risk.
+
+**Doc cleanup (part of E3):** the v16 rule #9 wording is reconciled to carve out Phase 2 — "include `conversationalSummary` in every phase **except Phase 2 single-question turns, whose contract is strictly `{ question, phase2_done }`**" — so a future reader/LLM doesn't treat the omission as a bug. This is a **comment/wording** change to a non-Phase-3 global rule, not a Phase 3 divergence.
+
+**Status:** resolved 2026-05-29 — implemented together with E3 (client-side intro + rule #9 carve-out). No separate code beyond E3.
 
 ---
 
@@ -473,6 +497,81 @@ Because the v16 Phase 3 prompt resolves `user_inputs_required` against `clarific
 **Scope:** part of the Phase 2 single-question requirement (the multi-turn loop is what introduced the race). No DB / no contract change. `tsc` clean (no errors in the edited file).
 
 **Status:** implemented 2026-05-29 — awaiting user's live re-test at `/v2/agents/new`.
+
+---
+
+## Fix F2 (2026-05-29) — Phase 2 cap is thread-global, not per-session → mini-cycle infinite loop
+
+**Symptom (live test 2026-05-29):** After a long first Phase 2 session (q1–q8, terminated `phase2_done` at `iteration_count: 9`) and a successful Phase 3, the flow fell into an **infinite loop**: every subsequent turn logged `Phase 2 loop terminated … iteration_count: 10 … termination_reason: cap_hit … server_short_circuit: cap_pre_call`, immediately followed by another Phase 3 attempt, repeating forever.
+
+**Root cause:** `phase2_loop_state.iteration_count` is persisted in **thread metadata** and was read as a **thread-global** counter, but FR5.12 defines the cap as **per session**. Phase 3 returned `user_inputs_required`, so the page opened a **mini-cycle** Phase 2 session to collect the missing input. That mini-cycle's first turn inherited `iteration_count: 9` from the *first* session, so the pre-call cap (Fix in SA Medium 2: `iteration_count >= MAX_ITERATIONS - 1`) fired **immediately** — the mini-cycle question was **never asked** (response was the `{ question: null, phase2_done: true }` cap short-circuit). Phase 3 then re-found the same missing input → re-opened the mini-cycle → capped again → ∞. (The bug is latent in the original design; the pre-call cap turned it into a tight no-question loop, and a first session long enough to approach the cap is what exposes it.)
+
+**Fix ([process-message/route.ts](app/api/agent-creation/process-message/route.ts)):** make the counter **per-session**. A Phase 2 session starts on a turn with **no `phase2_user_answer`** (initial entry OR mini-cycle start); mid-loop answer turns carry the answer and continue the running count. On a session-start turn, read `INITIAL_LOOP_STATE` (count 0) instead of the persisted thread-global state. Applied at **both** `priorLoopState` read sites (the pre-call cap short-circuit and the post-LLM `step()` path). This mirrors the page's per-session hint reset (`isFirstTurnOfSession = !phase2_user_answer`, [E3](#enhancement-e3-2026-05-29--move-inline_hint-to-client-side-thinking-words--add-a-phase-2-opening-message-also-resolves-t2)). Now a mini-cycle gets a fresh budget, actually asks its question, the user answers, Phase 3 resolves, and the loop ends.
+
+**Scope:** part of the Phase 2 single-question requirement (multi-session loop state). No DB / no contract change. `tsc` clean; 18/18 controller unit tests still pass (the controller `step()` is unchanged — the reset lives in the route, which owns I/O and session boundaries). Route has no unit harness; covered by the live re-test.
+
+**Status:** implemented 2026-05-29 — awaiting user's live re-test at `/v2/agents/new`.
+
+---
+
+## Change C1 (2026-05-29) — cap raised to 10 questions inclusive (was 9) — per user request
+
+**What:** the per-session cap now allows **up to 10 questions inclusive** (≤ 10 LLM round-trips), where before it allowed 9. FR5.12 wording changed from "< 10" to "≤ 10 inclusive". (This supersedes the "9 questions / < 10" framing in [SA Code Review § Medium 2] and the original F2 diagnostic, which described the prior behavior.)
+
+**Code:** both cap checks now compare `iteration_count >= MAX_ITERATIONS` (= 10) instead of `>= MAX_ITERATIONS - 1`:
+- route pre-call guard ([process-message/route.ts](app/api/agent-creation/process-message/route.ts)) — `capReachedPreCall = priorLoopState.iteration_count >= MAX_ITERATIONS`.
+- controller `step()` backstop ([phase2-loop-controller.ts](lib/agent-creation/phase2-loop-controller.ts)) — caps on `input.state.iteration_count >= MAX_ITERATIONS` (compares the prior count, symmetric with the route).
+
+`MAX_ITERATIONS` stays 10 but now means "max questions asked per session" (questions are asked on turns where prior count = 0…9 → Q1…Q10; the turn where prior count = 10 caps without a call). Combined with the per-session reset (F2), each session — initial OR mini-cycle — gets a fresh budget of up to 10 questions. Controller unit tests updated to the new boundary; 18/18 pass; `tsc` clean.
+
+**Status:** implemented 2026-05-29 — awaiting user's live re-test.
+
+---
+
+## Enhancement E4 (2026-05-29) — running question-number indicator ("Question N") — DOCUMENTED, pending implementation
+
+**Request:** show a small per-question indicator with the running question **number** (numerator only — e.g. "Question 3"), NOT the old "Question X of Y". The old multi-question batch flow showed an "X of Y" pill ([page.tsx ~2592-2615](app/v2/agents/new/page.tsx)); it is suppressed in single-question mode (gated on `questionsSequence.length > 1`).
+
+**Running total across mini-cycles (key requirement):** the number is a **thread-wide running total from the user's perspective** — it keeps counting across Phase 2 sessions. So if the initial session asked 8 questions, the FIRST question of a subsequent mini-cycle is **"Question 9"** (previous total + 1), not "Question 1". This is **independent of the per-session cap counter** `iteration_count` (which resets per session via [F2](#fix-f2-2026-05-29--phase-2-cap-is-thread-global-not-per-session--mini-cycle-infinite-loop)). The display counter must NOT reset on a mini-cycle.
+
+**Numerator only (no total):** single-question mode never knows the total upfront (the LLM stops when satisfied, capped at 10/session), so there is no truthful "Y". Show only the ordinal.
+
+**Implementation approach (client-side, no server contract change):**
+1. New page ref `runningQuestionNumberRef` (init 0 at mount). Increment it on EVERY rendered Phase 2 question (in `processPhase2`'s question branch). It NEVER resets per session — unlike the E3 hint deck / `phase2QuestionsRenderedRef` — giving the cross-session running total.
+2. Attach the number to the message so the render block can show it: add `questionNumber?: number` to the `Message` interface and extend `addAIQuestion(content, questionId?, questionNumber?)` in [hooks/useAgentBuilderMessages.ts](hooks/useAgentBuilderMessages.ts). Pass `runningQuestionNumberRef.current` when adding the question.
+3. Render a cyan "Question {message.questionNumber}" pill when `questionNumber` is set (single-question mode), reusing the existing pill styling. The legacy "X of Y" block stays inert (still gated on `length > 1`).
+4. **Caveat:** a client-side counter resets on a full page reload / resumed thread (the running total restarts). Acceptable for now; a server-side thread-global counter would survive reloads but adds state — out of scope unless requested.
+
+**FR amendments (this enhancement RELAXES the earlier no-counter rule):**
+- **FR7.20** — was "No progress bar / numeric counter shown." Now: a **numerator-only running question number** ("Question N") IS allowed. A denominator/total ("of Y") and any reference to the cap remain forbidden.
+- **FR8 grep gate / acceptance criterion** — "the string '10' never appears in user-facing copy" was meant to prevent leaking the **cap**. The running ordinal may legitimately reach/exceed 10 across mini-cycles ("Question 11"). The gate is clarified to forbid exposing the cap as a number/denominator ("of 10", "10 questions max"), NOT an incidental running ordinal like "Question 10".
+
+**Status:** documented 2026-05-29 — implementation pending (timing TBD with user: fold into the current untested batch, or after the E3/F2/C1 test+commit).
+
+---
+
+## Enhancement E5 (2026-05-30) — prompt v16: stop re-asking the same question + enforce qID uniqueness across the whole thread
+
+**Symptom (live test 2026-05-30):** the same conceptual Phase 2 question was asked four times across a single agent-creation flow. The user picked **"Include with warning"** — an exact label match for one of the LLM's own offered options for q9 (options were `skip_and_note`, `include_with_warning`, `separate_section`). The LLM still re-asked q9: (a) inside the same initial Phase 2 session — same id `q9`, reworded text + new options ([dev.log line 6455]); (b) at the cap (10-question session cap fired correctly per [F2](#fix-f2-2026-05-29--phase-2-cap-is-thread-global-not-per-session--mini-cycle-infinite-loop) / [C1](#change-c1-2026-05-29--cap-raised-to-10-questions-inclusive-was-9--per-user-request)); (c) as Phase 3 entrenchment ([line 7019]) — E2 retry caught this and recovered; (d) in the mini-cycle Phase 2 session ([line 7716]) after Phase 3 listed the topic in `user_inputs_required`.
+
+**Diagnosis — NOT a code-level loop.** F2 (per-session cap reset), C1 (10-inclusive cap), F1 (answer-keying ref), E2 (Phase 3 retry) all worked as designed. The repetition is **pure LLM behavior** against the v16 prompt:
+- v16 line 360 says "id MUST be globally unique across the run/thread" — violated (re-used `q9`).
+- v16 line 297 says "In mini-cycles, you MUST NOT reuse any prior questionsSequence[].id" — only addresses mini-cycles, not the same-session reuse observed here.
+- No explicit "do not re-ask a question already answered" rule existed; line 290's self-reference rule is narrow.
+- v16 lines 465-468 already say Phase 3 must reconcile Phase 2 answers out of `user_inputs_required` — the LLM violated that too, but this is a downstream symptom.
+
+**Fix (this enhancement) — prompt-only, no code change.** Two **HARD-RULE** bullets inserted at the very top of Phase 2 `### Behavior rules` ([prompt v16](app/api/prompt-templates/Workflow-Agent-Creation-Prompt-v16-chatgpt.txt) at the start of the Behavior rules section, before "Ask questions using one of these types…"):
+
+1. **DO NOT RE-ASK A QUESTION ALREADY ANSWERED** — Before emitting any new question, scan the prior thread; if the user provided ANY answer for a topic (free text, option label/value match, or any meaningful content) treat it as RESOLVED. Don't re-ask under any rewording, different qid, or different option set. When the answer is informal/ambiguous, prefer "resolved" over re-asking. Move to the next unresolved topic or emit `phase2_done: true`.
+2. **QUESTION ID UNIQUENESS — ENTIRE THREAD** — `id` MUST be globally unique across the ENTIRE thread (every prior Phase 2 turn, initial AND mini-cycle). Examine ALL prior assistant turns for ids in use. Next id MUST increment from the highest existing (`q9` already used → use `q10`). Re-using any prior id is a hard violation — it overwrites prior answers in `clarification_answers` and confuses Phase 3 reconciliation.
+
+These restate / strengthen rules that were already in v16 in weaker form (line 297 mini-cycle-only uniqueness; line 360 brief uniqueness mention; no explicit "don't re-ask"); the placement at the START of Behavior rules and the HARD-RULE framing are the change.
+
+**Phase 3 NOT touched (yet).** The existing Phase 3 reconciliation rule (lines 465-468 — "If a Phase 2 answer satisfies an expected input, REMOVE that label from `user_inputs_required`") already covers the mini-cycle re-ask path. If the Phase 2 fix is sufficient on its own, no Phase 3 divergence is needed; if the LLM still re-asks via the mini-cycle path after this lands, a one-line Phase 3 reinforcement can follow. Matches the "fix root causes, don't add compensating complexity" ethos.
+
+**Scope:** prompt-only. No DB / no contract change. No code change. Adjacent to (but does not resolve) [OI1](#open-item-oi1-2026-05-29--phase-2-question-pacing--wrap-up-signal-deferred) — OI1 is about *how many* questions; E5 is about *re-asking* the same one. `tsc` and unit suites unaffected.
+
+**Status:** implemented 2026-05-30 — awaiting user's live re-test.
 
 ---
 

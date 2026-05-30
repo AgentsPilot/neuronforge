@@ -174,13 +174,6 @@ export interface ProcessMessageResponse {
   phase2_done?: boolean;
 
   /**
-   * Phase 2 single-question mode (2026-05-27). Optional soft hint surfaced
-   * with the question (e.g. "A few more details to refine your agent.").
-   * Generic, never mentions the cap or any number. Controller-cycled.
-   */
-  inline_hint?: string;
-
-  /**
    * Phase 2 single-question mode (2026-05-27). Soft banner surfaced ONLY
    * when `termination_reason === 'cap_hit'`. The cap itself is never
    * mentioned in the banner copy.

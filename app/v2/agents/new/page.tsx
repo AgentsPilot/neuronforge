@@ -43,7 +43,7 @@ import type {
 import { isGenerateAgentV2Success } from '@/components/agent-creation/types/generate-agent-v2'
 import { formatScheduleDisplay } from '@/lib/utils/scheduleFormatter'
 import { useV6AgentGeneration } from '@/lib/utils/featureFlags'
-import { createTimedThinkingWordCycler } from '@/lib/ui/thinking-words'
+import { createTimedThinkingWordCycler, getWordsForCategories } from '@/lib/ui/thinking-words'
 
 // ============================================================================
 // V6 Agent Generation Types and Helpers
@@ -378,6 +378,48 @@ function V2AgentBuilderContent() {
   // Phase 3 always sees every answer including the just-submitted one.
   const clarificationAnswersRef = useRef<Record<string, string>>({})
 
+  // E3 (2026-05-29): client-side Phase 2 inter-question hints. The hint copy now
+  // lives in the `clarification_hints` category of thinking-words-dictionary.json
+  // (no longer server-sent as `inline_hint`). Per Phase 2 SESSION we take a
+  // SHUFFLED copy of those phrases and walk it sequentially, so the user never
+  // sees the same hint twice in a session (10 phrases > 9 max questions) and the
+  // order varies across sessions. `phase2QuestionsRenderedRef` counts questions
+  // rendered this session: question #1 gets the opening message (no hint),
+  // questions #2+ get a cycled hint.
+  const clarificationHintsRef = useRef<string[]>([])
+  const hintIndexRef = useRef(0)
+  const phase2QuestionsRenderedRef = useRef(0)
+
+  // E4 (2026-05-29): running "Question N" ordinal shown to the user. Unlike the
+  // per-session counters above (and the server-side cap counter), this is a
+  // THREAD-WIDE running total — it increments on every rendered Phase 2 question
+  // and is NEVER reset per session, so a mini-cycle's first question continues
+  // the count (prior total + 1) rather than restarting at 1. Numerator only —
+  // no total/denominator is shown (single-question mode has no known total).
+  const runningQuestionNumberRef = useRef(0)
+
+  // Re-shuffle the hint deck and reset counters at the start of each Phase 2
+  // session (initial entry OR mini-cycle start).
+  const resetClarificationHints = () => {
+    const phrases = getWordsForCategories(['clarification_hints'])
+    for (let i = phrases.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1))
+      ;[phrases[i], phrases[j]] = [phrases[j], phrases[i]]
+    }
+    clarificationHintsRef.current = phrases
+    hintIndexRef.current = 0
+    phase2QuestionsRenderedRef.current = 0
+  }
+
+  // Next hint from the shuffled deck (null if the category is empty).
+  const nextClarificationHint = (): string | null => {
+    const deck = clarificationHintsRef.current
+    if (deck.length === 0) return null
+    const hint = deck[hintIndexRef.current % deck.length]
+    hintIndexRef.current += 1
+    return hint
+  }
+
   // V10: Edit flow state (for "Need changes" button)
   const [isAwaitingFeedback, setIsAwaitingFeedback] = useState(false)
 
@@ -664,7 +706,7 @@ function V2AgentBuilderContent() {
   // Phase 2: Single-question mode (2026-05-28)
   //
   // The backend now drives Phase 2 one question at a time. Every `phase: 2`
-  // call returns `{ question, phase2_done, inline_hint?, disclosure_banner?,
+  // call returns `{ question, phase2_done, disclosure_banner?,
   // termination_reason? }` and NO `questionsSequence`. We render ONE question
   // per turn and wait for the user's free-text answer (collected by
   // `handleSend`, which calls back into here with `phase2_user_answer`). We
@@ -689,6 +731,14 @@ function V2AgentBuilderContent() {
     try {
       const isMiniCycleStart = !!options?.enhanced_prompt || !!options?.user_feedback
       console.log('🔄 Phase 2: Single-question...', isMiniCycleStart ? '(mini-cycle start)' : '')
+
+      // E3: a Phase 2 SESSION begins on a turn that carries no `phase2_user_answer`
+      // (initial entry or mini-cycle start). Mid-loop answer turns carry the answer.
+      // Re-shuffle the hint deck + reset the per-session question counter here.
+      const isFirstTurnOfSession = !options?.phase2_user_answer
+      if (isFirstTurnOfSession) {
+        resetClarificationHints()
+      }
 
       // V10: Track mini-cycle state at the START of a refinement session so the
       // subsequent answer round-trips (which carry only `phase2_user_answer`)
@@ -782,16 +832,39 @@ function V2AgentBuilderContent() {
         // `workflowPhase: 'enhancement'` / `currentQuestionIndex: -1` here.
         setQuestionsSequence([data.question])
 
+        // E3: track which question this is within the current Phase 2 session.
+        phase2QuestionsRenderedRef.current += 1
+        const isFirstQuestionOfSession = phase2QuestionsRenderedRef.current === 1
+
+        // Lead-in bubble BEFORE the question (E3 / E3.5). Rendered as a native AI
+        // chat bubble (`addAIMessage`) — NOT the centered system "comment" pill —
+        // so it reads like the bot is talking, not a note tacked under the question.
+        //   • Q1 of the INITIAL (non-mini-cycle) session → the opening framing
+        //     message. Mini-cycles refine an existing plan, so "before I can build
+        //     your agent" doesn't apply there.
+        //   • Q2+ → a soft converging hint from the shuffled `clarification_hints`
+        //     deck (client-side; no longer server-sent). Generic/qualitative only —
+        //     never the cap or a number (FR7.19/20).
+        if (isFirstQuestionOfSession) {
+          if (!refiningPlan) {
+            addAIMessage('I need a few quick details before I can build your agent.')
+          }
+        } else {
+          const hint = nextClarificationHint()
+          if (hint) {
+            addAIMessage(hint)
+          }
+        }
+
+        // E4: advance the thread-wide running question number (never resets per
+        // session, so mini-cycle questions continue the count) and attach it to
+        // the message so the render shows "Question N".
+        runningQuestionNumberRef.current += 1
+
         // Render the question bubble so its content matches the current
         // question (the option-button render gate keys off
         // `currentQuestion.question === message.content`).
-        addAIQuestion(data.question.question, data.question.id)
-
-        // Optional soft inline hint, rendered as muted text. Generic only —
-        // never references the cap or any number (FR7.19/20).
-        if (data.inline_hint) {
-          addSystemMessage(data.inline_hint)
-        }
+        addAIQuestion(data.question.question, data.question.id, runningQuestionNumberRef.current)
 
         setPhase2AwaitingAnswer(true)
       } else {
@@ -2550,6 +2623,25 @@ function V2AgentBuilderContent() {
                               <HelpCircle className="w-3 h-3 text-cyan-600 dark:text-cyan-400" />
                               <span className="text-xs font-semibold text-cyan-600 dark:text-cyan-400">
                                 Question {builderState.currentQuestionIndex + 1} of {builderState.questionsSequence.length}
+                              </span>
+                            </div>
+                          )}
+
+                          {/* E4: single-question running number — numerator ONLY ("Question N"),
+                              a thread-wide running total that spans mini-cycles (the number is
+                              captured on the message when it's added, so it's stable across
+                              re-renders). No "of Y" total and no cap reference (FR7.20/FR8 as
+                              amended by E4). */}
+                          {message.role === 'assistant' &&
+                           message.variant === 'question' &&
+                           typeof message.questionNumber === 'number' && (
+                            <div
+                              className="mt-2 flex items-center gap-2 px-2 py-1 bg-cyan-500/10 border border-cyan-500/20 w-fit"
+                              style={{ borderRadius: 'var(--v2-radius-button)' }}
+                            >
+                              <HelpCircle className="w-3 h-3 text-cyan-600 dark:text-cyan-400" />
+                              <span className="text-xs font-semibold text-cyan-600 dark:text-cyan-400">
+                                Question {message.questionNumber}
                               </span>
                             </div>
                           )}

@@ -140,6 +140,22 @@
         "Your agent is worth the wait — polishing the final details",
         "Running a few more quality checks — perfection takes time"
       ]
+    },
+    "clarification_hints": {
+      "description": "Phase 2 single-question inter-question hints (full sentences). Special-purpose: accessed only explicitly by the agent-creation page; excludeFromGeneric keeps these out of the generic word pool and role mappings.",
+      "excludeFromGeneric": true,
+      "words": [
+        "A few more details to refine your agent.",
+        "Let's narrow this down a bit more.",
+        "Just a couple more questions and we can build it.",
+        "Thanks — that helps shape your agent.",
+        "Almost there; a little more context helps.",
+        "Got it. Let's fine-tune a couple of things.",
+        "Good — a few specifics and we're set.",
+        "Helpful! Let's lock in the details.",
+        "Nice — just clarifying a few things.",
+        "Great; pinning down the last details."
+      ]
     }
   },
   "roleMapping": {

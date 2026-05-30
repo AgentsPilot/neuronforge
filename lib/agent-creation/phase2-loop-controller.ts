@@ -17,14 +17,15 @@
  *     user-facing copy except via this banner.
  *
  * The defensive cap is `MAX_ITERATIONS = 10`. The cap is purely server-side
- * — the LLM is never told about it. The FR5.12 bound is "< 10 LLM round-trips
- * per session". That bound is enforced PRE-CALL by the route: once
- * `MAX_ITERATIONS - 1` round-trips are done it terminates as `cap_hit` BEFORE
- * making another completion (true worst case = 9 round-trips / 9 questions).
- * `step()`'s own cap below — terminate when `iteration_count + 1 >=
- * MAX_ITERATIONS` — is the BACKSTOP: it only fires if some path reaches `step()`
- * without the route's pre-call guard, and is what the controller unit tests
- * exercise in isolation.
+ * — the LLM is never told about it. The FR5.12 bound is "up to 10 questions
+ * (≤ 10 LLM round-trips) per session". That bound is enforced PRE-CALL by the
+ * route: once `MAX_ITERATIONS` questions have been asked it terminates as
+ * `cap_hit` BEFORE making another completion (worst case = 10 questions / 10
+ * round-trips, then the 11th turn caps without a call). `step()`'s own cap below
+ * — terminate when `iteration_count >= MAX_ITERATIONS` — uses the SAME condition
+ * and is the BACKSTOP: it only fires if some path reaches `step()` without the
+ * route's pre-call guard, and is what the controller unit tests exercise in
+ * isolation.
  *
  * Decision shapes (returned by `step()`):
  *   - `{ decision: 'continue', next_state, response }` — emit the LLM's
@@ -38,7 +39,10 @@
  *     cap eventually fires if the LLM never recovers. (SA Comment 2.)
  */
 
-/** Maximum number of LLM round-trips per Phase 2 session. Defensive only. */
+/**
+ * Maximum number of questions asked per Phase 2 session (inclusive) — i.e. up to
+ * 10 LLM round-trips, then the next turn caps without a call. Defensive only.
+ */
 export const MAX_ITERATIONS = 10;
 
 /**
@@ -54,16 +58,12 @@ import type { Phase2Question } from '@/lib/validation/phase2-schema';
 export const DISCLOSURE_BANNER =
   'Proceeding with what we have — you can refine after the agent is created.';
 
-/**
- * Soft inline hints, cycled by iteration index. Plural, generic, do NOT
- * reference the cap or any number. Used as the optional `inline_hint` field
- * on each `phase2_question` response.
- */
-export const INLINE_HINTS: readonly string[] = [
-  'A few more details to refine your agent.',
-  "Let's narrow this down a bit more.",
-  'Just a couple more questions and we can build it.',
-];
+// NOTE (E3, 2026-05-29): the per-turn inline hint was moved OUT of this
+// controller. Hints are now generated client-side from the
+// `clarification_hints` category of `thinking-words-dictionary.json`
+// (see app/v2/agents/new/page.tsx). The controller no longer carries an
+// `INLINE_HINTS` array or an `inline_hint` response field. `DISCLOSURE_BANNER`
+// (cap-hit only) stays server-driven.
 
 export type TerminationReason = 'phase2_done' | 'cap_hit';
 
@@ -120,7 +120,6 @@ export interface Phase2StepInput {
 export interface Phase2StepResponse {
   question: Phase2Question | null;
   phase2_done: boolean;
-  inline_hint?: string;
   disclosure_banner?: string;
   termination_reason?: TerminationReason;
 }
@@ -142,16 +141,17 @@ export type Phase2StepDecision =
 /**
  * Pure state-machine transition. Returns `{ next_state, decision, response }`.
  *
- * Cap precedence: the cap check runs FIRST. If `iteration_count + 1 >=
- * MAX_ITERATIONS`, the controller terminates with `cap_hit` regardless of
- * what the LLM said this turn. This is the defensive guard — even if the
- * LLM is misbehaving, the loop always terminates.
+ * Cap precedence: the cap check runs FIRST. If `iteration_count >=
+ * MAX_ITERATIONS` (i.e. MAX_ITERATIONS questions already asked), the controller
+ * terminates with `cap_hit` regardless of what the LLM said this turn. This is
+ * the defensive guard — even if the LLM is misbehaving, the loop always
+ * terminates.
  *
  * After cap, the controller branches on `payload_valid`:
  *   - valid + `llm_phase2_done === true`  → terminate as `phase2_done`
  *     (response has `question: null`, `phase2_done: true`).
  *   - valid + `llm_phase2_done === false` → continue (response has the
- *     LLM's question + cycled `inline_hint`).
+ *     LLM's question; the inter-question hint is added client-side, not here).
  *   - invalid                              → pass_through_degraded
  *     (response carries whatever the LLM emitted, even if missing /
  *     malformed — the UI handles missing fields gracefully and the next
@@ -161,8 +161,12 @@ export function step(input: Phase2StepInput): Phase2StepDecision {
   const nextIteration = input.state.iteration_count + 1;
   const next_state: Phase2LoopState = { iteration_count: nextIteration };
 
-  // CAP CHECK — fires regardless of what the LLM said on this turn.
-  if (nextIteration >= MAX_ITERATIONS) {
+  // CAP CHECK — fires regardless of what the LLM said on this turn. We cap once
+  // MAX_ITERATIONS questions have ALREADY been asked (`iteration_count` counts
+  // questions asked so far), so the loop asks up to MAX_ITERATIONS (=10)
+  // questions inclusive, then terminates on the next turn. Same condition the
+  // route's pre-call guard uses, so the two stay consistent.
+  if (input.state.iteration_count >= MAX_ITERATIONS) {
     return {
       decision: 'terminate',
       next_state,
@@ -210,16 +214,14 @@ export function step(input: Phase2StepInput): Phase2StepDecision {
     };
   }
 
-  // Continue — emit the LLM's question with a cycled inline hint.
-  // (Cycle by 0-based iteration_count, which is `nextIteration - 1`.)
-  const hintIndex = (nextIteration - 1) % INLINE_HINTS.length;
+  // Continue — emit the LLM's question. The inter-question hint is generated
+  // client-side (E3), not here.
   return {
     decision: 'continue',
     next_state,
     response: {
       question: input.llm_question ?? null,
       phase2_done: false,
-      inline_hint: INLINE_HINTS[hintIndex],
     },
   };
 }

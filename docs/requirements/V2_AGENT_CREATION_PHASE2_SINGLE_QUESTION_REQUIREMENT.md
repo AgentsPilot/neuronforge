@@ -91,7 +91,7 @@ If a proposed change touches Phase 2 question-selection rules, carve-outs, allow
 11. Zod-validated server-side with `.strict()` (rejects extra keys, including the legacy batch `questionsSequence[]` array). Validation failures are logged as a Pino warn breadcrumb; the loop does NOT retry the LLM call. On Zod failure, the route returns the parsed payload as-is in degraded form (the controller still increments `iteration_count`); the cap will eventually fire if the LLM never recovers. The route MUST NOT fabricate a synthetic question server-side.
 
 ### FR5 — Defensive iteration cap (server-side only)
-12. Iteration cap = **< 10 LLM round-trips** per Phase 2 session. Purely defensive (in case the LLM never emits `phase2_done`).
+12. Iteration cap = **up to 10 questions (≤ 10 LLM round-trips) per Phase 2 session, inclusive**. Purely defensive (in case the LLM never emits `phase2_done`). The cap is **per session** — a mini-cycle (Phase 3 → `user_inputs_required` → Phase 2) starts a fresh session with its own 10-question budget; the counter is not thread-global. **(Updated 2026-05-29: 10 inclusive, was "< 10".)**
 13. On cap reach, the server terminates the loop with `termination_reason: cap_hit` and surfaces a soft disclosure banner ("Proceeding with what we have — you can refine after the agent is created.") to the user before advancing to Phase 3.
 14. The cap is **never** mentioned in the prompt, never exposed in user-facing copy, and never logged for the user to see.
 
@@ -104,8 +104,9 @@ If a proposed change touches Phase 2 question-selection rules, carve-outs, allow
 
 ### FR7 — UX presentation
 18. Each iteration renders ONE question in the V2 page using its **existing structured-question UI** — i.e. `select`/`multi_select` render as clickable option buttons (with the `allowCustom` escape) and `text` renders as a free-text answer, exactly as v15's batch flow rendered each question. Reuse the page's existing `questionsSequence` / `currentQuestionIndex` rendering rather than printing the question as plain prose.
-19. Each assistant message MAY include a soft inline hint (e.g., "A few more details to refine your agent") — phrased to avoid exposing the hard cap. Hints are server-controlled (controller-cycled from a fixed list).
-20. No progress bar / numeric counter shown to the user. The hard cap is NEVER exposed in user-facing copy.
+19. Each question from Q2 onward MAY be accompanied by a soft inline hint (e.g., "A few more details to refine your agent") — phrased to avoid exposing the hard cap. **(Updated by E3, 2026-05-29:)** hints are now **client-generated** from the `clarification_hints` category of `thinking-words-dictionary.json` (a shuffled, no-repeat walk of 10 phrases), NOT server-controlled. The server `inline_hint` field and the controller's `INLINE_HINTS` array are removed. **(E3.5:)** the hint renders as a **native AI chat bubble** (`addAIMessage`), placed as a lead-in *before* the question — not as the centered system "comment" pill (`addSystemMessage`).
+19a. **(Added by E3 / T2, 2026-05-29:)** Before the **first** Phase 2 question only, the page renders a static opening message — "I need a few quick details before I can build your agent." — as an AI bubble. This is client-side (no prompt/contract change) and resolves the missing-intro gap (T2). Converging hints (FR7.19) therefore begin at Q2.
+20. No progress bar shown. **(Amended by E4, 2026-05-29:)** a numerator-only running question number ("Question N") IS allowed — where N is a thread-wide running total across sessions (mini-cycle questions continue the count, they do not restart at 1). A denominator/total ("of M") and any reference to the hard cap remain forbidden. The hard cap is NEVER exposed in user-facing copy; inline hints and the opening message stay qualitative ("a few…"), never "question N of M."
 21. The chat send button is `disabled` when the input box is empty or whitespace-only (see FR6.17).
 
 ### FR8 — Telemetry
@@ -143,7 +144,7 @@ If a proposed change touches Phase 2 question-selection rules, carve-outs, allow
 
 | Concern | Requirement |
 |---|---|
-| Performance | One LLM call per iteration. Worst case ≈ 10 calls per session before the defensive cap fires. "Build it" / "done" termination skips the LLM call on the last turn. |
+| Performance | One LLM call per iteration. Worst case = 10 calls per session (10 questions inclusive); the 11th turn caps WITHOUT a call (pre-call guard). "Build it" / "done" termination also skips the LLM call on that turn. |
 | Reliability | The loop MUST always terminate via one of the two enum termination reasons (`phase2_done` or `cap_hit`). |
 | Observability | One Pino line per session at loop exit. |
 | Determinism | The "I want to stop" keyword check (FR6) MUST be keyword-based, not LLM-judgment based. |
@@ -160,11 +161,11 @@ If a proposed change touches Phase 2 question-selection rules, carve-outs, allow
 - [ ] `init-thread` selects v16 unconditionally for the V2 flow. No flag gate.
 - [ ] v16 includes the audience banner (FR2) and the single-question response contract block (FR3 sub-clause 7).
 - [ ] LLM response Zod-validated server-side with `.strict()`. `question` is the **structured object** (`{ id, question, type, options?, allowCustom?, theme? }`) with `type` constrained to `select` | `multi_select` | `text`; `null` only when `phase2_done=true` (enforced by `.refine()`). Schema, code, and tests use **no version number** in their names.
-- [ ] Defensive iteration cap < 10 implemented server-side. Cap-hit termination uses `termination_reason: cap_hit` and surfaces a soft disclosure banner. Cap is NOT referenced in v16 or in any user-facing copy.
+- [ ] Defensive iteration cap = up to 10 questions inclusive (≤ 10 round-trips), per session, implemented server-side. Cap-hit termination uses `termination_reason: cap_hit` and surfaces a soft disclosure banner. Cap is NOT referenced in v16 or in any user-facing copy.
 - [ ] Server-side "done" keyword check implemented. On match: loop terminates as `phase2_done` without making an LLM call for that turn. On no-match: user reply forwarded to LLM as normal. No other enums, no other server-side intent handling.
 - [ ] Empty / whitespace-only input is prevented at the UI level (send button is `disabled` when the input is empty). Verified by manual smoke test.
 - [ ] Loop controller has exactly 2 termination reasons: `phase2_done` and `cap_hit`. Both reachable per unit tests.
-- [ ] `app/v2/agents/new/page.tsx` renders one **structured** question per turn through its existing `questionsSequence`/option-button UI (`select`/`multi_select` → clickable options with `allowCustom`; `text` → free text), collects the answer, sends it back as `phase2_user_answer`, and only advances to `processPhase3` when the response sets `phase2_done: true`. No options crammed into prose; no numeric counter; the string "10" never appears in any user-facing Phase 2 copy (grep gate).
+- [ ] `app/v2/agents/new/page.tsx` renders one **structured** question per turn through its existing `questionsSequence`/option-button UI (`select`/`multi_select` → clickable options with `allowCustom`; `text` → free text), collects the answer, sends it back as `phase2_user_answer`, and only advances to `processPhase3` when the response sets `phase2_done: true`. No options crammed into prose. **(Amended by E4:)** a numerator-only running "Question N" indicator is allowed; the grep gate forbids exposing the cap as a number/denominator ("of 10", "10 questions max") in user-facing copy — NOT an incidental running ordinal like "Question 10".
 - [ ] Single Pino termination log per session with `iteration_count`, `termination_reason`, `correlationId`.
 - [ ] No feature flag added or removed. `app/v2/agents/new/page.tsx` does not gate the new behavior behind any flag. The separate `/agents/new/chat` route and `components/agent-creation/conversational/` are untouched.
 - [ ] **Mandatory live dev-server smoke matrix** (FR12) is run by Dev **against the real URL `/v2/agents/new`**, results captured in the workplan, PASS for both scenarios, BEFORE the workplan is marked "Code Complete."
@@ -205,7 +206,8 @@ If a proposed change touches Phase 2 question-selection rules, carve-outs, allow
 | `lib/agent-creation/phase2-loop-controller.ts` | New pure state machine. 2 termination reasons (`phase2_done`, `cap_hit`). |
 | **`app/v2/agents/new/page.tsx`** | **THE primary UI surface.** Rework `processPhase2()` + the question-render `useEffect` + the answer handler + the auto-advance `useEffect`: detect the `{ question, phase2_done }` response shape, render ONE question, wait for the answer, send it back via a fresh `phase: 2` fetch with `phase2_user_answer`, render the next question, advance to `processPhase3` only on `phase2_done: true`. Render the `cap_hit` disclosure banner before advancing. Remove/replace the batch `data.questionsSequence` auto-advance. |
 | V2 chat input (within the `/v2/agents/new` page's component tree) | Confirm the send button is `disabled` when the input is empty/whitespace. Exact path located in the Step 1 audit. |
-| `components/agent-creation/types/agent-prompt-threads.ts` | Add response fields (`question`, `phase2_done`, `inline_hint`, `disclosure_banner`, `termination_reason`) to `ProcessMessageResponse`; add `phase2_user_answer` to `ProcessMessageRequest`. (Already applied — these are additive optional fields used by the route and consumable by the page.) |
+| `components/agent-creation/types/agent-prompt-threads.ts` | Add response fields (`question`, `phase2_done`, `disclosure_banner`, `termination_reason`) to `ProcessMessageResponse`; add `phase2_user_answer` to `ProcessMessageRequest`. (`inline_hint` was added then **removed by E3** — hints are now client-generated.) |
+| `lib/ui/thinking-words-dictionary.json`, `lib/ui/thinking-words-loader.ts` | **(E3)** Add the `clarification_hints` category (10 phrases) with an `excludeFromGeneric` flag so the sentences stay out of the generic word pool; add `'clarification_hints'` to the `ThinkingCategory` union. |
 | `components/agent-creation/conversational/**` and `/agents/new/chat` route | **NOT touched.** This is the separate, non-primary agent-creation surface. The earlier draft incorrectly targeted it. |
 | `lib/utils/featureFlags.ts`, `docs/FEATURE_FLAGS.md`, `CLAUDE.md` | **NOT touched.** No flag added or removed. (The earlier draft's `useNewAgentCreationUI` removal was based on the wrong entry point and has been reverted.) |
 | `docs/requirements/archive/` | Move prior Phase 2 prompt-related requirement MDs here, with a one-line "Superseded by" header. |

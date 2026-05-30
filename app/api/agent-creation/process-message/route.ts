@@ -357,9 +357,24 @@ export async function POST(request: NextRequest) {
     // we never log a termination that wasn't actually persisted.
     // -----------------------------------------------------------------------
     if (phase === 2) {
-      const priorLoopState: Phase2LoopState =
-        (threadRecord.metadata?.phase2_loop_state as Phase2LoopState | undefined) ?? INITIAL_LOOP_STATE;
-      const capReachedPreCall = priorLoopState.iteration_count >= MAX_ITERATIONS - 1;
+      // The defensive cap is PER SESSION (FR5.12), and `iteration_count` is
+      // persisted thread-globally — so a NEW Phase 2 session must reset it to 0
+      // rather than inherit the prior session's count. A session starts on a turn
+      // with no `phase2_user_answer` (initial entry OR mini-cycle start); mid-loop
+      // answer turns carry the answer and continue the running count. Without this
+      // reset, a mini-cycle opened after a long first session inherits a near-cap
+      // count and is terminated `cap_pre_call` before it can ask its question —
+      // Phase 3 then re-finds the missing input and re-enters the mini-cycle
+      // forever (observed loop, 2026-05-29).
+      const isPhase2SessionStart =
+        phase2_user_answer === undefined || phase2_user_answer === null;
+      const priorLoopState: Phase2LoopState = isPhase2SessionStart
+        ? INITIAL_LOOP_STATE
+        : ((threadRecord.metadata?.phase2_loop_state as Phase2LoopState | undefined) ?? INITIAL_LOOP_STATE);
+      // Cap once MAX_ITERATIONS questions have already been asked this session,
+      // so the loop asks up to MAX_ITERATIONS (=10) questions INCLUSIVE before
+      // terminating. Same condition as the controller's step() backstop.
+      const capReachedPreCall = priorLoopState.iteration_count >= MAX_ITERATIONS;
       const doneKeywordHit =
         typeof phase2_user_answer === 'string' && isDoneIntent(phase2_user_answer);
 
@@ -820,9 +835,15 @@ export async function POST(request: NextRequest) {
           );
         }
 
-        // Load prior loop state from thread metadata, default to initial state.
+        // Load prior loop state from thread metadata. A NEW Phase 2 session (no
+        // `phase2_user_answer` — initial entry or mini-cycle start) resets the
+        // count to 0; the cap is per-session (FR5.12), not thread-global. Mid-loop
+        // answer turns continue the running count. (Mirrors the pre-call block and
+        // the page's per-session hint reset; prevents the mini-cycle cap loop.)
         const priorLoopState: Phase2LoopState =
-          (threadRecord.metadata?.phase2_loop_state as Phase2LoopState | undefined) ?? INITIAL_LOOP_STATE;
+          (phase2_user_answer === undefined || phase2_user_answer === null)
+            ? INITIAL_LOOP_STATE
+            : ((threadRecord.metadata?.phase2_loop_state as Phase2LoopState | undefined) ?? INITIAL_LOOP_STATE);
 
         // Build controller input from the parsed payload (whether or not it
         // passed Zod — the controller branches on `payload_valid`).
@@ -860,9 +881,6 @@ export async function POST(request: NextRequest) {
           phase: 2,
           question: decision.response.question,
           phase2_done: decision.response.phase2_done,
-          ...(decision.response.inline_hint !== undefined && {
-            inline_hint: decision.response.inline_hint,
-          }),
           ...(decision.response.disclosure_banner !== undefined && {
             disclosure_banner: decision.response.disclosure_banner,
           }),
