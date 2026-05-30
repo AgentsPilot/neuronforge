@@ -197,11 +197,16 @@ export class DataPreprocessor {
     }
 
     // Event detection: Has time fields (startTime, start, or schedule-related)
+    // WP-50: `summary` is Google Calendar's event-title field — but it's also a
+    // common field name on research / AI / extractor / summarizer outputs.
+    // Require it to co-occur with at least one event-specific field, otherwise
+    // any object with a `summary` field gets routed through EventPreprocessor
+    // and filtered to empty by validateEvents() (which requires startTime).
     if (
       data.startTime ||
       data.start?.dateTime ||
       (data.start && data.end) ||
-      data.summary
+      (data.summary && (data.start || data.end || data.startTime || data.organizer || data.attendees))
     ) {
       return 'event';
     }
