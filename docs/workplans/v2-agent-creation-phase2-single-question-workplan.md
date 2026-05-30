@@ -448,11 +448,15 @@ Setup checklist (do once, before scenarios):
 
 ---
 
-## Open item OI1 (2026-05-29) — Phase 2 question pacing / wrap-up signal (deferred)
+## Open item OI1 (2026-05-29) — Phase 2 question pacing / wrap-up signal — RESOLVED 2026-05-30
 
 **Observation:** in the failing test the loop asked **9 questions** before the defensive cap fired. That is (a) too many for a non-technical user — it cuts against the requirement's core tone-down goal — and (b) the amplifier for E2: the more Phase 2 turns, the deeper the pattern entrenchment that triggers the phase-confusion crash. In single-question mode the model receives **no sense of how many questions it has asked** (the per-turn iteration signal was deliberately dropped for minimalism), so it keeps asking until the cap.
 
-**Possible direction (not yet decided):** give the model a gentle pacing/wrap-up cue (e.g. a soft per-turn hint that it should converge, or surfacing a coarse "you've gathered enough" signal) so it emits `phase2_done` earlier on its own. Adjacent to [T2](#t2-2026-05-29--conversationalsummary-every-phase-vs-phase-2-strict-contract--resolved). Deferred — decide after E2 lands and is re-tested.
+**Resolution (2026-05-30):** added a **pacing-and-convergence rule** at the top of v16 Phase 2 Behavior rules (after [E5](#enhancement-e5-2026-05-30--prompt-v16-stop-re-asking-the-same-question--enforce-qid-uniqueness-across-the-whole-thread)'s no-re-ask rules). After each user answer, the LLM is now told to weigh remaining gaps against safe defaults; only ask another question if the gap is essential and cannot be sensibly defaulted; otherwise prefer `phase2_done: true` and surface defaults via Phase 3's `conversationalSummary` / `user_inputs_required`. Target the **smallest** number of questions that still produces a deterministic agent (typically 3–6 for a routine flow).
+
+Paired with [E6 — `ai_reasoning` telemetry](#enhancement-e6-2026-05-30--ai_reasoning-per-turn-telemetry-for-prompt-calibration) so we can observe the LLM's decisions over multiple runs and tighten the pacing rule based on real data rather than guesses. Distinct from E5: E5 stops the LLM from re-asking the **same** question; OI1 stops it from asking **too many distinct** questions.
+
+**Status:** implemented 2026-05-30 (prompt-only) — awaiting live verification via E6 telemetry.
 
 ---
 
@@ -528,7 +532,7 @@ Because the v16 Phase 3 prompt resolves `user_inputs_required` against `clarific
 
 ---
 
-## Enhancement E4 (2026-05-29) — running question-number indicator ("Question N") — DOCUMENTED, pending implementation
+## Enhancement E4 (2026-05-29) — running question-number indicator ("Question N")
 
 **Request:** show a small per-question indicator with the running question **number** (numerator only — e.g. "Question 3"), NOT the old "Question X of Y". The old multi-question batch flow showed an "X of Y" pill ([page.tsx ~2592-2615](app/v2/agents/new/page.tsx)); it is suppressed in single-question mode (gated on `questionsSequence.length > 1`).
 
@@ -546,7 +550,7 @@ Because the v16 Phase 3 prompt resolves `user_inputs_required` against `clarific
 - **FR7.20** — was "No progress bar / numeric counter shown." Now: a **numerator-only running question number** ("Question N") IS allowed. A denominator/total ("of Y") and any reference to the cap remain forbidden.
 - **FR8 grep gate / acceptance criterion** — "the string '10' never appears in user-facing copy" was meant to prevent leaking the **cap**. The running ordinal may legitimately reach/exceed 10 across mini-cycles ("Question 11"). The gate is clarified to forbid exposing the cap as a number/denominator ("of 10", "10 questions max"), NOT an incidental running ordinal like "Question 10".
 
-**Status:** documented 2026-05-29 — implementation pending (timing TBD with user: fold into the current untested batch, or after the E3/F2/C1 test+commit).
+**Status:** implemented 2026-05-30, shipped in commit `3c31624` (folded into the E3/E3.5/F2/C1/E4/E5 batch).
 
 ---
 
@@ -569,7 +573,73 @@ These restate / strengthen rules that were already in v16 in weaker form (line 2
 
 **Phase 3 NOT touched (yet).** The existing Phase 3 reconciliation rule (lines 465-468 — "If a Phase 2 answer satisfies an expected input, REMOVE that label from `user_inputs_required`") already covers the mini-cycle re-ask path. If the Phase 2 fix is sufficient on its own, no Phase 3 divergence is needed; if the LLM still re-asks via the mini-cycle path after this lands, a one-line Phase 3 reinforcement can follow. Matches the "fix root causes, don't add compensating complexity" ethos.
 
-**Scope:** prompt-only. No DB / no contract change. No code change. Adjacent to (but does not resolve) [OI1](#open-item-oi1-2026-05-29--phase-2-question-pacing--wrap-up-signal-deferred) — OI1 is about *how many* questions; E5 is about *re-asking* the same one. `tsc` and unit suites unaffected.
+**Scope:** prompt-only. No DB / no contract change. No code change. Adjacent to [OI1](#open-item-oi1-2026-05-29--phase-2-question-pacing--wrap-up-signal--resolved-2026-05-30) — OI1 is about *how many* questions; E5 is about *re-asking* the same one. `tsc` and unit suites unaffected.
+
+**Status:** implemented 2026-05-30 — awaiting user's live re-test.
+
+---
+
+## Enhancement E6 (2026-05-30) — `ai_reasoning` per-turn telemetry for prompt calibration
+
+**Motivation:** [OI1](#open-item-oi1-2026-05-29--phase-2-question-pacing--wrap-up-signal--resolved-2026-05-30) gives the LLM a pacing rule, but we have no observability into *whether* the model is following it. To calibrate the pacing prompt against real data — rather than guessing — we instrument every Phase 2 decision with a brief reasoning string. After a few sessions, we scan the logs to see which decisions are reasonable and which need a prompt tightening.
+
+**Design:**
+
+- **Prompt (v16, Phase 2 OUTPUT contract):** mandate a `ai_reasoning` field (REQUIRED in the prompt) on every Phase 2 turn — both continue-with-question turns AND `phase2_done: true` turns. The string is 1–3 sentences explaining (a) which gap this question targets and why it can't be defaulted, OR (b) why all remaining gaps can be safely defaulted. The strict-schema rule that says "only `question` + `phase2_done`" is carved out to allow this telemetry field.
+- **Schema ([phase2-schema.ts](lib/validation/phase2-schema.ts)):** add `ai_reasoning: z.string().min(1).max(500).optional()` to `Phase2ResponseSchema`. **Optional in schema, required in prompt** — tolerates a rare miss without 500-ing the flow (mirrors the existing degraded-passthrough on Zod failure; FR4.11 unchanged).
+- **Route ([process-message/route.ts](app/api/agent-creation/process-message/route.ts)):** on each Phase 2 turn, extract `ai_reasoning` from the validated payload and emit a structured Pino `info` breadcrumb (`"Phase 2 turn decision"`) carrying `iteration_count`, `decision` (`'continue'` | `'phase2_done'` | `'cap_hit'`), `ai_reasoning`, and the existing `correlationId`. Use the route's `requestLogger` child so `correlationId` is automatic.
+- **Client response — STRIPPED.** `ai_reasoning` is server-side only. The response builder ships only `{ question, phase2_done, disclosure_banner?, termination_reason? }` to the page. The user never sees the reasoning; the page contract is unchanged.
+
+**FR amendments:**
+- **FR4** — the Phase 2 strict response shape is carved out to allow `ai_reasoning` as an optional telemetry field on top of `{ question, phase2_done }`. The contract remains otherwise strict (any other extra key still fails Zod).
+- **FR8** — was "exactly one structured Pino log line at loop exit". Amended: ONE termination log per session (unchanged) **plus** a per-turn `Phase 2 turn decision` breadcrumb carrying `iteration_count`, `decision`, `ai_reasoning`, `correlationId`. No DB / no UI / no dashboard.
+
+**Files affected (~5):** v16 prompt (Phase 2 contract + OI1 pacing rule), `lib/validation/phase2-schema.ts`, `lib/validation/__tests__/phase2-schema.test.ts`, `app/api/agent-creation/process-message/route.ts`, requirement doc (FR4 + FR8 amendments). No DB / no contract change visible to the client. `tsc` clean; Phase 2 unit suites updated for the new optional field.
+
+**Cost:** ~50–100 extra output tokens per Phase 2 turn (the reasoning string). Acceptable for the calibration value; can be tightened or removed later once the pacing rule is dialed in.
+
+**Status:** implemented 2026-05-30 — awaiting first calibration runs. Scan `dev.log` for `Phase 2 turn decision` Pino lines to review reasoning patterns and refine the pacing rule.
+
+---
+
+## Enhancement E7 (2026-05-30) — Phase 3 input-payload trim (generalize E1 to Phase 3)
+
+**Observation:** the route sends `plugin_action_summary` (large — every connected plugin's actions + params) and `connected_services` (smaller) in the userMessage of **every** Phase 3 call. Phase 1 and the first Phase 2 turn already ship both into the thread (see [E1](#enhancement-e1-2026-05-29--stop-re-sending-heavy-context-on-mid-loop-phase-2-turns)), and the OpenAI thread accumulates messages — so by the time Phase 3 runs, the same payload is already in the conversation history. Each re-send is essentially copying ~1k–3k tokens of context the LLM already has. Across a normal flow (initial Phase 3 + at least one mini-cycle refinement Phase 3) that's a measurable cost, with no functional benefit.
+
+**Why we can trim it:** v16 already coaches the LLM to read from thread:
+- Line 280: *"If `connected_services` or `available_services` are omitted or null, always reference the latest known values from Phase 1 in the same thread."*
+- Line 281: *"earlier-thread context stays authoritative"* — written specifically for Phase 2 single-question turns, but the underlying principle generalizes.
+- Phase 3 input description (line 339-340): *"`connected_services` … if null, reference the original connected_service in Phase 1 prompt."*
+
+So the prompt-side support is in place; the route just doesn't take advantage of it for Phase 3.
+
+**The catch — `connected_services` is mutable.** The OAuth gate may add a new plugin between Phase 3 calls, and a decline may remove one. When that happens the LLM MUST see the updated set (and the freshly-derived `plugin_action_summary`); we cannot blindly omit on every Phase 3.
+
+**Design:**
+1. **Route:** track `plugin_context_signature` in thread metadata (a stable hash/JSON of the sorted `connected_services` array). On each Phase 3 call:
+    - Compute the current signature from the request body's `connected_services`.
+    - If `metadata.plugin_context_signature` equals the current signature → the thread already has the latest `plugin_action_summary` + `connected_services`; OMIT both from the userMessage.
+    - If absent or different → SEND both (and `available_services` if applicable), then update `metadata.plugin_context_signature` to the current signature on the existing `updateThreadPhase()` call (no extra DB write — same pattern as `phase2_loop_state`).
+    - Initial Phase 3 in a fresh thread: no signature yet → always send (correct).
+    - Mini-cycle Phase 3 refinement (no OAuth, no decline change): signatures match → omit. ✅ savings.
+    - Phase 3 after OAuth (`pluginsOverride: updatedPlugins`) or after a decline: signatures differ → send. ✅ correctness.
+2. **v16 prompt:** widen the line-281 rule from "Single-question turns" to "across the entire thread (Phase 2 AND Phase 3)" so the LLM has an explicit licence to use the prior-thread copy on a Phase 3 turn where the route omits these fields.
+
+**Scope:** route ([process-message/route.ts](app/api/agent-creation/process-message/route.ts)) + v16 prompt. No DB schema change (uses existing thread metadata blob). No client contract change. No tests added for this beyond `tsc` + the existing Phase 2 unit suites (route has no unit harness; the live smoke matrix covers Phase 3 paths).
+
+**Savings:** ~1k–3k tokens per Phase 3 call when context is unchanged (most cases). On a typical session (initial Phase 3 + 1 mini-cycle Phase 3) that's ~1k–3k tokens saved on the mini-cycle.
+
+**Status:** implemented 2026-05-30 — awaiting user's live re-test.
+
+---
+
+## Enhancement E8 (2026-05-30) — Configuration section collapsible (default collapsed)
+
+**Observation:** the Agent Draft card's **"Configuration"** block at [page.tsx:3361-3391](app/v2/agents/new/page.tsx#L3361-L3391) renders every entry of `inputParameterValues` as a key/value row, always expanded. When the agent has many configured inputs, this section dominates the card's vertical space and pushes other useful info (Schedule, Required Services, Approve/Cancel buttons) below the fold.
+
+**Design (mirrors the existing "How it works" accordion at [page.tsx:2898-2933](app/v2/agents/new/page.tsx#L2898-L2933)):** add `isConfigurationExpanded` state (init `false`), wrap the Configuration block in a chevron-button header showing *"Configuration ({N} fields)"*, render the rows only when expanded. Defaults to **collapsed** so users see a compact card by default and can expand to inspect.
+
+**Scope:** page only ([app/v2/agents/new/page.tsx](app/v2/agents/new/page.tsx)) — one new state hook + the existing block restructured to an accordion. No contract / no schema / no docs beyond this entry. ~20 LOC.
 
 **Status:** implemented 2026-05-30 — awaiting user's live re-test.
 

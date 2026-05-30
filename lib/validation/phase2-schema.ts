@@ -17,9 +17,11 @@
  * The OUTER object is `.strict()` — it rejects extra top-level keys (the legacy
  * `questionsSequence[]` batch array, and the server-injected `success`/`phase`
  * fields — the route MUST snapshot the parsed payload BEFORE the success/phase
- * mutation before calling `validatePhase2Response()`). The INNER question object
- * is non-strict on purpose: it strips any extra v15 fields the LLM might include
- * (e.g. `required`, `placeholder`, `dimension`) rather than failing.
+ * mutation before calling `validatePhase2Response()`). The allowed top-level keys
+ * are `question`, `phase2_done`, and (E6, 2026-05-30) `ai_reasoning`. The INNER
+ * question object is non-strict on purpose: it strips any extra v15 fields the
+ * LLM might include (e.g. `required`, `placeholder`, `dimension`) rather than
+ * failing.
  *
  * `.refine()` enforces:
  *   1. `phase2_done=true` MUST come with `question=null` (no bundling).
@@ -70,6 +72,17 @@ export const Phase2ResponseSchema = z
      * advance to Phase 3.
      */
     phase2_done: z.boolean(),
+
+    /**
+     * E6 (2026-05-30) — per-turn server-side TELEMETRY. A 1–3 sentence
+     * explanation of THIS turn's decision (which gap is being targeted and why
+     * it cannot be defaulted, OR why the loop is terminating). REQUIRED in the
+     * v16 prompt, OPTIONAL here so a rare omission falls into the existing
+     * degraded-passthrough path rather than 500-ing the flow. The route logs
+     * this via Pino for prompt calibration and STRIPS it from the client
+     * response — the field is never returned to the UI.
+     */
+    ai_reasoning: z.string().min(1).max(500).optional(),
   })
   .strict()
   .refine(

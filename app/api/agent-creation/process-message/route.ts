@@ -443,6 +443,32 @@ export async function POST(request: NextRequest) {
     }
 
     // Step 6: Build user message based on phase
+
+    // E7 (2026-05-30): compute the signature of THIS turn's "effective"
+    // `connected_services` (sorted JSON of the array — order-independent). Used
+    // (a) to decide whether to OMIT the heavy plugin context on Phase 3 when the
+    // thread already has the latest copy, and (b) stored in thread metadata as
+    // the "last sent" baseline so subsequent turns can compare.
+    const effectiveConnectedServicesForSig: string[] = Array.isArray(connected_services)
+      ? connected_services
+      : Array.isArray(threadRecord.metadata?.phase1_connected_services)
+        ? (threadRecord.metadata!.phase1_connected_services as string[])
+        : [];
+    const currentPluginSignature = JSON.stringify(
+      [...effectiveConnectedServicesForSig].sort()
+    );
+    const priorPluginSignature: string | undefined =
+      threadRecord.metadata?.plugin_context_signature;
+    const pluginContextUnchangedFromThread =
+      typeof priorPluginSignature === 'string' &&
+      priorPluginSignature === currentPluginSignature;
+
+    // Flag flipped on by each phase branch when it INCLUDES the heavy plugin
+    // context (connected_services + plugin_action_summary) in the userMessage.
+    // When true at the metadata write below, `plugin_context_signature` is
+    // updated to `currentPluginSignature` so future turns can compare.
+    let pluginContextIncludedThisTurn = false;
+
     let userMessage: any;
 
     if (phase === 1) {
@@ -455,6 +481,7 @@ export async function POST(request: NextRequest) {
         available_services: user_available_services,
         plugin_action_summary: plugin_action_summary_text || undefined  // EP Key Hints (O8)
       };
+      pluginContextIncludedThisTurn = true; // E7: Phase 1 always sends
     } else if (phase === 2) {
       // V10: Phase 2 can receive connected_services, enhanced_prompt, declined_services, and user_feedback for refinement
       // If null, reference Phase 1 stored values from thread metadata
@@ -494,16 +521,36 @@ export async function POST(request: NextRequest) {
               plugin_action_summary: plugin_action_summary_text || undefined, // EP Key Hints (O8)
             }),
       };
+      if (!isMidLoopPhase2Turn) {
+        pluginContextIncludedThisTurn = true; // E7: first Phase 2 turn sends, mid-loop omits (E1)
+      }
     } else if (phase === 3) {
-      // V10: Phase 3 needs connected_services for OAuth gate re-call, declined_services, and enhanced_prompt for refinement
+      // E7 (2026-05-30): OMIT the heavy plugin context (`plugin_action_summary` +
+      // `connected_services`) when the thread already has the latest copy from a
+      // prior turn — i.e. when this turn's `connected_services` signature matches
+      // the one we last persisted. The v16 prompt's "earlier-thread context stays
+      // authoritative" rule tells the LLM to read the latest copy from the thread
+      // when these fields are absent from the current message. We always send on
+      // the initial Phase 3 (no prior signature stored) and whenever the user
+      // connected or declined a plugin between turns (signature differs). Saves
+      // ~1k–3k tokens per Phase 3 call when nothing changed, e.g. mini-cycle
+      // refinement Phase 3 turns.
+      const omitPluginContextOnPhase3 = pluginContextUnchangedFromThread;
       userMessage = {
         phase: 3,
         clarification_answers: clarification_answers || {},
-        connected_services: connected_services || threadRecord.metadata?.phase1_connected_services || [],
         declined_services: declined_services || [],   // V10: services user refused to connect
         enhanced_prompt: enhanced_prompt || null,     // V10: for refinement cycles
-        plugin_action_summary: plugin_action_summary_text || undefined  // EP Key Hints (O8)
+        ...(omitPluginContextOnPhase3
+          ? {}
+          : {
+              connected_services: connected_services || threadRecord.metadata?.phase1_connected_services || [],
+              plugin_action_summary: plugin_action_summary_text || undefined,  // EP Key Hints (O8)
+            }),
       };
+      if (!omitPluginContextOnPhase3) {
+        pluginContextIncludedThisTurn = true;
+      }
     }
 
     requestLogger.debug({ phase, userMessage }, 'User message constructed');
@@ -873,9 +920,34 @@ export async function POST(request: NextRequest) {
               : undefined,
         };
 
+        // E6 (2026-05-30): per-turn telemetry breadcrumb. Logs the LLM's
+        // `ai_reasoning` (server-side observability for OI1 pacing calibration)
+        // alongside the iteration count and the controller's decision. Fires
+        // ONLY on a valid post-LLM turn — pre-call short-circuits (done_keyword,
+        // cap_pre_call) have their own termination log, and degraded turns have
+        // their own warn. `ai_reasoning` is optional in the schema; logged as
+        // null when the LLM omitted it. The field is NEVER returned to the UI
+        // (the aiResponse builder below does not spread it).
+        if (payloadValid && phase2Validation.success) {
+          const turnDecision: 'continue' | 'phase2_done' | 'cap_hit' =
+            decision.decision === 'terminate'
+              ? decision.termination_reason
+              : 'continue';
+          requestLogger.info(
+            {
+              phase: 2,
+              iteration_count: decision.next_state.iteration_count,
+              decision: turnDecision,
+              ai_reasoning: phase2Validation.data.ai_reasoning ?? null,
+            },
+            'Phase 2 turn decision'
+          );
+        }
+
         // Build the response from the controller's response. We deliberately
         // do NOT pass through any of the LLM's other fields (the Phase 2
         // response contract is `{ question, phase2_done, ... }` only).
+        // E6: `ai_reasoning` is intentionally NOT spread here — server-side only.
         aiResponse = {
           success: false, // will be set true below by the existing mutation
           phase: 2,
@@ -961,6 +1033,14 @@ export async function POST(request: NextRequest) {
       // post-LLM path (the done-keyword short-circuit handles its own persist).
       ...(phase === 2 && phase2NextLoopState && {
         phase2_loop_state: phase2NextLoopState
+      }),
+      // E7 (2026-05-30): persist the signature of the connected_services that
+      // the thread now has in its conversation history (from THIS turn's
+      // userMessage). Updates only when we actually INCLUDED the heavy plugin
+      // context this turn; otherwise the prior signature still describes
+      // what's authoritative in the thread.
+      ...(pluginContextIncludedThisTurn && {
+        plugin_context_signature: currentPluginSignature
       })
     };
 

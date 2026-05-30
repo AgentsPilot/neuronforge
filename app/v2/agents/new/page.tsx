@@ -340,6 +340,14 @@ function V2AgentBuilderContent() {
 
   // Enhanced prompt display state
   const [isStepsExpanded, setIsStepsExpanded] = useState(false)
+  // E8 (2026-05-30): the Agent Draft "Configuration" block can grow long when
+  // the agent has many input parameters. Default to COLLAPSED so the card stays
+  // compact; user can expand to inspect (mirrors the "How it works" accordion).
+  const [isConfigurationExpanded, setIsConfigurationExpanded] = useState(false)
+  // E8 (2026-05-30): same treatment for the Agent Draft "How it works" steps —
+  // separate state from `isStepsExpanded` (chat-side card) so the two cards
+  // toggle independently. Default COLLAPSED.
+  const [isAgentDraftStepsExpanded, setIsAgentDraftStepsExpanded] = useState(false)
   const [enhancedPromptData, setEnhancedPromptData] = useState<any>(null)
 
   // Service status tracking
@@ -1524,7 +1532,7 @@ function V2AgentBuilderContent() {
 
       setTimeout(() => {
         router.push(`/agents/${result.agent.id}`)
-      }, 1500)
+      }, 1000)
 
     } catch (error: any) {
       console.error('❌ Agent creation error:', error)
@@ -3299,29 +3307,41 @@ function V2AgentBuilderContent() {
                           </div>
                         )}
 
-                        {/* How it works - Steps */}
+                        {/* How it works - E8 (2026-05-30): collapsible accordion,
+                            default COLLAPSED, mirroring the Configuration block below
+                            and the chat-side "Your Agent Plan" card's accordion. Uses
+                            its own state so this card and the chat-side card toggle
+                            independently. */}
                         {enhancedPromptData.sections?.processing_steps && enhancedPromptData.sections.processing_steps.length > 0 && (
                           <div>
-                            <h4 className="text-xs font-semibold text-[var(--v2-text-muted)] uppercase tracking-wide mb-3 flex items-center gap-1.5">
-                              <div className="w-4 h-4 bg-[var(--v2-surface)] border border-[var(--v2-border)] flex items-center justify-center flex-shrink-0" style={{ borderRadius: 'var(--v2-radius-button)' }}>
-                                <Settings className="h-2.5 w-2.5 text-slate-600 dark:text-slate-400" />
+                            <button
+                              onClick={() => setIsAgentDraftStepsExpanded(!isAgentDraftStepsExpanded)}
+                              className="w-full flex items-center justify-between py-2 px-3 bg-[var(--v2-surface-hover)] hover:bg-[var(--v2-border)] transition-colors"
+                              style={{ borderRadius: 'var(--v2-radius-button)' }}
+                            >
+                              <span className="text-sm font-semibold text-[var(--v2-text-secondary)] flex items-center gap-2">
+                                {isAgentDraftStepsExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                                <Settings className="w-4 h-4" />
+                                How it works ({enhancedPromptData.sections.processing_steps.length} steps)
+                              </span>
+                            </button>
+
+                            {isAgentDraftStepsExpanded && (
+                              <div className="mt-3 space-y-3">
+                                {enhancedPromptData.sections.processing_steps.map((step: string, stepIndex: number) => (
+                                  <div key={stepIndex} className="flex gap-3">
+                                    <div
+                                      className="flex-shrink-0 w-6 h-6 rounded-full bg-[var(--v2-surface)] border-2 border-[var(--v2-primary)] flex items-center justify-center text-[var(--v2-primary)] text-xs font-bold"
+                                    >
+                                      {stepIndex + 1}
+                                    </div>
+                                    <div className="flex-1">
+                                      <p className="text-sm text-[var(--v2-text-secondary)] leading-relaxed">{step}</p>
+                                    </div>
+                                  </div>
+                                ))}
                               </div>
-                              How it works ({enhancedPromptData.sections.processing_steps.length} steps)
-                            </h4>
-                            <div className="space-y-3">
-                              {enhancedPromptData.sections.processing_steps.map((step: string, stepIndex: number) => (
-                                <div key={stepIndex} className="flex gap-3">
-                                  <div
-                                    className="flex-shrink-0 w-6 h-6 rounded-full bg-[var(--v2-surface)] border-2 border-[var(--v2-primary)] flex items-center justify-center text-[var(--v2-primary)] text-xs font-bold"
-                                  >
-                                    {stepIndex + 1}
-                                  </div>
-                                  <div className="flex-1">
-                                    <p className="text-sm text-[var(--v2-text-secondary)] leading-relaxed">{step}</p>
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
+                            )}
                           </div>
                         )}
 
@@ -3358,35 +3378,47 @@ function V2AgentBuilderContent() {
                           </div>
                         )}
 
-                        {/* Input Parameters */}
+                        {/* Input Parameters — E8 (2026-05-30): collapsible accordion,
+                            default COLLAPSED. Mirrors the "How it works" pattern above
+                            so the card stays compact when the agent has many fields. */}
                         {Object.keys(inputParameterValues).length > 0 && (
                           <div>
-                            <h4 className="text-xs font-semibold text-[var(--v2-text-muted)] uppercase tracking-wide mb-2 flex items-center gap-1">
-                              <Settings className="h-3 w-3" />
-                              Configuration
-                            </h4>
-                            <div className="space-y-2">
-                              {Object.entries(inputParameterValues).map(([key, value]) => {
-                                // Find the input schema for this parameter to get the label
-                                const paramSchema = requiredInputs.find((input: any) => input.name === key)
-                                const label = paramSchema?.label || key.replace(/_/g, ' ')
+                            <button
+                              onClick={() => setIsConfigurationExpanded(!isConfigurationExpanded)}
+                              className="w-full flex items-center justify-between py-2 px-3 bg-[var(--v2-surface-hover)] hover:bg-[var(--v2-border)] transition-colors"
+                              style={{ borderRadius: 'var(--v2-radius-button)' }}
+                            >
+                              <span className="text-sm font-semibold text-[var(--v2-text-secondary)] flex items-center gap-2">
+                                {isConfigurationExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                                <Settings className="w-4 h-4" />
+                                Configuration ({Object.keys(inputParameterValues).length} {Object.keys(inputParameterValues).length === 1 ? 'field' : 'fields'})
+                              </span>
+                            </button>
 
-                                return (
-                                  <div
-                                    key={key}
-                                    className="flex items-start gap-2 px-3 py-2 bg-[var(--v2-surface-hover)]"
-                                    style={{ borderRadius: 'var(--v2-radius-button)' }}
-                                  >
-                                    <span className="text-sm text-[var(--v2-text-muted)] capitalize min-w-[120px]">
-                                      {label}:
-                                    </span>
-                                    <span className="text-sm text-[var(--v2-text-primary)] font-medium">
-                                      {typeof value === 'boolean' ? (value ? 'Yes' : 'No') : String(value)}
-                                    </span>
-                                  </div>
-                                )
-                              })}
-                            </div>
+                            {isConfigurationExpanded && (
+                              <div className="mt-3 space-y-2">
+                                {Object.entries(inputParameterValues).map(([key, value]) => {
+                                  // Find the input schema for this parameter to get the label
+                                  const paramSchema = requiredInputs.find((input: any) => input.name === key)
+                                  const label = paramSchema?.label || key.replace(/_/g, ' ')
+
+                                  return (
+                                    <div
+                                      key={key}
+                                      className="flex items-start gap-2 px-3 py-2 bg-[var(--v2-surface-hover)]"
+                                      style={{ borderRadius: 'var(--v2-radius-button)' }}
+                                    >
+                                      <span className="text-sm text-[var(--v2-text-muted)] capitalize min-w-[120px]">
+                                        {label}:
+                                      </span>
+                                      <span className="text-sm text-[var(--v2-text-primary)] font-medium">
+                                        {typeof value === 'boolean' ? (value ? 'Yes' : 'No') : String(value)}
+                                      </span>
+                                    </div>
+                                  )
+                                })}
+                              </div>
+                            )}
                           </div>
                         )}
 

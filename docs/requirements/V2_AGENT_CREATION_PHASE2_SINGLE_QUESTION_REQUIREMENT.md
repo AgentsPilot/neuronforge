@@ -83,12 +83,14 @@ If a proposed change touches Phase 2 question-selection rules, carve-outs, allow
         "allowCustom": true,              // select/multi_select: offer a "none fit / my answer" escape
         "theme": "string (optional)"
       } | null,
-      "phase2_done": boolean
+      "phase2_done": boolean,
+      "ai_reasoning": "string (optional)" // E6: server-side telemetry, never returned to the client
     }
     ```
    - **Question types are restricted to exactly `select`, `multi_select`, `text`** — nothing else (no `email`/`number`/etc.). This matches what the V2 page's option-button UI renders.
+   - **(Amended by E6, 2026-05-30:)** `ai_reasoning` is a per-turn telemetry field — REQUIRED in the v16 prompt, OPTIONAL in the Zod schema (a rare omission falls into the degraded-passthrough path; FR4.11 unchanged). The route extracts it for a Pino breadcrumb (FR8) and **STRIPS it from the client response** — the page contract stays `{ question, phase2_done, disclosure_banner?, termination_reason? }`.
 10. `phase2_done: true` MUST come with `question: null` (no bundling).
-11. Zod-validated server-side with `.strict()` (rejects extra keys, including the legacy batch `questionsSequence[]` array). Validation failures are logged as a Pino warn breadcrumb; the loop does NOT retry the LLM call. On Zod failure, the route returns the parsed payload as-is in degraded form (the controller still increments `iteration_count`); the cap will eventually fire if the LLM never recovers. The route MUST NOT fabricate a synthetic question server-side.
+11. Zod-validated server-side with `.strict()` (rejects extra keys, including the legacy batch `questionsSequence[]` array). The only top-level keys the schema accepts are `question`, `phase2_done`, and `ai_reasoning` (E6). Validation failures are logged as a Pino warn breadcrumb; the loop does NOT retry the LLM call. On Zod failure, the route returns the parsed payload as-is in degraded form (the controller still increments `iteration_count`); the cap will eventually fire if the LLM never recovers. The route MUST NOT fabricate a synthetic question server-side.
 
 ### FR5 — Defensive iteration cap (server-side only)
 12. Iteration cap = **up to 10 questions (≤ 10 LLM round-trips) per Phase 2 session, inclusive**. Purely defensive (in case the LLM never emits `phase2_done`). The cap is **per session** — a mini-cycle (Phase 3 → `user_inputs_required` → Phase 2) starts a fresh session with its own 10-question budget; the counter is not thread-global. **(Updated 2026-05-29: 10 inclusive, was "< 10".)**
@@ -110,11 +112,17 @@ If a proposed change touches Phase 2 question-selection rules, carve-outs, allow
 21. The chat send button is `disabled` when the input box is empty or whitespace-only (see FR6.17).
 
 ### FR8 — Telemetry
-22. Exactly **one structured Pino log line at loop exit**:
+22. **One structured Pino log line at loop exit (REQUIRED):**
     - `iteration_count` (integer)
     - `termination_reason` (enum: `phase2_done` | `cap_hit`)
     - `correlationId`
-23. No per-iteration logs. No DB schema changes. No UI dashboards.
+22a. **(Amended by E6, 2026-05-30:)** in addition to the termination log, the route emits **one per-turn Pino `info` breadcrumb** — `"Phase 2 turn decision"` — carrying:
+    - `iteration_count` (integer)
+    - `decision` (enum: `'continue'` | `'phase2_done'` | `'cap_hit'`)
+    - `ai_reasoning` (string, optional — populated when the LLM provided it; absent when the field was missing from the payload)
+    - `correlationId`
+    This is the calibration signal for the OI1 pacing rule. No DB / no UI / no dashboard — server-side log breadcrumbs only.
+23. No further per-iteration logs beyond the breadcrumb above. No DB schema changes. No UI dashboards.
 
 ### FR9 — UI surface — the primary V2 agent-creation page
 24. The new Phase 2 flow lives in the **primary V2 agent-creation page**: the route **`/v2/agents/new`**, served by **`app/v2/agents/new/page.tsx`**. This is the page users actually reach when they create an agent in the V2 product (per CLAUDE.md, `/app/v2/` is "V2 Dashboard and Sandbox (primary UI)").

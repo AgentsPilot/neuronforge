@@ -180,6 +180,54 @@ describe('Phase2ResponseSchema', () => {
       expect(Phase2ResponseSchema.safeParse(payload).success).toBe(false);
     });
   });
+
+  describe('ai_reasoning (E6 telemetry — optional in schema)', () => {
+    it('accepts a valid ai_reasoning string on a continue turn', () => {
+      const payload = {
+        question: textQuestion,
+        phase2_done: false,
+        ai_reasoning: 'The data source identifier is missing and cannot be defaulted.',
+      };
+      expect(Phase2ResponseSchema.safeParse(payload).success).toBe(true);
+    });
+
+    it('accepts a valid ai_reasoning string on a terminal turn', () => {
+      const payload = {
+        question: null,
+        phase2_done: true,
+        ai_reasoning: 'Core inputs are clear; remaining ambiguities can be safely defaulted in Phase 3.',
+      };
+      expect(Phase2ResponseSchema.safeParse(payload).success).toBe(true);
+    });
+
+    it('accepts an omitted ai_reasoning (optional in schema, REQUIRED in prompt)', () => {
+      const payload = { question: textQuestion, phase2_done: false };
+      expect(Phase2ResponseSchema.safeParse(payload).success).toBe(true);
+    });
+
+    it('rejects an empty ai_reasoning string (min length 1)', () => {
+      const payload = { question: textQuestion, phase2_done: false, ai_reasoning: '' };
+      expect(Phase2ResponseSchema.safeParse(payload).success).toBe(false);
+    });
+
+    it('rejects an ai_reasoning longer than 500 chars', () => {
+      const payload = {
+        question: textQuestion,
+        phase2_done: false,
+        ai_reasoning: 'a'.repeat(501),
+      };
+      expect(Phase2ResponseSchema.safeParse(payload).success).toBe(false);
+    });
+
+    it('rejects a non-string ai_reasoning (type guard)', () => {
+      const payload = {
+        question: textQuestion,
+        phase2_done: false,
+        ai_reasoning: { reason: 'nope' },
+      } as unknown;
+      expect(Phase2ResponseSchema.safeParse(payload).success).toBe(false);
+    });
+  });
 });
 
 describe('validatePhase2Response', () => {
