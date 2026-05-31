@@ -1,6 +1,6 @@
 # V6 Open Items — Consolidated Backlog
 
-> **Last Updated:** 2026-05-31 (WP-53 fixed; WP-54 next)
+> **Last Updated:** 2026-05-31 (WP-53 + WP-54 fixed)
 > **Purpose:** Single source of truth for everything that's deferred, partial, or "future" in V6. Aggregates from `V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_WEAK_POINTS.md`, `V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_INTENT_CONTRACT.md`, the regression `scenario.json` caveats, and session-level observations.
 
 ## How to use this doc
@@ -33,7 +33,6 @@ Sourced from [`V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_WEAK_POINTS.md`](./V6_
 | [WP-26](./V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_WEAK_POINTS.md#wp-26-o23-doesnt-recognize-project_columnby_index-as-a-positional-consumer) | O23 doesn't recognize `project_column.by_index` as positional consumer | ⬜ Future | User workaround: add header row to sheet. ~15 lines. |
 | [WP-27](./V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_WEAK_POINTS.md#wp-27-sheets-append_rows-shifts-to-non-A-column-when-existing-data-has-empty-cells) | Sheets `append_rows` shifts off column A on sparse data | ⬜ Future | User workaround: add header row. ~5 lines compiler-side normalization. |
 | [WP-51](./V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_WEAK_POINTS.md#wp-51-datapreprocessor-shape-heuristic-routing-into-lossy-specialized-preprocessors-architectural) | `DataPreprocessor` shape-heuristic routing into lossy specialized preprocessors — family of WP-50-class false positives | ⬜ Documented (architectural) | First family member fixed as [WP-50](./V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_WEAK_POINTS.md#wp-50-datapreprocessor-misclassifies-any-object-with-a-summary-field-as-a-calendar-event--silently-eats-ai_processing-input) (2026-05-30). Three remaining clauses at risk (email / transaction / contact). Three intervention options in the WP body: (A) schema-driven routing, (B) non-destructive preprocessor contract, (C) hybrid auto-fallback. Bundle when next family member surfaces. |
-| [WP-54](./V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_WEAK_POINTS.md#wp-54-parallelexecutor-production-mode-fail-fast-amplifies-per-item-failures-into-whole-run-failures) | `ParallelExecutor` production-mode fail-fast amplifies per-item failures into whole-run failures | ⬜ Documented (defence-in-depth for WP-53) | Surfaced as amplifier alongside [WP-53](#wp-53) on Contract Expiration Monitor agent: one bad item in a 7-item scatter killed the whole run. Fix: opt-in `scatter.continueOnError: true` with `_skipped[]` companion. 5-15 LOC. Bundle with WP-53 implementation. |
 
 ### P2 (Phase D / Phase A realism)
 
