@@ -1,6 +1,6 @@
 # V6 Open Items — Consolidated Backlog
 
-> **Last Updated:** 2026-05-30 (WP-50/WP-52 fixed, WP-51 documented)
+> **Last Updated:** 2026-05-31 (WP-53 + WP-54 documented; fixes planned next)
 > **Purpose:** Single source of truth for everything that's deferred, partial, or "future" in V6. Aggregates from `V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_WEAK_POINTS.md`, `V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_INTENT_CONTRACT.md`, the regression `scenario.json` caveats, and session-level observations.
 
 ## How to use this doc
@@ -22,6 +22,7 @@ Sourced from [`V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_WEAK_POINTS.md`](./V6_
 | WP | One-line summary | Status | Notes |
 |---|---|---|---|
 | ⭐ [WP-15](./V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_WEAK_POINTS.md#wp-15-ai-declared-output-slots-lose-item-level-shape) | AI-declared output slots lose item-level shape (grammar gap in `generate.outputs[]` / `extract.fields[]`) | ⬜ Not started | Concrete tasks queued in WORKPLAN_INTENT_CONTRACT 0.4–0.6 + 2.11. Largest open foundational item. |
+| ⭐ [WP-53](./V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_WEAK_POINTS.md#wp-53-phase-3-ir-author-drops-ep-level-plugin-filter-constraints-only-google-docs-only-pdfs-in-folder-x-when-authoring-stepparams) | Phase 3 IR-author drops EP-level filter constraints (*"only Google Docs"*, *"only PDFs"*, *"from sender X"*) when authoring `step.params` | ⬜ Documented (fix planned) | Surfaced 2026-05-31 on Contract Expiration Monitor agent. Same "EP says X, plugin supports X, IR drops X" family as [WP-44](./V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_WEAK_POINTS.md#wp-44-v6-formalization-drops-explicit-ep-format-requirements-html-vs-plain-text) (HTML format) and [WP-49](./V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_WEAK_POINTS.md#wp-49-convertnotify-emits-paramsrecipients-with-to-only--cc-and-bcc-silently-dropped) (cc/bcc). **Canonical fix:** extend Pipeline A intent-system prompt with EP-scan-for-filter-language guidance. Bundle Phase 3 prompt-fidelity work with WP-44. **Companion runtime mitigation:** [WP-54](#wp-54). |
 
 ### P1 (real-user impact, well-scoped fix)
 
@@ -33,6 +34,7 @@ Sourced from [`V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_WEAK_POINTS.md`](./V6_
 | [WP-26](./V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_WEAK_POINTS.md#wp-26-o23-doesnt-recognize-project_columnby_index-as-a-positional-consumer) | O23 doesn't recognize `project_column.by_index` as positional consumer | ⬜ Future | User workaround: add header row to sheet. ~15 lines. |
 | [WP-27](./V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_WEAK_POINTS.md#wp-27-sheets-append_rows-shifts-to-non-A-column-when-existing-data-has-empty-cells) | Sheets `append_rows` shifts off column A on sparse data | ⬜ Future | User workaround: add header row. ~5 lines compiler-side normalization. |
 | [WP-51](./V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_WEAK_POINTS.md#wp-51-datapreprocessor-shape-heuristic-routing-into-lossy-specialized-preprocessors-architectural) | `DataPreprocessor` shape-heuristic routing into lossy specialized preprocessors — family of WP-50-class false positives | ⬜ Documented (architectural) | First family member fixed as [WP-50](./V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_WEAK_POINTS.md#wp-50-datapreprocessor-misclassifies-any-object-with-a-summary-field-as-a-calendar-event--silently-eats-ai_processing-input) (2026-05-30). Three remaining clauses at risk (email / transaction / contact). Three intervention options in the WP body: (A) schema-driven routing, (B) non-destructive preprocessor contract, (C) hybrid auto-fallback. Bundle when next family member surfaces. |
+| [WP-54](./V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_WEAK_POINTS.md#wp-54-parallelexecutor-production-mode-fail-fast-amplifies-per-item-failures-into-whole-run-failures) | `ParallelExecutor` production-mode fail-fast amplifies per-item failures into whole-run failures | ⬜ Documented (defence-in-depth for WP-53) | Surfaced as amplifier alongside [WP-53](#wp-53) on Contract Expiration Monitor agent: one bad item in a 7-item scatter killed the whole run. Fix: opt-in `scatter.continueOnError: true` with `_skipped[]` companion. 5-15 LOC. Bundle with WP-53 implementation. |
 
 ### P2 (Phase D / Phase A realism)
 
