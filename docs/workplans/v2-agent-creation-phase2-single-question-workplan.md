@@ -645,6 +645,73 @@ So the prompt-side support is in place; the route just doesn't take advantage of
 
 ---
 
+## Fix F3 (2026-05-30) — Phase 3 retry hardening: schema normalizer + context-aware corrective nudge
+
+**Symptom (live test 2026-05-30, correlationId `08f08751-0926-44f5-b827-be203e5f23f7`):** a `Phase 3 response failed validation — retrying the Phase 3 completion once (with corrective nudge)` WARN fired with `validationErrors: ["enhanced_prompt.specifics.resolved_user_inputs.1.value: Invalid input"]` and crucially **`looksLikePhase2: false`**. The retry happened to succeed by re-sampling at temp 0.1 — pure dice-rolling. No user-visible impact, but the warning masks two real gaps surfaced by an external SA review.
+
+**Diagnosis — two distinct gaps:**
+
+1. **Phase 3 schema rejects valid-looking LLM emissions** — [`ResolvedUserInputSchema`](lib/validation/phase3-schema.ts#L48-L51) declares `value: z.union([z.string(), z.number()]).transform(v => String(v)).pipe(z.string().min(1))`. The normalizer at [phase3-schema.ts:113-137](lib/validation/phase3-schema.ts#L113-L137) only handles `Array.isArray(item.value)` (joins to a comma-separated string). Other common LLM emissions fall through to the strict union and fail Zod: `value: null` (optional/unspecified field), `value: true`/`false` (boolean toggle, e.g. "include images?"), `value: { from, to }` (object for a date range).
+
+2. **The retry's corrective nudge is hardcoded for the WRONG failure mode** — the [E2 corrective retry](#enhancement-e2-2026-05-29--phase-confusion-crash-fix-response-shape-reinforcement--corrective-retry) was added for the Phase 2 entrenchment case (LLM returns `{question, phase2_done}` on a phase-3 request). Its `correctiveTurn.content` at [route.ts:795](app/api/agent-creation/process-message/route.ts#L795) is literally *"Your previous reply was a Phase 2 single-question payload (it contained 'question'/'phase2_done')…"* — but it fires for **every** Phase 3 Zod failure, including schema-shape violations like (1). The route already computes `looksLikePhase2` at [route.ts:780-782](app/api/agent-creation/process-message/route.ts#L780-L782) but only uses it in the log payload — never to branch the nudge. So today the misaimed nudge tells the LLM to fix a problem it didn't have; the retry succeeds (when it does) by chance, not because the nudge addressed the real issue.
+
+**Fix (two layers, single commit):**
+
+**L1 — extend the normalizer ([phase3-schema.ts](lib/validation/phase3-schema.ts) line 113-137).** Same shape as the existing array-join pattern, covering the other LLM-quirk emissions:
+- `value === null || value === undefined` → drop the row (an unresolved input belongs in `user_inputs_required`, not `resolved_user_inputs`).
+- `typeof value === 'boolean'` → coerce to `'true'` / `'false'`.
+- `typeof value === 'object'` (non-array, non-null) → `JSON.stringify(value)`.
+- Filter out dropped rows before re-assigning the array.
+- Emit a Pino `debug` breadcrumb whenever the normalizer touches a row, so future LLM quirks aren't silent. Use the existing `requestLogger` plumbing if available, else a module-level debug log.
+
+**L2 — context-aware corrective nudge ([route.ts:790-795](app/api/agent-creation/process-message/route.ts#L790-L795)).** Branch on the already-computed `looksLikePhase2` flag:
+- `looksLikePhase2 === true` → keep the existing entrenchment nudge (unchanged copy).
+- `looksLikePhase2 === false` → emit a generic schema-violation nudge that interpolates `validation.errors.join('; ')` so the LLM gets the actual failing path (e.g., *"Your previous reply failed schema validation at: resolved_user_inputs[1].value: Invalid input. Re-emit the Phase 3 enhanced-prompt JSON object with these specific paths fixed."*). This makes the retry deterministic rather than dice-rolling, AND removes misleading log noise.
+
+**NOT done (deliberately):** a prompt-side rule in v16 saying "`value` must be a string or number." The schema-side defense is robust regardless of prompt rules; tightening v16 here would be a band-aid + tokens for negligible additional value. Skip per "don't add compensating complexity."
+
+**Scope:** [`lib/validation/phase3-schema.ts`](lib/validation/phase3-schema.ts) (normalizer + tests) + [`app/api/agent-creation/process-message/route.ts`](app/api/agent-creation/process-message/route.ts) (corrective-nudge branch). No DB / no UI / no prompt change. ~30 LOC across both files + ~4-6 new schema tests for the null / bool / object / mixed-row paths.
+
+**Severity:** warning-only today (retry masks user impact). Becomes user-visible if the LLM ever insists on the same bad shape twice — which the prior pure-dice-rolling retry could not recover from.
+
+**Status:** implemented 2026-05-30. `tsc` clean; 92/92 unit tests pass (8 new tests in [phase3-schema.test.ts](lib/validation/__tests__/phase3-schema.test.ts) lock the normalizer: string/number/array passthrough, null/undefined drop, boolean coercion, object JSON-stringify, mixed-quirk batch, and a sanity check that genuinely invalid rows still fail). Awaiting user's live re-test.
+
+---
+
+## Enhancement E9 (2026-05-30) — fold input-values save into `/api/create-agent` (eliminate the ~1.5 s race)
+
+**Observation (live test 2026-05-30):** After the user clicks the final create button, the page makes TWO sequential server calls — `POST /api/create-agent`, then `POST /api/agent-configurations/save-inputs` — separated by a ~1.1 s client gap (dev-mode JS + first-time route compile of save-inputs) and followed by the post-success message's `setTimeout(..., 1000)`. Total perceived wait ≈ **4.2 s** before the redirect. The dev-mode compile of `/v2/agents/[id]` (~9.6 s) is also visible to the user, but that's a `next dev` artifact that does NOT exist in production — only the ~4.2 s does.
+
+**The race risk that ruled out a simpler fix:** the V1 agent edit page at [`app/(protected)/agents/[id]/page.tsx`](app/(protected)/agents/[id]/page.tsx) runs `checkAgentConfiguration` on mount ([page.tsx:352-402](app/(protected)/agents/[id]/page.tsx#L352-L402)). It reads `input_values` from `agent_configurations` where `status = 'configured'`. The result drives `isConfigured`, which gates the activation button ([page.tsx:950](app/(protected)/agents/[id]/page.tsx#L950)). A naive fire-and-forget of save-inputs would let the user land on a freshly-created agent that briefly shows as "not configured" until the deferred save lands — and nothing on the page re-runs `checkAgentConfiguration` afterwards.
+
+**Design — server-side fold, single round-trip:**
+
+1. **`/api/create-agent` request schema** accepts an OPTIONAL `input_values: Record<string, unknown>` field (matches the `save-inputs` schema's contract). Backward-compatible: existing callers that omit it keep their behavior.
+2. **After the agent insert succeeds** (and the OpenAI thread link), if `input_values` is present and non-empty, call `agentConfigurationRepository.saveInputValues(agent.id, userId, input_values, { inputSchema: agentInput.input_schema, status: 'configured' })` — the same repository call the standalone route uses. The repository runs through `supabaseServer` so RLS bypass is intentional and already documented at the route level.
+3. **Failure isolation.** If `saveInputValues` fails, the agent already exists — we MUST NOT 500 the whole request and orphan the agent. Log a Pino warn breadcrumb, set `inputsSaved: false` on the response, and let the client decide (page currently logs errors only — no UI feedback path depends on this). The standalone save-inputs route still exists so the user can retry from the agent page if needed.
+4. **Audit log:** add an `AGENT_CONFIG_SAVED` non-blocking audit entry when the inline save succeeds (mirrors the standalone route's audit).
+5. **Response payload:** add `inputsSaved: boolean` so the client can detect a partial success.
+
+**Page changes ([app/v2/agents/new/page.tsx](app/v2/agents/new/page.tsx)):**
+- Include `input_values` in the `/api/create-agent` POST body when `Object.keys(inputParameterValues).length > 0`.
+- Drop the entire separate `await fetch('/api/agent-configurations/save-inputs', …)` block (~25 LOC removed).
+- Trim the post-success `setTimeout(router.push, 1000)` → **`300`** ms (Option A) — the success message remains briefly readable while the redirect's prefetch/transition starts.
+
+**The standalone `/api/agent-configurations/save-inputs` route stays** — it's still needed for **post-creation updates** (the agent edit page's input-config drawer saves through it). Only the agent-CREATION flow uses the folded path.
+
+**Expected savings (production):**
+- ~1 client→server hop and ~1 dev-compile cost eliminated (~500 ms–1 s).
+- ~700 ms shaved off the success-message timer.
+- **Total perceived improvement: ~1.5–2 s** (~4.2 s → ~2.3–2.7 s).
+
+**Race eliminated:** there is no longer a window where the page can read `agent_configurations` before save-inputs lands — both writes are done within the same server response.
+
+**Scope:** [`app/api/create-agent/route.ts`](app/api/create-agent/route.ts) (~30 LOC added) + [`app/v2/agents/new/page.tsx`](app/v2/agents/new/page.tsx) (one block removed, setTimeout tweak). No DB / no schema / no UI redesign. Standalone `/api/agent-configurations/save-inputs` untouched.
+
+**Status:** implemented 2026-05-30. `tsc` clean on edited files; 92/92 unit tests pass (no test additions — route has no unit harness; verified via tsc + live smoke). Standalone save-inputs route unchanged and still wired for post-creation edits. Awaiting user's live re-test.
+
+---
+
 ## SA Review
 
 **Reviewed by SA — 2026-05-27**

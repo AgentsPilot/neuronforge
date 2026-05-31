@@ -787,12 +787,23 @@ export async function POST(request: NextRequest) {
           }, 'Phase 3 response failed validation — retrying the Phase 3 completion once (with corrective nudge)');
 
           try {
-            // E2 #2: corrective turn so the retry isn't just a re-roll of the same
-            // (entrenched) context. Phrased as a user turn the model must obey.
+            // E2 #2 + F3 layer 2 (2026-05-30): corrective turn so the retry isn't just a
+            // re-roll of the same context. Branch on `looksLikePhase2` because the
+            // Phase 3 retry covers TWO distinct failure modes:
+            //   (a) Phase-2 entrenchment — LLM returned a `{question, phase2_done}`
+            //       payload on a phase:3 request after many Phase 2 turns. E2 message
+            //       tells it to switch to the enhanced-prompt shape.
+            //   (b) Schema-shape violation — the payload is shaped like Phase 3 but
+            //       fails Zod on a specific path (e.g. `resolved_user_inputs[1].value`
+            //       was a boolean/null/object before F3's normalizer caught those).
+            //       Naming the failing paths gives the LLM a concrete fix, instead of
+            //       the misleading Phase-2 message that previously fired here.
+            const correctiveTurnContent = looksLikePhase2
+              ? 'Your previous reply was a Phase 2 single-question payload (it contained "question"/"phase2_done"). This is a PHASE 3 request. Respond NOW with ONLY the Phase 3 enhanced-prompt JSON object (analysis, enhanced_prompt, requiredServices, missingPlugins, pluginWarning, clarityScore, conversationalSummary, metadata). Do NOT ask another question and do NOT include "question" or "phase2_done".'
+              : `Your previous reply was shaped like a Phase 3 response but failed schema validation at the following path(s): ${(validation.errors ?? []).join('; ')}. Re-emit the full Phase 3 enhanced-prompt JSON object with ONLY those specific paths fixed; keep every other field exactly as you had it. Common pitfalls: each \`enhanced_prompt.specifics.resolved_user_inputs[*].value\` MUST be a non-empty string or number (not null, not boolean, not object); each \`sections\` array MUST contain only non-empty strings; \`clarityScore\` MUST be a number between 0 and 100.`;
             const correctiveTurn = {
               role: 'user' as const,
-              content:
-                'Your previous reply was a Phase 2 single-question payload (it contained "question"/"phase2_done"). This is a PHASE 3 request. Respond NOW with ONLY the Phase 3 enhanced-prompt JSON object (analysis, enhanced_prompt, requiredServices, missingPlugins, pluginWarning, clarityScore, conversationalSummary, metadata). Do NOT ask another question and do NOT include "question" or "phase2_done".',
+              content: correctiveTurnContent,
             };
             const retryParams: any = {
               model: aiModel,

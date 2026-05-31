@@ -1472,8 +1472,15 @@ function V2AgentBuilderContent() {
     setIsCreatingAgent(true)
 
     try {
-      // Call /api/create-agent
-      console.log('📞 Calling /api/create-agent...')
+      // E9 (2026-05-30): fold input_values into a SINGLE /api/create-agent call.
+      // The route now inline-saves agent_configurations atomically with the agent
+      // insert (eliminates the prior ~1.5 s sequential save-inputs round-trip AND
+      // closes the race with the V1 agent edit page's on-mount checkAgentConfiguration).
+      // The standalone /api/agent-configurations/save-inputs route remains as the
+      // canonical write path for POST-creation updates from the agent edit page.
+      console.log('📞 Calling /api/create-agent (with input_values folded in — E9)...')
+      const hasInputValues =
+        Object.keys(inputParameterValues).length > 0
       const createRes = await fetch('/api/create-agent', {
         method: 'POST',
         headers: {
@@ -1486,7 +1493,8 @@ function V2AgentBuilderContent() {
           agent: agentData,
           sessionId: sessionId.current,
           agentId: agentId.current,
-          thread_id: threadId
+          thread_id: threadId,
+          ...(hasInputValues && { input_values: inputParameterValues })
         })
       })
 
@@ -1496,31 +1504,14 @@ function V2AgentBuilderContent() {
       }
 
       const result = await createRes.json()
-      console.log('✅ Agent created successfully:', result.agent?.id)
+      console.log('✅ Agent created successfully:', result.agent?.id, hasInputValues ? `(inputsSaved=${result.inputsSaved})` : '')
 
-      // Save input parameter values if any were collected
-      // Note: Use agentData.input_schema (full schema) not requiredInputs (only missing params)
-      if (Object.keys(inputParameterValues).length > 0 && result.agent?.id) {
-        console.log('💾 Saving input parameter values...')
-        try {
-          const saveInputsRes = await fetch('/api/agent-configurations/save-inputs', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              agent_id: result.agent.id,
-              input_values: inputParameterValues,
-              input_schema: agentData.input_schema || []
-            })
-          })
-
-          if (!saveInputsRes.ok) {
-            console.error('Failed to save input values')
-          } else {
-            console.log('✅ Input values saved successfully')
-          }
-        } catch (err) {
-          console.error('Error saving input values:', err)
-        }
+      // If inputs were sent but the inline save did not succeed, the agent
+      // exists but its configuration row is missing — surface that in console
+      // and the page-side audit. (The user can still configure from the agent
+      // edit page; we don't block the navigation.)
+      if (hasInputValues && result.inputsSaved === false) {
+        console.warn('⚠️ Agent created but inline input save failed — user can re-save from the agent edit page')
       }
 
       // Mark agent as created
@@ -1530,9 +1521,11 @@ function V2AgentBuilderContent() {
       stopThinkingWords()
       addAIMessage('Your agent has been created successfully! Taking you to your new agent...')
 
+      // E9 + Option A: 1000 ms → 300 ms. The message stays briefly readable
+      // while Next.js starts the route transition.
       setTimeout(() => {
         router.push(`/agents/${result.agent.id}`)
-      }, 1000)
+      }, 300)
 
     } catch (error: any) {
       console.error('❌ Agent creation error:', error)
