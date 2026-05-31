@@ -1,6 +1,6 @@
 # V6 Open Items — Consolidated Backlog
 
-> **Last Updated:** 2026-05-31 (WP-53 + WP-54 documented; fixes planned next)
+> **Last Updated:** 2026-05-31 (WP-53 fixed; WP-54 next)
 > **Purpose:** Single source of truth for everything that's deferred, partial, or "future" in V6. Aggregates from `V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_WEAK_POINTS.md`, `V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_INTENT_CONTRACT.md`, the regression `scenario.json` caveats, and session-level observations.
 
 ## How to use this doc
@@ -22,7 +22,6 @@ Sourced from [`V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_WEAK_POINTS.md`](./V6_
 | WP | One-line summary | Status | Notes |
 |---|---|---|---|
 | ⭐ [WP-15](./V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_WEAK_POINTS.md#wp-15-ai-declared-output-slots-lose-item-level-shape) | AI-declared output slots lose item-level shape (grammar gap in `generate.outputs[]` / `extract.fields[]`) | ⬜ Not started | Concrete tasks queued in WORKPLAN_INTENT_CONTRACT 0.4–0.6 + 2.11. Largest open foundational item. |
-| ⭐ [WP-53](./V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_WEAK_POINTS.md#wp-53-phase-3-ir-author-drops-ep-level-plugin-filter-constraints-only-google-docs-only-pdfs-in-folder-x-when-authoring-stepparams) | Phase 3 IR-author drops EP-level filter constraints (*"only Google Docs"*, *"only PDFs"*, *"from sender X"*) when authoring `step.params` | ⬜ Documented (fix planned) | Surfaced 2026-05-31 on Contract Expiration Monitor agent. Same "EP says X, plugin supports X, IR drops X" family as [WP-44](./V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_WEAK_POINTS.md#wp-44-v6-formalization-drops-explicit-ep-format-requirements-html-vs-plain-text) (HTML format) and [WP-49](./V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_WEAK_POINTS.md#wp-49-convertnotify-emits-paramsrecipients-with-to-only--cc-and-bcc-silently-dropped) (cc/bcc). **Canonical fix:** extend Pipeline A intent-system prompt with EP-scan-for-filter-language guidance. Bundle Phase 3 prompt-fidelity work with WP-44. **Companion runtime mitigation:** [WP-54](#wp-54). |
 
 ### P1 (real-user impact, well-scoped fix)
 
