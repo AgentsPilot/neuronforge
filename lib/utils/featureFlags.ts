@@ -45,21 +45,14 @@ export function useThreadBasedAgentCreation(): boolean {
   return parseBooleanFlag(flag);
 }
 
-/**
- * Check if enhanced technical workflow review (V5 generator) is enabled
- *
- * When enabled, the technical workflow path uses LLM-based review and repair
- * before DSL building. This adds validation against plugin schemas and can
- * fix issues like missing steps or invalid references.
- *
- * Server-side only (no NEXT_PUBLIC_ prefix).
- *
- * @returns {boolean} True to use V5 generator with LLM review, false for V4
- */
-export function useEnhancedTechnicalWorkflowReview(): boolean {
-  const flag = process.env.USE_AGENT_GENERATION_ENHANCED_TECHNICAL_WORKFLOW_REVIEW;
-  return parseBooleanFlag(flag);
-}
+// Retired 2026-05-31: USE_AGENT_GENERATION_ENHANCED_TECHNICAL_WORKFLOW_REVIEW
+// flag + useEnhancedTechnicalWorkflowReview() helper were a rollout safety net
+// for picking between V4 (standard) and V5 (LLM-reviewed) generators inside
+// /api/generate-agent-v4. Git log shows the flag was never enabled in any
+// commit since its introduction (c29c93f), and the V4 route itself is now the
+// dormant fallback when NEXT_PUBLIC_USE_V6_AGENT_GENERATION=true (V6 is the
+// production primary). Route collapsed to V4-only; V5WorkflowGenerator source
+// kept for now (broader V4/V5 stack retirement is a separate cleanup).
 
 /**
  * Check if new conversational UI V2 is enabled
@@ -124,7 +117,6 @@ export function getFeatureFlags() {
   return {
     useThreadBasedAgentCreation: useThreadBasedAgentCreation(),
     useNewAgentCreationUI: useNewAgentCreationUI(),
-    useEnhancedTechnicalWorkflowReview: useEnhancedTechnicalWorkflowReview(),
     useV6AgentGeneration: useV6AgentGeneration(),
     useV6ReviewMode: useV6ReviewMode(),
   };

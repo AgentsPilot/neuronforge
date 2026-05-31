@@ -40,7 +40,6 @@ Feature flag functions are defined in:
 |------|---------------------|-------|---------|---------------|
 | V6 Agent Generation | `NEXT_PUBLIC_USE_V6_AGENT_GENERATION` | Client | `false` | `/v2/agents/new`, `/test-plugins-v2` |
 | V6 Review Mode | `NEXT_PUBLIC_USE_V6_REVIEW_MODE` | Client | `true` | `/v2/agents/new`, `/test-plugins-v2` |
-| Enhanced Technical Workflow Review | `USE_AGENT_GENERATION_ENHANCED_TECHNICAL_WORKFLOW_REVIEW` | Server | `false` | `/v2/agents/new`, `/test-plugins-v2` (via API) |
 | Thread-Based Agent Creation | `NEXT_PUBLIC_USE_THREAD_BASED_AGENT_CREATION` | Client | `false` | Legacy: `/agents/new/chat` only |
 | New Agent Creation UI | `NEXT_PUBLIC_USE_NEW_AGENT_CREATION_UI` | Client | `false` | Legacy: `/agents/new/chat` only |
 
@@ -124,32 +123,19 @@ if (useV6) {
 
 ---
 
-### 3. Enhanced Technical Workflow Review (V5 Generator)
+### 3. Enhanced Technical Workflow Review (V5 Generator) — RETIRED 2026-05-31
 
-**Environment Variable**: `USE_AGENT_GENERATION_ENHANCED_TECHNICAL_WORKFLOW_REVIEW`
+The `USE_AGENT_GENERATION_ENHANCED_TECHNICAL_WORKFLOW_REVIEW` flag and the
+`useEnhancedTechnicalWorkflowReview()` helper were retired on 2026-05-31. Git
+log showed the flag was never enabled in any commit since its introduction
+(`c29c93f`), and `/api/generate-agent-v4` itself is now the dormant fallback —
+the production primary is the V6 pipeline at `/api/v6/generate-ir-intent-contract`
+(see `NEXT_PUBLIC_USE_V6_AGENT_GENERATION` above). The route was collapsed to
+V4-only; the `V5WorkflowGenerator` source is kept for now, but no live code
+references it. Mirrors the precedent set by the retired `NEXT_PUBLIC_USE_V6_PIPELINE_A`.
 
-**Purpose**: Enables the V5 workflow generator with LLM-based technical workflow review and repair before DSL building. Validates against plugin schemas and fixes issues like missing steps or invalid references.
-
-**Function**: `useEnhancedTechnicalWorkflowReview()`
-
-**Used In**:
-- [generate-agent-v4/route.ts](app/api/generate-agent-v4/route.ts)
-
-**Values**:
-- `true` or `1` - Use V5 generator with LLM review
-- `false`, `0`, or omit - Use V4 generator
-
-> **Note**: This is a server-side only flag (no `NEXT_PUBLIC_` prefix). It cannot be accessed from client-side code.
-
-```typescript
-import { useEnhancedTechnicalWorkflowReview } from '@/lib/utils/featureFlags';
-
-const useV5 = useEnhancedTechnicalWorkflowReview();
-
-const generator = useV5
-  ? new V5WorkflowGenerator(plugins, userId, agentId)
-  : new V4WorkflowGenerator(plugins, userId, agentId);
-```
+If you set `USE_AGENT_GENERATION_ENHANCED_TECHNICAL_WORKFLOW_REVIEW` in
+`.env.local` you can now safely remove it — nothing reads it anymore.
 
 ---
 
@@ -224,7 +210,6 @@ return useNewUI ? (
 # Active Feature Flags (v2/agents/new, test-plugins-v2)
 NEXT_PUBLIC_USE_V6_AGENT_GENERATION=false
 NEXT_PUBLIC_USE_V6_REVIEW_MODE=true  # Only has effect when V6 is enabled
-USE_AGENT_GENERATION_ENHANCED_TECHNICAL_WORKFLOW_REVIEW=false
 
 # Legacy Feature Flags (agents/new/chat only)
 NEXT_PUBLIC_USE_THREAD_BASED_AGENT_CREATION=false
@@ -242,10 +227,6 @@ NEXT_PUBLIC_USE_V6_REVIEW_MODE=true  # or omit (true by default)
 NEXT_PUBLIC_USE_V6_AGENT_GENERATION=true
 NEXT_PUBLIC_USE_V6_REVIEW_MODE=false
 
-# Test V5 generator (LLM review) with V4 flow
-NEXT_PUBLIC_USE_V6_AGENT_GENERATION=false
-USE_AGENT_GENERATION_ENHANCED_TECHNICAL_WORKFLOW_REVIEW=true
-
 # Test legacy route with thread-based flow
 NEXT_PUBLIC_USE_THREAD_BASED_AGENT_CREATION=true
 NEXT_PUBLIC_USE_NEW_AGENT_CREATION_UI=true
@@ -256,7 +237,6 @@ NEXT_PUBLIC_USE_NEW_AGENT_CREATION_UI=true
 ```bash
 # Current recommended setup
 NEXT_PUBLIC_USE_V6_AGENT_GENERATION=false  # Enable when V6 is stable
-USE_AGENT_GENERATION_ENHANCED_TECHNICAL_WORKFLOW_REVIEW=true
 
 # Legacy route (if still in use)
 NEXT_PUBLIC_USE_THREAD_BASED_AGENT_CREATION=true
@@ -279,7 +259,6 @@ const flags = getFeatureFlags();
 // {
 //   useV6AgentGeneration: boolean,
 //   useV6ReviewMode: boolean,              // Defaults to true
-//   useEnhancedTechnicalWorkflowReview: boolean,
 //   useThreadBasedAgentCreation: boolean,  // Legacy
 //   useNewAgentCreationUI: boolean,        // Legacy
 // }
@@ -512,7 +491,6 @@ export function useMyNewFeature(): boolean {
 export function getFeatureFlags() {
   return {
     useV6AgentGeneration: useV6AgentGeneration(),
-    useEnhancedTechnicalWorkflowReview: useEnhancedTechnicalWorkflowReview(),
     useThreadBasedAgentCreation: useThreadBasedAgentCreation(),
     useNewAgentCreationUI: useNewAgentCreationUI(),
     useMyNewFeature: useMyNewFeature(), // Add here
