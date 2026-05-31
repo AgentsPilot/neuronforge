@@ -1756,7 +1756,16 @@ export class StructuralRepairEngine {
       if (rootVar === currentStepId) continue;
 
       // Skip known built-in variables
-      const builtins = new Set(['current_item', 'current_email', 'current_row', 'index', 'context']);
+      // WP-52: `input` and `config` are runtime config namespaces — every
+      // workflow uses `{{input.X}}` for its parameters; older Pipeline-B
+      // output sometimes emitted `{{config.X}}` (a separate check at L403
+      // rewrites those to `input.X` regardless). Without these, every config
+      // reference false-positives as a broken_variable_reference, and the
+      // fuzzy-match path would risk auto-rewriting them into the wrong step.
+      const builtins = new Set([
+        'input', 'config',
+        'current_item', 'current_email', 'current_row', 'index', 'context'
+      ]);
       if (builtins.has(rootVar)) continue;
 
       // This is a broken reference - try to suggest a correction
