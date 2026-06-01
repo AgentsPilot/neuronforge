@@ -1,6 +1,6 @@
 # V6 Open Items — Consolidated Backlog
 
-> **Last Updated:** 2026-06-01 (WP-55 documented, planned)
+> **Last Updated:** 2026-06-01 (WP-55 fixed)
 > **Purpose:** Single source of truth for everything that's deferred, partial, or "future" in V6. Aggregates from `V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_WEAK_POINTS.md`, `V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_INTENT_CONTRACT.md`, the regression `scenario.json` caveats, and session-level observations.
 
 ## How to use this doc
@@ -39,7 +39,6 @@ Sourced from [`V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_WEAK_POINTS.md`](./V6_
 | WP | One-line summary | Status | Notes |
 |---|---|---|---|
 | [WP-19](./V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_WEAK_POINTS.md#wp-19-ai_processing-on-array-input-bulk-vs-per-item) | `ai_processing` on array input runs as single bulk call instead of scatter-gather | ⬜ Future / latent | Revisit when Phase E observes token bloat or item drop. |
-| ⭐ [WP-55](./V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_WEAK_POINTS.md#wp-55-phase-1-intentcontract--phase-2-data_schema-not-persisted-on-the-agents-row--production-diagnosis-of-llm-emission-variance-requires-non-deterministic-llm-re-runs) | Phase 1 IntentContract + Phase 2 data_schema not persisted on the agents row → production diagnosis of LLM emission variance requires non-deterministic LLM re-runs | ⬜ Planned (implementation following the WP entry) | Surfaced 2026-06-01 during the contracts-googledocs-v2ui-pipeline-a investigation: agent's Phase 1 emission wasn't recoverable post-hoc; re-run produced a different (correct) emission. Fix: extend `agent_config.ai_context` with `intent_contract` + `data_schema`. ~80 LOC, no schema migration. |
 
 ### P3 (lower priority / defer)
 
