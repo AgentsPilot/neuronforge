@@ -1,0 +1,550 @@
+{
+  "version": "intent.v1",
+  "goal": "Scan Google Docs in the Drive 'Contracts' folder, extract contract end/expiration dates, and email an HTML summary table of contracts ending within the next 30 days (plus documents where no end date was found) to specified recipients.",
+  "unit_of_work": {
+    "entity": "contract_document",
+    "parent_entity": "folder"
+  },
+  "config": [
+    {
+      "key": "contracts_folder_name",
+      "type": "string",
+      "description": "Name of the Google Drive folder containing contract documents",
+      "default": "Contracts"
+    },
+    {
+      "key": "days_window",
+      "type": "number",
+      "description": "Number of days ahead to check for expiring contracts",
+      "default": 30
+    },
+    {
+      "key": "email_to",
+      "type": "string",
+      "description": "Primary email recipient",
+      "default": "meiribarak@gmail.com"
+    },
+    {
+      "key": "email_cc_1",
+      "type": "string",
+      "description": "First CC recipient",
+      "default": "offir.omer@gmail.com"
+    },
+    {
+      "key": "email_cc_2",
+      "type": "string",
+      "description": "Second CC recipient",
+      "default": "eomer3@gmail.com"
+    },
+    {
+      "key": "email_subject",
+      "type": "string",
+      "description": "Subject line for the summary email",
+      "default": "Contracts ending in the next 30 days (Contracts folder)"
+    }
+  ],
+  "invariants": [
+    "Only Google Docs documents directly inside the Contracts folder are considered (no subfolders)",
+    "Dates must be normalized to YYYY-MM-DD format for comparison",
+    "Documents with no extractable end date must still appear in the report marked as 'End date not found'",
+    "Report is sorted: soonest-expiring first, then 'End date not found' items at the bottom",
+    "Email is always sent even if no contracts are expiring soon"
+  ],
+  "required_outcomes": [
+    "An HTML email is sent to the specified recipients containing a summary table of contracts ending within the configured window and contracts with missing end dates",
+    "Each included contract shows document name, document link, end date (or 'End date not found'), days remaining, and notes"
+  ],
+  "steps": [
+    {
+      "id": "find_contracts_folder",
+      "kind": "artifact",
+      "summary": "Find the Google Drive folder named 'Contracts' (get existing folder)",
+      "uses": [
+        {
+          "capability": "upsert",
+          "domain": "storage",
+          "preferences": {
+            "provider_family": "google"
+          }
+        }
+      ],
+      "output": "contracts_folder",
+      "artifact": {
+        "domain": "storage",
+        "type": "folder",
+        "strategy": "get_or_create",
+        "name_hint": "Contracts",
+        "options": {
+          "folder_name": {
+            "kind": "config",
+            "key": "contracts_folder_name"
+          }
+        }
+      }
+    },
+    {
+      "id": "list_docs_in_folder",
+      "kind": "data_source",
+      "summary": "List only Google Docs files directly inside the Contracts folder (non-recursive, filtered to Google Docs type)",
+      "uses": [
+        {
+          "capability": "list",
+          "domain": "storage",
+          "preferences": {
+            "provider_family": "google"
+          }
+        }
+      ],
+      "inputs": [
+        "contracts_folder"
+      ],
+      "output": "contract_docs",
+      "source": {
+        "domain": "storage",
+        "intent": "list"
+      },
+      "payload": {
+        "folder_id": {
+          "kind": "ref",
+          "ref": "contracts_folder",
+          "field": "folder_id"
+        },
+        "file_types": {
+          "kind": "literal",
+          "value": [
+            "document"
+          ]
+        },
+        "max_results": {
+          "kind": "literal",
+          "value": 100
+        }
+      },
+      "retrieval": {
+        "max_results": 100,
+        "include_metadata": true
+      }
+    },
+    {
+      "id": "process_each_contract",
+      "kind": "loop",
+      "summary": "For each Google Doc contract, read its content and extract end/expiration date information",
+      "inputs": [
+        "contract_docs"
+      ],
+      "output": "contract_analysis_results",
+      "loop": {
+        "over": "contract_docs",
+        "item_ref": "contract_doc",
+        "unit_of_work": {
+          "entity": "contract_document"
+        },
+        "collect": {
+          "enabled": true,
+          "collect_as": "contract_analysis_results",
+          "from_step_output": "extracted_contract_info"
+        },
+        "do": [
+          {
+            "id": "read_doc_content",
+            "kind": "data_source",
+            "summary": "Read the full text content of the contract document",
+            "uses": [
+              {
+                "capability": "fetch_content",
+                "domain": "storage",
+                "preferences": {
+                  "provider_family": "google"
+                }
+              }
+            ],
+            "inputs": [
+              "contract_doc"
+            ],
+            "output": "doc_content",
+            "source": {
+              "domain": "storage",
+              "intent": "fetch_content"
+            },
+            "payload": {
+              "file_id": {
+                "kind": "ref",
+                "ref": "contract_doc",
+                "field": "id"
+              },
+              "export_format": {
+                "kind": "literal",
+                "value": "text/plain"
+              }
+            }
+          },
+          {
+            "id": "extract_expiration_date",
+            "kind": "generate",
+            "summary": "Extract the contract end/expiration date from the document text using label-aware scanning, normalize to YYYY-MM-DD, and handle ambiguity",
+            "uses": [
+              {
+                "capability": "generate",
+                "domain": "internal"
+              }
+            ],
+            "inputs": [
+              "doc_content",
+              "contract_doc"
+            ],
+            "output": "extracted_contract_info",
+            "generate": {
+              "input": "doc_content",
+              "instruction": "Analyze the document text content to find the contract end or expiration date. Look for labels such as 'End Date', 'Expiration Date', 'Expiry Date', 'Term ends', 'Termination Date', 'Valid until', and similar phrases. If multiple candidate end/expiration dates are found, prefer the date closest to the phrases 'End Date' or 'Expiration Date'. If still ambiguous, choose the latest date and set has_multiple_dates to true. Normalize the extracted date to YYYY-MM-DD format. If no end/expiration date can be found at all, set end_date to null and end_date_found to false. Also include the document name and webViewLink from the contract_doc metadata.",
+              "reason": "Requires semantic reasoning to identify date labels in unstructured contract text, resolve ambiguity between multiple candidate dates, and determine which date represents the contract end/expiration",
+              "outputs": [
+                {
+                  "name": "document_name",
+                  "type": "string",
+                  "description": "Name of the contract document from metadata"
+                },
+                {
+                  "name": "document_link",
+                  "type": "string",
+                  "description": "Web view link to the document from metadata"
+                },
+                {
+                  "name": "end_date",
+                  "type": "string",
+                  "description": "Extracted end/expiration date in YYYY-MM-DD format, or null if not found"
+                },
+                {
+                  "name": "end_date_found",
+                  "type": "boolean",
+                  "description": "Whether an end/expiration date was successfully extracted"
+                },
+                {
+                  "name": "has_multiple_dates",
+                  "type": "boolean",
+                  "description": "Whether multiple candidate end/expiration dates were found in the document"
+                },
+                {
+                  "name": "notes",
+                  "type": "string",
+                  "description": "Any notes about the extraction, e.g. 'Multiple possible dates found' or empty string"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "add_computed_fields",
+      "kind": "transform",
+      "summary": "Add days_remaining and date_window_end fields to each contract analysis result for filtering and display",
+      "inputs": [
+        "contract_analysis_results"
+      ],
+      "output": "contracts_with_days",
+      "transform": {
+        "op": "with_fields",
+        "input": "contract_analysis_results",
+        "fields": [
+          {
+            "name": "date_window_end",
+            "expression": {
+              "kind": "date_add",
+              "date": {
+                "kind": "today"
+              },
+              "days": {
+                "kind": "config",
+                "key": "days_window"
+              }
+            }
+          },
+          {
+            "name": "days_remaining",
+            "expression": {
+              "kind": "if",
+              "condition": {
+                "op": "test",
+                "left": {
+                  "kind": "ref",
+                  "ref": "contract_analysis_results",
+                  "field": "end_date_found"
+                },
+                "comparator": "eq",
+                "right": {
+                  "kind": "literal",
+                  "value": true
+                }
+              },
+              "then": {
+                "kind": "date_diff",
+                "unit": "days",
+                "left": {
+                  "kind": "ref",
+                  "ref": "contract_analysis_results",
+                  "field": "end_date"
+                },
+                "right": {
+                  "kind": "today"
+                }
+              },
+              "else": {
+                "kind": "literal",
+                "value": null
+              }
+            }
+          }
+        ],
+        "output_schema": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "document_name": {
+                "type": "string"
+              },
+              "document_link": {
+                "type": "string"
+              },
+              "end_date": {
+                "type": "string"
+              },
+              "end_date_found": {
+                "type": "boolean"
+              },
+              "has_multiple_dates": {
+                "type": "boolean"
+              },
+              "notes": {
+                "type": "string"
+              },
+              "date_window_end": {
+                "type": "string"
+              },
+              "days_remaining": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "document_name",
+              "document_link",
+              "end_date_found",
+              "days_remaining",
+              "date_window_end"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "filter_reportable_contracts",
+      "kind": "transform",
+      "summary": "Keep contracts where end date is within the next 30 days OR where no end date was found",
+      "inputs": [
+        "contracts_with_days"
+      ],
+      "output": "reportable_contracts",
+      "transform": {
+        "op": "filter",
+        "input": "contracts_with_days",
+        "description": "Include contracts ending within the configured window (days_remaining >= 0 and days_remaining <= days_window) OR contracts where no end date was found",
+        "where": {
+          "op": "or",
+          "conditions": [
+            {
+              "op": "test",
+              "left": {
+                "kind": "ref",
+                "ref": "contracts_with_days",
+                "field": "end_date_found"
+              },
+              "comparator": "eq",
+              "right": {
+                "kind": "literal",
+                "value": false
+              }
+            },
+            {
+              "op": "and",
+              "conditions": [
+                {
+                  "op": "test",
+                  "left": {
+                    "kind": "ref",
+                    "ref": "contracts_with_days",
+                    "field": "days_remaining"
+                  },
+                  "comparator": "gte",
+                  "right": {
+                    "kind": "literal",
+                    "value": 0
+                  }
+                },
+                {
+                  "op": "test",
+                  "left": {
+                    "kind": "ref",
+                    "ref": "contracts_with_days",
+                    "field": "days_remaining"
+                  },
+                  "comparator": "lte",
+                  "right": {
+                    "kind": "config",
+                    "key": "days_window"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "compute_report_metrics",
+      "kind": "aggregate",
+      "summary": "Compute counts of expiring-soon contracts and missing-date contracts for the email header",
+      "inputs": [
+        "reportable_contracts"
+      ],
+      "output": "report_metrics",
+      "aggregate": {
+        "input": "reportable_contracts",
+        "outputs": [
+          {
+            "name": "total_reportable",
+            "type": "count"
+          },
+          {
+            "name": "expiring_soon_contracts",
+            "type": "subset",
+            "where": {
+              "op": "test",
+              "left": {
+                "kind": "ref",
+                "ref": "reportable_contracts",
+                "field": "end_date_found"
+              },
+              "comparator": "eq",
+              "right": {
+                "kind": "literal",
+                "value": true
+              }
+            }
+          },
+          {
+            "name": "missing_date_contracts",
+            "type": "subset",
+            "where": {
+              "op": "test",
+              "left": {
+                "kind": "ref",
+                "ref": "reportable_contracts",
+                "field": "end_date_found"
+              },
+              "comparator": "eq",
+              "right": {
+                "kind": "literal",
+                "value": false
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "generate_html_email",
+      "kind": "generate",
+      "summary": "Build the HTML email body with a summary header and a sorted table of reportable contracts (soonest-expiring first, missing-date items last)",
+      "uses": [
+        {
+          "capability": "generate",
+          "domain": "internal"
+        }
+      ],
+      "inputs": [
+        "reportable_contracts",
+        "total_reportable",
+        "expiring_soon_contracts",
+        "missing_date_contracts"
+      ],
+      "output": "email_content",
+      "generate": {
+        "format": "html",
+        "instruction": "Generate a professional HTML email body for a contract expiration report. The email should include: 1) A brief header summary stating how many contracts are expiring within 30 days and how many have missing end dates (use the total_reportable count, expiring_soon_contracts count, and missing_date_contracts count). 2) If total_reportable is 0, display a clear message: 'No contracts ending in the next 30 days.' and skip the table. 3) If there are reportable contracts, build an HTML table with columns: Document Name (as a clickable hyperlink using document_link), End/Expiration Date (show 'End date not found' if end_date_found is false), Days Remaining (blank if end_date_found is false), and Notes (show 'Multiple possible dates found' if has_multiple_dates is true, otherwise blank). 4) Sort the table rows so contracts with the fewest days_remaining appear first, and contracts with no end date appear at the bottom. 5) Style the table with professional formatting: borders, header row with background color, padding, and readable fonts. Use inline CSS for email compatibility.",
+        "reason": "Requires semantic composition of an HTML email body with conditional content (empty-state message vs populated table), dynamic sorting logic, and professional styling — no template structure available",
+        "outputs": [
+          {
+            "name": "html_body",
+            "type": "string",
+            "description": "Complete HTML email body with summary header and styled table"
+          },
+          {
+            "name": "summary_line",
+            "type": "string",
+            "description": "Short plain-text summary for reference (e.g., '3 contracts expiring soon, 1 missing end date')"
+          }
+        ]
+      }
+    },
+    {
+      "id": "send_summary_email",
+      "kind": "notify",
+      "summary": "Send the HTML contract expiration summary email to the specified recipients",
+      "uses": [
+        {
+          "capability": "send_message",
+          "domain": "email",
+          "preferences": {
+            "provider_family": "google"
+          }
+        }
+      ],
+      "inputs": [
+        "email_content"
+      ],
+      "notify": {
+        "channel": "email",
+        "recipients": {
+          "to": [
+            {
+              "kind": "config",
+              "key": "email_to"
+            }
+          ],
+          "cc": [
+            {
+              "kind": "config",
+              "key": "email_cc_1"
+            },
+            {
+              "kind": "config",
+              "key": "email_cc_2"
+            }
+          ]
+        },
+        "content": {
+          "subject": {
+            "kind": "config",
+            "key": "email_subject"
+          },
+          "body": {
+            "kind": "ref",
+            "ref": "email_content",
+            "field": "html_body"
+          },
+          "format": "html"
+        }
+      }
+    }
+  ],
+  "confidence": 0.88,
+  "meta": {
+    "estimated_steps_per_run": "Variable: 3 fixed steps + N loop iterations (one per Google Doc in Contracts folder) + 4 post-loop steps",
+    "key_assumptions": [
+      "The 'Contracts' folder already exists in Google Drive",
+      "Contract documents are Google Docs (native format), not uploaded PDFs or other file types",
+      "End/expiration dates in contracts are expressed in recognizable date formats near standard labels",
+      "The read_file_content action with text/plain export provides sufficient text for date extraction from Google Docs"
+    ]
+  }
+}

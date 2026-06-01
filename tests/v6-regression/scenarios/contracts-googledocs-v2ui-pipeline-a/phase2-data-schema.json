@@ -1,0 +1,706 @@
+{
+  "slots": {
+    "contracts_folder": {
+      "schema": {
+        "type": "object",
+        "source": "plugin",
+        "properties": {
+          "folder_id": {
+            "type": "string",
+            "source": "plugin",
+            "description": "ID of the folder (existing or newly created)"
+          },
+          "folder_name": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Name of the folder"
+          },
+          "web_view_link": {
+            "type": "string",
+            "source": "plugin",
+            "description": "URL to view the folder"
+          },
+          "parent_folder_id": {
+            "type": "string",
+            "source": "plugin",
+            "description": "ID of the parent folder"
+          },
+          "created": {
+            "type": "boolean",
+            "source": "plugin",
+            "description": "True if folder was newly created, false if it already existed"
+          },
+          "created_at": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Timestamp when folder was created (if new) or found (if existing)"
+          }
+        }
+      },
+      "scope": "global",
+      "produced_by": "find_contracts_folder",
+      "consumed_by": [
+        "list_docs_in_folder"
+      ]
+    },
+    "contract_docs": {
+      "schema": {
+        "type": "object",
+        "source": "plugin",
+        "properties": {
+          "files": {
+            "type": "array",
+            "source": "plugin",
+            "description": "List of files and folders",
+            "items": {
+              "type": "object",
+              "source": "plugin",
+              "semantic_type": "file_attachment",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "Unique file ID"
+                },
+                "name": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "File or folder name"
+                },
+                "mimeType": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "MIME type of the file"
+                },
+                "size": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "File size in bytes"
+                },
+                "createdTime": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "Creation timestamp (ISO 8601)"
+                },
+                "modifiedTime": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "Last modification timestamp (ISO 8601)"
+                },
+                "webViewLink": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "URL to view the file"
+                },
+                "shared": {
+                  "type": "boolean",
+                  "source": "plugin",
+                  "description": "Whether file is shared"
+                },
+                "starred": {
+                  "type": "boolean",
+                  "source": "plugin",
+                  "description": "Whether file is starred"
+                }
+              }
+            }
+          },
+          "file_count": {
+            "type": "number",
+            "source": "plugin",
+            "description": "Number of files returned"
+          },
+          "next_page_token": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Token for fetching next page of results"
+          },
+          "has_more": {
+            "type": "boolean",
+            "source": "plugin",
+            "description": "Whether more files are available"
+          },
+          "query_used": {
+            "type": "string",
+            "source": "plugin",
+            "description": "The query used to filter results"
+          },
+          "retrieved_at": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Timestamp when data was retrieved (ISO 8601)"
+          }
+        }
+      },
+      "scope": "global",
+      "produced_by": "list_docs_in_folder",
+      "consumed_by": [
+        "process_each_contract"
+      ]
+    },
+    "contract_doc": {
+      "schema": {
+        "type": "object",
+        "source": "inferred",
+        "semantic_type": "file_attachment",
+        "properties": {
+          "id": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Unique file ID"
+          },
+          "name": {
+            "type": "string",
+            "source": "plugin",
+            "description": "File or folder name"
+          },
+          "mimeType": {
+            "type": "string",
+            "source": "plugin",
+            "description": "MIME type of the file"
+          },
+          "size": {
+            "type": "string",
+            "source": "plugin",
+            "description": "File size in bytes"
+          },
+          "createdTime": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Creation timestamp (ISO 8601)"
+          },
+          "modifiedTime": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Last modification timestamp (ISO 8601)"
+          },
+          "webViewLink": {
+            "type": "string",
+            "source": "plugin",
+            "description": "URL to view the file"
+          },
+          "shared": {
+            "type": "boolean",
+            "source": "plugin",
+            "description": "Whether file is shared"
+          },
+          "starred": {
+            "type": "boolean",
+            "source": "plugin",
+            "description": "Whether file is starred"
+          }
+        }
+      },
+      "scope": "loop",
+      "produced_by": "process_each_contract",
+      "consumed_by": [
+        "read_doc_content",
+        "extract_expiration_date"
+      ]
+    },
+    "contract_analysis_results": {
+      "schema": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "document_name": {
+              "type": "string",
+              "source": "ai_declared",
+              "description": "Name of the contract document from metadata"
+            },
+            "document_link": {
+              "type": "string",
+              "source": "ai_declared",
+              "description": "Web view link to the document from metadata"
+            },
+            "end_date": {
+              "type": "string",
+              "source": "ai_declared",
+              "description": "Extracted end/expiration date in YYYY-MM-DD format, or null if not found"
+            },
+            "end_date_found": {
+              "type": "boolean",
+              "source": "ai_declared",
+              "description": "Whether an end/expiration date was successfully extracted"
+            },
+            "has_multiple_dates": {
+              "type": "boolean",
+              "source": "ai_declared",
+              "description": "Whether multiple candidate end/expiration dates were found in the document"
+            },
+            "notes": {
+              "type": "string",
+              "source": "ai_declared",
+              "description": "Any notes about the extraction, e.g. 'Multiple possible dates found' or empty string"
+            }
+          },
+          "source": "ai_declared"
+        },
+        "source": "inferred"
+      },
+      "scope": "global",
+      "produced_by": "process_each_contract",
+      "consumed_by": [
+        "add_computed_fields"
+      ]
+    },
+    "doc_content": {
+      "schema": {
+        "type": "object",
+        "source": "plugin",
+        "properties": {
+          "file_id": {
+            "type": "string",
+            "source": "plugin",
+            "description": "ID of the file that was read"
+          },
+          "file_name": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Name of the file"
+          },
+          "file_size": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Human-readable file size (e.g., '1.5 MB')"
+          },
+          "mime_type": {
+            "type": "string",
+            "source": "plugin",
+            "description": "MIME type of the file"
+          },
+          "content": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Text content extracted from the file"
+          },
+          "content_length": {
+            "type": "number",
+            "source": "plugin",
+            "description": "Length of the extracted content in characters"
+          },
+          "export_format": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Format the file was exported as (text/plain, text/html, or 'original')"
+          },
+          "read_at": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Timestamp when file was read (ISO 8601)"
+          }
+        }
+      },
+      "scope": "loop",
+      "produced_by": "read_doc_content",
+      "consumed_by": [
+        "extract_expiration_date"
+      ]
+    },
+    "extracted_contract_info": {
+      "schema": {
+        "type": "object",
+        "properties": {
+          "document_name": {
+            "type": "string",
+            "source": "ai_declared",
+            "description": "Name of the contract document from metadata"
+          },
+          "document_link": {
+            "type": "string",
+            "source": "ai_declared",
+            "description": "Web view link to the document from metadata"
+          },
+          "end_date": {
+            "type": "string",
+            "source": "ai_declared",
+            "description": "Extracted end/expiration date in YYYY-MM-DD format, or null if not found"
+          },
+          "end_date_found": {
+            "type": "boolean",
+            "source": "ai_declared",
+            "description": "Whether an end/expiration date was successfully extracted"
+          },
+          "has_multiple_dates": {
+            "type": "boolean",
+            "source": "ai_declared",
+            "description": "Whether multiple candidate end/expiration dates were found in the document"
+          },
+          "notes": {
+            "type": "string",
+            "source": "ai_declared",
+            "description": "Any notes about the extraction, e.g. 'Multiple possible dates found' or empty string"
+          }
+        },
+        "source": "ai_declared"
+      },
+      "scope": "loop",
+      "produced_by": "extract_expiration_date",
+      "consumed_by": [
+        "process_each_contract"
+      ]
+    },
+    "contracts_with_days": {
+      "schema": {
+        "type": "array",
+        "source": "ai_declared",
+        "items": {
+          "type": "object",
+          "source": "ai_declared",
+          "properties": {
+            "document_name": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "document_link": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "end_date": {
+              "type": "string",
+              "source": "ai_declared"
+            },
+            "end_date_found": {
+              "type": "boolean",
+              "source": "ai_declared",
+              "required": true
+            },
+            "has_multiple_dates": {
+              "type": "boolean",
+              "source": "ai_declared"
+            },
+            "notes": {
+              "type": "string",
+              "source": "ai_declared"
+            },
+            "date_window_end": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "days_remaining": {
+              "type": "number",
+              "source": "ai_declared",
+              "required": true
+            }
+          }
+        }
+      },
+      "scope": "global",
+      "produced_by": "add_computed_fields",
+      "consumed_by": [
+        "filter_reportable_contracts"
+      ]
+    },
+    "reportable_contracts": {
+      "schema": {
+        "type": "array",
+        "source": "inferred",
+        "items": {
+          "type": "object",
+          "source": "ai_declared",
+          "properties": {
+            "document_name": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "document_link": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "end_date": {
+              "type": "string",
+              "source": "ai_declared"
+            },
+            "end_date_found": {
+              "type": "boolean",
+              "source": "ai_declared",
+              "required": true
+            },
+            "has_multiple_dates": {
+              "type": "boolean",
+              "source": "ai_declared"
+            },
+            "notes": {
+              "type": "string",
+              "source": "ai_declared"
+            },
+            "date_window_end": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "days_remaining": {
+              "type": "number",
+              "source": "ai_declared",
+              "required": true
+            }
+          }
+        }
+      },
+      "scope": "global",
+      "produced_by": "filter_reportable_contracts",
+      "consumed_by": [
+        "compute_report_metrics",
+        "generate_html_email"
+      ]
+    },
+    "total_reportable": {
+      "schema": {
+        "type": "number",
+        "description": "Count of total_reportable",
+        "source": "inferred"
+      },
+      "scope": "global",
+      "produced_by": "compute_report_metrics",
+      "consumed_by": [
+        "generate_html_email"
+      ]
+    },
+    "expiring_soon_contracts": {
+      "schema": {
+        "type": "array",
+        "source": "inferred",
+        "items": {
+          "type": "object",
+          "source": "ai_declared",
+          "properties": {
+            "document_name": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "document_link": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "end_date": {
+              "type": "string",
+              "source": "ai_declared"
+            },
+            "end_date_found": {
+              "type": "boolean",
+              "source": "ai_declared",
+              "required": true
+            },
+            "has_multiple_dates": {
+              "type": "boolean",
+              "source": "ai_declared"
+            },
+            "notes": {
+              "type": "string",
+              "source": "ai_declared"
+            },
+            "date_window_end": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "days_remaining": {
+              "type": "number",
+              "source": "ai_declared",
+              "required": true
+            }
+          }
+        }
+      },
+      "scope": "global",
+      "produced_by": "compute_report_metrics",
+      "consumed_by": [
+        "generate_html_email"
+      ]
+    },
+    "missing_date_contracts": {
+      "schema": {
+        "type": "array",
+        "source": "inferred",
+        "items": {
+          "type": "object",
+          "source": "ai_declared",
+          "properties": {
+            "document_name": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "document_link": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "end_date": {
+              "type": "string",
+              "source": "ai_declared"
+            },
+            "end_date_found": {
+              "type": "boolean",
+              "source": "ai_declared",
+              "required": true
+            },
+            "has_multiple_dates": {
+              "type": "boolean",
+              "source": "ai_declared"
+            },
+            "notes": {
+              "type": "string",
+              "source": "ai_declared"
+            },
+            "date_window_end": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "days_remaining": {
+              "type": "number",
+              "source": "ai_declared",
+              "required": true
+            }
+          }
+        }
+      },
+      "scope": "global",
+      "produced_by": "compute_report_metrics",
+      "consumed_by": [
+        "generate_html_email"
+      ]
+    },
+    "report_metrics": {
+      "schema": {
+        "type": "object",
+        "properties": {
+          "total_reportable": {
+            "type": "number",
+            "description": "Count of total_reportable",
+            "source": "inferred"
+          },
+          "expiring_soon_contracts": {
+            "type": "array",
+            "source": "inferred",
+            "items": {
+              "type": "object",
+              "source": "ai_declared",
+              "properties": {
+                "document_name": {
+                  "type": "string",
+                  "source": "ai_declared",
+                  "required": true
+                },
+                "document_link": {
+                  "type": "string",
+                  "source": "ai_declared",
+                  "required": true
+                },
+                "end_date": {
+                  "type": "string",
+                  "source": "ai_declared"
+                },
+                "end_date_found": {
+                  "type": "boolean",
+                  "source": "ai_declared",
+                  "required": true
+                },
+                "has_multiple_dates": {
+                  "type": "boolean",
+                  "source": "ai_declared"
+                },
+                "notes": {
+                  "type": "string",
+                  "source": "ai_declared"
+                },
+                "date_window_end": {
+                  "type": "string",
+                  "source": "ai_declared",
+                  "required": true
+                },
+                "days_remaining": {
+                  "type": "number",
+                  "source": "ai_declared",
+                  "required": true
+                }
+              }
+            }
+          },
+          "missing_date_contracts": {
+            "type": "array",
+            "source": "inferred",
+            "items": {
+              "type": "object",
+              "source": "ai_declared",
+              "properties": {
+                "document_name": {
+                  "type": "string",
+                  "source": "ai_declared",
+                  "required": true
+                },
+                "document_link": {
+                  "type": "string",
+                  "source": "ai_declared",
+                  "required": true
+                },
+                "end_date": {
+                  "type": "string",
+                  "source": "ai_declared"
+                },
+                "end_date_found": {
+                  "type": "boolean",
+                  "source": "ai_declared",
+                  "required": true
+                },
+                "has_multiple_dates": {
+                  "type": "boolean",
+                  "source": "ai_declared"
+                },
+                "notes": {
+                  "type": "string",
+                  "source": "ai_declared"
+                },
+                "date_window_end": {
+                  "type": "string",
+                  "source": "ai_declared",
+                  "required": true
+                },
+                "days_remaining": {
+                  "type": "number",
+                  "source": "ai_declared",
+                  "required": true
+                }
+              }
+            }
+          }
+        },
+        "source": "inferred"
+      },
+      "scope": "global",
+      "produced_by": "compute_report_metrics"
+    },
+    "email_content": {
+      "schema": {
+        "type": "object",
+        "properties": {
+          "html_body": {
+            "type": "string",
+            "source": "ai_declared",
+            "description": "Complete HTML email body with summary header and styled table"
+          },
+          "summary_line": {
+            "type": "string",
+            "source": "ai_declared",
+            "description": "Short plain-text summary for reference (e.g., '3 contracts expiring soon, 1 missing end date')"
+          }
+        },
+        "source": "ai_declared"
+      },
+      "scope": "global",
+      "produced_by": "generate_html_email",
+      "consumed_by": [
+        "send_summary_email"
+      ]
+    }
+  }
+}
