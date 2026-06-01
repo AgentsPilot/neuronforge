@@ -215,6 +215,21 @@ export interface CreateAgentAIContext {
   original_prompt: string;
   enhanced_prompt: string;
   generated_plan: string;
+  /**
+   * WP-55: Phase 1 raw IntentContract LLM output (Pipeline A only).
+   * Persisted so post-hoc diagnosis of LLM emission variance becomes a
+   * SQL lookup instead of a non-deterministic LLM re-run. Null for
+   * agents created before WP-55 landed or via legacy generators.
+   * See docs/v6/V6_DEVELOPER_GUIDE.md § "Diagnosing a Production
+   * Agent's Phase 1 Emission".
+   */
+  intent_contract?: unknown | null;
+  /**
+   * WP-55: Phase 2 data_schema (slot schemas + semantic types built
+   * from plugin definitions). Persisted alongside intent_contract for
+   * the same diagnosis flow. Null for agents created before WP-55.
+   */
+  data_schema?: unknown | null;
 }
 
 /** Agent config for create-agent API */

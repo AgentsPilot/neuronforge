@@ -231,7 +231,14 @@ export async function POST(request: NextRequest) {
         grounded_facts: null,
         formalization_metadata: null
       },
-      ir: conversionResult.ir
+      ir: conversionResult.ir,
+
+      // WP-55: expose Phase 1 + Phase 2 artifacts so the V2 UI can forward
+      // them to /api/create-agent for persistence on agents.agent_config.
+      // Enables post-hoc diagnosis of Phase 1 LLM emission variance without
+      // a non-deterministic LLM re-run. See WP-55 in WEAK_POINTS.md.
+      intent_contract: intentContract,
+      data_schema: conversionResult.ir?.execution_graph?.data_schema ?? null
     }
 
     // V2 UI uses intermediate_results.semantic_plan.goal as a fallback for

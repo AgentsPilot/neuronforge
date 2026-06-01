@@ -89,6 +89,11 @@ interface V6GenerateResponse {
     grounded_plan?: any
     ir?: any
   }
+  // WP-55: Phase 1 + Phase 2 artifacts forwarded for persistence on
+  // agents.agent_config.ai_context so post-hoc diagnosis of LLM emission
+  // variance doesn't require a non-deterministic LLM re-run.
+  intent_contract?: any
+  data_schema?: any
 }
 
 /**
@@ -262,7 +267,13 @@ function mapV6ResponseToAgent(
         confidence: metadata.grounding_confidence || 0.8,
         original_prompt: context.initialPrompt || '',
         enhanced_prompt: context.enhancedPromptData?.enhanced_prompt || '',
-        generated_plan: ''
+        generated_plan: '',
+        // WP-55: persist Phase 1 IntentContract + Phase 2 data_schema so
+        // post-hoc diagnosis of this agent's LLM emission becomes a SQL
+        // lookup instead of a non-deterministic LLM re-run. ~40 KB total
+        // on representative agents; well within JSONB practical limits.
+        intent_contract: v6Response.intent_contract ?? null,
+        data_schema: v6Response.data_schema ?? null
       }
     }
   }
