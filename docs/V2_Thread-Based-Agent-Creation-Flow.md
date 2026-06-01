@@ -1,11 +1,13 @@
 # Thread-Based Agent Creation Flow Diagram
 
-> **Last Updated**: 2026-05-24
+> **Last Updated**: 2026-06-01
 
 ## Overview
 This diagram shows the complete user journey through the V2 agent creation page (`app/v2/agents/new/page.tsx`).
 
-> **Note**: The legacy `useConversationalBuilder.ts` hook is no longer used. The V2 page implements the thread-based flow directly without a feature flag - it is always enabled.
+> **Note**: The legacy `useConversationalBuilder.ts` hook, `ConversationalAgentBuilder*` components, and `/agents/new/chat` route are **deprecated** (marked `@deprecated`) and are not part of the active flow. The V2 page implements the thread-based flow directly without a feature flag — it is always enabled.
+
+> **Phase 2 is now SINGLE-QUESTION (2026-05-29).** The page no longer renders a batch `questionsSequence: [...]` — each Phase 2 round-trip returns exactly ONE question (or `phase2_done: true`), and the page renders one question at a time until the loop terminates. The contract, controller, telemetry, and UX described below all reflect that. See `app/api/prompt-templates/Workflow-Agent-Creation-Prompt-v16-chatgpt.txt` (the active prompt — v16) and `lib/validation/phase2-schema.ts` for the authoritative shape.
 
 ---
 
@@ -37,7 +39,7 @@ This diagram shows the complete user journey through the V2 agent creation page 
 │    │                                                                │
 │    ├─► POST /api/agent-creation/init-thread                         │
 │    │   • Creates OpenAI thread                                      │
-│    │   • Injects system prompt (Workflow-Agent-Creation-Prompt-v15)  │
+│    │   • Injects system prompt (Workflow-Agent-Creation-Prompt-v16)  │
 │    │   • Stores in agent_prompt_threads table                       │
 │    │   • Returns: { thread_id: "thread_abc123" }                    │
 │    │                                                                │
@@ -82,67 +84,107 @@ This diagram shows the complete user journey through the V2 agent creation page 
                                  │
                                  ▼
 ┌─────────────────────────────────────────────────────────────────────┐
-│  STEP 3: Phase 2 - Generate Questions (processPhase2, ~line 625)    │
-│  ─────────────────────────────────────────                          │
+│  STEP 3: Phase 2 - SINGLE-QUESTION LOOP (processPhase2)             │
+│  ─────────────────────────────────────────────────────────────────  │
 │                                                                     │
-│  NOTE: V2 flow ALWAYS runs Phase 2 (no clarity score skip)          │
+│  NOTE: V2 flow ALWAYS runs Phase 2 (no clarity-score skip).         │
+│        ONE round-trip per question; the loop terminates when the    │
+│        LLM emits phase2_done: true (or the cap fires server-side).  │
 │                                                                     │
-│    ├─► POST /api/agent-creation/process-message                     │
-│    │   Body: {                                                      │
-│    │     thread_id: "thread_abc123",                                │
-│    │     phase: 2,                                                  │
-│    │     enhanced_prompt: null,        // V10: for mini-cycle       │
-│    │     user_feedback: null,          // V10: for edit flow        │
-│    │     declined_services: []         // V10: skipped plugins      │
-│    │   }                                                            │
-│    │                                                                │
-│    └─► Returns: {                                                   │
-│          questionsSequence: [                                       │
-│            { id: "q1", question: "Which Slack channel?", type: "text" },
-│            { ... }                                                  │
-│          ],                                                         │
-│          conversationalSummary: "Let me ask a few questions..."     │
-│        }                                                            │
+│  ┌─ FIRST TURN (no answer yet) ───────────────────────────────────┐ │
+│  │ POST /api/agent-creation/process-message                       │ │
+│  │ Body: {                                                        │ │
+│  │   thread_id, phase: 2,                                         │ │
+│  │   phase2_user_answer: null,        ← signals first-turn        │ │
+│  │   enhanced_prompt: null,           ← for mini-cycle start      │ │
+│  │   user_feedback: null,             ← for edit flow             │ │
+│  │   declined_services: [],                                       │ │
+│  │   connected_services, plugin_action_summary  (heavy, see E1)   │ │
+│  │ }                                                              │ │
+│  └────────────────────────────────────────────────────────────────┘ │
 │                                                                     │
-│  If questions.length > 0:                                           │
-│  • setQuestionsSequence(questions)                                  │
-│  • Questions displayed via useEffect (~line 504)                    │
+│  ┌─ MID-LOOP TURNS (one answer per turn) ─────────────────────────┐ │
+│  │ POST /api/agent-creation/process-message                       │ │
+│  │ Body: {                                                        │ │
+│  │   thread_id, phase: 2,                                         │ │
+│  │   phase2_user_answer: "<the user's reply>",                    │ │
+│  │   // E1: connected_services + plugin_action_summary OMITTED    │ │
+│  │   //     on mid-loop turns (thread already has them).          │ │
+│  │ }                                                              │ │
+│  └────────────────────────────────────────────────────────────────┘ │
 │                                                                     │
-│  If questions.length === 0:                                         │
-│  • Skip to Phase 3 directly                                         │
+│  ┌─ RESPONSE SHAPE — strict (FR4, .strict() Zod) ─────────────────┐ │
+│  │ {                                                              │ │
+│  │   question: {                                                  │ │
+│  │     id: "q1",                  ← UNIQUE across the whole       │ │
+│  │     question: "Which ...?",       thread (E5 hard rule)        │ │
+│  │     type: "select" | "multi_select" | "text",                  │ │
+│  │     options?: [{ value, label, description? }],                │ │
+│  │     allowCustom?: true,                                        │ │
+│  │     theme?: "Inputs"|"Processing"|"Outputs"|"Delivery"         │ │
+│  │   } | null,                    ← null iff phase2_done is true  │ │
+│  │   phase2_done: false,                                          │ │
+│  │   ai_reasoning?: "<1–3 sentences explaining this turn's        │ │
+│  │                    decision>"  ← E6: server-side telemetry,    │ │
+│  │                                   STRIPPED from the response   │ │
+│  │                                   that's actually returned     │ │
+│  │                                   to the page.                 │ │
+│  │ }                                                              │ │
+│  │                                                                │ │
+│  │ Terminal turn (loop end): { question: null, phase2_done: true, │ │
+│  │                             disclosure_banner?, termination_   │ │
+│  │                             reason: "phase2_done"|"cap_hit" }  │ │
+│  └────────────────────────────────────────────────────────────────┘ │
+│                                                                     │
+│  Server-side cap (FR5.12 / C1): up to MAX_ITERATIONS=10 questions   │
+│  PER SESSION (mini-cycles get a fresh budget per F2). The cap fires │
+│  PRE-CALL — once 10 questions have been asked, the 11th turn        │
+│  short-circuits without an LLM call. The cap is NEVER mentioned to  │
+│  the LLM or user; cap_hit surfaces only via the soft disclosure     │
+│  banner.                                                            │
 │                                                                     │
 └──────────────────┬──────────────────────────────────────────────────┘
                    │
                    ▼
 ┌─────────────────────────────────────────────────────────────────────┐
-│         UI RENDERS QUESTIONS                                        │
-│         (User answers via handleSend, ~line 1298)                   │
+│         UI RENDERS THE QUESTION (one per turn)                      │
 │                                                                     │
-│  • Question 1: "Which Slack channel?"                               │
-│    User types: "#general" → answerQuestion(q.id, answer)            │
-│                                                                     │
-│  • Question 2: "What time of day?"                                  │
-│    User types: "9am daily" → answerQuestion(q.id, answer)           │
-│                                                                     │
-│  • ... all questions answered ...                                   │
+│  • First Phase 2 question of the initial session is preceded by a   │
+│    client-side OPENING MESSAGE: "I need a few quick details before  │
+│    I can build your agent." (E3, resolves T2 contract gap.)         │
+│  • Q2+ are preceded by a client-side HINT (Bot bubble lead-in) from │
+│    the `clarification_hints` thinking-words category, shuffled per  │
+│    session so no two are the same.                                  │
+│  • Each question carries a thread-wide running "Question N" pill    │
+│    (E4: numerator only — never "of M"; continues across mini-cycles)│
+│  • User selects an option (select/multi_select) or types a text     │
+│    answer; `submitPhase2Answer` keys the value by `question.id`     │
+│    (F1: into the staleness-proof `clarificationAnswersRef` AND      │
+│    setBuilderState in the same call) and round-trips it back as     │
+│    `phase2_user_answer`. Server responds with the NEXT question or  │
+│    `phase2_done: true`.                                             │
 │                                                                     │
 └──────────────────┬──────────────────────────────────────────────────┘
                    │
                    ▼
 ┌─────────────────────────────────────────────────────────────────────┐
-│  Auto-Enhancement Trigger (useEffect, ~line 462)                    │
-│  ─────────────────────────────────────────                          │
-│  When all questions answered && workflowPhase === 'enhancement':    │
+│  Loop-end transition                                                │
+│  ─────────────────────────                                          │
+│  When the most recent /process-message response has                 │
+│  `phase2_done: true`:                                               │
 │                                                                     │
-│  • Shows typing indicator                                           │
-│  • Calls processPhase3()                                            │
-│  • V10: If isInMiniCycle, passes pendingEnhancedPrompt              │
+│  • Surface `disclosure_banner` if present (cap_hit termination).    │
+│  • Mini-cycle? (i.e. enhanced_prompt was pending)                   │
+│      → processPhase3(tid, { enhanced_prompt: pendingEnhancedPrompt })│
+│        ⇒ refines the existing plan.                                 │
+│  • Initial session?                                                 │
+│      → processPhase3(tid) ⇒ builds the plan from scratch.           │
 │                                                                     │
 └────────────────────────────────────┬────────────────────────────────┘
                                      │
                                      ▼
 ┌─────────────────────────────────────────────────────────────────────┐
-│  Phase 3 - Enhancement (processPhase3, ~line 701)                   │
+│  Phase 3 - Enhancement (processPhase3)                              │
 │  ─────────────────────────────────────────────────────────────────  │
 │                                                                     │
 │    ├─► POST /api/agent-creation/process-message                     │
@@ -150,17 +192,34 @@ This diagram shows the complete user journey through the V2 agent creation page 
 │    │     thread_id: "thread_abc123",                                │
 │    │     phase: 3,                                                  │
 │    │     clarification_answers: { q1: "#general", q2: "9am" },      │
-│    │     connected_services: ['google-mail', 'slack'],              │
 │    │     declined_services: [],                                     │
-│    │     enhanced_prompt: null  // V10: for refinement              │
+│    │     enhanced_prompt: null,  // V10: for refinement             │
+│    │     // E7: connected_services + plugin_action_summary OMITTED  │
+│    │     //     when the connected_services_signature matches the   │
+│    │     //     one persisted in thread metadata (most mini-cycle   │
+│    │     //     Phase 3 turns). SENT when sig differs (initial,    │
+│    │     //     post-OAuth, post-decline). ~1k–3k tokens saved per │
+│    │     //     match.                                              │
 │    │   }                                                            │
 │    │                                                                │
 │    │   Backend Processing:                                          │
 │    │   • Adds user message + clarification answers to thread        │
 │    │   • Retrieves FULL thread history                              │
 │    │   • Calls AI provider with conversation context                │
-│    │   • Validates response with Zod schema (strict!)               │
-│    │   • Stores AI response in thread                               │
+│    │   • Validates response with strict Zod schema (phase3-schema). │
+│    │   • F3 normalizer absorbs LLM quirks on                        │
+│    │     resolved_user_inputs[*].value before validation: array→    │
+│    │     comma-string, null/undefined→drop row, boolean→'true'/    │
+│    │     'false', non-array object→JSON.stringify.                  │
+│    │   • E2 / F3 corrective retry: on validation failure, ONE       │
+│    │     retry with a corrective user-turn appended:                │
+│    │       - looksLikePhase2: true  → "your previous reply was a    │
+│    │         Phase 2 single-question payload; emit Phase 3 now"     │
+│    │       - looksLikePhase2: false → "your previous reply failed   │
+│    │         schema validation at: <errors>" (interpolated paths)   │
+│    │     The corrective user turn AND the good reply are persisted  │
+│    │     to the thread to keep the message sequence well-formed.    │
+│    │   • Stores AI response in thread.                              │
 │    │                                                                │
 │    └─► Returns: {                                                   │
 │          enhanced_prompt: {                                         │
@@ -225,45 +284,45 @@ This diagram shows the complete user journey through the V2 agent creation page 
                 │
                 ▼
 ┌─────────────────────────────────────────────────────────────────────┐
-│  Agent Generation (createAgent, ~line 961)                          │
+│  Agent Generation (createAgent)                                     │
 │  ─────────────────────────────────────────────────────────────────  │
 │                                                                     │
 │  Checks feature flag: useV6AgentGeneration()                        │
 │                                                                     │
 │  ┌───────────────────────────────────────────────────────────────┐  │
-│  │  V6 FLOW (flag enabled) — 5-Phase Semantic Pipeline           │  │
+│  │  V6 FLOW (flag enabled) — IntentContract Pipeline (Pipeline A)│  │
 │  │  ─────────────────────────────────────────────────────────    │  │
 │  │                                                               │  │
-│  │  POST /api/v6/generate-ir-semantic                            │  │
+│  │  POST /api/v6/generate-ir-intent-contract                     │  │
 │  │  Body: {                                                      │  │
 │  │    enhanced_prompt: enhancedPromptData,                       │  │
 │  │    userId: user.id,                                           │  │
 │  │    config: {                                                  │  │
 │  │      return_intermediate_results: true,                       │  │
-│  │      provider: 'openai'                                      │  │
+│  │      provider: 'openai'                                       │  │
 │  │    }                                                          │  │
 │  │  }                                                            │  │
 │  │                                                               │  │
-│  │  Single API call runs all 5 V6 phases:                        │  │
-│  │    1. Semantic Plan (understanding)                           │  │
-│  │    2. Grounding                                               │  │
-│  │    3. Formalization                                           │  │
-│  │    4. Compilation                                             │  │
-│  │    5. Normalization                                           │  │
+│  │  Single API call runs the IntentContract pipeline:            │  │
+│  │    1. IntentContract generation (semantic intent extraction)  │  │
+│  │    2. CapabilityBinderV2 (intent → plugin operations)         │  │
+│  │    3. IntentToIRConverter (logical IR)                        │  │
+│  │    4. ExecutionGraphCompiler (IR → DSL workflow steps)        │  │
 │  │                                                               │  │
 │  │  Returns: {                                                   │  │
 │  │    success: true,                                             │  │
-│  │    workflow: { workflow_steps, suggested_plugins },            │  │
-│  │    validation: { valid, issues },                             │  │
-│  │    metadata: {                                                │  │
-│  │      steps_generated, plugins_used,                           │  │
-│  │      total_time_ms, phase_times_ms                            │  │
-│  │    },                                                         │  │
-│  │    intermediate_results: { semantic_plan, grounded_plan, ir } │  │
+│  │    ir: { config_defaults, ... },                              │  │
+│  │    workflow: { workflow_steps, suggested_plugins },           │  │
+│  │    metadata: { steps_generated, phase_times_ms }              │  │
 │  │  }                                                            │  │
 │  │                                                               │  │
-│  │  Maps V6 response to agent via mapV6ResponseToAgent()         │  │
-│  │  Sets platform_version: 'v6.0' in agent_config                │  │
+│  │  Mapped to agent via mapV6ResponseToAgent().                  │  │
+│  │  Sets platform_version: 'v6.0' in agent_config.               │  │
+│  │                                                               │  │
+│  │  (Note: the older "Pipeline B" / semantic pipeline at         │  │
+│  │   /api/v6/generate-ir-semantic remains in the codebase but    │  │
+│  │   the V2 UI no longer calls it — see                          │  │
+│  │   docs/v6/V6_PIPELINE_A_MIGRATION.md § P6.)                   │  │
 │  │                                                               │  │
 │  └───────────────────────────────────────────────────────────────┘  │
 │                                                                     │
@@ -272,17 +331,14 @@ This diagram shows the complete user journey through the V2 agent creation page 
 │  │  ─────────────────────────────────────────────────────────    │  │
 │  │                                                               │  │
 │  │  POST /api/generate-agent-v4                                  │  │
-│  │  Body: {                                                      │  │
-│  │    enhancedPrompt: JSON.stringify(enhancedPromptData),        │  │
-│  │    promptType: 'enhanced',                                    │  │
-│  │    clarificationAnswers: { ... },                             │  │
-│  │    userId: user.id,                                           │  │
-│  │    services_involved: requiredServices,                       │  │
-│  │    connectedPlugins: connectedPlugins                         │  │
-│  │  }                                                            │  │
+│  │  (The route is V4-only as of 2026-05-31; the                  │  │
+│  │   USE_AGENT_GENERATION_ENHANCED_TECHNICAL_WORKFLOW_REVIEW     │  │
+│  │   flag that picked V5 was retired — see docs/FEATURE_FLAGS.md │  │
+│  │   § Enhanced Technical Workflow Review for the retirement     │  │
+│  │   note.)                                                      │  │
 │  │                                                               │  │
-│  │  Returns: GenerateAgentV2Response (agent config with steps)   │  │
-│  │  Sets platform_version: 'v2.0' in agent_config                │  │
+│  │  Returns: GenerateAgentV2Response (agent config with steps).  │  │
+│  │  Sets platform_version: 'v2.0' in agent_config.               │  │
 │  │                                                               │  │
 │  └───────────────────────────────────────────────────────────────┘  │
 │                                                                     │
@@ -296,11 +352,17 @@ This diagram shows the complete user journey through the V2 agent creation page 
 │     • User selects: On Demand / Scheduled                           │
 │     • Configure cron expression if scheduled                        │
 │                                                                     │
-│  3. Call executeAgentCreation() (~line 1216)                         │
-│     • POST /api/create-agent with agent data                        │
-│     • Saves input parameter values via /api/agent-configurations    │
+│  3. Call executeAgentCreation()                                     │
+│     • POST /api/create-agent with agent data + input_values         │
+│       (E9: inputs are INLINE-SAVED in the same call now —           │
+│        agent_configurations row is created atomically with the      │
+│        agent insert. No separate POST to                            │
+│        /api/agent-configurations/save-inputs in the create path;    │
+│        that route remains the canonical write for post-creation     │
+│        edits from the agent edit page.)                             │
 │     • Links thread to agent (thread_id passed)                      │
-│     • Redirect to /agents/{id}                                      │
+│     • Shows success message; 300 ms later, router.push to           │
+│       /agents/{id}.                                                 │
 │                                                                     │
 └─────────────────────────────────────────────────────────────────────┘
 ```
@@ -349,34 +411,40 @@ This diagram shows the complete user journey through the V2 agent creation page 
    ↓
 2. initializeThread() creates thread + calls Phase 1
    ↓
-3. Phase 1 Analysis → clarityScore: 45, conversationalSummary displayed
+3. Phase 1 Analysis → clarityScore, conversationalSummary displayed
    ↓
-4. Phase 2 Questions Generated:
-   - "Which email service?"
-   - "What action on emails?"
-   - "Where should results go?"
+4. Phase 2 starts (single-question loop):
    ↓
-5. User answers: "Gmail" → "Send to Slack" → "#general"
+   Q1 (preceded by opening message): "Which email service?"  → user picks "Gmail"
    ↓
-6. Auto-enhancement useEffect triggers Phase 3
+   Q2 (preceded by a hint bubble): "What action on emails?"  → user picks "Send to Slack"
    ↓
-7. Phase 3 Enhancement → Enhanced prompt with plan card shown
+   Q3 (preceded by a different hint):  "Which Slack channel?" → user types "#general"
    ↓
-8. User clicks "Yes, perfect!" → createAgent() called
+   Server emits { question: null, phase2_done: true, ai_reasoning: "..." }
    ↓
-9a. V6 flag ON:  POST /api/v6/generate-ir-semantic (5-phase semantic pipeline)
-9b. V6 flag OFF: POST /api/generate-agent-v4 (OpenAI 3-Stage generation)
+5. Page advances to processPhase3() (initial session ⇒ no enhanced_prompt)
    ↓
-10. Input parameters collected (if required and not already resolved)
+6. Phase 3 Enhancement → Enhanced prompt with plan card shown
+   (E2/F3 corrective retry handled silently if needed)
    ↓
-11. Scheduling UI shown (On Demand / Scheduled)
+7. User clicks "Yes, perfect!" → createAgent() called
    ↓
-12. User selects schedule → executeAgentCreation()
+8a. V6 flag ON:  POST /api/v6/generate-ir-intent-contract (IntentContract pipeline)
+8b. V6 flag OFF: POST /api/generate-agent-v4 (V4-only since 2026-05-31)
    ↓
-13. POST /api/create-agent saves agent, redirects to /agents/{id}
+9. Input parameters collected (if required and not already resolved)
+   ↓
+10. Scheduling UI shown (On Demand / Scheduled)
+   ↓
+11. User selects schedule → executeAgentCreation()
+   ↓
+12. POST /api/create-agent saves agent AND inline-saves input_values (E9),
+    then 300 ms later router.push('/agents/{id}')
 
-API Calls (V6):  init-thread + process-message × 3 + generate-ir-semantic + create-agent
-API Calls (V4):  init-thread + process-message × 3 + generate-agent-v4 + create-agent
+API Calls (V6):  init-thread + process-message × (N+1)  +  generate-ir-intent-contract + create-agent
+API Calls (V4):  init-thread + process-message × (N+1)  +  generate-agent-v4 + create-agent
+  where N = number of Phase 2 questions actually asked (3–6 typical; ≤10 per session)
 ```
 
 ---
@@ -462,45 +530,58 @@ API Calls (V4):  init-thread + process-message × 3 + generate-agent-v4 + create
 
 ### Frontend: `app/v2/agents/new/page.tsx`
 
-| Function | ~Line | Purpose |
-|----------|-------|---------|
-| `V2AgentBuilderContent` | 273 | Main page component |
-| `threadId` state | 312 | Thread ID storage (useState) |
-| Init thread useEffect | 454 | Triggers thread creation when ready |
-| Auto-enhancement useEffect | 462 | Triggers Phase 3 after questions answered |
-| Question display useEffect | 504 | Shows current question to user |
-| `initializeThread()` | 519 | Creates thread and starts Phase 1 |
-| `processPhase1()` | 566 | Phase 1: Analysis |
-| `processPhase2()` | 625 | Phase 2: Questions (supports mini-cycle) |
-| `processPhase3()` | 701 | Phase 3: Enhancement (OAuth gate, mini-cycle) |
-| `handleConnectPlugin()` | 847 | OAuth plugin connection |
-| `handleSkipPlugin()` | 898 | Decline plugin and re-run Phase 3 |
-| `createAgent()` | 961 | Generate agent via V6 or V4 pipeline |
-| `executeAgentCreation()` | 1216 | Save agent via /api/create-agent |
-| `handleSend()` | 1298 | Handle user input (answers, feedback) |
-| `handleApprove()` | 1411 | Approve plan and create agent |
-| `handleEdit()` | 1431 | V10: Start edit flow with feedback |
+(Line numbers intentionally omitted — they shift with every change. Grep by function name.)
+
+| Function / Hook | Purpose |
+|---|---|
+| `V2AgentBuilderContent` | Main page component |
+| `threadId` state | Thread ID storage |
+| Init thread `useEffect` | Triggers `initializeThread()` when prerequisites are ready |
+| `initializeThread()` | Creates thread + immediately starts Phase 1 |
+| `processPhase1()` | Phase 1: diagnostic narrative |
+| `processPhase2()` | Phase 2 round-trip — sends `phase2_user_answer`, receives one question or `phase2_done: true` |
+| `submitPhase2Answer(answerText)` | Records the user's answer (synchronous to `clarificationAnswersRef` — F1; also `setBuilderState`), increments running question number (E4), round-trips back via `processPhase2` |
+| `resetClarificationHints()` | Re-shuffles the hint deck + resets the per-session question counter (E3) at the start of each Phase 2 session (initial OR mini-cycle) |
+| `nextClarificationHint()` | Returns the next shuffled hint from the `clarification_hints` thinking-words category (E3) |
+| `processPhase3()` | Phase 3 enhancement (OAuth gate, mini-cycle, E2/F3 corrective retry handled server-side) |
+| `handleConnectPlugin()` | OAuth plugin connection — re-runs Phase 3 with updated `connected_services` |
+| `handleSkipPlugin()` | Decline plugin and re-run Phase 3 with `declined_services` |
+| `createAgent()` | Calls V6 (`/api/v6/generate-ir-intent-contract`) or V4 (`/api/generate-agent-v4`) per `useV6AgentGeneration()` |
+| `executeAgentCreation()` | Single POST to `/api/create-agent` (with `input_values` folded in — E9), then redirect |
+| `handleSend()` | Handles user input — answers, feedback, free-text |
+| `handleApprove()` | Approve plan → start the create flow |
+| `handleEdit()` | V10: Start edit flow with `user_feedback` |
 
 ### Backend: `app/api/agent-creation/`
 
 | Route | Purpose |
 |-------|---------|
-| `init-thread/route.ts` | Creates OpenAI thread with v15 system prompt |
-| `process-message/route.ts` | Handles Phases 1-3 message processing |
+| `init-thread/route.ts` | Creates OpenAI thread, injects the v16 system prompt |
+| `process-message/route.ts` | Handles Phases 1, 2, 3 — including the Phase 2 done-keyword short-circuit (F2 pre-call cap), the loop controller call, the E1/E7 thread-context omission, the E2/F3 Phase 3 corrective retry, and the E6 per-turn `ai_reasoning` breadcrumb |
 | `thread/[id]/route.ts` | Resume existing thread with full history |
 
 ### Agent Generation APIs
 
 | Route | Pipeline | Called When |
 |-------|----------|------------|
-| `/api/v6/generate-ir-semantic` | V6 5-phase semantic pipeline | `useV6AgentGeneration()` enabled |
-| `/api/generate-agent-v4` | V4 OpenAI 3-stage generation | `useV6AgentGeneration()` disabled |
+| `/api/v6/generate-ir-intent-contract` | **V6 IntentContract pipeline (Pipeline A)** — IntentContract → CapabilityBinderV2 → IntentToIRConverter → ExecutionGraphCompiler | `useV6AgentGeneration()` enabled |
+| `/api/generate-agent-v4` | V4 OpenAI 3-stage generation (V5 retired 2026-05-31) | `useV6AgentGeneration()` disabled |
+| `/api/create-agent` | Final atomic agent insert. **E9: also inline-saves `agent_configurations.input_values` when the request includes `input_values`.** | After scheduling step in `executeAgentCreation()` |
+| `/api/agent-configurations/save-inputs` | Canonical write path for **post-creation** input edits from the agent edit page. NOT called from the creation flow anymore (folded into `/api/create-agent` by E9). | From the agent edit page's input-config drawer |
 
 ### Validation: `lib/validation/`
 
 | File | Purpose |
 |------|---------|
-| `phase3-schema.ts` | Zod validation for Phase 3 responses |
+| `phase2-schema.ts` | Strict Zod schema for the Phase 2 single-question response — `{ question, phase2_done, ai_reasoning? }`. `.strict()` rejects extra top-level keys. |
+| `phase3-schema.ts` | Strict Zod schema + normalizer for Phase 3 responses. The F3 normalizer absorbs `resolved_user_inputs[*].value` LLM quirks (null/bool/object/array) before validation. |
+
+### Loop control + Telemetry: `lib/agent-creation/`
+
+| File | Purpose |
+|------|---------|
+| `phase2-loop-controller.ts` | Pure state machine for the Phase 2 cap and termination. NO I/O — caller (the route) owns Pino logging, thread metadata writes, and the cap pre-call short-circuit. |
+| `phase2-done-detector.ts` | Done-keyword short-circuit (`"build it"`, `"that's enough"`, `"go ahead"`, etc.) — terminates the loop server-side without an LLM call. |
 
 ---
 
@@ -540,14 +621,17 @@ To simulate the flow yourself:
 4. Verify Network tab shows:
    - `POST /api/agent-creation/init-thread`
    - `POST /api/agent-creation/process-message` (phase 1)
-   - `POST /api/agent-creation/process-message` (phase 2)
+   - `POST /api/agent-creation/process-message` (phase 2) — ONE call per question; expect N+1 calls (the last one returns `phase2_done: true`)
    - `POST /api/agent-creation/process-message` (phase 3)
+   - `POST /api/v6/generate-ir-intent-contract` OR `POST /api/generate-agent-v4`
+   - `POST /api/create-agent` (ONE call — E9 folds input save in; no separate `/api/agent-configurations/save-inputs` should appear in the create flow)
 5. Check Supabase `agent_prompt_threads` table for new row
-6. Answer questions and verify Phase 3 triggers automatically
-7. Test "Need changes" button → Should trigger Phase 2 with user_feedback
-8. Test OAuth gate: Use prompt requiring unconnected plugin → Should show connect cards
-9. Test "Yes, perfect!" → Should call V6 or V4 generation, then create-agent
-10. Verify agent is created and redirects to `/agents/{id}`
+6. Answer the questions one at a time — verify each response has `question.id` UNIQUE across the whole thread (E5; e.g. q1, q2, …, qN — never repeated)
+7. `grep "Phase 2 turn decision" dev.log` — verify the E6 `ai_reasoning` breadcrumb fires per turn with a sensible explanation
+8. Test "Need changes" button → Should trigger Phase 2 with `user_feedback` (mini-cycle)
+9. Test OAuth gate: Use prompt requiring unconnected plugin → Should show connect cards
+10. Test "Yes, perfect!" → Should call V6 or V4 generation, then create-agent
+11. Verify agent is created and redirects to `/agents/{id}` within ~300 ms of the success message
 
 ### V10 Mini-Cycle Testing:
 - Create prompt that requires user_inputs_required (e.g., specific email addresses)
@@ -590,6 +674,7 @@ Try-Catch Boundaries:
 
 | Date | Change | Details |
 |------|--------|---------|
+| 2026-06-01 | Phase 2 single-question + v16 prompt + V6 Pipeline A + E9 + flag retirement | Major update reflecting the merged feature cycle. Phase 2 is now SINGLE-QUESTION per turn (FR4 strict contract: `{ question, phase2_done, ai_reasoning? }` validated by `lib/validation/phase2-schema.ts`). Prompt bumped to v16. V6 endpoint corrected from `/api/v6/generate-ir-semantic` to `/api/v6/generate-ir-intent-contract` (Pipeline A — IntentContract). `/api/create-agent` now folds the input-values save inline (E9 — no separate `/api/agent-configurations/save-inputs` in the create flow; that route remains for post-creation edits). `USE_AGENT_GENERATION_ENHANCED_TECHNICAL_WORKFLOW_REVIEW` flag retired; V5 generator no longer reachable from this route. Added: F1 (answer-keying race), F2 (per-session cap reset), F3 (Phase 3 normalizer + context-aware nudge), C1 (cap to 10 inclusive), E1 (mid-loop context omission), E2 (Phase 3 entrenchment retry), E3/E3.5 (client-side hints + opening message), E4 (running Question N), E5 (no re-ask + qID uniqueness), E6 (`ai_reasoning` telemetry), E7 (Phase 3 thread-context omission by signature), E8 (Agent Draft accordions). Dropped volatile per-line refs in favour of function-name anchors. |
 | 2026-05-24 | R1 Phase 4 cleanup | Removed Phase 4 documentation as part of R1 cleanup (Phase 4 was never wired in the production frontend). System prompt bumped to v15; `process-message` now handles Phases 1-3 only; `phase4-schema.ts` no longer exists at that path; `schema-services-generator.ts` deleted. |
 | 2026-04-01 | Updated for V6 pipeline + accurate line refs | Documented V6/V4 branching in agent generation, updated system prompt to v14, fixed all line number references, added `ai_provider`/`ai_model` to thread schema, added agent generation APIs table |
 | 2026-01-16 | Initial document | Original thread-based flow diagram with Phases 1-4 |
