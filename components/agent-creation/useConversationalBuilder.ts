@@ -1,3 +1,11 @@
+/**
+ * @deprecated Legacy V1 conversational builder hook. NOT the primary
+ * agent-creation flow. The live V2 agent-creation flow is
+ * `app/v2/agents/new/page.tsx` (route `/v2/agents/new`). This hook backs the
+ * legacy `ConversationalAgentBuilder`, reached only via the secondary
+ * `/agents/new/chat` route. Do NOT wire new agent-creation behavior here —
+ * make changes in `app/v2/agents/new/page.tsx`.
+ */
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useAuth } from '@/components/UserProvider';
 import { Message, ProjectState, ClarificationQuestion, ClarityAnalysis, RequirementItem, PromptRequestPayload, PromptResponsePayload, ClarificationQuestionRequestPayload, EnhancedPromptRequestPayload } from './types';

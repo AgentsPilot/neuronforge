@@ -16,6 +16,16 @@ import type {
   UserContext
 } from '@/components/agent-creation/types/agent-prompt-threads';
 import { validatePhase3Response } from '@/lib/validation/phase3-schema';
+import { validatePhase2Response } from '@/lib/validation/phase2-schema';
+import { isDoneIntent } from '@/lib/agent-creation/phase2-done-detector';
+import {
+  step as phase2LoopStep,
+  INITIAL_LOOP_STATE,
+  MAX_ITERATIONS,
+  DISCLOSURE_BANNER,
+  type Phase2LoopState,
+  type TerminationReason,
+} from '@/lib/agent-creation/phase2-loop-controller';
 import { ProviderFactory } from '@/lib/ai/providerFactory';
 import { validateContextUsage } from '@/lib/ai/context-limits';
 
@@ -96,6 +106,7 @@ export async function POST(request: NextRequest) {
       clarification_answers,
       enhanced_prompt,
       user_feedback,          // V10: refinement feedback for mini-cycle
+      phase2_user_answer,     // Phase 2 single-question mode: user's reply this turn
       metadata
     } = requestBody;
 
@@ -319,7 +330,145 @@ export async function POST(request: NextRequest) {
 
     requestLogger.debug({ aiProvider, aiModel }, 'AI provider verified for chat completion');
 
+    // -----------------------------------------------------------------------
+    // Phase 2 single-question mode: PRE-CALL terminations (no LLM call this turn)
+    //
+    // Two server-side terminations need NO LLM call for the current turn:
+    //
+    //   • cap_hit — the defensive iteration cap (SA Medium 2 / FR5.12). Once
+    //     `MAX_ITERATIONS - 1` round-trips are already done, terminate BEFORE
+    //     making another call. The post-call cap in the loop controller's
+    //     `step()` would still fire the Nth completion and then discard it —
+    //     wasting an LLM call and making the worst case 10 round-trips, which
+    //     violates FR5.12's "< 10 round-trips" bound. This pre-call guard makes
+    //     the true worst case 9 round-trips / 9 questions. `step()`'s cap stays
+    //     as a backstop for any path that bypasses this check.
+    //
+    //   • phase2_done — the user's reply matches the "I want to stop" intent
+    //     (case-insensitive match against the small `DONE_KEYWORDS` list). FR6
+    //     deterministic server-side intent handling; the LLM handles every other
+    //     reply (substantive answers, "skip"-like replies, ambiguity) next turn.
+    //
+    // Cap takes precedence over the done-keyword (mirrors `step()`'s "cap fires
+    // regardless of what the LLM said"). Both persist the loop-state advance via
+    // the SAME `updateThreadPhase()` shape the route uses elsewhere (no extra DB
+    // write), return their own response, and exit the handler. The single Pino
+    // termination log is emitted AFTER the `updateThreadPhase` await resolves, so
+    // we never log a termination that wasn't actually persisted.
+    // -----------------------------------------------------------------------
+    if (phase === 2) {
+      // The defensive cap is PER SESSION (FR5.12), and `iteration_count` is
+      // persisted thread-globally — so a NEW Phase 2 session must reset it to 0
+      // rather than inherit the prior session's count. A session starts on a turn
+      // with no `phase2_user_answer` (initial entry OR mini-cycle start); mid-loop
+      // answer turns carry the answer and continue the running count. Without this
+      // reset, a mini-cycle opened after a long first session inherits a near-cap
+      // count and is terminated `cap_pre_call` before it can ask its question —
+      // Phase 3 then re-finds the missing input and re-enters the mini-cycle
+      // forever (observed loop, 2026-05-29).
+      const isPhase2SessionStart =
+        phase2_user_answer === undefined || phase2_user_answer === null;
+      const priorLoopState: Phase2LoopState = isPhase2SessionStart
+        ? INITIAL_LOOP_STATE
+        : ((threadRecord.metadata?.phase2_loop_state as Phase2LoopState | undefined) ?? INITIAL_LOOP_STATE);
+      // Cap once MAX_ITERATIONS questions have already been asked this session,
+      // so the loop asks up to MAX_ITERATIONS (=10) questions INCLUSIVE before
+      // terminating. Same condition as the controller's step() backstop.
+      const capReachedPreCall = priorLoopState.iteration_count >= MAX_ITERATIONS;
+      const doneKeywordHit =
+        typeof phase2_user_answer === 'string' && isDoneIntent(phase2_user_answer);
+
+      if (capReachedPreCall || doneKeywordHit) {
+        const terminationReason: TerminationReason = capReachedPreCall ? 'cap_hit' : 'phase2_done';
+        const shortCircuitKind = capReachedPreCall ? 'cap_pre_call' : 'done_keyword';
+        const nextLoopState: Phase2LoopState = {
+          iteration_count: priorLoopState.iteration_count + 1,
+        };
+
+        const shortCircuitResponse: ProcessMessageResponse = {
+          success: true,
+          phase: 2,
+          question: null,
+          phase2_done: true,
+          // Only cap_hit surfaces the soft disclosure banner; a user-initiated
+          // "done" needs no "we're proceeding with what we have" notice.
+          ...(capReachedPreCall ? { disclosure_banner: DISCLOSURE_BANNER } : {}),
+          termination_reason: terminationReason,
+        };
+
+        const updatedMetadataDone = {
+          ...threadRecord.metadata,
+          last_phase: 2,
+          last_updated: new Date().toISOString(),
+          phase2_loop_state: nextLoopState,
+          iterations: [
+            ...(threadRecord.metadata?.iterations || []),
+            {
+              phase: 2,
+              timestamp: new Date().toISOString(),
+              request: { phase: 2, phase2_user_answer, server_short_circuit: shortCircuitKind },
+              response: shortCircuitResponse,
+            },
+          ],
+        };
+
+        try {
+          await threadRepository.updateThreadPhase(
+            threadRecord.id,
+            2,
+            'active',
+            updatedMetadataDone
+          );
+        } catch (updateError: any) {
+          requestLogger.warn(
+            { err: updateError, dbRecordId: threadRecord.id },
+            'Failed to persist Phase 2 pre-call short-circuit (non-critical)'
+          );
+          // We still return a terminating response — UI advances to Phase 3.
+        }
+
+        // Single Pino termination log line (FR8). Emitted post-persist.
+        requestLogger.info(
+          {
+            phase: 2,
+            iteration_count: nextLoopState.iteration_count,
+            termination_reason: terminationReason,
+            server_short_circuit: shortCircuitKind,
+          },
+          'Phase 2 loop terminated'
+        );
+
+        return NextResponse.json(shortCircuitResponse);
+      }
+    }
+
     // Step 6: Build user message based on phase
+
+    // E7 (2026-05-30): compute the signature of THIS turn's "effective"
+    // `connected_services` (sorted JSON of the array — order-independent). Used
+    // (a) to decide whether to OMIT the heavy plugin context on Phase 3 when the
+    // thread already has the latest copy, and (b) stored in thread metadata as
+    // the "last sent" baseline so subsequent turns can compare.
+    const effectiveConnectedServicesForSig: string[] = Array.isArray(connected_services)
+      ? connected_services
+      : Array.isArray(threadRecord.metadata?.phase1_connected_services)
+        ? (threadRecord.metadata!.phase1_connected_services as string[])
+        : [];
+    const currentPluginSignature = JSON.stringify(
+      [...effectiveConnectedServicesForSig].sort()
+    );
+    const priorPluginSignature: string | undefined =
+      threadRecord.metadata?.plugin_context_signature;
+    const pluginContextUnchangedFromThread =
+      typeof priorPluginSignature === 'string' &&
+      priorPluginSignature === currentPluginSignature;
+
+    // Flag flipped on by each phase branch when it INCLUDES the heavy plugin
+    // context (connected_services + plugin_action_summary) in the userMessage.
+    // When true at the metadata write below, `plugin_context_signature` is
+    // updated to `currentPluginSignature` so future turns can compare.
+    let pluginContextIncludedThisTurn = false;
+
     let userMessage: any;
 
     if (phase === 1) {
@@ -332,27 +481,76 @@ export async function POST(request: NextRequest) {
         available_services: user_available_services,
         plugin_action_summary: plugin_action_summary_text || undefined  // EP Key Hints (O8)
       };
+      pluginContextIncludedThisTurn = true; // E7: Phase 1 always sends
     } else if (phase === 2) {
       // V10: Phase 2 can receive connected_services, enhanced_prompt, declined_services, and user_feedback for refinement
       // If null, reference Phase 1 stored values from thread metadata
+      // Phase 2 single-question mode (2026-05-27): include `phase2_user_answer`
+      // so the LLM has the user's reply to the previous question in the same
+      // message payload (the OpenAI thread already carries history, but
+      // including it inline keeps the prompt structure explicit).
+      //
+      // E1 (2026-05-29): on a MID-LOOP turn (the user is answering a prior
+      // question, signalled by a non-null `phase2_user_answer`), OMIT the heavy
+      // `plugin_action_summary` blob and `connected_services`. Both were already
+      // sent on Phase 1 and the first Phase 2 turn and persist in the OpenAI
+      // thread, so re-sending them every turn duplicates a large payload N times
+      // in the context (~O(N^2) growth). The v16 prompt treats earlier-thread
+      // copies as authoritative on later turns. We still send them on the FIRST
+      // Phase 2 turn (no `phase2_user_answer`) so they're present even if Phase 1
+      // was skipped (resumed thread) and to seed EP Key Hints for question #1.
+      // INVARIANT: the FIRST Phase 2 turn sends `phase2_user_answer: null` (the
+      // page sends `phase2_user_answer ?? null`, and there is no answer yet on the
+      // first turn); every MID-LOOP turn sends the user's answer string. So a
+      // non-null answer reliably distinguishes mid-loop from first turn. If the
+      // page is ever changed to default this field differently, revisit this gate.
+      const isMidLoopPhase2Turn =
+        phase2_user_answer !== undefined && phase2_user_answer !== null;
       userMessage = {
         phase: 2,
-        connected_services: connected_services || threadRecord.metadata?.phase1_connected_services || null,
         enhanced_prompt: enhanced_prompt || null,
         declined_services: declined_services || [],   // V10: services user refused to connect
         user_feedback: user_feedback || null,         // V10: refinement feedback for mini-cycle
-        plugin_action_summary: plugin_action_summary_text || undefined  // EP Key Hints (O8)
+        phase2_user_answer: phase2_user_answer ?? null,
+        // Heavy context only on the first Phase 2 turn (omitted mid-loop — E1):
+        ...(isMidLoopPhase2Turn
+          ? {}
+          : {
+              connected_services:
+                connected_services || threadRecord.metadata?.phase1_connected_services || null,
+              plugin_action_summary: plugin_action_summary_text || undefined, // EP Key Hints (O8)
+            }),
       };
+      if (!isMidLoopPhase2Turn) {
+        pluginContextIncludedThisTurn = true; // E7: first Phase 2 turn sends, mid-loop omits (E1)
+      }
     } else if (phase === 3) {
-      // V10: Phase 3 needs connected_services for OAuth gate re-call, declined_services, and enhanced_prompt for refinement
+      // E7 (2026-05-30): OMIT the heavy plugin context (`plugin_action_summary` +
+      // `connected_services`) when the thread already has the latest copy from a
+      // prior turn — i.e. when this turn's `connected_services` signature matches
+      // the one we last persisted. The v16 prompt's "earlier-thread context stays
+      // authoritative" rule tells the LLM to read the latest copy from the thread
+      // when these fields are absent from the current message. We always send on
+      // the initial Phase 3 (no prior signature stored) and whenever the user
+      // connected or declined a plugin between turns (signature differs). Saves
+      // ~1k–3k tokens per Phase 3 call when nothing changed, e.g. mini-cycle
+      // refinement Phase 3 turns.
+      const omitPluginContextOnPhase3 = pluginContextUnchangedFromThread;
       userMessage = {
         phase: 3,
         clarification_answers: clarification_answers || {},
-        connected_services: connected_services || threadRecord.metadata?.phase1_connected_services || [],
         declined_services: declined_services || [],   // V10: services user refused to connect
         enhanced_prompt: enhanced_prompt || null,     // V10: for refinement cycles
-        plugin_action_summary: plugin_action_summary_text || undefined  // EP Key Hints (O8)
+        ...(omitPluginContextOnPhase3
+          ? {}
+          : {
+              connected_services: connected_services || threadRecord.metadata?.phase1_connected_services || [],
+              plugin_action_summary: plugin_action_summary_text || undefined,  // EP Key Hints (O8)
+            }),
       };
+      if (!omitPluginContextOnPhase3) {
+        pluginContextIncludedThisTurn = true;
+      }
     }
 
     requestLogger.debug({ phase, userMessage }, 'User message constructed');
@@ -533,24 +731,132 @@ export async function POST(request: NextRequest) {
 
     // Step 12: Parse and validate response JSON
     let aiResponse: ProcessMessageResponse;
+    // Phase 2 single-question mode: stash the loop decision so the persist
+    // block at the bottom can write `phase2_loop_state` and emit the single
+    // termination Pino log AFTER `updateThreadPhase()` resolves.
+    let phase2LoopDecisionForLog:
+      | {
+          terminate: boolean;
+          iteration_count: number;
+          termination_reason?: 'phase2_done' | 'cap_hit';
+        }
+      | null = null;
+    let phase2NextLoopState: Phase2LoopState | null = null;
     try {
       requestLogger.debug({ responsePreview: aiResponseText.substring(0, 200) }, 'AI response preview');
       requestLogger.trace({ fullResponse: aiResponseText }, 'AI response full');
 
       const parsedJson = JSON.parse(aiResponseText);
 
+      // -----------------------------------------------------------------------
+      // Phase 2 single-question mode (2026-05-27): SNAPSHOT BEFORE MUTATION.
+      //
+      // CRITICAL: a few lines below this we mutate `aiResponse.success = true`
+      // and `aiResponse.phase = phase`. The `.strict()` Zod schema rejects any
+      // extra keys (including `success` and `phase`) — so we MUST capture the
+      // raw parsed LLM payload here, BEFORE the mutation, and validate the
+      // snapshot. Validating the post-mutation object would reject every call
+      // and cause an infinite "shape invalid" warn breadcrumb (this is the
+      // exact regression the prior R3 attempt hit).
+      // -----------------------------------------------------------------------
+      const rawPhase2Payload =
+        phase === 2 ? { ...parsedJson } : null;
+
       // Strict validation for Phase 3 responses
       if (phase === 3) {
         requestLogger.debug('Validating Phase 3 response structure');
 
-        const validation = validatePhase3Response(parsedJson);
+        let validation = validatePhase3Response(parsedJson);
+
+        // Crash hardening (2026-05-28, strengthened 2026-05-29 — E2): a phase:3 call
+        // can come back shaped like a Phase 2 single-question payload
+        // (`{ question, phase2_done }`) when the LLM is entrenched in single-question
+        // mode after many Phase 2 turns. Rather than 500 the whole flow, retry the
+        // Phase 3 completion ONCE. The retry appends an explicit CORRECTIVE turn
+        // (E2 #2) — re-sending the identical entrenched conversation alone just
+        // re-rolls the same dice, so the corrective nudge tells the model to switch
+        // to the enhanced-prompt shape. Bounded to a single extra call.
+        if (!validation.success) {
+          const looksLikePhase2 =
+            parsedJson && typeof parsedJson === 'object' &&
+            ('phase2_done' in parsedJson || 'question' in parsedJson);
+          requestLogger.warn({
+            validationErrors: validation.errors,
+            looksLikePhase2,
+            phase,
+          }, 'Phase 3 response failed validation — retrying the Phase 3 completion once (with corrective nudge)');
+
+          try {
+            // E2 #2 + F3 layer 2 (2026-05-30): corrective turn so the retry isn't just a
+            // re-roll of the same context. Branch on `looksLikePhase2` because the
+            // Phase 3 retry covers TWO distinct failure modes:
+            //   (a) Phase-2 entrenchment — LLM returned a `{question, phase2_done}`
+            //       payload on a phase:3 request after many Phase 2 turns. E2 message
+            //       tells it to switch to the enhanced-prompt shape.
+            //   (b) Schema-shape violation — the payload is shaped like Phase 3 but
+            //       fails Zod on a specific path (e.g. `resolved_user_inputs[1].value`
+            //       was a boolean/null/object before F3's normalizer caught those).
+            //       Naming the failing paths gives the LLM a concrete fix, instead of
+            //       the misleading Phase-2 message that previously fired here.
+            const correctiveTurnContent = looksLikePhase2
+              ? 'Your previous reply was a Phase 2 single-question payload (it contained "question"/"phase2_done"). This is a PHASE 3 request. Respond NOW with ONLY the Phase 3 enhanced-prompt JSON object (analysis, enhanced_prompt, requiredServices, missingPlugins, pluginWarning, clarityScore, conversationalSummary, metadata). Do NOT ask another question and do NOT include "question" or "phase2_done".'
+              : `Your previous reply was shaped like a Phase 3 response but failed schema validation at the following path(s): ${(validation.errors ?? []).join('; ')}. Re-emit the full Phase 3 enhanced-prompt JSON object with ONLY those specific paths fixed; keep every other field exactly as you had it. Common pitfalls: each \`enhanced_prompt.specifics.resolved_user_inputs[*].value\` MUST be a non-empty string or number (not null, not boolean, not object); each \`sections\` array MUST contain only non-empty strings; \`clarityScore\` MUST be a number between 0 and 100.`;
+            const correctiveTurn = {
+              role: 'user' as const,
+              content: correctiveTurnContent,
+            };
+            const retryParams: any = {
+              model: aiModel,
+              messages: [...conversationMessages, correctiveTurn],
+              temperature: 0.1,
+              max_tokens: maxOutputTokens,
+            };
+            if (chatProvider.supportsResponseFormat) {
+              retryParams.response_format = { type: 'json_object' };
+            }
+            const retryCompletion = await chatProvider.chatCompletion(retryParams, {
+              userId: user.id,
+              feature: 'agent_creation',
+              component: 'process-message',
+              category: 'agent_workflow',
+              activity_type: 'agent_creation',
+              activity_name: 'Process agent creation phase 3 (retry)',
+              activity_step: 'phase_3_retry',
+              workflow_step: 'phase_3_retry',
+            });
+            const retryText = retryCompletion.choices[0]?.message?.content;
+            if (retryText) {
+              const retryParsed = JSON.parse(retryText);
+              const retryValidation = validatePhase3Response(retryParsed);
+              if (retryValidation.success) {
+                requestLogger.info({ phase }, 'Phase 3 retry returned a valid response');
+                validation = retryValidation;
+                // The bad assistant reply is already in the thread (stored at Step
+                // 11 before validation). Persist the corrective USER turn first, then
+                // the good assistant reply, so the thread keeps a well-formed
+                // alternating sequence (…→ assistant[bad] → user[corrective] →
+                // assistant[good]). Appending only the assistant reply would leave
+                // two consecutive assistant turns, which a later mini-cycle Phase 3
+                // replay would resend verbatim. Order matters; await sequentially.
+                await openaiProvider
+                  .addMessageToThread(thread_id, { role: 'user', content: correctiveTurn.content })
+                  .catch((err: any) => requestLogger.warn({ err }, 'Failed to store Phase 3 corrective turn (non-critical)'));
+                await openaiProvider
+                  .addMessageToThread(thread_id, { role: 'assistant', content: retryText })
+                  .catch((err: any) => requestLogger.warn({ err }, 'Failed to store Phase 3 retry response (non-critical)'));
+              }
+            }
+          } catch (retryErr: any) {
+            requestLogger.warn({ err: retryErr, phase }, 'Phase 3 retry threw');
+          }
+        }
 
         if (!validation.success) {
           requestLogger.error({
             validationErrors: validation.errors,
             phase,
             fullResponse: aiResponseText
-          }, 'Phase 3 response validation failed');
+          }, 'Phase 3 response validation failed (after one retry)');
           return NextResponse.json(
             {
               success: false,
@@ -564,8 +870,109 @@ export async function POST(request: NextRequest) {
 
         requestLogger.debug('Phase 3 response validated successfully');
         aiResponse = validation.data as ProcessMessageResponse;
+      } else if (phase === 2) {
+        // Phase 2 single-question mode: validate the SNAPSHOT (not parsedJson —
+        // which is about to be mutated). On Zod failure we do NOT retry the LLM
+        // and we do NOT fabricate a question — we pass the parsed payload
+        // through in degraded form (FR4.11 / SA Comment 2) and let the next
+        // turn recover. The loop controller still advances iteration_count so
+        // the defensive cap eventually fires if the LLM never recovers.
+        const phase2Validation = validatePhase2Response(rawPhase2Payload);
+        const payloadValid = phase2Validation.success;
+
+        if (!payloadValid) {
+          requestLogger.warn(
+            {
+              phase: 2,
+              validationErrors: phase2Validation.success
+                ? undefined
+                : phase2Validation.errors,
+              fullResponse: aiResponseText,
+            },
+            'Phase 2 response shape invalid — degraded passthrough (no retry, no synthesis)'
+          );
+        }
+
+        // Load prior loop state from thread metadata. A NEW Phase 2 session (no
+        // `phase2_user_answer` — initial entry or mini-cycle start) resets the
+        // count to 0; the cap is per-session (FR5.12), not thread-global. Mid-loop
+        // answer turns continue the running count. (Mirrors the pre-call block and
+        // the page's per-session hint reset; prevents the mini-cycle cap loop.)
+        const priorLoopState: Phase2LoopState =
+          (phase2_user_answer === undefined || phase2_user_answer === null)
+            ? INITIAL_LOOP_STATE
+            : ((threadRecord.metadata?.phase2_loop_state as Phase2LoopState | undefined) ?? INITIAL_LOOP_STATE);
+
+        // Build controller input from the parsed payload (whether or not it
+        // passed Zod — the controller branches on `payload_valid`).
+        const llmQuestion =
+          rawPhase2Payload && typeof (rawPhase2Payload as any).question !== 'undefined'
+            ? (rawPhase2Payload as any).question
+            : undefined;
+        const llmPhase2Done =
+          rawPhase2Payload && typeof (rawPhase2Payload as any).phase2_done === 'boolean'
+            ? (rawPhase2Payload as any).phase2_done
+            : undefined;
+
+        const decision = phase2LoopStep({
+          state: priorLoopState,
+          payload_valid: payloadValid,
+          llm_question: llmQuestion,
+          llm_phase2_done: llmPhase2Done,
+        });
+
+        phase2NextLoopState = decision.next_state;
+        phase2LoopDecisionForLog = {
+          terminate: decision.decision === 'terminate',
+          iteration_count: decision.next_state.iteration_count,
+          termination_reason:
+            decision.decision === 'terminate'
+              ? decision.termination_reason
+              : undefined,
+        };
+
+        // E6 (2026-05-30): per-turn telemetry breadcrumb. Logs the LLM's
+        // `ai_reasoning` (server-side observability for OI1 pacing calibration)
+        // alongside the iteration count and the controller's decision. Fires
+        // ONLY on a valid post-LLM turn — pre-call short-circuits (done_keyword,
+        // cap_pre_call) have their own termination log, and degraded turns have
+        // their own warn. `ai_reasoning` is optional in the schema; logged as
+        // null when the LLM omitted it. The field is NEVER returned to the UI
+        // (the aiResponse builder below does not spread it).
+        if (payloadValid && phase2Validation.success) {
+          const turnDecision: 'continue' | 'phase2_done' | 'cap_hit' =
+            decision.decision === 'terminate'
+              ? decision.termination_reason
+              : 'continue';
+          requestLogger.info(
+            {
+              phase: 2,
+              iteration_count: decision.next_state.iteration_count,
+              decision: turnDecision,
+              ai_reasoning: phase2Validation.data.ai_reasoning ?? null,
+            },
+            'Phase 2 turn decision'
+          );
+        }
+
+        // Build the response from the controller's response. We deliberately
+        // do NOT pass through any of the LLM's other fields (the Phase 2
+        // response contract is `{ question, phase2_done, ... }` only).
+        // E6: `ai_reasoning` is intentionally NOT spread here — server-side only.
+        aiResponse = {
+          success: false, // will be set true below by the existing mutation
+          phase: 2,
+          question: decision.response.question,
+          phase2_done: decision.response.phase2_done,
+          ...(decision.response.disclosure_banner !== undefined && {
+            disclosure_banner: decision.response.disclosure_banner,
+          }),
+          ...(decision.response.termination_reason !== undefined && {
+            termination_reason: decision.response.termination_reason,
+          }),
+        } as ProcessMessageResponse;
       } else {
-        // Phase 1 & 2: No strict validation yet
+        // Phase 1: No strict validation yet
         aiResponse = parsedJson;
       }
 
@@ -630,6 +1037,21 @@ export async function POST(request: NextRequest) {
       ...(phase === 1 && {
         phase1_connected_services: user_connected_services,
         phase1_available_services: user_available_services
+      }),
+      // Phase 2 single-question mode (2026-05-27): merge loop state onto the
+      // SAME `updateThreadPhase()` call below (no separate DB write — SA
+      // Comment 1). Only present when phase === 2 and the route reached the
+      // post-LLM path (the done-keyword short-circuit handles its own persist).
+      ...(phase === 2 && phase2NextLoopState && {
+        phase2_loop_state: phase2NextLoopState
+      }),
+      // E7 (2026-05-30): persist the signature of the connected_services that
+      // the thread now has in its conversation history (from THIS turn's
+      // userMessage). Updates only when we actually INCLUDED the heavy plugin
+      // context this turn; otherwise the prior signature still describes
+      // what's authoritative in the thread.
+      ...(pluginContextIncludedThisTurn && {
+        plugin_context_signature: currentPluginSignature
       })
     };
 
@@ -661,6 +1083,26 @@ export async function POST(request: NextRequest) {
         newPhase: phase,
         newStatus
       }, 'Thread record updated');
+
+      // Phase 2 single-question mode (2026-05-27): emit exactly ONE Pino info
+      // line on loop EXIT (FR8). Placed AFTER `updateThreadPhase()` resolves so
+      // we never log a successful termination that wasn't actually persisted
+      // (SA Comment 1). The continue path emits no per-iteration log line —
+      // FR8 mandates one log per session, at exit.
+      if (
+        phase === 2 &&
+        phase2LoopDecisionForLog &&
+        phase2LoopDecisionForLog.terminate
+      ) {
+        requestLogger.info(
+          {
+            phase: 2,
+            iteration_count: phase2LoopDecisionForLog.iteration_count,
+            termination_reason: phase2LoopDecisionForLog.termination_reason,
+          },
+          'Phase 2 loop terminated'
+        );
+      }
     } catch (updateError: any) {
       requestLogger.warn({ err: updateError, dbRecordId: threadRecord.id }, 'Failed to update thread record (non-critical)');
       // Don't fail the request if database update fails

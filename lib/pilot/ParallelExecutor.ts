@@ -708,8 +708,17 @@ export class ParallelExecutor {
       //                         calibration can surface as many issues as
       //                         possible without halting)
       //
+      // WP-54: opt out of the production-mode re-throw via
+      // `scatter.continueOnError: true`. Used by heterogeneous-input scatters
+      // (Drive folder scans, broad searches, multi-URL fetches) where some
+      // items being un-processable is expected. The swallowed result is
+      // tagged with {error, item:idx} the same way calibration mode does,
+      // and the gather phase's existing WP-10 error filtering separates
+      // failures from successes so downstream consumers only see good items.
+      //
       // See workplan: docs/workplans/runmode-into-scatter-failure-handling.md
-      if (parentContext.runMode === 'production') {
+      const continueOnError = scatterStep.scatter?.continueOnError === true;
+      if (parentContext.runMode === 'production' && !continueOnError) {
         logger.warn(
           { itemIndex: index, error: error.message, runMode: parentContext.runMode },
           'Scatter item failed in production mode — re-throwing to fail fast'
@@ -717,7 +726,14 @@ export class ParallelExecutor {
         throw error;
       }
 
-      logger.warn({ itemIndex: index, error: error.message }, 'Scatter item failed');
+      if (continueOnError) {
+        logger.warn(
+          { itemIndex: index, error: error.message, runMode: parentContext.runMode, continueOnError: true },
+          'Scatter item failed — swallowing (WP-54 continueOnError enabled)'
+        );
+      } else {
+        logger.warn({ itemIndex: index, error: error.message }, 'Scatter item failed');
+      }
       return {
         result: {
           error: error.message,

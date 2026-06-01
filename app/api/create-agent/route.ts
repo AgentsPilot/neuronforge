@@ -4,7 +4,9 @@ import { createLogger } from '@/lib/logger';
 import { getUser } from '@/lib/auth';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { AgentRepository } from '@/lib/repositories/AgentRepository';
+import { agentConfigurationRepository } from '@/lib/repositories';
 import { auditLog } from '@/lib/services/AuditTrailService';
+import { AUDIT_EVENTS } from '@/lib/audit/events';
 
 // Module-scoped Pino logger (per SYSTEM_LOGGING_GUIDELINES.md § Server-Side Logging).
 // Each request creates a child logger with a correlation ID + route below.
@@ -54,6 +56,14 @@ const CreateAgentSchema = z.object({
   sessionId: z.string().optional(),
   agentId: z.string().optional(),
   thread_id: z.string().optional(),
+  // E9 (2026-05-30): optional input values folded into the create flow so the
+  // V2 UI doesn't have to follow up with a second `/api/agent-configurations/
+  // save-inputs` POST. Eliminates the ~1.5 s sequential round-trip + closes the
+  // race where the V1 agent edit page reads `agent_configurations` on mount
+  // before the deferred save lands. Optional + backward-compatible: existing
+  // callers that omit this field keep the prior behavior. Same shape as the
+  // standalone save-inputs route's `input_values`.
+  input_values: z.record(z.string(), z.unknown()).optional(),
 });
 
 export async function POST(request: NextRequest) {
@@ -108,7 +118,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { agent, sessionId: providedSessionId, agentId: providedAgentId, thread_id } = parsed.data;
+    const { agent, sessionId: providedSessionId, agentId: providedAgentId, thread_id, input_values } = parsed.data;
 
     // Use the authenticated user's ID — never trust client-provided user_id
     const agentUserIdToUse = userId;
@@ -239,6 +249,55 @@ export async function POST(request: NextRequest) {
       requestLogger.warn({ err, agentId: data.id }, 'Audit log failed (non-blocking)');
     });
 
+    // E9 (2026-05-30): inline-save input_values when provided. Folded in here to
+    // eliminate the V2 UI's prior sequential `POST /api/agent-configurations/
+    // save-inputs` round-trip and the race it created with the V1 agent edit
+    // page's on-mount `checkAgentConfiguration` (which reads the same row this
+    // saves). Failure is isolated — the agent already exists, so we MUST NOT 500
+    // the whole request if input save fails. The standalone save-inputs route
+    // remains the canonical write path for post-creation updates.
+    let inputsSaved = false;
+    if (input_values && Object.keys(input_values).length > 0) {
+      try {
+        const { data: configData, error: configError } =
+          await agentConfigurationRepository.saveInputValues(
+            data.id,
+            agentUserIdToUse,
+            input_values,
+            { inputSchema: agentInput.input_schema, status: 'configured' }
+          );
+        if (configError || !configData) {
+          requestLogger.warn(
+            { err: configError, agentId: data.id, inputCount: Object.keys(input_values).length },
+            'E9: inline saveInputValues failed — agent created, inputs NOT saved (client may retry via /api/agent-configurations/save-inputs)'
+          );
+        } else {
+          inputsSaved = true;
+          requestLogger.info(
+            { configId: configData.id, agentId: data.id, inputCount: Object.keys(input_values).length },
+            'E9: inline input values saved successfully'
+          );
+          // Audit (non-blocking — mirrors the standalone save-inputs route)
+          auditLog({
+            action: AUDIT_EVENTS.AGENT_CONFIG_SAVED,
+            entityType: 'agent',
+            entityId: data.id,
+            userId: agentUserIdToUse,
+            details: { configId: configData.id, inputCount: Object.keys(input_values).length, via: 'create-agent' },
+            severity: 'info',
+            request,
+          }).catch((err) =>
+            requestLogger.warn({ err, agentId: data.id }, 'E9: AGENT_CONFIG_SAVED audit failed (non-blocking)')
+          );
+        }
+      } catch (configError: any) {
+        requestLogger.warn(
+          { err: configError, agentId: data.id },
+          'E9: inline saveInputValues threw — agent created, inputs NOT saved (client may retry)'
+        );
+      }
+    }
+
     // Link agent to thread if thread_id (OpenAI thread ID) provided
     if (thread_id) {
       try {
@@ -364,6 +423,9 @@ export async function POST(request: NextRequest) {
         success: true,
         agent: data,
         message: 'Agent created successfully',
+        // E9: when input_values was provided in the request, this reflects whether
+        // the inline save succeeded. Absent / false when no values were passed.
+        inputsSaved,
         analytics: {
           agentId: data.id,
           sessionId: providedSessionId,

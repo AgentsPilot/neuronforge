@@ -187,6 +187,80 @@ Every step MUST have:
 - uses tells compiler what capabilities to bind (domain + capability)
 
 ────────────────────────────────────────────────────────
+5.5) EP FIDELITY — Don't drop user constraints when authoring step params
+────────────────────────────────────────────────────────
+
+The Enhanced Prompt (EP) carries every user-specified constraint in its
+prose sections (sections.data / sections.actions / sections.output /
+sections.delivery / processing_steps). EVERY such constraint must be
+reflected in the corresponding step.payload / step.recipients /
+step.content / step.filters — NEVER just in the step's summary text.
+
+The summary is for humans. The structured fields are what the runtime
+executes. If the EP says X and the bound plugin action supports X as a
+parameter, X MUST appear in the step's structured fields.
+
+The most common authoring mistake is: "I picked the right action and
+filled in the obvious params, but I forgot to set the param that
+actually enforces what the EP said." This silently drops the user's
+intent and causes either downstream failures (the wrong items reach a
+later step that can't handle them) or wrong-output bugs (the user
+receives results that don't match the EP's constraints).
+
+**Before authoring any step's structured fields, scan the EP for these
+constraint patterns and map each to the bound action's parameter schema
+(see "CONNECTED PLUGINS AND ACTIONS" below for each action's params):**
+
+| EP language pattern | Maps to | Examples |
+|---|---|---|
+| "only X" / "X documents" / "X files" (X is a type) | type/format filter param | "only Google Docs" → \`file_types: ["document"]\`; "only PDFs" → \`file_types: ["pdf"]\`; "only spreadsheets" → \`file_types: ["spreadsheet"]\` |
+| "in folder Y" / "from sheet Y" / "in calendar Y" | resource ID in payload | \`folder_id\`, \`spreadsheet_id\`, \`calendar_id\` |
+| "from sender X" / "with subject Y" / "labeled Z" | search query string | \`query: "from:X subject:Y label:Z"\` |
+| "published after T" / "in the last N days" / "since D" | date filter | date range, \`publishedAfter\`, \`time_window\` param |
+| "as HTML" / "in HTML format" / "HTML table" | body format | use \`html_body\` field (NOT \`body\`); set \`format: "html"\` |
+| "as Markdown" / "as plain text" | body format | \`markdown_body\` / \`body\` (plain) |
+| "to A, CC B, BCC C" | recipients structure | \`recipients.to\` / \`recipients.cc\` / \`recipients.bcc\` (ALL three, not just to) |
+| "in language L" | locale / language param | \`language: L\` |
+
+**Authoring process:**
+1. Read the EP's sections.data, sections.actions, sections.output, sections.delivery, processing_steps.
+2. For each filter / format / recipient / scope phrase, identify the constraint.
+3. Look up the bound action's parameter schema in "CONNECTED PLUGINS AND ACTIONS".
+4. If a matching param exists → set it in step.payload (or recipients/content for notify).
+5. If NO matching param exists → add a downstream \`transform/filter\` step to enforce the constraint.
+6. NEVER leave the constraint only in the step summary or in a prose comment.
+
+**Anti-example — the WP-53 incident (do NOT do this):**
+
+EP says: "Consider only Google Docs documents in the Contracts folder"
+Bound action: \`google-drive.list_files\` — its schema exposes
+\`file_types\` (array enum: "document", "spreadsheet", "pdf", ...) AND
+\`folder_id\` (string).
+
+❌ WRONG — file_types dropped; all files in the folder get listed
+(DOCX, PDF, native Docs all together); downstream google-docs.read_document
+fails with 400 on the non-Google-Doc files:
+\`\`\`json
+{
+  "kind": "data_source",
+  "summary": "List Google Docs in Contracts folder",
+  "payload": { "folder_id": { "kind": "ref", "ref": "contracts_folder", "field": "folder_id" } }
+}
+\`\`\`
+
+✅ CORRECT — file_types reflects the EP's "only Google Docs" constraint:
+\`\`\`json
+{
+  "kind": "data_source",
+  "summary": "List Google Docs in Contracts folder",
+  "payload": {
+    "folder_id": { "kind": "ref", "ref": "contracts_folder", "field": "folder_id" },
+    "file_types": { "kind": "literal", "value": ["document"] }
+  }
+}
+\`\`\`
+
+────────────────────────────────────────────────────────
 6) STEP KINDS (DETAILED)
 ────────────────────────────────────────────────────────
 
@@ -258,6 +332,7 @@ The right side of \`contains_any\` MUST be an array literal.
 - Use **payload** for ANY structured parameters that identify resources or configure the data fetch
   - Examples: resource IDs, container names, location specifiers, format options
   - Always use payload when user specifies parameters like "from sheet X", "in folder Y", "with ID Z"
+  - **Also include EP-derived type/format filters here** — e.g. "only Google Docs" → \`file_types: ["document"]\`, "only PDFs" → \`file_types: ["pdf"]\`. See § 5.5 EP FIDELITY for the full pattern list.
 - Use **query** ONLY for free-text search strings (semantic searches, keyword queries)
   - Example: "is:unread has:attachment", "status:open", natural language queries
 - Use **inputs** array when you need data from a prior step's output
@@ -269,6 +344,7 @@ The right side of \`contains_any\` MUST be an array literal.
 1. Is this a text-based search? → Use query (string)
 2. Does user specify resource identifiers or locations? → Use payload (object with ValueRefs)
 3. Does this need data from a prior step? → Use inputs (array of RefNames)
+4. Does the EP name a content type/format (e.g. "only Google Docs", "only PDFs")? → Check the bound action's parameter schema for a matching filter param and include it in payload (§ 5.5).
 
 ### 6.2) ARTIFACT - Create/get storage containers
 
@@ -1340,6 +1416,11 @@ For NAMED-FIELD destinations (e.g., CRM record-create, key-value store \`set\`),
     "options"?: JsonObject
   }
 }
+
+**EP FIDELITY for notify** (see § 5.5 for the full pattern list):
+- "to A, CC B, BCC C" → emit ALL of \`recipients.to\` / \`recipients.cc\` / \`recipients.bcc\`. Dropping cc/bcc means those recipients silently never receive the message.
+- "as HTML" / "HTML table" / "HTML email" → set \`content.format: "html"\` so the compiler emits \`html_body\` (not plain \`body\`). The runtime treats these as different fields; using the wrong one means the user receives ASCII-pipe tables instead of styled HTML.
+- "send to my lawyers" / "to the team" / "to my list" — when the recipient is a named group, the EP's \`resolved_user_inputs\` will carry the actual addresses; emit each as a separate ValueRef in the appropriate \`to\`/\`cc\`/\`bcc\` array.
 
 ### 6.13) SCHEDULE - Time-based execution
 

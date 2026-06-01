@@ -1,6 +1,6 @@
 # V6 Open Items — Consolidated Backlog
 
-> **Last Updated:** 2026-05-20
+> **Last Updated:** 2026-06-01 (WP-55 fixed)
 > **Purpose:** Single source of truth for everything that's deferred, partial, or "future" in V6. Aggregates from `V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_WEAK_POINTS.md`, `V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_INTENT_CONTRACT.md`, the regression `scenario.json` caveats, and session-level observations.
 
 ## How to use this doc
@@ -32,8 +32,9 @@ Sourced from [`V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_WEAK_POINTS.md`](./V6_
 | [WP-14](./V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_WEAK_POINTS.md#wp-14) (reopened) | Multi-nested-step scatter body token bloat (`isExtractLike` guard missing on multi-step branch in `ParallelExecutor.ts:470`) | ⚠️ Partial fix | Triggers on contract-enddate Phase E (1M tokens). ~30 lines. |
 | [WP-26](./V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_WEAK_POINTS.md#wp-26-o23-doesnt-recognize-project_columnby_index-as-a-positional-consumer) | O23 doesn't recognize `project_column.by_index` as positional consumer | ⬜ Future | User workaround: add header row to sheet. ~15 lines. |
 | [WP-27](./V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_WEAK_POINTS.md#wp-27-sheets-append_rows-shifts-to-non-A-column-when-existing-data-has-empty-cells) | Sheets `append_rows` shifts off column A on sparse data | ⬜ Future | User workaround: add header row. ~5 lines compiler-side normalization. |
+| [WP-51](./V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_WEAK_POINTS.md#wp-51-datapreprocessor-shape-heuristic-routing-into-lossy-specialized-preprocessors-architectural) | `DataPreprocessor` shape-heuristic routing into lossy specialized preprocessors — family of WP-50-class false positives | ⬜ Documented (architectural) | First family member fixed as [WP-50](./V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_WEAK_POINTS.md#wp-50-datapreprocessor-misclassifies-any-object-with-a-summary-field-as-a-calendar-event--silently-eats-ai_processing-input) (2026-05-30). Three remaining clauses at risk (email / transaction / contact). Three intervention options in the WP body: (A) schema-driven routing, (B) non-destructive preprocessor contract, (C) hybrid auto-fallback. Bundle when next family member surfaces. |
 
-### P2 (Phase D / Phase A realism)
+### P2 (Phase D / Phase A realism + observability)
 
 | WP | One-line summary | Status | Notes |
 |---|---|---|---|

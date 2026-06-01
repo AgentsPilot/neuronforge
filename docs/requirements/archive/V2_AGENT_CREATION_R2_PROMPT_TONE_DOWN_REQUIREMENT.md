@@ -1,5 +1,7 @@
 # Requirement: V2 Agent Creation — R2 Prompt Tone-Down (Phase 2 Question Cap & Carve-Outs)
 
+> **Status:** Superseded by [V2_AGENT_CREATION_PHASE2_SINGLE_QUESTION_REQUIREMENT.md](/docs/requirements/V2_AGENT_CREATION_PHASE2_SINGLE_QUESTION_REQUIREMENT.md). Kept for historical reference.
+
 > **Last Updated**: 2026-05-24
 
 **Created by:** BA

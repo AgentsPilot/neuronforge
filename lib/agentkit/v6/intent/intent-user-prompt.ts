@@ -9,7 +9,7 @@ export type EnhancedPrompt = {
     actions: string[];
     output: string[];
     delivery: string[];
-    processing_steps: string[];
+    processing_steps?: string[];
   };
   specifics: {
     services_involved: string[];
@@ -48,7 +48,11 @@ DELIVERY:
 ${enhancedPrompt.sections.delivery.map((item) => `  ${item}`).join('\n')}
 
 PROCESSING STEPS (suggested sequence):
-${enhancedPrompt.sections.processing_steps.map((item) => `  ${item}`).join('\n')}
+${
+    enhancedPrompt.sections.processing_steps && enhancedPrompt.sections.processing_steps.length > 0
+      ? enhancedPrompt.sections.processing_steps.map((item) => `  ${item}`).join('\n')
+      : '  (none)'
+  }
 
 SERVICES INVOLVED:
 ${enhancedPrompt.specifics.services_involved.map((s) => `  - ${s}`).join('\n')}

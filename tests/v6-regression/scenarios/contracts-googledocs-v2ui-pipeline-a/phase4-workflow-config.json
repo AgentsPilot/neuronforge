@@ -1,0 +1,12 @@
+{
+  "contracts_folder_name": "Contracts",
+  "days_window": 30,
+  "email_to": "meiribarak@gmail.com",
+  "email_cc_1": "offir.omer@gmail.com",
+  "email_cc_2": "eomer3@gmail.com",
+  "email_subject": "Contracts ending in the next 30 days (Contracts folder)",
+  "google-drive__search__folder_name": "Contracts",
+  "google-mail__send_message__recipients.to": "meiribarak@gmail.com",
+  "google-mail__send_message__recipients.cc": "offir.omer@gmail.com, eomer3@gmail.com",
+  "google-drive__list__folder_scope": "Only the main folder"
+}

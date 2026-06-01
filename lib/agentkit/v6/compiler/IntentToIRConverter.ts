@@ -1045,11 +1045,18 @@ export class IntentToIRConverter {
       if (schemaProps.has('recipients') && step.notify.recipients?.to) {
         // Robust: LLM occasionally emits recipients.to as a single ValueRef
         // object instead of an array of ValueRefs. Normalize before mapping.
-        const toList = Array.isArray(step.notify.recipients.to)
-          ? step.notify.recipients.to
-          : [step.notify.recipients.to]
+        // WP-49: also project cc / bcc when present so the EP's CC/BCC
+        // recipients aren't silently dropped on the way to the DSL.
+        const normalize = (v: any) => Array.isArray(v) ? v : [v]
+        const toList = normalize(step.notify.recipients.to)
         params.recipients = {
-          to: toList.map((r: any) => this.resolveValueRef(r, ctx))
+          to: toList.map((r: any) => this.resolveValueRef(r, ctx)),
+          ...(step.notify.recipients.cc && {
+            cc: normalize(step.notify.recipients.cc).map((r: any) => this.resolveValueRef(r, ctx))
+          }),
+          ...(step.notify.recipients.bcc && {
+            bcc: normalize(step.notify.recipients.bcc).map((r: any) => this.resolveValueRef(r, ctx))
+          })
         }
       }
 
@@ -1096,11 +1103,17 @@ export class IntentToIRConverter {
         if (step.notify.recipients?.to) {
           // Robust: LLM occasionally emits recipients.to as a single ValueRef
           // object instead of an array of ValueRefs. Normalize before mapping.
-          const toList = Array.isArray(step.notify.recipients.to)
-            ? step.notify.recipients.to
-            : [step.notify.recipients.to]
+          // WP-49: also project cc / bcc (mirror schema-aware branch above).
+          const normalize = (v: any) => Array.isArray(v) ? v : [v]
+          const toList = normalize(step.notify.recipients.to)
           params.recipients = {
-            to: toList.map((r: any) => this.resolveValueRef(r, ctx))
+            to: toList.map((r: any) => this.resolveValueRef(r, ctx)),
+            ...(step.notify.recipients.cc && {
+              cc: normalize(step.notify.recipients.cc).map((r: any) => this.resolveValueRef(r, ctx))
+            }),
+            ...(step.notify.recipients.bcc && {
+              bcc: normalize(step.notify.recipients.bcc).map((r: any) => this.resolveValueRef(r, ctx))
+            })
           }
         }
         const contentObj: Record<string, any> = {}

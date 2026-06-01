@@ -21,11 +21,22 @@ export type ThinkingCategory =
   | 'communication'
   | 'progress'
   | 'friendly'
-  | 'long_wait';
+  | 'long_wait'
+  | 'clarification_hints';
 
 interface CategoryDefinition {
   description: string;
   words: string[];
+  /**
+   * When true, this category's words are EXCLUDED from the generic word pool
+   * (`getAllWords()` and everything built on it: `getRandomThinkingWord`,
+   * `createThinkingWordCycler`, `getShuffledThinkingWords`, the `THINKING_WORDS`
+   * constant). The category is still reachable explicitly via
+   * `getWordsForCategory`/`getWordsForCategories`. Used for special-purpose copy
+   * (e.g. `clarification_hints`, full sentences) that must not leak into the
+   * generic rotating-status pool.
+   */
+  excludeFromGeneric?: boolean;
 }
 
 interface ThinkingWordsDictionary {
@@ -84,9 +95,13 @@ class ThinkingWordsLoader {
       );
     }
 
-    // Build all words array
+    // Build all words array (the GENERIC pool). Categories flagged
+    // `excludeFromGeneric` are skipped here so their special-purpose copy never
+    // leaks into generic random/cycler helpers; they remain reachable explicitly
+    // via getWordsForCategory/getWordsForCategories.
     const allWordsArray: string[] = [];
     for (const categoryData of Object.values(this.dictionary.categories)) {
+      if (categoryData.excludeFromGeneric) continue;
       allWordsArray.push(...categoryData.words);
     }
     this.allWords = Object.freeze(allWordsArray);

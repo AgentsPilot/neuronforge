@@ -505,6 +505,78 @@ console.log('IR:', result.intermediate?.declarative_ir)
 console.log('Compiled Steps:', result.workflow?.steps)
 ```
 
+### Diagnosing a Production Agent's Phase 1 Emission (WP-55)
+
+Pipeline A's `/api/v6/generate-ir-intent-contract` writes the Phase 1
+`intent_contract` and the Phase 2 `data_schema` into the response. The
+V2 UI persists both on the agent row at create-agent time under
+`agents.agent_config.ai_context.intent_contract` /
+`agents.agent_config.ai_context.data_schema`. This makes post-hoc
+diagnosis of Phase 1 LLM emission variance a single SQL lookup —
+**no LLM re-run required** (which is critical because re-runs are
+non-deterministic and can produce a different, correct emission that
+doesn't reproduce the bug).
+
+**Fetch the IntentContract for a given agent:**
+
+```sql
+SELECT agent_config -> 'ai_context' -> 'intent_contract' AS intent_contract
+FROM agents
+WHERE id = '<agent_id>';
+```
+
+**Fetch the data_schema (Phase 2 slot schemas):**
+
+```sql
+SELECT agent_config -> 'ai_context' -> 'data_schema' AS data_schema
+FROM agents
+WHERE id = '<agent_id>';
+```
+
+**Both together as a diagnostic bundle:**
+
+```sql
+SELECT
+  id,
+  agent_name,
+  agent_config -> 'creation_metadata' -> 'platform_version' AS pipeline,
+  agent_config -> 'ai_context' -> 'intent_contract' AS intent_contract,
+  agent_config -> 'ai_context' -> 'data_schema' AS data_schema,
+  pilot_steps
+FROM agents
+WHERE id = '<agent_id>';
+```
+
+**What to look for when diagnosing emission variance:**
+
+- *Wrong field reference* (the class of bug WP-55 was created to
+  diagnose): scan `intent_contract.steps[].payload` / `.inputs` for
+  `{kind: "ref", field: "X"}` and cross-check `X` against the
+  corresponding slot in `data_schema.slots[varname].schema.properties`.
+  A mismatch means Phase 1 authored a reference to a field the slot
+  doesn't have — at runtime this will resolve to `undefined`.
+- *Wrong plugin choice*: `intent_contract.steps[].uses[].capability` +
+  `.domain` shows which capability the LLM picked; cross-check against
+  the EP's `services_involved` for any unexpected substitutions.
+- *Missing EP constraint*: scan
+  `intent_contract.steps[].payload` for any param the EP prose required
+  (e.g. `file_types`, `recipients.cc`, `content.format: "html"`). If
+  it's missing, you've hit the EP-fidelity-loss family
+  ([WP-44](./V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_WEAK_POINTS.md#wp-44-v6-formalization-drops-explicit-ep-format-requirements-html-vs-plain-text)
+  / [WP-49](./V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_WEAK_POINTS.md#wp-49-convertnotify-emits-paramsrecipients-with-to-only--cc-and-bcc-silently-dropped)
+  / [WP-53](./V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_WEAK_POINTS.md#wp-53-phase-3-ir-author-drops-ep-level-plugin-filter-constraints-only-google-docs-only-pdfs-in-folder-x-when-authoring-stepparams)).
+
+**Size note:** The IntentContract is typically 15–20 KB and the
+data_schema 15–25 KB. Combined ~40 KB is well within JSONB practical
+limits and small relative to `agent_config` (the EP alone is already
+~5 KB on representative agents).
+
+**Backfill:** agents created before WP-55 landed have
+`agent_config.ai_context.intent_contract = null` and
+`agent_config.ai_context.data_schema = null`. There is no backfill
+because the source artifacts weren't persisted; diagnosis of pre-WP-55
+agents still requires a Pipeline A re-run.
+
 ### Common Issues and Solutions
 
 #### Issue: Field Names Not Matching

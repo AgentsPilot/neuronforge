@@ -261,6 +261,23 @@ export interface ScatterGatherStep extends WorkflowStepBase {
     steps: WorkflowStep[]; // Steps to execute for each item
     maxConcurrency?: number; // Limit parallel execution
     itemVariable?: string; // Variable name for current item (default: "item")
+    /**
+     * WP-54: opt out of production-mode fail-fast on per-item scatter failures.
+     *
+     * Default (`false` / undefined): production mode re-throws on the first item
+     * failure, aborting the entire run. Correct for scatters where every item
+     * must succeed (order processing, transactional updates).
+     *
+     * When `true`: production mode swallows per-item failures the same way
+     * calibration/batch already do, tagging the result with `{error, item:idx}`.
+     * The gather phase's existing WP-10 error filtering then separates failures
+     * from successes so downstream consumers only see good items.
+     *
+     * Use for heterogeneous-input scatters where some failures are expected:
+     * Drive folder scans (mixed file types), broad Gmail searches (some
+     * unreadable), web research over multiple URLs (some dead links).
+     */
+    continueOnError?: boolean;
   };
   gather: {
     operation: 'collect' | 'merge' | 'reduce' | 'flatten'; // How to aggregate results

@@ -18,7 +18,10 @@ import type {
 import { PROVIDERS } from '@/lib/ai/providerFactory';
 import { resolveThreadProviderConfig } from '@/lib/agent-creation/thread-provider-config';
 
-const aiAgentPromptTemplate = "Workflow-Agent-Creation-Prompt-v15-chatgpt";
+// Phase 2 single-question mode (2026-05-27): v16 = v15 + audience banner +
+// single-question interaction-process block. Question-selection logic from
+// v15 is preserved verbatim.
+const aiAgentPromptTemplate = "Workflow-Agent-Creation-Prompt-v16-chatgpt";
 
 // Initialize Supabase client (still needed for AIAnalyticsService)
 const supabase = createClient(

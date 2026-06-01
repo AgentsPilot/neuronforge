@@ -1,0 +1,78 @@
+{
+  "plan_title": "Contract Expiration Monitor (Google Drive → HTML Email Summary)",
+  "plan_description": "Scans Google Docs in the Drive folder 'Contracts', extracts contract end/expiration dates, and emails an HTML summary table of contracts ending within the next 30 days, including documents where an end date could not be found.",
+  "sections": {
+    "data": [
+      "- Locate the Google Drive folder named 'Contracts'.",
+      "- Scan only files directly inside the 'Contracts' folder (do not include subfolders).",
+      "- Consider only Google Docs documents in that folder as candidate contracts.",
+      "- For each candidate document, retrieve the document title and document link (for inclusion in the email table).",
+      "- For each candidate document, read the document text content needed to find an end/expiration date."
+    ],
+    "actions": [
+      "- For each contract document, identify any date that appears to represent the contract end/expiration date (examples of labels to look for: 'End Date', 'Expiration Date', 'Expiry Date', 'Term ends', 'Termination Date', 'Valid until').",
+      "- If multiple candidate end/expiration dates are found, prefer the date that is closest to the phrases 'End Date' or 'Expiration Date'; if still ambiguous, choose the latest date and add a note that multiple dates were present.",
+      "- Normalize extracted dates into a consistent format (YYYY-MM-DD) for comparison.",
+      "- Determine whether each extracted end/expiration date falls within the next 30 days (relative to the day the agent runs).",
+      "- Include a document in the report if its end/expiration date is within the next 30 days.",
+      "- Include a document in the report if no end/expiration date could be found, and mark it as 'End date not found'.",
+      "- For each included document, compute 'days remaining' when an end/expiration date is available.",
+      "- Sort the report so that: (1) contracts ending soonest appear first, then (2) 'End date not found' items appear at the bottom."
+    ],
+    "output": [
+      "- Generate an HTML summary table to be placed in the email body (not as an attachment).",
+      "- The HTML table must include these columns:",
+      "- Document name",
+      "- Document link",
+      "- End/expiration date (or 'End date not found')",
+      "- Days remaining (blank if end date not found)",
+      "- Notes (e.g., 'Multiple possible dates found')",
+      "- If no contracts are ending within the next 30 days and no documents are missing an end date, the email should still be sent and should clearly say: 'No contracts ending in the next 30 days.'"
+    ],
+    "delivery": [
+      "- Send a single email with the HTML table in the email body.",
+      "- Set the email TO recipient to meiribarak@gmail.com.",
+      "- CC: offir.omer@gmail.com.",
+      "- CC: eomer3@gmail.com.",
+      "- Use a clear subject line such as: 'Contracts ending in the next 30 days (Contracts folder)'."
+    ],
+    "processing_steps": [
+      "- Find the Drive folder named 'Contracts' and get its folder identifier.",
+      "- List Google Docs files directly inside the 'Contracts' folder (non-recursive).",
+      "- For each document, fetch the document content and basic metadata (title, link).",
+      "- Extract candidate end/expiration dates using label-aware scanning (e.g., 'End Date', 'Expiration Date', 'Valid until').",
+      "- Normalize the extracted date(s) and select the best end/expiration date when multiple are present.",
+      "- Filter to (a) contracts ending within the next 30 days and (b) documents where no end date could be found.",
+      "- Compute days remaining for items with an end/expiration date.",
+      "- Build the HTML summary table and a short header summary (counts of ending soon vs missing date).",
+      "- Email the HTML summary to the specified recipients."
+    ]
+  },
+  "specifics": {
+    "services_involved": [
+      "google-drive",
+      "google-docs",
+      "google-mail",
+      "chatgpt-research"
+    ],
+    "user_inputs_required": [],
+    "resolved_user_inputs": [
+      {
+        "key": "google-drive__search__folder_name",
+        "value": "Contracts"
+      },
+      {
+        "key": "google-mail__send_message__recipients.to",
+        "value": "meiribarak@gmail.com"
+      },
+      {
+        "key": "google-mail__send_message__recipients.cc",
+        "value": "offir.omer@gmail.com, eomer3@gmail.com"
+      },
+      {
+        "key": "google-drive__list__folder_scope",
+        "value": "Only the main folder"
+      }
+    ]
+  }
+}

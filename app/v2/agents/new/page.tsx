@@ -43,7 +43,7 @@ import type {
 import { isGenerateAgentV2Success } from '@/components/agent-creation/types/generate-agent-v2'
 import { formatScheduleDisplay } from '@/lib/utils/scheduleFormatter'
 import { useV6AgentGeneration } from '@/lib/utils/featureFlags'
-import { createTimedThinkingWordCycler } from '@/lib/ui/thinking-words'
+import { createTimedThinkingWordCycler, getWordsForCategories } from '@/lib/ui/thinking-words'
 
 // ============================================================================
 // V6 Agent Generation Types and Helpers
@@ -89,6 +89,11 @@ interface V6GenerateResponse {
     grounded_plan?: any
     ir?: any
   }
+  // WP-55: Phase 1 + Phase 2 artifacts forwarded for persistence on
+  // agents.agent_config.ai_context so post-hoc diagnosis of LLM emission
+  // variance doesn't require a non-deterministic LLM re-run.
+  intent_contract?: any
+  data_schema?: any
 }
 
 /**
@@ -262,7 +267,13 @@ function mapV6ResponseToAgent(
         confidence: metadata.grounding_confidence || 0.8,
         original_prompt: context.initialPrompt || '',
         enhanced_prompt: context.enhancedPromptData?.enhanced_prompt || '',
-        generated_plan: ''
+        generated_plan: '',
+        // WP-55: persist Phase 1 IntentContract + Phase 2 data_schema so
+        // post-hoc diagnosis of this agent's LLM emission becomes a SQL
+        // lookup instead of a non-deterministic LLM re-run. ~40 KB total
+        // on representative agents; well within JSONB practical limits.
+        intent_contract: v6Response.intent_contract ?? null,
+        data_schema: v6Response.data_schema ?? null
       }
     }
   }
@@ -340,6 +351,14 @@ function V2AgentBuilderContent() {
 
   // Enhanced prompt display state
   const [isStepsExpanded, setIsStepsExpanded] = useState(false)
+  // E8 (2026-05-30): the Agent Draft "Configuration" block can grow long when
+  // the agent has many input parameters. Default to COLLAPSED so the card stays
+  // compact; user can expand to inspect (mirrors the "How it works" accordion).
+  const [isConfigurationExpanded, setIsConfigurationExpanded] = useState(false)
+  // E8 (2026-05-30): same treatment for the Agent Draft "How it works" steps —
+  // separate state from `isStepsExpanded` (chat-side card) so the two cards
+  // toggle independently. Default COLLAPSED.
+  const [isAgentDraftStepsExpanded, setIsAgentDraftStepsExpanded] = useState(false)
   const [enhancedPromptData, setEnhancedPromptData] = useState<any>(null)
 
   // Service status tracking
@@ -355,6 +374,70 @@ function V2AgentBuilderContent() {
   // V10: Mini-cycle state (for user_inputs_required refinement)
   const [isInMiniCycle, setIsInMiniCycle] = useState(false)
   const [pendingEnhancedPrompt, setPendingEnhancedPrompt] = useState<any>(null)
+
+  // Phase 2 single-question mode (2026-05-28): the backend now asks ONE question
+  // per turn ({ question, phase2_done }) instead of returning a batch
+  // `questionsSequence`. `phase2AwaitingAnswer` is true while we are waiting for
+  // the user's free-text reply to the current single question; `handleSend`
+  // uses it to route the reply back as `phase2_user_answer`. `phase2TurnRef`
+  // keys each answer into `clarificationAnswers` (e.g. `phase2_turn_1`) so
+  // Phase 3 still receives the collected answers.
+  const [phase2AwaitingAnswer, setPhase2AwaitingAnswer] = useState(false)
+  const phase2TurnRef = useRef(0)
+
+  // Staleness-proof mirror of the Phase 2 single-question answers (2026-05-29).
+  // `builderState.clarificationAnswers` is updated via setState (async), so the
+  // LAST answer submitted on the turn the backend returns `phase2_done` has not
+  // flushed into builderState by the time the Phase 3 transition fires (it runs
+  // in the same call chain via `setTimeout(processPhase3, …)`, whose closure
+  // captured the pre-answer builderState). That dropped the last answer (e.g. the
+  // marketing-manager email) from the Phase 3 `clarification_answers` payload, so
+  // Phase 3 saw the input as unresolved and re-asked it (mini-cycle + phase
+  // entrenchment). This ref is written synchronously in `submitPhase2Answer`, so
+  // Phase 3 always sees every answer including the just-submitted one.
+  const clarificationAnswersRef = useRef<Record<string, string>>({})
+
+  // E3 (2026-05-29): client-side Phase 2 inter-question hints. The hint copy now
+  // lives in the `clarification_hints` category of thinking-words-dictionary.json
+  // (no longer server-sent as `inline_hint`). Per Phase 2 SESSION we take a
+  // SHUFFLED copy of those phrases and walk it sequentially, so the user never
+  // sees the same hint twice in a session (10 phrases > 9 max questions) and the
+  // order varies across sessions. `phase2QuestionsRenderedRef` counts questions
+  // rendered this session: question #1 gets the opening message (no hint),
+  // questions #2+ get a cycled hint.
+  const clarificationHintsRef = useRef<string[]>([])
+  const hintIndexRef = useRef(0)
+  const phase2QuestionsRenderedRef = useRef(0)
+
+  // E4 (2026-05-29): running "Question N" ordinal shown to the user. Unlike the
+  // per-session counters above (and the server-side cap counter), this is a
+  // THREAD-WIDE running total — it increments on every rendered Phase 2 question
+  // and is NEVER reset per session, so a mini-cycle's first question continues
+  // the count (prior total + 1) rather than restarting at 1. Numerator only —
+  // no total/denominator is shown (single-question mode has no known total).
+  const runningQuestionNumberRef = useRef(0)
+
+  // Re-shuffle the hint deck and reset counters at the start of each Phase 2
+  // session (initial entry OR mini-cycle start).
+  const resetClarificationHints = () => {
+    const phrases = getWordsForCategories(['clarification_hints'])
+    for (let i = phrases.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1))
+      ;[phrases[i], phrases[j]] = [phrases[j], phrases[i]]
+    }
+    clarificationHintsRef.current = phrases
+    hintIndexRef.current = 0
+    phase2QuestionsRenderedRef.current = 0
+  }
+
+  // Next hint from the shuffled deck (null if the category is empty).
+  const nextClarificationHint = (): string | null => {
+    const deck = clarificationHintsRef.current
+    if (deck.length === 0) return null
+    const hint = deck[hintIndexRef.current % deck.length]
+    hintIndexRef.current += 1
+    return hint
+  }
 
   // V10: Edit flow state (for "Need changes" button)
   const [isAwaitingFeedback, setIsAwaitingFeedback] = useState(false)
@@ -475,6 +558,15 @@ function V2AgentBuilderContent() {
       return false;
     };
 
+    // NOTE (2026-05-28): legacy batch auto-advance. Single-question mode DOES
+    // now populate `questionsSequence` (with exactly one live question per
+    // turn), BUT this effect stays inert for it because it additionally
+    // requires `workflowPhase === 'enhancement'` AND `currentQuestionIndex === -1`
+    // — neither of which the single-question path ever sets (the answer
+    // round-trip never reaches `proceedToNextQuestion`, the only code that sets
+    // those). The single-question advance to Phase 3 happens explicitly in
+    // `processPhase2` on `phase2_done === true`. Kept untouched so any residual
+    // batch flow keeps working.
     const allQuestionsAnswered = builderState.questionsSequence.length > 0 &&
       builderState.questionsSequence.every(q => isAnswerValid(builderState.clarificationAnswers[q.id]))
 
@@ -503,6 +595,13 @@ function V2AgentBuilderContent() {
 
   // Display current question when index changes
   // V10: Use addAIQuestion for question variant styling (cyan HelpCircle icon)
+  // NOTE (2026-05-28): batch question-render path. Single-question mode now
+  // populates `questionsSequence` (one question per turn) too, but it ALSO
+  // renders the question bubble imperatively in `processPhase2` via
+  // `addAIQuestion(data.question.question, data.question.id)` BEFORE this effect
+  // runs. The `messages.find(...)` guard below therefore finds the existing
+  // bubble and skips, so there is no double-render. This effect remains the
+  // render path for any residual multi-question batch flow.
   useEffect(() => {
     if (builderState.workflowPhase === 'questions' &&
         builderState.currentQuestionIndex >= 0 &&
@@ -623,17 +722,52 @@ function V2AgentBuilderContent() {
     }
   }
 
-  // Phase 2: Questions (supports mini-cycle mode with enhanced_prompt)
+  // Phase 2: Single-question mode (2026-05-28)
+  //
+  // The backend now drives Phase 2 one question at a time. Every `phase: 2`
+  // call returns `{ question, phase2_done, disclosure_banner?,
+  // termination_reason? }` and NO `questionsSequence`. We render ONE question
+  // per turn and wait for the user's free-text answer (collected by
+  // `handleSend`, which calls back into here with `phase2_user_answer`). We
+  // advance to Phase 3 ONLY when the response sets `phase2_done === true` —
+  // never on an empty `questionsSequence` (that batch auto-advance was the
+  // R3 bug that skipped straight to the plugin gate).
+  //
+  // Mini-cycle refinement (Phase 3 → user_inputs_required, or the "Need
+  // changes" edit flow) shares this same path because the route's Phase 2
+  // branch is unconditional. We preserve the mini-cycle's distinguishing
+  // behavior via `isInMiniCycle` / `pendingEnhancedPrompt`: when a mini-cycle
+  // Phase 2 session terminates, we re-run Phase 3 WITH the pending
+  // `enhanced_prompt` for refinement (matching the prior batch behavior).
   const processPhase2 = async (
     tid: string,
     options?: {
-      enhanced_prompt?: any;  // V10: For mini-cycle refinement
-      user_feedback?: string; // V10: For edit flow refinement
+      enhanced_prompt?: any;       // V10: For mini-cycle refinement
+      user_feedback?: string;      // V10: For edit flow refinement
+      phase2_user_answer?: string; // Single-question mode: user's reply this turn
     }
   ) => {
     try {
-      const isMiniCycle = !!options?.enhanced_prompt || !!options?.user_feedback
-      console.log('🔄 Phase 2: Questions...', isMiniCycle ? '(mini-cycle mode)' : '')
+      const isMiniCycleStart = !!options?.enhanced_prompt || !!options?.user_feedback
+      console.log('🔄 Phase 2: Single-question...', isMiniCycleStart ? '(mini-cycle start)' : '')
+
+      // E3: a Phase 2 SESSION begins on a turn that carries no `phase2_user_answer`
+      // (initial entry or mini-cycle start). Mid-loop answer turns carry the answer.
+      // Re-shuffle the hint deck + reset the per-session question counter here.
+      const isFirstTurnOfSession = !options?.phase2_user_answer
+      if (isFirstTurnOfSession) {
+        resetClarificationHints()
+      }
+
+      // V10: Track mini-cycle state at the START of a refinement session so the
+      // subsequent answer round-trips (which carry only `phase2_user_answer`)
+      // still terminate into the refinement Phase 3 path below.
+      if (isMiniCycleStart) {
+        setIsInMiniCycle(true)
+        if (options?.enhanced_prompt) {
+          setPendingEnhancedPrompt(options.enhanced_prompt)
+        }
+      }
 
       const res = await fetch('/api/agent-creation/process-message', {
         method: 'POST',
@@ -646,9 +780,10 @@ function V2AgentBuilderContent() {
         body: JSON.stringify({
           thread_id: tid,
           phase: 2,
-          enhanced_prompt: options?.enhanced_prompt || null,  // V10: Pass for mini-cycle
-          user_feedback: options?.user_feedback || null,      // V10: Pass for edit flow
-          declined_services: declinedPlugins                  // V10: Maintain declined services
+          enhanced_prompt: options?.enhanced_prompt || null,        // V10: Pass for mini-cycle
+          user_feedback: options?.user_feedback || null,            // V10: Pass for edit flow
+          phase2_user_answer: options?.phase2_user_answer ?? null,  // Single-question: user's reply
+          declined_services: declinedPlugins                        // V10: Maintain declined services
         })
       })
 
@@ -660,36 +795,109 @@ function V2AgentBuilderContent() {
       // Stop thinking words
       stopThinkingWords()
 
-      // Display conversational summary
+      // Display conversational summary (if the backend sent one)
       if (data.conversationalSummary) {
         addAIMessage(data.conversationalSummary)
       }
 
-      // Extract questions
-      const questions = data.questionsSequence || []
-      if (questions.length > 0) {
-        // Store questions and trigger first question display
-        setQuestionsSequence(questions)
+      // Read whether we are (or were) refining an existing plan. We snapshot
+      // `isInMiniCycle` here because the state setter above is async; for the
+      // first turn of a mini-cycle we rely on `isMiniCycleStart`.
+      const refiningPlan = isMiniCycleStart || isInMiniCycle
 
-        // V10: Track mini-cycle state - when these questions are answered, re-run Phase 3
-        if (isMiniCycle) {
-          setIsInMiniCycle(true)
-          // Store the enhanced_prompt for Phase 3 refinement
-          if (options?.enhanced_prompt) {
-            setPendingEnhancedPrompt(options.enhanced_prompt)
+      // ── Single-question response handling ──────────────────────────────
+      if (data.phase2_done === true) {
+        // Loop complete — advance to Phase 3. Surface the cap-hit disclosure
+        // banner first if the backend included one (cap_hit termination).
+        setPhase2AwaitingAnswer(false)
+
+        if (data.disclosure_banner) {
+          addAIMessage(data.disclosure_banner)
+        }
+
+        if (refiningPlan && pendingEnhancedPrompt) {
+          // Mini-cycle complete — re-run Phase 3 WITH the pending enhanced
+          // prompt so the plan is refined (not regenerated from scratch).
+          setIsInMiniCycle(false)
+          startThinkingWords('Updating your agent plan with new details...')
+          const refinementPrompt = pendingEnhancedPrompt
+          setPendingEnhancedPrompt(null)
+          setTimeout(() => {
+            processPhase3(tid, undefined, { enhanced_prompt: refinementPrompt })
+          }, 1200)
+        } else {
+          // Initial Phase 2 complete — build the plan. This `else` is ALSO the
+          // intentional regenerate fallback for a mini-cycle that has no pending
+          // enhanced prompt (e.g. a `user_feedback`-only edit that set
+          // `isInMiniCycle` but left `pendingEnhancedPrompt` null): we rebuild from
+          // scratch rather than refine. Matches the pre-existing batch fallback.
+          startThinkingWords('Creating your agent plan...')
+          setTimeout(() => processPhase3(tid), 1200)
+        }
+      } else if (data.question && typeof data.question === 'object' && typeof data.question.question === 'string' && data.question.question.trim()) {
+        // Render exactly ONE STRUCTURED question (2026-05-28). The backend now
+        // sends the v15 `ClarificationQuestion` shape ({ id, question, type,
+        // options?, allowCustom?, theme? }) so the user gets clickable option
+        // buttons (select/multi_select) or a free-text prompt — never
+        // "pick a number" prose. We reuse the EXISTING option-button render
+        // UI by pushing the single incoming question into `questionsSequence`
+        // (which sets `currentQuestionIndex: 0` and `workflowPhase: 'questions'`).
+        //
+        // IMPORTANT: this REPLACES the array each turn — the single-question
+        // loop holds exactly one live question at a time. Per-turn answers are
+        // accumulated separately in `clarificationAnswers` (keyed `phase2_turn_N`
+        // by `submitPhase2Answer`), so replacing the array loses no history.
+        // The batch advance machinery stays inert because we never set
+        // `workflowPhase: 'enhancement'` / `currentQuestionIndex: -1` here.
+        setQuestionsSequence([data.question])
+
+        // E3: track which question this is within the current Phase 2 session.
+        phase2QuestionsRenderedRef.current += 1
+        const isFirstQuestionOfSession = phase2QuestionsRenderedRef.current === 1
+
+        // Lead-in bubble BEFORE the question (E3 / E3.5). Rendered as a native AI
+        // chat bubble (`addAIMessage`) — NOT the centered system "comment" pill —
+        // so it reads like the bot is talking, not a note tacked under the question.
+        //   • Q1 of the INITIAL (non-mini-cycle) session → the opening framing
+        //     message. Mini-cycles refine an existing plan, so "before I can build
+        //     your agent" doesn't apply there.
+        //   • Q2+ → a soft converging hint from the shuffled `clarification_hints`
+        //     deck (client-side; no longer server-sent). Generic/qualitative only —
+        //     never the cap or a number (FR7.19/20).
+        if (isFirstQuestionOfSession) {
+          if (!refiningPlan) {
+            addAIMessage('I need a few quick details before I can build your agent.')
+          }
+        } else {
+          const hint = nextClarificationHint()
+          if (hint) {
+            addAIMessage(hint)
           }
         }
-        // First question will be displayed by useEffect
+
+        // E4: advance the thread-wide running question number (never resets per
+        // session, so mini-cycle questions continue the count) and attach it to
+        // the message so the render shows "Question N".
+        runningQuestionNumberRef.current += 1
+
+        // Render the question bubble so its content matches the current
+        // question (the option-button render gate keys off
+        // `currentQuestion.question === message.content`).
+        addAIQuestion(data.question.question, data.question.id, runningQuestionNumberRef.current)
+
+        setPhase2AwaitingAnswer(true)
       } else {
-        // No questions needed - proceed to Phase 3
-        if (isMiniCycle) {
-          // V10: Mini-cycle complete, no more questions - show the plan
-          setIsInMiniCycle(false)
-          startThinkingWords('Finalizing your agent plan...')
-        } else {
-          startThinkingWords('Creating your agent plan...')
-        }
-        setTimeout(() => processPhase3(tid), 1500)
+        // Degraded turn — the backend passed through a payload with neither a
+        // question nor `phase2_done` (LLM emitted a bad shape; FR4.11). Do NOT
+        // advance to Phase 3 and do NOT fabricate a question. Clear the prior
+        // question first so its stale option buttons don't remain clickable next
+        // to the rephrase prompt (the option-button render gate keys off a live
+        // `questionsSequence` entry). Then ask the user to rephrase and keep
+        // waiting for input so the next turn can recover.
+        setQuestionsSequence([])
+        setBuilderState(prev => ({ ...prev, workflowPhase: 'questions' }))
+        addAIMessage("Let me think about that — could you rephrase or add a little more detail?")
+        setPhase2AwaitingAnswer(true)
       }
 
     } catch (error) {
@@ -737,7 +945,11 @@ function V2AgentBuilderContent() {
         body: JSON.stringify({
           thread_id: currentThreadId,
           phase: 3,
-          clarification_answers: builderState.clarificationAnswers,
+          // Merge the staleness-proof ref over builderState so the just-submitted
+          // Phase 2 answer (which may not have flushed into builderState yet) is
+          // always present. Without this the last answer is dropped and Phase 3
+          // re-asks it. The ref wins on key collisions (it is the latest value).
+          clarification_answers: { ...builderState.clarificationAnswers, ...clarificationAnswersRef.current },
           connected_services: pluginsToSend,
           declined_services: options?.declined_services || [],
           enhanced_prompt: options?.enhanced_prompt || null  // V10: For mini-cycle refinement
@@ -771,32 +983,42 @@ function V2AgentBuilderContent() {
         return // Stop here, wait for user to connect/skip plugins
       }
 
-      // V10: Check for user_inputs_required - trigger mini-cycle if needed
+      // Phase 3 → mini-cycle SAFETY NET (single-question-aware, 2026-05-28).
+      // With the recognition fix in place — Phase 2 answers are keyed by qId, and
+      // the v16 Phase 3 prompt resolves user_inputs_required against the full Phase 2
+      // conversation — Phase 3 should resolve every input the loop already gathered,
+      // leaving `user_inputs_required` empty in the normal case. So this block fires
+      // ONLY when an input is GENUINELY still missing; it is a safety net, not the
+      // primary gathering mechanism (that's the single-question loop).
+      // The `!isInMiniCycle` guard makes it fire at most ONCE per session: the
+      // mini-cycle's own Phase 2 round-trips set isInMiniCycle, so when Phase 3 runs
+      // again afterward it falls through to the cleanup below and shows the plan —
+      // no infinite Phase 3 ↔ Phase 2 loop.
       const userInputsRequired = data.enhanced_prompt?.specifics?.user_inputs_required || []
       if (userInputsRequired.length > 0 && !isInMiniCycle) {
-        console.log('🔄 Phase 3: user_inputs_required detected, triggering mini-cycle:', userInputsRequired)
+        console.log('🔄 Phase 3: genuinely-missing inputs — mini-cycle safety net:', userInputsRequired)
 
-        // Store the enhanced_prompt for refinement
+        // Store the enhanced_prompt so the mini-cycle terminates back into a
+        // refinement Phase 3 (not a from-scratch regeneration).
         setPendingEnhancedPrompt(data.enhanced_prompt)
-
-        // V10: Reset enhancement state so Phase 3 can be re-triggered after mini-cycle questions
         resetForRefinement()
 
-        // Show message about needing more information
-        addAIMessage(`I need a few more details to complete your agent. Let me ask some quick questions about: ${userInputsRequired.join(', ')}`)
+        // Soft, non-technical message — do NOT echo raw input labels (they can be
+        // jargon-y like "sender email address to filter on"). The actual question
+        // follows one at a time via the single-question loop.
+        addAIMessage('Just one or two more details to finish your agent.')
 
-        // Trigger mini-cycle Phase 2 with the enhanced_prompt
-        startThinkingWords('Generating clarification questions...')
+        startThinkingWords('One more question…')
         setTimeout(() => {
           processPhase2(currentThreadId, { enhanced_prompt: data.enhanced_prompt })
         }, 1000)
 
-        return // Stop here, wait for mini-cycle to complete
+        return // wait for the mini-cycle single-question loop to complete
       }
 
-      // V10: If we were in mini-cycle, clear the state
+      // Clear mini-cycle / edit-flow state once Phase 3 has run after a refinement.
       if (isInMiniCycle) {
-        console.log('✅ Mini-cycle complete, all inputs resolved')
+        console.log('✅ Mini-cycle / refinement complete')
         setIsInMiniCycle(false)
         setPendingEnhancedPrompt(null)
       }
@@ -1261,8 +1483,15 @@ function V2AgentBuilderContent() {
     setIsCreatingAgent(true)
 
     try {
-      // Call /api/create-agent
-      console.log('📞 Calling /api/create-agent...')
+      // E9 (2026-05-30): fold input_values into a SINGLE /api/create-agent call.
+      // The route now inline-saves agent_configurations atomically with the agent
+      // insert (eliminates the prior ~1.5 s sequential save-inputs round-trip AND
+      // closes the race with the V1 agent edit page's on-mount checkAgentConfiguration).
+      // The standalone /api/agent-configurations/save-inputs route remains as the
+      // canonical write path for POST-creation updates from the agent edit page.
+      console.log('📞 Calling /api/create-agent (with input_values folded in — E9)...')
+      const hasInputValues =
+        Object.keys(inputParameterValues).length > 0
       const createRes = await fetch('/api/create-agent', {
         method: 'POST',
         headers: {
@@ -1275,7 +1504,8 @@ function V2AgentBuilderContent() {
           agent: agentData,
           sessionId: sessionId.current,
           agentId: agentId.current,
-          thread_id: threadId
+          thread_id: threadId,
+          ...(hasInputValues && { input_values: inputParameterValues })
         })
       })
 
@@ -1285,31 +1515,14 @@ function V2AgentBuilderContent() {
       }
 
       const result = await createRes.json()
-      console.log('✅ Agent created successfully:', result.agent?.id)
+      console.log('✅ Agent created successfully:', result.agent?.id, hasInputValues ? `(inputsSaved=${result.inputsSaved})` : '')
 
-      // Save input parameter values if any were collected
-      // Note: Use agentData.input_schema (full schema) not requiredInputs (only missing params)
-      if (Object.keys(inputParameterValues).length > 0 && result.agent?.id) {
-        console.log('💾 Saving input parameter values...')
-        try {
-          const saveInputsRes = await fetch('/api/agent-configurations/save-inputs', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              agent_id: result.agent.id,
-              input_values: inputParameterValues,
-              input_schema: agentData.input_schema || []
-            })
-          })
-
-          if (!saveInputsRes.ok) {
-            console.error('Failed to save input values')
-          } else {
-            console.log('✅ Input values saved successfully')
-          }
-        } catch (err) {
-          console.error('Error saving input values:', err)
-        }
+      // If inputs were sent but the inline save did not succeed, the agent
+      // exists but its configuration row is missing — surface that in console
+      // and the page-side audit. (The user can still configure from the agent
+      // edit page; we don't block the navigation.)
+      if (hasInputValues && result.inputsSaved === false) {
+        console.warn('⚠️ Agent created but inline input save failed — user can re-save from the agent edit page')
       }
 
       // Mark agent as created
@@ -1319,9 +1532,11 @@ function V2AgentBuilderContent() {
       stopThinkingWords()
       addAIMessage('Your agent has been created successfully! Taking you to your new agent...')
 
+      // E9 + Option A: 1000 ms → 300 ms. The message stays briefly readable
+      // while Next.js starts the route transition.
       setTimeout(() => {
         router.push(`/agents/${result.agent.id}`)
-      }, 1500)
+      }, 300)
 
     } catch (error: any) {
       console.error('❌ Agent creation error:', error)
@@ -1332,6 +1547,79 @@ function V2AgentBuilderContent() {
   }
 
   // ==================== HANDLERS ====================
+
+  // Phase 2 single-question mode (2026-05-28): dedicated answer handler.
+  //
+  // This is the ONLY path a Phase 2 answer takes in single-question mode —
+  // for ALL three question types (text via the chat input, select option
+  // clicks, multi_select "Done", and the "Other"/custom text submit). It
+  // deliberately does NOT call the batch answer functions
+  // (`answerSelectOption` / `submitMultiSelectAnswer` / `answerQuestion` /
+  // `submitCustomAnswer`), all of which schedule `proceedToNextQuestion` —
+  // which, with a single question in `questionsSequence`, would mark "all
+  // answered" → set `workflowPhase: 'enhancement'` / `currentQuestionIndex: -1`
+  // → fire the batch auto-advance `useEffect` → jump to Phase 3 after every
+  // answer (the bug this round-trip prevents).
+  //
+  // Instead we round-trip the answer to the backend as `phase2_user_answer`
+  // and let `processPhase2` decide whether to render the next question or
+  // advance to Phase 3 on `phase2_done`.
+  const submitPhase2Answer = async (answerText: string) => {
+    const answer = (answerText ?? '').trim()
+    // Guard: only act while we are awaiting a Phase 2 answer, and only with a
+    // live thread. Flip the flag off immediately to prevent a double-send
+    // (e.g. a fast double-click on an option button).
+    if (!answer || !phase2AwaitingAnswer || !threadId) return
+    setPhase2AwaitingAnswer(false)
+
+    try {
+      // Add the user's answer (human-readable label/text) to the transcript.
+      addUserMessage(answer)
+
+      // Accumulate into clarificationAnswers KEYED BY THE QUESTION'S id (2026-05-28).
+      // Phase 3 resolves `user_inputs_required` → `resolved_user_inputs` by reading
+      // `clarification_answers[qId]` (the v16 Phase 3 resolution rules expect a
+      // qId-keyed map; a plain-string value is treated as a free-text/custom
+      // answer). The earlier `phase2_turn_N` keying had NO link to the question,
+      // so Phase 3 could not tell an input had been answered and re-listed it in
+      // `user_inputs_required` (which then re-triggered the mini-cycle and asked
+      // the same thing again). Keying by qId lets Phase 3 recognise the answer.
+      // Fallback to a per-turn key only if the question somehow has no id.
+      const answeredQ = builderState.questionsSequence[builderState.currentQuestionIndex]
+      phase2TurnRef.current += 1
+      const answerKey = answeredQ?.id || `phase2_turn_${phase2TurnRef.current}`
+      // Write the staleness-proof ref FIRST (synchronous) so the Phase 3 transition
+      // — which may fire in this same call chain when the backend returns
+      // `phase2_done` — sees this answer. Then mirror into builderState for render.
+      clarificationAnswersRef.current = {
+        ...clarificationAnswersRef.current,
+        [answerKey]: answer
+      }
+      setBuilderState(prev => ({
+        ...prev,
+        clarificationAnswers: {
+          ...prev.clarificationAnswers,
+          [answerKey]: answer
+        }
+      }))
+
+      // Show thinking words while the backend picks the next question.
+      startThinkingWords('Got it — one moment...')
+
+      // Round-trip the answer. Preserve mini-cycle refinement state so a
+      // terminating mini-cycle still refines (not regenerates) the plan.
+      await processPhase2(threadId, {
+        phase2_user_answer: answer,
+        enhanced_prompt: isInMiniCycle ? (pendingEnhancedPrompt || undefined) : undefined
+      })
+    } catch (error) {
+      console.error('❌ Phase 2 answer error:', error)
+      stopThinkingWords()
+      addSystemMessage('Error sending message')
+      // Re-open input so the user can retry this turn.
+      setPhase2AwaitingAnswer(true)
+    }
+  }
 
   // Handle sending messages/answers
   const handleSend = async () => {
@@ -1367,7 +1655,20 @@ function V2AgentBuilderContent() {
         return
       }
 
-      // If we're in questions phase, treat as answer
+      // Phase 2 single-question mode (2026-05-28): the user typed a free-text
+      // answer to the current question (the `text`-type path, or a typed reply
+      // to any question). Delegate to the shared single-question handler, which
+      // records the answer, accumulates it per-turn, and round-trips it to the
+      // backend as `phase2_user_answer`. The reworked `processPhase2` decides
+      // whether to ask the next question or advance to Phase 3 (`phase2_done`).
+      if (phase2AwaitingAnswer && threadId) {
+        await submitPhase2Answer(answer)
+        return
+      }
+
+      // Legacy batch questions path (kept for safety; no longer populated by
+      // the single-question backend, but harmless if questionsSequence is ever
+      // set by another flow).
       if (builderState.workflowPhase === 'questions' &&
           builderState.currentQuestionIndex >= 0 &&
           builderState.questionsSequence.length > 0) {
@@ -1923,8 +2224,11 @@ function V2AgentBuilderContent() {
                       Clarification Questions
                     </p>
                     <p className="text-xs text-[var(--v2-text-muted)]">
+                      {/* NOTE (2026-05-28): no count shown. Single-question mode asks one
+                          question at a time with no known total, so an "X/Y" progress
+                          fraction would be meaningless and leak a count (FR7 grep gate). */}
                       {builderState.workflowPhase === 'questions'
-                        ? `Answering questions (${Object.keys(builderState.clarificationAnswers).length}/${builderState.questionsSequence.length})`
+                        ? 'Answering a few quick questions'
                         : 'Answer clarifying questions'
                       }
                     </p>
@@ -2310,11 +2614,18 @@ function V2AgentBuilderContent() {
                             </p>
                           </div>
 
-                          {/* Question Progress Indicator - shown for AI questions during Phase 2 */}
+                          {/* Question Progress Indicator - shown for AI questions during Phase 2.
+                              NOTE (2026-05-28): suppressed in single-question mode. The
+                              single-question loop holds exactly ONE question in
+                              `questionsSequence` per turn, so showing "Question 1 of 1" every
+                              turn would both be meaningless and leak a question count to the
+                              user (FR7 grep gate forbids count exposure). The `length > 1` gate
+                              means this indicator only renders for a genuine multi-question
+                              batch (legacy flow), never for the single-question loop. */}
                           {message.role === 'assistant' &&
                            message.variant === 'question' &&
                            builderState.workflowPhase === 'questions' &&
-                           builderState.questionsSequence.length > 0 &&
+                           builderState.questionsSequence.length > 1 &&
                            builderState.currentQuestionIndex >= 0 &&
                            builderState.questionsSequence[builderState.currentQuestionIndex]?.question === message.content && (
                             <div
@@ -2328,13 +2639,43 @@ function V2AgentBuilderContent() {
                             </div>
                           )}
 
-                          {/* V14: Hybrid Question Options - Select/Multi-Select with option buttons */}
+                          {/* E4: single-question running number — numerator ONLY ("Question N"),
+                              a thread-wide running total that spans mini-cycles (the number is
+                              captured on the message when it's added, so it's stable across
+                              re-renders). No "of Y" total and no cap reference (FR7.20/FR8 as
+                              amended by E4). */}
+                          {message.role === 'assistant' &&
+                           message.variant === 'question' &&
+                           typeof message.questionNumber === 'number' && (
+                            <div
+                              className="mt-2 flex items-center gap-2 px-2 py-1 bg-cyan-500/10 border border-cyan-500/20 w-fit"
+                              style={{ borderRadius: 'var(--v2-radius-button)' }}
+                            >
+                              <HelpCircle className="w-3 h-3 text-cyan-600 dark:text-cyan-400" />
+                              <span className="text-xs font-semibold text-cyan-600 dark:text-cyan-400">
+                                Question {message.questionNumber}
+                              </span>
+                            </div>
+                          )}
+
+                          {/* V14: Hybrid Question Options - Select/Multi-Select with option buttons.
+                              NOTE (2026-05-28): in single-question mode the answer is NOT written
+                              to `clarificationAnswers[currentQ.id]` (it is keyed `phase2_turn_N`),
+                              so the batch "answered" gate below never hides the buttons. Instead we
+                              gate on `phase2AwaitingAnswer`: the buttons show only while we are
+                              awaiting THIS turn's answer, and hide the instant the user submits
+                              (the handler flips `phase2AwaitingAnswer` false), preventing a
+                              double-submit during the round-trip. The legacy batch flow leaves
+                              `phase2AwaitingAnswer` false, so the original `clarificationAnswers`
+                              gate governs there. */}
                           {message.role === 'assistant' &&
                            message.variant === 'question' &&
                            builderState.workflowPhase === 'questions' &&
                            builderState.currentQuestionIndex >= 0 &&
                            builderState.questionsSequence[builderState.currentQuestionIndex]?.question === message.content &&
-                           !builderState.clarificationAnswers[builderState.questionsSequence[builderState.currentQuestionIndex]?.id] && (
+                           (builderState.questionsSequence.length === 1
+                             ? phase2AwaitingAnswer  // single-question mode: visible only while awaiting this turn
+                             : !builderState.clarificationAnswers[builderState.questionsSequence[builderState.currentQuestionIndex]?.id]) && (
                             (() => {
                               const currentQ = builderState.questionsSequence[builderState.currentQuestionIndex];
                               const qType = currentQ?.type;
@@ -2355,9 +2696,17 @@ function V2AgentBuilderContent() {
                                             key={opt.value}
                                             onClick={() => {
                                               if (isMulti) {
+                                                // Multi-select: toggling is pure checkbox UI state in
+                                                // both modes; the actual answer is submitted by "Done".
                                                 toggleMultiSelectOption(opt.value);
+                                              } else if (phase2AwaitingAnswer) {
+                                                // Single-question mode: route the human-readable label
+                                                // through the round-trip handler — NOT the batch
+                                                // `answerSelectOption` (which would trigger
+                                                // `proceedToNextQuestion` → premature Phase 3 jump).
+                                                submitPhase2Answer(opt.label);
                                               } else {
-                                                // Single select - record answer and proceed
+                                                // Legacy batch select - record answer and proceed
                                                 answerSelectOption(currentQ.id, opt.value);
                                                 // Add to messages
                                                 addUserMessage(opt.label);
@@ -2401,8 +2750,19 @@ function V2AgentBuilderContent() {
                                             .map(v => options.find(o => o.value === v)?.label)
                                             .filter(Boolean)
                                             .join(', ');
-                                          submitMultiSelectAnswer(currentQ.id);
-                                          addUserMessage(selectedLabels);
+                                          if (phase2AwaitingAnswer) {
+                                            // Single-question mode: send the joined labels via the
+                                            // round-trip handler. Reset the checkbox UI state here
+                                            // (the batch `submitMultiSelectAnswer` we skip would
+                                            // normally do that, but it also schedules the batch
+                                            // auto-advance we must avoid).
+                                            setBuilderState(prev => ({ ...prev, selectedMultiOptions: [] }));
+                                            submitPhase2Answer(selectedLabels);
+                                          } else {
+                                            // Legacy batch multi-select submit.
+                                            submitMultiSelectAnswer(currentQ.id);
+                                            addUserMessage(selectedLabels);
+                                          }
                                         }}
                                         className="w-full px-3 py-2 bg-gradient-to-r from-[var(--v2-primary)] to-[var(--v2-secondary)] text-white font-medium text-sm hover:opacity-90 transition-opacity"
                                         style={{ borderRadius: 'var(--v2-radius-button)' }}
@@ -2437,8 +2797,24 @@ function V2AgentBuilderContent() {
                                         <div className="flex gap-2">
                                           <button
                                             onClick={() => {
-                                              submitCustomAnswer();
-                                              addUserMessage(builderState.customInputValue.trim());
+                                              const customText = builderState.customInputValue.trim();
+                                              if (phase2AwaitingAnswer) {
+                                                // Single-question mode: route the typed custom text
+                                                // through the round-trip handler. Reset the custom-input
+                                                // UI state here (the batch `submitCustomAnswer` we skip
+                                                // would do that, but also schedules the batch advance).
+                                                setBuilderState(prev => ({
+                                                  ...prev,
+                                                  showingCustomInput: false,
+                                                  customInputValue: '',
+                                                  customInputQuestionId: null
+                                                }));
+                                                submitPhase2Answer(customText);
+                                              } else {
+                                                // Legacy batch custom answer submit.
+                                                submitCustomAnswer();
+                                                addUserMessage(customText);
+                                              }
                                             }}
                                             disabled={!builderState.customInputValue.trim()}
                                             className="flex-1 px-3 py-2 bg-gradient-to-r from-[var(--v2-primary)] to-[var(--v2-secondary)] text-white font-medium text-sm hover:opacity-90 transition-opacity disabled:opacity-50"
@@ -2935,29 +3311,41 @@ function V2AgentBuilderContent() {
                           </div>
                         )}
 
-                        {/* How it works - Steps */}
+                        {/* How it works - E8 (2026-05-30): collapsible accordion,
+                            default COLLAPSED, mirroring the Configuration block below
+                            and the chat-side "Your Agent Plan" card's accordion. Uses
+                            its own state so this card and the chat-side card toggle
+                            independently. */}
                         {enhancedPromptData.sections?.processing_steps && enhancedPromptData.sections.processing_steps.length > 0 && (
                           <div>
-                            <h4 className="text-xs font-semibold text-[var(--v2-text-muted)] uppercase tracking-wide mb-3 flex items-center gap-1.5">
-                              <div className="w-4 h-4 bg-[var(--v2-surface)] border border-[var(--v2-border)] flex items-center justify-center flex-shrink-0" style={{ borderRadius: 'var(--v2-radius-button)' }}>
-                                <Settings className="h-2.5 w-2.5 text-slate-600 dark:text-slate-400" />
+                            <button
+                              onClick={() => setIsAgentDraftStepsExpanded(!isAgentDraftStepsExpanded)}
+                              className="w-full flex items-center justify-between py-2 px-3 bg-[var(--v2-surface-hover)] hover:bg-[var(--v2-border)] transition-colors"
+                              style={{ borderRadius: 'var(--v2-radius-button)' }}
+                            >
+                              <span className="text-sm font-semibold text-[var(--v2-text-secondary)] flex items-center gap-2">
+                                {isAgentDraftStepsExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                                <Settings className="w-4 h-4" />
+                                How it works ({enhancedPromptData.sections.processing_steps.length} steps)
+                              </span>
+                            </button>
+
+                            {isAgentDraftStepsExpanded && (
+                              <div className="mt-3 space-y-3">
+                                {enhancedPromptData.sections.processing_steps.map((step: string, stepIndex: number) => (
+                                  <div key={stepIndex} className="flex gap-3">
+                                    <div
+                                      className="flex-shrink-0 w-6 h-6 rounded-full bg-[var(--v2-surface)] border-2 border-[var(--v2-primary)] flex items-center justify-center text-[var(--v2-primary)] text-xs font-bold"
+                                    >
+                                      {stepIndex + 1}
+                                    </div>
+                                    <div className="flex-1">
+                                      <p className="text-sm text-[var(--v2-text-secondary)] leading-relaxed">{step}</p>
+                                    </div>
+                                  </div>
+                                ))}
                               </div>
-                              How it works ({enhancedPromptData.sections.processing_steps.length} steps)
-                            </h4>
-                            <div className="space-y-3">
-                              {enhancedPromptData.sections.processing_steps.map((step: string, stepIndex: number) => (
-                                <div key={stepIndex} className="flex gap-3">
-                                  <div
-                                    className="flex-shrink-0 w-6 h-6 rounded-full bg-[var(--v2-surface)] border-2 border-[var(--v2-primary)] flex items-center justify-center text-[var(--v2-primary)] text-xs font-bold"
-                                  >
-                                    {stepIndex + 1}
-                                  </div>
-                                  <div className="flex-1">
-                                    <p className="text-sm text-[var(--v2-text-secondary)] leading-relaxed">{step}</p>
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
+                            )}
                           </div>
                         )}
 
@@ -2994,35 +3382,47 @@ function V2AgentBuilderContent() {
                           </div>
                         )}
 
-                        {/* Input Parameters */}
+                        {/* Input Parameters — E8 (2026-05-30): collapsible accordion,
+                            default COLLAPSED. Mirrors the "How it works" pattern above
+                            so the card stays compact when the agent has many fields. */}
                         {Object.keys(inputParameterValues).length > 0 && (
                           <div>
-                            <h4 className="text-xs font-semibold text-[var(--v2-text-muted)] uppercase tracking-wide mb-2 flex items-center gap-1">
-                              <Settings className="h-3 w-3" />
-                              Configuration
-                            </h4>
-                            <div className="space-y-2">
-                              {Object.entries(inputParameterValues).map(([key, value]) => {
-                                // Find the input schema for this parameter to get the label
-                                const paramSchema = requiredInputs.find((input: any) => input.name === key)
-                                const label = paramSchema?.label || key.replace(/_/g, ' ')
+                            <button
+                              onClick={() => setIsConfigurationExpanded(!isConfigurationExpanded)}
+                              className="w-full flex items-center justify-between py-2 px-3 bg-[var(--v2-surface-hover)] hover:bg-[var(--v2-border)] transition-colors"
+                              style={{ borderRadius: 'var(--v2-radius-button)' }}
+                            >
+                              <span className="text-sm font-semibold text-[var(--v2-text-secondary)] flex items-center gap-2">
+                                {isConfigurationExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                                <Settings className="w-4 h-4" />
+                                Configuration ({Object.keys(inputParameterValues).length} {Object.keys(inputParameterValues).length === 1 ? 'field' : 'fields'})
+                              </span>
+                            </button>
 
-                                return (
-                                  <div
-                                    key={key}
-                                    className="flex items-start gap-2 px-3 py-2 bg-[var(--v2-surface-hover)]"
-                                    style={{ borderRadius: 'var(--v2-radius-button)' }}
-                                  >
-                                    <span className="text-sm text-[var(--v2-text-muted)] capitalize min-w-[120px]">
-                                      {label}:
-                                    </span>
-                                    <span className="text-sm text-[var(--v2-text-primary)] font-medium">
-                                      {typeof value === 'boolean' ? (value ? 'Yes' : 'No') : String(value)}
-                                    </span>
-                                  </div>
-                                )
-                              })}
-                            </div>
+                            {isConfigurationExpanded && (
+                              <div className="mt-3 space-y-2">
+                                {Object.entries(inputParameterValues).map(([key, value]) => {
+                                  // Find the input schema for this parameter to get the label
+                                  const paramSchema = requiredInputs.find((input: any) => input.name === key)
+                                  const label = paramSchema?.label || key.replace(/_/g, ' ')
+
+                                  return (
+                                    <div
+                                      key={key}
+                                      className="flex items-start gap-2 px-3 py-2 bg-[var(--v2-surface-hover)]"
+                                      style={{ borderRadius: 'var(--v2-radius-button)' }}
+                                    >
+                                      <span className="text-sm text-[var(--v2-text-muted)] capitalize min-w-[120px]">
+                                        {label}:
+                                      </span>
+                                      <span className="text-sm text-[var(--v2-text-primary)] font-medium">
+                                        {typeof value === 'boolean' ? (value ? 'Yes' : 'No') : String(value)}
+                                      </span>
+                                    </div>
+                                  )
+                                })}
+                              </div>
+                            )}
                           </div>
                         )}
 

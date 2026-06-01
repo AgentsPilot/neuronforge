@@ -17,6 +17,7 @@ export interface Message {
   isQuestionAnswer?: boolean;
   isTemporary?: boolean; // For typing indicators that will be removed
   variant?: AIMessageVariant; // V10: AI message styling variant
+  questionNumber?: number; // E4: running "Question N" ordinal (thread-wide, spans mini-cycles)
 }
 
 /**
@@ -33,7 +34,8 @@ export function useAgentBuilderMessages() {
     role: 'user' | 'assistant' | 'system' = 'assistant',
     questionId?: string,
     isQuestionAnswer?: boolean,
-    variant?: AIMessageVariant
+    variant?: AIMessageVariant,
+    questionNumber?: number
   ) => {
     const newMessage: Message = {
       id: `msg-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
@@ -42,7 +44,8 @@ export function useAgentBuilderMessages() {
       timestamp: new Date(),
       questionId,
       isQuestionAnswer,
-      variant
+      variant,
+      questionNumber
     };
 
     setMessages(prev => [...prev, newMessage]);
@@ -64,8 +67,9 @@ export function useAgentBuilderMessages() {
   }, [addMessage]);
 
   // V10: Add an AI question message (cyan HelpCircle icon, for Phase 2 questions)
-  const addAIQuestion = useCallback((content: string, questionId?: string) => {
-    addMessage(content, 'assistant', questionId, false, 'question');
+  // E4: optional running `questionNumber` ordinal (thread-wide, spans mini-cycles).
+  const addAIQuestion = useCallback((content: string, questionId?: string, questionNumber?: number) => {
+    addMessage(content, 'assistant', questionId, false, 'question', questionNumber);
   }, [addMessage]);
 
   // V10: Add a minimized plan summary message (muted/disabled appearance)

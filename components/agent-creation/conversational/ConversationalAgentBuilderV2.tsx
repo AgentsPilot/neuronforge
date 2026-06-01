@@ -3,6 +3,14 @@
  *
  * Modern ChatGPT/Claude-style interface for agent creation.
  * Integrates with thread-based API for optimal token usage.
+ *
+ * @deprecated NOT the primary agent-creation UI. Despite the "V2" name, the
+ * live V2 agent-creation flow is `app/v2/agents/new/page.tsx` (route
+ * `/v2/agents/new`). This component only serves the secondary
+ * `/agents/new/chat` route (via `AgentBuilderParent`). Do NOT wire new
+ * agent-creation behavior here — make changes in `app/v2/agents/new/page.tsx`.
+ * (This misleading name caused a Phase 2 change to be wired into the wrong
+ * surface; see docs/workplans/v2-agent-creation-phase2-single-question-workplan.md.)
  */
 
 import React from 'react';

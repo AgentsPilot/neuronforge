@@ -1,0 +1,49 @@
+{
+  "name": "Contract Expiration Monitor — Google Docs branch (V2-UI captured via Pipeline A)",
+  "description": "Same EP family as `contract-enddate-summary` (which Phase E ✅ passed 2026-05-14) but documenting a different production incident. In the original 2026-05-31 agent-creation (agent `8c7caa01-...`) the Phase 1 LLM picked `google-docs.read_document` AND authored `field: \"folder_id\"` for the file reference — internally self-consistent with the agent's stored step2 items schema (which also had key `folder_id`, description \"Unique file ID\"), so the V6 compiler's field reconciliation found no mismatch. At runtime Drive returns `id` not `folder_id`, so every scatter item's `document_id` resolved to `\"\"`, Docs API 400'd on every item, WP-54 swallowed each per-item failure but WP-10 correctly threw 'all 3 items failed' rather than let downstream steps fabricate an empty email. **The canonical snapshot files at top-level (`intent-contract.json`, `phase2-data-schema.json`, `phase4-pilot-dsl-steps.json`) were re-captured on 2026-06-01 by re-running the same EP through `/api/v6/generate-ir-intent-contract`. On that fresh re-run, Phase 1 emitted CORRECTLY (`field: \"id\"`, picked `google-drive.read_file_content`) — Phase A + D therefore pass against the snapshot.** The Phase E failure in `expected.phase_e_failure_reason` documents the original incident, not the snapshot. Phase 1 emission variance is the root cause; reproduction rate not yet measured.",
+  "created": "2026-05-31",
+  "source": {
+    "type": "v2-ui-capture",
+    "pipeline": "A",
+    "endpoint": "/api/v6/generate-ir-intent-contract",
+    "agent_id": "8c7caa01-e328-4b0a-ae04-afbcd10add45",
+    "agent_created_at": "2026-05-31T06:54:33Z",
+    "thread_id": "thread_5fy2uKUnfJrWrTWIkubgjRI4",
+    "session_id": "98b0cb7f-0808-47bb-bf7c-f7626c15758c",
+    "branch": "feature/v2-agent-creation-r2r3-toned-single-question",
+    "platform_version": "v6.0",
+    "feature_flags": {
+      "NEXT_PUBLIC_USE_V6_AGENT_GENERATION": "true",
+      "NEXT_PUBLIC_USE_V6_PIPELINE_A": "true"
+    }
+  },
+  "plugins": ["google-drive", "google-docs", "google-mail", "chatgpt-research"],
+  "expected": {
+    "min_steps": 13,
+    "step_types": ["action", "scatter_gather", "transform", "ai_processing"],
+    "phase_a_checks": 14,
+    "phase_d_success": true,
+    "phase_e_success": false,
+    "phase_e_failure_timestamps": [
+      "2026-05-31T06:58:43Z (pre-patch — 7 files including DOCX; Docs API 400 on the DOCX files; whole run aborted)",
+      "2026-05-31T08:46:38Z (post WP-53 + WP-54 + file_types DB patch — only 3 Google Docs reach scatter; all 3 fail at step4 with `doc_item.folder_id` undefined; WP-10 fires `3/3 items failed`)"
+    ],
+    "phase_e_execution_ids": [
+      "52f43567-f60f-4f89-8033-a5a03fca160b",
+      "a3bb6edf-fe4f-40ec-bd18-5a09a3772d11"
+    ],
+    "phase_e_failure_reason": "step4 references `{{doc_item.folder_id}}` for `google-docs.read_document.document_id`. The agent's stored step2 output_schema declares Drive file items have `folder_id` (description \"Unique file ID\", source \"plugin\") but the plugin definition and Drive API both return `id`. Compiler's O10 field reconciliation found no mismatch (schema and reference agreed on the wrong name). At runtime, `doc_item.folder_id` is undefined, plugin defaults `document_id` to `\"\"`, Docs API 400s. WP-54 swallows each per-item failure (continueOnError=true patched in) but WP-10 (2026-03-31) correctly throws when ALL scatter items failed — preventing a silent empty-data downstream cascade. Pre-flight `StructuralRepairEngine` did detect the broken reference (dev.log L5050 'Step params reference non-existent variable: doc_item.folder_id') but emitted only a WARN — it cannot auto-fix scatter iteration variables because their schemas aren't validated upstream by WP-2's Phase 5 reconciler."
+  },
+  "exercises": [
+    "WP-53: Phase 3 EP-fidelity for filter constraints (`file_types: [\"document\"]`) — applied via DB patch, verified in step2.params",
+    "WP-54: scatter.continueOnError opt-in — verified in dev.log L7133/7160/7239 ('swallowing (WP-54 continueOnError enabled)' for items 0, 1, 2)",
+    "WP-10: all-failed scatter throw — verified in dev.log L7260 ('WP-10: 3/3 scatter items failed — filtering out error objects') + L7176 ExecutionError 'all 3 items failed'",
+    "Plugin-choice contrast vs working scenario `contract-enddate-summary` (Phase 1 LLM picked `google-drive.read_file_content` + `field: \"id\"` there; here picked `google-docs.read_document` + `field: \"folder_id\"`)",
+    "Schema-vs-runtime key mismatch on Drive `list_files` items — first regression scenario to capture this class of failure"
+  ],
+  "known_weaknesses": [
+    "Phase 1 LLM emission is non-deterministic — a fresh re-run on 2026-06-01 (captured in `output/phase1-intent-contract.json`) emitted the CORRECT `field: \"id\"` and chose `google-drive.read_file_content`. The bug requires the LLM to land on the `google-docs.read_document` + `folder_id` combo, which appears stochastic. Reproduction rate not yet measured.",
+    "Root cause of `id` → `folder_id` schema mutation NOT pinned. DataSchemaBuilder.inferSchemaForBoundStep uses straight key copy from the plugin definition (verified via `convertJsonSchemaToSchemaField` at workflow-data-schema.ts:152). The mutation appears to be downstream of DataSchemaBuilder — possibly tied to the LLM's `field: \"folder_id\"` reference triggering a schema-key rewrite. Confirmed candidates ruled out via static analysis; live capture with intermediate-state dumps proposed as the next investigation step.",
+    "Agent's IntentContract / data_schema NOT persisted on the `agents` row. Without `agents.agent_config.intent_contract`, production diagnosis of this class of bug requires re-running the EP through `/api/v6/generate-ir-intent-contract` (which costs LLM tokens and is non-deterministic). A separate WP is proposed to extend `agent_config` JSONB with `intent_contract` + `data_schema` at create-agent time."
+  ]
+}

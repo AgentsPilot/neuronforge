@@ -1,4 +1,11 @@
 import { z } from 'zod';
+import { createLogger } from '@/lib/logger';
+
+// F3 (2026-05-30): module-level logger for the normalizer's debug breadcrumbs.
+// Fires whenever the normalizer touches a `resolved_user_inputs[*].value` so
+// future LLM quirks aren't silently coerced or dropped. Module scope (not a
+// request-child) keeps the schema module decoupled from route plumbing.
+const schemaLogger = createLogger({ module: 'Phase3SchemaNormalizer' });
 
 // ===== BASE SCHEMAS =====
 
@@ -108,29 +115,73 @@ export type ValidatedPhase3Response = z.infer<typeof Phase3ResponseSchema>;
 
 /**
  * Normalize LLM response before validation.
- * Handles common LLM quirks like returning arrays where strings are expected.
+ * Handles common LLM quirks for `resolved_user_inputs[*].value`:
+ *   - Array              → comma-separated string (e.g. `["a","b"]` → `"a, b"`)
+ *   - null / undefined   → DROP the row (F3, 2026-05-30); an unresolved input
+ *     belongs in `user_inputs_required`, not `resolved_user_inputs`. Letting it
+ *     through previously caused a Zod union failure that triggered the Phase 3
+ *     retry, which in turn used the Phase-2-entrenchment corrective nudge —
+ *     misleading and pure dice-rolling. See workplan § F3.
+ *   - boolean            → `'true'` / `'false'`
+ *   - object (non-array) → `JSON.stringify(value)` (preserves structured data
+ *     like `{ from, to }` date ranges as a string the schema can accept)
+ * Any normalization or drop is logged as a debug breadcrumb so we can see what
+ * the LLM is actually emitting and tighten v16 if a quirk becomes a pattern.
  */
 function normalizePhase3Response(data: unknown): unknown {
   if (!data || typeof data !== 'object') return data;
 
   const normalized = JSON.parse(JSON.stringify(data)); // Deep clone
 
-  // Normalize resolved_user_inputs: convert array values to comma-separated strings
+  // Normalize resolved_user_inputs values — see function-doc comment above.
   if (
     normalized.enhanced_prompt?.specifics?.resolved_user_inputs &&
     Array.isArray(normalized.enhanced_prompt.specifics.resolved_user_inputs)
   ) {
-    normalized.enhanced_prompt.specifics.resolved_user_inputs =
-      normalized.enhanced_prompt.specifics.resolved_user_inputs.map((item: any) => {
-        if (item && typeof item === 'object' && Array.isArray(item.value)) {
-          // Convert array to comma-separated string
-          return {
-            ...item,
-            value: item.value.join(', ')
-          };
-        }
-        return item;
-      });
+    const inputs: any[] = normalized.enhanced_prompt.specifics.resolved_user_inputs;
+    const next: any[] = [];
+    for (let i = 0; i < inputs.length; i++) {
+      const item = inputs[i];
+      if (!item || typeof item !== 'object') {
+        // Non-object row — pass through; Zod will catch it.
+        next.push(item);
+        continue;
+      }
+      const value = (item as any).value;
+
+      if (value === null || value === undefined) {
+        // DROP — half-baked "resolved" entry. Conservative + accurate.
+        schemaLogger.debug(
+          { index: i, key: item.key },
+          'Normalizer dropped resolved_user_inputs row with null/undefined value'
+        );
+        continue;
+      }
+      if (Array.isArray(value)) {
+        next.push({ ...item, value: value.join(', ') });
+        continue;
+      }
+      if (typeof value === 'boolean') {
+        schemaLogger.debug(
+          { index: i, key: item.key, originalType: 'boolean' },
+          'Normalizer coerced resolved_user_inputs boolean value to string'
+        );
+        next.push({ ...item, value: value ? 'true' : 'false' });
+        continue;
+      }
+      if (typeof value === 'object') {
+        // Non-array, non-null object — preserve as a JSON string.
+        schemaLogger.debug(
+          { index: i, key: item.key, originalType: 'object' },
+          'Normalizer JSON-stringified resolved_user_inputs object value'
+        );
+        next.push({ ...item, value: JSON.stringify(value) });
+        continue;
+      }
+      // string | number — leave for the Zod transform/pipe.
+      next.push(item);
+    }
+    normalized.enhanced_prompt.specifics.resolved_user_inputs = next;
   }
 
   return normalized;
