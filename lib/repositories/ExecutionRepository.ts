@@ -181,6 +181,37 @@ export class ExecutionRepository {
       return { data: null, error: error as Error };
     }
   }
+
+  /**
+   * Update execution logs with additional metadata
+   * Used to update token usage, execution metadata, and other fields after execution completes
+   */
+  async updateLogs(executionId: string, logs: Partial<Execution>): Promise<AgentRepositoryResult<Execution>> {
+    const methodLogger = this.logger.child({ method: 'updateLogs', executionId });
+    const startTime = Date.now();
+
+    try {
+      methodLogger.debug({ logs }, 'Updating execution logs');
+
+      const { data, error } = await this.supabase
+        .from('agent_executions')
+        .update(logs)
+        .eq('id', executionId)
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      const duration = Date.now() - startTime;
+      methodLogger.debug({ duration }, 'Execution logs updated successfully');
+
+      return { data, error: null };
+    } catch (error) {
+      const duration = Date.now() - startTime;
+      methodLogger.error({ err: error, duration }, 'Failed to update execution logs');
+      return { data: null, error: error as Error };
+    }
+  }
 }
 
 // Export singleton instance for convenience

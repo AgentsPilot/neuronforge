@@ -4,10 +4,12 @@ import React from 'react'
 import { useRouter } from 'next/navigation'
 import { ArrowLeft } from 'lucide-react'
 import { V2Logo, V2Controls } from '@/components/v2/V2Header'
+import { ModernHelpDialog } from '@/components/v2/ModernHelpDialog'
 import BillingSettingsV2 from '@/components/v2/settings/BillingSettingsV2_NEW'
 
 export default function V2BillingPage() {
   const router = useRouter()
+  const [helpOpen, setHelpOpen] = React.useState(false)
 
   return (
     <div className="space-y-4 sm:space-y-5 lg:space-y-6">
@@ -26,7 +28,10 @@ export default function V2BillingPage() {
           <ArrowLeft className="w-4 h-4" />
           Back to Dashboard
         </button>
-        <V2Controls />
+        <V2Controls
+          showHelpLink={true}
+          onHelpClick={() => setHelpOpen(true)}
+        />
       </div>
 
       {/* Header */}
@@ -43,6 +48,12 @@ export default function V2BillingPage() {
       <div className="bg-[var(--v2-surface)] shadow-[var(--v2-shadow-card)] p-4 sm:p-5 lg:p-6" style={{ borderRadius: 'var(--v2-radius-card)' }}>
         <BillingSettingsV2 />
       </div>
+
+      {/* Help Dialog */}
+      <ModernHelpDialog
+        isOpen={helpOpen}
+        onClose={() => setHelpOpen(false)}
+      />
     </div>
   )
 }

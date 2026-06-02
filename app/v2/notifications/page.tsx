@@ -6,6 +6,7 @@ import { useAuth } from '@/components/UserProvider'
 import { supabase } from '@/lib/supabaseClient'
 import { ArrowLeft } from 'lucide-react'
 import { V2Logo, V2Controls } from '@/components/v2/V2Header'
+import { ModernHelpDialog } from '@/components/v2/ModernHelpDialog'
 import NotificationsTabV2 from '@/components/v2/settings/NotificationsTabV2'
 import { NotificationSettings } from '@/types/settings'
 
@@ -17,6 +18,7 @@ export default function V2NotificationsPage() {
   const [notificationsForm, setNotificationsForm] = useState<Partial<NotificationSettings>>({})
   const [successMessage, setSuccessMessage] = useState('')
   const [errorMessage, setErrorMessage] = useState('')
+  const [helpOpen, setHelpOpen] = useState(false)
 
   useEffect(() => {
     if (user?.id) {
@@ -111,7 +113,10 @@ export default function V2NotificationsPage() {
           <ArrowLeft className="w-4 h-4" />
           Back to Dashboard
         </button>
-        <V2Controls />
+        <V2Controls
+          showHelpLink={true}
+          onHelpClick={() => setHelpOpen(true)}
+        />
       </div>
 
       {/* Header */}
@@ -135,6 +140,12 @@ export default function V2NotificationsPage() {
           errorMessage={errorMessage}
         />
       </div>
+
+      {/* Help Dialog */}
+      <ModernHelpDialog
+        isOpen={helpOpen}
+        onClose={() => setHelpOpen(false)}
+      />
     </div>
   )
 }

@@ -46,8 +46,6 @@ export async function POST(request: NextRequest) {
 
     const { plugin, action, parameter, refresh = false, page = 1, limit = 100, dependentValues = {} } = body;
 
-    logger.debug({ plugin, action, parameter, refresh, dependentValues }, 'Request received');
-
     // Validate required fields
     if (!plugin || !action || !parameter) {
       return NextResponse.json(
@@ -107,7 +105,6 @@ export async function POST(request: NextRequest) {
     }
 
     // Get user's plugin connection via facade (includes smart token refresh)
-    logger.debug({ userId, plugin }, 'Looking for connection');
     const connection = await pluginExecuter.userConnections.getConnection(
       userId,
       plugin,
@@ -136,14 +133,6 @@ export async function POST(request: NextRequest) {
 
     // Find the parameter schema with x-dynamic-options
     const paramSchema = actionSchema.parameters?.properties?.[parameter];
-    logger.debug({
-      plugin,
-      action,
-      parameter,
-      hasParamSchema: !!paramSchema,
-      hasDynamicOptions: !!paramSchema?.['x-dynamic-options'],
-      availableParameters: Object.keys(actionSchema.parameters?.properties || {})
-    }, 'Checking parameter schema');
 
     if (!paramSchema || !paramSchema['x-dynamic-options']) {
       return NextResponse.json(
@@ -166,16 +155,12 @@ export async function POST(request: NextRequest) {
     let options: OptionItem[] = [];
 
     try {
-      logger.debug({ plugin, fetchMethod, dependentValues }, 'Calling fetchDynamicOptions');
-
       options = await pluginExecuter.fetchDynamicOptions(
         plugin,
         fetchMethod,
         connection,
         { page, limit, ...dependentValues }
       );
-
-      logger.debug({ plugin, fetchMethod, optionsCount: options.length }, 'fetchDynamicOptions returned');
 
       // Cache the results
       optionsCache.set(cacheKey, {

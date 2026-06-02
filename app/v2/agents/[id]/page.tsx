@@ -17,6 +17,7 @@ import { requestDeduplicator } from '@/lib/utils/request-deduplication'
 import type { Agent, Execution } from '@/lib/repositories/types'
 import { Card } from '@/components/v2/ui/card'
 import { V2Logo, V2Controls } from '@/components/v2/V2Header'
+import { ModernHelpDialog } from '@/components/v2/ModernHelpDialog'
 import {
   ArrowLeft,
   Play,
@@ -89,7 +90,8 @@ import {
   ExecutionDetailPanel,
   InsightPreview,
   normalizeInsights,
-  ExecutionModal
+  ExecutionModal,
+  type TimePeriod
 } from '@/components/v2/agent'
 
 // PERFORMANCE: Lazy load heavy components that may not be used immediately
@@ -155,7 +157,61 @@ export default function V2AgentDetailPage() {
         };
       }>;
     } | null;
-    insights: any[];
+    insightRuns?: Array<{
+      id: string;
+      insight_id: string;
+      execution_id: string;
+      title: string;
+      description: string;
+      business_impact: string;
+      recommendation: string;
+      severity: 'low' | 'medium' | 'high' | 'critical';
+      confidence: string;
+      this_run_count: number;
+      last_run_count: number;
+      input_tokens: number;
+      output_tokens: number;
+      total_tokens: number;
+      model: string;
+      latency_ms: number;
+      llm_called: boolean;
+      cache_hit: boolean;
+      time_saved_hours_per_week: string;
+      cost_saved_usd_per_week: string;
+      pattern_data: any;
+      created_at: string;
+    }>;
+    executionInsights?: Array<{
+      id: string;
+      user_id: string;
+      agent_id: string;
+      execution_ids: string[];
+      insight_type: string;
+      category: string;
+      severity: string;
+      confidence: string | number;
+      title: string;
+      description: string;
+      business_impact: string;
+      recommendation: string;
+      pattern_data: any;
+      metrics: {
+        total_executions: number;
+        affected_executions: number;
+        pattern_frequency: number;
+        avg_duration_ms?: number;
+        avg_token_usage?: number;
+        avg_cost?: number;
+        first_occurrence?: string;
+        last_occurrence?: string;
+      };
+      status: string;
+      snoozed_until?: string;
+      created_at: string;
+      updated_at: string;
+      viewed_at?: string;
+      applied_at?: string;
+    }>;
     roi: {
       items_processed: number;
       time_saved_seconds: number;
@@ -164,8 +220,8 @@ export default function V2AgentDetailPage() {
       manual_time_per_item_seconds: number;
     } | null;
     agent: {
-      business_entity_type: string | null;
-      entity_desirability: string | null;
+      manual_time_per_item_seconds?: number | null;
+      workflow_purpose?: string | null;
     } | null;
   } | null>(null)
   const [loadingExecutionDetails, setLoadingExecutionDetails] = useState(false)
@@ -182,11 +238,13 @@ export default function V2AgentDetailPage() {
   // NEW: Advanced mode and slide-out panel for redesigned layout
   const [advancedMode, setAdvancedMode] = useState(false)
   const [showDetailPanel, setShowDetailPanel] = useState(false)
+  const [timePeriod, setTimePeriod] = useState<TimePeriod>('all')
 
   // Drawer and modal state
   const [showSettingsDrawer, setShowSettingsDrawer] = useState(false)
   const [showInsightsModal, setShowInsightsModal] = useState(false)
-  const [insightsTab, setInsightsTab] = useState<'business' | 'technical'>('business')
+  const [insightsTab, setInsightsTab] = useState<'business' | 'technical' | 'data'>('business')
+  const [helpOpen, setHelpOpen] = useState(false)
   const [metricsData, setMetricsData] = useState<any>(null)
   const [loadingMetrics, setLoadingMetrics] = useState(false)
   const [metricsRange, setMetricsRange] = useState<'7d' | '30d' | '90d'>('7d')
@@ -289,11 +347,11 @@ export default function V2AgentDetailPage() {
     setLoading(true)
     try {
       // Parallel fetch all data
-      // PERFORMANCE: Limit to 50 executions and skip token enrichment for faster load
+      // PERFORMANCE: Skip token enrichment for faster load
       // Also pre-fetch form metadata and global schema metadata for input config drawer
       const [agentResult, executionsResult, configResult, rewardStatus, insightsResult, formMetadataResult, globalSchemaResult, profileResult] = await Promise.all([
         agentApi.getById(agentId, user.id),
-        agentApi.getExecutions(agentId, user.id, { limit: 50, includeTokens: false }),
+        agentApi.getExecutions(agentId, user.id, { includeTokens: false }),
         systemConfigApi.getByKeys(['tokens_per_pilot_credit', 'agent_sharing_reward_amount']),
         fetch('/api/admin/reward-config').then(r => r.json()).catch(() => ({ success: false })),
         fetch(`/api/v6/insights?agentId=${agentId}&status=new,viewed`).then(r => r.json()).catch(() => ({ success: false, data: [] })),
@@ -407,10 +465,10 @@ export default function V2AgentDetailPage() {
     setRefreshingExecutions(true)
     try {
       // Clear cache for this agent's executions
-      requestDeduplicator.clear(`executions-${agentId}-false-50`)
+      requestDeduplicator.clear(`executions-${agentId}-false-all`)
 
       // Fetch only executions (not all data)
-      const executionsResult = await agentApi.getExecutions(agentId, user.id, { limit: 50, includeTokens: false })
+      const executionsResult = await agentApi.getExecutions(agentId, user.id, { includeTokens: false })
 
       if (executionsResult.success && executionsResult.data) {
         const enrichedExecutions = executionsResult.data as Execution[]
@@ -637,9 +695,10 @@ export default function V2AgentDetailPage() {
 
     try {
       const { count, error } = await supabase
-        .from('workflow_executions')
+        .from('agent_executions')
         .select('id', { count: 'exact', head: true })
         .eq('agent_id', agentId)
+        .neq('run_mode', 'calibration')
 
       if (!error && count !== null) {
         setTotalExecutionCount(count)
@@ -698,12 +757,14 @@ export default function V2AgentDetailPage() {
         console.log('[fetchExecutionDetails] ✅ Loaded execution details:', {
           hasMetrics: !!data.data.metrics,
           stepMetricsCount: data.data.metrics?.step_metrics?.length || 0,
-          insightsCount: data.data.insights?.length || 0,
+          insightRunsCount: data.data.insightRuns?.length || 0,
+          executionInsightsCount: data.data.executionInsights?.length || 0,
           hasRoi: !!data.data.roi,
         })
         setExecutionDetails({
           metrics: data.data.metrics,
-          insights: data.data.insights || [],
+          insightRuns: data.data.insightRuns || [],
+          executionInsights: data.data.executionInsights || [],
           roi: data.data.roi,
           agent: data.data.agent,
         })
@@ -720,18 +781,99 @@ export default function V2AgentDetailPage() {
   }
 
   const fetchMetrics = async (range: '7d' | '30d' | '90d' = '7d') => {
-    if (!agentId) return
+    if (!agentId || !user?.id) return
 
     setLoadingMetrics(true)
     try {
-      const response = await fetch(`/api/v6/agents/${agentId}/metrics?range=${range}`)
-      const data = await response.json()
+      // Calculate date range using UTC (same pattern as SystemAnalyticsService)
+      const now = new Date()
+      const daysAgo = range === '7d' ? 7 : range === '30d' ? 30 : 90
 
-      if (data.success) {
-        setMetricsData(data.data)
-      } else {
-        clientLogger.error('Failed to fetch metrics', new Error(data.error))
+      // Get today's date at end of day UTC
+      const endDate = new Date(Date.UTC(
+        now.getUTCFullYear(),
+        now.getUTCMonth(),
+        now.getUTCDate(),
+        23, 59, 59, 999
+      ))
+
+      // Start date: (daysAgo - 1) days before today to get exactly daysAgo days including today
+      const startDate = new Date(Date.UTC(
+        now.getUTCFullYear(),
+        now.getUTCMonth(),
+        now.getUTCDate() - (daysAgo - 1),
+        0, 0, 0, 0
+      ))
+
+      // Filter executions by date range
+      const rangeExecutions = executions.filter(e => {
+        const execDate = new Date(e.created_at)
+        return execDate >= startDate && execDate <= endDate
+      })
+
+      // Build chart data from executions
+      const chartDataMap = new Map<string, { items: number; duration: number; count: number }>()
+
+      rangeExecutions.forEach(exec => {
+        // Extract UTC date to match the date range we're querying (avoid timezone issues)
+        const executionDate = new Date(exec.created_at)
+        const year = executionDate.getUTCFullYear()
+        const month = String(executionDate.getUTCMonth() + 1).padStart(2, '0')
+        const day = String(executionDate.getUTCDate()).padStart(2, '0')
+        const date = `${year}-${month}-${day}` // YYYY-MM-DD in UTC
+
+        const existing = chartDataMap.get(date) || { items: 0, duration: 0, count: 0 }
+
+        // Count items processed (from logs if available)
+        const itemsProcessed = exec.logs?.metrics?.total_items || 1
+
+        // Sum duration
+        const duration = exec.execution_duration_ms || 0
+
+        chartDataMap.set(date, {
+          items: existing.items + itemsProcessed,
+          duration: existing.duration + duration,
+          count: existing.count + 1
+        })
+      })
+
+      // Fill in missing dates with zero values (including today)
+      // Helper function to format date as YYYY-MM-DD in UTC
+      const formatUTCDate = (date: Date) => {
+        const year = date.getUTCFullYear()
+        const month = String(date.getUTCMonth() + 1).padStart(2, '0')
+        const day = String(date.getUTCDate()).padStart(2, '0')
+        return `${year}-${month}-${day}`
       }
+
+      // Get today's date string in UTC to ensure we always include it
+      const todayStr = formatUTCDate(endDate)
+
+      // Generate dates from startDate to today (inclusive)
+      const chartData: any[] = []
+      const currentDate = new Date(startDate)
+
+      // Keep looping until we've included today
+      while (true) {
+        const dateStr = formatUTCDate(currentDate)
+        const data = chartDataMap.get(dateStr)
+
+        chartData.push({
+          date: dateStr,
+          items: data?.items || 0,
+          avgDuration: data && data.count > 0 ? Math.round(data.duration / data.count) : 0
+        })
+
+        // If we just added today, we're done
+        if (dateStr === todayStr) {
+          break
+        }
+
+        // Move to next day in UTC
+        currentDate.setUTCDate(currentDate.getUTCDate() + 1)
+      }
+
+      setMetricsData({ chartData })
     } catch (error) {
       clientLogger.error('Error fetching metrics', error as Error)
     } finally {
@@ -744,9 +886,9 @@ export default function V2AgentDetailPage() {
     setShowInsightsModal(true)
 
     // Set the appropriate tab based on the insight category
-    if (insight?.category === 'growth') {
+    if (insight?.category === 'business_insight') {
       setInsightsTab('business')
-    } else if (insight?.category) {
+    } else if (insight?.category === 'technical_insight' || insight?.category === 'data_insight') {
       setInsightsTab('technical')
     } else if (insight === undefined) {
       // When no insight is passed (e.g., "View All" button), default to business tab
@@ -1502,33 +1644,60 @@ export default function V2AgentDetailPage() {
     return !!connectedPlugins[plugin]
   }
 
-  // Memoized health calculation
-  const health = useMemo(() => {
-    if (allExecutions.length === 0) return { score: 0, maxScore: 0, percentage: 0, recentScore: 0, recentMaxScore: 0, failedCount: 0 }
+  // Memoized filtered executions based on time period
+  const filteredExecutions = useMemo(() => {
+    if (timePeriod === 'all') return allExecutions
 
-    const totalSuccessCount = allExecutions.filter(e =>
+    const now = new Date()
+    let cutoffDate: Date
+
+    switch (timePeriod) {
+      case '24h':
+        cutoffDate = new Date(now.getTime() - 24 * 60 * 60 * 1000)
+        break
+      case '7d':
+        cutoffDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)
+        break
+      case '30d':
+        cutoffDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000)
+        break
+      default:
+        return allExecutions
+    }
+
+    return allExecutions.filter(e => {
+      const execDate = new Date(e.created_at)
+      return execDate >= cutoffDate
+    })
+  }, [allExecutions, timePeriod])
+
+  // Memoized health calculation (now uses filtered executions)
+  const health = useMemo(() => {
+    if (filteredExecutions.length === 0) return { score: 0, maxScore: 0, percentage: 0, recentScore: 0, recentMaxScore: 0, failedCount: 0 }
+
+    const totalSuccessCount = filteredExecutions.filter(e =>
       e.status === 'completed' || e.status === 'success'
     ).length
-    const totalPercentage = (totalSuccessCount / allExecutions.length) * 100
+    const totalPercentage = (totalSuccessCount / filteredExecutions.length) * 100
 
-    const failedCount = allExecutions.filter(e =>
+    const failedCount = filteredExecutions.filter(e =>
       e.status === 'failed' || e.status === 'error'
     ).length
 
-    const recentExecutions = allExecutions.slice(0, 5)
+    const recentExecutions = filteredExecutions.slice(0, 5)
     const recentSuccessCount = recentExecutions.filter(e =>
       e.status === 'completed' || e.status === 'success'
     ).length
 
     return {
       score: totalSuccessCount,
-      maxScore: allExecutions.length,
+      maxScore: filteredExecutions.length,
       percentage: totalPercentage,
       recentScore: recentSuccessCount,
       recentMaxScore: recentExecutions.length,
       failedCount
     }
-  }, [allExecutions])
+  }, [filteredExecutions])
 
   const formatDuration = (ms?: number) => {
     if (!ms) return 'N/A'
@@ -1754,13 +1923,15 @@ export default function V2AgentDetailPage() {
 
   const healthStatus = calculateHealthStatus()
 
-  // Separate business and technical insights
-  const businessInsights = insights.filter((i: any) => i.category === 'growth')
-  const technicalInsights = insights.filter((i: any) => i.category === 'data_quality')
+  // Separate business and technical insights (for logging only - dialog has its own filtering)
+  const allBusinessInsights = insights.filter((i: any) => i.category === 'business_insight')
+  const allTechnicalInsights = insights.filter((i: any) =>
+    i.category === 'technical_insight' || i.category === 'data_insight'
+  )
 
   console.log('[AgentPage] Total insights:', insights.length)
-  console.log('[AgentPage] Business insights (growth):', businessInsights.length)
-  console.log('[AgentPage] Technical insights (data_quality):', technicalInsights.length)
+  console.log('[AgentPage] Business insights:', allBusinessInsights.length)
+  console.log('[AgentPage] Technical insights:', allTechnicalInsights.length)
 
   // Get health bar color
   const getHealthColor = () => {
@@ -1807,18 +1978,27 @@ export default function V2AgentDetailPage() {
             <ArrowLeft className="w-4 h-4" />
             Back to Agents
           </button>
-          <V2Controls />
+          <V2Controls
+            showHelpLink={true}
+            onHelpClick={() => setHelpOpen(true)}
+          />
         </motion.div>
 
-        {/* NEW: Redesigned Agent Header with same design patterns */}
+        {/* NEW: Redesigned Agent Header */}
         <AgentHeader
           agent={agent}
           stats={{
-            runCount: totalExecutionCount || allExecutions.length,
+            runCount: filteredExecutions.length, // Use filtered count based on selected time period
             successRate: health.percentage
           }}
           isExecuting={executing}
           advancedMode={advancedMode}
+          timePeriodLabel={
+            timePeriod === '24h' ? 'Last 24 Hours' :
+            timePeriod === '7d' ? 'Last 7 Days' :
+            timePeriod === '30d' ? 'Last 30 Days' :
+            'All Time'
+          }
           onRun={handleRunNow}
           onSettingsClick={() => {
             setInputConfigExpanded(false)
@@ -1828,19 +2008,28 @@ export default function V2AgentDetailPage() {
           onAdvancedModeToggle={handleAdvancedModeToggle}
         />
 
-        {/* Performance Trends + Latest Run - Side by Side */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4">
-          <PerformanceTrends
-            executions={allExecutions}
-            hourlyRate={userHourlyRate ?? undefined}
-          />
-          <LatestRunCard
-            execution={selectedExecution}
-            isRunning={executing}
-            advancedMode={advancedMode}
-            hourlyRate={userHourlyRate ?? undefined}
-          />
-        </div>
+        {/* Performance Trends + Latest Run - Side by Side (Advanced Mode Only) */}
+        {advancedMode && (
+          <div className="grid grid-cols-1 lg:grid-cols-5 gap-4 mt-4">
+            <div className="lg:col-span-3">
+              <PerformanceTrends
+                executions={filteredExecutions}
+                hourlyRate={userHourlyRate ?? undefined}
+                timePeriod={timePeriod}
+                onTimePeriodChange={setTimePeriod}
+                manualTimePerItemSeconds={agent?.manual_time_per_item_seconds}
+              />
+            </div>
+            <div className="lg:col-span-2">
+              <LatestRunCard
+                execution={selectedExecution}
+                isRunning={executing}
+                advancedMode={advancedMode}
+                hourlyRate={userHourlyRate ?? undefined}
+              />
+            </div>
+          </div>
+        )}
 
         {/* Insight Preview */}
         {insights.length > 0 && (
@@ -1853,7 +2042,7 @@ export default function V2AgentDetailPage() {
 
         {/* Run History Table */}
         <RunHistoryTable
-          executions={allExecutions}
+          executions={filteredExecutions}
           onSelectExecution={handleSelectExecutionForPanel}
           selectedExecutionId={selectedExecution?.id}
           className="mt-4"
@@ -1869,6 +2058,8 @@ export default function V2AgentDetailPage() {
         advancedMode={advancedMode}
         executionDetails={executionDetails}
         hourlyRate={userHourlyRate ?? undefined}
+        insights={insights}
+        manualTimePerItemSeconds={agent?.manual_time_per_item_seconds}
       />
 
       {/* Settings Drawer Overlay */}
@@ -2884,7 +3075,7 @@ export default function V2AgentDetailPage() {
                 onClick={() => setInsightsTab('business')}
                 className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
                   insightsTab === 'business'
-                    ? 'border-[var(--v2-success)] text-[var(--v2-success)]'
+                    ? 'border-emerald-500 text-emerald-600 dark:text-emerald-400'
                     : 'border-transparent text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)]'
                 }`}
               >
@@ -2897,7 +3088,7 @@ export default function V2AgentDetailPage() {
                 onClick={() => setInsightsTab('technical')}
                 className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
                   insightsTab === 'technical'
-                    ? 'border-[var(--v2-info)] text-[var(--v2-info)]'
+                    ? 'border-blue-500 text-blue-600 dark:text-blue-400'
                     : 'border-transparent text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)]'
                 }`}
               >
@@ -2906,13 +3097,28 @@ export default function V2AgentDetailPage() {
                   Technical Issues
                 </span>
               </button>
+              <button
+                onClick={() => setInsightsTab('data')}
+                className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
+                  insightsTab === 'data'
+                    ? 'border-purple-500 text-purple-600 dark:text-purple-400'
+                    : 'border-transparent text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)]'
+                }`}
+              >
+                <span className="flex items-center gap-2">
+                  <Database className="w-4 h-4" />
+                  Data Issues
+                </span>
+              </button>
             </div>
 
             {/* Content */}
             <div className="overflow-y-auto flex-1 p-6">
               {insightsTab === 'business' ? (
                 (() => {
-                  const businessInsights = insights.filter((i: any) => i.category === 'growth')
+                  // Show only the latest business insight (API returns ordered by created_at DESC)
+                  const latestBusinessInsight = insights.find((i: any) => i.category === 'business_insight')
+                  const businessInsights = latestBusinessInsight ? [latestBusinessInsight] : []
                   return (
                     <div className="space-y-6">
                       {/* Business Metrics Charts */}
@@ -2920,8 +3126,8 @@ export default function V2AgentDetailPage() {
                         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
                           {/* Volume Trend Chart */}
                           <div className="bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-xl p-4">
-                            <h3 className="text-sm font-semibold text-[var(--v2-success)] mb-3 flex items-center gap-2">
-                              <TrendingUp className="w-4 h-4" />
+                            <h3 className="text-sm font-semibold text-emerald-600 dark:text-emerald-400 mb-3 flex items-center gap-2">
+                              <TrendingUp className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
                               Volume Trend (Last 7 Days)
                             </h3>
                             <div className="h-48">
@@ -2931,14 +3137,19 @@ export default function V2AgentDetailPage() {
                                 </div>
                               ) : metricsData?.chartData ? (
                                 <ResponsiveContainer width="100%" height="100%">
-                                  <AreaChart data={metricsData.chartData.map((d: any) => ({
-                                    date: new Date(d.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-                                    items: d.items
-                                  }))}>
+                                  <AreaChart data={metricsData.chartData.map((d: any) => {
+                                    // Parse YYYY-MM-DD and format without timezone conversion
+                                    const [year, month, day] = d.date.split('-')
+                                    const dateObj = new Date(parseInt(year), parseInt(month) - 1, parseInt(day))
+                                    return {
+                                      date: dateObj.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+                                      items: d.items
+                                    }
+                                  })}>
                                     <defs>
                                       <linearGradient id="volumeGradient" x1="0" y1="0" x2="0" y2="1">
-                                        <stop offset="5%" stopColor="var(--v2-success)" stopOpacity={0.6}/>
-                                        <stop offset="95%" stopColor="var(--v2-success)" stopOpacity={0.1}/>
+                                        <stop offset="5%" stopColor="#10b981" stopOpacity={0.6}/>
+                                        <stop offset="95%" stopColor="#10b981" stopOpacity={0.1}/>
                                       </linearGradient>
                                     </defs>
                                     <CartesianGrid strokeDasharray="3 3" stroke="var(--v2-border)" />
@@ -2961,7 +3172,7 @@ export default function V2AgentDetailPage() {
                                     <Area
                                       type="monotone"
                                       dataKey="items"
-                                      stroke="var(--v2-success)"
+                                      stroke="#10b981"
                                       fillOpacity={1}
                                       fill="url(#volumeGradient)"
                                       strokeWidth={2}
@@ -2978,8 +3189,8 @@ export default function V2AgentDetailPage() {
 
                           {/* ROI Metrics */}
                           <div className="bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-xl p-4">
-                            <h3 className="text-sm font-semibold text-[var(--v2-success)] mb-3 flex items-center gap-2">
-                              <Gauge className="w-4 h-4" />
+                            <h3 className="text-sm font-semibold text-emerald-600 dark:text-emerald-400 mb-3 flex items-center gap-2">
+                              <Gauge className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
                               ROI Metrics
                             </h3>
                             <div className="space-y-3">
@@ -3091,8 +3302,8 @@ export default function V2AgentDetailPage() {
                         </div>
                       ) : (
                         <div className="text-center py-12">
-                          <div className="w-16 h-16 bg-[var(--v2-success-bg)] border border-[var(--v2-success-border)] rounded-full flex items-center justify-center mx-auto mb-4">
-                            <TrendingUp className="w-8 h-8 text-[var(--v2-success)]" />
+                          <div className="w-16 h-16 bg-emerald-100 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800/50 rounded-full flex items-center justify-center mx-auto mb-4">
+                            <TrendingUp className="w-8 h-8 text-emerald-600 dark:text-emerald-400" />
                           </div>
                           <h3 className="text-lg font-semibold text-[var(--v2-text-primary)] mb-2">No Business Insights Yet</h3>
                           <p className="text-sm text-[var(--v2-text-secondary)]">
@@ -3103,9 +3314,18 @@ export default function V2AgentDetailPage() {
                     </div>
                   )
                 })()
-              ) : (
+              ) : insightsTab === 'technical' ? (
                 (() => {
-                  const technicalInsights = insights.filter((i: any) => i.category !== 'growth')
+                  // Deduplicate technical insights by insight_type (keep only the most recent per type)
+                  const allTechnicalInsights = insights.filter((i: any) =>
+                    i.category === 'technical_insight'
+                  )
+                  const seenTypes = new Set<string>()
+                  const technicalInsights = allTechnicalInsights.filter((i: any) => {
+                    if (seenTypes.has(i.insight_type)) return false
+                    seenTypes.add(i.insight_type)
+                    return true
+                  })
                   return (
                     <div className="space-y-6">
                       {/* Technical Performance Charts */}
@@ -3113,8 +3333,8 @@ export default function V2AgentDetailPage() {
                         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
                           {/* Performance Trend */}
                           <div className="bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-xl p-4">
-                            <h3 className="text-sm font-semibold text-[var(--v2-primary)] mb-3 flex items-center gap-2">
-                              <Activity className="w-4 h-4" />
+                            <h3 className="text-sm font-semibold text-blue-600 dark:text-blue-400 mb-3 flex items-center gap-2">
+                              <Activity className="w-4 h-4 text-blue-600 dark:text-blue-400" />
                               Performance Trend
                             </h3>
                             <div className="h-48">
@@ -3124,10 +3344,15 @@ export default function V2AgentDetailPage() {
                                 </div>
                               ) : metricsData?.chartData ? (
                                 <ResponsiveContainer width="100%" height="100%">
-                                  <LineChart data={metricsData.chartData.map((d: any) => ({
-                                    date: new Date(d.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-                                    duration: d.avgDuration
-                                  }))}>
+                                  <LineChart data={metricsData.chartData.map((d: any) => {
+                                    // Parse YYYY-MM-DD and format without timezone conversion
+                                    const [year, month, day] = d.date.split('-')
+                                    const dateObj = new Date(parseInt(year), parseInt(month) - 1, parseInt(day))
+                                    return {
+                                      date: dateObj.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+                                      duration: d.avgDuration
+                                    }
+                                  })}>
                                     <CartesianGrid strokeDasharray="3 3" stroke="var(--v2-border)" />
                                     <XAxis dataKey="date" tick={{ fontSize: 12, fill: 'var(--v2-text-muted)' }} stroke="var(--v2-border)" />
                                     <YAxis tick={{ fontSize: 12, fill: 'var(--v2-text-muted)' }} stroke="var(--v2-border)" />
@@ -3148,9 +3373,9 @@ export default function V2AgentDetailPage() {
                                     <Line
                                       type="monotone"
                                       dataKey="duration"
-                                      stroke="var(--v2-primary)"
+                                      stroke="#2563eb"
                                       strokeWidth={2}
-                                      dot={{ fill: 'var(--v2-primary)', r: 4 }}
+                                      dot={{ fill: '#2563eb', r: 4 }}
                                     />
                                   </LineChart>
                                 </ResponsiveContainer>
@@ -3164,14 +3389,14 @@ export default function V2AgentDetailPage() {
 
                           {/* Success/Failure Stats */}
                           <div className="bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-xl p-4">
-                            <h3 className="text-sm font-semibold text-[var(--v2-primary)] mb-3 flex items-center gap-2">
-                              <CheckCircle className="w-4 h-4" />
+                            <h3 className="text-sm font-semibold text-blue-600 dark:text-blue-400 mb-3 flex items-center gap-2">
+                              <CheckCircle className="w-4 h-4 text-blue-600 dark:text-blue-400" />
                               Reliability Metrics
                             </h3>
                             <div className="space-y-3">
                               <div className="bg-[var(--v2-bg)] rounded-lg p-3">
-                                <div className="text-xs text-[var(--v2-success)] font-medium mb-1">Success Rate</div>
-                                <div className="text-2xl font-bold text-[var(--v2-success)]">
+                                <div className="text-xs text-emerald-600 dark:text-emerald-400 font-medium mb-1">Success Rate</div>
+                                <div className="text-2xl font-bold text-emerald-600 dark:text-emerald-400">
                                   {executions.length > 0
                                     ? ((executions.filter(e => e.status === 'success').length / executions.length) * 100).toFixed(1)
                                     : '0'
@@ -3179,14 +3404,14 @@ export default function V2AgentDetailPage() {
                                 </div>
                               </div>
                               <div className="bg-[var(--v2-bg)] rounded-lg p-3">
-                                <div className="text-xs text-[var(--v2-primary)] font-medium mb-1">Total Executions</div>
-                                <div className="text-2xl font-bold text-[var(--v2-primary)]">
+                                <div className="text-xs text-blue-600 dark:text-blue-400 font-medium mb-1">Total Executions</div>
+                                <div className="text-2xl font-bold text-blue-600 dark:text-blue-400">
                                   {executions.length}
                                 </div>
                               </div>
                               <div className="bg-[var(--v2-bg)] rounded-lg p-3">
-                                <div className="text-xs text-[var(--v2-error)] font-medium mb-1">Failures</div>
-                                <div className="text-2xl font-bold text-[var(--v2-error)]">
+                                <div className="text-xs text-red-600 dark:text-red-400 font-medium mb-1">Failures</div>
+                                <div className="text-2xl font-bold text-red-600 dark:text-red-400">
                                   {executions.filter(e => e.status === 'failed' || e.status === 'error').length}
                                 </div>
                               </div>
@@ -3251,12 +3476,181 @@ export default function V2AgentDetailPage() {
                         </div>
                       ) : (
                         <div className="text-center py-12">
-                          <div className="w-16 h-16 bg-[var(--v2-info-bg)] border border-[var(--v2-info-border)] rounded-full flex items-center justify-center mx-auto mb-4">
-                            <Zap className="w-8 h-8 text-[var(--v2-info)]" />
+                          <div className="w-16 h-16 bg-blue-100 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800/50 rounded-full flex items-center justify-center mx-auto mb-4">
+                            <CheckCircle className="w-8 h-8 text-blue-600 dark:text-blue-400" />
                           </div>
                           <h3 className="text-lg font-semibold text-[var(--v2-text-primary)] mb-2">No Technical Issues</h3>
                           <p className="text-sm text-[var(--v2-text-secondary)]">
                             Your workflow is running smoothly with no technical issues detected.
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  )
+                })()
+              ) : (
+                (() => {
+                  // Data Insights tab - show only data_insight category
+                  const allDataInsights = insights.filter((i: any) =>
+                    i.category === 'data_insight'
+                  )
+                  const seenTypes = new Set<string>()
+                  const dataInsights = allDataInsights.filter((i: any) => {
+                    if (seenTypes.has(i.insight_type)) return false
+                    seenTypes.add(i.insight_type)
+                    return true
+                  })
+                  return (
+                    <div className="space-y-6">
+                      {/* Data Performance Charts - Always show */}
+                      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
+                          {/* Data Issues Trend */}
+                          <div className="bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-xl p-4">
+                            <h3 className="text-sm font-semibold text-purple-600 dark:text-purple-400 mb-3 flex items-center gap-2">
+                              <Activity className="w-4 h-4 text-purple-600 dark:text-purple-400" />
+                              Data Issues Trend
+                            </h3>
+                            <div className="h-48">
+                              {loadingMetrics ? (
+                                <div className="flex items-center justify-center h-full">
+                                  <div className="text-sm text-[var(--v2-text-muted)]">Loading metrics...</div>
+                                </div>
+                              ) : metricsData?.chartData ? (
+                                <ResponsiveContainer width="100%" height="100%">
+                                  <LineChart data={metricsData.chartData.map((d: any) => {
+                                    // Parse YYYY-MM-DD and format without timezone conversion
+                                    const [year, month, day] = d.date.split('-')
+                                    const dateObj = new Date(parseInt(year), parseInt(month) - 1, parseInt(day))
+                                    return {
+                                      date: dateObj.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+                                      issues: 0  // Always 0 for data issues
+                                    }
+                                  })}>
+                                    <CartesianGrid strokeDasharray="3 3" stroke="var(--v2-border)" />
+                                    <XAxis dataKey="date" tick={{ fontSize: 12, fill: 'var(--v2-text-muted)' }} stroke="var(--v2-border)" />
+                                    <YAxis tick={{ fontSize: 12, fill: 'var(--v2-text-muted)' }} stroke="var(--v2-border)" />
+                                    <Tooltip
+                                      contentStyle={{
+                                        backgroundColor: 'var(--v2-surface)',
+                                        border: '1px solid var(--v2-border)',
+                                        borderRadius: '8px',
+                                        fontSize: '12px',
+                                        color: 'var(--v2-text-primary)'
+                                      }}
+                                      labelStyle={{
+                                        color: 'var(--v2-text-primary)'
+                                      }}
+                                      labelFormatter={(value) => `Date: ${value}`}
+                                      formatter={(value: any) => [`${value}`, 'Data Issues']}
+                                    />
+                                    <Line
+                                      type="monotone"
+                                      dataKey="issues"
+                                      stroke="#9333ea"
+                                      strokeWidth={2}
+                                      dot={{ fill: '#9333ea', r: 4 }}
+                                    />
+                                  </LineChart>
+                                </ResponsiveContainer>
+                              ) : (
+                                <div className="flex items-center justify-center h-full">
+                                  <div className="text-sm text-[var(--v2-text-muted)]">No metrics data available</div>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Data Quality Metrics */}
+                          <div className="bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-xl p-4">
+                            <h3 className="text-sm font-semibold text-purple-600 dark:text-purple-400 mb-3 flex items-center gap-2">
+                              <CheckCircle className="w-4 h-4 text-purple-600 dark:text-purple-400" />
+                              Data Quality Metrics
+                            </h3>
+                            <div className="space-y-3">
+                              <div className="bg-[var(--v2-bg)] rounded-lg p-3">
+                                <div className="text-xs text-emerald-600 dark:text-emerald-400 font-medium mb-1">Data Quality Score</div>
+                                <div className="text-2xl font-bold text-emerald-600 dark:text-emerald-400">
+                                  100%
+                                </div>
+                              </div>
+                              <div className="bg-[var(--v2-bg)] rounded-lg p-3">
+                                <div className="text-xs text-purple-600 dark:text-purple-400 font-medium mb-1">Total Issues</div>
+                                <div className="text-2xl font-bold text-purple-600 dark:text-purple-400">
+                                  {dataInsights.length}
+                                </div>
+                              </div>
+                              <div className="bg-[var(--v2-bg)] rounded-lg p-3">
+                                <div className="text-xs text-blue-600 dark:text-blue-400 font-medium mb-1">Resolved Issues</div>
+                                <div className="text-2xl font-bold text-blue-600 dark:text-blue-400">
+                                  0
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+
+                      {/* Data Insights List */}
+                      {dataInsights.length > 0 ? (
+                        <div>
+                          <h3 className="text-sm font-semibold text-[var(--v2-text-primary)] mb-3">Data Quality Issues</h3>
+                          <InsightsList
+                            insights={dataInsights}
+                            onDismiss={async (id) => {
+                              try {
+                                await fetch(`/api/v6/insights/${id}`, {
+                                  method: 'PATCH',
+                                  headers: { 'Content-Type': 'application/json' },
+                                  body: JSON.stringify({ status: 'dismissed' })
+                                })
+                                const result = await fetch(`/api/v6/insights?agentId=${agentId}&status=new,viewed`)
+                                const data = await result.json()
+                                if (data.success) setInsights(data.data)
+                              } catch (error) {
+                                clientLogger.error('Error dismissing insight', error as Error)
+                              }
+                            }}
+                            onApply={async (id) => {
+                              try {
+                                await fetch(`/api/v6/insights/${id}`, {
+                                  method: 'PATCH',
+                                  headers: { 'Content-Type': 'application/json' },
+                                  body: JSON.stringify({ status: 'applied' })
+                                })
+                                const result = await fetch(`/api/v6/insights?agentId=${agentId}&status=new,viewed`)
+                                const data = await result.json()
+                                if (data.success) setInsights(data.data)
+                              } catch (error) {
+                                clientLogger.error('Error applying insight', error as Error)
+                              }
+                            }}
+                            onSnooze={async (id, days) => {
+                              try {
+                                const snoozedUntil = new Date()
+                                snoozedUntil.setDate(snoozedUntil.getDate() + days)
+                                await fetch(`/api/v6/insights/${id}`, {
+                                  method: 'PATCH',
+                                  headers: { 'Content-Type': 'application/json' },
+                                  body: JSON.stringify({ status: 'snoozed', snoozed_until: snoozedUntil.toISOString() })
+                                })
+                                const result = await fetch(`/api/v6/insights?agentId=${agentId}&status=new,viewed`)
+                                const data = await result.json()
+                                if (data.success) setInsights(data.data)
+                              } catch (error) {
+                                clientLogger.error('Error snoozing insight', error as Error)
+                              }
+                            }}
+                            showFilters={false}
+                            tokensPerPilotCredit={tokensPerPilotCredit}
+                          />
+                        </div>
+                      ) : (
+                        <div className="text-center py-12">
+                          <div className="w-16 h-16 bg-purple-100 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800/50 rounded-full flex items-center justify-center mx-auto mb-4">
+                            <CheckCircle className="w-8 h-8 text-purple-600 dark:text-purple-400" />
+                          </div>
+                          <h3 className="text-lg font-semibold text-[var(--v2-text-primary)] mb-2">No Data Issues</h3>
+                          <p className="text-sm text-[var(--v2-text-secondary)]">
+                            Your workflow data quality is excellent with no issues detected.
                           </p>
                         </div>
                       )}
@@ -3270,6 +3664,7 @@ export default function V2AgentDetailPage() {
       )}
 
       {/* Execution Modal - Run Now */}
+      {/* Execution Modal - Run Now */}
       <ExecutionModal
         isOpen={showExecutionModal}
         onClose={handleCloseExecutionModal}
@@ -3279,6 +3674,12 @@ export default function V2AgentDetailPage() {
         error={executionError}
         agentName={agent?.agent_name}
         onGoToBilling={() => router.push('/v2/settings?tab=billing')}
+      />
+
+      {/* Help Dialog */}
+      <ModernHelpDialog
+        isOpen={helpOpen}
+        onClose={() => setHelpOpen(false)}
       />
 
     </div>

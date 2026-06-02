@@ -2794,7 +2794,33 @@ Respond ONLY with the JSON array. No markdown, no explanation, no code blocks.`;
         positions.push([k, idx]);
       }
 
-      if (allPositional) {
+      // WP-FIX: Detect if input is a 2D array (each item is an array).
+      // When target keys are positional AND input is 2D array, the correct
+      // interpretation is "extract columns by position to create objects"
+      // (e.g. {"A": "Task name", "D": "Status"} means extract column A as
+      // "Task name" field). In this case, we invert the mapping: the
+      // positional key becomes the SOURCE and the value becomes the TARGET.
+      const inputIs2DArray = Array.isArray(data) && data.length > 0 && Array.isArray(data[0]);
+
+      if (allPositional && inputIs2DArray) {
+        // Special case: 2D array input with positional target keys
+        // Invert the mapping: {"A": "Task name"} → extract column A as "Task name"
+        logger.info({ mapping, itemCount: data.length }, '[transformMap] WP-FIX: 2D array input with positional keys → extract columns to objects');
+        const apply2DToObject = (row: any[]) => {
+          const obj: Record<string, any> = {};
+          for (const [posKey, fieldName] of Object.entries(mapping)) {
+            const colIdx = parsePositionalKey(posKey);
+            if (colIdx !== null && colIdx < row.length) {
+              // fieldName is the target field name, posKey is the source column position
+              obj[fieldName as string] = row[colIdx];
+            }
+          }
+          return obj;
+        };
+        return data.map((row: any) => Array.isArray(row) ? apply2DToObject(row) : row);
+      }
+
+      if (allPositional && !inputIs2DArray) {
         const len = Math.max(...positions.map(([, i]) => i)) + 1;
         const applyToArray = (item: any) => {
           const row = new Array(len).fill(null);
@@ -3369,12 +3395,66 @@ Respond ONLY with the JSON array. No markdown, no explanation, no code blocks.`;
       console.log(`🔍 [transformFilter] First item type:`, Array.isArray(sample) ? `array[${sample.length}]` : (sample && typeof sample === 'object' ? `object{${Object.keys(sample).slice(0, 5).join(',')}}` : typeof sample));
     }
 
-    const filtered = data.filter(item => {
+    // Debug: Log the first item's fields and condition values for diagnosis
+    if (data.length > 0) {
+      const firstItem = data[0];
+      const debugContext = context.clone();
+      debugContext.setVariable('item', firstItem);
+
+      // Try to resolve condition fields for debugging
+      const conditionDebug: any = {
+        firstItemFields: Object.keys(firstItem || {}).slice(0, 10),
+        firstItemFull: JSON.stringify(firstItem).slice(0, 300)
+      };
+      try {
+        // Check if days_until_due exists on the item
+        conditionDebug.days_until_due = firstItem?.days_until_due;
+        conditionDebug.days_until_due_type = typeof firstItem?.days_until_due;
+
+        // Try to resolve input.days_ahead
+        try {
+          const daysAhead = debugContext.resolveVariable('{{input.days_ahead}}');
+          conditionDebug.input_days_ahead = daysAhead;
+          conditionDebug.input_days_ahead_type = typeof daysAhead;
+        } catch (e: any) {
+          conditionDebug.input_days_ahead_error = e.message;
+        }
+      } catch (e: any) {
+        conditionDebug.error = e.message;
+      }
+      console.log(`🔍 [transformFilter] DEBUG condition values:`, JSON.stringify(conditionDebug));
+    }
+
+    const filtered = data.filter((item, idx) => {
       // Create temporary context with current item
       const tempContext = context.clone();
       tempContext.setVariable('item', item);
 
-      return this.conditionalEvaluator.evaluate(config.condition, tempContext);
+      const result = this.conditionalEvaluator.evaluate(config.condition, tempContext);
+
+      // Debug: Log individual item evaluation for first few items
+      if (idx < 3) {
+        // Also evaluate sub-conditions separately if complex_and
+        let subResults: any = {};
+        if (config.condition?.conditionType === 'complex_and' && Array.isArray(config.condition?.conditions)) {
+          config.condition.conditions.forEach((subCond: any, i: number) => {
+            try {
+              const subResult = this.conditionalEvaluator.evaluate(subCond, tempContext);
+              subResults[`cond_${i}_${subCond.operator}`] = subResult;
+            } catch (e: any) {
+              subResults[`cond_${i}_error`] = e.message;
+            }
+          });
+        }
+        console.log(`🔍 [transformFilter] Item ${idx} eval:`, {
+          days_until_due: item?.days_until_due,
+          type: typeof item?.days_until_due,
+          result,
+          subResults
+        });
+      }
+
+      return result;
     });
 
     // ✅ AUTO-UNWRAP: If this was a tuple filter pattern, extract the original items
@@ -3843,10 +3923,11 @@ Respond ONLY with the JSON array. No markdown, no explanation, no code blocks.`;
     // import chain (same pattern as StructuredTransforms for W2).
     try {
       const result = rowsToObjects(data, config || {});
-      logger.debug({
+      logger.info({
         inputRows: data.length,
         outputObjects: result.length,
         preserveCase: config?.preserve_case === true,
+        headerRow: config?.header_row || 1,
       }, 'rows_to_objects: Converted via pure helper');
       return result;
     } catch (e: any) {

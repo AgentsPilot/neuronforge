@@ -7,7 +7,7 @@
  * - Data shape mismatches
  * - High empty result rate
  *
- * Category: data_quality
+ * Category: data_insight
  * Insight Types: data_unavailable, data_malformed, data_missing_fields, data_type_mismatch
  */
 
@@ -106,7 +106,7 @@ export class DataQualityDetector {
 
     return {
       insight_type: 'data_unavailable',
-      category: 'data_quality',
+      category: 'data_insight',
       severity,
       confidence_score: frequency, // Higher frequency = higher confidence
       execution_ids: emptyResultExecutions.map(e => e.execution_id),
@@ -173,7 +173,7 @@ export class DataQualityDetector {
 
     return {
       insight_type: 'data_missing_fields',
-      category: 'data_quality',
+      category: 'data_insight',
       severity,
       confidence_score: frequency,
       execution_ids: fieldMissingExecutions.map(e => e.execution_id),

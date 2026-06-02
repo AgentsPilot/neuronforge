@@ -109,12 +109,12 @@ export function AutoFixProgress({
     <div className="space-y-4">
       {/* Auto-fix in progress */}
       {status === 'fixing' && (
-        <div className="border rounded-lg p-6 bg-blue-50 text-center">
-          <Loader className="w-12 h-12 animate-spin mx-auto mb-4 text-blue-600" />
-          <h3 className="text-lg font-medium text-gray-900">
+        <div className="border border-[var(--v2-border)] rounded-lg p-6 bg-blue-50 dark:bg-blue-900/20 text-center">
+          <Loader className="w-12 h-12 animate-spin mx-auto mb-4 text-blue-600 dark:text-blue-400" />
+          <h3 className="text-lg font-medium text-[var(--v2-text-primary)]">
             Optimizing your workflow...
           </h3>
-          <p className="text-sm text-gray-600 mt-2">
+          <p className="text-sm text-[var(--v2-text-muted)] mt-2">
             Checking for issues and applying automatic fixes
           </p>
         </div>

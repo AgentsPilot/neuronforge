@@ -53,48 +53,27 @@ export class UserPluginConnections {
   // NOTE: This returns ALL active plugins, even with expired tokens
   // Use this for execution flows where tokens can be refreshed
   async getAllActivePlugins(userId: string): Promise<UserConnection[]> {
-    logger.debug({ userId }, 'Getting all active plugins (including expired tokens)');
-
-    const allConnections = await this.fetchActiveConnections(userId);
-
-    const expiredCount = allConnections.filter(conn => !this.isTokenValid(conn.expires_at)).length;
-    logger.debug({
-      userId,
-      totalActive: allConnections.length,
-      expiredCount
-    }, 'Active plugins retrieved');
-
-    return allConnections;
+    return await this.fetchActiveConnections(userId);
   }
 
   // Get all connected plugin connections for user (only active plugins with valid tokens)
   // NOTE: This function does NOT refresh tokens - it only pulls active connections from the database
   // Use this for status display and operations that don't require token refresh
   async getConnectedPlugins(userId: string): Promise<UserConnection[]> {
-    logger.debug({ userId }, 'Getting connected plugins');
-
     const connections = await this.fetchActiveConnections(userId);
 
     // Filter out expired connections
     const validConnections = connections.filter(conn => this.isTokenValid(conn.expires_at));
-
-    logger.debug({ userId, validCount: validConnections.length }, 'Valid connected plugins retrieved');
 
     return validConnections;
   }
 
   // Get all connected plugin keys for user (only valid connections)
   async getConnectedPluginKeys(userId: string): Promise<string[]> {
-    logger.debug({ userId }, 'Getting connected plugin keys');
-
     try {
       // Use getConnectedPlugins and extract just the keys
       const connections = await this.getConnectedPlugins(userId);
-      const pluginKeys = connections.map(conn => conn.plugin_key);
-
-      logger.debug({ userId, count: pluginKeys.length, pluginKeys }, 'Connected plugin keys retrieved');
-
-      return pluginKeys;
+      return connections.map(conn => conn.plugin_key);
     } catch (error) {
       logger.error({ err: error, userId }, 'Error getting connected plugin keys');
       return [];
@@ -108,8 +87,6 @@ export class UserPluginConnections {
     availablePluginKeys: string[],
     connectedKeys?: string[]
   ): Promise<string[]> {
-    logger.debug({ userId }, 'Getting disconnected plugin keys');
-
     try {
       // Use provided connectedKeys if available, otherwise fetch them
       const keys = connectedKeys ?? await this.getConnectedPluginKeys(userId);
@@ -118,15 +95,7 @@ export class UserPluginConnections {
       const connectedSet = new Set(keys);
 
       // Filter available plugins to find disconnected ones
-      const disconnectedKeys = availablePluginKeys.filter(key => !connectedSet.has(key));
-
-      logger.debug({
-        userId,
-        disconnectedCount: disconnectedKeys.length,
-        availableCount: availablePluginKeys.length
-      }, 'Disconnected plugin keys retrieved');
-
-      return disconnectedKeys;
+      return availablePluginKeys.filter(key => !connectedSet.has(key));
     } catch (error) {
       logger.error({ err: error, userId }, 'Error getting disconnected plugin keys');
       // If error, return all available plugins as potentially disconnected
@@ -174,11 +143,8 @@ export class UserPluginConnections {
 
   // Get connection data for plugin (for API calls)
   async getConnection(userId: string, pluginKey: string, authConfig: PluginAuthConfig): Promise<UserConnection | null> {
-    logger.debug({ userId, pluginKey }, 'Getting connection data');
-
     // Check if this is a system plugin (no database connection required)
     if (authConfig.auth_type === 'platform_key') {
-      logger.debug({ pluginKey }, 'System plugin - returning virtual connection');
 
       // Return a virtual connection for system plugins (no DB record needed)
       return {
@@ -205,7 +171,6 @@ export class UserPluginConnections {
       const { data: connection, error } = await this.repository.findActiveByUserAndPlugin(userId, pluginKey);
 
       if (error || !connection) {
-        logger.debug({ userId, pluginKey }, 'No active connection found');
         return null;
       }
 
@@ -236,7 +201,6 @@ export class UserPluginConnections {
         }
       }
 
-      logger.debug({ pluginKey }, 'Valid connection found - no refresh needed');
       return connection;
     } catch (error) {
       logger.error({ err: error, userId, pluginKey }, 'Error getting connection');
@@ -695,16 +659,7 @@ export class UserPluginConnections {
     const timeUntilExpiry = expiryDate.getTime() - now.getTime();
 
     // Refresh if token expires within buffer time or is already expired
-    const shouldRefresh = timeUntilExpiry <= bufferMs;
-
-    const minutesUntilExpiry = Math.floor(timeUntilExpiry / 60000);
-    logger.debug({
-      minutesUntilExpiry,
-      shouldRefresh,
-      bufferMinutes
-    }, 'Token refresh check');
-
-    return shouldRefresh;
+    return timeUntilExpiry <= bufferMs;
   }
 
   // Non-blocking audit trail helper

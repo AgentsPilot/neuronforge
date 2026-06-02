@@ -7,8 +7,8 @@ import React, { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@/components/UserProvider'
 import { supabase } from '@/lib/supabaseClient'
-import { Card } from '@/components/v2/ui/card'
 import { V2Logo, V2Controls } from '@/components/v2/V2Header'
+import { ModernHelpDialog } from '@/components/v2/ModernHelpDialog'
 import {
   ArrowLeft,
   Bot,
@@ -26,9 +26,9 @@ import {
   X,
   ArrowUpDown,
   ChevronDown,
-  Database
+  Database,
+  Power
 } from 'lucide-react'
-import { formatScheduleDisplay } from '@/lib/utils/scheduleFormatter'
 
 type Agent = {
   id: string
@@ -45,7 +45,7 @@ type Agent = {
 }
 
 type FilterType = 'all' | 'active' | 'inactive' | 'draft'
-type SortType = 'created_desc' | 'created_asc' | 'name_asc' | 'name_desc'
+type SortType = 'created_desc' | 'created_asc' | 'name_asc' | 'name_desc' | 'runs_desc' | 'runs_asc'
 
 type Toast = {
   id: string
@@ -138,7 +138,7 @@ export default function V2AgentListPage() {
   const [sortButtonRect, setSortButtonRect] = useState<DOMRect | null>(null)
   const sortButtonRef = React.useRef<HTMLButtonElement>(null)
   const [hoveredAgent, setHoveredAgent] = useState<string | null>(null)
-  const [tooltipPosition, setTooltipPosition] = useState<{ x: number; y: number } | null>(null)
+  const [helpOpen, setHelpOpen] = useState(false)
 
   useEffect(() => {
     if (user) {
@@ -153,7 +153,10 @@ export default function V2AgentListPage() {
     try {
       let query = supabase
         .from('agents')
-        .select('*')
+        .select(`
+          *,
+          agent_executions(run_mode)
+        `)
         .eq('user_id', user.id)
         .order('created_at', { ascending: false })
 
@@ -164,7 +167,33 @@ export default function V2AgentListPage() {
       const { data, error } = await query
 
       if (error) throw error
-      setAgents(data || [])
+
+      // Process the data to count non-calibration runs
+      const agentsWithRuns = (data || []).map(agent => {
+        // Count executions excluding calibration runs
+        const executions = agent.agent_executions || []
+        const runCount = executions.filter((exec: any) =>
+          exec.run_mode !== 'calibration'
+        ).length
+
+        // Debug logging for first agent
+        if (data && data.length > 0 && agent.id === data[0].id) {
+          console.log('First agent execution data:', {
+            agentName: agent.agent_name,
+            totalExecutions: executions.length,
+            runModes: executions.map((e: any) => e.run_mode),
+            calibrationCount: executions.filter((e: any) => e.run_mode === 'calibration').length,
+            nonCalibrationCount: runCount
+          })
+        }
+
+        return {
+          ...agent,
+          total_runs: runCount
+        }
+      })
+
+      setAgents(agentsWithRuns)
     } catch (error) {
       console.error('Error fetching agents:', error)
       addToast('Failed to load agents', 'error')
@@ -318,6 +347,10 @@ export default function V2AgentListPage() {
           return a.agent_name.localeCompare(b.agent_name)
         case 'name_desc':
           return b.agent_name.localeCompare(a.agent_name)
+        case 'runs_desc':
+          return (b.total_runs || 0) - (a.total_runs || 0)
+        case 'runs_asc':
+          return (a.total_runs || 0) - (b.total_runs || 0)
         default:
           return 0
       }
@@ -327,7 +360,9 @@ export default function V2AgentListPage() {
     { value: 'created_desc' as SortType, label: 'Newest first' },
     { value: 'created_asc' as SortType, label: 'Oldest first' },
     { value: 'name_asc' as SortType, label: 'A to Z' },
-    { value: 'name_desc' as SortType, label: 'Z to A' }
+    { value: 'name_desc' as SortType, label: 'Z to A' },
+    { value: 'runs_desc' as SortType, label: 'Most runs' },
+    { value: 'runs_asc' as SortType, label: 'Least runs' }
   ]
 
   // Pagination
@@ -341,29 +376,44 @@ export default function V2AgentListPage() {
     setCurrentPage(1)
   }, [searchQuery, filterType])
 
-  const getStatusColor = (status: string) => {
+  const getStatusConfig = (status: string) => {
     switch (status) {
       case 'active':
-        return 'bg-green-500'
+        return {
+          color: 'bg-[var(--v2-status-success-bg)]',
+          dotColor: 'bg-green-500',
+          textColor: 'text-[var(--v2-status-success-text)]',
+          borderColor: 'border-[var(--v2-status-success-border)]',
+          icon: <CheckCircle className="w-3.5 h-3.5 text-green-600 dark:text-green-400" />,
+          label: 'Active'
+        }
       case 'inactive':
-        return 'bg-gray-400'
+        return {
+          color: 'bg-gray-50 dark:bg-gray-900/30',
+          dotColor: 'bg-gray-400',
+          textColor: 'text-gray-600 dark:text-gray-400',
+          borderColor: 'border-gray-200 dark:border-gray-700',
+          icon: <Pause className="w-3.5 h-3.5 text-gray-600 dark:text-gray-400" />,
+          label: 'Paused'
+        }
       case 'draft':
-        return 'bg-yellow-500'
+        return {
+          color: 'bg-[var(--v2-status-warning-bg)]',
+          dotColor: 'bg-yellow-500',
+          textColor: 'text-[var(--v2-status-warning-text)]',
+          borderColor: 'border-[var(--v2-status-warning-border)]',
+          icon: <AlertCircle className="w-3.5 h-3.5 text-yellow-600 dark:text-yellow-400" />,
+          label: 'Draft'
+        }
       default:
-        return 'bg-gray-300'
-    }
-  }
-
-  const getStatusIcon = (status: string) => {
-    switch (status) {
-      case 'active':
-        return <CheckCircle className="w-4 h-4 text-green-600 dark:text-green-400" />
-      case 'inactive':
-        return <Pause className="w-4 h-4 text-gray-600 dark:text-gray-400" />
-      case 'draft':
-        return <AlertCircle className="w-4 h-4 text-yellow-600 dark:text-yellow-400" />
-      default:
-        return null
+        return {
+          color: 'bg-gray-50 dark:bg-gray-900/30',
+          dotColor: 'bg-gray-300',
+          textColor: 'text-gray-600 dark:text-gray-400',
+          borderColor: 'border-gray-200 dark:border-gray-700',
+          icon: null,
+          label: 'Unknown'
+        }
     }
   }
 
@@ -417,16 +467,19 @@ export default function V2AgentListPage() {
           <ArrowLeft className="w-4 h-4" />
           Back to Dashboard
         </button>
-        <V2Controls />
+        <V2Controls
+          showHelpLink={true}
+          onHelpClick={() => setHelpOpen(true)}
+        />
       </div>
 
       {/* Header */}
       <div>
         <h1 className="text-2xl sm:text-3xl lg:text-4xl font-bold text-[var(--v2-text-primary)] mb-2">
-          Your Agents
+          Your Automations
         </h1>
         <p className="text-base sm:text-lg text-[var(--v2-text-secondary)]">
-          Manage and monitor all your automation agents
+          Manage and monitor all your automations
         </p>
       </div>
 
@@ -466,8 +519,8 @@ export default function V2AgentListPage() {
                 {filter.charAt(0).toUpperCase() + filter.slice(1)}
                 <span className={`text-xs px-1.5 py-0.5 rounded ${
                   filterType === filter
-                    ? 'bg-white/20'
-                    : 'bg-gray-100 dark:bg-gray-800 text-[var(--v2-text-muted)]'
+                    ? 'bg-white/20 text-white'
+                    : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300'
                 }`}>
                   {count}
                 </span>
@@ -537,7 +590,7 @@ export default function V2AgentListPage() {
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[var(--v2-primary)]"></div>
         </div>
       ) : filteredAgents.length === 0 ? (
-        <Card className="!p-8 sm:!p-12">
+        <div className="bg-[var(--v2-surface)] shadow-[var(--v2-shadow-card)] p-8 sm:p-12" style={{ borderRadius: 'var(--v2-radius-card)' }}>
           <div className="flex flex-col items-center justify-center text-center">
             <Bot className="w-12 h-12 sm:w-16 sm:h-16 text-[var(--v2-text-muted)] opacity-20 mb-4" />
             <h3 className="text-base sm:text-lg font-semibold text-[var(--v2-text-primary)] mb-2">
@@ -559,151 +612,179 @@ export default function V2AgentListPage() {
               </button>
             )}
           </div>
-        </Card>
+        </div>
       ) : (
         <>
-          <div className="space-y-3 sm:space-y-4">
-            {paginatedAgents.map((agent) => (
-              <Card
-                key={agent.id}
-                hoverable
-                onClick={() => router.push(`/v2/agents/${agent.id}`)}
-                onMouseEnter={(e) => {
-                  if (agent.description) {
-                    setHoveredAgent(agent.id)
-                    const rect = e.currentTarget.getBoundingClientRect()
-                    setTooltipPosition({ x: rect.left, y: rect.top })
-                  }
-                }}
-                onMouseLeave={() => {
-                  setHoveredAgent(null)
-                  setTooltipPosition(null)
-                }}
-                className="!p-4 relative"
-              >
-                {/* Main Grid Layout */}
-                <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-center">
+          {/* Table Container */}
+          <div className="bg-[var(--v2-surface)] shadow-[var(--v2-shadow-card)] overflow-x-auto border border-[var(--v2-border)]" style={{ borderRadius: 'var(--v2-radius-card)' }}>
+            <table className="w-full min-w-[800px]">
+              {/* Table Header */}
+              <thead className="bg-[var(--v2-surface-hover)] border-b border-[var(--v2-border)]">
+                <tr>
+                  <th className="px-4 sm:px-6 py-3 sm:py-4 text-left text-xs font-bold text-[var(--v2-text-muted)] uppercase tracking-wider">
+                    Agent
+                  </th>
+                  <th className="px-4 sm:px-6 py-3 sm:py-4 text-left text-xs font-bold text-[var(--v2-text-muted)] uppercase tracking-wider">
+                    Status
+                  </th>
+                  <th className="px-4 sm:px-6 py-3 sm:py-4 text-left text-xs font-bold text-[var(--v2-text-muted)] uppercase tracking-wider">
+                    Runs
+                  </th>
+                  <th className="px-4 sm:px-6 py-3 sm:py-4 text-left text-xs font-bold text-[var(--v2-text-muted)] uppercase tracking-wider">
+                    Mode
+                  </th>
+                  <th className="px-4 sm:px-6 py-3 sm:py-4 text-left text-xs font-bold text-[var(--v2-text-muted)] uppercase tracking-wider">
+                    Next / Memory
+                  </th>
+                  <th className="px-4 sm:px-6 py-3 sm:py-4 text-right text-xs font-bold text-[var(--v2-text-muted)] uppercase tracking-wider">
+                    Actions
+                  </th>
+                </tr>
+              </thead>
 
-                  {/* Column 1: Status Indicator + Agent Name (4 cols) */}
-                  <div className="lg:col-span-4 flex items-center gap-3 min-w-0">
-                    <div className={`w-2 h-2 rounded-full ${getStatusColor(agent.status)} flex-shrink-0`} />
-                    <div className="flex-1 min-w-0">
-                      <h3 className="text-sm font-semibold text-[var(--v2-text-primary)] truncate">
-                        {agent.agent_name}
-                      </h3>
-                      <div className="flex items-center gap-1 mt-0.5">
-                        {getStatusIcon(agent.status)}
-                        <span className="text-xs text-[var(--v2-text-muted)] capitalize">
-                          {agent.status}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
+              {/* Table Body */}
+              <tbody className="divide-y divide-[var(--v2-border)]">
+                {paginatedAgents.map((agent) => {
+                  const statusConfig = getStatusConfig(agent.status)
+                  const isExecuting = executingAgents.has(agent.id)
+                  const isPausing = pausingAgents.has(agent.id)
 
-                  {/* Column 2: Stats Grid (5 cols) */}
-                  <div className="lg:col-span-5 grid grid-cols-2 sm:grid-cols-3 gap-3">
-                    {/* Total Runs */}
-                    <div className="flex flex-col">
-                      <div className="flex items-center gap-1 text-[var(--v2-text-muted)] mb-0.5">
-                        <Activity className="w-3 h-3" />
-                        <span className="text-[10px] uppercase tracking-wide">Runs</span>
-                      </div>
-                      <span className="text-sm font-semibold text-[var(--v2-text-primary)]">
-                        {agent.total_runs !== undefined ? agent.total_runs.toLocaleString() : '0'}
-                      </span>
-                    </div>
-
-                    {/* Mode */}
-                    <div className="flex flex-col">
-                      <div className="flex items-center gap-1 text-[var(--v2-text-muted)] mb-0.5">
-                        {agent.mode === 'scheduled' ? (
-                          <Calendar className="w-3 h-3" />
-                        ) : (
-                          <Clock className="w-3 h-3" />
-                        )}
-                        <span className="text-[10px] uppercase tracking-wide">Mode</span>
-                      </div>
-                      <span className="text-sm font-medium text-[var(--v2-text-primary)] capitalize">
-                        {agent.mode || 'Manual'}
-                      </span>
-                    </div>
-
-                    {/* Next Run / Memory */}
-                    <div className="flex flex-col">
-                      {agent.mode === 'scheduled' && agent.next_run ? (
-                        <>
-                          <div className="flex items-center gap-1 text-[var(--v2-text-muted)] mb-0.5">
-                            <Clock className="w-3 h-3" />
-                            <span className="text-[10px] uppercase tracking-wide">Next Run</span>
+                  return (
+                    <tr
+                      key={agent.id}
+                      className="hover:bg-[var(--v2-surface-hover)] transition-colors cursor-pointer group relative"
+                      onClick={() => router.push(`/v2/agents/${agent.id}`)}
+                      onMouseEnter={() => setHoveredAgent(agent.id)}
+                      onMouseLeave={() => setHoveredAgent(null)}
+                    >
+                      {/* Agent Name */}
+                      <td className="px-4 sm:px-6 py-3 sm:py-4">
+                        <div className="flex items-center gap-3">
+                          <div className={`w-1.5 h-12 rounded-full ${statusConfig.dotColor} flex-shrink-0`} />
+                          <div className="flex-1 min-w-0">
+                            <h3 className="text-sm font-semibold text-[var(--v2-text-primary)] truncate group-hover:text-[var(--v2-primary)] transition-colors">
+                              {agent.agent_name}
+                            </h3>
                           </div>
-                          <span className="text-sm font-medium text-[var(--v2-text-primary)]">
-                            {formatNextRun(agent.next_run)}
-                          </span>
-                        </>
-                      ) : agent.memory_count !== undefined && agent.memory_count > 0 ? (
-                        <>
-                          <div className="flex items-center gap-1 text-[var(--v2-text-muted)] mb-0.5">
-                            <Database className="w-3 h-3" />
-                            <span className="text-[10px] uppercase tracking-wide">Memory</span>
-                          </div>
-                          <span className="text-sm font-medium text-[var(--v2-text-primary)]">
-                            {agent.memory_count}
-                          </span>
-                        </>
-                      ) : (
-                        <div className="opacity-0">
-                          <span className="text-[10px]">-</span>
                         </div>
-                      )}
-                    </div>
-                  </div>
 
-                  {/* Column 3: Action Buttons (3 cols) */}
-                  <div className="lg:col-span-3 flex items-center justify-end gap-2">
-                    <button
-                      onClick={(e) => handleExecuteAgent(e, agent.id, agent.agent_name)}
-                      disabled={executingAgents.has(agent.id) || agent.status !== 'active'}
-                      className="flex items-center justify-center gap-1.5 px-4 py-2 bg-gradient-to-r from-[var(--v2-primary)] to-[var(--v2-secondary)] text-white text-xs font-medium hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed w-[90px]"
-                      style={{ borderRadius: 'var(--v2-radius-button)' }}
-                    >
-                      {executingAgents.has(agent.id) ? (
-                        <>
-                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                          <span>Running</span>
-                        </>
-                      ) : (
-                        <>
-                          <Play className="w-3.5 h-3.5" />
-                          <span>Run</span>
-                        </>
-                      )}
-                    </button>
+                        {/* Tooltip */}
+                        {hoveredAgent === agent.id && agent.description && (
+                          <div className="absolute left-0 top-full mt-1 z-50 px-3 py-2 bg-[var(--v2-surface)] border border-[var(--v2-border)] shadow-lg text-xs text-[var(--v2-text-secondary)] max-w-xs pointer-events-none"
+                            style={{ borderRadius: 'var(--v2-radius-card)' }}
+                          >
+                            {agent.description}
+                          </div>
+                        )}
+                      </td>
 
-                    <button
-                      onClick={(e) => handleToggleAgentStatus(e, agent.id, agent.status, agent.agent_name)}
-                      disabled={pausingAgents.has(agent.id)}
-                      className="flex items-center justify-center gap-1.5 px-4 py-2 bg-[var(--v2-surface)] text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] text-xs font-medium border border-gray-200 dark:border-slate-700 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed w-[90px]"
-                      style={{ borderRadius: 'var(--v2-radius-button)' }}
-                    >
-                      {pausingAgents.has(agent.id) ? (
-                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                      ) : agent.status === 'active' ? (
-                        <>
-                          <Pause className="w-3.5 h-3.5" />
-                          <span>Pause</span>
-                        </>
-                      ) : (
-                        <>
-                          <Play className="w-3.5 h-3.5" />
-                          <span>Activate</span>
-                        </>
-                      )}
-                    </button>
-                  </div>
+                      {/* Status */}
+                      <td className="px-4 sm:px-6 py-3 sm:py-4">
+                        <div className={`inline-flex items-center gap-1.5 px-3 py-1.5 border ${statusConfig.borderColor} ${statusConfig.color}`} style={{ borderRadius: 'var(--v2-radius-button)' }}>
+                          {statusConfig.icon}
+                          <span className={`text-xs font-semibold ${statusConfig.textColor}`}>
+                            {statusConfig.label}
+                          </span>
+                        </div>
+                      </td>
 
-                </div>
-              </Card>
-            ))}
+                      {/* Runs */}
+                      <td className="px-4 sm:px-6 py-3 sm:py-4">
+                        <div className="flex items-center gap-1.5">
+                          <Activity className="w-4 h-4 text-[var(--v2-text-muted)]" />
+                          <span className="text-sm font-bold text-[var(--v2-text-primary)]">
+                            {agent.total_runs !== undefined ? agent.total_runs.toLocaleString() : '0'}
+                          </span>
+                        </div>
+                      </td>
+
+                      {/* Mode */}
+                      <td className="px-4 sm:px-6 py-3 sm:py-4">
+                        <div className="flex items-center gap-2">
+                          {agent.mode === 'scheduled' ? (
+                            <>
+                              <Calendar className="w-4 h-4 text-[var(--v2-primary)]" />
+                              <span className="text-sm font-medium text-[var(--v2-text-secondary)]">Scheduled</span>
+                            </>
+                          ) : (
+                            <>
+                              <Clock className="w-4 h-4 text-[var(--v2-text-muted)]" />
+                              <span className="text-sm font-medium text-[var(--v2-text-secondary)]">Manual</span>
+                            </>
+                          )}
+                        </div>
+                      </td>
+
+                      {/* Next Run / Memory */}
+                      <td className="px-4 sm:px-6 py-3 sm:py-4">
+                        {agent.mode === 'scheduled' && agent.next_run ? (
+                          <div className="flex items-center gap-2">
+                            <Clock className="w-4 h-4 text-orange-500" />
+                            <span className="text-sm font-medium text-[var(--v2-text-secondary)]">
+                              {formatNextRun(agent.next_run)}
+                            </span>
+                          </div>
+                        ) : agent.memory_count !== undefined && agent.memory_count > 0 ? (
+                          <div className="flex items-center gap-2">
+                            <Database className="w-4 h-4 text-purple-500" />
+                            <span className="text-sm font-medium text-[var(--v2-text-secondary)]">
+                              {agent.memory_count}
+                            </span>
+                          </div>
+                        ) : (
+                          <span className="text-sm text-[var(--v2-text-muted)]">—</span>
+                        )}
+                      </td>
+
+                      {/* Actions */}
+                      <td className="px-4 sm:px-6 py-3 sm:py-4" onClick={(e) => e.stopPropagation()}>
+                        <div className="flex items-center justify-end gap-2">
+                          <div className="relative group/tooltip">
+                            <button
+                              onClick={(e) => handleExecuteAgent(e, agent.id, agent.agent_name)}
+                              disabled={isExecuting || agent.status !== 'active'}
+                              className="p-2 transition-all disabled:opacity-50 disabled:cursor-not-allowed group/btn border-2 bg-transparent border-[var(--v2-primary)] dark:border-[var(--v2-primary)] text-[var(--v2-primary)] dark:text-[var(--v2-primary)] hover:border-[var(--v2-primary-dark)] dark:hover:border-[var(--v2-secondary)]"
+                              style={{ borderRadius: 'var(--v2-radius-button)' }}
+                            >
+                              {isExecuting ? (
+                                <Loader2 className="w-4 h-4 animate-spin" />
+                              ) : (
+                                <Play className="w-4 h-4 group-hover/btn:scale-110 transition-transform" />
+                              )}
+                            </button>
+                            <div className="absolute bottom-full right-0 mb-2 px-2 py-1 bg-gray-900 dark:bg-gray-700 text-white text-xs rounded opacity-0 group-hover/tooltip:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-50">
+                              {agent.status !== 'active' ? 'Activate agent to run' : 'Run agent now'}
+                            </div>
+                          </div>
+
+                          <div className="relative group/tooltip">
+                            <button
+                              onClick={(e) => handleToggleAgentStatus(e, agent.id, agent.status, agent.agent_name)}
+                              disabled={isPausing}
+                              className={`p-2 transition-all disabled:opacity-50 disabled:cursor-not-allowed group/btn border-2 bg-transparent ${
+                                agent.status === 'active'
+                                  ? 'border-red-500 dark:border-red-400 text-red-600 dark:text-red-400 hover:border-red-600 dark:hover:border-red-300'
+                                  : 'border-green-500 dark:border-green-400 text-green-600 dark:text-green-400 hover:border-green-600 dark:hover:border-green-300'
+                              }`}
+                              style={{ borderRadius: 'var(--v2-radius-button)' }}
+                            >
+                              {isPausing ? (
+                                <Loader2 className="w-4 h-4 animate-spin" />
+                              ) : (
+                                <Power className="w-4 h-4 group-hover/btn:scale-110 transition-transform" />
+                              )}
+                            </button>
+                            <div className="absolute bottom-full right-0 mb-2 px-2 py-1 bg-gray-900 dark:bg-gray-700 text-white text-xs rounded opacity-0 group-hover/tooltip:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-50">
+                              {agent.status === 'active' ? 'Deactivate agent' : 'Activate agent'}
+                            </div>
+                          </div>
+                        </div>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
           </div>
 
           {/* Pagination */}
@@ -755,20 +836,6 @@ export default function V2AgentListPage() {
         </>
       )}
 
-      {/* Tooltip for Agent Description */}
-      {hoveredAgent && tooltipPosition && (
-        <div
-          className="fixed z-[200] max-w-xs bg-gray-900 dark:bg-gray-800 text-white text-xs rounded-lg px-3 py-2 shadow-xl pointer-events-none"
-          style={{
-            top: `${tooltipPosition.y - 10}px`,
-            left: `${tooltipPosition.x}px`,
-            transform: 'translateY(-100%)'
-          }}
-        >
-          {agents.find(a => a.id === hoveredAgent)?.description}
-        </div>
-      )}
-
       <style jsx>{`
         @keyframes slide-in-right {
           from {
@@ -785,6 +852,12 @@ export default function V2AgentListPage() {
           animation: slide-in-right 0.3s ease-out;
         }
       `}</style>
+
+      {/* Help Dialog */}
+      <ModernHelpDialog
+        isOpen={helpOpen}
+        onClose={() => setHelpOpen(false)}
+      />
     </div>
   )
 }

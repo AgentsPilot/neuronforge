@@ -1,12 +1,12 @@
 /**
  * Automation Detector
  *
- * Detects automation improvement opportunities:
+ * Detects business automation improvement opportunities:
  * - High manual approval rates
  * - Patterns that could be auto-approved
  * - Repetitive human interventions
  *
- * Category: growth
+ * Category: business_insight
  * Insight Type: automation_opportunity
  */
 
@@ -113,7 +113,7 @@ export class AutomationDetector {
 
     return {
       insight_type: 'automation_opportunity',
-      category: 'growth',
+      category: 'business_insight',
       severity,
       confidence_score: frequency,
       execution_ids: executionsWithManualWork.map(e => e.execution_id),

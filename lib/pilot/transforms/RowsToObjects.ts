@@ -23,6 +23,12 @@ export interface RowsToObjectsConfig {
   headers?: string[]
   /** When true, keep header text as-is. Otherwise lowercase. */
   preserve_case?: boolean
+  /**
+   * 1-based row number where headers are located (default: 1).
+   * Rows before header_row are skipped. Data starts from header_row + 1.
+   * Example: header_row: 4 means row 4 has headers, rows 1-3 are skipped.
+   */
+  header_row?: number
 }
 
 export class RowsToObjectsError extends Error {
@@ -51,8 +57,45 @@ export function rowsToObjects(data: any[], config: RowsToObjectsConfig = {}): an
     return data
   }
 
-  const headers: string[] = config.headers ?? data[0]
-  const dataRows = config.headers ? data : data.slice(1)
+  // Determine header row index (0-based). Default is row 1 (index 0).
+  // header_row is 1-based for user-friendliness (matches spreadsheet row numbers).
+  let headerRowIndex = config.header_row ? config.header_row - 1 : 0
+
+  // AUTO-DETECTION: If no explicit header_row specified, try to auto-detect
+  // by skipping rows that are clearly not headers (empty, single column, etc.)
+  if (!config.header_row && !config.headers) {
+    // Find first row with multiple non-empty values (likely the real header)
+    for (let i = 0; i < Math.min(data.length, 10); i++) {
+      const row = data[i]
+      if (!Array.isArray(row)) continue
+
+      // Count non-empty cells
+      const nonEmptyCells = row.filter(cell =>
+        cell !== null && cell !== undefined && cell.toString().trim() !== ''
+      ).length
+
+      // If this row has 2+ non-empty cells, assume it's the header
+      if (nonEmptyCells >= 2) {
+        if (i !== headerRowIndex) {
+          console.log(`🔍 [rowsToObjects] Auto-detected header row at index ${i} (row ${i + 1}) with ${nonEmptyCells} columns`)
+        }
+        headerRowIndex = i
+        break
+      }
+    }
+  }
+
+  // Validate header_row is within bounds
+  if (headerRowIndex < 0 || headerRowIndex >= data.length) {
+    throw new RowsToObjectsError(
+      `header_row ${config.header_row} is out of bounds (data has ${data.length} rows)`,
+      'INVALID_HEADER_ROW'
+    )
+  }
+
+  const headers: string[] = config.headers ?? data[headerRowIndex]
+  // Data rows start after the header row (skip rows before and including header)
+  const dataRows = config.headers ? data : data.slice(headerRowIndex + 1)
 
   if (dataRows.length === 0) {
     return []

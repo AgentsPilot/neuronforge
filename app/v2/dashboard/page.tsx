@@ -6,6 +6,7 @@ import { useAuth } from '@/components/UserProvider'
 import { supabase } from '@/lib/supabaseClient'
 import { Card } from '@/components/v2/ui/card'
 import { V2Logo, V2Controls } from '@/components/v2/V2Header'
+import { ModernHelpDialog } from '@/components/v2/ModernHelpDialog'
 import { getPricingConfig } from '@/lib/utils/pricingConfig'
 import { PieChart, Pie, Cell, ResponsiveContainer } from 'recharts'
 import {
@@ -21,7 +22,9 @@ import {
   Bot,
   Mic,
   MicOff,
-  ArrowRight
+  ArrowRight,
+  ChevronDown,
+  Calendar
 } from 'lucide-react'
 
 interface AgentStat {
@@ -53,8 +56,12 @@ interface DashboardStats {
   successfulRuns30d: number
   successRate: number
   totalTimeSavedSeconds: number
-  moneySavedPerWeek: number
+  moneySavedTotal: number
   activeInsightsCount: number
+  // Execution quota
+  executionsQuota: number | null
+  executionsUsed: number
+  executionsAlertThreshold: number
 }
 
 export default function V2DashboardPage() {
@@ -75,8 +82,12 @@ export default function V2DashboardPage() {
     successfulRuns30d: 0,
     successRate: 0,
     totalTimeSavedSeconds: 0,
-    moneySavedPerWeek: 0,
-    activeInsightsCount: 0
+    moneySavedTotal: 0,
+    activeInsightsCount: 0,
+    // Execution quota
+    executionsQuota: null,
+    executionsUsed: 0,
+    executionsAlertThreshold: 0.90
   })
   // Voice input state
   const [isListening, setIsListening] = useState(false)
@@ -90,11 +101,14 @@ export default function V2DashboardPage() {
   const [promptIdeas, setPromptIdeas] = useState<any[]>([])
   const [showIdeas, setShowIdeas] = useState(false)
   const [accountFrozen, setAccountFrozen] = useState(false)
+  const [helpOpen, setHelpOpen] = useState(false)
   const textareaRef = React.useRef<HTMLTextAreaElement>(null)
   const [systemStatusTimeFilter, setSystemStatusTimeFilter] = useState<7 | 30 | 90 | 'all'>(30)
   const [recentActivityTimeFilter, setRecentActivityTimeFilter] = useState<7 | 30 | 90 | 'all'>(30)
+  const [showSystemStatusMenu, setShowSystemStatusMenu] = useState(false)
+  const [showRecentActivityMenu, setShowRecentActivityMenu] = useState(false)
 
-  const fetchDashboardData = async () => {
+  const fetchDashboardData = React.useCallback(async () => {
     if (!user) return
 
     try {
@@ -122,10 +136,12 @@ export default function V2DashboardPage() {
         { data: subscriptionData },
         { data: recentRunsData },
         { data: agentExecutionCounts },
+        { data: agentExecutionCountsAllTime },
         { data: profileData },
         { data: promptIdeasData },
         { data: executions30d },
-        { count: activeInsightsCount }
+        { count: activeInsightsCount },
+        { data: agentsROIConfig }
       ] = await Promise.all([
         supabase
           .from('agent_stats')
@@ -152,7 +168,7 @@ export default function V2DashboardPage() {
           .eq('user_id', user.id),
         supabase
           .from('user_subscriptions')
-          .select('balance, total_spent')
+          .select('balance, total_spent, executions_quota, executions_used, executions_alert_threshold')
           .eq('user_id', user.id)
           .single(),
         supabase
@@ -171,6 +187,14 @@ export default function V2DashboardPage() {
           .neq('run_mode', 'calibration')
           .gte('started_at', recentActivityFilterDate)
           .order('started_at', { ascending: false }),
+        // Get ALL TIME execution counts from agent_executions table for Agent List (no time filter)
+        supabase
+          .from('agent_executions')
+          .select('agent_id, started_at, agents!inner (agent_name, status)')
+          .eq('user_id', user.id)
+          .eq('agents.status', 'active')
+          .neq('run_mode', 'calibration')
+          .order('started_at', { ascending: false }),
         // Get user profile for full name
         supabase
           .from('profiles')
@@ -186,7 +210,7 @@ export default function V2DashboardPage() {
         // Get all executions with logs for money saved calculation (filtered by time for System Status)
         supabase
           .from('agent_executions')
-          .select('id, status, logs')
+          .select('id, agent_id, status, logs')
           .eq('user_id', user.id)
           .neq('run_mode', 'calibration')
           .gte('started_at', systemStatusFilterDate),
@@ -195,7 +219,13 @@ export default function V2DashboardPage() {
           .from('execution_insights')
           .select('*', { count: 'exact', head: true })
           .eq('user_id', user.id)
-          .in('status', ['new', 'viewed'])
+          .in('status', ['new', 'viewed']),
+        // Get agents with ROI configuration (manual_time_per_item_seconds)
+        supabase
+          .from('agents')
+          .select('id, manual_time_per_item_seconds')
+          .eq('user_id', user.id)
+          .eq('status', 'active')
       ])
 
       // Set user name from profile
@@ -208,7 +238,7 @@ export default function V2DashboardPage() {
         setPromptIdeas(promptIdeasData.ideas)
       }
 
-      // Count actual executions per agent
+      // Count actual executions per agent (filtered by time for Recent Activity)
       const executionCountMap = new Map<string, number>()
       const lastRunMap = new Map<string, string>()
 
@@ -225,16 +255,26 @@ export default function V2DashboardPage() {
         })
       }
 
-      // Parse agent stats using ACTUAL execution counts from agent_executions table
+      // Count ALL TIME executions per agent (no time filter - for Agent List)
+      const executionCountMapAllTime = new Map<string, number>()
+
+      if (agentExecutionCountsAllTime) {
+        agentExecutionCountsAllTime.forEach((exec: any) => {
+          const count = executionCountMapAllTime.get(exec.agent_id) || 0
+          executionCountMapAllTime.set(exec.agent_id, count + 1)
+        })
+      }
+
+      // Parse agent stats using TIME-FILTERED execution counts from agent_executions table
       const parsedStats: AgentStat[] = agentStatsData?.map((s) => {
         const agentData = s.agents as any
-        const actualCount = executionCountMap.get(s.agent_id) || 0
+        const actualCount = executionCountMap.get(s.agent_id) || 0 // Use TIME-FILTERED count for Recent Activity
         const lastRun = lastRunMap.get(s.agent_id) || s.last_run_at
 
         return {
           id: s.agent_id,
           name: agentData?.agent_name ?? 'Unknown Agent',
-          count: actualCount, // Use actual count from agent_executions
+          count: actualCount, // Use TIME-FILTERED count from agent_executions (excluding calibration)
           lastRun: lastRun,
         }
       }) || []
@@ -266,44 +306,57 @@ export default function V2DashboardPage() {
 
       const successRate = totalRunsFiltered > 0 ? Math.round((successfulRuns / totalRunsFiltered) * 100) : 0
 
-      // Calculate total time saved and money saved from execution logs
-      const DEFAULT_HOURLY_RATE = 50 // Default $50/hour
-      const MINUTES_PER_STEP = 5 // Estimate: each workflow step saves 5 minutes of manual work
-      let totalTimeSavedSeconds = 0
-
-      executions30d?.forEach((execution: any) => {
-        const logs = execution.logs as any
-
-        // Try to get time_saved_seconds from metrics (if available)
-        const timeSaved = logs?.metrics?.time_saved_seconds
-
-        if (timeSaved !== null && timeSaved !== undefined && timeSaved > 0) {
-          // Use actual metric if available
-          totalTimeSavedSeconds += timeSaved
-        } else {
-          // Fallback estimation based on available data
-          // 1. Try items processed (2 minutes per item)
-          const itemsProcessed = logs?.metrics?.total_items ||
-                                logs?.itemsProcessed ||
-                                logs?.items_processed ||
-                                0
-
-          if (itemsProcessed > 0) {
-            totalTimeSavedSeconds += itemsProcessed * 120 // 2 minutes per item
-          } else {
-            // 2. Estimate based on workflow steps completed
-            const stepsCompleted = logs?.stepsCompleted || 0
-            if (stepsCompleted > 0) {
-              totalTimeSavedSeconds += stepsCompleted * (MINUTES_PER_STEP * 60) // 5 minutes per step
-            }
-          }
+      // Create map of agent_id -> manual_time_per_item_seconds for ROI calculation
+      const agentROIConfigMap = new Map<string, number>()
+      agentsROIConfig?.forEach((agent: any) => {
+        if (agent.manual_time_per_item_seconds && agent.manual_time_per_item_seconds > 0) {
+          agentROIConfigMap.set(agent.id, agent.manual_time_per_item_seconds)
         }
       })
 
-      // Calculate money saved per week (average from 30 days data)
+      // Get user's hourly rate from profile (same as analytics)
+      const DEFAULT_HOURLY_RATE = 50 // Default $50/hour
+      const { data: userProfile } = await supabase
+        .from('profiles')
+        .select('hourly_rate_usd')
+        .eq('id', user.id)
+        .single()
+
+      const hourlyRate = userProfile?.hourly_rate_usd || DEFAULT_HOURLY_RATE
+      console.log(`[Dashboard] Using hourly rate: $${hourlyRate}/hour (from profile: ${userProfile?.hourly_rate_usd || 'not set, using default'})`)
+
+      // Calculate total time saved and money saved using execution_metrics table (like analytics)
+      let totalTimeSavedSeconds = 0
+
+      // Fetch execution metrics for the filtered executions
+      const executionIds = executions30d?.map((e: any) => e.id) || []
+
+      console.log(`[Dashboard] Time filter: ${systemStatusTimeFilter} days, Found ${executionIds.length} executions, ROI config for ${agentROIConfigMap.size} agents`)
+
+      if (executionIds.length > 0) {
+        const { data: executionMetrics } = await supabase
+          .from('execution_metrics')
+          .select('execution_id, time_saved_seconds')
+          .in('execution_id', executionIds)
+
+        console.log(`[Dashboard] Found ${executionMetrics?.length || 0} execution_metrics records`)
+
+        // Sum up pre-calculated time_saved_seconds from execution_metrics
+        // IMPORTANT: Use stored values instead of recalculating to support bulk workflows
+        executionMetrics?.forEach((metric: any) => {
+          if (metric.time_saved_seconds && metric.time_saved_seconds > 0) {
+            totalTimeSavedSeconds += metric.time_saved_seconds
+          }
+        })
+
+        console.log(`[Dashboard] Total time saved: ${totalTimeSavedSeconds}s (${Math.round(totalTimeSavedSeconds / 3600)}h)`)
+      }
+
+      // Calculate total money saved for the period (not weekly average)
       const timeSavedHours = totalTimeSavedSeconds / 3600
-      const moneySaved30d = timeSavedHours * DEFAULT_HOURLY_RATE
-      const moneySavedPerWeek = Math.round((moneySaved30d / 30) * 7)
+      const moneySavedTotal = Math.round(timeSavedHours * hourlyRate)
+
+      console.log(`[Dashboard] Money saved calculation: ${timeSavedHours.toFixed(2)}h × $${hourlyRate}/h = $${moneySavedTotal}`)
 
       // Update all stats at once
       setStats({
@@ -321,8 +374,12 @@ export default function V2DashboardPage() {
         successfulRuns30d: successfulRuns,
         successRate,
         totalTimeSavedSeconds,
-        moneySavedPerWeek,
-        activeInsightsCount: activeInsightsCount || 0
+        moneySavedTotal,
+        activeInsightsCount: activeInsightsCount || 0,
+        // Execution quota
+        executionsQuota: subscriptionData?.executions_quota || null,
+        executionsUsed: subscriptionData?.executions_used || 0,
+        executionsAlertThreshold: subscriptionData?.executions_alert_threshold || 0.90
       })
 
       setLastUpdated(new Date())
@@ -331,15 +388,21 @@ export default function V2DashboardPage() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [user, systemStatusTimeFilter, recentActivityTimeFilter])
 
   useEffect(() => {
-    fetchDashboardData()
+    if (user) {
+      fetchDashboardData()
+    }
+  }, [user, systemStatusTimeFilter, recentActivityTimeFilter, fetchDashboardData])
 
-    // Auto-refresh every 5 minutes
-    const interval = setInterval(fetchDashboardData, 5 * 60 * 1000)
-    return () => clearInterval(interval)
-  }, [user, systemStatusTimeFilter, recentActivityTimeFilter])
+  // Separate effect for auto-refresh to avoid dependency issues
+  useEffect(() => {
+    if (user) {
+      const interval = setInterval(fetchDashboardData, 5 * 60 * 1000)
+      return () => clearInterval(interval)
+    }
+  }, [user, fetchDashboardData])
 
   // Initialize Speech Recognition
   useEffect(() => {
@@ -491,7 +554,10 @@ export default function V2DashboardPage() {
         </div>
         {/* Token Display + User Menu */}
         <div className="flex-shrink-0">
-          <V2Controls />
+          <V2Controls
+            showHelpLink={true}
+            onHelpClick={() => setHelpOpen(true)}
+          />
         </div>
       </div>
 
@@ -610,21 +676,23 @@ export default function V2DashboardPage() {
 
       {/* Cards Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-4 items-start">
-          {/* Active Agents Card */}
+          {/* Active Automations Card */}
           <Card
             hoverable
             onClick={() => router.push('/v2/agent-list')}
             className="cursor-pointer !p-3 sm:!p-4 !h-[280px] overflow-hidden !box-border active:scale-[0.98] transition-transform"
           >
               <div className="space-y-2">
-                <div className="flex items-center gap-2">
-                  <Bot className="w-6 h-6 sm:w-7 sm:h-7 text-[#10B981]" />
-                  <h3 className="text-lg sm:text-xl font-semibold text-[var(--v2-text-primary)]">
-                    Active Agents
-                  </h3>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Bot className="w-6 h-6 sm:w-7 sm:h-7 text-[#10B981]" />
+                    <h3 className="text-lg sm:text-xl font-semibold text-[var(--v2-text-primary)]">
+                      Active Automations
+                    </h3>
+                  </div>
                 </div>
                 <p className="text-sm text-[var(--v2-text-secondary)]">
-                  Your running agents
+                  Your running automations
                 </p>
 
               {stats.agentStats.length > 0 ? (
@@ -660,116 +728,309 @@ export default function V2DashboardPage() {
               ) : (
                 <div className="flex flex-col items-center justify-center py-8 text-center">
                   <Bot className="w-12 h-12 opacity-20 mb-2" />
-                  <p className="text-xs text-[var(--v2-text-muted)]">No active agents yet</p>
+                  <p className="text-xs text-[var(--v2-text-muted)]">No active automations yet</p>
                 </div>
               )}
               </div>
             </Card>
 
-          {/* System Status Card */}
+          {/* Performance Overview Card */}
           <Card
             hoverable
             onClick={() => router.push('/v2/analytics')}
             className="cursor-pointer !p-3 sm:!p-4 !h-[280px] overflow-hidden !box-border active:scale-[0.98] transition-transform"
           >
-              <div className="space-y-3">
+              <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <AlertCircle className="w-6 h-6 sm:w-7 sm:h-7 text-[#06B6D4]" />
+                  <TrendingUp className="w-6 h-6 sm:w-7 sm:h-7 text-[#06B6D4]" />
                   <h3 className="text-lg sm:text-xl font-semibold text-[var(--v2-text-primary)]">
-                    System Status
+                    Performance Overview
                   </h3>
                 </div>
-                <select
-                  value={systemStatusTimeFilter}
-                  onChange={(e) => {
-                    e.stopPropagation()
-                    setSystemStatusTimeFilter(e.target.value === 'all' ? 'all' : parseInt(e.target.value) as 7 | 30 | 90)
-                  }}
-                  onClick={(e) => e.stopPropagation()}
-                  className="text-xs px-3 py-1.5 rounded-lg bg-gradient-to-b from-[var(--v2-surface)] to-[var(--v2-surface-hover)] border border-[var(--v2-border)] text-[var(--v2-text-primary)] font-medium cursor-pointer hover:border-[var(--v2-primary)] hover:shadow-sm focus:outline-none focus:ring-2 focus:ring-[var(--v2-primary)]/20 transition-all duration-200"
-                >
-                  <option value="7">7 days</option>
-                  <option value="30">30 days</option>
-                  <option value="90">90 days</option>
-                  <option value="all">All time</option>
-                </select>
-              </div>
-              <p className="text-sm text-[var(--v2-text-secondary)]">
-                Overall health and performance
-              </p>
+                <div className="relative">
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setShowSystemStatusMenu(!showSystemStatusMenu)
+                    }}
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium whitespace-nowrap bg-[var(--v2-surface)] text-[var(--v2-text-primary)] border border-[var(--v2-border)] hover:border-[var(--v2-border-hover)] transition-all rounded-lg"
+                  >
+                    <Calendar className="w-3.5 h-3.5 text-[var(--v2-text-muted)]" />
+                    {systemStatusTimeFilter === 'all' ? 'All Time' : `Last ${systemStatusTimeFilter} Days`}
+                    <ChevronDown className={`w-3.5 h-3.5 text-[var(--v2-text-muted)] transition-transform ${showSystemStatusMenu ? 'rotate-180' : ''}`} />
+                  </button>
 
-              {/* Top Metrics Row */}
-              <div className="grid grid-cols-3 gap-2 pt-1">
-                {/* Failures */}
-                <div className="text-center p-2 rounded-lg bg-[var(--v2-surface)] border border-[var(--v2-border)]">
-                  <div className={`text-xl font-bold ${stats.alertsCount > 0 ? 'text-red-500' : 'text-green-500'}`}>
-                    {stats.alertsCount}
-                  </div>
-                  <div className="text-[10px] text-[var(--v2-text-muted)] mt-0.5">
-                    Failed (24h)
-                  </div>
-                </div>
-
-                {/* Success Rate */}
-                <div className="text-center p-2 rounded-lg bg-[var(--v2-surface)] border border-[var(--v2-border)]">
-                  <div className={`text-xl font-bold ${
-                    stats.successRate >= 95 ? 'text-green-500' :
-                    stats.successRate >= 90 ? 'text-yellow-500' : 'text-red-500'
-                  }`}>
-                    {stats.successRate}%
-                  </div>
-                  <div className="text-[10px] text-[var(--v2-text-muted)] mt-0.5">
-                    Success
-                  </div>
-                </div>
-
-                {/* Money Saved */}
-                <div className="text-center p-2 rounded-lg bg-[var(--v2-surface)] border border-[var(--v2-border)]">
-                  {stats.moneySavedPerWeek > 0 ? (
+                  {showSystemStatusMenu && (
                     <>
-                      <div className="text-xl font-bold text-green-500">
-                        ${stats.moneySavedPerWeek.toLocaleString()}
-                      </div>
-                      <div className="text-[10px] text-[var(--v2-text-muted)] mt-0.5">
-                        Saved/Week
-                      </div>
-                    </>
-                  ) : (
-                    <>
-                      <div className="text-xl font-bold text-[var(--v2-text-muted)]">
-                        —
-                      </div>
-                      <div className="text-[10px] text-[var(--v2-text-muted)] mt-0.5">
-                        Calculating
+                      <div
+                        className="fixed inset-0 z-[100]"
+                        onClick={() => setShowSystemStatusMenu(false)}
+                      />
+                      <div
+                        className="absolute top-full right-0 mt-2 w-48 bg-[var(--v2-surface)] border border-[var(--v2-border)] shadow-xl z-[101] rounded-lg overflow-hidden"
+                      >
+                        {[
+                          { value: 7 as const, label: 'Last 7 Days' },
+                          { value: 30 as const, label: 'Last 30 Days' },
+                          { value: 90 as const, label: 'Last 90 Days' },
+                          { value: 'all' as const, label: 'All Time' }
+                        ].map((option) => (
+                          <button
+                            key={option.value}
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              setSystemStatusTimeFilter(option.value)
+                              setShowSystemStatusMenu(false)
+                            }}
+                            className={`w-full text-left px-4 py-2.5 text-sm transition-colors ${
+                              systemStatusTimeFilter === option.value
+                                ? 'bg-[var(--v2-primary)] text-white'
+                                : 'text-[var(--v2-text-secondary)] hover:bg-[var(--v2-hover)]'
+                            }`}
+                          >
+                            {option.label}
+                          </button>
+                        ))}
                       </div>
                     </>
                   )}
                 </div>
               </div>
+              <p className="text-sm text-[var(--v2-text-secondary)]">
+                How your automations are performing
+              </p>
 
-              {/* Summary Stats */}
-              <div className="space-y-1.5 pt-1">
-                <div className="flex items-center justify-between text-xs">
-                  <span className="text-[var(--v2-text-muted)]">
-                    Total runs ({systemStatusTimeFilter === 'all' ? 'all time' : `${systemStatusTimeFilter}d`})
-                  </span>
-                  <span className="font-medium text-[var(--v2-text-primary)]">{stats.totalRuns30d.toLocaleString()}</span>
+              {/* Modern Executive Summary Layout */}
+              <div className="space-y-4">
+
+                {/* System Health Status Banner */}
+                {(() => {
+                  // Collect all system alerts
+                  const alerts = []
+
+                  if ((stats.totalRuns30d - stats.successfulRuns30d) > 0) {
+                    alerts.push({
+                      type: 'error',
+                      label: 'Failed',
+                      count: stats.totalRuns30d - stats.successfulRuns30d,
+                      color: 'red'
+                    })
+                  }
+
+                  if (stats.successRate < 90) {
+                    alerts.push({
+                      type: 'warning',
+                      label: 'Low Success',
+                      count: `${stats.successRate}%`,
+                      color: 'yellow'
+                    })
+                  }
+
+                  if (stats.activeInsightsCount > 0) {
+                    alerts.push({
+                      type: 'info',
+                      label: 'Insights',
+                      count: stats.activeInsightsCount,
+                      color: 'orange'
+                    })
+                  }
+
+                  // Check execution quota (if quota exists and not unlimited)
+                  if (stats.executionsQuota !== null && stats.executionsQuota > 0) {
+                    const usagePercent = stats.executionsUsed / stats.executionsQuota
+                    if (usagePercent >= stats.executionsAlertThreshold) {
+                      const remaining = stats.executionsQuota - stats.executionsUsed
+                      alerts.push({
+                        type: 'warning',
+                        label: 'Quota',
+                        count: remaining,
+                        color: remaining <= 0 ? 'red' : 'yellow'
+                      })
+                    }
+                  }
+
+                  const isHealthy = alerts.length === 0
+
+                  return (
+                    <div className={`p-3 rounded-xl border backdrop-blur-sm transition-all ${
+                      isHealthy
+                        ? 'bg-gradient-to-br from-emerald-500/10 via-green-500/10 to-teal-500/10 dark:from-emerald-500/20 dark:via-green-500/20 dark:to-teal-500/20 border-emerald-300/40 dark:border-emerald-700/50'
+                        : 'bg-gradient-to-br from-red-500/10 via-orange-500/10 to-amber-500/10 dark:from-red-500/20 dark:via-orange-500/20 dark:to-amber-500/20 border-red-300/40 dark:border-red-700/50'
+                    }`}>
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="flex items-center gap-3 min-w-0 flex-1">
+                          <div className={`p-2 rounded-lg flex-shrink-0 ${
+                            isHealthy
+                              ? 'bg-emerald-500/20 dark:bg-emerald-500/30'
+                              : 'bg-red-500/20 dark:bg-red-500/30'
+                          }`}>
+                            {isHealthy ? (
+                              <CheckCircle2 className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />
+                            ) : (
+                              <AlertCircle className="w-5 h-5 text-red-600 dark:text-red-400" />
+                            )}
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <div className={`text-sm font-bold ${
+                              isHealthy
+                                ? 'text-emerald-800 dark:text-emerald-200'
+                                : 'text-red-800 dark:text-red-200'
+                            }`}>
+                              {isHealthy ? 'All Systems Operational' : `${alerts.length} Issue${alerts.length > 1 ? 's' : ''} Detected`}
+                            </div>
+                            <div className={`text-[10px] font-medium mt-0.5 ${
+                              isHealthy
+                                ? 'text-emerald-700/80 dark:text-emerald-300/80'
+                                : 'text-red-700/80 dark:text-red-300/80'
+                            }`}>
+                              {isHealthy
+                                ? `${stats.successRate}% success rate • ${stats.totalRuns30d} runs (30 days)`
+                                : 'View Analytics page for full details'
+                              }
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Alert Badges - Wraps if too many */}
+                        {!isHealthy && alerts.length > 0 && (
+                          <div className="flex items-center gap-1.5 flex-wrap justify-end flex-shrink-0">
+                            {alerts.map((alert, index) => (
+                              <div
+                                key={index}
+                                className={`px-2 py-1 rounded-lg border ${
+                                  alert.color === 'red'
+                                    ? 'bg-red-500/20 dark:bg-red-500/30 border-red-500/40'
+                                    : alert.color === 'yellow'
+                                    ? 'bg-yellow-500/20 dark:bg-yellow-500/30 border-yellow-500/40'
+                                    : 'bg-orange-500/20 dark:bg-orange-500/30 border-orange-500/40'
+                                }`}
+                              >
+                                <div className={`text-xs font-bold ${
+                                  alert.color === 'red'
+                                    ? 'text-red-700 dark:text-red-300'
+                                    : alert.color === 'yellow'
+                                    ? 'text-yellow-700 dark:text-yellow-300'
+                                    : 'text-orange-700 dark:text-orange-300'
+                                }`}>
+                                  {alert.count}
+                                </div>
+                                <div className={`text-[8px] font-semibold uppercase tracking-wider ${
+                                  alert.color === 'red'
+                                    ? 'text-red-600/80 dark:text-red-400/80'
+                                    : alert.color === 'yellow'
+                                    ? 'text-yellow-600/80 dark:text-yellow-400/80'
+                                    : 'text-orange-600/80 dark:text-orange-400/80'
+                                }`}>
+                                  {alert.label}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )
+                })()}
+
+                {/* Key Performance Metrics - 2 row grid */}
+                <div className="grid grid-cols-4 gap-2.5">
+
+                  {/* Row 1: Core Metrics */}
+                  {/* Success Rate */}
+                  <div className={`group relative overflow-hidden p-3 rounded-xl border backdrop-blur-sm transition-all hover:scale-105 hover:shadow-md ${
+                    stats.successRate >= 95
+                      ? 'bg-gradient-to-br from-emerald-500/10 to-teal-500/10 dark:from-emerald-500/20 dark:to-teal-500/20 border-emerald-300/30 dark:border-emerald-700/40'
+                      : stats.successRate >= 90
+                      ? 'bg-gradient-to-br from-yellow-500/10 to-amber-500/10 dark:from-yellow-500/20 dark:to-amber-500/20 border-yellow-300/30 dark:border-yellow-700/40'
+                      : 'bg-gradient-to-br from-red-500/10 to-rose-500/10 dark:from-red-500/20 dark:to-rose-500/20 border-red-300/30 dark:border-red-700/40'
+                  }`}>
+                    <div className={`absolute top-0 right-0 w-16 h-16 rounded-full blur-2xl -translate-y-1/2 translate-x-1/2 ${
+                      stats.successRate >= 95 ? 'bg-gradient-to-br from-emerald-500/20 to-teal-500/20' :
+                      stats.successRate >= 90 ? 'bg-gradient-to-br from-yellow-500/20 to-amber-500/20' :
+                      'bg-gradient-to-br from-red-500/20 to-rose-500/20'
+                    }`} />
+                    <div className="relative text-center">
+                      <div className={`text-2xl font-bold text-transparent bg-clip-text bg-gradient-to-br mb-0.5 ${
+                        stats.successRate >= 95 ? 'from-emerald-600 to-teal-600 dark:from-emerald-400 dark:to-teal-400' :
+                        stats.successRate >= 90 ? 'from-yellow-600 to-amber-600 dark:from-yellow-400 dark:to-amber-400' :
+                        'from-red-600 to-rose-600 dark:from-red-400 dark:to-rose-400'
+                      }`}>
+                        {stats.successRate}%
+                      </div>
+                      <div className={`text-[9px] font-semibold tracking-wider uppercase ${
+                        stats.successRate >= 95 ? 'text-emerald-700/70 dark:text-emerald-300/70' :
+                        stats.successRate >= 90 ? 'text-yellow-700/70 dark:text-yellow-300/70' :
+                        'text-red-700/70 dark:text-red-300/70'
+                      }`}>
+                        Success Rate
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Total Runs */}
+                  <div className="group relative overflow-hidden p-3 rounded-xl bg-gradient-to-br from-blue-500/10 to-indigo-500/10 dark:from-blue-500/20 dark:to-indigo-500/20 border border-blue-300/30 dark:border-blue-700/40 backdrop-blur-sm transition-all hover:scale-105 hover:shadow-md">
+                    <div className="absolute top-0 right-0 w-16 h-16 bg-gradient-to-br from-blue-500/20 to-indigo-500/20 rounded-full blur-2xl -translate-y-1/2 translate-x-1/2" />
+                    <div className="relative text-center">
+                      <div className="text-2xl font-bold text-transparent bg-clip-text bg-gradient-to-br from-blue-600 to-indigo-600 dark:from-blue-400 dark:to-indigo-400 mb-0.5">
+                        {stats.totalRuns30d.toLocaleString()}
+                      </div>
+                      <div className="text-[9px] text-blue-700/70 dark:text-blue-300/70 font-semibold tracking-wider uppercase">
+                        Total Runs
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Money Saved */}
+                  <div className={`group relative overflow-hidden p-3 rounded-xl border backdrop-blur-sm transition-all hover:scale-105 hover:shadow-md ${
+                    stats.moneySavedTotal > 0
+                      ? 'bg-gradient-to-br from-green-500/10 to-lime-500/10 dark:from-green-500/20 dark:to-lime-500/20 border-green-300/30 dark:border-green-700/40'
+                      : 'bg-gradient-to-br from-gray-500/5 to-slate-500/5 dark:from-gray-700/20 dark:to-slate-700/20 border-gray-300/20 dark:border-gray-700/30'
+                  }`}>
+                    <div className={`absolute top-0 right-0 w-16 h-16 rounded-full blur-2xl -translate-y-1/2 translate-x-1/2 ${
+                      stats.moneySavedTotal > 0
+                        ? 'bg-gradient-to-br from-green-500/20 to-lime-500/20'
+                        : 'bg-gradient-to-br from-gray-500/10 to-slate-500/10'
+                    }`} />
+                    <div className="relative text-center">
+                      <div className={`text-2xl font-bold text-transparent bg-clip-text bg-gradient-to-br mb-0.5 ${
+                        stats.moneySavedTotal > 0
+                          ? 'from-green-600 to-lime-600 dark:from-green-400 dark:to-lime-400'
+                          : 'from-gray-400 to-slate-400 dark:from-gray-500 dark:to-slate-500'
+                      }`}>
+                        {stats.moneySavedTotal > 0
+                          ? stats.moneySavedTotal >= 1000
+                            ? `$${(stats.moneySavedTotal / 1000).toFixed(1)}K`
+                            : `$${stats.moneySavedTotal}`
+                          : '—'
+                        }
+                      </div>
+                      <div className={`text-[9px] font-semibold tracking-wider uppercase ${
+                        stats.moneySavedTotal > 0
+                          ? 'text-green-700/70 dark:text-green-300/70'
+                          : 'text-gray-500/70 dark:text-gray-400/70'
+                      }`}>
+                        Value Saved
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Time Saved */}
+                  <div className="group relative overflow-hidden p-3 rounded-xl bg-gradient-to-br from-purple-500/10 to-violet-500/10 dark:from-purple-500/20 dark:to-violet-500/20 border border-purple-300/30 dark:border-purple-700/40 backdrop-blur-sm transition-all hover:scale-105 hover:shadow-md">
+                    <div className="absolute top-0 right-0 w-16 h-16 bg-gradient-to-br from-purple-500/20 to-violet-500/20 rounded-full blur-2xl -translate-y-1/2 translate-x-1/2" />
+                    <div className="relative text-center">
+                      <div className="text-2xl font-bold text-transparent bg-clip-text bg-gradient-to-br from-purple-600 to-violet-600 dark:from-purple-400 dark:to-violet-400 mb-0.5">
+                        {stats.totalTimeSavedSeconds > 0
+                          ? `${Math.round(stats.totalTimeSavedSeconds / 3600).toLocaleString()}h`
+                          : '—'
+                        }
+                      </div>
+                      <div className="text-[9px] text-purple-700/70 dark:text-purple-300/70 font-semibold tracking-wider uppercase">
+                        Time Saved
+                      </div>
+                    </div>
+                  </div>
                 </div>
-                {stats.totalTimeSavedSeconds > 0 && (
-                  <div className="flex items-center justify-between text-xs">
-                    <span className="text-[var(--v2-text-muted)]">Hours saved</span>
-                    <span className="font-medium text-[var(--v2-text-primary)]">
-                      {Math.round(stats.totalTimeSavedSeconds / 3600).toLocaleString()}
-                    </span>
-                  </div>
-                )}
-                {stats.activeInsightsCount > 0 && (
-                  <div className="flex items-center justify-between text-xs">
-                    <span className="text-[var(--v2-text-muted)]">Active insights</span>
-                    <span className="font-medium text-orange-500">{stats.activeInsightsCount}</span>
-                  </div>
-                )}
               </div>
               </div>
             </Card>
@@ -786,25 +1047,57 @@ export default function V2DashboardPage() {
                     Recent Activity
                   </h3>
                 </div>
-                <select
-                  value={recentActivityTimeFilter}
-                  onChange={(e) => {
-                    setRecentActivityTimeFilter(e.target.value === 'all' ? 'all' : parseInt(e.target.value) as 7 | 30 | 90)
-                  }}
-                  className="text-xs px-3 py-1.5 rounded-lg bg-gradient-to-b from-[var(--v2-surface)] to-[var(--v2-surface-hover)] border border-[var(--v2-border)] text-[var(--v2-text-primary)] font-medium cursor-pointer hover:border-[var(--v2-primary)] hover:shadow-sm focus:outline-none focus:ring-2 focus:ring-[var(--v2-primary)]/20 transition-all duration-200"
-                >
-                  <option value="7">7 days</option>
-                  <option value="30">30 days</option>
-                  <option value="90">90 days</option>
-                  <option value="all">All time</option>
-                </select>
+                <div className="relative">
+                  <button
+                    onClick={() => setShowRecentActivityMenu(!showRecentActivityMenu)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium whitespace-nowrap bg-[var(--v2-surface)] text-[var(--v2-text-primary)] border border-[var(--v2-border)] hover:border-[var(--v2-border-hover)] transition-all rounded-lg"
+                  >
+                    <Calendar className="w-3.5 h-3.5 text-[var(--v2-text-muted)]" />
+                    {recentActivityTimeFilter === 'all' ? 'All Time' : `Last ${recentActivityTimeFilter} Days`}
+                    <ChevronDown className={`w-3.5 h-3.5 text-[var(--v2-text-muted)] transition-transform ${showRecentActivityMenu ? 'rotate-180' : ''}`} />
+                  </button>
+
+                  {showRecentActivityMenu && (
+                    <>
+                      <div
+                        className="fixed inset-0 z-[100]"
+                        onClick={() => setShowRecentActivityMenu(false)}
+                      />
+                      <div
+                        className="absolute top-full right-0 mt-2 w-48 bg-[var(--v2-surface)] border border-[var(--v2-border)] shadow-xl z-[101] rounded-lg overflow-hidden"
+                      >
+                        {[
+                          { value: 7 as const, label: 'Last 7 Days' },
+                          { value: 30 as const, label: 'Last 30 Days' },
+                          { value: 90 as const, label: 'Last 90 Days' },
+                          { value: 'all' as const, label: 'All Time' }
+                        ].map((option) => (
+                          <button
+                            key={option.value}
+                            onClick={() => {
+                              setRecentActivityTimeFilter(option.value)
+                              setShowRecentActivityMenu(false)
+                            }}
+                            className={`w-full text-left px-4 py-2.5 text-sm transition-colors ${
+                              recentActivityTimeFilter === option.value
+                                ? 'bg-[var(--v2-primary)] text-white'
+                                : 'text-[var(--v2-text-secondary)] hover:bg-[var(--v2-hover)]'
+                            }`}
+                          >
+                            {option.label}
+                          </button>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </div>
               </div>
               <p className="text-sm text-[var(--v2-text-secondary)]">
-                Top 3 most active agents
+                Top 3 most active automations
               </p>
-              <div className="pt-2 pb-0">
+              <div className="pt-3 pb-0">
                 {stats.agentStats.length > 0 ? (
-                  <div className="space-y-3">
+                  <div className="space-y-4">
                     {(() => {
                       // Take top 3 agents by execution count
                       const topAgents = [...stats.agentStats]
@@ -820,34 +1113,55 @@ export default function V2DashboardPage() {
                         const widthPercent = maxCount > 0 ? (agent.count / maxCount) * 100 : 0
                         const color = colors[index]
 
+                        // Create gradient colors based on base color
+                        const gradients = {
+                          '#8B5CF6': 'from-purple-500 via-purple-400 to-purple-500', // Purple
+                          '#06B6D4': 'from-cyan-500 via-cyan-400 to-cyan-500', // Cyan
+                          '#10B981': 'from-emerald-500 via-emerald-400 to-emerald-500', // Emerald
+                          '#F59E0B': 'from-amber-500 via-amber-400 to-amber-500', // Amber
+                          '#EF4444': 'from-red-500 via-red-400 to-red-500' // Red
+                        }
+                        const gradient = gradients[color as keyof typeof gradients]
+
                         return (
-                          <div key={index} className="space-y-1.5">
+                          <div key={index} className="space-y-2">
                             {/* Agent name and count */}
                             <div className="flex items-center justify-between text-xs">
-                              <div className="flex items-center gap-2 flex-1 min-w-0">
+                              <div className="flex items-center gap-2.5 flex-1 min-w-0">
                                 <div
-                                  className="w-3 h-3 rounded-full flex-shrink-0"
-                                  style={{ backgroundColor: color }}
+                                  className="w-2.5 h-2.5 rounded-full flex-shrink-0 shadow-sm"
+                                  style={{
+                                    backgroundColor: color,
+                                    boxShadow: `0 0 8px ${color}40`
+                                  }}
                                 />
-                                <span className="font-medium text-[var(--v2-text-primary)] truncate">
+                                <span className="font-semibold text-[var(--v2-text-primary)] truncate">
                                   {agent.name}
                                 </span>
                               </div>
-                              <span className="font-bold text-[var(--v2-text-primary)] ml-2">
-                                {agent.count}
+                              <span className="font-bold text-[var(--v2-text-primary)] ml-2 tabular-nums">
+                                {agent.count.toLocaleString()}
                               </span>
                             </div>
 
-                            {/* Progress bar */}
-                            <div className="w-full bg-gray-100 dark:bg-gray-800 rounded-full h-2 overflow-hidden">
+                            {/* Modern progress bar with gradient and glow */}
+                            <div className="relative w-full bg-gradient-to-r from-gray-100 via-gray-50 to-gray-100 dark:from-gray-800 dark:via-gray-850 dark:to-gray-800 rounded-full h-2.5 overflow-visible shadow-inner">
                               <div
-                                className="h-full rounded-full transition-all duration-300"
+                                className={`h-full rounded-full transition-all duration-500 ease-out bg-gradient-to-r ${gradient} relative`}
                                 style={{
                                   width: `${widthPercent}%`,
-                                  backgroundColor: color,
-                                  minWidth: agent.count > 0 ? '4px' : '0'
+                                  minWidth: agent.count > 0 ? '8px' : '0',
+                                  boxShadow: `0 2px 8px ${color}30, inset 0 1px 0 rgba(255,255,255,0.3)`
                                 }}
-                              />
+                              >
+                                {/* Shimmer effect overlay */}
+                                <div className="absolute inset-0 rounded-full bg-gradient-to-r from-transparent via-white/20 to-transparent animate-shimmer"
+                                     style={{
+                                       backgroundSize: '200% 100%',
+                                       animation: 'shimmer 2s infinite'
+                                     }}
+                                />
+                              </div>
                             </div>
                           </div>
                         )
@@ -858,7 +1172,7 @@ export default function V2DashboardPage() {
                   <div className="flex items-center justify-center h-[180px] text-[var(--v2-text-muted)]">
                     <div className="text-center">
                       <Activity className="w-12 h-12 opacity-20 mx-auto mb-2" />
-                      <p className="text-xs">No agents created yet</p>
+                      <p className="text-xs">No automations created yet</p>
                     </div>
                   </div>
                 )}
@@ -997,6 +1311,12 @@ export default function V2DashboardPage() {
               </div>
             </Card>
         </div>
+
+      {/* Help Dialog */}
+      <ModernHelpDialog
+        isOpen={helpOpen}
+        onClose={() => setHelpOpen(false)}
+      />
     </div>
   )
 }

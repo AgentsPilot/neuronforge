@@ -171,8 +171,6 @@ export class PluginManagerV2 {
 
   // Get all available plugins in registry (static)
   getAvailablePlugins(): Record<string, PluginDefinition> {
-    logger.debug({ totalPlugins: this.plugins.size }, 'Getting available plugins');
-
     const result: Record<string, PluginDefinition> = {};
     for (const [name, definition] of this.plugins) {
       result[name] = definition;
@@ -282,15 +280,11 @@ export class PluginManagerV2 {
 
   // Get actionable system plugins (no OAuth required, auto-available for all users)
   getActionableSystemPlugins(userId: string): Record<string, ActionablePlugin> {
-    logger.debug({ userId }, 'Getting actionable system plugins');
-
     const systemPlugins: Record<string, ActionablePlugin> = {};
 
     for (const [pluginKey, definition] of this.plugins.entries()) {
       // Check if this is a system plugin
       if (definition.plugin.isSystem) {
-        logger.debug({ pluginKey }, 'Found system plugin');
-
         // Create a virtual connection for system plugins (no database record needed)
         systemPlugins[pluginKey] = {
           definition,
@@ -315,15 +309,12 @@ export class PluginManagerV2 {
       }
     }
 
-    logger.debug({ count: Object.keys(systemPlugins).length }, 'System plugins retrieved');
     return systemPlugins;
   }
 
   // Get all active plugin keys (including expired tokens) + system plugins
   // Use for: Showing users all their active services regardless of token status
   async getAllActivePluginKeys(userId: string): Promise<string[]> {
-    logger.debug({ userId }, 'Getting all active plugin keys (including expired)');
-
     // Get ALL active OAuth plugins (including those with expired tokens)
     const allActiveOAuthConnections = await this.userConnections.getAllActivePlugins(userId);
     const activeOAuthKeys = allActiveOAuthConnections.map(conn => conn.plugin_key);
@@ -333,15 +324,7 @@ export class PluginManagerV2 {
     const systemPluginKeys = Object.keys(systemPlugins);
 
     // Combine both (deduplicate in case of overlap)
-    const allActiveKeys = [...new Set([...activeOAuthKeys, ...systemPluginKeys])];
-
-    logger.debug({
-      totalKeys: allActiveKeys.length,
-      oauthKeys: activeOAuthKeys.length,
-      systemKeys: systemPluginKeys.length
-    }, 'All active plugin keys retrieved');
-
-    return allActiveKeys;
+    return [...new Set([...activeOAuthKeys, ...systemPluginKeys])];
   }
   
   // Get user's connected plugins (active status only, no token refresh - FAST)
@@ -354,14 +337,10 @@ export class PluginManagerV2 {
   ): Promise<Record<string, ActionablePlugin>> {
     const { includeSystemPlugins = true } = options;
 
-    logger.debug({ userId, includeSystemPlugins }, 'Getting connected plugins (status only)');
-
     const actionablePlugins: Record<string, ActionablePlugin> = {};
 
     // Get connected plugin connections (simple query, no token operations)
     const connections = await this.userConnections.getConnectedPlugins(userId);
-
-    logger.debug({ connectionCount: connections.length }, 'Connected plugins retrieved from database');
 
     // Build actionable plugins from connections
     for (const connection of connections) {
@@ -369,7 +348,6 @@ export class PluginManagerV2 {
       const definition = this.plugins.get(pluginKey);
 
       if (!definition) {
-        logger.debug({ pluginKey }, 'Plugin connected but not in registry, skipping');
         continue;
       }
 
@@ -377,7 +355,6 @@ export class PluginManagerV2 {
         definition,
         connection
       };
-      logger.debug({ pluginKey }, 'Plugin is connected (status=active)');
     }
 
     // Add system plugins (no database connection required, always available)
@@ -388,20 +365,8 @@ export class PluginManagerV2 {
         // Only add if not already present (OAuth connection takes precedence)
         if (!actionablePlugins[pluginKey]) {
           actionablePlugins[pluginKey] = systemPlugin;
-          logger.debug({ pluginKey }, 'Added system plugin to connected plugins');
         }
       }
-
-      logger.debug({
-        totalPlugins: Object.keys(actionablePlugins).length,
-        oauthPlugins: connections.length,
-        systemPlugins: Object.keys(systemPlugins).length
-      }, 'Returning connected plugins with system plugins');
-    } else {
-      logger.debug({
-        totalPlugins: Object.keys(actionablePlugins).length,
-        oauthPlugins: connections.length
-      }, 'Returning connected plugins (system plugins excluded)');
     }
 
     return actionablePlugins;
@@ -410,7 +375,6 @@ export class PluginManagerV2 {
   // Get plugins with expired tokens (active but need refresh)
   // Returns plugin keys that are active in DB but have expired tokens
   async getActiveExpiredPluginKeys(userId: string): Promise<string[]> {
-    logger.debug({ userId }, 'Getting active expired plugin keys');
 
     // Get all active connections (including expired)
     const allActive = await this.userConnections.getAllActivePlugins(userId);
@@ -423,8 +387,6 @@ export class PluginManagerV2 {
     const expiredKeys = allActive
       .filter(conn => !validKeys.has(conn.plugin_key))
       .map(conn => conn.plugin_key);
-
-    logger.debug({ expiredCount: expiredKeys.length }, 'Active plugins with expired tokens retrieved');
 
     return expiredKeys;
   }
@@ -544,8 +506,6 @@ export class PluginManagerV2 {
     userId: string,
     connectedKeys?: string[]
   ): Promise<Record<string, { plugin: PluginDefinition; reason: string; auth_url: string }>> {
-    logger.debug({ userId }, 'Getting disconnected plugins');
-
     const allPlugins = this.getAvailablePlugins();
     const availablePluginKeys = Object.keys(allPlugins);
 
@@ -556,8 +516,6 @@ export class PluginManagerV2 {
       connectedKeys
     );
 
-    logger.debug({ disconnectedCount: disconnectedKeys.length }, 'Disconnected plugin keys retrieved');
-
     const disconnectedPlugins: Record<string, { plugin: PluginDefinition; reason: string; auth_url: string }> = {};
 
     // Build the disconnected plugins object with definitions
@@ -566,7 +524,6 @@ export class PluginManagerV2 {
       if (definition) {
         // Skip system plugins (they're never "disconnected" - always available)
         if (definition.plugin.isSystem) {
-          logger.debug({ pluginKey }, 'Skipping system plugin from disconnected list');
           continue;
         }
 
@@ -575,12 +532,8 @@ export class PluginManagerV2 {
           reason: 'not_connected', // Simplified reason since we're just checking active status
           auth_url: definition.plugin.auth_config.auth_url
         };
-
-        logger.debug({ pluginKey }, 'Plugin is disconnected');
       }
     }
-
-    logger.debug({ count: Object.keys(disconnectedPlugins).length }, 'Disconnected plugins retrieved');
 
     return disconnectedPlugins;
   }
@@ -715,7 +668,6 @@ export class PluginManagerV2 {
 
   // Get plugin definition by name
   getPluginDefinition(pluginName: string): PluginDefinition | undefined {
-    logger.debug({ pluginName }, 'Getting plugin definition');
     return this.plugins.get(pluginName);
   }
 
@@ -731,16 +683,12 @@ export class PluginManagerV2 {
 
   // Get action definition
   getActionDefinition(pluginName: string, actionName: string): ActionDefinition | undefined {
-    logger.debug({ pluginName, actionName }, 'Getting action definition');
-
     const plugin = this.plugins.get(pluginName);
     return plugin?.actions[actionName];
   }
 
   // Get output guidance for action
   getOutputGuidance(pluginName: string, actionName: string): { success_description: string; sample_output?: any; common_errors: Record<string, string> } | undefined {
-    logger.debug({ pluginName, actionName }, 'Getting output guidance');
-
     const action = this.getActionDefinition(pluginName, actionName);
     return action?.output_guidance;
   }

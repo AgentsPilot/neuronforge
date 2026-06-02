@@ -1,13 +1,13 @@
 /**
  * Reliability Detector
  *
- * Detects reliability risks:
+ * Detects technical system issues:
  * - Missing fallback mechanisms
  * - Single points of failure
  * - Steps with high failure rates
  * - Performance degradation
  *
- * Category: growth
+ * Category: technical_insight
  * Insight Types: reliability_risk, performance_degradation
  */
 
@@ -117,7 +117,7 @@ export class ReliabilityDetector {
 
     return {
       insight_type: 'reliability_risk',
-      category: 'growth',
+      category: 'technical_insight',
       severity,
       confidence_score: frequency, // Higher failure rate = higher confidence
       execution_ids: failedExecutions.map((e) => e.execution_id),
@@ -180,7 +180,7 @@ export class ReliabilityDetector {
 
     return {
       insight_type: 'reliability_risk',
-      category: 'growth',
+      category: 'technical_insight',
       severity,
       confidence_score: frequency,
       execution_ids: failuresWithoutFallback.map(e => e.execution_id),
@@ -259,7 +259,7 @@ export class ReliabilityDetector {
 
     return {
       insight_type: 'performance_degradation',
-      category: 'growth',
+      category: 'technical_insight',
       severity,
       confidence_score: Math.min(degradationRatio - 1, 1.0), // Cap at 1.0
       execution_ids: recentExecutions.map(e => e.execution_id),

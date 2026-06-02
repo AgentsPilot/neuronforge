@@ -504,3 +504,18 @@
 .dark .danger-zone-warning-text {
   color: rgb(252 165 165) !important; /* red-300 */
 }
+
+/* Indeterminate Progress Bar Animation */
+@keyframes progress-indeterminate {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(400%);
+  }
+}
+
+.animate-progress-indeterminate {
+  animation: progress-indeterminate 1.5s ease-in-out infinite;
+  width: 25%;
+}

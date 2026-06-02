@@ -76,6 +76,44 @@ export async function GET(
       }
     }
 
+    // Enrich with execution_metrics data (ROI: time_saved_seconds, total_items)
+    if (resultExecutions.length > 0) {
+      const executionIds = resultExecutions.map(e => e.id);
+      const { data: metricsData, error: metricsError } = await supabaseServer
+        .from('execution_metrics')
+        .select('execution_id, total_items, time_saved_seconds, manual_time_per_item_seconds')
+        .in('execution_id', executionIds);
+
+      if (metricsError) {
+        requestLogger.warn({ err: metricsError }, 'Failed to fetch execution_metrics (non-blocking)');
+      } else if (metricsData && metricsData.length > 0) {
+        // Build map for quick lookup
+        const metricsMap = new Map(metricsData.map(m => [m.execution_id, m]));
+
+        // Merge metrics into logs.metrics for backward compatibility with PerformanceTrends
+        resultExecutions = resultExecutions.map(execution => {
+          const metrics = metricsMap.get(execution.id);
+          if (!metrics) return execution;
+
+          const logs = (execution.logs || {}) as any;
+          return {
+            ...execution,
+            logs: {
+              ...logs,
+              metrics: {
+                ...(logs.metrics || {}),
+                total_items: metrics.total_items,
+                time_saved_seconds: metrics.time_saved_seconds,
+                manual_time_per_item_seconds: metrics.manual_time_per_item_seconds,
+              },
+            },
+          };
+        });
+
+        requestLogger.debug({ metricsCount: metricsData.length }, 'Execution metrics enrichment complete');
+      }
+    }
+
     // Enrich with token data if requested
     if (includeTokens && resultExecutions.length > 0) {
       requestLogger.debug('Enriching executions with token data');
