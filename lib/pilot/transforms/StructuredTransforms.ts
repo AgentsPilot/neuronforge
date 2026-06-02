@@ -126,7 +126,7 @@ export function transformWithFields(
   // Coerce non-array input to single-item processing (e.g., when input is one object).
   const items = Array.isArray(data) ? data : (data == null ? [] : [data]);
 
-  const result = items.map(item => {
+  const result = items.map((item, itemIndex) => {
     const augmented: Record<string, any> = {
       ...(item && typeof item === 'object' && !Array.isArray(item) ? item : { value: item }),
     };
@@ -148,6 +148,13 @@ export function transformWithFields(
       }
       augmented[field.name] = evaluateExpression(field.expression, item, context, evaluator);
     }
+
+    // Debug: Log first augmented item to verify field was added
+    if (itemIndex === 0) {
+      console.log(`🔍 [transformWithFields] First augmented item keys:`, Object.keys(augmented));
+      console.log(`🔍 [transformWithFields] First augmented item:`, JSON.stringify(augmented).slice(0, 300));
+    }
+
     return augmented;
   });
 
@@ -417,7 +424,22 @@ export function evaluateExpression(
       if (expr.ref === 'item' || expr.ref === '__item__') {
         if (typeof expr.field === 'string' && expr.field.length > 0) {
           if (currentItem == null || typeof currentItem !== 'object') return undefined;
-          return (currentItem as Record<string, any>)[expr.field];
+
+          // Try exact match first
+          const currentObj = currentItem as Record<string, any>;
+          if (expr.field in currentObj) {
+            return currentObj[expr.field];
+          }
+
+          // Fuzzy match: try case-insensitive lookup
+          const keys = Object.keys(currentObj);
+          const lowerField = expr.field.toLowerCase();
+          const fuzzyKey = keys.find(k => k.toLowerCase() === lowerField);
+          if (fuzzyKey) {
+            return currentObj[fuzzyKey];
+          }
+
+          return undefined;
         }
         return currentItem;
       }

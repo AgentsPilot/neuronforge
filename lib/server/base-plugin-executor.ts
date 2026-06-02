@@ -17,8 +17,6 @@ export abstract class BasePluginExecutor {
     this.userConnections = userConnections;
     this.pluginManager = pluginManager;
     this.logger = createLogger({ module: 'PluginExecutor', plugin: pluginName });
-
-    this.logger.debug('Plugin executor initialized');
   }
 
   // Template method - implements common execution flow

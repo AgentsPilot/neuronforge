@@ -38,34 +38,33 @@ export interface ConfidenceThresholds {
 
 /**
  * Three categories of insights:
- * 1. Data Quality - Fix problems (empty results, malformed data, missing fields)
- * 2. Growth - Improve business (automation, cost, performance, reliability)
- * 3. Business Intelligence - Understand business trends (volume, patterns, operational health)
+ * 1. Data Insight - Fix data quality problems (empty results, malformed data, missing fields)
+ * 2. Business Insight - Understand business operations, identify growth opportunities (volume trends, scaling, anomalies)
+ * 3. Technical Insight - Fix system issues (failures, performance degradation, costs, scheduling)
  */
-export type InsightCategory = 'data_quality' | 'growth' | 'business_intelligence';
+export type InsightCategory = 'data_insight' | 'business_insight' | 'technical_insight';
 
 /**
- * Specific insight types
+ * Specific insight types organized by category
  */
 export type InsightType =
-  // Data Quality Insights
+  // Data Insight Types
   | 'data_unavailable'       // Empty results, missing data
   | 'data_malformed'         // Unexpected structure
   | 'data_missing_fields'    // Required fields not present
   | 'data_type_mismatch'     // Wrong data type
   | 'data_validation_failed' // Schema validation errors
-  // Growth Insights
-  | 'automation_opportunity' // High manual approval rate
-  | 'cost_optimization'      // High token usage, caching opportunities
-  | 'performance_degradation'// Slower than historical average
-  | 'reliability_risk'       // No fallback, single point of failure
-  | 'schedule_optimization'  // Better timing for execution
-  | 'scale_opportunity'      // Could process more items
-  // Business Intelligence Insights
-  | 'volume_trend'           // Volume changes (increases/decreases)
-  | 'category_shift'         // Distribution changes (field presence)
-  | 'performance_issue'      // Duration degradation
-  | 'operational_anomaly';   // Spikes, drops, unusual patterns
+  // Technical Insight Types
+  | 'reliability_risk'       // Failures, no fallbacks, single points of failure
+  | 'performance_degradation'// Processing slower than baseline
+  | 'cost_optimization'      // High LLM token usage, expensive operations
+  | 'schedule_optimization'  // Inefficient scheduling (runs when no work available)
+  // Business Insight Types
+  | 'automation_opportunity' // Pattern detector (rare) - manual work that could be automated
+  | 'volume_trend'           // LLM (common) - Volume changes (increases/decreases, good news or problems)
+  | 'category_shift'         // LLM (common) - Distribution changes (field presence, category mix)
+  | 'operational_anomaly'    // LLM (common) - Spikes, drops, unusual patterns, zero results
+  | 'scale_opportunity';     // LLM (common) - Growth/scaling opportunities, capacity planning
 
 /**
  * Insight severity levels
@@ -89,13 +88,14 @@ export interface ExecutionInsight {
   id: string;
   user_id: string;
   agent_id: string;
-  execution_ids: string[];  // Multiple executions may contribute to one insight
+  execution_ids: string[];  // Array of workflow_execution UUIDs
 
   // Classification
   insight_type: InsightType;
   category: InsightCategory;
   severity: InsightSeverity;
-  confidence: ConfidenceMode | number;  // ConfidenceMode for technical, 0.0-1.0 for business
+  confidence: number;  // UPDATED: Now always numeric (0.0-1.0) - LLM generates this
+  confidence_mode?: ConfidenceMode;  // ADDED: Computed from confidence score
 
   // Content (business language)
   title: string;
@@ -106,6 +106,12 @@ export interface ExecutionInsight {
   // Supporting data (metadata only - NO client data)
   pattern_data: PatternData;
   metrics: InsightMetrics;
+
+  // Business value metrics (ADDED - from DB schema)
+  time_saved_hours_per_week?: number;
+  cost_saved_usd_per_week?: number;
+  revenue_at_risk_usd?: number;
+  automation_potential_percentage?: number;
 
   // Lifecycle
   status: InsightStatus;
@@ -216,3 +222,35 @@ export interface DetectedPattern {
  */
 // Removed InsightGenerationInput and GeneratedInsight - no longer needed
 // InsightGenerator.ts deleted - using only BusinessInsightGenerator now
+
+// ===========================
+// Helper Functions
+// ===========================
+
+/**
+ * Compute confidence mode from numeric confidence score
+ * Maps 0.0-1.0 score to descriptive confidence mode
+ *
+ * Thresholds:
+ * - observation: < 0.20 (1 execution, descriptive only)
+ * - early_signals: 0.20-0.35 (2-3 executions, tentative)
+ * - emerging_patterns: 0.35-0.50 (4-10 executions, medium confidence)
+ * - confirmed: >= 0.50 (10+ executions, high confidence)
+ */
+export function getConfidenceModeFromScore(confidence: number): ConfidenceMode {
+  if (confidence < 0.20) return 'observation';
+  if (confidence < 0.35) return 'early_signals';
+  if (confidence < 0.50) return 'emerging_patterns';
+  return 'confirmed';
+}
+
+/**
+ * Compute numeric confidence score from execution count
+ * Used when generating insights from pattern detectors (non-LLM)
+ */
+export function getConfidenceScoreFromExecutionCount(executionCount: number): number {
+  if (executionCount === 1) return 0.15;        // observation
+  if (executionCount <= 3) return 0.30;         // early_signals
+  if (executionCount <= 10) return 0.50;        // emerging_patterns
+  return 0.80;                                   // confirmed
+}

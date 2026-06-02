@@ -136,3 +136,56 @@ export interface ProcessedAnalyticsData {
     tokensPerCredit: number;
   };
 }
+
+// Business Analytics Dashboard Types
+export type TimeRange = '7d' | '30d' | '90d' | 'all';
+
+export interface BusinessAnalyticsData {
+  timeRange: {
+    start: string;
+    end: string;
+    days: number;
+  };
+  heroMetrics: {
+    totalRuns: number;
+    totalRunsChange: number; // percentage
+    successRate: number; // 0-100
+    moneySaved: number; // USD
+    costPerExecution: number; // USD
+    hoursAutomated: number;
+  };
+  volumeTrends: VolumeTrendPoint[];
+  costTrends: CostTrendPoint[];
+  agentBreakdown: AgentBreakdownItem[];
+  systemHealth: {
+    status: 'healthy' | 'warning' | 'critical';
+    message: string;
+    failedRuns24h: number;
+    activeInsights: number;
+  };
+}
+
+export interface VolumeTrendPoint {
+  date: string; // YYYY-MM-DD
+  totalRuns: number;
+  successfulRuns: number;
+  failedRuns: number;
+  successRate: number; // 0-100
+}
+
+export interface CostTrendPoint {
+  date: string; // YYYY-MM-DD
+  creationCost: number; // USD
+  executionCost: number; // USD
+  pluginCost: number; // USD
+}
+
+export interface AgentBreakdownItem {
+  agentId: string;
+  agentName: string;
+  status: 'active' | 'paused' | 'draft';
+  totalRuns: number;
+  successRate: number; // 0-100
+  moneySaved: number; // USD
+  lastRun: string | null; // ISO date string
+}

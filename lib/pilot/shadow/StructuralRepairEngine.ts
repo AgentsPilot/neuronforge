@@ -1756,7 +1756,7 @@ export class StructuralRepairEngine {
       if (rootVar === currentStepId) continue;
 
       // Skip known built-in variables
-      const builtins = new Set(['current_item', 'current_email', 'current_row', 'index', 'context']);
+      const builtins = new Set(['current_item', 'current_email', 'current_row', 'index', 'context', 'input', 'inputs', 'item', 'var']);
       if (builtins.has(rootVar)) continue;
 
       // This is a broken reference - try to suggest a correction

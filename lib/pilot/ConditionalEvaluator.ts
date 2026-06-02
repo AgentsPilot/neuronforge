@@ -121,6 +121,12 @@ export class ConditionalEvaluator {
     const coerce = context.isConditionalCoercionEnabled();
 
     try {
+      // AST format: { kind: "and", conditions: [...] } or { kind: "comparison", operator: "gt", left: {...}, right: {...} }
+      // This format is used by the IR compiler and workflow definitions
+      if (typeof condition === 'object' && 'kind' in condition) {
+        return this.evaluateKindBasedCondition(condition as any, context, coerce);
+      }
+
       // Simple condition: { field: "step1.data.score", operator: ">", value: 70 }
       if (isSimpleCondition(condition)) {
         return this.evaluateSimpleCondition(condition, context, coerce);
@@ -286,6 +292,94 @@ export class ConditionalEvaluator {
     throw new ConditionError(
       `Invalid complex condition: conditionType=${condition.conditionType}, missing required fields`
     );
+  }
+
+  /**
+   * Evaluate kind-based condition (AST format from IR compiler)
+   *
+   * Supports:
+   * - { kind: "and", conditions: [...] }
+   * - { kind: "or", conditions: [...] }
+   * - { kind: "not", condition: {...} }
+   * - { kind: "comparison", operator: "gt", left: {...}, right: {...} }
+   * - { kind: "literal", value: any }
+   * - { kind: "ref", ref: "item" | "input", field?: string }
+   */
+  private evaluateKindBasedCondition(
+    condition: any,
+    context: ExecutionContext,
+    coerce: boolean = false
+  ): boolean {
+    console.log(`🔍 [ConditionalEvaluator] evaluateKindBasedCondition:`, JSON.stringify(condition).slice(0, 200));
+
+    switch (condition.kind) {
+      case 'and':
+        if (!Array.isArray(condition.conditions)) {
+          throw new ConditionError('AND condition requires conditions array');
+        }
+        const andResults = condition.conditions.map((c: any, i: number) => {
+          const result = this.evaluateKindBasedCondition(c, context, coerce);
+          console.log(`🔍 [ConditionalEvaluator] AND sub-condition ${i}:`, result);
+          return result;
+        });
+        const andResult = andResults.every((r: boolean) => r);
+        console.log(`🔍 [ConditionalEvaluator] AND overall result:`, andResult);
+        return andResult;
+
+      case 'or':
+        if (!Array.isArray(condition.conditions)) {
+          throw new ConditionError('OR condition requires conditions array');
+        }
+        return condition.conditions.some((c: any) => this.evaluateKindBasedCondition(c, context, coerce));
+
+      case 'not':
+        if (!condition.condition) {
+          throw new ConditionError('NOT condition requires condition field');
+        }
+        return !this.evaluateKindBasedCondition(condition.condition, context, coerce);
+
+      case 'comparison': {
+        const left = this.evaluateKindValue(condition.left, context);
+        const right = this.evaluateKindValue(condition.right, context);
+        console.log(`🔍 [ConditionalEvaluator] comparison: operator=${condition.operator}, left=${JSON.stringify(left)}, right=${JSON.stringify(right)}`);
+        return this.compareValues(left, right, condition.operator, coerce);
+      }
+
+      default:
+        throw new ConditionError(`Unknown condition kind: ${condition.kind}`);
+    }
+  }
+
+  /**
+   * Evaluate a value expression in kind-based format
+   * - { kind: "literal", value: any } → return value
+   * - { kind: "ref", ref: "item", field: "name" } → resolve item.name
+   * - { kind: "ref", ref: "input", field: "days_ahead" } → resolve input.days_ahead
+   */
+  private evaluateKindValue(expr: any, context: ExecutionContext): any {
+    if (!expr || typeof expr !== 'object') {
+      return expr;
+    }
+
+    switch (expr.kind) {
+      case 'literal':
+        return expr.value;
+
+      case 'ref': {
+        // Build variable reference like {{item.field}} or {{input.field}}
+        let varRef = `{{${expr.ref}}}`;
+        if (expr.field) {
+          varRef = `{{${expr.ref}.${expr.field}}}`;
+        }
+        console.log(`🔍 [ConditionalEvaluator] resolving ref: ${varRef}`);
+        const resolved = context.resolveVariable(varRef);
+        console.log(`🔍 [ConditionalEvaluator] resolved to:`, JSON.stringify(resolved));
+        return resolved;
+      }
+
+      default:
+        throw new ConditionError(`Unknown value kind: ${expr.kind}`);
+    }
   }
 
   /**
@@ -747,7 +841,9 @@ export class ConditionalEvaluator {
       case 'greater_than':
       case 'gt': {
         const cmp = compareAsDates(left, right);
-        return cmp !== null ? cmp > 0 : left > right;
+        const result = cmp !== null ? cmp > 0 : left > right;
+        console.log(`🔍 [ConditionalEvaluator] gt comparison: left=${JSON.stringify(left)}, right=${JSON.stringify(right)}, cmp=${cmp}, result=${result}`);
+        return result;
       }
 
       case '>=':
@@ -768,7 +864,9 @@ export class ConditionalEvaluator {
       case 'less_than_or_equal':
       case 'lte': {
         const cmp = compareAsDates(left, right);
-        return cmp !== null ? cmp <= 0 : left <= right;
+        const result = cmp !== null ? cmp <= 0 : left <= right;
+        console.log(`🔍 [ConditionalEvaluator] lte comparison: left=${JSON.stringify(left)}, right=${JSON.stringify(right)}, cmp=${cmp}, result=${result}`);
+        return result;
       }
 
       case 'contains':

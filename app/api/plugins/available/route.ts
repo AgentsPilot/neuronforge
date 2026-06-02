@@ -10,8 +10,6 @@ const logger = createLogger({ module: 'API', service: 'PluginsAvailable' });
 // Returns all plugins available in the registry (regardless of user connections)
 export async function GET(request: NextRequest) {
   try {
-    logger.debug('Getting available plugins');
-
     // Get plugin manager instance (singleton with cold start handling)
     const pluginManager = await PluginManagerV2.getInstance();
 
@@ -31,8 +29,6 @@ export async function GET(request: NextRequest) {
       action_count: Object.keys(definition.actions).length,
       isSystem: definition.plugin.isSystem || false // Include system flag
     }));
-
-    logger.debug({ count: formatted.length }, 'Returning available plugins');
 
     return NextResponse.json({
       success: true,

@@ -131,7 +131,6 @@ export async function GET(request: NextRequest) {
     // Format connected plugins with connection details
     const connected = Object.entries(connectedPlugins).map(([key, connectedPlugin]) => {
       const { definition, connection } = connectedPlugin;
-      logger.debug({ pluginKey: key }, 'Formatting plugin with connection details');
 
       // Check if this is a system plugin
       const isSystemPlugin = definition.plugin.isSystem || false;
@@ -166,13 +165,6 @@ export async function GET(request: NextRequest) {
       actions: Object.keys(data.plugin.actions),
       action_count: Object.keys(data.plugin.actions).length
     }));
-
-    logger.debug({
-      userId,
-      connectedCount: connected.length,
-      activeExpiredCount: activeExpiredKeys.length,
-      disconnectedCount: disconnected.length
-    }, 'Plugin status summary');
 
     // Build response data
     const responseData = {

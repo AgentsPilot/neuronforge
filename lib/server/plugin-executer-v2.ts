@@ -71,14 +71,11 @@ export class PluginExecuterV2 {
   private constructor(userConnections: UserPluginConnections, pluginManager: PluginManagerV2) {
     this.userConnections = userConnections;
     this.pluginManager = pluginManager;
-    logger.debug('PluginExecuterV2 initialized');
   }
 
   // Singleton factory for serverless functions
   static async getInstance(): Promise<PluginExecuterV2> {
     if (!pluginExecuterInstance) {
-      logger.debug('Creating new PluginExecuterV2 instance for serverless function');
-
       const userConnections = UserPluginConnections.getInstance();
       const pluginManager = await PluginManagerV2.getInstance();
       pluginExecuterInstance = new PluginExecuterV2(userConnections, pluginManager);
@@ -90,13 +87,11 @@ export class PluginExecuterV2 {
   // Initialize plugin executer
   async initialize(): Promise<void> {
     if (this.initialized) {
-      logger.debug('PluginExecuterV2 already initialized, skipping');
       return;
     }
 
     // Plugin instances will be created lazily on-demand
     this.initialized = true;
-    logger.info('PluginExecuterV2 initialization complete');
   }
 
   // Unified execute method - routes to appropriate plugin executor
@@ -126,7 +121,6 @@ export class PluginExecuterV2 {
   private getOrCreateExecutor(pluginName: string): BasePluginExecutor {
     // Check if we already have an instance
     if (this.pluginInstances.has(pluginName)) {
-      logger.debug({ pluginName }, 'Reusing existing executor');
       return this.pluginInstances.get(pluginName)!;
     }
 
@@ -137,8 +131,6 @@ export class PluginExecuterV2 {
     }
 
     // Create new instance
-    logger.debug({ pluginName }, 'Creating new executor instance');
-
     const executor = new ExecutorClass(this.userConnections, this.pluginManager);
 
     // Cache the instance

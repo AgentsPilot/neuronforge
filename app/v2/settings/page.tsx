@@ -10,6 +10,7 @@ import {
   ArrowLeft
 } from 'lucide-react'
 import { V2Logo, V2Controls } from '@/components/v2/V2Header'
+import { ModernHelpDialog } from '@/components/v2/ModernHelpDialog'
 import ProfileTabV2 from '@/components/v2/settings/ProfileTabV2'
 import SecurityTabV2 from '@/components/v2/settings/SecurityTabV2'
 import { UserProfile, NotificationSettings, PluginConnection } from '@/types/settings'
@@ -29,6 +30,7 @@ export default function V2SettingsPage() {
 
   // Form states
   const [profileForm, setProfileForm] = useState<Partial<UserProfile>>({})
+  const [helpOpen, setHelpOpen] = useState(false)
 
   const tabs = [
     {
@@ -138,7 +140,10 @@ export default function V2SettingsPage() {
           <ArrowLeft className="w-4 h-4" />
           Back to Dashboard
         </button>
-        <V2Controls />
+        <V2Controls
+          showHelpLink={true}
+          onHelpClick={() => setHelpOpen(true)}
+        />
       </div>
 
       {/* Header */}
@@ -182,6 +187,12 @@ export default function V2SettingsPage() {
         )}
         {activeTab === 'security' && <SecurityTabV2 />}
       </div>
+
+      {/* Help Dialog */}
+      <ModernHelpDialog
+        isOpen={helpOpen}
+        onClose={() => setHelpOpen(false)}
+      />
     </div>
   )
 }

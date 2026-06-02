@@ -13,7 +13,7 @@ import { AlertCircle, AlertTriangle, Info, X, TrendingUp, Activity, AlertOctagon
 
 export interface MiniInsight {
   id: string
-  category: 'business_intelligence' | 'data_quality' | 'growth'
+  category: 'business_insight' | 'data_insight' | 'technical_insight'
   insight_type: string
   severity: 'critical' | 'high' | 'medium' | 'low'
   title: string
@@ -58,12 +58,12 @@ export function MiniInsightCard({ insight, onViewDetails, onDismiss }: MiniInsig
 
   // Determine category icon and label
   const getCategoryInfo = () => {
-    if (insight.category === 'business_intelligence') {
+    if (insight.category === 'business_insight') {
       return { icon: '📊', label: 'Business' }
-    } else if (insight.category === 'growth') {
-      return { icon: '📈', label: 'Growth' }
-    } else {
+    } else if (insight.category === 'technical_insight') {
       return { icon: '⚙️', label: 'Technical' }
+    } else {
+      return { icon: '🔍', label: 'Data' }
     }
   }
 

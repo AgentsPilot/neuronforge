@@ -186,6 +186,31 @@ export async function POST(req: Request) {
           logger.debug({ inputCount: Object.keys(inputValues).length, mode: 'run' }, 'Pilot using saved configuration');
         }
 
+        // Inject user timezone for date parsing (WP-29: MM/DD vs DD/MM disambiguation)
+        try {
+          const { data: profile } = await supabase
+            .from('profiles')
+            .select('timezone')
+            .eq('id', user.id)
+            .single();
+
+          // Use profile timezone if set and not UTC (UTC doesn't indicate MM/DD vs DD/MM preference)
+          // Fall back to America/New_York for MM/DD format (US date format)
+          let userTimezone = profile?.timezone || user.user_metadata?.timezone;
+          if (!userTimezone || userTimezone === 'UTC') {
+            userTimezone = 'America/New_York';
+          }
+          inputValues._user_timezone = userTimezone;
+          logger.debug({
+            timezone: userTimezone,
+            source: (profile?.timezone && profile.timezone !== 'UTC') ? 'profile' : (user.user_metadata?.timezone ? 'auth' : 'default')
+          }, 'Injected user timezone for date parsing');
+        } catch (err) {
+          // Fallback to America/New_York if profile fetch fails
+          inputValues._user_timezone = 'America/New_York';
+          logger.warn({ err }, 'Failed to fetch user profile, using default timezone America/New_York');
+        }
+
         // Use provided session_id for SSE correlation, or generate new one
         const sessionId = provided_session_id || uuidv4();
         logger.debug({ sessionId, fromRequest: !!provided_session_id }, 'Session ID set');

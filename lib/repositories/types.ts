@@ -47,6 +47,8 @@ export interface Agent {
   production_ready?: boolean;
   // Business intelligence context
   workflow_purpose?: string | null;
+  // ROI tracking - estimated time saved per item automated (in seconds)
+  manual_time_per_item_seconds?: number | null;
   // Creation metadata + AI context (JSONB column populated at agent creation time;
   // shape matches CreateAgentInput.agent_config — creation_metadata + ai_context)
   agent_config?: Record<string, unknown> | null;

@@ -97,17 +97,18 @@ export function InsightsList({
             <div className="relative category-dropdown">
               <button
                 onClick={() => setShowCategoryMenu(!showCategoryMenu)}
-                className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium bg-[var(--v2-surface)] text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] border border-gray-200 dark:border-slate-700 transition-all"
+                className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium bg-[var(--v2-surface)] text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] border border-[var(--v2-border)] transition-all"
                 style={{ borderRadius: 'var(--v2-radius-button)' }}
               >
                 {categoryFilter === 'all' && 'All Categories'}
-                {categoryFilter === 'data_quality' && 'Data Quality'}
-                {categoryFilter === 'growth' && 'Growth'}
+                {categoryFilter === 'data_insight' && 'Data Insight'}
+                {categoryFilter === 'business_insight' && 'Business Insight'}
+                {categoryFilter === 'technical_insight' && 'Technical Insight'}
                 <ChevronDown className="w-3 h-3" />
               </button>
 
               {showCategoryMenu && (
-                <div className="absolute top-full mt-1 left-0 bg-[var(--v2-surface)] border border-[var(--v2-border)] shadow-lg z-10 min-w-[160px]"
+                <div className="absolute top-full mt-1 left-0 bg-[var(--v2-surface)] border border-[var(--v2-border)] shadow-lg z-10 min-w-[180px]"
                   style={{ borderRadius: 'var(--v2-radius-button)' }}
                 >
                   <button
@@ -121,24 +122,34 @@ export function InsightsList({
                     All Categories
                   </button>
                   <button
-                    onClick={() => { setCategoryFilter('data_quality'); setShowCategoryMenu(false); }}
+                    onClick={() => { setCategoryFilter('data_insight'); setShowCategoryMenu(false); }}
                     className={`w-full text-left px-3 py-2 text-sm font-medium transition-colors ${
-                      categoryFilter === 'data_quality'
+                      categoryFilter === 'data_insight'
                         ? 'bg-[var(--v2-primary)] text-white'
                         : 'text-[var(--v2-text-secondary)] hover:bg-[var(--v2-surface-hover)] hover:text-[var(--v2-text-primary)]'
                     }`}
                   >
-                    Data Quality
+                    Data Insight
                   </button>
                   <button
-                    onClick={() => { setCategoryFilter('growth'); setShowCategoryMenu(false); }}
+                    onClick={() => { setCategoryFilter('business_insight'); setShowCategoryMenu(false); }}
                     className={`w-full text-left px-3 py-2 text-sm font-medium transition-colors ${
-                      categoryFilter === 'growth'
+                      categoryFilter === 'business_insight'
                         ? 'bg-[var(--v2-primary)] text-white'
                         : 'text-[var(--v2-text-secondary)] hover:bg-[var(--v2-surface-hover)] hover:text-[var(--v2-text-primary)]'
                     }`}
                   >
-                    Growth
+                    Business Insight
+                  </button>
+                  <button
+                    onClick={() => { setCategoryFilter('technical_insight'); setShowCategoryMenu(false); }}
+                    className={`w-full text-left px-3 py-2 text-sm font-medium transition-colors ${
+                      categoryFilter === 'technical_insight'
+                        ? 'bg-[var(--v2-primary)] text-white'
+                        : 'text-[var(--v2-text-secondary)] hover:bg-[var(--v2-text-primary)]'
+                    }`}
+                  >
+                    Technical Insight
                   </button>
                 </div>
               )}
@@ -149,7 +160,7 @@ export function InsightsList({
           <div className="relative severity-dropdown">
             <button
               onClick={() => setShowSeverityMenu(!showSeverityMenu)}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium bg-[var(--v2-surface)] text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] border border-gray-200 dark:border-slate-700 transition-all"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium bg-[var(--v2-surface)] text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] border border-[var(--v2-border)] transition-all"
               style={{ borderRadius: 'var(--v2-radius-button)' }}
             >
               {severityFilter === 'all' && 'All Severities'}
@@ -224,7 +235,7 @@ export function InsightsList({
             <div className="relative sort-dropdown">
               <button
                 onClick={() => setShowSortMenu(!showSortMenu)}
-                className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium bg-[var(--v2-surface)] text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] border border-gray-200 dark:border-slate-700 transition-all"
+                className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium bg-[var(--v2-surface)] text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] border border-[var(--v2-border)] transition-all"
                 style={{ borderRadius: 'var(--v2-radius-button)' }}
               >
                 {sortBy === 'severity' && 'Sort by Severity'}

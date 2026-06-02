@@ -101,7 +101,7 @@ export function HardcodeRepairModal({
 
     return (
       <div className={`p-4 rounded-lg border ${borderColor} ${bgColor}`}>
-        <h3 className="text-sm font-semibold text-gray-900 mb-3">{title}</h3>
+        <h3 className="text-sm font-semibold text-[var(--v2-text-primary)] mb-3">{title}</h3>
         <div className="space-y-3">
           {items.map((item) => {
             const isSelected = selectedValues.has(item.path);
@@ -113,44 +113,44 @@ export function HardcodeRepairModal({
                   type="checkbox"
                   checked={isSelected}
                   onChange={() => handleToggleSelection(item)}
-                  className="mt-1 h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded"
+                  className="mt-1 h-4 w-4 text-[var(--v2-primary)] focus:ring-[var(--v2-primary)] border-[var(--v2-border)] rounded"
                 />
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center justify-between">
-                    <label className="text-sm font-medium text-gray-700">
+                    <label className="text-sm font-medium text-[var(--v2-text-primary)]">
                       {item.label}
                       {isCritical && (
-                        <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-800">
+                        <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-100 dark:bg-red-900/30 text-red-800 dark:text-red-400">
                           {item.priority}
                         </span>
                       )}
                     </label>
                   </div>
 
-                  <p className="text-xs text-gray-500 mt-1">{item.reason}</p>
+                  <p className="text-xs text-[var(--v2-text-muted)] mt-1">{item.reason}</p>
 
-                  <div className="mt-2 text-xs text-gray-600">
-                    <span className="font-mono bg-gray-100 px-2 py-1 rounded">
+                  <div className="mt-2 text-xs text-[var(--v2-text-secondary)]">
+                    <span className="font-mono bg-[var(--v2-hover)] px-2 py-1 rounded">
                       {String(item.value).length > 50
                         ? String(item.value).substring(0, 50) + '...'
                         : String(item.value)}
                     </span>
                   </div>
 
-                  <div className="text-xs text-gray-400 mt-1">
+                  <div className="text-xs text-[var(--v2-text-muted)] mt-1">
                     Used in: {item.stepIds.join(', ')}
                   </div>
 
                   {isSelected && (
                     <div className="mt-3">
-                      <label className="text-xs font-medium text-gray-700">
+                      <label className="text-xs font-medium text-[var(--v2-text-primary)]">
                         New value for testing:
                       </label>
                       {item.type === 'select' && item.value && typeof item.value === 'object' ? (
                         <select
                           value={newValues[item.suggested_param] || ''}
                           onChange={(e) => handleValueChange(item.suggested_param, e.target.value)}
-                          className="mt-1 block w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
+                          className="mt-1 block w-full px-3 py-2 text-sm border border-[var(--v2-border)] bg-[var(--v2-surface)] text-[var(--v2-text-primary)] rounded-md focus:outline-none focus:ring-[var(--v2-primary)] focus:border-[var(--v2-primary)]"
                         >
                           {Object.keys(item.value).map(key => (
                             <option key={key} value={item.value[key]}>{key}</option>
@@ -161,7 +161,7 @@ export function HardcodeRepairModal({
                           type="number"
                           value={newValues[item.suggested_param] || ''}
                           onChange={(e) => handleValueChange(item.suggested_param, Number(e.target.value))}
-                          className="mt-1 block w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
+                          className="mt-1 block w-full px-3 py-2 text-sm border border-[var(--v2-border)] bg-[var(--v2-surface)] text-[var(--v2-text-primary)] rounded-md focus:outline-none focus:ring-[var(--v2-primary)] focus:border-[var(--v2-primary)]"
                         />
                       ) : item.type === 'email' ? (
                         <input
@@ -169,7 +169,7 @@ export function HardcodeRepairModal({
                           value={newValues[item.suggested_param] || ''}
                           onChange={(e) => handleValueChange(item.suggested_param, e.target.value)}
                           placeholder="email@example.com"
-                          className="mt-1 block w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
+                          className="mt-1 block w-full px-3 py-2 text-sm border border-[var(--v2-border)] bg-[var(--v2-surface)] text-[var(--v2-text-primary)] rounded-md focus:outline-none focus:ring-[var(--v2-primary)] focus:border-[var(--v2-primary)]"
                         />
                       ) : item.type === 'url' ? (
                         <input
@@ -177,17 +177,17 @@ export function HardcodeRepairModal({
                           value={newValues[item.suggested_param] || ''}
                           onChange={(e) => handleValueChange(item.suggested_param, e.target.value)}
                           placeholder="https://example.com"
-                          className="mt-1 block w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
+                          className="mt-1 block w-full px-3 py-2 text-sm border border-[var(--v2-border)] bg-[var(--v2-surface)] text-[var(--v2-text-primary)] rounded-md focus:outline-none focus:ring-[var(--v2-primary)] focus:border-[var(--v2-primary)]"
                         />
                       ) : (
                         <input
                           type="text"
                           value={newValues[item.suggested_param] || ''}
                           onChange={(e) => handleValueChange(item.suggested_param, e.target.value)}
-                          className="mt-1 block w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
+                          className="mt-1 block w-full px-3 py-2 text-sm border border-[var(--v2-border)] bg-[var(--v2-surface)] text-[var(--v2-text-primary)] rounded-md focus:outline-none focus:ring-[var(--v2-primary)] focus:border-[var(--v2-primary)]"
                         />
                       )}
-                      <p className="text-xs text-gray-500 mt-1">
+                      <p className="text-xs text-[var(--v2-text-muted)] mt-1">
                         Will be saved as: <span className="font-mono">{'{{input.' + item.suggested_param + '}}'}</span>
                       </p>
                     </div>
@@ -212,24 +212,24 @@ export function HardcodeRepairModal({
     <div className="fixed inset-0 z-50 overflow-y-auto">
       <div className="flex items-center justify-center min-h-screen px-4 pt-4 pb-20 text-center sm:block sm:p-0">
         {/* Background overlay */}
-        <div className="fixed inset-0 transition-opacity bg-gray-500 bg-opacity-75" onClick={onCancel} />
+        <div className="fixed inset-0 transition-opacity bg-black/60 backdrop-blur-sm" onClick={onCancel} />
 
         {/* Modal panel */}
-        <div className="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full">
-          <div className="bg-white px-6 pt-6 pb-4">
+        <div className="inline-block align-bottom bg-[var(--v2-surface)] rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full border border-[var(--v2-border)]">
+          <div className="bg-[var(--v2-surface)] px-6 pt-6 pb-4">
             <div className="flex items-start justify-between">
               <div>
-                <h2 className="text-xl font-semibold text-gray-900">
+                <h2 className="text-xl font-semibold text-[var(--v2-text-primary)]">
                   Hardcoded Values Detected
                 </h2>
-                <p className="mt-2 text-sm text-gray-600">
+                <p className="mt-2 text-sm text-[var(--v2-text-muted)]">
                   We found {detectionResult.total_count} hardcoded value{detectionResult.total_count !== 1 ? 's' : ''} in your workflow.
                   Select which ones to convert to input parameters for easier testing.
                 </p>
               </div>
               <button
                 onClick={onCancel}
-                className="text-gray-400 hover:text-gray-500"
+                className="text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)]"
               >
                 <span className="sr-only">Close</span>
                 <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -242,42 +242,42 @@ export function HardcodeRepairModal({
               {renderValueGroup(
                 'Critical - Resource IDs',
                 detectionResult.resource_ids,
-                'bg-red-50',
-                'border-red-200'
+                'bg-red-50 dark:bg-red-900/20',
+                'border-red-200 dark:border-red-800'
               )}
 
               {renderValueGroup(
                 'Business Logic - Filters & Conditions',
                 detectionResult.business_logic,
-                'bg-yellow-50',
-                'border-yellow-200'
+                'bg-yellow-50 dark:bg-yellow-900/20',
+                'border-yellow-200 dark:border-yellow-800'
               )}
 
               {renderValueGroup(
                 'Configuration - Optional Settings',
                 detectionResult.configuration,
-                'bg-blue-50',
-                'border-blue-200'
+                'bg-blue-50 dark:bg-blue-900/20',
+                'border-blue-200 dark:border-blue-800'
               )}
             </div>
           </div>
 
-          <div className="bg-gray-50 px-6 py-4 flex items-center justify-between">
-            <div className="text-sm text-gray-600">
+          <div className="bg-[var(--v2-hover)] px-6 py-4 flex items-center justify-between border-t border-[var(--v2-border)]">
+            <div className="text-sm text-[var(--v2-text-muted)]">
               {selectedValues.size} value{selectedValues.size !== 1 ? 's' : ''} selected
             </div>
             <div className="flex space-x-3">
               <button
                 onClick={onCancel}
                 disabled={isRepairing}
-                className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                className="px-4 py-2 text-sm font-medium text-[var(--v2-text-primary)] bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-md hover:bg-[var(--v2-hover)] disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 Cancel
               </button>
               <button
                 onClick={handleSubmit}
                 disabled={!canSubmit || isRepairing}
-                className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 border border-transparent rounded-md hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                className="px-4 py-2 text-sm font-medium text-white bg-[var(--v2-primary)] border border-transparent rounded-md hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {isRepairing ? 'Repairing...' : 'Save & Repair Agent'}
               </button>

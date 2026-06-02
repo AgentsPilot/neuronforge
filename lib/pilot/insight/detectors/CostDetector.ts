@@ -1,13 +1,13 @@
 /**
  * Cost Detector
  *
- * Detects cost optimization opportunities:
+ * Detects technical cost and scheduling issues:
  * - High token usage patterns
  * - Expensive steps that could be cached
  * - Redundant API calls
  * - Schedule optimization opportunities
  *
- * Category: growth
+ * Category: technical_insight
  * Insight Types: cost_optimization, schedule_optimization
  */
 
@@ -121,7 +121,7 @@ export class CostDetector {
 
     return {
       insight_type: 'cost_optimization',
-      category: 'growth',
+      category: 'technical_insight',
       severity,
       confidence_score: frequency,
       execution_ids: highTokenExecutions.map(e => e.execution_id),
@@ -185,7 +185,7 @@ export class CostDetector {
 
       return {
         insight_type: 'schedule_optimization',
-        category: 'growth',
+        category: 'technical_insight',
         severity: 'low', // Optimization, not a problem
         confidence_score: concentrationRatio,
         execution_ids: executions.map(e => e.execution_id),

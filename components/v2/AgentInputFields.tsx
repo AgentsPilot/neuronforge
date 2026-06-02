@@ -150,7 +150,7 @@ const renderFieldInput = (
       <select
         value={values[field.name] || ''}
         onChange={(e) => onChange(field.name, e.target.value)}
-        className="w-full px-2.5 py-1.5 border text-xs focus:outline-none focus:ring-1 bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600 focus:ring-indigo-500 focus:border-indigo-500 text-gray-900 dark:text-gray-100"
+        className="w-full px-2.5 py-1.5 border text-xs focus:outline-none focus:ring-1 bg-[var(--v2-surface)] border-[var(--v2-border)] focus:ring-[var(--v2-primary)] focus:border-[var(--v2-primary)] text-[var(--v2-text-primary)]"
         style={{ borderRadius: 'var(--v2-radius-button)' }}
         required={field.required}
       >
@@ -173,7 +173,7 @@ const renderFieldInput = (
         placeholder={field.placeholder || `Enter ${formatFieldName(field.name).toLowerCase()}...`}
         required={field.required}
         rows={3}
-        className="w-full px-2.5 py-1.5 border text-xs focus:outline-none focus:ring-1 bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600 focus:ring-indigo-500 focus:border-indigo-500 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500"
+        className="w-full px-2.5 py-1.5 border text-xs focus:outline-none focus:ring-1 bg-[var(--v2-surface)] border-[var(--v2-border)] focus:ring-[var(--v2-primary)] focus:border-[var(--v2-primary)] text-[var(--v2-text-primary)] placeholder-[var(--v2-text-muted)]"
         style={{ borderRadius: 'var(--v2-radius-button)' }}
       />
     )
@@ -193,7 +193,7 @@ const renderFieldInput = (
         onChange={(e) => onChange(field.name, e.target.value)}
         placeholder={field.placeholder || `Enter ${formatFieldName(field.name).toLowerCase()}...`}
         required={field.required}
-        className="w-full px-2.5 py-1.5 border text-xs focus:outline-none focus:ring-1 bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600 focus:ring-indigo-500 focus:border-indigo-500 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500"
+        className="w-full px-2.5 py-1.5 border text-xs focus:outline-none focus:ring-1 bg-[var(--v2-surface)] border-[var(--v2-border)] focus:ring-[var(--v2-primary)] focus:border-[var(--v2-primary)] text-[var(--v2-text-primary)] placeholder-[var(--v2-text-muted)]"
         style={{ borderRadius: 'var(--v2-radius-button)' }}
       />
     )
@@ -363,7 +363,7 @@ export function AgentInputFields({
         <div key={field.name}>
           <label className="block">
             <div className="flex items-center gap-1.5 mb-1.5">
-              <span className="text-xs font-medium text-gray-700 dark:text-gray-300">
+              <span className="text-xs font-medium text-[var(--v2-text-primary)]">
                 {field.label || formatFieldName(field.name)}
               </span>
               {(field.required || allRequired) && (
@@ -373,7 +373,7 @@ export function AgentInputFields({
 
             {/* Description */}
             {field.description && (
-              <p className="text-[10px] text-gray-500 dark:text-gray-400 mb-1.5">
+              <p className="text-[10px] text-[var(--v2-text-secondary)] mb-1.5">
                 {field.description}
               </p>
             )}
@@ -395,8 +395,8 @@ export function AgentInputFields({
 
       {/* Render grouped fields by step */}
       {sortedStepIds.map((stepId) => (
-        <div key={stepId} className="border border-gray-200 dark:border-gray-700 rounded-lg p-4 bg-gray-50 dark:bg-gray-800/50">
-          <h4 className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-3 capitalize">
+        <div key={stepId} className="border border-[var(--v2-border)] rounded-lg p-4 bg-[var(--v2-bg)]">
+          <h4 className="text-sm font-semibold text-[var(--v2-text-primary)] mb-3 capitalize">
             {stepId.replace('step', 'Step ')}
           </h4>
           <div className="space-y-3">
@@ -404,7 +404,7 @@ export function AgentInputFields({
               <div key={field.name}>
           <label className="block">
             <div className="flex items-center gap-1.5 mb-1.5">
-              <span className="text-xs font-medium text-gray-700 dark:text-gray-300">
+              <span className="text-xs font-medium text-[var(--v2-text-primary)]">
                 {field.label || formatFieldName(field.name)}
               </span>
               {(field.required || allRequired) && (
@@ -414,7 +414,7 @@ export function AgentInputFields({
 
             {/* Description */}
             {field.description && (
-              <p className="text-[10px] text-gray-500 dark:text-gray-400 mb-1.5">
+              <p className="text-[10px] text-[var(--v2-text-secondary)] mb-1.5">
                 {field.description}
               </p>
             )}

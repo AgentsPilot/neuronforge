@@ -773,7 +773,7 @@ export class ExecutionContext implements IExecutionContext {
 
   /**
    * Find matching key with smart field name resolution
-   * Tries multiple naming conventions: snake_case, camelCase, PascalCase, lowercase
+   * Tries multiple naming conventions: snake_case, camelCase, PascalCase, lowercase, space-separated
    */
   private findMatchingKey(obj: Record<string, any>, requestedKey: string): string | null {
     const keys = Object.keys(obj);
@@ -797,7 +797,15 @@ export class ExecutionContext implements IExecutionContext {
     const camelToSnake = (str: string) =>
       str.replace(/[A-Z]/g, letter => `_${letter.toLowerCase()}`);
 
-    // If requested key is snake_case, try camelCase version
+    // Convert snake_case to "Title Case" (space-separated)
+    const snakeToSpaced = (str: string) =>
+      str.split('_').map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()).join(' ');
+
+    // Convert space-separated to snake_case
+    const spacedToSnake = (str: string) =>
+      str.toLowerCase().replace(/\s+/g, '_');
+
+    // If requested key is snake_case, try various conversions
     if (requestedKey.includes('_')) {
       const camelVersion = snakeToCamel(requestedKey);
       if (keys.includes(camelVersion)) {
@@ -807,6 +815,16 @@ export class ExecutionContext implements IExecutionContext {
       const pascalVersion = camelVersion.charAt(0).toUpperCase() + camelVersion.slice(1);
       if (keys.includes(pascalVersion)) {
         return pascalVersion;
+      }
+      // Also try space-separated "Title Case" (e.g., "days_ahead" → "Days Ahead")
+      const spacedVersion = snakeToSpaced(requestedKey);
+      if (keys.includes(spacedVersion)) {
+        return spacedVersion;
+      }
+      // Try case-insensitive match on spaced version
+      const spacedMatch = keys.find(k => k.toLowerCase() === spacedVersion.toLowerCase());
+      if (spacedMatch) {
+        return spacedMatch;
       }
     }
 
@@ -820,6 +838,14 @@ export class ExecutionContext implements IExecutionContext {
       const lowerVersion = requestedKey.toLowerCase();
       if (keys.includes(lowerVersion)) {
         return lowerVersion;
+      }
+    }
+
+    // If key contains spaces, try snake_case conversion (e.g., "Days Ahead" → "days_ahead")
+    if (requestedKey.includes(' ')) {
+      const snakeVersion = spacedToSnake(requestedKey);
+      if (keys.includes(snakeVersion)) {
+        return snakeVersion;
       }
     }
 

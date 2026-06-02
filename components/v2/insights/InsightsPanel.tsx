@@ -215,7 +215,7 @@ export function InsightsPanel({ agentId, executionId, compact = false }: Insight
         <div className="flex items-center gap-2">
           <Lightbulb className="w-5 h-5 text-[var(--v2-primary)]" />
           <h3 className="text-base font-semibold text-[var(--v2-text-primary)]">
-            Business Insights
+            Insights
           </h3>
           {insights.length > 0 && (
             <span className="text-xs px-2 py-0.5 bg-[var(--v2-primary)] text-white rounded-full font-medium">

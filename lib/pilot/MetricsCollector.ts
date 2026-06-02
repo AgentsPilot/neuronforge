@@ -52,6 +52,8 @@ export interface ExecutionMetrics {
   failed_step_count: number;
   duration_ms?: number;
   step_metrics?: StepMetric[];  // NEW: Per-step breakdown for business intelligence
+  time_saved_seconds?: number;  // ROI: Estimated time saved (total_items × manual_time_per_item_seconds)
+  manual_time_per_item_seconds?: number;  // ROI: The rate used for calculation (from agent config)
 }
 
 export class MetricsCollector {
@@ -91,11 +93,19 @@ export class MetricsCollector {
     }, 'Starting metrics collection from workflow_step_executions table');
 
     // ✅ Query workflow_step_executions table for step metrics
-    const { data: stepExecutions, error } = await this.supabase
-      .from('workflow_step_executions')
-      .select('step_id, step_name, plugin, action, item_count, status, execution_metadata')
-      .eq('workflow_execution_id', executionId)
-      .order('created_at', { ascending: true });
+    const [{ data: stepExecutions, error }, { data: agentData }] = await Promise.all([
+      this.supabase
+        .from('workflow_step_executions')
+        .select('step_id, step_name, plugin, action, item_count, status, execution_metadata')
+        .eq('workflow_execution_id', executionId)
+        .order('created_at', { ascending: true }),
+      // Also fetch agent's manual_time_per_item_seconds + agent_config for ROI calculation
+      this.supabase
+        .from('agents')
+        .select('manual_time_per_item_seconds, agent_config')
+        .eq('id', agentId)
+        .single()
+    ]);
 
     if (error) {
       logger.error({ err: error, executionId }, 'Failed to query workflow_step_executions');
@@ -105,6 +115,7 @@ export class MetricsCollector {
     logger.debug({
       executionId,
       stepCount: stepExecutions?.length || 0,
+      manualTimePerItem: agentData?.manual_time_per_item_seconds,
     }, 'Fetched step executions from database');
 
     const metrics: ExecutionMetrics = {
@@ -114,6 +125,7 @@ export class MetricsCollector {
       has_empty_results: false,
       failed_step_count: 0,
       step_metrics: [],
+      manual_time_per_item_seconds: agentData?.manual_time_per_item_seconds || undefined,
     };
 
     // Aggregate metrics from step executions
@@ -181,6 +193,35 @@ export class MetricsCollector {
       metrics.duration_ms = context.totalExecutionTime;
     }
 
+    // Calculate time_saved_seconds for ROI
+    // Check if this is a bulk workflow (total_manual_time_seconds in agent_config)
+    const agentConfig = agentData?.agent_config as Record<string, any>;
+    const roiEstimate = agentConfig?.roi_estimate;
+    const isBulkWorkflow = roiEstimate?.is_bulk_workflow;
+    const totalManualTimeSeconds = roiEstimate?.total_manual_time_seconds;
+
+    if (isBulkWorkflow && totalManualTimeSeconds) {
+      // Bulk workflow: use fixed total time regardless of item count
+      metrics.time_saved_seconds = totalManualTimeSeconds;
+      logger.info({
+        executionId,
+        totalItems: metrics.total_items,
+        totalManualTimeSeconds,
+        timeSavedSeconds: metrics.time_saved_seconds,
+        workflowType: 'bulk',
+      }, '💰 ROI calculated: time_saved_seconds (bulk workflow)');
+    } else if (metrics.manual_time_per_item_seconds && metrics.manual_time_per_item_seconds > 0 && metrics.total_items > 0) {
+      // Per-item workflow: multiply items by time per item
+      metrics.time_saved_seconds = metrics.total_items * metrics.manual_time_per_item_seconds;
+      logger.info({
+        executionId,
+        totalItems: metrics.total_items,
+        manualTimePerItem: metrics.manual_time_per_item_seconds,
+        timeSavedSeconds: metrics.time_saved_seconds,
+        workflowType: 'per-item',
+      }, '💰 ROI calculated: time_saved_seconds (per-item workflow)');
+    }
+
     // Store aggregated metrics in execution_metrics table
     await this.storeMetrics(executionId, agentId, metrics);
 
@@ -242,7 +283,9 @@ export class MetricsCollector {
           field_names: metrics.field_names,
           has_empty_results: metrics.has_empty_results,
           failed_step_count: metrics.failed_step_count,
-          step_metrics: metrics.step_metrics || [],  // NEW: Per-step breakdown
+          step_metrics: metrics.step_metrics || [],  // Per-step breakdown
+          time_saved_seconds: metrics.time_saved_seconds || null,  // ROI: calculated time saved
+          manual_time_per_item_seconds: metrics.manual_time_per_item_seconds || null,  // ROI: rate used
         });
 
       if (error) {

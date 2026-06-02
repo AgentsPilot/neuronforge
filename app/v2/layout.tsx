@@ -5,27 +5,13 @@
 
 import { V2ThemeProvider } from '@/lib/design-system-v2'
 import { V2Footer } from '@/components/v2/Footer'
-import { HelpBot } from '@/components/v2/HelpBot'
-import { usePathname } from 'next/navigation'
 import './globals-v2.css'
-
-// Pages that have their own HelpBot implementation should not show the global one
-const PAGES_WITH_OWN_HELPBOT = [
-  '/v2/agents/[id]/run',
-  '/v2/sandbox/[agentId]',
-]
 
 export default function V2RootLayout({
   children,
 }: {
   children: React.ReactNode
 }) {
-  const pathname = usePathname()
-
-  // Check if current page has its own HelpBot
-  // Match patterns like /v2/agents/123/run or /v2/sandbox/456
-  const hasOwnHelpBot = pathname?.match(/\/v2\/agents\/[^/]+\/run/) || pathname?.match(/\/v2\/sandbox\/[^/]+/)
-
   return (
     <V2ThemeProvider>
       <div className="min-h-screen bg-[var(--v2-bg)] dark:bg-slate-900">
@@ -35,9 +21,6 @@ export default function V2RootLayout({
           {/* Global Footer */}
           <V2Footer />
         </div>
-
-        {/* Global Help Bot - only show on pages without their own HelpBot */}
-        {!hasOwnHelpBot && <HelpBot />}
       </div>
     </V2ThemeProvider>
   )

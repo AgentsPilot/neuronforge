@@ -19,7 +19,7 @@ import { CostDetector } from './detectors/CostDetector';
 import { AutomationDetector } from './detectors/AutomationDetector';
 import { ReliabilityDetector } from './detectors/ReliabilityDetector';
 import { TrendAnalyzer } from './TrendAnalyzer';
-import { BusinessInsightGenerator, type BusinessInsight } from './BusinessInsightGenerator';
+import { BusinessInsightGenerator, type BusinessInsight, type ROIMetrics } from './BusinessInsightGenerator';
 
 export class InsightAnalyzer {
   private dataQualityDetector: DataQualityDetector;
@@ -44,6 +44,7 @@ export class InsightAnalyzer {
   async analyze(agentId: string, limit: number = 20): Promise<{
     patterns: DetectedPattern[];
     businessInsights: BusinessInsight[];
+    roiMetrics?: ROIMetrics;
     confidence_mode: ConfidenceMode;
     execution_count: number;
   }> {
@@ -89,12 +90,13 @@ export class InsightAnalyzer {
 
     // 6. Generate unified insights using BusinessInsightGenerator (from execution #1)
     let businessInsights: BusinessInsight[] = [];
+    let roiMetrics: ROIMetrics | undefined;
 
     try {
       // Fetch agent details for workflow context
       const { data: agent } = await this.supabase
         .from('agents')
-        .select('id, agent_name, description, workflow_purpose, created_from_prompt')
+        .select('*')
         .eq('id', agentId)
         .single();
 
@@ -112,38 +114,77 @@ export class InsightAnalyzer {
 
       // Generate insights based on data availability
       if (executionSummaries.length >= 7) {
-        // 7+ executions: Use trend analysis + detected patterns
+        // 7+ executions: Use trend analysis + 7-run progression + detected patterns
         const trendAnalyzer = new TrendAnalyzer(this.supabase);
         const trends = await trendAnalyzer.analyzeTrends(agentId);
 
         if (trends) {
-          // Fetch recent metrics for LLM context
-          const { data: recentMetrics } = await this.supabase
+          // Fetch last 7 runs for progression analysis
+          const { data: last7Runs } = await this.supabase
             .from('execution_metrics')
-            .select('*')
+            .select('execution_id, total_items, duration_ms, items_by_field, executed_at')
             .eq('agent_id', agentId)
             .order('executed_at', { ascending: false })
-            .limit(30);
+            .limit(7);
 
-          if (recentMetrics && recentMetrics.length > 0) {
-            businessInsights = await businessGenerator.generate(
+          // Fetch last 30 days for historical baseline
+          const thirtyDaysAgo = new Date();
+          thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+          const { data: historicalStats } = await this.supabase
+            .from('execution_metrics')
+            .select('total_items, duration_ms')
+            .eq('agent_id', agentId)
+            .gte('executed_at', thirtyDaysAgo.toISOString())
+            .order('executed_at', { ascending: false });
+
+          if (last7Runs && last7Runs.length >= 2) {
+            // Import pattern detection helpers
+            const { detectPattern, calculateBaseline, isWithinRange, getTimeAgo } = await import('./PatternDetector');
+
+            // Calculate historical baseline
+            const historicalBaseline = calculateBaseline(historicalStats || []);
+
+            // Build progression context
+            const progressionContext = {
+              last7Runs: last7Runs.map(run => ({
+                total_items: run.total_items,
+                duration_ms: run.duration_ms,
+                field_counts: run.items_by_field || {},
+                executed_at: run.executed_at,
+                time_ago: getTimeAgo(run.executed_at),
+              })),
+              pattern: detectPattern(last7Runs as any),
+              historicalBaseline: {
+                avg_items: historicalBaseline.avgItems,
+                typical_range: historicalBaseline.range,
+                is_current_within_range: isWithinRange(last7Runs[0] as any, historicalBaseline),
+              },
+            };
+
+            const result = await businessGenerator.generate(
               agent,
               trends,
-              recentMetrics as any,
+              progressionContext,  // Pass 7-run progression context instead of flat metrics
               sortedPatterns  // Pass detected technical patterns
             );
 
-            console.log(`[InsightAnalyzer] Generated ${businessInsights.length} insights (trends + patterns) for agent ${agentId}`);
+            businessInsights = result.insights;
+            roiMetrics = result.roiMetrics;
+
+            console.log(`[InsightAnalyzer] Generated ${businessInsights.length} insights (trends + 7-run progression) for agent ${agentId}`);
           }
         }
       } else {
         // 1-6 executions: Use only detected patterns (no trends yet)
-        businessInsights = await businessGenerator.generateFromPatterns(
+        const result = await businessGenerator.generateFromPatterns(
           agent,
           sortedPatterns,
           confidence_mode,
           executionSummaries.length
         );
+
+        businessInsights = result.insights;
+        roiMetrics = result.roiMetrics;
 
         console.log(`[InsightAnalyzer] Generated ${businessInsights.length} insights (patterns only) for agent ${agentId}`);
       }
@@ -155,6 +196,7 @@ export class InsightAnalyzer {
     return {
       patterns: sortedPatterns,
       businessInsights,
+      roiMetrics,
       confidence_mode,
       execution_count: executionSummaries.length,
     };

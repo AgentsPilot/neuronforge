@@ -14,7 +14,7 @@ export class InsightRepository {
   /**
    * Create a new insight
    */
-  async create(insight: Omit<ExecutionInsight, 'id' | 'created_at' | 'updated_at'>): Promise<ExecutionInsight | null> {
+  async create(insight: Omit<ExecutionInsight, 'id' | 'created_at' | 'updated_at' | 'confidence_mode'>): Promise<ExecutionInsight | null> {
     const { data, error } = await this.supabase
       .from('execution_insights')
       .insert({
@@ -24,7 +24,7 @@ export class InsightRepository {
         insight_type: insight.insight_type,
         category: insight.category,
         severity: insight.severity,
-        confidence: insight.confidence,
+        confidence: insight.confidence,  // Now always numeric
         title: insight.title,
         description: insight.description,
         business_impact: insight.business_impact,
@@ -35,6 +35,11 @@ export class InsightRepository {
         snoozed_until: insight.snoozed_until,
         viewed_at: insight.viewed_at,
         applied_at: insight.applied_at,
+        // Business value metrics
+        time_saved_hours_per_week: insight.time_saved_hours_per_week,
+        cost_saved_usd_per_week: insight.cost_saved_usd_per_week,
+        revenue_at_risk_usd: insight.revenue_at_risk_usd,
+        automation_potential_percentage: insight.automation_potential_percentage,
       })
       .select()
       .single();
@@ -297,15 +302,20 @@ export class InsightRepository {
 
   /**
    * Find existing insight by category (for deduplication)
-   * Looks for insights in the same category (e.g., 'growth', 'data_quality') created within the specified number of days
+   * Looks for insights in the same category created within the specified number of days
+   *
+   * Categories:
+   * - 'data_insight': Data quality problems (empty results, malformed data, missing fields)
+   * - 'business_insight': Business intelligence (volume trends, growth opportunities, anomalies)
+   * - 'technical_insight': System issues (failures, performance, costs, scheduling)
    *
    * Note: We query by 'category' not 'insight_type' because the LLM may generate different
-   * specific types (scale_opportunity, performance_degradation, reliability_risk) within the same category.
+   * specific types (volume_trend, scale_opportunity, operational_anomaly) within the same category.
    * This ensures cache hits work correctly.
    */
   async findExistingInsight(
     agentId: string,
-    category: string,  // Changed from insightType - now queries by category
+    category: string,  // 'data_insight' | 'business_insight' | 'technical_insight'
     withinDays: number = 7
   ): Promise<ExecutionInsight | null> {
     const cutoffDate = new Date();
@@ -404,5 +414,108 @@ export class InsightRepository {
     }
 
     return true;
+  }
+
+  /**
+   * Link an execution insight run to its corresponding insight
+   * Updates the insight_id field to connect historical run data to active insights
+   */
+  async linkInsightRun(executionId: string, title: string, insightId: string): Promise<boolean> {
+    try {
+      console.log(`[InsightRepository] Linking insight_run: execution=${executionId}, title="${title}", insight=${insightId}`);
+
+      const { data, error, count } = await this.supabase
+        .from('execution_insight_runs')
+        .update({ insight_id: insightId })
+        .eq('execution_id', executionId)
+        .eq('title', title)
+        .is('insight_id', null) // Only update if not already linked
+        .select();
+
+      if (error) {
+        console.error('[InsightRepository] Failed to link insight run:', error);
+        return false;
+      }
+
+      if (!data || data.length === 0) {
+        console.warn(`[InsightRepository] No matching insight_run found to link (execution=${executionId}, title="${title}")`);
+        return false;
+      }
+
+      console.log(`[InsightRepository] Successfully linked ${data.length} insight_run(s) to insight ${insightId}`);
+      return true;
+    } catch (error) {
+      console.error('[InsightRepository] Failed to link insight run:', error);
+      return false;
+    }
+  }
+
+  /**
+   * Create an execution insight run record
+   * Stores per-execution insight snapshot to execution_insight_runs table
+   * This table keeps a historical log of every run's insights
+   */
+  async createInsightRun(params: {
+    insight_id: string | null;
+    execution_id: string;
+    agent_id: string;
+    user_id: string;
+    title: string;
+    description: string;
+    business_impact: string;
+    recommendation: string;
+    severity: string;
+    confidence: number;
+    this_run_count?: number;
+    last_run_count?: number;
+    input_tokens?: number;
+    output_tokens?: number;
+    total_tokens?: number;
+    model?: string;
+    latency_ms?: number;
+    llm_called?: boolean;
+    cache_hit?: boolean;
+    time_saved_hours_per_week?: number;
+    cost_saved_usd_per_week?: number;
+    pattern_data?: any;
+  }): Promise<boolean> {
+    try {
+      const { error } = await this.supabase
+        .from('execution_insight_runs')
+        .insert({
+          insight_id: params.insight_id,
+          execution_id: params.execution_id,
+          agent_id: params.agent_id,
+          user_id: params.user_id,
+          title: params.title,
+          description: params.description,
+          business_impact: params.business_impact,
+          recommendation: params.recommendation,
+          severity: params.severity,
+          confidence: params.confidence.toString(), // Note: execution_insight_runs stores confidence as TEXT
+          this_run_count: params.this_run_count,
+          last_run_count: params.last_run_count,
+          input_tokens: params.input_tokens,
+          output_tokens: params.output_tokens,
+          total_tokens: params.total_tokens,
+          model: params.model,
+          latency_ms: params.latency_ms,
+          llm_called: params.llm_called ?? true,
+          cache_hit: params.cache_hit ?? false,
+          time_saved_hours_per_week: params.time_saved_hours_per_week,
+          cost_saved_usd_per_week: params.cost_saved_usd_per_week,
+          pattern_data: params.pattern_data,
+        });
+
+      if (error) {
+        console.error('[InsightRepository] Failed to create insight run:', error);
+        return false;
+      }
+
+      return true;
+    } catch (error) {
+      console.error('[InsightRepository] Failed to create insight run:', error);
+      return false;
+    }
   }
 }
