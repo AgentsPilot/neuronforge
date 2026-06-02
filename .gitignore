@@ -48,3 +48,6 @@ output/e2e-test-results/e2e-test-report.json
 
 # simulator output
 simulators/**/output/
+
+# vibeyard
+.vibeyardignore
