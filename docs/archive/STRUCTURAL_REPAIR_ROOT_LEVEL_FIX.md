@@ -272,11 +272,11 @@ Both validators now use **identical root-level priority logic**:
 
 This fix works in conjunction with:
 
-1. **Layer 1 Root-Level Array Priority** ([LAYER1_ROOT_LEVEL_ARRAY_PRIORITY.md](LAYER1_ROOT_LEVEL_ARRAY_PRIORITY.md))
+1. **Layer 1 Root-Level Array Priority** ([LAYER1_ROOT_LEVEL_ARRAY_PRIORITY.md](../Calibration/LAYER1_ROOT_LEVEL_ARRAY_PRIORITY.md))
    - EnhancedSchemaValidator inference logic
    - Same priority lists for consistent behavior
 
-2. **Layer 2 Nested Field Detection** ([LAYER2_NESTED_FIELD_DETECTION.md](LAYER2_NESTED_FIELD_DETECTION.md))
+2. **Layer 2 Nested Field Detection** ([LAYER2_NESTED_FIELD_DETECTION.md](../Calibration/LAYER2_NESTED_FIELD_DETECTION.md))
    - Catches cases where field exists but at wrong level
    - Provides secondary validation
 

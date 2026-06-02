@@ -1747,8 +1747,8 @@ INSERT INTO config (key, value, description) VALUES
    - [lib/services/](../../lib/services/) - Service layer
 
 2. **Documentation**
-   - [REPOSITORY_STRATEGY.md](./REPOSITORY_STRATEGY.md)
-   - [SUPABASE_CLIENTS.md](./SUPABASE_CLIENTS.md)
+   - [REPOSITORY_STRATEGY.md](../REPOSITORY_STRATEGY.md)
+   - [SUPABASE_CLIENTS.md](../SUPABASE_CLIENTS.md)
 
 ---
 

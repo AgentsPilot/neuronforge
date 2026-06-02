@@ -1,4 +1,7 @@
 /**
+ * @deprecated Unused/unrendered as of 2026-06-02 — superseded by the CalibrationSetup UI.
+ * Slated for removal pending sign-off. See docs/Calibration/CALIBRATION_OVERVIEW.md § Dead Code / Cleanup Backlog.
+ *
  * CalibrationQualityBadge - Display calibration quality score with visual indicator
  *
  * Shows quality score 0-100 with color-coded badge and key indicators

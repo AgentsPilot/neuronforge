@@ -1,4 +1,7 @@
 /**
+ * @deprecated Unused/unrendered as of 2026-06-02 — superseded by the CalibrationSetup UI.
+ * Slated for removal pending sign-off. See docs/Calibration/CALIBRATION_OVERVIEW.md § Dead Code / Cleanup Backlog.
+ *
  * WorkflowHealthCard - Display workflow complexity and calibration health metrics
  *
  * Shows complexity score, step breakdown, and calibration history

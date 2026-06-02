@@ -1,3 +1,7 @@
+/**
+ * @deprecated Unused/unrendered as of 2026-06-02 — superseded by the CalibrationSetup UI.
+ * Slated for removal pending sign-off. See docs/Calibration/CALIBRATION_OVERVIEW.md § Dead Code / Cleanup Backlog.
+ */
 'use client';
 
 // components/v2/calibration/RequirementCoverageCard.tsx

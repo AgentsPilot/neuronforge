@@ -1,3 +1,8 @@
+/**
+ * @deprecated Unused/unrendered as of 2026-06-02 — superseded by the CalibrationSetup UI
+ * (inline CalibrationStory). Slated for removal pending sign-off.
+ * See docs/Calibration/CALIBRATION_OVERVIEW.md § Dead Code / Cleanup Backlog.
+ */
 // components/v2/wizard/CalibrationStoryView.tsx
 // Story-driven calibration progress view for non-technical users
 // Shows agent "learning" and "healing" with friendly language

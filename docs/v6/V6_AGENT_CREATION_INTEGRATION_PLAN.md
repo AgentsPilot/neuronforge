@@ -1604,7 +1604,7 @@ Phase 2D: Polish
 ### 18.10 Related Documentation
 
 - `docs/INTENT_VALIDATION_USER_FLOW.md` - Complete user flow and UI mockups
-- `docs/shadow-critic-architecture.md` - 5-Layer detection concepts
+- `docs/Calibration/shadow-critic-architecture.md` - 5-Layer detection concepts
 
 ### 18.11 Review UI Section Mapping to Data Structures
 

@@ -2053,10 +2053,10 @@ new → viewed → applied/dismissed/snoozed
 
 ## 🔗 RELATED DOCUMENTS
 
-- [V6 Execution Guide](./V6_EXECUTION_GUIDE.md) - Current execution architecture
-- [V6 Declarative Architecture](./V6_DECLARATIVE_ARCHITECTURE.md) - DSL compiler design
-- [AIS Complete System Guide](./AIS_COMPLETE_SYSTEM_GUIDE.md) - AI Intelligence System
-- [Admin UI Reorganization](./ADMIN_UI_REORGANIZATION.md) - UI patterns
+- [V6 Execution Guide](../v6/V6_EXECUTION_GUIDE.md) - Current execution architecture
+- [V6 Declarative Architecture](../V6_DECLARATIVE_ARCHITECTURE.md) - DSL compiler design
+- [AIS Complete System Guide](../AIS_COMPLETE_SYSTEM_GUIDE.md) - AI Intelligence System
+- [Admin UI Reorganization](../ADMIN_UI_REORGANIZATION.md) - UI patterns
 
 ---
 

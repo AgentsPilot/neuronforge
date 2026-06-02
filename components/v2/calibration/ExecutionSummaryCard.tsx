@@ -1,4 +1,7 @@
 /**
+ * @deprecated Unused/unrendered as of 2026-06-02 — superseded by the CalibrationSetup UI.
+ * Slated for removal pending sign-off. See docs/Calibration/CALIBRATION_OVERVIEW.md § Dead Code / Cleanup Backlog.
+ *
  * ExecutionSummaryCard - Show what the workflow actually did during calibration
  *
  * Displays data sources accessed, data written, and processing statistics

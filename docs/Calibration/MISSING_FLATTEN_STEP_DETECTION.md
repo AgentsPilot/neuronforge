@@ -1,7 +1,7 @@
 # Missing Flatten Step Detection & Auto-Insertion
 
-> **Status**: 📋 Planned
-> **Last Updated**: 2026-04-23
+> **Status**: ✅ Implemented (logic lives in `MultiStepStructuralDetector`)
+> **Last Updated**: 2026-06-02
 
 ## Problem
 
