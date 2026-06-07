@@ -2090,7 +2090,19 @@ export function CalibrationSetup({
                   const itemsProcessed = session?.execution_summary?.items_processed || 0
                   const itemsDelivered = session?.execution_summary?.items_delivered || 0
                   const hasProcessedData = completedSteps > 0 && (itemsProcessed > 0 || itemsDelivered > 0)
-                  const hadNoDataToProcess = completedSteps > 0 && itemsProcessed === 0 && itemsDelivered === 0 && failedSteps === 0
+
+                  // P2: an empty run is NOT automatically "no data found". Distinguish:
+                  //  - genuinelyNoData: the data source itself returned nothing
+                  //    (legitimate for a monitor — e.g. no contracts ending) → benign.
+                  //  - dataFoundButNotProcessed: the data source returned items but
+                  //    none were processed/delivered → a processing FAILURE, not "no
+                  //    data". `failedSteps` can't be trusted here because scatter
+                  //    failures are swallowed (WP-10/WP-54) without incrementing it,
+                  //    so we key off what the data sources actually returned.
+                  const dataSourcesReturnedItems = session?.execution_summary?.data_sources_accessed?.some((s: any) => s.count > 0) || false
+                  const noItemsProcessed = completedSteps > 0 && itemsProcessed === 0 && itemsDelivered === 0
+                  const genuinelyNoData = noItemsProcessed && !dataSourcesReturnedItems
+                  const dataFoundButNotProcessed = noItemsProcessed && dataSourcesReturnedItems
 
                   // Calculate calibration quality score
                   const workflowSteps = agent.pilot_steps || agent.workflow_steps || []
@@ -2129,7 +2141,7 @@ export function CalibrationSetup({
                         </div>
                       )}
 
-                      {hadNoDataToProcess && (
+                      {genuinelyNoData && (
                         <div className="mb-4">
                           <div className="p-3 bg-yellow-50 dark:bg-yellow-950/30 border border-yellow-200 dark:border-yellow-800 rounded-lg">
                             <div className="flex items-start gap-2">
@@ -2147,8 +2159,29 @@ export function CalibrationSetup({
                         </div>
                       )}
 
+                      {/* P2: data WAS found but none of it made it through — a
+                          processing failure, not an empty data source. Never frame
+                          this as a benign "ran successfully". */}
+                      {dataFoundButNotProcessed && (
+                        <div className="mb-4">
+                          <div className="p-3 bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800 rounded-lg">
+                            <div className="flex items-start gap-2">
+                              <AlertCircle className="w-4 h-4 text-red-600 dark:text-red-400 flex-shrink-0 mt-0.5" />
+                              <div>
+                                <p className="text-sm text-red-900 dark:text-red-100 font-medium mb-1">
+                                  Found data, but couldn&apos;t process any of it
+                                </p>
+                                <p className="text-sm text-red-900 dark:text-red-100">
+                                  Your data source returned {itemsProcessed > 0 ? itemsProcessed : 'items'}, but none reached the end of the workflow. This usually means a step that reads or transforms each item is misconfigured — not that there was no data. Re-run after reviewing the per-item steps.
+                                </p>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
                       {/* Case 3: No session data available - Compact */}
-                      {!hasProcessedData && !hadNoDataToProcess && (
+                      {!hasProcessedData && !genuinelyNoData && !dataFoundButNotProcessed && (
                         <div className="mb-4 p-3 bg-[var(--v2-surface-hover)] border border-[var(--v2-border)] rounded-lg">
                           <p className="text-xs text-[var(--v2-text-secondary)]">
                             Your workflow completed the test without any issues and is ready for production.
