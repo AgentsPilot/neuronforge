@@ -4,6 +4,8 @@
  * Centralized feature flag management for gradual rollouts and A/B testing.
  */
 
+import { clientLogger } from '@/lib/logger/client';
+
 /**
  * Parse a boolean feature flag from environment variable
  *
@@ -41,7 +43,7 @@ function parseBooleanFlag(flag: string | undefined, defaultValue: boolean = fals
  */
 export function useThreadBasedAgentCreation(): boolean {
   const flag = process.env.NEXT_PUBLIC_USE_THREAD_BASED_AGENT_CREATION;
-  console.log("Feature Flag: NEXT_PUBLIC_USE_THREAD_BASED_AGENT_CREATION=", flag || 'none');
+  clientLogger.debug({ flag: 'NEXT_PUBLIC_USE_THREAD_BASED_AGENT_CREATION', value: flag ?? null }, 'Feature flag evaluated');
   return parseBooleanFlag(flag);
 }
 
@@ -61,7 +63,7 @@ export function useThreadBasedAgentCreation(): boolean {
  */
 export function useNewAgentCreationUI(): boolean {
   const flag = process.env.NEXT_PUBLIC_USE_NEW_AGENT_CREATION_UI;
-  console.log("Feature Flag: NEXT_PUBLIC_USE_NEW_AGENT_CREATION_UI=", flag || 'none');
+  clientLogger.debug({ flag: 'NEXT_PUBLIC_USE_NEW_AGENT_CREATION_UI', value: flag ?? null }, 'Feature flag evaluated');
   return parseBooleanFlag(flag);
 }
 
@@ -76,7 +78,7 @@ export function useNewAgentCreationUI(): boolean {
  */
 export function useV6AgentGeneration(): boolean {
   const flag = process.env.NEXT_PUBLIC_USE_V6_AGENT_GENERATION;
-  console.log("Feature Flag: NEXT_PUBLIC_USE_V6_AGENT_GENERATION=", flag || 'none');
+  clientLogger.debug({ flag: 'NEXT_PUBLIC_USE_V6_AGENT_GENERATION', value: flag ?? null }, 'Feature flag evaluated');
   return parseBooleanFlag(flag);
 }
 
@@ -97,9 +99,25 @@ export function useV6AgentGeneration(): boolean {
  */
 export function useV6ReviewMode(): boolean {
   const flag = process.env.NEXT_PUBLIC_USE_V6_REVIEW_MODE;
-  console.log("Feature Flag: NEXT_PUBLIC_USE_V6_REVIEW_MODE=", flag || 'none (default: true)');
+  clientLogger.debug({ flag: 'NEXT_PUBLIC_USE_V6_REVIEW_MODE', value: flag ?? null, default: true }, 'Feature flag evaluated');
   // Default to TRUE - review mode is enabled by default
   return parseBooleanFlag(flag, true);
+}
+
+/**
+ * Show the "Run Calibration" entry on the agent detail page.
+ *
+ * Temporary: calibration is being phased out as a user-facing surface, so the
+ * default is OFF — the hidden state is the intended long-term state. Opt in via
+ * NEXT_PUBLIC_SHOW_CALIBRATION_BUTTON=true for testing/diagnosis. The button
+ * navigates to /v2/sandbox/[agentId], which hosts the batch-calibration flow.
+ *
+ * @returns {boolean} True if the calibration entry should be shown
+ */
+export function useCalibrationButton(): boolean {
+  const flag = process.env.NEXT_PUBLIC_SHOW_CALIBRATION_BUTTON;
+  clientLogger.debug({ flag: 'NEXT_PUBLIC_SHOW_CALIBRATION_BUTTON', value: flag ?? null, default: false }, 'Feature flag evaluated');
+  return parseBooleanFlag(flag, false);
 }
 
 // Retired 2026-05-20 (P6): NEXT_PUBLIC_USE_V6_PIPELINE_A flag + useV6PipelineA()

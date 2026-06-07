@@ -21,7 +21,16 @@ import { CalibrationHistoryRepository } from '@/lib/repositories/CalibrationHist
 import { acquireLock, releaseLock } from '@/lib/utils/distributedLock';
 import { createLogger } from '@/lib/logger';
 import type { CollectedIssue } from '@/lib/pilot/types';
-import type { Agent } from '@/types/agent';
+// NOTE: this route historically imported `Agent` from `@/types/agent`, a module
+// that never existed — so the import resolved to `any`, which the rest of the
+// route relies on. It accesses raw workflow-step fields (`.config`, `.scatter`,
+// `.step_id`, `.operation`) and passes `agent` to both pilot-typed and
+// repository-typed signatures; pinning it to either concrete `Agent` interface
+// surfaces ~90+ pre-existing type-debt errors across this route and the shared
+// `WorkflowStep` type. Keeping it permissive and intentional (documented) until
+// that broader typing debt is addressed as its own task.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type Agent = any;
 
 const logger = createLogger({ module: 'BatchCalibrationAPI', service: 'api' });
 
@@ -2284,7 +2293,7 @@ export async function POST(req: NextRequest) {
 
               // Get plugin definition to understand expected parameters
               const pluginDef = pluginManager.getPluginDefinition(targetStep.plugin);
-              const actionDef = pluginDef?.actions?.find((a: any) => a.name === targetStep.action);
+              const actionDef = (pluginDef?.actions as any[] | undefined)?.find((a: any) => a.name === targetStep.action);
 
               if (actionDef && Array.isArray(actionDef.parameters)) {
                 // Find which required parameters are missing
@@ -2565,7 +2574,7 @@ export async function POST(req: NextRequest) {
         let producerStepId: string | null = null;
         let producerStepIndex = -1;
 
-        const currentStepIndex = allSteps.findIndex(s => (s.step_id || s.id) === stepId);
+        const currentStepIndex = allSteps.findIndex((s: any) => (s.step_id || s.id) === stepId);
 
         for (let i = 0; i < currentStepIndex; i++) {
           const prevStep = allSteps[i];
@@ -2578,7 +2587,12 @@ export async function POST(req: NextRequest) {
 
         // If we found a producer step, create auto-fix to rewrite field reference
         if (producerStepId) {
-          const newIssue: CalibrationIssue = {
+          // NOTE: a dedicated `CalibrationIssue` type was never defined in the
+          // codebase; this richer issue shape (sessionId/issueType/impact/…) is
+          // pushed to the loosely-typed `iterationIssues` collection. Typed as
+          // `any` deliberately — the consumers below read only id /
+          // autoRepairAvailable / autoRepairProposal / requiresUserInput.
+          const newIssue: any = {
             id: crypto.randomUUID(),
             sessionId,
             agentId,
@@ -3573,7 +3587,7 @@ export async function POST(req: NextRequest) {
 
                       // Create a transform step that converts fields object to values 2D array
                       // Build the transformation expression that maps each item to an array of values
-                      const transformExpression = `[${fieldValues.map(path => {
+                      const transformExpression = `[${(fieldValues as string[]).map((path) => {
                         // Extract the field path (e.g., "high_value_items.date" → "item.date")
                         const fieldPath = path.replace(`${inputVariable}.`, 'item.');
                         return fieldPath;
@@ -3872,17 +3886,25 @@ export async function POST(req: NextRequest) {
           }, 'Semantic validation: workflow produced no output despite processing items');
 
           await sessionRepo.update(sessionId, {
-            status: 'needs_review',
+            // 'needs_review' is a calibration_history status, NOT a session status.
+            // The session "needs user action" state is 'awaiting_fixes' (matches
+            // the main completed-with-issues path); 'needs_review' isn't in the
+            // CalibrationSession status union and would risk a DB CHECK violation.
+            status: 'awaiting_fixes',
             execution_id: finalResult.executionId,
             completed_steps: finalResult.stepsCompleted,
             failed_steps: finalResult.stepsFailed,
             skipped_steps: finalResult.stepsSkipped,
-            issues_found: allIssuesForUI,
+            // The session column is `issues` (see create()); `issues_found` was a
+            // non-existent field that would have been dropped/rejected at write.
+            issues: allIssuesForUI,
             execution_summary: finalResult.execution_summary || null
           });
 
           return NextResponse.json({
-            success: true,
+            // P1a: needs-review outcome must not report success:true (status was
+            // already 'needs_review' below; success was inconsistent with it).
+            success: false,
             sessionId,
             executionId: finalResult.executionId,
             autoCalibration: {
@@ -4070,6 +4092,7 @@ export async function POST(req: NextRequest) {
 
       return NextResponse.json({
         success: true,
+        status: 'success',
         sessionId,
         executionId: finalResult.executionId,
         autoCalibration: {
@@ -4212,16 +4235,27 @@ export async function POST(req: NextRequest) {
     };
 
     // 11. Return results
+    // P1a: report the real outcome. This branch only runs when there ARE issues
+    // (calibrationStatus is 'needs_review' or 'failed'), so `success` must be
+    // false and the explicit `status` is surfaced for the client to key off —
+    // never report a needs-review/failed run as a success.
     return NextResponse.json({
-      success: true,
+      success: false,
+      status: calibrationStatus,
       sessionId,
       executionId: finalResult.executionId,
       autoCalibration: {
         iterations: loopIteration,
         autoFixesApplied,
-        message: autoFixesApplied > 0
-          ? `We took care of ${autoFixesApplied} thing${autoFixesApplied === 1 ? '' : 's'} for you while testing your workflow.`
-          : 'Everything looked good while we tested.'
+        // P1b: message is critical-aware, not fix-count-only. A run with 0 fixes
+        // and open critical issues must never say "everything looked good".
+        message: summary.critical > 0
+          ? (autoFixesApplied > 0
+              ? `We fixed ${autoFixesApplied} thing${autoFixesApplied === 1 ? '' : 's'} automatically, but ${summary.critical} issue${summary.critical === 1 ? '' : 's'} still need${summary.critical === 1 ? 's' : ''} your attention before this agent is ready.`
+              : `We found ${summary.critical} issue${summary.critical === 1 ? '' : 's'} that need${summary.critical === 1 ? 's' : ''} your attention before this agent is ready.`)
+          : (autoFixesApplied > 0
+              ? `We took care of ${autoFixesApplied} thing${autoFixesApplied === 1 ? '' : 's'} for you${summary.warnings > 0 ? `, and there ${summary.warnings === 1 ? 'is' : 'are'} ${summary.warnings} suggestion${summary.warnings === 1 ? '' : 's'} to review` : ''}.`
+              : `We found ${summary.total} suggestion${summary.total === 1 ? '' : 's'} to review before this agent is ready.`)
       },
       issues: userFacingIssues,
       summary: {

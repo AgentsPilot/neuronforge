@@ -779,27 +779,36 @@ export function CalibrationSetup({
     }
   }
 
-  // Separate critical issues from improvements
+  // Separate critical issues from improvements.
+  //
+  // P1c fix: these filters previously keyed off a STALE raw-issue schema
+  // (`issue.requiresUserInput`, `issue.category === 'parameter_error'`, …). The
+  // API now sends `UserFacingIssue` objects (lib/pilot/shadow/userFacing.ts),
+  // which carry NONE of those fields — only `severity` ('must_fix' |
+  // 'will_auto_fix' | 'heads_up') and a different `category` vocabulary. The old
+  // predicate therefore dropped EVERY issue (`requiresUserInput` is always
+  // undefined), so `hasIssues` was always false and the all-green success story
+  // rendered on every completed calibration — even with open critical failures.
+  //
+  // Trust the backend's own grouping instead: `issues.critical` are the blocking
+  // ('must_fix') issues and `issues.warnings` are heads-up suggestions.
+  // Silently auto-fixed issues are surfaced separately as `issues.autoRepairs`
+  // (severity 'will_auto_fix') and must not appear in either list here.
+  //
+  // NOTE on the `as string` casts: `IssueGroups` is *typed* as `CollectedIssue[]`
+  // (severity 'critical'|'high'|'medium'|'low') but at runtime holds the
+  // `UserFacingIssue` payload the API actually sends (severity 'must_fix'|
+  // 'will_auto_fix'|'heads_up'). The declared type therefore claims no overlap
+  // with 'will_auto_fix'. Casting to string keeps the (runtime-correct) guard
+  // until the prop type is migrated to `UserFacingIssue[]` (tracked separately).
   const criticalIssues = React.useMemo(() => {
     if (!issues) return []
-    return issues.critical.filter(issue => {
-      // NEVER show data_shape_mismatch - it's auto-fixed silently
-      if (issue.category === 'data_shape_mismatch') return false
-      if (!issue.requiresUserInput) return false
-      // Critical: parameter errors, logic errors, and configuration missing
-      return ['parameter_error', 'logic_error', 'configuration_missing'].includes(issue.category)
-    })
+    return issues.critical.filter(issue => (issue.severity as string) !== 'will_auto_fix')
   }, [issues])
 
   const improvements = React.useMemo(() => {
     if (!issues) return []
-    // Improvements: hardcode detections only (NOT data shape mismatches)
-    return [...issues.critical, ...issues.warnings].filter(issue => {
-      // NEVER show data_shape_mismatch - it's auto-fixed silently
-      if (issue.category === 'data_shape_mismatch') return false
-      if (!issue.requiresUserInput) return false
-      return issue.category === 'hardcode_detected'
-    })
+    return issues.warnings.filter(issue => (issue.severity as string) !== 'will_auto_fix')
   }, [issues])
 
   // Combined list for sequential fixing (critical first, then improvements)

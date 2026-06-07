@@ -1010,7 +1010,8 @@ export interface WorkflowExecutionResult {
 export interface CollectedIssue {
   id: string; // uuid
   category: 'parameter_error' | 'hardcode_detected' | 'data_shape_mismatch' |
-            'logic_error' | 'execution_error' | 'data_unavailable';
+            'logic_error' | 'execution_error' | 'data_unavailable' |
+            'configuration_missing';
   severity: 'critical' | 'high' | 'medium' | 'low';
 
   // Affected steps
