@@ -42,6 +42,21 @@ export abstract class GoogleBasePluginExecutor extends BasePluginExecutor {
 
     // Check for permission errors
     if (error.message?.includes('403') || error.message?.includes('forbidden')) {
+      // Google returns 403 for two UNRELATED reasons: a genuine permission
+      // problem, OR the API being disabled for the Cloud project
+      // (reason: SERVICE_DISABLED). They need different fixes — telling the user
+      // to "request access from the owner" when the API simply isn't enabled
+      // sends them down the wrong path (the actual fix is enabling the API in the
+      // Google Cloud console). Distinguish them by the API's own reason/message.
+      const msg = error.message || '';
+      if (msg.includes('SERVICE_DISABLED') || /has not been used in project|it is disabled/i.test(msg)) {
+        const urlMatch = msg.match(/https:\/\/console\.developers\.google\.com\/apis\/api\/[^\s"')]+/);
+        const activationUrl = urlMatch ? urlMatch[0] : null;
+        return (
+          commonErrors.service_disabled ||
+          `This Google API is not enabled for the connected Google Cloud project. Enable it${activationUrl ? ` here: ${activationUrl}` : ' in the Google Cloud console'}, wait a minute for it to propagate, then retry.`
+        );
+      }
       return commonErrors.permission_denied || 'Permission denied. Please check your Google account permissions.';
     }
 
