@@ -982,6 +982,42 @@ export async function POST(req: NextRequest) {
       throw new Error('Session ID not initialized - this should never happen');
     }
 
+    // P3 (WP-56): scatter/loop item-ref FIELD validation + high-confidence auto-repair.
+    // Runs BEFORE the dry-run so a confident rewrite (e.g. {{doc_item.folder_id}} →
+    // {{doc_item.id}}, verified against the PLUGIN DEFINITION — confidence ≥ 0.9)
+    // takes effect and the dry-run executes the FIXED workflow. Lower-confidence
+    // matches are collected and surfaced as proposals later — never silently
+    // rewritten (the WP-40 hazard). Non-blocking.
+    let scatterAutoFixCount = 0;
+    const scatterFieldProposals: any[] = [];
+    try {
+      const { ScatterItemFieldValidator } = await import('@/lib/pilot/shadow/ScatterItemFieldValidator');
+      const targetSteps = agent.pilot_steps || agent.workflow_steps || [];
+      const scatterFieldIssues = new ScatterItemFieldValidator(
+        (plugin: string, action: string) => pluginManager.getActionDefinition(plugin, action)?.output_schema ?? null
+      ).validate(targetSteps);
+      const SCATTER_AUTOFIX_MIN_CONFIDENCE = 0.9; // identifier-matched, plugin-def-verified
+      for (const sfi of scatterFieldIssues) {
+        if (sfi.confidence >= SCATTER_AUTOFIX_MIN_CONFIDENCE && ScatterItemFieldValidator.applyFix(targetSteps, sfi)) {
+          scatterAutoFixCount++;
+          logger.info({ sessionId, agentId, stepId: sfi.subStepId, from: sfi.oldToken, to: sfi.newToken, confidence: sfi.confidence },
+            '[ScatterItemField] Auto-applied high-confidence field-ref fix');
+        } else {
+          scatterFieldProposals.push(sfi); // low-confidence or unapplyable → surface as a proposal
+        }
+      }
+      if (scatterAutoFixCount > 0) {
+        await supabase
+          .from('agents')
+          .update({ pilot_steps: agent.pilot_steps, updated_at: new Date().toISOString() })
+          .eq('id', agentId);
+        logger.info({ sessionId, agentId, scatterAutoFixCount },
+          '[ScatterItemField] Persisted auto-applied field-ref fixes before dry-run');
+      }
+    } catch (err) {
+      logger.error({ err, sessionId, agentId }, '[ScatterItemField] validation/auto-repair failed (non-blocking)');
+    }
+
     // 6.10. LAYER 3: Dry-Run Validation (Context-Aware with Real Data)
     logger.info({ sessionId, agentId }, '[Layer 3] Running dry-run validation with real user data');
     const { DryRunValidator } = await import('@/lib/pilot/shadow/DryRunValidator');
@@ -1089,6 +1125,52 @@ export async function POST(req: NextRequest) {
           nonFixableCount: nonFixableStructuralIssues.length
         }, '[StructuralRepair] Non-autoFixable issues surfaced to UI');
       }
+    }
+
+    // P3 (WP-56): reconcile the scatter item-ref results computed before the dry-run.
+    //  - High-confidence fixes were already auto-applied to the DSL + persisted →
+    //    count them as auto-fixes here (autoFixesApplied is declared just above).
+    //  - Lower-confidence / unapplyable matches are surfaced as before/after
+    //    proposals for the user to confirm (never silently rewritten — WP-40).
+    if (scatterAutoFixCount > 0) {
+      autoFixesApplied += scatterAutoFixCount;
+    }
+    for (const sfi of scatterFieldProposals) {
+      const description = `In "${sfi.subStepId}", each ${sfi.itemVariable} is an item from "${sfi.sourceVariable}", which has no "${sfi.brokenField}" field — so ${sfi.oldToken} is empty at run time. Change it to ${sfi.newToken}. Available fields: ${sfi.availableFields.join(', ')}.`;
+      // Shape like a CollectedIssue so IssueGrouper.getGroupKey() gives it a
+      // distinct key (category + id + affectedSteps); otherwise it falls into the
+      // `unique:undefined` bucket and is merged away before reaching the UI.
+      // `source` is retained for the userFacing translator dispatch.
+      allIssuesForUI.push({
+        id: crypto.randomUUID(),
+        source: 'scatter_item_field',
+        type: 'parameter_error',
+        category: 'parameter_error',
+        severity: 'critical',
+        affectedSteps: [{ stepId: sfi.subStepId, stepName: sfi.subStepId, friendlyName: sfi.subStepId }],
+        title: "A field name doesn't exist on these items",
+        description,
+        message: description,
+        stepId: sfi.subStepId,
+        details: {
+          ...sfi,
+          autoRepairProposal: {
+            type: 'rewrite_scatter_item_field_reference',
+            stepId: sfi.subStepId,
+            oldValue: sfi.oldToken,
+            newValue: sfi.newToken,
+            confidence: sfi.confidence,
+          },
+        },
+        autoRepairAvailable: false,
+        requiresUserInput: true,
+        estimatedImpact: 'high',
+        suggested_fix: `Replace ${sfi.oldToken} with ${sfi.newToken}`,
+      });
+    }
+    if (scatterAutoFixCount > 0 || scatterFieldProposals.length > 0) {
+      logger.info({ sessionId, agentId, autoApplied: scatterAutoFixCount, surfacedProposals: scatterFieldProposals.length },
+        '[ScatterItemField] Reconciled scatter item-ref results (auto-applied + surfaced)');
     }
 
     // Merge input_schema default values into inputValues for fields not provided

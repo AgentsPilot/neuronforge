@@ -315,6 +315,33 @@ function translateOutputSchemaIssue(issue: any): UserFacingIssue {
  * if the input is unrecognizable). The raw input is preserved under
  * `_technical` so support staff can still inspect it.
  */
+/**
+ * Scatter/loop item-ref field mismatch (P3 / WP-56 companion). A loop step reads
+ * a field that doesn't exist on the iterated items; the detector already computed
+ * the correct field and a before/after token.
+ */
+function translateScatterItemFieldIssue(raw: any): UserFacingIssue {
+  const d = raw?.details || {};
+  const stepName = friendlyStepFromIssue(raw);
+  const source = d.sourceVariable ? `"${d.sourceVariable}"` : 'the list';
+  const brokenField = d.brokenField || 'a field';
+  const oldToken: string | undefined = d.oldToken;
+  const newToken: string | undefined = d.newToken;
+
+  return {
+    title: "A field name doesn't exist on these items",
+    message:
+      oldToken && newToken
+        ? `In ${stepName}, each item from ${source} has no "${brokenField}" field, so ${oldToken} comes through empty. Use ${newToken} instead.`
+        : oneLine(String(raw?.description ?? '')) || 'A loop step reads a field the items do not have.',
+    what_to_do: newToken && oldToken ? `Change ${oldToken} to ${newToken}.` : 'Use a field the items actually have.',
+    severity: 'must_fix',
+    category: 'data_flow',
+    step_name: stepName,
+    _technical: { source: 'scatter_item_field', ...raw },
+  };
+}
+
 export function toUserFacing(raw: any): UserFacingIssue {
   // String inputs: try to recognize known message formats.
   if (typeof raw === 'string') {
@@ -347,6 +374,7 @@ export function toUserFacing(raw: any): UserFacingIssue {
   const source = raw.source as string | undefined;
 
   if (source === 'dry_run') return translateDryRunIssue(raw);
+  if (source === 'scatter_item_field') return translateScatterItemFieldIssue(raw);
   if (source === 'calibration_loop') return translateNonConvergence(raw);
   if (source === 'hardcode' || raw.type === 'hardcoded_value') return translateHardcodeIssue(raw);
   if (source === 'action_mismatch' || raw.type === 'action_mismatch') return translateActionMismatchIssue(raw);
