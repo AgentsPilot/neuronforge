@@ -21,7 +21,16 @@ import { CalibrationHistoryRepository } from '@/lib/repositories/CalibrationHist
 import { acquireLock, releaseLock } from '@/lib/utils/distributedLock';
 import { createLogger } from '@/lib/logger';
 import type { CollectedIssue } from '@/lib/pilot/types';
-import type { Agent } from '@/types/agent';
+// NOTE: this route historically imported `Agent` from `@/types/agent`, a module
+// that never existed — so the import resolved to `any`, which the rest of the
+// route relies on. It accesses raw workflow-step fields (`.config`, `.scatter`,
+// `.step_id`, `.operation`) and passes `agent` to both pilot-typed and
+// repository-typed signatures; pinning it to either concrete `Agent` interface
+// surfaces ~90+ pre-existing type-debt errors across this route and the shared
+// `WorkflowStep` type. Keeping it permissive and intentional (documented) until
+// that broader typing debt is addressed as its own task.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type Agent = any;
 
 const logger = createLogger({ module: 'BatchCalibrationAPI', service: 'api' });
 
@@ -973,6 +982,42 @@ export async function POST(req: NextRequest) {
       throw new Error('Session ID not initialized - this should never happen');
     }
 
+    // P3 (WP-56): scatter/loop item-ref FIELD validation + high-confidence auto-repair.
+    // Runs BEFORE the dry-run so a confident rewrite (e.g. {{doc_item.folder_id}} →
+    // {{doc_item.id}}, verified against the PLUGIN DEFINITION — confidence ≥ 0.9)
+    // takes effect and the dry-run executes the FIXED workflow. Lower-confidence
+    // matches are collected and surfaced as proposals later — never silently
+    // rewritten (the WP-40 hazard). Non-blocking.
+    let scatterAutoFixCount = 0;
+    const scatterFieldProposals: any[] = [];
+    try {
+      const { ScatterItemFieldValidator } = await import('@/lib/pilot/shadow/ScatterItemFieldValidator');
+      const targetSteps = agent.pilot_steps || agent.workflow_steps || [];
+      const scatterFieldIssues = new ScatterItemFieldValidator(
+        (plugin: string, action: string) => pluginManager.getActionDefinition(plugin, action)?.output_schema ?? null
+      ).validate(targetSteps);
+      const SCATTER_AUTOFIX_MIN_CONFIDENCE = 0.9; // identifier-matched, plugin-def-verified
+      for (const sfi of scatterFieldIssues) {
+        if (sfi.confidence >= SCATTER_AUTOFIX_MIN_CONFIDENCE && ScatterItemFieldValidator.applyFix(targetSteps, sfi)) {
+          scatterAutoFixCount++;
+          logger.info({ sessionId, agentId, stepId: sfi.subStepId, from: sfi.oldToken, to: sfi.newToken, confidence: sfi.confidence },
+            '[ScatterItemField] Auto-applied high-confidence field-ref fix');
+        } else {
+          scatterFieldProposals.push(sfi); // low-confidence or unapplyable → surface as a proposal
+        }
+      }
+      if (scatterAutoFixCount > 0) {
+        await supabase
+          .from('agents')
+          .update({ pilot_steps: agent.pilot_steps, updated_at: new Date().toISOString() })
+          .eq('id', agentId);
+        logger.info({ sessionId, agentId, scatterAutoFixCount },
+          '[ScatterItemField] Persisted auto-applied field-ref fixes before dry-run');
+      }
+    } catch (err) {
+      logger.error({ err, sessionId, agentId }, '[ScatterItemField] validation/auto-repair failed (non-blocking)');
+    }
+
     // 6.10. LAYER 3: Dry-Run Validation (Context-Aware with Real Data)
     logger.info({ sessionId, agentId }, '[Layer 3] Running dry-run validation with real user data');
     const { DryRunValidator } = await import('@/lib/pilot/shadow/DryRunValidator');
@@ -1080,6 +1125,52 @@ export async function POST(req: NextRequest) {
           nonFixableCount: nonFixableStructuralIssues.length
         }, '[StructuralRepair] Non-autoFixable issues surfaced to UI');
       }
+    }
+
+    // P3 (WP-56): reconcile the scatter item-ref results computed before the dry-run.
+    //  - High-confidence fixes were already auto-applied to the DSL + persisted →
+    //    count them as auto-fixes here (autoFixesApplied is declared just above).
+    //  - Lower-confidence / unapplyable matches are surfaced as before/after
+    //    proposals for the user to confirm (never silently rewritten — WP-40).
+    if (scatterAutoFixCount > 0) {
+      autoFixesApplied += scatterAutoFixCount;
+    }
+    for (const sfi of scatterFieldProposals) {
+      const description = `In "${sfi.subStepId}", each ${sfi.itemVariable} is an item from "${sfi.sourceVariable}", which has no "${sfi.brokenField}" field — so ${sfi.oldToken} is empty at run time. Change it to ${sfi.newToken}. Available fields: ${sfi.availableFields.join(', ')}.`;
+      // Shape like a CollectedIssue so IssueGrouper.getGroupKey() gives it a
+      // distinct key (category + id + affectedSteps); otherwise it falls into the
+      // `unique:undefined` bucket and is merged away before reaching the UI.
+      // `source` is retained for the userFacing translator dispatch.
+      allIssuesForUI.push({
+        id: crypto.randomUUID(),
+        source: 'scatter_item_field',
+        type: 'parameter_error',
+        category: 'parameter_error',
+        severity: 'critical',
+        affectedSteps: [{ stepId: sfi.subStepId, stepName: sfi.subStepId, friendlyName: sfi.subStepId }],
+        title: "A field name doesn't exist on these items",
+        description,
+        message: description,
+        stepId: sfi.subStepId,
+        details: {
+          ...sfi,
+          autoRepairProposal: {
+            type: 'rewrite_scatter_item_field_reference',
+            stepId: sfi.subStepId,
+            oldValue: sfi.oldToken,
+            newValue: sfi.newToken,
+            confidence: sfi.confidence,
+          },
+        },
+        autoRepairAvailable: false,
+        requiresUserInput: true,
+        estimatedImpact: 'high',
+        suggested_fix: `Replace ${sfi.oldToken} with ${sfi.newToken}`,
+      });
+    }
+    if (scatterAutoFixCount > 0 || scatterFieldProposals.length > 0) {
+      logger.info({ sessionId, agentId, autoApplied: scatterAutoFixCount, surfacedProposals: scatterFieldProposals.length },
+        '[ScatterItemField] Reconciled scatter item-ref results (auto-applied + surfaced)');
     }
 
     // Merge input_schema default values into inputValues for fields not provided
@@ -2284,7 +2375,7 @@ export async function POST(req: NextRequest) {
 
               // Get plugin definition to understand expected parameters
               const pluginDef = pluginManager.getPluginDefinition(targetStep.plugin);
-              const actionDef = pluginDef?.actions?.find((a: any) => a.name === targetStep.action);
+              const actionDef = (pluginDef?.actions as any[] | undefined)?.find((a: any) => a.name === targetStep.action);
 
               if (actionDef && Array.isArray(actionDef.parameters)) {
                 // Find which required parameters are missing
@@ -2565,7 +2656,7 @@ export async function POST(req: NextRequest) {
         let producerStepId: string | null = null;
         let producerStepIndex = -1;
 
-        const currentStepIndex = allSteps.findIndex(s => (s.step_id || s.id) === stepId);
+        const currentStepIndex = allSteps.findIndex((s: any) => (s.step_id || s.id) === stepId);
 
         for (let i = 0; i < currentStepIndex; i++) {
           const prevStep = allSteps[i];
@@ -2578,7 +2669,12 @@ export async function POST(req: NextRequest) {
 
         // If we found a producer step, create auto-fix to rewrite field reference
         if (producerStepId) {
-          const newIssue: CalibrationIssue = {
+          // NOTE: a dedicated `CalibrationIssue` type was never defined in the
+          // codebase; this richer issue shape (sessionId/issueType/impact/…) is
+          // pushed to the loosely-typed `iterationIssues` collection. Typed as
+          // `any` deliberately — the consumers below read only id /
+          // autoRepairAvailable / autoRepairProposal / requiresUserInput.
+          const newIssue: any = {
             id: crypto.randomUUID(),
             sessionId,
             agentId,
@@ -3573,7 +3669,7 @@ export async function POST(req: NextRequest) {
 
                       // Create a transform step that converts fields object to values 2D array
                       // Build the transformation expression that maps each item to an array of values
-                      const transformExpression = `[${fieldValues.map(path => {
+                      const transformExpression = `[${(fieldValues as string[]).map((path) => {
                         // Extract the field path (e.g., "high_value_items.date" → "item.date")
                         const fieldPath = path.replace(`${inputVariable}.`, 'item.');
                         return fieldPath;
@@ -3872,17 +3968,25 @@ export async function POST(req: NextRequest) {
           }, 'Semantic validation: workflow produced no output despite processing items');
 
           await sessionRepo.update(sessionId, {
-            status: 'needs_review',
+            // 'needs_review' is a calibration_history status, NOT a session status.
+            // The session "needs user action" state is 'awaiting_fixes' (matches
+            // the main completed-with-issues path); 'needs_review' isn't in the
+            // CalibrationSession status union and would risk a DB CHECK violation.
+            status: 'awaiting_fixes',
             execution_id: finalResult.executionId,
             completed_steps: finalResult.stepsCompleted,
             failed_steps: finalResult.stepsFailed,
             skipped_steps: finalResult.stepsSkipped,
-            issues_found: allIssuesForUI,
+            // The session column is `issues` (see create()); `issues_found` was a
+            // non-existent field that would have been dropped/rejected at write.
+            issues: allIssuesForUI,
             execution_summary: finalResult.execution_summary || null
           });
 
           return NextResponse.json({
-            success: true,
+            // P1a: needs-review outcome must not report success:true (status was
+            // already 'needs_review' below; success was inconsistent with it).
+            success: false,
             sessionId,
             executionId: finalResult.executionId,
             autoCalibration: {
@@ -4070,6 +4174,7 @@ export async function POST(req: NextRequest) {
 
       return NextResponse.json({
         success: true,
+        status: 'success',
         sessionId,
         executionId: finalResult.executionId,
         autoCalibration: {
@@ -4212,16 +4317,27 @@ export async function POST(req: NextRequest) {
     };
 
     // 11. Return results
+    // P1a: report the real outcome. This branch only runs when there ARE issues
+    // (calibrationStatus is 'needs_review' or 'failed'), so `success` must be
+    // false and the explicit `status` is surfaced for the client to key off —
+    // never report a needs-review/failed run as a success.
     return NextResponse.json({
-      success: true,
+      success: false,
+      status: calibrationStatus,
       sessionId,
       executionId: finalResult.executionId,
       autoCalibration: {
         iterations: loopIteration,
         autoFixesApplied,
-        message: autoFixesApplied > 0
-          ? `We took care of ${autoFixesApplied} thing${autoFixesApplied === 1 ? '' : 's'} for you while testing your workflow.`
-          : 'Everything looked good while we tested.'
+        // P1b: message is critical-aware, not fix-count-only. A run with 0 fixes
+        // and open critical issues must never say "everything looked good".
+        message: summary.critical > 0
+          ? (autoFixesApplied > 0
+              ? `We fixed ${autoFixesApplied} thing${autoFixesApplied === 1 ? '' : 's'} automatically, but ${summary.critical} issue${summary.critical === 1 ? '' : 's'} still need${summary.critical === 1 ? 's' : ''} your attention before this agent is ready.`
+              : `We found ${summary.critical} issue${summary.critical === 1 ? '' : 's'} that need${summary.critical === 1 ? 's' : ''} your attention before this agent is ready.`)
+          : (autoFixesApplied > 0
+              ? `We took care of ${autoFixesApplied} thing${autoFixesApplied === 1 ? '' : 's'} for you${summary.warnings > 0 ? `, and there ${summary.warnings === 1 ? 'is' : 'are'} ${summary.warnings} suggestion${summary.warnings === 1 ? '' : 's'} to review` : ''}.`
+              : `We found ${summary.total} suggestion${summary.total === 1 ? '' : 's'} to review before this agent is ready.`)
       },
       issues: userFacingIssues,
       summary: {

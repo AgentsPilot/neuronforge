@@ -1254,6 +1254,19 @@ OR
 - Loop body steps can reference item_ref as input
 - If collect.enabled=true, compiler gathers from_step_output from each iteration
 - Collected output is available as loop.output RefName
+- **FIELD FIDELITY (WP-56) — use the iterated item's OWN field names.** When a
+  loop-body step references a field on the current item (\`item_ref.<field>\`),
+  that field name MUST come from the element schema of the collection you are
+  iterating (\`loop.over\` → that producer's \`output_schema\` items), NOT from a
+  different step or a different resource type. Common failure: the workflow first
+  resolves a *container* (a folder, board, spreadsheet, …) whose identifier field
+  is named one way, then iterates the *items inside it* (files, cards, rows, …)
+  whose identifier field is named another way — do NOT reuse the container's id
+  field name for the items. Read the iterated producer's \`output_schema\` and use
+  the items' own field names exactly: e.g. if a \`list_*\` action returns items
+  with an \`id\` field, reference \`item_ref.id\` for the next step's id parameter,
+  even when an earlier "find/create container" step exposed a \`<container>_id\`
+  field. The same rule applies to scatter-gather iteration variables.
 
 ### 6.10) AGGREGATE - Compute metrics/subsets
 

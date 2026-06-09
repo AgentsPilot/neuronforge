@@ -51,3 +51,6 @@ simulators/**/output/
 
 # vibeyard
 .vibeyardignore
+
+# dev server log (generated at runtime; was tracked by mistake)
+dev.log

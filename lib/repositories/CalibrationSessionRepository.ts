@@ -38,6 +38,9 @@ export interface UpdateSessionInput {
   failed_steps?: number;
   skipped_steps?: number;
   completed_at?: string;
+  // Execution summary snapshot (what the workflow actually did). Persisted by the
+  // batch route and read back by the sandbox UI (session.execution_summary).
+  execution_summary?: any;
 }
 
 export interface RepositoryResult<T> {
