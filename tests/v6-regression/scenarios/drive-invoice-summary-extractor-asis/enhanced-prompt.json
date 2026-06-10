@@ -1,0 +1,65 @@
+{
+  "plan_title": "Google Drive Invoice Summary Email Agent",
+  "plan_description": "Reads invoice files from a specific Google Drive folder, extracts key invoice details, and emails a summary to you using Gmail.",
+  "sections": {
+    "data": [
+      "- Use the Google Drive folder at https://drive.google.com/drive/u/0/folders/1Wszlm9qgqPVQyHYp1lWmlkipRFLVQLAk as the only source location for invoices.",
+      "- Consider files in that folder as candidate invoices, prioritizing common invoice formats (PDF first; also allow image files like JPG/PNG if present).",
+      "- For each candidate file, retrieve the file name and basic file details (for example: last updated date) to include in the summary when helpful."
+    ],
+    "actions": [
+      "- List files in the specified Google Drive folder (non-recursive by default).",
+      "- For each file, extract invoice fields using deterministic document extraction.",
+      "- Extract these default invoice fields when available: vendor/supplier name, invoice number, invoice date, due date, total amount, currency, and tax/VAT amount.",
+      "- If a field is missing or unreadable on an invoice, leave it blank and add a short note for that invoice (for example: \"Missing invoice number\").",
+      "- Create a roll-up summary across all invoices found: count of invoices, total sum of invoice totals (when totals are available), and a list of any invoices with missing key fields.",
+      "- If no invoices are found in the folder, send an email stating that no invoices were found and include the folder link."
+    ],
+    "output": [
+      "- Produce an email-ready summary that includes:",
+      "- A short header with the folder link and the number of invoices found.",
+      "- A simple table listing one row per invoice with: file name, vendor, invoice #, invoice date, due date, total, currency, and notes.",
+      "- A totals section (for example: total invoices, sum of totals, and a short list of exceptions such as missing totals or missing invoice numbers)."
+    ],
+    "delivery": [
+      "- Send the summary email using Gmail.",
+      "- Send the email to meiribarak@gmail.com.",
+      "- Use a clear subject line such as: \"Invoice summary from Google Drive folder\".",
+      "- Put the table directly in the email body (HTML table) so it is readable without downloading anything."
+    ],
+    "processing_steps": [
+      "- Open the Google Drive folder provided by the user.",
+      "- List the files in the folder (non-recursive).",
+      "- For each file, extract invoice fields (vendor, invoice number, dates, totals).",
+      "- Normalize extracted values for consistency (for example: date format and currency/amount formatting).",
+      "- Build a per-invoice table plus roll-up totals and exceptions.",
+      "- Send the summary email via Gmail to the user."
+    ]
+  },
+  "specifics": {
+    "services_involved": [
+      "google-drive",
+      "document-extractor",
+      "google-mail"
+    ],
+    "user_inputs_required": [],
+    "resolved_user_inputs": [
+      {
+        "key": "user_email",
+        "value": "meiribarak@gmail.com"
+      },
+      {
+        "key": "google-drive__storage/list__folder_link",
+        "value": "https://drive.google.com/drive/u/0/folders/1Wszlm9qgqPVQyHYp1lWmlkipRFLVQLAk"
+      },
+      {
+        "key": "google-mail__email/send_message__recipients.to",
+        "value": "meiribarak@gmail.com"
+      },
+      {
+        "key": "email_service",
+        "value": "google-mail"
+      }
+    ]
+  }
+}

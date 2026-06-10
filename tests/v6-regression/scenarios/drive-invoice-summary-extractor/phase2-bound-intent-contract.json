@@ -1,0 +1,1201 @@
+{
+  "version": "intent.v1",
+  "goal": "Read invoice files from a specific Google Drive folder, extract key invoice details (vendor, invoice number, dates, totals, currency, tax), and email an HTML summary table with roll-up totals to the user via Gmail.",
+  "unit_of_work": {
+    "entity": "invoice_file",
+    "parent_entity": "drive_folder"
+  },
+  "config": [
+    {
+      "key": "folder_id",
+      "type": "string",
+      "description": "Google Drive folder ID containing invoices",
+      "default": "1TAUlds9R8r2lznDszbOwovpdM0cN7aFK"
+    },
+    {
+      "key": "recipient_email",
+      "type": "string",
+      "description": "Email address to send the invoice summary to",
+      "default": "offir.omer@gmail.com"
+    },
+    {
+      "key": "folder_link",
+      "type": "string",
+      "description": "Full URL of the Google Drive folder for reference in the email",
+      "default": "https://drive.google.com/drive/folders/1TAUlds9R8r2lznDszbOwovpdM0cN7aFK"
+    }
+  ],
+  "invariants": [
+    "All invoice files in the specified folder must be processed",
+    "Missing or unreadable fields must be noted, not fabricated",
+    "Email must be sent even if no invoices are found (with appropriate message)",
+    "HTML table format must be used in the email body"
+  ],
+  "required_outcomes": [
+    "All invoice files in the folder are read and their key fields extracted",
+    "An HTML email is sent to the recipient with a per-invoice table and roll-up totals",
+    "Any missing fields are flagged with notes per invoice"
+  ],
+  "steps": [
+    {
+      "id": "list_folder_files",
+      "kind": "data_source",
+      "summary": "List all files in the specified Google Drive invoice folder",
+      "uses": [
+        {
+          "capability": "list",
+          "domain": "storage",
+          "preferences": {
+            "provider_family": "google"
+          }
+        }
+      ],
+      "output": "folder_files",
+      "source": {
+        "domain": "storage",
+        "intent": "list"
+      },
+      "payload": {
+        "folder_id": {
+          "kind": "config",
+          "key": "folder_id"
+        },
+        "max_results": {
+          "kind": "literal",
+          "value": 100
+        }
+      },
+      "retrieval": {
+        "max_results": 100,
+        "include_metadata": true
+      },
+      "plugin_key": "google-drive",
+      "action": "list_files",
+      "binding_confidence": 1,
+      "binding_method": "exact_match",
+      "binding_reason": [
+        "✅ Domain match: storage",
+        "✅ Capability match: list",
+        "✅ Provider preference matched: google"
+      ]
+    },
+    {
+      "id": "filter_invoice_files",
+      "kind": "transform",
+      "summary": "Filter to only PDF and image files (JPG, PNG) that are likely invoices",
+      "inputs": [
+        "folder_files"
+      ],
+      "output": "invoice_files",
+      "transform": {
+        "op": "filter",
+        "input": "folder_files",
+        "description": "Keep only files with PDF or image MIME types as candidate invoices",
+        "where": {
+          "op": "test",
+          "left": {
+            "kind": "ref",
+            "ref": "folder_files",
+            "field": "mimeType"
+          },
+          "comparator": "in",
+          "right": {
+            "kind": "literal",
+            "value": [
+              "application/pdf",
+              "image/jpeg",
+              "image/png",
+              "image/jpg"
+            ]
+          }
+        }
+      },
+      "binding_method": "unbound"
+    },
+    {
+      "id": "process_each_invoice",
+      "kind": "loop",
+      "summary": "For each candidate invoice file, read its content and extract invoice fields",
+      "inputs": [
+        "invoice_files"
+      ],
+      "output": "extracted_invoices",
+      "loop": {
+        "over": "invoice_files",
+        "item_ref": "invoice_file",
+        "unit_of_work": {
+          "entity": "invoice_file"
+        },
+        "collect": {
+          "enabled": true,
+          "collect_as": "extracted_invoices",
+          "from_step_output": "extraction_result"
+        },
+        "do": [
+          {
+            "id": "read_file_content",
+            "kind": "data_source",
+            "summary": "Read the file content from Google Drive for extraction",
+            "uses": [
+              {
+                "capability": "fetch_content",
+                "domain": "storage",
+                "preferences": {
+                  "provider_family": "google"
+                }
+              }
+            ],
+            "inputs": [
+              "invoice_file"
+            ],
+            "output": "file_content",
+            "source": {
+              "domain": "storage",
+              "intent": "fetch_content"
+            },
+            "payload": {
+              "file_id": {
+                "kind": "ref",
+                "ref": "invoice_file",
+                "field": "id"
+              },
+              "export_format": {
+                "kind": "literal",
+                "value": "application/pdf"
+              }
+            },
+            "plugin_key": "google-drive",
+            "action": "read_file_content",
+            "binding_confidence": 1,
+            "binding_method": "exact_match",
+            "binding_reason": [
+              "✅ Domain match: storage",
+              "✅ Capability match: fetch_content",
+              "✅ Provider preference matched: google"
+            ]
+          },
+          {
+            "id": "extract_invoice_fields",
+            "kind": "extract",
+            "summary": "Extract structured invoice fields from the file content (vendor, invoice number, dates, totals, currency, tax)",
+            "uses": [
+              {
+                "capability": "extract_structured_data",
+                "domain": "document"
+              }
+            ],
+            "inputs": [
+              "file_content",
+              "invoice_file"
+            ],
+            "output": "raw_extracted_fields",
+            "extract": {
+              "input": "file_content",
+              "fields": [
+                {
+                  "name": "vendor_name",
+                  "type": "string",
+                  "required": false,
+                  "description": "Vendor or supplier name on the invoice"
+                },
+                {
+                  "name": "invoice_number",
+                  "type": "string",
+                  "required": false,
+                  "description": "Invoice number or reference ID"
+                },
+                {
+                  "name": "invoice_date",
+                  "type": "date",
+                  "required": false,
+                  "description": "Date the invoice was issued"
+                },
+                {
+                  "name": "due_date",
+                  "type": "date",
+                  "required": false,
+                  "description": "Payment due date"
+                },
+                {
+                  "name": "total_amount",
+                  "type": "number",
+                  "required": false,
+                  "description": "Total invoice amount"
+                },
+                {
+                  "name": "currency",
+                  "type": "string",
+                  "required": false,
+                  "description": "Currency code (e.g., USD, EUR, ILS)"
+                },
+                {
+                  "name": "tax_amount",
+                  "type": "number",
+                  "required": false,
+                  "description": "Tax or VAT amount"
+                }
+              ],
+              "deterministic": true,
+              "content_hints": {
+                "file_types": [
+                  "pdf",
+                  "jpg",
+                  "png"
+                ],
+                "language": "en"
+              }
+            },
+            "binding_confidence": 1,
+            "binding_method": "unbound",
+            "binding_reason": [
+              "✅ Domain match: document",
+              "✅ Capability match: extract_structured_data",
+              "input_type_incompatible"
+            ],
+            "rejected_candidates": [
+              {
+                "plugin_key": "document-extractor",
+                "action_name": "extract_structured_data",
+                "rejection_reason": "required from_type=\"file_attachment\" but source provides to_type=\"text_content\""
+              }
+            ]
+          },
+          {
+            "id": "augment_with_file_metadata",
+            "kind": "transform",
+            "summary": "Augment extracted fields with file name and modification date from the Drive file metadata",
+            "inputs": [
+              "raw_extracted_fields",
+              "invoice_file"
+            ],
+            "output": "extraction_result",
+            "transform": {
+              "op": "with_fields",
+              "input": "raw_extracted_fields",
+              "fields": [
+                {
+                  "name": "file_name",
+                  "expression": {
+                    "kind": "ref",
+                    "ref": "invoice_file",
+                    "field": "name"
+                  }
+                },
+                {
+                  "name": "file_modified",
+                  "expression": {
+                    "kind": "ref",
+                    "ref": "invoice_file",
+                    "field": "modifiedTime"
+                  }
+                }
+              ],
+              "output_schema": {
+                "type": "object",
+                "properties": {
+                  "vendor_name": {
+                    "type": "string"
+                  },
+                  "invoice_number": {
+                    "type": "string"
+                  },
+                  "invoice_date": {
+                    "type": "string"
+                  },
+                  "due_date": {
+                    "type": "string"
+                  },
+                  "total_amount": {
+                    "type": "number"
+                  },
+                  "currency": {
+                    "type": "string"
+                  },
+                  "tax_amount": {
+                    "type": "number"
+                  },
+                  "file_name": {
+                    "type": "string"
+                  },
+                  "file_modified": {
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            "binding_method": "unbound"
+          }
+        ]
+      },
+      "binding_method": "unbound"
+    },
+    {
+      "id": "compute_metrics",
+      "kind": "aggregate",
+      "summary": "Compute roll-up metrics: total invoice count, sum of totals, and identify invoices with missing key fields",
+      "inputs": [
+        "extracted_invoices"
+      ],
+      "output": "invoice_metrics",
+      "aggregate": {
+        "input": "extracted_invoices",
+        "outputs": [
+          {
+            "name": "invoice_count",
+            "type": "count"
+          },
+          {
+            "name": "total_sum",
+            "type": "sum",
+            "field": "total_amount"
+          },
+          {
+            "name": "invoices_missing_total",
+            "type": "subset",
+            "where": {
+              "op": "not",
+              "condition": {
+                "op": "test",
+                "left": {
+                  "kind": "ref",
+                  "ref": "extracted_invoices",
+                  "field": "total_amount"
+                },
+                "comparator": "exists"
+              }
+            }
+          },
+          {
+            "name": "invoices_missing_invoice_number",
+            "type": "subset",
+            "where": {
+              "op": "not",
+              "condition": {
+                "op": "test",
+                "left": {
+                  "kind": "ref",
+                  "ref": "extracted_invoices",
+                  "field": "invoice_number"
+                },
+                "comparator": "exists"
+              }
+            }
+          }
+        ]
+      },
+      "binding_method": "unbound"
+    },
+    {
+      "id": "generate_email_body",
+      "kind": "generate",
+      "summary": "Generate an HTML email body with a header, per-invoice table, and roll-up totals/exceptions section",
+      "inputs": [
+        "extracted_invoices",
+        "invoice_count",
+        "total_sum",
+        "invoices_missing_total",
+        "invoices_missing_invoice_number"
+      ],
+      "output": "email_content",
+      "uses": [
+        {
+          "capability": "generate",
+          "domain": "internal"
+        }
+      ],
+      "generate": {
+        "input": "extracted_invoices",
+        "format": "html",
+        "reason": "Free-form HTML email body composition with conditional content (no-invoices case vs table case), styled HTML table generation, and dynamic exception notes per invoice — requires semantic reasoning to compose readable prose and handle edge cases like missing fields gracefully.",
+        "instruction": "Generate a professional HTML email body for an invoice summary. Structure it as follows:\n\n1. HEADER: Include a short greeting, the Google Drive folder link (from config folder_link), and the total number of invoices found (from invoice_count).\n\n2. If no invoices were found (invoice_count is 0), state that no invoices were found in the folder and include the folder link. Skip the table and totals.\n\n3. INVOICE TABLE: Create an HTML <table> with styled borders, header row with background color, and padding. Columns: File Name, Vendor, Invoice #, Invoice Date, Due Date, Total, Currency, Notes. One row per invoice from extracted_invoices. For any missing/null field, show a dash and add a note like 'Missing vendor name' in the Notes column. Multiple missing fields should be comma-separated in Notes.\n\n4. TOTALS SECTION: Below the table, show:\n   - Total invoices processed: (invoice_count)\n   - Sum of invoice totals: (total_sum, formatted with 2 decimal places; note if some invoices had no total)\n   - Exceptions: list file names from invoices_missing_total and invoices_missing_invoice_number if any exist.\n\n5. Use professional styling: table borders (#ddd), header background (#4472C4 with white text), alternating row colors, padding 8px.",
+        "outputs": [
+          {
+            "name": "subject",
+            "type": "string",
+            "description": "Email subject line"
+          },
+          {
+            "name": "html_body",
+            "type": "string",
+            "description": "Complete HTML email body with styled table and totals"
+          }
+        ]
+      },
+      "plugin_key": "chatgpt-research",
+      "action": "answer_question",
+      "binding_confidence": 1,
+      "binding_method": "exact_match",
+      "binding_reason": [
+        "✅ Domain match: internal",
+        "✅ Capability match: generate"
+      ]
+    },
+    {
+      "id": "send_summary_email",
+      "kind": "notify",
+      "summary": "Send the invoice summary email via Gmail to the user",
+      "inputs": [
+        "email_content"
+      ],
+      "uses": [
+        {
+          "capability": "send_message",
+          "domain": "email",
+          "preferences": {
+            "provider_family": "google"
+          }
+        }
+      ],
+      "notify": {
+        "channel": "email",
+        "recipients": {
+          "to": [
+            {
+              "kind": "config",
+              "key": "recipient_email"
+            }
+          ]
+        },
+        "content": {
+          "subject": {
+            "kind": "ref",
+            "ref": "email_content",
+            "field": "subject"
+          },
+          "body": {
+            "kind": "ref",
+            "ref": "email_content",
+            "field": "html_body"
+          },
+          "format": "html"
+        }
+      },
+      "plugin_key": "google-mail",
+      "action": "send_email",
+      "binding_confidence": 1,
+      "binding_method": "exact_match",
+      "binding_reason": [
+        "✅ Domain match: email",
+        "✅ Capability match: send_message",
+        "✅ Provider preference matched: google"
+      ]
+    }
+  ],
+  "confidence": 0.9,
+  "meta": {
+    "estimated_steps_per_run": "2 + N*3 + 2 (where N = number of invoice files)",
+    "services_used": [
+      "google-drive",
+      "document-extractor",
+      "google-mail"
+    ],
+    "handles_empty_folder": true,
+    "handles_missing_fields": true
+  },
+  "subset_resolution": {
+    "success": true,
+    "subsets": {},
+    "errors": [],
+    "warnings": []
+  },
+  "data_schema": {
+    "slots": {
+      "folder_files": {
+        "schema": {
+          "type": "object",
+          "source": "plugin",
+          "properties": {
+            "files": {
+              "type": "array",
+              "source": "plugin",
+              "description": "List of files and folders",
+              "items": {
+                "type": "object",
+                "source": "plugin",
+                "semantic_type": "file_attachment",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "source": "plugin",
+                    "description": "Unique file ID"
+                  },
+                  "name": {
+                    "type": "string",
+                    "source": "plugin",
+                    "description": "File or folder name"
+                  },
+                  "mimeType": {
+                    "type": "string",
+                    "source": "plugin",
+                    "description": "MIME type of the file"
+                  },
+                  "size": {
+                    "type": "string",
+                    "source": "plugin",
+                    "description": "File size in bytes"
+                  },
+                  "createdTime": {
+                    "type": "string",
+                    "source": "plugin",
+                    "description": "Creation timestamp (ISO 8601)"
+                  },
+                  "modifiedTime": {
+                    "type": "string",
+                    "source": "plugin",
+                    "description": "Last modification timestamp (ISO 8601)"
+                  },
+                  "webViewLink": {
+                    "type": "string",
+                    "source": "plugin",
+                    "description": "URL to view the file"
+                  },
+                  "shared": {
+                    "type": "boolean",
+                    "source": "plugin",
+                    "description": "Whether file is shared"
+                  },
+                  "starred": {
+                    "type": "boolean",
+                    "source": "plugin",
+                    "description": "Whether file is starred"
+                  }
+                }
+              }
+            },
+            "file_count": {
+              "type": "number",
+              "source": "plugin",
+              "description": "Number of files returned"
+            },
+            "next_page_token": {
+              "type": "string",
+              "source": "plugin",
+              "description": "Token for fetching next page of results"
+            },
+            "has_more": {
+              "type": "boolean",
+              "source": "plugin",
+              "description": "Whether more files are available"
+            },
+            "query_used": {
+              "type": "string",
+              "source": "plugin",
+              "description": "The query used to filter results"
+            },
+            "retrieved_at": {
+              "type": "string",
+              "source": "plugin",
+              "description": "Timestamp when data was retrieved (ISO 8601)"
+            }
+          }
+        },
+        "scope": "global",
+        "produced_by": "list_folder_files",
+        "consumed_by": [
+          "filter_invoice_files"
+        ]
+      },
+      "invoice_files": {
+        "schema": {
+          "type": "array",
+          "source": "inferred",
+          "description": "List of files and folders",
+          "items": {
+            "type": "object",
+            "source": "plugin",
+            "semantic_type": "file_attachment",
+            "properties": {
+              "id": {
+                "type": "string",
+                "source": "plugin",
+                "description": "Unique file ID"
+              },
+              "name": {
+                "type": "string",
+                "source": "plugin",
+                "description": "File or folder name"
+              },
+              "mimeType": {
+                "type": "string",
+                "source": "plugin",
+                "description": "MIME type of the file"
+              },
+              "size": {
+                "type": "string",
+                "source": "plugin",
+                "description": "File size in bytes"
+              },
+              "createdTime": {
+                "type": "string",
+                "source": "plugin",
+                "description": "Creation timestamp (ISO 8601)"
+              },
+              "modifiedTime": {
+                "type": "string",
+                "source": "plugin",
+                "description": "Last modification timestamp (ISO 8601)"
+              },
+              "webViewLink": {
+                "type": "string",
+                "source": "plugin",
+                "description": "URL to view the file"
+              },
+              "shared": {
+                "type": "boolean",
+                "source": "plugin",
+                "description": "Whether file is shared"
+              },
+              "starred": {
+                "type": "boolean",
+                "source": "plugin",
+                "description": "Whether file is starred"
+              }
+            }
+          }
+        },
+        "scope": "global",
+        "produced_by": "filter_invoice_files",
+        "consumed_by": [
+          "process_each_invoice"
+        ]
+      },
+      "invoice_file": {
+        "schema": {
+          "type": "object",
+          "source": "inferred",
+          "semantic_type": "file_attachment",
+          "properties": {
+            "id": {
+              "type": "string",
+              "source": "plugin",
+              "description": "Unique file ID"
+            },
+            "name": {
+              "type": "string",
+              "source": "plugin",
+              "description": "File or folder name"
+            },
+            "mimeType": {
+              "type": "string",
+              "source": "plugin",
+              "description": "MIME type of the file"
+            },
+            "size": {
+              "type": "string",
+              "source": "plugin",
+              "description": "File size in bytes"
+            },
+            "createdTime": {
+              "type": "string",
+              "source": "plugin",
+              "description": "Creation timestamp (ISO 8601)"
+            },
+            "modifiedTime": {
+              "type": "string",
+              "source": "plugin",
+              "description": "Last modification timestamp (ISO 8601)"
+            },
+            "webViewLink": {
+              "type": "string",
+              "source": "plugin",
+              "description": "URL to view the file"
+            },
+            "shared": {
+              "type": "boolean",
+              "source": "plugin",
+              "description": "Whether file is shared"
+            },
+            "starred": {
+              "type": "boolean",
+              "source": "plugin",
+              "description": "Whether file is starred"
+            }
+          }
+        },
+        "scope": "loop",
+        "produced_by": "process_each_invoice",
+        "consumed_by": [
+          "read_file_content",
+          "extract_invoice_fields",
+          "augment_with_file_metadata"
+        ]
+      },
+      "extracted_invoices": {
+        "schema": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "source": "ai_declared",
+            "properties": {
+              "vendor_name": {
+                "type": "string",
+                "source": "ai_declared"
+              },
+              "invoice_number": {
+                "type": "string",
+                "source": "ai_declared"
+              },
+              "invoice_date": {
+                "type": "string",
+                "source": "ai_declared"
+              },
+              "due_date": {
+                "type": "string",
+                "source": "ai_declared"
+              },
+              "total_amount": {
+                "type": "number",
+                "source": "ai_declared"
+              },
+              "currency": {
+                "type": "string",
+                "source": "ai_declared"
+              },
+              "tax_amount": {
+                "type": "number",
+                "source": "ai_declared"
+              },
+              "file_name": {
+                "type": "string",
+                "source": "ai_declared"
+              },
+              "file_modified": {
+                "type": "string",
+                "source": "ai_declared"
+              }
+            }
+          },
+          "source": "inferred"
+        },
+        "scope": "global",
+        "produced_by": "process_each_invoice",
+        "consumed_by": [
+          "compute_metrics",
+          "generate_email_body"
+        ]
+      },
+      "file_content": {
+        "schema": {
+          "type": "object",
+          "source": "plugin",
+          "properties": {
+            "file_id": {
+              "type": "string",
+              "source": "plugin",
+              "description": "ID of the file that was read"
+            },
+            "file_name": {
+              "type": "string",
+              "source": "plugin",
+              "description": "Name of the file"
+            },
+            "file_size": {
+              "type": "string",
+              "source": "plugin",
+              "description": "Human-readable file size (e.g., '1.5 MB')"
+            },
+            "mime_type": {
+              "type": "string",
+              "source": "plugin",
+              "description": "MIME type of the file"
+            },
+            "content": {
+              "type": "string",
+              "source": "plugin",
+              "description": "Text content extracted from the file"
+            },
+            "content_length": {
+              "type": "number",
+              "source": "plugin",
+              "description": "Length of the extracted content in characters"
+            },
+            "export_format": {
+              "type": "string",
+              "source": "plugin",
+              "description": "Format the file was exported as (text/plain, text/html, or 'original')"
+            },
+            "read_at": {
+              "type": "string",
+              "source": "plugin",
+              "description": "Timestamp when file was read (ISO 8601)"
+            }
+          }
+        },
+        "scope": "loop",
+        "produced_by": "read_file_content",
+        "consumed_by": [
+          "extract_invoice_fields"
+        ]
+      },
+      "raw_extracted_fields": {
+        "schema": {
+          "type": "object",
+          "properties": {
+            "vendor_name": {
+              "type": "string",
+              "source": "ai_declared",
+              "description": "Vendor or supplier name on the invoice",
+              "required": false
+            },
+            "invoice_number": {
+              "type": "string",
+              "source": "ai_declared",
+              "description": "Invoice number or reference ID",
+              "required": false
+            },
+            "invoice_date": {
+              "type": "string",
+              "source": "ai_declared",
+              "description": "Date the invoice was issued",
+              "required": false
+            },
+            "due_date": {
+              "type": "string",
+              "source": "ai_declared",
+              "description": "Payment due date",
+              "required": false
+            },
+            "total_amount": {
+              "type": "number",
+              "source": "ai_declared",
+              "description": "Total invoice amount",
+              "required": false
+            },
+            "currency": {
+              "type": "string",
+              "source": "ai_declared",
+              "description": "Currency code (e.g., USD, EUR, ILS)",
+              "required": false
+            },
+            "tax_amount": {
+              "type": "number",
+              "source": "ai_declared",
+              "description": "Tax or VAT amount",
+              "required": false
+            }
+          },
+          "source": "ai_declared"
+        },
+        "scope": "loop",
+        "produced_by": "extract_invoice_fields",
+        "consumed_by": [
+          "augment_with_file_metadata"
+        ]
+      },
+      "extraction_result": {
+        "schema": {
+          "type": "object",
+          "source": "ai_declared",
+          "properties": {
+            "vendor_name": {
+              "type": "string",
+              "source": "ai_declared"
+            },
+            "invoice_number": {
+              "type": "string",
+              "source": "ai_declared"
+            },
+            "invoice_date": {
+              "type": "string",
+              "source": "ai_declared"
+            },
+            "due_date": {
+              "type": "string",
+              "source": "ai_declared"
+            },
+            "total_amount": {
+              "type": "number",
+              "source": "ai_declared"
+            },
+            "currency": {
+              "type": "string",
+              "source": "ai_declared"
+            },
+            "tax_amount": {
+              "type": "number",
+              "source": "ai_declared"
+            },
+            "file_name": {
+              "type": "string",
+              "source": "ai_declared"
+            },
+            "file_modified": {
+              "type": "string",
+              "source": "ai_declared"
+            }
+          }
+        },
+        "scope": "loop",
+        "produced_by": "augment_with_file_metadata",
+        "consumed_by": [
+          "process_each_invoice"
+        ]
+      },
+      "invoice_count": {
+        "schema": {
+          "type": "number",
+          "description": "Count of invoice_count",
+          "source": "inferred"
+        },
+        "scope": "global",
+        "produced_by": "compute_metrics",
+        "consumed_by": [
+          "generate_email_body"
+        ]
+      },
+      "total_sum": {
+        "schema": {
+          "type": "number",
+          "description": "sum of total_amount",
+          "source": "inferred"
+        },
+        "scope": "global",
+        "produced_by": "compute_metrics",
+        "consumed_by": [
+          "generate_email_body"
+        ]
+      },
+      "invoices_missing_total": {
+        "schema": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "source": "ai_declared",
+            "properties": {
+              "vendor_name": {
+                "type": "string",
+                "source": "ai_declared"
+              },
+              "invoice_number": {
+                "type": "string",
+                "source": "ai_declared"
+              },
+              "invoice_date": {
+                "type": "string",
+                "source": "ai_declared"
+              },
+              "due_date": {
+                "type": "string",
+                "source": "ai_declared"
+              },
+              "total_amount": {
+                "type": "number",
+                "source": "ai_declared"
+              },
+              "currency": {
+                "type": "string",
+                "source": "ai_declared"
+              },
+              "tax_amount": {
+                "type": "number",
+                "source": "ai_declared"
+              },
+              "file_name": {
+                "type": "string",
+                "source": "ai_declared"
+              },
+              "file_modified": {
+                "type": "string",
+                "source": "ai_declared"
+              }
+            }
+          },
+          "source": "inferred"
+        },
+        "scope": "global",
+        "produced_by": "compute_metrics",
+        "consumed_by": [
+          "generate_email_body"
+        ]
+      },
+      "invoices_missing_invoice_number": {
+        "schema": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "source": "ai_declared",
+            "properties": {
+              "vendor_name": {
+                "type": "string",
+                "source": "ai_declared"
+              },
+              "invoice_number": {
+                "type": "string",
+                "source": "ai_declared"
+              },
+              "invoice_date": {
+                "type": "string",
+                "source": "ai_declared"
+              },
+              "due_date": {
+                "type": "string",
+                "source": "ai_declared"
+              },
+              "total_amount": {
+                "type": "number",
+                "source": "ai_declared"
+              },
+              "currency": {
+                "type": "string",
+                "source": "ai_declared"
+              },
+              "tax_amount": {
+                "type": "number",
+                "source": "ai_declared"
+              },
+              "file_name": {
+                "type": "string",
+                "source": "ai_declared"
+              },
+              "file_modified": {
+                "type": "string",
+                "source": "ai_declared"
+              }
+            }
+          },
+          "source": "inferred"
+        },
+        "scope": "global",
+        "produced_by": "compute_metrics",
+        "consumed_by": [
+          "generate_email_body"
+        ]
+      },
+      "invoice_metrics": {
+        "schema": {
+          "type": "object",
+          "properties": {
+            "invoice_count": {
+              "type": "number",
+              "description": "Count of invoice_count",
+              "source": "inferred"
+            },
+            "total_sum": {
+              "type": "number",
+              "description": "sum of total_amount",
+              "source": "inferred"
+            },
+            "invoices_missing_total": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "source": "ai_declared",
+                "properties": {
+                  "vendor_name": {
+                    "type": "string",
+                    "source": "ai_declared"
+                  },
+                  "invoice_number": {
+                    "type": "string",
+                    "source": "ai_declared"
+                  },
+                  "invoice_date": {
+                    "type": "string",
+                    "source": "ai_declared"
+                  },
+                  "due_date": {
+                    "type": "string",
+                    "source": "ai_declared"
+                  },
+                  "total_amount": {
+                    "type": "number",
+                    "source": "ai_declared"
+                  },
+                  "currency": {
+                    "type": "string",
+                    "source": "ai_declared"
+                  },
+                  "tax_amount": {
+                    "type": "number",
+                    "source": "ai_declared"
+                  },
+                  "file_name": {
+                    "type": "string",
+                    "source": "ai_declared"
+                  },
+                  "file_modified": {
+                    "type": "string",
+                    "source": "ai_declared"
+                  }
+                }
+              },
+              "source": "inferred"
+            },
+            "invoices_missing_invoice_number": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "source": "ai_declared",
+                "properties": {
+                  "vendor_name": {
+                    "type": "string",
+                    "source": "ai_declared"
+                  },
+                  "invoice_number": {
+                    "type": "string",
+                    "source": "ai_declared"
+                  },
+                  "invoice_date": {
+                    "type": "string",
+                    "source": "ai_declared"
+                  },
+                  "due_date": {
+                    "type": "string",
+                    "source": "ai_declared"
+                  },
+                  "total_amount": {
+                    "type": "number",
+                    "source": "ai_declared"
+                  },
+                  "currency": {
+                    "type": "string",
+                    "source": "ai_declared"
+                  },
+                  "tax_amount": {
+                    "type": "number",
+                    "source": "ai_declared"
+                  },
+                  "file_name": {
+                    "type": "string",
+                    "source": "ai_declared"
+                  },
+                  "file_modified": {
+                    "type": "string",
+                    "source": "ai_declared"
+                  }
+                }
+              },
+              "source": "inferred"
+            }
+          },
+          "source": "inferred"
+        },
+        "scope": "global",
+        "produced_by": "compute_metrics"
+      },
+      "email_content": {
+        "schema": {
+          "type": "object",
+          "properties": {
+            "subject": {
+              "type": "string",
+              "source": "ai_declared",
+              "description": "Email subject line"
+            },
+            "html_body": {
+              "type": "string",
+              "source": "ai_declared",
+              "description": "Complete HTML email body with styled table and totals"
+            }
+          },
+          "source": "ai_declared"
+        },
+        "scope": "global",
+        "produced_by": "generate_email_body",
+        "consumed_by": [
+          "send_summary_email"
+        ]
+      }
+    }
+  }
+}

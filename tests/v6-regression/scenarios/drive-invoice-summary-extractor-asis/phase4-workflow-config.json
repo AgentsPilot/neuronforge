@@ -1,0 +1,9 @@
+{
+  "user_email": "meiribarak@gmail.com",
+  "folder_link": "https://drive.google.com/drive/u/0/folders/1Wszlm9qgqPVQyHYp1lWmlkipRFLVQLAk",
+  "email_service": "google-mail",
+  "email_subject": "Invoice summary from Google Drive folder",
+  "recipient_email": "meiribarak@gmail.com",
+  "google-drive__storage/list__folder_link": "https://drive.google.com/drive/u/0/folders/1Wszlm9qgqPVQyHYp1lWmlkipRFLVQLAk",
+  "google-mail__email/send_message__recipients.to": "meiribarak@gmail.com"
+}

@@ -1,0 +1,39 @@
+{
+  "name": "Google Drive Invoice Summary Email Agent — exact DB DSL (Phase D mocked + Phase E live)",
+  "description": "Captured AS IS from agent 6ef48513-f49c-4635-b0dc-bdd9bf2f80a6 (created 2026-06-02T17:21:55.615+00:00). Exact DB pilot_steps + configured input_values — no LLM, no recompile, no IntentContract. `dsl_provided: true` tells run-regression.ts to skip Compile + Phase A and run the committed DB DSL through Phase D (mocked). Phase E (live) runs via test-live-agent-execution.ts (file-based): the DSL is persisted to agents.pilot_steps and the config to agent_configurations.input_values before executing, so edits to these files are saved on the agent in the DB.",
+  "created": "2026-06-02",
+  "dsl_provided": true,
+  "source": {
+    "type": "live-agent-asis-capture",
+    "agent_id": "6ef48513-f49c-4635-b0dc-bdd9bf2f80a6",
+    "owner_user_id": "868fda6a-59fa-4e99-8930-9951484078bf",
+    "endpoint": "tests/v6-regression/scripts/build-phase-e-scenario-from-agent.ts"
+  },
+  "plugins": [
+    "google-drive",
+    "document-extractor",
+    "google-mail"
+  ],
+  "expected": {
+    "min_steps": 9,
+    "step_types": [
+      "action",
+      "transform",
+      "scatter_gather",
+      "ai_processing"
+    ],
+    "phase_d_success": true,
+    "phase_e_success": false
+  },
+  "status": {
+    "phase_d": "PASS — verified 2026-06-10 (mocked WorkflowPilot, 10/10 steps). NOTE: Phase D mocks return stub data, so it passes despite the live bugs below — the mocks hide the real Drive/extractor failures.",
+    "phase_e": "FAIL — live run 2026-06-10 (execution captured in output/vocabulary-pipeline/live-execution-report.json). Two confirmed bugs (below).",
+    "phase_e_failure_reason": "BUG 1 (extraction): every document-extractor.extract_structured_data call returns success:false with all 8 fields missing. The DSL has no download step before the extractor and feeds step4 file_content = the Drive list-item METADATA object (no bytes). Deeper root cause: document-extractor requires base64 file bytes, but google-drive.read_file_content does `downloadResponse.text()` on non-Google-Doc files (google-drive-plugin-executor.ts ~L326), corrupting binary PDFs — so no Drive action yields the base64 the extractor needs. BUG 2 (wrong folder): step1 list_files has params:{} — the configured folder_link was never bound to folder_id, so Drive listed the My-Drive ROOT (20 mixed items) instead of folder 1TAUlds9…. The filter then kept 2 stray root PDFs (a 'Welcome Playbook' + an Expedia PDF), not the 3 receipts in the configured folder. Email therefore showed 2 'Extraction failed' lines from the wrong files.",
+    "bugs_open": true
+  },
+  "run": {
+    "phase_d_note": "Run as part of the suite: npx tsx --import ./scripts/env-preload.ts tests/v6-regression/run-regression.ts",
+    "phase_e_note": "Requires TEST_USER_ID in .env.local to equal the agent owner above. Live run reads real plugins and is outward-facing (sends real email).",
+    "phase_e_command": "npx tsx --import ./scripts/env-preload.ts scripts/test-live-agent-execution.ts --agent-id 6ef48513-f49c-4635-b0dc-bdd9bf2f80a6 --input-dir tests/v6-regression/scenarios/drive-invoice-summary-extractor-asis"
+  }
+}

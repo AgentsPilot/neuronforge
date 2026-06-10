@@ -1,0 +1,700 @@
+{
+  "slots": {
+    "folder_files": {
+      "schema": {
+        "type": "object",
+        "source": "plugin",
+        "properties": {
+          "files": {
+            "type": "array",
+            "source": "plugin",
+            "description": "List of files and folders",
+            "items": {
+              "type": "object",
+              "source": "plugin",
+              "semantic_type": "file_attachment",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "Unique file ID"
+                },
+                "name": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "File or folder name"
+                },
+                "mimeType": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "MIME type of the file"
+                },
+                "size": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "File size in bytes"
+                },
+                "createdTime": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "Creation timestamp (ISO 8601)"
+                },
+                "modifiedTime": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "Last modification timestamp (ISO 8601)"
+                },
+                "webViewLink": {
+                  "type": "string",
+                  "source": "plugin",
+                  "description": "URL to view the file"
+                },
+                "shared": {
+                  "type": "boolean",
+                  "source": "plugin",
+                  "description": "Whether file is shared"
+                },
+                "starred": {
+                  "type": "boolean",
+                  "source": "plugin",
+                  "description": "Whether file is starred"
+                }
+              }
+            }
+          },
+          "file_count": {
+            "type": "number",
+            "source": "plugin",
+            "description": "Number of files returned"
+          },
+          "next_page_token": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Token for fetching next page of results"
+          },
+          "has_more": {
+            "type": "boolean",
+            "source": "plugin",
+            "description": "Whether more files are available"
+          },
+          "query_used": {
+            "type": "string",
+            "source": "plugin",
+            "description": "The query used to filter results"
+          },
+          "retrieved_at": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Timestamp when data was retrieved (ISO 8601)"
+          }
+        }
+      },
+      "scope": "global",
+      "produced_by": "list_folder_files",
+      "consumed_by": [
+        "filter_invoice_files"
+      ]
+    },
+    "invoice_files": {
+      "schema": {
+        "type": "array",
+        "source": "inferred",
+        "description": "List of files and folders",
+        "items": {
+          "type": "object",
+          "source": "plugin",
+          "semantic_type": "file_attachment",
+          "properties": {
+            "id": {
+              "type": "string",
+              "source": "plugin",
+              "description": "Unique file ID"
+            },
+            "name": {
+              "type": "string",
+              "source": "plugin",
+              "description": "File or folder name"
+            },
+            "mimeType": {
+              "type": "string",
+              "source": "plugin",
+              "description": "MIME type of the file"
+            },
+            "size": {
+              "type": "string",
+              "source": "plugin",
+              "description": "File size in bytes"
+            },
+            "createdTime": {
+              "type": "string",
+              "source": "plugin",
+              "description": "Creation timestamp (ISO 8601)"
+            },
+            "modifiedTime": {
+              "type": "string",
+              "source": "plugin",
+              "description": "Last modification timestamp (ISO 8601)"
+            },
+            "webViewLink": {
+              "type": "string",
+              "source": "plugin",
+              "description": "URL to view the file"
+            },
+            "shared": {
+              "type": "boolean",
+              "source": "plugin",
+              "description": "Whether file is shared"
+            },
+            "starred": {
+              "type": "boolean",
+              "source": "plugin",
+              "description": "Whether file is starred"
+            }
+          }
+        }
+      },
+      "scope": "global",
+      "produced_by": "filter_invoice_files",
+      "consumed_by": [
+        "process_each_invoice"
+      ]
+    },
+    "invoice_file": {
+      "schema": {
+        "type": "object",
+        "source": "inferred",
+        "semantic_type": "file_attachment",
+        "properties": {
+          "id": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Unique file ID"
+          },
+          "name": {
+            "type": "string",
+            "source": "plugin",
+            "description": "File or folder name"
+          },
+          "mimeType": {
+            "type": "string",
+            "source": "plugin",
+            "description": "MIME type of the file"
+          },
+          "size": {
+            "type": "string",
+            "source": "plugin",
+            "description": "File size in bytes"
+          },
+          "createdTime": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Creation timestamp (ISO 8601)"
+          },
+          "modifiedTime": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Last modification timestamp (ISO 8601)"
+          },
+          "webViewLink": {
+            "type": "string",
+            "source": "plugin",
+            "description": "URL to view the file"
+          },
+          "shared": {
+            "type": "boolean",
+            "source": "plugin",
+            "description": "Whether file is shared"
+          },
+          "starred": {
+            "type": "boolean",
+            "source": "plugin",
+            "description": "Whether file is starred"
+          }
+        }
+      },
+      "scope": "loop",
+      "produced_by": "process_each_invoice",
+      "consumed_by": [
+        "read_file_content",
+        "extract_invoice_fields",
+        "augment_with_file_metadata"
+      ]
+    },
+    "extracted_invoices": {
+      "schema": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "source": "ai_declared",
+          "properties": {
+            "vendor_name": {
+              "type": "string",
+              "source": "ai_declared"
+            },
+            "invoice_number": {
+              "type": "string",
+              "source": "ai_declared"
+            },
+            "invoice_date": {
+              "type": "string",
+              "source": "ai_declared"
+            },
+            "due_date": {
+              "type": "string",
+              "source": "ai_declared"
+            },
+            "total_amount": {
+              "type": "number",
+              "source": "ai_declared"
+            },
+            "currency": {
+              "type": "string",
+              "source": "ai_declared"
+            },
+            "tax_amount": {
+              "type": "number",
+              "source": "ai_declared"
+            },
+            "file_name": {
+              "type": "string",
+              "source": "ai_declared"
+            },
+            "file_modified": {
+              "type": "string",
+              "source": "ai_declared"
+            }
+          }
+        },
+        "source": "inferred"
+      },
+      "scope": "global",
+      "produced_by": "process_each_invoice",
+      "consumed_by": [
+        "compute_metrics",
+        "generate_email_body"
+      ]
+    },
+    "file_content": {
+      "schema": {
+        "type": "object",
+        "source": "plugin",
+        "properties": {
+          "file_id": {
+            "type": "string",
+            "source": "plugin",
+            "description": "ID of the file that was read"
+          },
+          "file_name": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Name of the file"
+          },
+          "file_size": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Human-readable file size (e.g., '1.5 MB')"
+          },
+          "mime_type": {
+            "type": "string",
+            "source": "plugin",
+            "description": "MIME type of the file"
+          },
+          "content": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Text content extracted from the file"
+          },
+          "content_length": {
+            "type": "number",
+            "source": "plugin",
+            "description": "Length of the extracted content in characters"
+          },
+          "export_format": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Format the file was exported as (text/plain, text/html, or 'original')"
+          },
+          "read_at": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Timestamp when file was read (ISO 8601)"
+          }
+        }
+      },
+      "scope": "loop",
+      "produced_by": "read_file_content",
+      "consumed_by": [
+        "extract_invoice_fields"
+      ]
+    },
+    "raw_extracted_fields": {
+      "schema": {
+        "type": "object",
+        "properties": {
+          "vendor_name": {
+            "type": "string",
+            "source": "ai_declared",
+            "description": "Vendor or supplier name on the invoice",
+            "required": false
+          },
+          "invoice_number": {
+            "type": "string",
+            "source": "ai_declared",
+            "description": "Invoice number or reference ID",
+            "required": false
+          },
+          "invoice_date": {
+            "type": "string",
+            "source": "ai_declared",
+            "description": "Date the invoice was issued",
+            "required": false
+          },
+          "due_date": {
+            "type": "string",
+            "source": "ai_declared",
+            "description": "Payment due date",
+            "required": false
+          },
+          "total_amount": {
+            "type": "number",
+            "source": "ai_declared",
+            "description": "Total invoice amount",
+            "required": false
+          },
+          "currency": {
+            "type": "string",
+            "source": "ai_declared",
+            "description": "Currency code (e.g., USD, EUR, ILS)",
+            "required": false
+          },
+          "tax_amount": {
+            "type": "number",
+            "source": "ai_declared",
+            "description": "Tax or VAT amount",
+            "required": false
+          }
+        },
+        "source": "ai_declared"
+      },
+      "scope": "loop",
+      "produced_by": "extract_invoice_fields",
+      "consumed_by": [
+        "augment_with_file_metadata"
+      ]
+    },
+    "extraction_result": {
+      "schema": {
+        "type": "object",
+        "source": "ai_declared",
+        "properties": {
+          "vendor_name": {
+            "type": "string",
+            "source": "ai_declared"
+          },
+          "invoice_number": {
+            "type": "string",
+            "source": "ai_declared"
+          },
+          "invoice_date": {
+            "type": "string",
+            "source": "ai_declared"
+          },
+          "due_date": {
+            "type": "string",
+            "source": "ai_declared"
+          },
+          "total_amount": {
+            "type": "number",
+            "source": "ai_declared"
+          },
+          "currency": {
+            "type": "string",
+            "source": "ai_declared"
+          },
+          "tax_amount": {
+            "type": "number",
+            "source": "ai_declared"
+          },
+          "file_name": {
+            "type": "string",
+            "source": "ai_declared"
+          },
+          "file_modified": {
+            "type": "string",
+            "source": "ai_declared"
+          }
+        }
+      },
+      "scope": "loop",
+      "produced_by": "augment_with_file_metadata",
+      "consumed_by": [
+        "process_each_invoice"
+      ]
+    },
+    "invoice_count": {
+      "schema": {
+        "type": "number",
+        "description": "Count of invoice_count",
+        "source": "inferred"
+      },
+      "scope": "global",
+      "produced_by": "compute_metrics",
+      "consumed_by": [
+        "generate_email_body"
+      ]
+    },
+    "total_sum": {
+      "schema": {
+        "type": "number",
+        "description": "sum of total_amount",
+        "source": "inferred"
+      },
+      "scope": "global",
+      "produced_by": "compute_metrics",
+      "consumed_by": [
+        "generate_email_body"
+      ]
+    },
+    "invoices_missing_total": {
+      "schema": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "source": "ai_declared",
+          "properties": {
+            "vendor_name": {
+              "type": "string",
+              "source": "ai_declared"
+            },
+            "invoice_number": {
+              "type": "string",
+              "source": "ai_declared"
+            },
+            "invoice_date": {
+              "type": "string",
+              "source": "ai_declared"
+            },
+            "due_date": {
+              "type": "string",
+              "source": "ai_declared"
+            },
+            "total_amount": {
+              "type": "number",
+              "source": "ai_declared"
+            },
+            "currency": {
+              "type": "string",
+              "source": "ai_declared"
+            },
+            "tax_amount": {
+              "type": "number",
+              "source": "ai_declared"
+            },
+            "file_name": {
+              "type": "string",
+              "source": "ai_declared"
+            },
+            "file_modified": {
+              "type": "string",
+              "source": "ai_declared"
+            }
+          }
+        },
+        "source": "inferred"
+      },
+      "scope": "global",
+      "produced_by": "compute_metrics",
+      "consumed_by": [
+        "generate_email_body"
+      ]
+    },
+    "invoices_missing_invoice_number": {
+      "schema": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "source": "ai_declared",
+          "properties": {
+            "vendor_name": {
+              "type": "string",
+              "source": "ai_declared"
+            },
+            "invoice_number": {
+              "type": "string",
+              "source": "ai_declared"
+            },
+            "invoice_date": {
+              "type": "string",
+              "source": "ai_declared"
+            },
+            "due_date": {
+              "type": "string",
+              "source": "ai_declared"
+            },
+            "total_amount": {
+              "type": "number",
+              "source": "ai_declared"
+            },
+            "currency": {
+              "type": "string",
+              "source": "ai_declared"
+            },
+            "tax_amount": {
+              "type": "number",
+              "source": "ai_declared"
+            },
+            "file_name": {
+              "type": "string",
+              "source": "ai_declared"
+            },
+            "file_modified": {
+              "type": "string",
+              "source": "ai_declared"
+            }
+          }
+        },
+        "source": "inferred"
+      },
+      "scope": "global",
+      "produced_by": "compute_metrics",
+      "consumed_by": [
+        "generate_email_body"
+      ]
+    },
+    "invoice_metrics": {
+      "schema": {
+        "type": "object",
+        "properties": {
+          "invoice_count": {
+            "type": "number",
+            "description": "Count of invoice_count",
+            "source": "inferred"
+          },
+          "total_sum": {
+            "type": "number",
+            "description": "sum of total_amount",
+            "source": "inferred"
+          },
+          "invoices_missing_total": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "source": "ai_declared",
+              "properties": {
+                "vendor_name": {
+                  "type": "string",
+                  "source": "ai_declared"
+                },
+                "invoice_number": {
+                  "type": "string",
+                  "source": "ai_declared"
+                },
+                "invoice_date": {
+                  "type": "string",
+                  "source": "ai_declared"
+                },
+                "due_date": {
+                  "type": "string",
+                  "source": "ai_declared"
+                },
+                "total_amount": {
+                  "type": "number",
+                  "source": "ai_declared"
+                },
+                "currency": {
+                  "type": "string",
+                  "source": "ai_declared"
+                },
+                "tax_amount": {
+                  "type": "number",
+                  "source": "ai_declared"
+                },
+                "file_name": {
+                  "type": "string",
+                  "source": "ai_declared"
+                },
+                "file_modified": {
+                  "type": "string",
+                  "source": "ai_declared"
+                }
+              }
+            },
+            "source": "inferred"
+          },
+          "invoices_missing_invoice_number": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "source": "ai_declared",
+              "properties": {
+                "vendor_name": {
+                  "type": "string",
+                  "source": "ai_declared"
+                },
+                "invoice_number": {
+                  "type": "string",
+                  "source": "ai_declared"
+                },
+                "invoice_date": {
+                  "type": "string",
+                  "source": "ai_declared"
+                },
+                "due_date": {
+                  "type": "string",
+                  "source": "ai_declared"
+                },
+                "total_amount": {
+                  "type": "number",
+                  "source": "ai_declared"
+                },
+                "currency": {
+                  "type": "string",
+                  "source": "ai_declared"
+                },
+                "tax_amount": {
+                  "type": "number",
+                  "source": "ai_declared"
+                },
+                "file_name": {
+                  "type": "string",
+                  "source": "ai_declared"
+                },
+                "file_modified": {
+                  "type": "string",
+                  "source": "ai_declared"
+                }
+              }
+            },
+            "source": "inferred"
+          }
+        },
+        "source": "inferred"
+      },
+      "scope": "global",
+      "produced_by": "compute_metrics"
+    },
+    "email_content": {
+      "schema": {
+        "type": "object",
+        "properties": {
+          "subject": {
+            "type": "string",
+            "source": "ai_declared",
+            "description": "Email subject line"
+          },
+          "html_body": {
+            "type": "string",
+            "source": "ai_declared",
+            "description": "Complete HTML email body with styled table and totals"
+          }
+        },
+        "source": "ai_declared"
+      },
+      "scope": "global",
+      "produced_by": "generate_email_body",
+      "consumed_by": [
+        "send_summary_email"
+      ]
+    }
+  }
+}
