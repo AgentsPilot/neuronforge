@@ -9,8 +9,8 @@
  * separately (intent-contract isn't stored on the agent row and scenario.json
  * is hand-written metadata).
  *
- * Usage:
- *   npx tsx scripts/build-scenario-from-agent.ts <agent_id> <scenario_folder_name>
+ * Usage (run from project root):
+ *   npx tsx tests/v6-regression/scripts/build-scenario-from-agent.ts <agent_id> <scenario_folder_name>
  */
 
 import { config } from 'dotenv';
@@ -18,7 +18,8 @@ import { resolve } from 'path';
 import { createClient } from '@supabase/supabase-js';
 import { writeFileSync } from 'fs';
 
-config({ path: resolve(__dirname, '../.env.local') });
+// __dirname = tests/v6-regression/scripts → repo root is three levels up
+config({ path: resolve(__dirname, '../../../.env.local') });
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -27,7 +28,7 @@ const supabase = createClient(
 
 const [agentId, scenarioName] = process.argv.slice(2);
 if (!agentId || !scenarioName) {
-  console.error('Usage: tsx scripts/build-scenario-from-agent.ts <agent_id> <scenario_folder_name>');
+  console.error('Usage: tsx tests/v6-regression/scripts/build-scenario-from-agent.ts <agent_id> <scenario_folder_name>');
   process.exit(1);
 }
 
@@ -39,7 +40,7 @@ if (!agentId || !scenarioName) {
     .single();
   if (error) { console.error('read failed:', error); process.exit(1); }
 
-  const scenarioDir = resolve(__dirname, '..', 'tests/v6-regression/scenarios', scenarioName);
+  const scenarioDir = resolve(__dirname, '..', 'scenarios', scenarioName);
   console.log('Writing scenario files to:', scenarioDir);
 
   // 1. enhanced-prompt.json — parse the EP JSON string stored on user_prompt

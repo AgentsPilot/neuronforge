@@ -22,6 +22,11 @@ interface ScenarioMeta {
   name: string
   description: string
   plugins: string[]
+  // When true, the scenario ships an exact, pre-built DSL (e.g. captured AS IS
+  // from a live agent's pilot_steps) instead of an IntentContract. The runner
+  // skips Compile + Phase A (which need IR/data_schema) and runs the committed
+  // DSL straight through Phase D (mocked). See tests/v6-regression/scripts/README.md.
+  dsl_provided?: boolean
   expected: {
     min_steps: number
     step_types?: string[]
@@ -605,6 +610,80 @@ async function main() {
         compile: { success: false, steps: 0, duration_ms: 0, error: errorMsg },
         phase_a: { success: false, checks_passed: 0, checks_failed: 0, errors: [errorMsg] },
         phase_d: { success: false, steps_completed: 0, steps_failed: 0, duration_ms: 0, error: errorMsg },
+      })
+      continue
+    }
+
+    // --- DSL-provided scenarios (exact pre-built DSL, no IntentContract) ---
+    // Captured AS IS from a live agent's pilot_steps. Skip Compile + Phase A
+    // (they need IR/data_schema this scenario doesn't carry) and run the
+    // committed DB DSL straight through Phase D (mocked). Live Phase E is run
+    // separately via scripts/test-live-agent-execution.ts.
+    if (meta.dsl_provided === true) {
+      const committedDslPath = path.join(scenarioDir, 'phase4-pilot-dsl-steps.json')
+      const committedConfigPath = path.join(scenarioDir, 'phase4-workflow-config.json')
+
+      if (!fs.existsSync(committedDslPath) || !fs.existsSync(committedConfigPath)) {
+        const errorMsg = 'dsl_provided scenario missing phase4-pilot-dsl-steps.json or phase4-workflow-config.json'
+        logger.log(`   FAIL — ${errorMsg}`)
+        console.log(`   FAIL -- ${errorMsg}`)
+        results.push({
+          scenario: scenarioName,
+          status: 'FAIL',
+          failure_reason: errorMsg,
+          ep_key_hints: { valid: true, warnings: [], auto_fixed_keys: [] },
+          compile: { success: false, steps: 0, duration_ms: 0, error: errorMsg },
+          phase_a: { success: false, checks_passed: 0, checks_failed: 0, errors: [errorMsg] },
+          phase_d: { success: false, steps_completed: 0, steps_failed: 0, duration_ms: 0, error: errorMsg },
+        })
+        continue
+      }
+
+      // Stage the committed DSL + config into the output dir for Phase D.
+      let providedSteps = 0
+      try {
+        const dsl = JSON.parse(fs.readFileSync(committedDslPath, 'utf-8'))
+        providedSteps = Array.isArray(dsl) ? dsl.length : 0
+        fs.copyFileSync(committedDslPath, path.join(scenarioOutputDir, 'phase4-pilot-dsl-steps.json'))
+        fs.copyFileSync(committedConfigPath, path.join(scenarioOutputDir, 'phase4-workflow-config.json'))
+      } catch (err: any) {
+        const errorMsg = `Failed to stage provided DSL: ${err.message}`
+        logger.log(`   FAIL — ${errorMsg}`)
+        console.log(`   FAIL -- ${errorMsg}`)
+        results.push({
+          scenario: scenarioName,
+          status: 'FAIL',
+          failure_reason: errorMsg,
+          ep_key_hints: { valid: true, warnings: [], auto_fixed_keys: [] },
+          compile: { success: false, steps: 0, duration_ms: 0, error: errorMsg },
+          phase_a: { success: false, checks_passed: 0, checks_failed: 0, errors: [errorMsg] },
+          phase_d: { success: false, steps_completed: 0, steps_failed: 0, duration_ms: 0, error: errorMsg },
+        })
+        continue
+      }
+
+      const compileResult: PhaseCompileResult = { success: true, steps: providedSteps, duration_ms: 0 }
+      console.log(`   Compile .............. PROVIDED (${providedSteps} steps, exact DB DSL — no IntentContract)`)
+      console.log(`   Phase A .............. SKIPPED (DSL-provided — no data_schema to validate)`)
+      logger.log(`   DSL-provided: staged ${providedSteps} steps; Compile+PhaseA skipped`)
+
+      const phaseDResult = runPhaseD(scenarioOutputDir, logger)
+      printPhaseDResult(phaseDResult)
+      logger.log(`   Phase D: ${phaseDResult.success ? 'PASS' : 'FAIL'} (${phaseDResult.steps_completed} steps, ${phaseDResult.duration_ms}ms)`)
+
+      const scenarioStatus: 'PASS' | 'FAIL' = phaseDResult.success ? 'PASS' : 'FAIL'
+      const failureReason = phaseDResult.success ? undefined : `Phase D failed: ${phaseDResult.error || 'execution failure'}`
+      printScenarioVerdict(scenarioStatus, failureReason)
+
+      results.push({
+        scenario: scenarioName,
+        status: scenarioStatus,
+        failure_reason: failureReason,
+        ep_key_hints: { valid: true, warnings: [], auto_fixed_keys: [] },
+        compile: compileResult,
+        // Phase A intentionally skipped — reported as SKIP (0/0) in the summary.
+        phase_a: { success: false, checks_passed: 0, checks_failed: 0, errors: [] },
+        phase_d: phaseDResult,
       })
       continue
     }

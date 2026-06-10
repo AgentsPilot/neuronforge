@@ -103,7 +103,9 @@ RUNTIME (lib/pilot/, executed by /api/run-agent and /api/run-agent-stream):
 | `scripts/test-live-agent-execution.ts` | Phase E live runner against real plugins. |
 | `tests/v6-regression/run-regression.ts` | Runs Phase A + D across all scenarios. |
 | `scripts/dump-agent.ts <agent_id>` | Pulls an agent row to `c:/tmp/agent-<prefix>.json` for inspection. |
-| `scripts/build-scenario-from-agent.ts <agent_id> <slug>` | Generates the canonical scenario seed files from a saved agent. |
+| `tests/v6-regression/scripts/build-scenario-from-agent.ts <agent_id> <slug>` | Seeds scenario files from a saved agent (EP + stored DSL only). |
+| `tests/v6-regression/scripts/capture-scenario-from-agent.ts <agent_id> <slug>` | Full headless capture from a live agent — regenerates IC + data_schema + fresh DSL (mirrors the `/api/v6/generate-ir-intent-contract` route). Run with `--import ./scripts/env-preload.ts`. |
+| `tests/v6-regression/scripts/import-regression-scenarios-as-agents.ts` | Imports committed scenarios into the DB as runnable agents (needs `TEST_USER_ID`). |
 
 ### Docs
 
@@ -281,7 +283,7 @@ The pipeline has accumulated invariants through 55+ weak-point fixes. Each row b
 | Add a new safety net for an LLM emission class | First: can the prompt prevent it? (root cause). If not: add the safety net at the latest safe point, prefer **throw with clear error** over **silently auto-fix** (WP-40 lesson). | Don't add Levenshtein/fuzzy-match auto-fix without a confidence threshold ≥ 3 and a regression scenario covering it |
 | Fix a runtime error that doesn't reproduce in fresh re-runs | Pull the agent's persisted `intent_contract` via the WP-55 SQL pattern. The original LLM emission is in `agents.agent_config.ai_context.intent_contract`. | Don't try to LLM re-run for diagnosis — emissions are non-deterministic, the re-run may produce a correct emission that doesn't reproduce the bug (lesson from the contracts-googledocs-v2ui-pipeline-a scenario). |
 | Reduce token cost in Phase 1 | Trim sections of `intent-system-prompt-v2.ts` that aren't load-bearing; verify with the regression suite Phase D | Don't drop the EP FIDELITY § 5.5 — its ~500 tokens prevent silent execution failures |
-| Add a regression scenario | Use `scripts/build-scenario-from-agent.ts <agent_id> <slug>` to seed, then live-capture via `scripts/test-complete-pipeline-with-vocabulary.ts --output-dir <scenario>/output`; commit only the canonical snapshots (`output/` is gitignored) per the regression plan doc | Don't commit `output/` — it's reproducible and bloats the repo |
+| Add a regression scenario | From a live agent, run `tests/v6-regression/scripts/capture-scenario-from-agent.ts <agent_id> <slug>` (one headless pipeline run → IC + data_schema + DSL + scenario skeleton), then hand-author `scenario.json`. The older two-step path (`build-scenario-from-agent.ts` to seed + `scripts/test-complete-pipeline-with-vocabulary.ts --output-dir <scenario>/output` to live-capture) still works. Commit only the canonical snapshots — `output/` is gitignored | Don't commit `output/` — it's reproducible and bloats the repo. Phase 1 is non-deterministic — review the captured IC before committing |
 | Investigate a "no data" / empty-email failure | Check WP-13 short-circuit logs first, then trace upstream to whichever step emptied the data (WP-50-class preprocessor false positive? WP-32 StructuralRepair rewrite? WP-40 IRFormalizer guess?) | Don't conclude "WP-13 swallowed real data" — WP-13 protects against fabrication; the bug is always upstream |
 
 ---

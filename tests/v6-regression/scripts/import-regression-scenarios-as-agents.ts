@@ -11,12 +11,12 @@
  * the user, insert otherwise. User-editable fields (status, mode, schedule,
  * trigger_conditions, connected_plugins) are preserved on update.
  *
- * Usage:
- *   npx tsx --import ./scripts/env-preload.ts scripts/import-regression-scenarios-as-agents.ts
- *   npx tsx --import ./scripts/env-preload.ts scripts/import-regression-scenarios-as-agents.ts --only expense-invoice-email-scanner
- *   npx tsx --import ./scripts/env-preload.ts scripts/import-regression-scenarios-as-agents.ts --dry-run
- *   npx tsx --import ./scripts/env-preload.ts scripts/import-regression-scenarios-as-agents.ts --insert-only
- *   npx tsx --import ./scripts/env-preload.ts scripts/import-regression-scenarios-as-agents.ts --update-only
+ * Usage (run from project root):
+ *   npx tsx --import ./scripts/env-preload.ts tests/v6-regression/scripts/import-regression-scenarios-as-agents.ts
+ *   npx tsx --import ./scripts/env-preload.ts tests/v6-regression/scripts/import-regression-scenarios-as-agents.ts --only expense-invoice-email-scanner
+ *   npx tsx --import ./scripts/env-preload.ts tests/v6-regression/scripts/import-regression-scenarios-as-agents.ts --dry-run
+ *   npx tsx --import ./scripts/env-preload.ts tests/v6-regression/scripts/import-regression-scenarios-as-agents.ts --insert-only
+ *   npx tsx --import ./scripts/env-preload.ts tests/v6-regression/scripts/import-regression-scenarios-as-agents.ts --update-only
  *
  * Requires: TEST_USER_ID in .env.local
  */
@@ -149,7 +149,7 @@ async function main() {
   console.log(`Mode:    ${mode}`)
   console.log('======================================================================\n')
 
-  const { createServerSupabaseClient } = await import('../lib/supabaseServer')
+  const { createServerSupabaseClient } = await import('../../../lib/supabaseServer')
   const supabase = createServerSupabaseClient()
 
   const results: ImportResult[] = []
