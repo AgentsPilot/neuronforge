@@ -1478,3 +1478,64 @@ _To be populated by RM._
 | 2026-06-04 | Initial workplan | Dev authored after reading EFFORT_ESTIMATOR_REQUIREMENT.md + recon of V6 save site (`app/api/create-agent/route.ts:197,229`), MetricsCollector reader (`lib/pilot/MetricsCollector.ts:197-223`), deprecated path (`lib/pilot/insight/BusinessInsightGenerator.ts:50-54,549-577,866-919`), repository pattern (`AgentRepository.update` line 218), model-config pattern (`lib/agentkit/v6/config/AgentGenerationConfigService.ts`), retry sibling (`lib/agentkit/v6/utils/ProviderFallback.ts`), audit infrastructure (`lib/services/AuditTrailService.ts:470` + `lib/audit/events.ts`), and feature-flag pattern (`lib/utils/featureFlags.ts:79-83`). Surfaced 7 risks for SA review; #2/#3/#4 are blocking. |
 | 2026-06-04 | SA Phase-1 review | SA reviewed workplan + cross-checked against actual code (create-agent route, agents-[id] PUT handler, AgentRepository, audit events, BusinessInsightGenerator, MetricsCollector, featureFlags, baseProvider, AgentGenerationConfigService, AgentWizard). Found 2 blocking issues: (1) AC-4's deprecated-path guard is on the wrong column — will silently overwrite fresh estimates, fix required at `BusinessInsightGenerator.ts:884`; (2) Risk #4 regen-trigger gating list assumes `enhanced_prompt`+`pilot_steps` are in PUT handler's updateData whitelist — they aren't, need to gate on `agentData` body instead. Verdict: NEEDS_REVISION. ~10 minor changes also flagged (dispatch helper extraction required, API endpoint sentinel cleanup, retry off-by-one, test mapping tweaks, persona scan robustness, log truncation for PII). Decisions confirmed: Risk #1 APPROVE env-opt-in; Risk #2 APPROVE no migration; Risk #3 APPROVE option-a `UpdateAgentInput` extension; Risk #6 APPROVE user_prompt fallback (verified V6 doesn't persist `enhanced_prompt`); Risk #7 APPROVE prompt-level + Zod-retry. |
 | 2026-06-07 | SA review revisions applied | (1) Added BusinessInsightGenerator guard extension at line 884 to in-scope. (2) Fixed regen gate to read from agentData not updateData. (3) Promoted lib/effort-estimator/dispatch.ts to required (net-new pattern single-source-of-truth). (4) Added "Known v1 limitations" section documenting create-then-edit race + Open Follow-Up #11 reference. (5) Updated Risks section to mark all BLOCKING items RESOLVED. |
+| 2026-06-10 | SA re-confirmation | SA re-reviewed all 5 revisions against the source code + requirement MD. All blockers verified resolved. APPROVED_FOR_IMPLEMENTATION. See "SA Re-Confirmation — 2026-06-10" section. |
+
+---
+
+## SA Re-Confirmation — 2026-06-10
+
+**Verdict:** APPROVED_FOR_IMPLEMENTATION
+
+**Reviewer process:** Re-read the workplan in full, cross-checked the 5 revisions against the requirement MD (`docs/requirements/EFFORT_ESTIMATOR_REQUIREMENT.md` — committed `d6f2852` with deprecation sub-bullet at line 213 + Open Follow-Ups #8/#9 at lines 260-261), and verified each fix against the source files I cited in my first-pass review (`BusinessInsightGenerator.ts:860-919`, `app/api/agents/[id]/route.ts:160-290`).
+
+### Revision verification table
+
+| Revision | Blocker addressed? | Notes |
+|---|---|---|
+| 1. line-884 guard extension | ✅ | Verified at workplan § Deprecation work item 0 (lines 959-980). Code snippet correctly reads `(agent.agent_config as Record<string, any> \| null)?.roi_estimate` BEFORE writing, with `&& !existingROI` gate on the `if (roiEstimate.total_manual_time_seconds...)` branch, plus a DEBUG-log-on-skip `else if (existingROI)` branch. Cross-checked against actual source — current code at line 884 of `BusinessInsightGenerator.ts` writes unconditionally when `roiEstimate.total_manual_time_seconds` is truthy. The proposed 2-line guard correctly closes the AC-4 hole. Test #6 in the Tests section (workplan line 1045) explicitly asserts the SKIP behavior. Execution Order phase 8(a) also lists it. Requirement MD § Deprecation (line 213) mirrors this scope. |
+| 2. Risk #4 gate corrected to agentData | ✅ | Verified at workplan § Risk #4 (lines 1146-1213). Gate now references `agentData` (line 1158-1164), which I confirmed matches `app/api/agents/[id]/route.ts:169` (`const { agent: agentData } = body;`). The whitelist at lines 262-283 of the PUT handler correctly does NOT copy `enhanced_prompt` or `pilot_steps`, so the corrected gate is the right source of truth. Tightening on `user_prompt !== existingAgent.user_prompt` and `JSON.stringify(workflow_steps)` comparison addresses my recommendation #3. The pre-existing direct-Supabase usage at lines 194-199 / 303-309 is explicitly called out as out-of-scope (workplan line 1186), consistent with my Phase-1 finding. |
+| 3. dispatch.ts SSoT helper promoted to required | ✅ | Verified at workplan § Async fire pattern (lines 541-642). Helper signature `dispatchEffortEstimate(input: EffortEstimatorInput, logger: Logger): void` wraps (a) `useEffortEstimator()` flag check, (b) dynamic `import('./EffortEstimator')`, (c) `void (async () => { ... })().catch(...)` IIFE chain that correctly routes import-throws through the catch (addresses my comment #13). Listed in Module layout (line 153), File-by-file task list (line 251), and consumed by both V6 save (lines 592-602) + PUT regen (lines 606-616). API endpoint correctly does NOT use it (line 619). CLAUDE.md mandatory rule #7 (no new patterns without SA review) is satisfied via single-source-of-truth. |
+| 4. v1 limitations section added | ✅ | Verified at workplan § Known v1 limitations (lines 1282-1303). Documents the create-then-quick-edit race (L1) with: (a) explicit scenario walkthrough, (b) acceptance rationale (low probability, observable via INFO override log carrying `correlationId` + `old_value` + `new_value`), (c) pointer to Open Follow-Up #8 in the requirement MD (the workplan says #11 — see "New findings" below for the numbering drift), (d) required inline comment at the read-modify-write site referencing the limitation. Cross-checked: the comment is already drafted in the pseudocode at workplan lines 516-522. |
+| 5. Risks reclassified RESOLVED | ✅ | Verified — Risk #1 (line 1091), Risk #5 (line 1215), Risk #6 (line 1255) all explicitly marked RESOLVED with refs to the fixes. Risk #4 retains its detailed history but the corrected gate is inlined at the top with the SA review thread preserved below for audit. SA Review Summary table (line 1452) shows "Revisions applied (2026-06-07): 5" with per-row resolution notes. Verdict at line 1456 reads APPROVE_FOR_IMPLEMENTATION pending SA re-confirmation (now resolved by this re-confirmation). |
+
+### Requirement-MD ↔ workplan scope alignment
+
+- Requirement MD Open Follow-Up #8 (`mergeAgentConfig` RPC, race condition) → workplan § Known v1 limitations § L1 (line 1286). **NOTE:** workplan refers to it as Open Follow-Up #11 throughout (drift from when BA had only 7 follow-ups); requirement MD now numbers it as #8. Non-blocking — Dev should update the pointer numbers during implementation to keep cross-refs accurate, but neither the limitation nor the fix shape is in dispute.
+- Requirement MD Open Follow-Up #9 (persist V6 `enhanced_prompt`) → workplan § Risk #6 (line 1255) acknowledges the re-trigger quality gap and references it as Open Follow-Up #12 (same numbering drift). Non-blocking.
+- Requirement MD § Deprecation sub-bullet (line 213) → workplan § Deprecation work item 0 (line 959). Direct match.
+- All 8 ACs map to tests in the workplan § Tests + § Acceptance criteria mapping (line 1075). Test #6 explicitly retargeted for AC-4 against the new guard. Test mapping for AC-7 (line 1065) and AC-8 (line 1066) was flagged in my Phase-1 review; both are now resolved in the workplan's prose but the table at line 1083 still says "Test #8" for AC-8 — Dev should make sure Test #8 is a dedicated `modelResolver.test.ts` row, not a reuse of #4(c). Non-blocking but call it out during code review.
+
+### CLAUDE.md mandatory rules check
+
+| Rule | Status | Evidence |
+|---|---|---|
+| #1 Repos for DB access | ✅ | All estimator writes go via `AgentRepository.update`. Pre-existing PUT handler violation explicitly flagged out-of-scope (workplan line 1186). |
+| #2 Zod on API inputs | ✅ | `RequestSchema = z.object({}).strict()` on POST endpoint (line 687). Estimator's LLM response also Zod-validated via `ROIEstimateV1Schema`. |
+| #3 correlationId + Pino | ✅ | All log calls + audit entries carry `correlationId`. Request-scoped child logger created in API route + dispatcher. No `console.log` in any new module (pre-existing console.log in PUT handler is out-of-scope). |
+| #4 `.eq('user_id', userId)` | ✅ | All `AgentRepository.findById` / `.update` calls in the estimator take `(id, userId)` as paired params — repository already enforces the filter. |
+| #5 No hardcoded model names | ✅ | `modelResolver` reads from `system_settings_config` with `gpt-4o-mini` as in-code default (AC-8 explicitly tests this). LLM call goes through `ProviderFactory.getProvider(provider)`. |
+| #6 TypeScript strict | ✅ | All new types defined explicitly; no `any` in new module signatures. The `(agent.agent_config as Record<string, any>)` casts in the BusinessInsightGenerator guard extension are pre-existing style in that file. |
+| #7 No new patterns without SA review | ✅ | The net-new fire-and-forget dispatch is consolidated in `lib/effort-estimator/dispatch.ts` per my conditional approval. |
+| #8 Audit trail non-blocking | ✅ | `auditLog(...).catch(err => logger.error(...))` pattern at lines 917-936. |
+
+### New findings (non-blocking)
+
+1. **Open Follow-Up numbering drift.** Workplan uses #11 (mergeAgentConfig RPC) and #12 (persist V6 enhanced_prompt). Requirement MD now uses #8 and #9 for the same items. Dev should align the pointer numbers in the workplan's prose + inline code comment at the read-modify-write site during implementation. No functional impact — both docs describe the same items.
+2. **AC-8 test row.** The Acceptance criteria mapping table at line 1083 lists "Test #8" for AC-8 but the Cross-cutting tests table at line 1047 still labels it "Reuse #4 case (c)". Per my Phase-1 comment #7, AC-8 needs a dedicated `modelResolver.test.ts` row. Dev should make this an explicit new sub-test during implementation (the modelResolver.test.ts file is already in the Module layout at line 159).
+3. **SESSION PAUSE STATE section.** The top-of-file pause-state block uses Open Follow-Up #11/#12 names but those should be remapped to #8/#9 when the section is cleaned up post-implementation. Non-blocking; meta-bookkeeping only.
+4. **Persona scan robustness (Phase-1 comment #8).** Still standing — Dev should use `role`-OR-`domain` substring scan rather than full persona string for AC-3 verification. Non-blocking; noted in code review pass.
+5. **Reasoning truncation in INFO logs (Phase-1 comment #9).** Still standing — truncate `reasoning` to ~500 chars at the log site (full payload preserved in audit table). Non-blocking; noted in code review pass.
+6. **`retryWithBackoff` off-by-one (Phase-1 comment #5).** Still standing — assert `attempts === 3` on exhaustion, not 4. Non-blocking; noted in code review pass.
+7. **`supabaseServer` singleton in `modelResolver` (Phase-1 comment #10).** Still standing — prefer `supabaseServer` over direct `createClient`. Non-blocking; noted in code review pass.
+
+None of these block implementation. The blockers from the first pass are all resolved, and these residual items are within the scope of normal code review.
+
+### Decision rationale
+
+All 5 first-pass blockers have been correctly addressed at the prose, file-reference, and line-number level, and the workplan is now internally consistent with the requirement MD (modulo the cosmetic Open Follow-Up numbering drift). The two architectural risks I flagged in Phase 1 (AC-4 silent overwrite + Risk #4 wrong source) have root-cause fixes verifiable against the actual source code at the cited lines. The net-new fire-and-forget pattern is consolidated to a single SSoT helper per CLAUDE.md rule #7. The v1 limitations section makes the accepted trade-offs explicit and observable. Dev may proceed to implementation; code review will catch the residual ~10 minor items already enumerated.
+
+### Approval
+
+[X] Workplan APPROVED FOR IMPLEMENTATION — proceed
+[ ] NEEDS REVISION
+[ ] BLOCKED
