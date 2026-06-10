@@ -1,6 +1,6 @@
 # Effort Estimator Requirement
 
-> **Last Updated**: 2026-06-03
+> **Last Updated**: 2026-06-10
 
 **Created by:** BA
 **Status:** Draft
@@ -210,6 +210,8 @@ In scope, but **no deletion yet**.
 | Self-guard at line 876 | STAYS so the deprecated path never overwrites the new path's output. |
 | Final delete/keep decision | Separate follow-up after one release window. |
 
+- Before the new module ships, extend the existing self-guard at `lib/pilot/insight/BusinessInsightGenerator.ts:884` to also skip writes to `agent_config.roi_estimate` when a value is already present (today the guard at line 876 only protects the top-level `manual_time_per_item_seconds` column, not the nested JSON). This 2-line guard extension is in-scope for the implementing PR and is required for Acceptance Criterion #4 (no double-writes from the deprecated path).
+
 ---
 
 ## Out of Scope
@@ -255,6 +257,8 @@ Full explicit list — captured for SA + Dev clarity.
 | 5 | Extend module to compute USD cost-savings (currently `total_manual_time_seconds` only). | BA | ⬜ future extension |
 | 6 | Migrate legacy `agents.manual_time_per_item_seconds` column data into `roi_estimate`. | Dev | ⬜ separate cleanup task |
 | 7 | Upgrade to `buildUserContextFromProfile` if auth metadata proves insufficient for persona quality. | BA | ⬜ pending observation |
+| 8 | `AgentRepository.mergeAgentConfig` RPC for atomic JSONB merge. The Effort Estimator's first write to `agent_config.roi_estimate` uses a read-modify-write pattern (read row → mutate `agent_config` JSON → update row). This is exposed to a race condition if the user edits the agent prompt while the estimator is still running (write-skew loses one of the two updates). v1 mitigation: log + accept the race as a known limitation (estimator wins on conflict because it runs after save). v2 fix: add a Supabase RPC `merge_agent_config(agent_id, patch jsonb)` that performs `UPDATE agents SET agent_config = agent_config \|\| patch WHERE id = ?` atomically, and expose it via `AgentRepository.mergeAgentConfig()`. | TBD | ⬜ post-v1 |
+| 9 | Persist V6 `enhanced_prompt` to the `agents` table. The Effort Estimator's prompt builder needs the *enhanced* prompt (rich V6 output), not the raw user prompt. Currently, the V6 pipeline produces `enhanced_prompt` in-memory during agent generation but does not persist it to `agents.enhanced_prompt` — it only writes to other columns. On a fresh estimator dispatch the estimator can read it from the V6 payload, but on a re-trigger (API on-demand or post-prompt-edit) the column is empty and the estimator must fall back to the raw user prompt, which produces a measurably lower-quality estimate. Fix: extend the V6 save path in `app/api/create-agent/route.ts` to write the enhanced prompt into a new (or existing) `agents.enhanced_prompt` column. | TBD | ⬜ blocks accurate re-triggers |
 
 ### Cycle Plan (FYI — Tracked by TL, Not Authoritative Here)
 
@@ -288,3 +292,4 @@ Full explicit list — captured for SA + Dev clarity.
 | Date | Change | Details |
 |------|--------|---------|
 | 2026-06-03 | Initial draft | BA authored requirement for Effort Estimator feature after 7 clarification turns. Scope locked: automatic + regeneration + API trigger paths; output schema with `reasoning`, `is_bulk_workflow`, `total_manual_time_seconds`, optional `confidence`, `generated_at`, `model`, `version`; always-overwrite behavior on new path; 3-attempt 1s/4s/16s retry with 30s budget; fire-and-forget async; DB-driven model selection with `gpt-4o-mini` fallback; deprecation of `updateAgentROI` (no deletion); feature flag `NEXT_PUBLIC_USE_EFFORT_ESTIMATOR` (ON dev / OFF prod). |
+| 2026-06-07 | Locked in deprecation guard fix; added Open Follow-Ups #8, #9 | Following SA review of the workplan, user approved a 2-line guard extension at BusinessInsightGenerator.ts:884 as in-scope, and approved adding Follow-Ups #8 (mergeAgentConfig RPC) and #9 (persist V6 enhanced_prompt) to capture known limitations. |
