@@ -1,5 +1,5 @@
 import { User } from '@supabase/supabase-js';
-import { UserProfileRepository } from '@/lib/repositories';
+import { userProfileRepository } from '@/lib/repositories';
 import type { UserContext } from './types';
 
 /**
@@ -22,8 +22,7 @@ export function buildUserContextFromAuth(user: User): UserContext {
  * Slower but more complete - fetches from profiles table
  */
 export async function buildUserContextFromProfile(user: User): Promise<UserContext> {
-  const profileRepo = new UserProfileRepository();
-  const { data: profile } = await profileRepo.findById(user.id);
+  const { data: profile } = await userProfileRepository.findById(user.id);
 
   const timezone = profile?.timezone || user.user_metadata?.timezone;
   return {
