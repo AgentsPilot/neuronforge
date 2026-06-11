@@ -109,6 +109,13 @@ export interface UpdateAgentInput {
   agent_name?: string;
   description?: string;
   config?: Record<string, unknown>;
+  // Added 2026-06-10 (Effort Estimator cycle, Risk #3 option-a): allow
+  // writes of the JSONB `agent_config` column via the repository so the
+  // estimator's read-modify-write can stay on the repository layer instead
+  // of falling back to a direct Supabase call. `AgentRepository.update`
+  // already spreads input directly into the Supabase update, so no impl
+  // change is needed — this is purely a type extension.
+  agent_config?: Record<string, unknown> | null;
   schedule_cron?: string | null;
   timezone?: string | null;
 }

@@ -367,7 +367,17 @@ export class BusinessInsightGenerator {
   }
 
   /**
-   * Build LLM prompt for business insight generation
+   * Build LLM prompt for business insight generation.
+   *
+   * @deprecated 2026-06-10 (the ROI Estimate Guidelines block only) — The
+   * ROI estimation responsibility has moved to `lib/effort-estimator`. The
+   * "ROI Estimate Guidelines" section of this prompt stays during the
+   * deprecation window so the existing insights pipeline keeps producing
+   * ROI estimates for agents created before the new module was wired in.
+   * New code MUST NOT extend that section — extend the new estimator's
+   * prompt at `lib/effort-estimator/buildEffortPrompt.ts` instead.
+   *
+   * The non-ROI business-insight portion of this prompt is NOT deprecated.
    */
   private buildBusinessInsightPrompt(
     workflowContext: string,
@@ -858,10 +868,23 @@ Look for other notable patterns: performance changes, failures, data quality iss
   }
 
   /**
-   * Update agent's manual_time_per_item_seconds with ROI estimate from LLM
-   * Only updates if the agent doesn't already have a value set (user-provided takes precedence)
+   * @deprecated 2026-06-10 — Replaced by `lib/effort-estimator`. This writer
+   * is kept temporarily during the deprecation window so the existing
+   * insights/ROI pipeline does not regress. The self-guard at line 876
+   * (`manual_time_per_item_seconds` null-check) MUST remain — it prevents
+   * this path from overwriting a user-provided manual-time value. The
+   * companion guard added 2026-06-10 (the `existingROI` check on the
+   * `agent_config.roi_estimate` write below) MUST also remain — it prevents
+   * this path from overwriting a fresh estimate written by the new effort
+   * estimator (AC-4 root-cause fix).
    *
-   * For bulk workflows: stores total_manual_time_seconds in agent_config.roi_estimate
+   * Final delete/keep decision is tracked in
+   * EFFORT_ESTIMATOR_REQUIREMENT.md § Open Follow-Ups #1.
+   *
+   * Update agent's manual_time_per_item_seconds with ROI estimate from LLM.
+   * Only updates if the agent doesn't already have a value set (user-provided
+   * takes precedence). For bulk workflows: stores total_manual_time_seconds
+   * in agent_config.roi_estimate.
    */
   private async updateAgentROI(agentId: string, roiEstimate: ROIEstimate): Promise<void> {
     try {
@@ -872,7 +895,9 @@ Look for other notable patterns: performance changes, failures, data quality iss
         .eq('id', agentId)
         .single();
 
-      // Only update if not already set (preserve user-provided values)
+      // CRITICAL: self-guard — do NOT remove. Prevents this deprecated path
+      // from overwriting a user-provided `manual_time_per_item_seconds`. This
+      // guard is on a DIFFERENT column from the AC-4 guard below; both must stay.
       if (agent && (agent.manual_time_per_item_seconds === null || agent.manual_time_per_item_seconds === undefined || agent.manual_time_per_item_seconds === 0)) {
         // Prepare update object
         const updateData: any = {
@@ -880,8 +905,15 @@ Look for other notable patterns: performance changes, failures, data quality iss
           updated_at: new Date().toISOString()
         };
 
+        // AC-4 (Effort Estimator cycle, 2026-06-10): do NOT overwrite a fresh
+        // `agent_config.roi_estimate` written by the new effort estimator. The
+        // legacy self-guard above is on `manual_time_per_item_seconds`, a
+        // separate column. Without this dedicated check the deprecated path
+        // would silently stomp the new estimator's output.
+        const existingROI = (agent.agent_config as Record<string, any> | null)?.roi_estimate;
+
         // If this is a bulk workflow (has total_manual_time_seconds), store it in agent_config
-        if (roiEstimate.total_manual_time_seconds) {
+        if (roiEstimate.total_manual_time_seconds && !existingROI) {
           const agentConfig = (agent.agent_config as Record<string, any>) || {};
           agentConfig.roi_estimate = {
             total_manual_time_seconds: roiEstimate.total_manual_time_seconds,
@@ -889,6 +921,11 @@ Look for other notable patterns: performance changes, failures, data quality iss
             is_bulk_workflow: true
           };
           updateData.agent_config = agentConfig;
+        } else if (existingROI) {
+          logger.debug(
+            { agentId, existingROI },
+            'deprecated path skipping write — fresh estimate already present'
+          );
         }
 
         const { error } = await this.supabase

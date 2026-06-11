@@ -7,6 +7,8 @@ import { AgentRepository } from '@/lib/repositories/AgentRepository';
 import { agentConfigurationRepository } from '@/lib/repositories';
 import { auditLog } from '@/lib/services/AuditTrailService';
 import { AUDIT_EVENTS } from '@/lib/audit/events';
+import { dispatchEffortEstimate } from '@/lib/effort-estimator/dispatch';
+import { buildUserContextFromAuth } from '@/lib/user-context';
 
 // Module-scoped Pino logger (per SYSTEM_LOGGING_GUIDELINES.md § Server-Side Logging).
 // Each request creates a child logger with a correlation ID + route below.
@@ -248,6 +250,24 @@ export async function POST(request: NextRequest) {
       // Non-blocking — never block agent creation on audit failure
       requestLogger.warn({ err, agentId: data.id }, 'Audit log failed (non-blocking)');
     });
+
+    // Effort Estimator — fire-and-forget. Populates `agent_config.roi_estimate`
+    // asynchronously so the user's create-agent response is not blocked on the
+    // LLM call. The dispatcher handles the dynamic import + outer `.catch` error
+    // logging. The `enhancedPrompt` falls back to `user_prompt` inside the
+    // estimator if the V6 enhanced prompt is not persisted on the agent row
+    // (current state — see Open Follow-Up #9 in the requirement MD).
+    dispatchEffortEstimate(
+      {
+        agentId: data.id,
+        userId: agentUserIdToUse,
+        enhancedPrompt: (data as any).enhanced_prompt ?? data.user_prompt ?? undefined,
+        userContext: buildUserContextFromAuth(user),
+        correlationId,
+        reason: 'agent_created',
+      },
+      requestLogger
+    );
 
     // E9 (2026-05-30): inline-save input_values when provided. Folded in here to
     // eliminate the V2 UI's prior sequential `POST /api/agent-configurations/

@@ -17,6 +17,8 @@ export { ExecutionLogRepository, executionLogRepository } from './ExecutionLogRe
 export { CalibrationSessionRepository } from './CalibrationSessionRepository';
 export { CalibrationHistoryRepository } from './CalibrationHistoryRepository';
 export { InsightRepository } from './InsightRepository';
+export { UserProfileRepository, userProfileRepository } from './UserProfileRepository';
+export type { UserProfile } from './UserProfileRepository';
 
 // Types
 export type {

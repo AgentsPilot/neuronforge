@@ -749,6 +749,7 @@ npm run lint       # ESLint
 | [USER_CONTEXT.md](/docs/USER_CONTEXT.md) | User context module for LLM personalization | not tracked |
 | [PLUGIN_GENERATION_WORKFLOW.md](/docs/PLUGIN_GENERATION_WORKFLOW.md) | Interactive plugin generation guide for Claude Code | not tracked |
 | [AI_PROVIDER_MODELS.md](/docs/AI_PROVIDER_MODELS.md) | Complete LLM provider/model catalogue with token limits and pricing | 2026-04-08 |
+| [EFFORT_ESTIMATOR.md](/docs/EFFORT_ESTIMATOR.md) | Effort Estimator feature design doc — work-savings estimation via SMB persona simulation. Architecture, trigger points, persona simulation, model resolution, retry/async, deprecation strategy, failure semantics, v1 limitations. | 2026-06-11 |
 
 ---
 

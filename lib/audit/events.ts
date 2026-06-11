@@ -34,6 +34,7 @@ export const AUDIT_EVENTS = {
   AGENT_RUN_FAILED: 'AGENT_RUN_FAILED',
   AGENT_SCHEMA_UPDATED: 'AGENT_SCHEMA_UPDATED', // input/output schema changes
   AGENT_CONFIG_SAVED: 'AGENT_CONFIG_SAVED', // input values saved/updated
+  EFFORT_ESTIMATE_GENERATED: 'EFFORT_ESTIMATE_GENERATED', // Effort Estimator wrote agent_config.roi_estimate
 
   // Agent Generation events
   AGENT_GENERATION_STARTED: 'AGENT_GENERATION_STARTED',
@@ -244,6 +245,11 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
     severity: 'info',
     complianceFlags: ['SOC2'],
     description: 'Agent input configuration saved or updated',
+  },
+  [AUDIT_EVENTS.EFFORT_ESTIMATE_GENERATED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'Effort Estimator generated/overwrote agent_config.roi_estimate',
   },
   [AUDIT_EVENTS.AGENT_RUN_STARTED]: {
     severity: 'info',
