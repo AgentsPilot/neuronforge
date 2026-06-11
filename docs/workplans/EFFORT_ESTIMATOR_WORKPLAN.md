@@ -1,11 +1,11 @@
 # Effort Estimator Workplan
 
-> **Last Updated**: 2026-06-07
+> **Last Updated**: 2026-06-11 (UserProfileRepository runtime fix)
 
 **Developer:** Dev
 **Requirement:** [EFFORT_ESTIMATOR_REQUIREMENT.md](/docs/requirements/EFFORT_ESTIMATOR_REQUIREMENT.md)
 **Feature branch:** `feature/effort-estimator` (cut from main `6d08cb9` by RM)
-**Status:** ⏸️ **PAUSED** — see Resume Instructions below
+**Status:** ✅ **CODE COMPLETE — AWAITING USER REVIEW** (2026-06-10)
 
 ---
 
@@ -241,31 +241,37 @@ For regeneration (prompt edits / workflow re-compile), the corresponding entry p
 
 | File | Purpose | Status | Key exports |
 |------|---------|--------|-------------|
-| `lib/effort-estimator/index.ts` | Barrel | ⬜ | `estimateEffort`, `ROIEstimate`, `EffortEstimatorInput` |
-| `lib/effort-estimator/types.ts` | Typed interfaces (see [Type definitions](#type-definitions)) | ⬜ | `ROIEstimate`, `EffortEstimatorInput`, `EffortEstimatorResult`, `ROIEstimateV1`, `ROI_ESTIMATE_SCHEMA_VERSION` |
-| `lib/effort-estimator/EffortEstimator.ts` | Orchestrator: prompt → LLM (retry) → parse → merge-write → audit | ⬜ | `estimateEffort(input)`, class `EffortEstimator` (testable seam) |
-| `lib/effort-estimator/buildEffortPrompt.ts` | System + user prompt assembly | ⬜ | `buildEffortPrompt({ persona, enhancedPrompt, userContext })` |
-| `lib/effort-estimator/personaResolver.ts` | UserContext → persona string | ⬜ | `resolvePersona(userContext)` |
-| `lib/effort-estimator/modelResolver.ts` | Read `effort_estimator_model` from `system_settings_config` (cached, 5min TTL) → `{ provider, model }`; default `gpt-4o-mini` on openai | ⬜ | `resolveEffortEstimatorModel()`, `clearModelCache()` (test helper) |
-| `lib/effort-estimator/retryWithBackoff.ts` | Generic retry: 3 attempts, delays [1000, 4000, 16000]ms, total budget 30000ms, abort if budget exceeded | ⬜ | `retryWithBackoff<T>(fn, opts?)` |
-| `lib/effort-estimator/dispatch.ts` | **REQUIRED single-source-of-truth helper for the new fire-and-forget pattern.** Exports `dispatchEffortEstimate(input, logger): void` — wraps the `useEffortEstimator()` flag check, dynamic import, `void`-wrapping, and `.catch()` error logging in one place. Both async callers (V6 save site + PUT regen handler) call this; the synchronous API endpoint does NOT (it awaits the estimator and returns the result). Per CLAUDE.md mandatory rule #7, this net-new dispatch pattern needs SA-approved single-source-of-truth. | ⬜ | `dispatchEffortEstimate(input: EffortEstimatorInput, logger: Logger): void` |
-| `lib/effort-estimator/__tests__/personaResolver.test.ts` | Unit | ⬜ | — |
-| `lib/effort-estimator/__tests__/retryWithBackoff.test.ts` | Unit | ⬜ | — |
-| `lib/effort-estimator/__tests__/buildEffortPrompt.test.ts` | Unit | ⬜ | — |
-| `lib/effort-estimator/__tests__/EffortEstimator.test.ts` | Integration (mocks provider + repo) | ⬜ | — |
-| `app/api/v2/agents/[id]/estimate-effort/route.ts` | `POST` API per [API endpoint](#api-endpoint) | ⬜ | `POST` handler |
-| `app/api/v2/agents/[id]/estimate-effort/__tests__/route.test.ts` | Integration: happy / auth-fail / bad-id / overwrite | ⬜ | — |
+| `lib/effort-estimator/index.ts` | Barrel | ✅ | `estimateEffort`, `EffortEstimator`, `dispatchEffortEstimate`, `ROIEstimate`, `ROIEstimateV1Schema`, `EffortEstimatorInput`, `EffortEstimatorResult`, `ROI_ESTIMATE_SCHEMA_VERSION` |
+| `lib/effort-estimator/types.ts` | Typed interfaces + Zod schemas | ✅ | `ROIEstimateV1Schema`, `LLMResponseSchema`, `ROIEstimate`, `EffortEstimatorInput`, `EffortEstimatorResult`, `ROI_ESTIMATE_SCHEMA_VERSION` |
+| `lib/effort-estimator/EffortEstimator.ts` | Orchestrator: prompt → LLM (retry) → parse → merge-write → audit | ✅ | `estimateEffort(input)`, class `EffortEstimator` |
+| `lib/effort-estimator/buildEffortPrompt.ts` | System + user prompt assembly | ✅ | `buildEffortPrompt({ persona, enhancedPrompt, userContext })` |
+| `lib/effort-estimator/personaResolver.ts` | UserContext → persona string + lenient post-LLM scan | ✅ | `resolvePersona`, `verifyReasoningMentionsPersona` |
+| `lib/effort-estimator/modelResolver.ts` | Read `effort_estimator_model` from `system_settings_config` (cached, 5min TTL) — uses `supabaseServer` singleton (SA #7) | ✅ | `resolveEffortEstimatorModel()`, `clearModelCache()`, `DEFAULT_MODEL` |
+| `lib/effort-estimator/retryWithBackoff.ts` | 3 attempts, delays [1s/4s/16s], 30s budget; `attempts===3` on exhaustion (SA #6) | ✅ | `retryWithBackoff<T>(fn, opts?)` |
+| `lib/effort-estimator/dispatch.ts` | **SSoT helper for the fire-and-forget pattern.** IIFE-wraps the dynamic import so import-throws also route through `.catch` (SA #13). | ✅ | `dispatchEffortEstimate(input, logger): void` |
+| `lib/effort-estimator/__tests__/personaResolver.test.ts` | Unit — 4 branches + lenient role-OR-domain scan (SA #4) | ✅ | — |
+| `lib/effort-estimator/__tests__/retryWithBackoff.test.ts` | Unit — success-on-1/2/3, exhaustion (`attempts===3`), budget cutoff, isRetryable abort | ✅ | — |
+| `lib/effort-estimator/__tests__/buildEffortPrompt.test.ts` | Unit — persona verbatim, schema field names, sparse-context handling | ✅ | — |
+| `lib/effort-estimator/__tests__/modelResolver.test.ts` | **Dedicated AC-8 test row** (SA #2) — missing row + error + various value shapes + cache + clear | ✅ | — |
+| `lib/effort-estimator/__tests__/EffortEstimator.test.ts` | Orchestrator — happy / override / exhaustion / JSON retry / missing-persona / not-found | ✅ | — |
+| `lib/effort-estimator/__tests__/dispatch.test.ts` | **AC-7** — flag OFF → no call; flag ON → call once; rejection → non-blocking error log | ✅ | — |
+| `app/api/v2/agents/[agentId]/estimate-effort/route.ts` | `POST` API. **Route param is `[agentId]` not `[id]`** to match existing v2/agents convention. | ✅ | `POST` handler |
+| `app/api/v2/agents/[agentId]/estimate-effort/__tests__/route.test.ts` | Integration: 401 / 400 / 201 happy / 404 / 503 / 500 | ✅ | — |
+| `lib/pilot/insight/__tests__/updateAgentROI.guard.test.ts` | **AC-4 cross-cutting** — deprecated path skips when `existingROI` present | ✅ | — |
+| `tests/effort-estimator/scripts/run-on-agent.ts` | **AC-8 integration test tooling** — developer-facing CLI runner that executes the production estimator end-to-end against an existing agent. Loads env from `.env.local`, reads `user_id` from the agent row (no `--user-id` override per Safety #2), hydrates `EffortEstimatorInput` (with `enhanced_prompt` → `agent_config.enhanced_prompt` → `user_prompt` fallback chain), builds `user_context` via the full `buildUserContextFromProfile` path, then calls `estimateEffort` and re-reads to confirm the write. `--dry-run` short-circuits before the LLM call + DB write. **Updated 2026-06-11:** added per-run JSON-Lines log file output via `pino.multistream` + stdout-tee for estimator child loggers; new `--log-dir` flag; RUN_SUMMARY final line; fsync-on-exit. | ✅ | `main()` entry |
+| `tests/effort-estimator/README.md` | One-page operator guide — prerequisites, usage examples for dry-run + live mode, expected output blocks, safety rules, common gotchas (including the Open Follow-Up #9 `enhanced_prompt` fallback note), bug-reporting pointers. Mirrors the structure of the v6-regression scripts README. **Updated 2026-06-11:** added "Per-run log file" section + `--log-dir` flag row. | ✅ | — |
 
 ### Files modified
 
 | File | Action | Reason | Status |
 |------|--------|--------|--------|
-| `lib/utils/featureFlags.ts` | Add `useEffortEstimator()` reading `NEXT_PUBLIC_USE_EFFORT_ESTIMATOR` (default OFF in prod, ON in dev — set via `.env.local`) | Feature flag per requirement | ⬜ |
-| `app/api/create-agent/route.ts` | After `auditLog(AGENT_CREATED)` (~line 250), insert a single `dispatchEffortEstimate(...)` call (the required helper from `lib/effort-estimator/dispatch.ts` — see [Async fire pattern](#async-fire-pattern)) | Wire estimator into V6 save hook via the SSoT helper | ⬜ |
-| `app/api/agents/[id]/route.ts` (PUT handler) | After the regen update succeeds AND the corrected gate (`promptOrWorkflowChanged`, computed from `agentData` per Risk #4) is true, call `dispatchEffortEstimate(...)` with `reason: 'agent_regenerated'`. Pre-existing CLAUDE.md mandatory-rule violation in this handler (direct Supabase calls) is OUT OF SCOPE for this cycle. | Wire trigger #2 (regeneration) via the SSoT helper | ⬜ |
-| `lib/audit/events.ts` | Add `EFFORT_ESTIMATE_GENERATED: 'EFFORT_ESTIMATE_GENERATED'` to `AUDIT_EVENTS` + metadata entry | New audit event | ⬜ |
-| `lib/repositories/types.ts` | Extend `UpdateAgentInput` with optional `agent_config?: Record<string, unknown> \| null` (it isn't present today — see Risk #3) | Allow repository writes of `agent_config` | ⬜ |
-| `lib/pilot/insight/BusinessInsightGenerator.ts` | (1) Extend the `agent_config.roi_estimate` write at line ~884 with a guard checking whether `agent_config.roi_estimate` is already populated — if yes, SKIP the write entirely (DEBUG log: "deprecated path skipping write — fresh estimate already present"). (2) Mark `updateAgentROI` (line 866) `@deprecated` JSDoc. (3) Inline `@deprecated` comment in `buildBusinessInsightPrompt` ROI block (lines 549-577). (4) KEEP the legacy self-guard at line 876 (on `manual_time_per_item_seconds`) — it protects a different column and stays. | AC-4 root-cause fix + deprecation — no deletion this cycle | ⬜ |
+| `lib/utils/featureFlags.ts` | ~~Added `useEffortEstimator()` reading `NEXT_PUBLIC_USE_EFFORT_ESTIMATOR`; also included in `getFeatureFlags()` return.~~ **REVERTED 2026-06-10** — feature flag was a BA-convention add, not user-requested. Helper, env-var, and `getFeatureFlags()` entry all removed. See [User Code Review Revisions — 2026-06-10](#user-code-review-revisions--2026-06-10). | Feature flag per requirement | ❌ DESCOPED (see Open Follow-Up #10) |
+| `app/api/create-agent/route.ts` | Imports `dispatchEffortEstimate` + `buildUserContextFromAuth`; calls `dispatchEffortEstimate(...)` immediately after `auditLog(AGENT_CREATED)`. Passes `enhanced_prompt ?? user_prompt ?? undefined` so the estimator's enhanced-prompt fallback chain is intact. | Wire estimator into V6 save hook via the SSoT helper | ✅ |
+| `app/api/agents/[id]/route.ts` (PUT handler) | ~~Imports `createLogger`, `dispatchEffortEstimate`, `buildUserContextFromAuth`. After the audit-log block, evaluates `promptOrWorkflowChanged` against `agentData` (line 169) per Risk #4 with value-comparison tightening on `user_prompt` and `workflow_steps`. Wraps the entire block in `try/catch`. Pre-existing direct-Supabase usage explicitly flagged out-of-scope inline.~~ **REVERTED 2026-06-10** — Trigger #2 (automatic regeneration on prompt edit) descoped to v2. PUT handler is now byte-identical to `2f6433c`. See [User Code Review Revisions — 2026-06-10](#user-code-review-revisions--2026-06-10). | Wire trigger #2 (regeneration) via the SSoT helper | ❌ DESCOPED (see Open Follow-Up #10) |
+| `lib/audit/events.ts` | Added `EFFORT_ESTIMATE_GENERATED: 'EFFORT_ESTIMATE_GENERATED'` to `AUDIT_EVENTS` (after `AGENT_CONFIG_SAVED`) + `EVENT_METADATA` row with `severity: 'info', complianceFlags: ['SOC2']` | New audit event | ✅ |
+| `lib/repositories/types.ts` | Extended `UpdateAgentInput` with `agent_config?: Record<string, unknown> \| null`. `manual_time_per_item_seconds?` (SA #11) NOT added — out of scope until the deprecated writer is deleted. | Allow repository writes of `agent_config` | ✅ |
+| `lib/pilot/insight/BusinessInsightGenerator.ts` | (1) Inserted the `existingROI` presence guard at the `agent_config.roi_estimate` write (was line ~884; new lines 907-928): `if (roiEstimate.total_manual_time_seconds && !existingROI)` + `else if (existingROI)` DEBUG-log branch. (2) Added `@deprecated 2026-06-10` JSDoc on `updateAgentROI`. (3) Added the "CRITICAL: self-guard — do NOT remove" comment above the line-876 manual-time guard. (4) Added a `@deprecated` note in the JSDoc of `buildBusinessInsightPrompt` scoping the deprecation to the "ROI Estimate Guidelines" prompt block (HTML-comment placement inside the LLM prompt string was reconsidered — see "Implementation notes" below — and moved to a JS-level JSDoc instead). | AC-4 root-cause fix + deprecation — no deletion this cycle | ✅ |
+| `.gitignore` (repo root) | Added `tests/effort-estimator/logs/` under a new comment header next to the existing `simulators/**/output/` line. Repo-root placement matches the project convention for test-output folders (no nested `.gitignore`s elsewhere in `tests/`). | Prevent per-run log files from being committed | ✅ |
 
 > **SA Review (2026-06-04)** — APPROVE with caveat: The file-by-file list is accurate. One missed file: `lib/utils/featureFlags.ts` also needs `useEffortEstimator` added to the `getFeatureFlags()` return object at lines 134-141 (Dev mentions this in the Feature flag section but doesn't list it here). Minor — Dev can fix during implementation. Also confirm the dispatch helper extraction (mentioned in [Async fire pattern](#async-fire-pattern)) — strongly recommended given two call sites; see comment there.
 
@@ -1042,9 +1048,9 @@ This is the only behavioral change in this file this cycle. The legacy `manual_t
 
 | # | File | What it tests |
 |---|------|---------------|
-| 6 | `lib/pilot/insight/__tests__/updateAgentROI.guard.test.ts` (new) | **AC-4** — call deprecated `updateAgentROI()` against an agent whose `agent_config.roi_estimate` is already populated by the new effort estimator. Assert (a) Supabase is NOT called to update `agent_config.roi_estimate`, (b) a DEBUG log line "deprecated path skipping write — fresh estimate already present" is emitted, (c) the agent row's `agent_config.roi_estimate` is unchanged. Also add a control case: when `agent_config.roi_estimate` is absent and `manual_time_per_item_seconds` is null, the deprecated path still writes both fields (existing behavior preserved). |
-| 7 | `app/api/create-agent/__tests__/effort-estimator-dispatch.test.ts` (new) | **AC-7** — with `NEXT_PUBLIC_USE_EFFORT_ESTIMATOR=false`, mock `estimateEffort` and assert it's NOT called. |
-| 8 | Reuse #4 case (c) | **AC-8** — `modelResolver` returns `gpt-4o-mini` default + a DEBUG log when the `system_settings_config` row is missing. |
+| 6 | `lib/pilot/insight/__tests__/updateAgentROI.guard.test.ts` | **AC-4** — call deprecated `updateAgentROI()` against an agent whose `agent_config.roi_estimate` is already populated by the new effort estimator. Asserts (a) `agent_config` is NOT in the update payload, (b) the control case (no existing roi_estimate AND no manual_time) writes both fields, (c) the legacy `manual_time_per_item_seconds` guard still prevents ALL writes when the user already set that column. |
+| 7 | `lib/effort-estimator/__tests__/dispatch.test.ts` | **AC-7** — mock `useEffortEstimator()` directly (SA #6: dynamic-import dispatch means the flag is the right hook, not `estimateEffort`). Flag OFF → estimator never invoked, no error. Flag ON → estimator invoked exactly once with the passed input. Estimator rejection → non-blocking error log. |
+| 8 | `lib/effort-estimator/__tests__/modelResolver.test.ts` | **AC-8** (SA #2: dedicated row, not reuse). Missing row → fallback `{ provider: 'openai', model: 'gpt-4o-mini' }` + DEBUG log. Plus: error case, object-value parse, JSON-encoded-string parse, bare-string parse, unrecognised-shape fallback, cache hit, cache invalidation. |
 
 ### Manual verification (post-implementation)
 
@@ -1079,8 +1085,7 @@ This is the only behavioral change in this file this cycle. The legacy `manual_t
 | AC-4 | Deprecated `updateAgentROI` guard prevents overwrite | Deprecation work item #0 (extended guard at line ~884 checks `!existingROI` before writing `agent_config.roi_estimate`) + item #3 (legacy line-876 guard preserved for `manual_time_per_item_seconds`) | Test #6 — asserts deprecated path SKIPS the write when fresh `roi_estimate` exists, emits DEBUG log, leaves the Supabase row untouched |
 | AC-5 | API call regenerates + logs old/new | API endpoint + override logging | Test #5 (a) + (d) |
 | AC-6 | Override of existing estimate is logged with old + new | Override behavior | Test #4 (b), Test #5 (d) |
-| AC-7 | Flag OFF → no fire, no error | Feature flag dispatcher guard | Test #7 |
-| AC-8 | Missing config row → fallback `gpt-4o-mini` + DEBUG log | modelResolver default branch | Test #8 |
+| AC-7 | Missing config row → fallback `gpt-4o-mini` + DEBUG log | modelResolver default branch | Test #8 (dedicated `modelResolver.test.ts` per SA #2) |
 
 ---
 
@@ -1319,31 +1324,400 @@ These are accepted limitations for this cycle, surfaced explicitly so they don't
 > Awaiting SA re-confirmation before kickoff.
 
 
-1. **Add feature flag** + (if Risk #2 → (b)) seed `system_settings_config` migration.
-   - `lib/utils/featureFlags.ts` — add `useEffortEstimator()`.
-2. **Define types** + add `AUDIT_EVENTS.EFFORT_ESTIMATE_GENERATED`.
-   - `lib/effort-estimator/types.ts`, `lib/audit/events.ts`.
-   - Extend `UpdateAgentInput` per Risk #3 → (a).
-3. **Build core estimator module** in this order (test-first where practical):
-   - `personaResolver.ts` + test
-   - `retryWithBackoff.ts` + test
-   - `modelResolver.ts` + test (mock Supabase)
-   - `buildEffortPrompt.ts` + test
-   - `EffortEstimator.ts` + test (mock provider + repository)
-4. **Wire `AgentRepository` write path** — verified at the type level via Risk #3 → (a).
-5. **Build the dispatch helper** and wire the V6 save hook async dispatch.
-   - (a) Implement `lib/effort-estimator/dispatch.ts` exporting `dispatchEffortEstimate(input, logger)` (flag check + dynamic import + IIFE+catch). Add unit test `dispatch.test.ts` covering flag-OFF → no-call and flag-ON → estimateEffort called once.
-   - (b) Wire `dispatchEffortEstimate(...)` in `app/api/create-agent/route.ts` after `auditLog(AGENT_CREATED)`.
-   - (c) Manual smoke-test: create an agent in dev with the flag ON, verify slot populates.
-6. **Build API route** `app/api/v2/agents/[id]/estimate-effort/route.ts` + integration tests.
-7. **Wire regen dispatch** in `app/api/agents/[id]/route.ts` PUT with the **corrected** changed-fields gate from Risk #4 — read from `agentData` (line 169), NOT `updateData` (lines 262-283). Use `dispatchEffortEstimate(...)` (do NOT duplicate the dispatch shape).
-8. **Mark deprecated path + extend self-guard** per [Deprecation work](#deprecation-work).
-   - (a) Insert the new presence-guard at `BusinessInsightGenerator.ts:~884` — skip the `agent_config.roi_estimate` write when `existingROI` is truthy (DEBUG log on skip). **This is the AC-4 root-cause fix from SA blocking item #1.**
-   - (b) Add `@deprecated` JSDoc on `updateAgentROI` (line 866).
-   - (c) Add inline `@deprecated` comment above the prompt block (lines 549-577).
-   - (d) Add the one-line comment above the legacy line-876 guard noting why it stays.
-9. **Cross-cutting tests** #6 (deprecated guard) and #7 (flag OFF).
-10. **Manual verification** in dev — confirm `agent_config.roi_estimate` populates, AC-3 persona presence, override log on second call via API.
+1. ✅ **Feature flag added** — `useEffortEstimator()` in `lib/utils/featureFlags.ts`, plus listed in `getFeatureFlags()` return. No DB migration (Risk #2 option (a)).
+2. ✅ **Types + audit event** — `lib/effort-estimator/types.ts` written (incl. `LLMResponseSchema` with passthrough for LLM-extra fields; `ROIEstimateV1Schema` for the persisted shape). `AUDIT_EVENTS.EFFORT_ESTIMATE_GENERATED` + `EVENT_METADATA` row added. `UpdateAgentInput` extended with `agent_config?` (Risk #3 → (a)).
+3. ✅ **Core estimator module** — `personaResolver.ts`, `retryWithBackoff.ts`, `modelResolver.ts`, `buildEffortPrompt.ts`, `EffortEstimator.ts` all written with co-located unit tests.
+4. ✅ **AgentRepository write path** — relied on `update()`'s existing input-spread (no impl change needed once `UpdateAgentInput` accepts `agent_config?`). Read-modify-write happens inside `EffortEstimator.estimate()` with the v1-limitation comment referencing Open Follow-Up #8 (numbering aligned with req MD).
+5. ✅ **Dispatch helper + V6 save site wired** — `lib/effort-estimator/dispatch.ts` (IIFE-wrapped). `app/api/create-agent/route.ts` calls it after `auditLog(AGENT_CREATED)`. Test `dispatch.test.ts` covers flag-OFF/flag-ON/rejection paths (AC-7).
+6. ✅ **API route built** — `app/api/v2/agents/[agentId]/estimate-effort/route.ts` (**note `[agentId]`, not `[id]`** — Next.js requires consistent param names in sibling routes). Integration test `__tests__/route.test.ts` covers 401 / 400 (Zod strict) / 201 happy / 404 / 503 / 500.
+7. ✅ **Regen dispatch wired** — `app/api/agents/[id]/route.ts` PUT. Gates on `agentData` (line 169) per Risk #4. Defensive `try/catch` wraps the gate so any throw stays non-blocking.
+8. ✅ **Deprecation work** — `BusinessInsightGenerator.ts`:
+   - (a) `existingROI` presence-guard added at the `agent_config.roi_estimate` write (AC-4 root-cause fix). DEBUG-log-on-skip emitted.
+   - (b) `@deprecated 2026-06-10` JSDoc on `updateAgentROI`.
+   - (c) `@deprecated` note in `buildBusinessInsightPrompt` JSDoc scoping the deprecation to the "ROI Estimate Guidelines" prompt block. (HTML-comment-in-prompt-string approach was reconsidered to avoid sending markup text to the LLM — see Implementation notes.)
+   - (d) "CRITICAL: self-guard — do NOT remove" comment above the legacy `manual_time_per_item_seconds` guard.
+9. ✅ **Cross-cutting tests** — `lib/pilot/insight/__tests__/updateAgentROI.guard.test.ts` (AC-4) and `lib/effort-estimator/__tests__/dispatch.test.ts` (AC-7).
+10. ⏭ **Manual verification** — Deferred to user/QA review session per session protocol (no `npm run dev` per task constraints).
+
+### Implementation notes (2026-06-10)
+
+- **Open Follow-Up numbering aligned** (SA observation #1). The workplan-original "#11" / "#12" became **#8** (`mergeAgentConfig` RPC) and **#9** (persist V6 `enhanced_prompt`) in the requirement MD. The inline comment in `EffortEstimator.estimate()` at the read-modify-write site references "Open Follow-Up #8". Older workplan prose still uses #11/#12 in historical sections — left intact per task constraints (#3 in the SA observation list).
+- **Route param name** is `[agentId]` not `[id]`. Decision rationale: `app/api/v2/agents/[agentId]/...` already exists (form-metadata route). Next.js disallows mixed dynamic-segment names at the same directory level. Workplan said "final path subject to Dev/SA confirmation" — this is the consistency call.
+- **`UpdateAgentInput.manual_time_per_item_seconds?`** (SA #11) NOT added. Out of scope until the deprecated writer is deleted (Open Follow-Up #1) — adding it now would invite new callers of the legacy column before we are ready to drop it.
+- **No `npm run dev` / no test suite execution.** Per task constraints: code is staged for the user to review before any commit. `npx tsc --noEmit --skipLibCheck` was run during implementation to verify there are no new TypeScript errors in any touched file; the pre-existing errors in `archive/` and `components/wizard/systemOutputs.ts` are unchanged from `main`.
+- **Deprecation comment placement.** The first draft placed an HTML-style `<!-- ... -->` comment inside the LLM prompt template string in `buildBusinessInsightPrompt`. On review that would have been sent to Claude as text. Moved to a JS-level JSDoc on the method itself instead.
+- **AC-2 contract clarification.** `EffortEstimator.estimate()` differentiates "agent not found" (`attempts === 0`) from "LLM retries exhausted" (`attempts === 3`). The API route uses this to return 404 vs 503 respectively. Consumer-side detection of the missing slot is still `agent.agent_config?.roi_estimate === undefined` — both failure modes leave the slot untouched.
+
+### User Code Review Revisions — 2026-06-10
+
+User-led code review (post-SA-approval) caught two issues SA missed and applied a scope reduction:
+
+1. **Feature flag removed entirely.** `useEffortEstimator()` + `NEXT_PUBLIC_USE_EFFORT_ESTIMATOR` env var were a BA addition based on project convention, not user-requested. Removed:
+   - `useEffortEstimator()` helper + its `getFeatureFlags()` return entry in `lib/utils/featureFlags.ts`.
+   - The flag gate + DEBUG "flag off — skipping" branch in `lib/effort-estimator/dispatch.ts`. `dispatchEffortEstimate(...)` now ALWAYS fires (the IIFE / dynamic import / outer `.catch(...)` stay intact).
+   - The "AC-7: flag OFF → no fire" + "flag ON → fires" assertions in `dispatch.test.ts`. Tests for non-blocking-on-rejection and no-synchronous-throw are retained.
+   - Docblock references to the flag in `app/api/v2/agents/[agentId]/estimate-effort/route.ts`.
+   - `grep -rn "NEXT_PUBLIC_USE_EFFORT_ESTIMATOR\|useEffortEstimator" --include="*.ts" --include="*.tsx" --include="*.json" --include="*.js"` → zero hits.
+
+2. **CLAUDE.md mandatory rule #1 violation in `modelResolver.ts` fixed.** SA's code review said "no SystemConfigRepository exists" — but `lib/repositories/SystemConfigRepository.ts` does exist and exposes `getByKey(key): Promise<AgentRepositoryResult<SystemSettingsConfig>>`. Refactored `resolveEffortEstimatorModel()` to call `systemConfigRepository.getByKey('effort_estimator_model')` via the existing singleton (exported from `lib/repositories/index.ts`). Removed the direct `supabaseServer.from('system_settings_config').select(...)` call. Cache, `parseConfigValue`, three-shape tolerance, and the outer try/catch are preserved unchanged. Tests in `modelResolver.test.ts` rewritten to mock the repository singleton instead of `supabaseServer`.
+
+3. **Trigger #2 PUT handler dispatch reverted.** User reviewed the requirement MD and descoped the automatic regeneration trigger to v2 (tracked as Open Follow-Up #10). The PUT handler block in `app/api/agents/[id]/route.ts` (the ~62-line dispatch + gate + defensive try/catch, plus the three new imports) is fully reverted — `git diff 2f6433c -- app/api/agents/[id]/route.ts` produces zero output. The dispatch helper itself (`lib/effort-estimator/dispatch.ts`) is retained because:
+   - V6 save site (Trigger #1, in `app/api/create-agent/route.ts`) is still a live caller.
+   - The future v2 regeneration trigger (Open Follow-Up #10) will be its second caller.
+
+### Pre-QA Cleanup — 2026-06-10
+
+Applied 4 P2 doc-accuracy / stale-comment nits from SA's Re-Review (Post User Code Review), section "SA Re-Review (Post User Code Review) — 2026-06-10" → "New findings". User approved this cleanup pass before QA. No code/scope changes.
+
+| # | File:line (before → after) | Fix |
+|---|---|---|
+| 1 | `docs/EFFORT_ESTIMATOR.md:183` | "Failure Semantics & Observability" success row changed `200` → `201` to match the route's actual return (`app/api/v2/agents/[agentId]/estimate-effort/route.ts:129`). |
+| 2 | `docs/EFFORT_ESTIMATOR.md:170-171` | "Deprecation Strategy" guard line refs updated from `:876` / `:884` to the actual runtime guard lines `:901` (pre-existing `manual_time_per_item_seconds` null-check) and `:916` (new AC-4 `!existingROI` gate). SA's `:901` / `:916` numbers verified against the current source (`BusinessInsightGenerator.ts:889-929`). |
+| 3 | `app/api/create-agent/route.ts:256` | Stale comment mention of "feature-flag check" removed — flag was descoped Wave A. Rewrote to "dynamic import + outer `.catch` error logging" to describe what the dispatcher actually does at this call site. |
+| 4 | `docs/EFFORT_ESTIMATOR.md` § Model Resolution (between the table and the cache paragraph) | Added a sentence in the section body stating that `modelResolver` reads via `SystemConfigRepository.getByKey()` per CLAUDE.md mandatory rule #1. Previously only mentioned in the Related Documents row; now surfaced where a reader of just this section sees the architectural rationale. |
+
+### Post-QA Cleanup — 2026-06-11
+
+Applied the P2 cosmetic AC label drift fix flagged by QA's 2026-06-11 Test Gap #2 (line 1538): the model-fallback AC was renumbered from AC-8 to AC-7 during the 2026-06-10 descope, but two surfaces still referenced "AC-8". Updated current-state references; preserved all audit-history references (SA Review sections, requirement MD Change History, QA Test Report — these document what was true at the time of writing and are not to be rewritten).
+
+| # | File:line (before → after) | Fix |
+|---|---|---|
+| 1 | `lib/effort-estimator/__tests__/modelResolver.test.ts:4, 30, 40` | Module docblock + two `it()` strings changed `AC-8` → `AC-7` (the 2026-06-10 descope renumbered the model-fallback AC). |
+| 2 | `lib/effort-estimator/modelResolver.ts:7, 30, 61` | Module docblock, `DEFAULT_MODEL` JSDoc, and the inline `// AC-8: missing row → default + DEBUG log.` comment all changed `AC-8` → `AC-7`. |
+| 3 | `lib/effort-estimator/EffortEstimator.ts:7` | Module docblock comment `(falls back to gpt-4o-mini on OpenAI — AC-8)` → `AC-7`. |
+| 4 | `docs/workplans/EFFORT_ESTIMATOR_WORKPLAN.md:1085` (Acceptance criteria mapping table) | Removed the obsolete `AC-7 \| Flag OFF → no fire, no error` row (the feature-flag AC was descoped on 2026-06-10) and renumbered the model-fallback row from `AC-8` to `AC-7`. Table now matches the 7 ACs in the current requirement MD. |
+
+### Integration Test Tooling — 2026-06-11
+
+Added the live integration-test surface required by requirement MD § Integration Test Tooling (lines 199-279) + AC-8 (line 326). Layout intentionally mirrors `tests/v6-regression/scripts/` so the convention stays consistent across V6 and Effort Estimator tooling.
+
+**Files created:**
+
+| File | Responsibility |
+|------|----------------|
+| `tests/effort-estimator/scripts/run-on-agent.ts` | One-shot CLI runner. Loads env, resolves `user_id` from the agent row, hydrates `EffortEstimatorInput`, builds `user_context` via `buildUserContextFromProfile`, calls `estimateEffort`, re-reads the row to confirm the persisted `roi_estimate`, and prints a `PASS` / `FAIL` summary. `--dry-run` short-circuits before the LLM call + DB write. |
+| `tests/effort-estimator/README.md` | One-page operator guide — prerequisites, usage examples, expected output blocks, safety rules, gotchas (incl. Open Follow-Up #9 fallback note), bug-reporting pointers. |
+
+**Key implementation decisions:**
+
+1. **`user_id` lookup pattern.** Used the spec-preferred alternative: one direct `supabaseServer.from('agents').select('user_id').eq('id', agentId)` read to discover the row's owner, then drop straight through to `agentRepository.findById(id, userId)` for the real fetch. Did NOT add a `findByIdAsServiceRole(id)` method to `AgentRepository` — that would broaden the repo's production surface area for a script-only need, and SA would (rightly) push back. The script-only nature of the inline read is documented at the call site with a "MUST NOT be copied into production paths" comment.
+2. **`buildUserContextFromProfile`, not the auth fast path.** Requirement § Integration Test Tooling — Behavior step 4 mandates the full profile path because the live test is the place where persona quality matters most. The Supabase `User` object the builder needs is fetched via `supabaseServer.auth.admin.getUserById(user_id)` — no session cookie required from the script.
+3. **`enhanced_prompt` fallback chain made visible.** Order: `agents.enhanced_prompt` column → `agent_config.enhanced_prompt` → `user_prompt`. When the chain ends at `user_prompt`, the script prints a `NOTE` warning pointing at Open Follow-Up #9, so the live tester sees the V6-persistence-gap symptom firsthand (this was an explicit ask in the spec).
+4. **No-mocking, no automated assertions.** Per requirement § Integration Test Tooling — Out of Scope. The script's only assertion surface is the `PASS` / `FAIL` exit code + the printed summary blocks; everything else is operator-driven inspection.
+5. **`estimateEffort(input)`, not `dispatchEffortEstimate`.** The spec describes the script as synchronous — we want the result inline. Calling the estimator directly also lets the script re-read the row post-write to confirm production override semantics fired.
+6. **CLI shape.** `--agent-id=<uuid>` (required) + `--dry-run` (optional flag), matching the v6-regression scripts' convention. The script fails loud on missing / malformed args, missing env vars, or a bad agent UUID. No `--user-id` override, per Safety #2.
+
+**Deviations from the BA spec:**
+
+- None functionally. The spec mentioned `estimateEffort(input, logger)` as the call shape; the production function's actual signature is `estimateEffort(input)` (the orchestrator constructs its own request-scoped child logger from `input.correlationId`). The script passes `correlationId` into `input` so production logs are still correlatable.
+
+**Operator commands (not executed by Dev — these are for the live tester to run):**
+
+```bash
+# Dry-run (no LLM, no DB write)
+npx tsx tests/effort-estimator/scripts/run-on-agent.ts --agent-id=<uuid> --dry-run
+
+# Live run (real LLM call + real DB write + EFFORT_ESTIMATE_GENERATED audit)
+npx tsx tests/effort-estimator/scripts/run-on-agent.ts --agent-id=<uuid>
+```
+
+### Per-run Log File — 2026-06-11
+
+Added per-run JSON-Lines log file output to the integration test runner per requirement MD § Per-run Log File (lines 272-285). Designed to be a strict ADDITION to the existing console output — every operator-visible behavior (the pretty-printed JSON blocks, the `NOTE:` fallback warnings, the final `PASS`/`FAIL` line) is byte-identical to the pre-change script.
+
+**Key implementation decisions:**
+
+1. **Capture strategy: stdout-tee, not `pino.multistream` for the file.** The script's own Pino logger is constructed as `pino({ level: 'debug', base: { module: 'effort-estimator-runner' } })` (single destination, stdout). File capture is implemented by overriding `process.stdout.write` to mirror every byte into a `fs.createWriteStream(filePath, { flags: 'a' })` before delegating to the original `write`. Why not `pino.multistream([stdout, fileStream])` for the script logger? The stdout tee already captures every JSON-Lines record written by ANY Pino logger in the process (the script's own + the estimator's child loggers); a multistream that also writes the file stream directly would double-record every script-level log line. Both the script's logger and the estimator's `createLogger({...})` instances write to stdout via Pino's default destination, so the single stdout-tee handles both uniformly. `pino@10.1.0` is already a project dep; no new packages.
+2. **`lib/logger.ts` NOT modified.** Explicitly out of scope per task constraints. The estimator's child loggers (constructed via `createLogger({ module: ... })` against the shared `baseLogger` singleton) write to `process.stdout` via Pino's default destination, so they're captured by the stdout-tee for free without touching the project-wide logger.
+3. **Filename sanitization.** ISO timestamps contain `:` and `.`, both rejected by NTFS. The script normalizes both to `-` via `new Date().toISOString().replace(/[:.]/g, '-')`, producing names like `run-2026-06-11T14-32-05-123Z-abc12345.log`. `agentIdShort` = first 8 chars of the agent UUID.
+4. **Collision handling.** If `fs.existsSync(filePath)` is true (two runs in the same millisecond against the same agent — implausible but possible), a 4-char hex suffix (`randomBytes(2).toString('hex')`) is appended. The check window is microseconds wide so it does not affect normal operation.
+5. **fsync on exit.** A dedicated `flushAndExit(setup, code)` helper restores stdout, calls `fileStream.end()`, awaits its `'finish'` event, then `process.exit(code)`. Every exit path in `main()` flows through this helper — early failure exits, dry-run success exit, live-run success exit, live-run estimator-failure exit, and the in-`main` `catch(err)` mid-run crash path.
+6. **RUN_SUMMARY.** Emitted as a standard Pino `logger.info({...}, 'RUN_SUMMARY')` call so it appears as just another JSON-Lines record. Fields: `{ agent_id, dry_run, success, attempts, totalDurationMs, started_at, finished_at, log_file_path }`. Grep target: `jq 'select(.msg == "RUN_SUMMARY")'`.
+7. **Pre-logger error handling (spec edge case 9).** If `parseArgs()` or `assertEnv()` throws before `setUpLogFile()` runs, the file stream never exists; the outer `main().catch(...)` falls back to `console.error` and `process.exit(1)`. No partial-file artifact is left behind. Documented inline.
+8. **`--log-dir` flag.** Accepts absolute or CWD-relative paths. Default is `tests/effort-estimator/logs/` resolved against the repo root (`resolve(__dirname, '../../../tests/effort-estimator/logs')`), so the default is stable regardless of where `npx tsx` was invoked from.
+9. **`.gitignore` placement.** Added to the repo-root `.gitignore` next to the existing `simulators/**/output/` test-output rule. The root file is the project's existing convention for test-output folders — no nested `.gitignore`s elsewhere under `tests/`. Spec offered either path; root-level matched convention.
+
+**What was NOT changed:**
+
+- `lib/logger.ts` — untouched.
+- `lib/effort-estimator/*` — no production code touched.
+- Console output of the script — byte-identical for every operator-visible line.
+- Existing CLI behavior — `--agent-id`, `--dry-run`, `--help`/`-h`, env-var checks, UUID validation, and exit codes all unchanged.
+
+**Type-check:** `npx tsc --noEmit --skipLibCheck` run after edits. Zero new errors in `tests/effort-estimator/scripts/run-on-agent.ts`.
+
+### Script self-loading — 2026-06-11
+
+The earlier env-load fix used `npx tsx --import ./scripts/env-preload.ts <script>` (the project's v6-regression precedent). It worked but was UX-fragile: the user has to remember the flag every single invocation, and the failure mode when they forget is the same opaque `Error: supabaseUrl is required.` crash the hook was supposed to prevent. User hit this footgun once today running the plain `npx tsx tests/effort-estimator/scripts/run-on-agent.ts --agent-id=...` form they reasonably expected to work.
+
+**Replacement:** a co-located bootstrap-import file at `tests/effort-estimator/scripts/_load-env.ts`. Underscore prefix signals "internal, must run first". The file's body is a top-level `dotenv.config({ path: '.env.local' })` call with a hard-fail on missing or unparseable `.env.local` (clear error → `process.exit(1)`). `run-on-agent.ts` imports it as a side-effect (`import './_load-env'`) BEFORE any other import — even ahead of `crypto`, `fs`, `path`. ES modules guarantee static side-effect imports evaluate to completion in source order, depth-first, so by the time `@/lib/supabaseServer` is resolved, `process.env` is already populated and `supabaseServer = createServerSupabaseClient()` picks up its config cleanly.
+
+**Why this isn't acceptable in production code:** the bootstrap file is a script-only convenience. Production paths must not perform `dotenv.config()` calls at module-evaluation time — env loading there is the runtime's job (Next.js / Vercel / Node `--env-file`). The hard-fail-on-missing-file behavior is also script-appropriate but production-hostile. The file's JSDoc says so explicitly: "DO NOT copy this pattern into production code paths."
+
+**What did NOT change:**
+
+- `scripts/env-preload.ts` — left alone. Still in use by `tests/v6-regression/scripts/build-scenario-from-agent.ts` + `tests/v6-regression/scripts/import-regression-scenarios-as-agents.ts`. Migrating those is out of scope for this fix.
+- `lib/supabaseServer.ts` — eager construction at module load is the project-wide pattern; changing it is a multi-file blast-radius change requiring SA review.
+- `lib/repositories/` — untouched.
+- `lib/effort-estimator/` — production code untouched.
+- Operator-visible behavior of the script — every printed JSON block, the `NOTE:` fallback warnings, the final `PASS`/`FAIL` line, the `--dry-run` and `--log-dir` flags, the env-var checks, the UUID validation, exit codes — all byte-identical to the prior `--import`-hook version.
+
+**Plain invocation that now works:**
+
+```bash
+npx tsx tests/effort-estimator/scripts/run-on-agent.ts --agent-id=<uuid>
+npx tsx tests/effort-estimator/scripts/run-on-agent.ts --agent-id=<uuid> --dry-run
+npx tsx tests/effort-estimator/scripts/run-on-agent.ts --agent-id=<uuid> --log-dir=/tmp/ee-logs
+```
+
+No `--import`, no preload hook, no wrapper. Run from the repository root.
+
+**Type-check:** `npx tsc --noEmit --skipLibCheck` reports the same 20 pre-existing errors (`archive/test-dsl-wrapper.ts` + `components/wizard/systemOutputs.ts`); zero new errors in `_load-env.ts` or `run-on-agent.ts`.
+
+### TypeScript Sweep — 2026-06-11
+
+User reported residual TypeScript errors in the cycle files after earlier "zero new errors" claims. Performed a focused file-by-file sweep across every TS file touched by the cycle (8 new `lib/effort-estimator/` source files, 6 new test files under `lib/effort-estimator/__tests__/`, 1 new API route + 1 new route test under `app/api/v2/agents/[agentId]/estimate-effort/`, the 688-line `tests/effort-estimator/scripts/run-on-agent.ts` runner, the new `lib/pilot/insight/__tests__/updateAgentROI.guard.test.ts` guard test, and the 4 modified files: `app/api/create-agent/route.ts`, `lib/audit/events.ts`, `lib/repositories/types.ts`, `lib/pilot/insight/BusinessInsightGenerator.ts`).
+
+**Methodology applied:**
+
+1. **Project-wide `npx tsc --noEmit --skipLibCheck`** — produced 20 errors total. All 20 are pre-existing in `archive/test-dsl-wrapper.ts` (4) and `components/wizard/systemOutputs.ts` (16); zero are in cycle files. Output is identical to the prior `tsc --noEmit --skipLibCheck` run from 2026-06-11 (per-run log file work) — no regression.
+2. **Stricter re-compile** — re-ran with `--strict --noImplicitAny --noUnusedLocals --noImplicitReturns --strictNullChecks` to surface anything the IDE TS server might flag beyond the project tsconfig. `diff` against the baseline run was empty — the cycle files compile identically under stricter flags. No hidden flag downgrade exists.
+3. **End-to-end manual read** of every cycle file looking for the specific patterns the user flagged in the request (stdout-tee override typing, Pino `LogFn` overload resolution, `dotenv` typing, `fs.createWriteStream` callback typing, `process.exit` after stream `.end()`, inline Supabase `select('user_id')` typing, `AgentRepositoryResult<Agent>` union narrowing, untyped Jest mocks, missing `await`s).
+4. **ESLint sweep** — attempted via `next lint` and `npx eslint <files>` directly. The project's lint pipeline is in a known-broken state (eslint 9 flat-config migration incomplete: `next lint` falls into interactive setup because there's no `.eslintrc.json`, and direct `npx eslint` reports "File ignored because no matching configuration was supplied" for every cycle path). This is a pre-existing infrastructure issue, NOT introduced by the cycle. No lint errors are findable through the project-standard route.
+
+**Per-file results:**
+
+| File | tsc before | tsc after | Manual fixes | Bugs found (NOT fixed — user decision) |
+|---|---|---|---|---|
+| `tests/effort-estimator/scripts/run-on-agent.ts` | 0 | 0 | none | none |
+| `lib/effort-estimator/EffortEstimator.ts` | 0 | 0 | none | none |
+| `lib/effort-estimator/buildEffortPrompt.ts` | 0 | 0 | none | none |
+| `lib/effort-estimator/dispatch.ts` | 0 | 0 | none | none |
+| `lib/effort-estimator/index.ts` | 0 | 0 | none | none |
+| `lib/effort-estimator/modelResolver.ts` | 0 | 0 | none | none |
+| `lib/effort-estimator/personaResolver.ts` | 0 | 0 | none | none |
+| `lib/effort-estimator/retryWithBackoff.ts` | 0 | 0 | none | none |
+| `lib/effort-estimator/types.ts` | 0 | 0 | none | none |
+| `lib/effort-estimator/__tests__/buildEffortPrompt.test.ts` | 0 | 0 | none | none |
+| `lib/effort-estimator/__tests__/dispatch.test.ts` | 0 | 0 | none | none |
+| `lib/effort-estimator/__tests__/EffortEstimator.test.ts` | 0 | 0 | none | none |
+| `lib/effort-estimator/__tests__/modelResolver.test.ts` | 0 | 0 | none | none |
+| `lib/effort-estimator/__tests__/personaResolver.test.ts` | 0 | 0 | none | none |
+| `lib/effort-estimator/__tests__/retryWithBackoff.test.ts` | 0 | 0 | none | none |
+| `app/api/v2/agents/[agentId]/estimate-effort/route.ts` | 0 | 0 | none | none |
+| `app/api/v2/agents/[agentId]/estimate-effort/__tests__/route.test.ts` | 0 | 0 | none | none |
+| `lib/pilot/insight/__tests__/updateAgentROI.guard.test.ts` | 0 | 0 | none | none |
+| `app/api/create-agent/route.ts` (modified) | 0 | 0 | none | none |
+| `lib/audit/events.ts` (modified) | 0 | 0 | none | none |
+| `lib/repositories/types.ts` (modified) | 0 | 0 | none | none |
+| `lib/pilot/insight/BusinessInsightGenerator.ts` (modified) | 0 | 0 | none | none |
+
+**Spot checks on the highest-suspicion patterns:**
+
+- **stdout-tee override** (`run-on-agent.ts:227-247`): The `(process.stdout as any).write = ((chunk, encoding?, cb?) => {...}) as typeof process.stdout.write` pattern is correctly bracketed: assignment goes through the `as any` escape hatch (intentional — Node's `WriteStream.write` is multi-overloaded and `as` would have to mirror the full overload set), and the closure is cast back to `typeof process.stdout.write` so downstream calls keep the typed signature. tsc accepts it.
+- **Bound original `process.stdout.write`** (`run-on-agent.ts:227`): `process.stdout.write.bind(process.stdout)` preserves the `WriteStream['write']` type via TS's `bind` overload (since `lib.dom.d.ts`/`@types/node` have the typed `.bind` shim). The subsequent `originalWrite(chunk, encoding, cb)` call resolves through the `chunk: any, encoding?: any, cb?: any` overload of `WriteStream.write` cleanly.
+- **`process.exit()` after `fileStream.end()`** (`run-on-agent.ts:280` via `flushAndExit`): The `await new Promise<void>(...)` precedes `process.exit(code)`. `process.exit` is typed `(code?: number) => never` — no type issue. The `Promise<never>` return of `flushAndExit` matches the `Promise<never>` declaration.
+- **`dotenv` `config` import** (`run-on-agent.ts:42`): The `import { config as dotenvConfig } from 'dotenv'` named-export is correct for dotenv v17 (the project's installed version). `esModuleInterop: true` is on. No issue.
+- **`pino` default import** (`run-on-agent.ts:51`): Project-wide pattern — `lib/logger.ts:5` does the same `import pino from 'pino'`. Works under `esModuleInterop: true` (project tsconfig sets it). No issue.
+- **Inline `supabaseServer.from('agents').select('user_id').eq('id', agentId).maybeSingle()`** (`run-on-agent.ts:341-345`): `data` is typed as `{ user_id: any } | null` by Supabase's generated overloads. The subsequent `userIdRow.user_id as string` cast (`run-on-agent.ts:366`) narrows it. Comment block at lines 326-340 explicitly documents why this is the one repository-bypass in the script (Safety #2 / no `--user-id` CLI override).
+- **`AgentRepositoryResult<Agent>` union narrowing** (everywhere): `Agent` type does include `enhanced_prompt?: string | null` (verified at `lib/repositories/types.ts:43`), so accessors like `agent.enhanced_prompt` resolve cleanly. The defensive double-cast `(agent as unknown as { enhanced_prompt?: string | null })` at `run-on-agent.ts:394` is redundant but harmless — tsc accepts both shapes.
+- **Untyped Jest mocks** (`__tests__/*.ts`): `jest.fn()` returns `jest.Mock<any, any>`; the `(input: unknown) => ...` arrows in `jest.mock('@/lib/effort-estimator', () => ({ estimateEffort: (input: unknown) => estimateEffort(input) }))` keep types tight. `expect.objectContaining(...)` calls are properly typed. No issues.
+- **Missing `await`s**: None. `dispatchEffortEstimate` is explicitly fire-and-forget (`void (async () => ...)().catch(...)`) by design — no missing `await` there.
+- **Pino `LogFn` overload resolution** (every `logger.info({...}, '...')` and `logger.error({err}, '...')` site): All call sites use the `(obj, msg)` overload with the message as a literal string — Pino's `LogFn` typing resolves these cleanly. No multi-arg interpolation that would trip overload selection.
+
+**Bugs found (NOT fixed — for user-decided action):** None. No real bugs surfaced during the read pass beyond the typing scope.
+
+**Final state:**
+
+- `npx tsc --noEmit --skipLibCheck` — 20 errors total, identical to the baseline; 0 in any cycle file.
+- `npx tsc --noEmit --skipLibCheck --strict --noImplicitAny --noUnusedLocals --noImplicitReturns --strictNullChecks` — identical output to the baseline (`diff` is empty).
+- ESLint — pre-existing project infrastructure broken; cannot be run via the standard path. Out-of-scope for this sweep.
+
+**Conclusion:** The earlier "zero new errors in cycle files" claim is correct under every tsc invocation tested (project-default + extra-strict). If the user is still seeing visual error markers, the most likely cause is one of:
+
+1. The IDE's TypeScript server has a stale incremental build cache (`.tsbuildinfo` in `.next/cache/` or wherever the IDE stores its TS server state) — a TypeScript: Restart TS Server in VS Code typically resolves this.
+2. The IDE is surfacing errors from `archive/` or `components/wizard/systemOutputs.ts` in the Problems panel without scoping them visually to a specific cycle file — those are pre-existing and predate this cycle.
+3. The IDE is surfacing ESLint warnings (not TS errors) via its lint integration — these would not appear in `tsc` output. The project's lint pipeline is in a known-broken state (see Methodology #4 above) so this cannot be verified through CLI tooling.
+
+If errors persist after a TS Server restart, paste the exact "Problems panel" text and we can map it to a specific file:line — `tsc` reports nothing actionable in any file the cycle touched.
+
+### UserProfileRepository missing — runtime fix — 2026-06-11
+
+While running `tests/effort-estimator/scripts/run-on-agent.ts` against the user's actual agent (`8c7caa01-...add45`, `--dry-run`), the script crashed with:
+
+```
+TypeError: import_repositories.UserProfileRepository is not a constructor
+    at buildUserContextFromProfile (lib/user-context/builders.ts:25:23)
+```
+
+**Root cause:** `lib/user-context/builders.ts` was authored against `UserProfileRepository` as if it existed, but the class was **never implemented** anywhere in the repository. The barrel `lib/repositories/index.ts` did not export it (no `UserProfile*` or `userProfile*` exports at all), and there was no `lib/repositories/UserProfileRepository.ts` file on disk. The import resolved to `undefined`, and `new undefined()` throws. This is NOT a cycle-introduced bug — it's a pre-existing latent defect in `lib/user-context/`. Production never noticed because no production code path calls `buildUserContextFromProfile` — all production callers use the fast path `buildUserContextFromAuth`. The integration script is the first runtime caller (per Behavior Step 4 of the requirement MD § Integration Test Tooling, which explicitly mandates the full profile path because "the live test is the place where persona quality matters most"), so it surfaced the bug.
+
+**Fix shape (combined Option A + B):** Created the missing repository, exported it through the barrel, and updated `builders.ts` to use the singleton (matching the rest of the codebase — `agentRepository`, `executionRepository`, etc.).
+
+**Files changed:**
+
+| File | Change | Diff stat |
+|---|---|---|
+| `lib/repositories/UserProfileRepository.ts` | **NEW.** Read-only repo following the `new-repository` SKILL.md template. Exposes `findById(userId): Promise<RepositoryResult<UserProfile>>`. Queries `.from('profiles').select('id, full_name, role, company, timezone').eq('id', userId).maybeSingle()`. `maybeSingle` (not `.single()`) on purpose: brand-new users without a profile row should return `{ data: null, error: null }` so callers fall back to auth metadata cleanly rather than treating "no profile yet" as an error. Uses `supabaseServer` (service role) — documented inline because the `id` column IS the auth user id (one row per user); `.eq('id', userId)` is the user_id filter the skill rule requires, the column name is just different from the convention. Exports both the class and a `userProfileRepository` singleton. | +66 / -0 |
+| `lib/repositories/index.ts` | Added `export { UserProfileRepository, userProfileRepository } from './UserProfileRepository';` and `export type { UserProfile } from './UserProfileRepository';` after the `InsightRepository` export, matching the existing alphabetical-ish convention used by the rest of the file. | +2 / -0 |
+| `lib/user-context/builders.ts` | Line 2: changed `import { UserProfileRepository } from '@/lib/repositories';` to `import { userProfileRepository } from '@/lib/repositories';`. Line 25: replaced `const profileRepo = new UserProfileRepository(); const { data: profile } = await profileRepo.findById(user.id);` with `const { data: profile } = await userProfileRepository.findById(user.id);`. Public API of `buildUserContextFromProfile(user) → Promise<UserContext>` is unchanged — callers see no difference. | +2 / -3 |
+
+**Sweep result (other callers of the affected symbols):**
+
+`grep -rn "buildUserContextFromProfile\|UserProfileRepository\|userProfileRepository"` across `.ts`, `.tsx`, `.md`:
+
+- `buildUserContextFromProfile` runtime callers: `tests/effort-estimator/scripts/run-on-agent.ts:470` is the **only** runtime caller. All other matches are documentation or backup files (`docs/USER_CONTEXT.md`, `docs/EFFORT_ESTIMATOR.md`, `docs/requirements/EFFORT_ESTIMATOR_REQUIREMENT.md`, `archive/CLAUDE_BACKUP_*.md`, this workplan).
+- `UserProfileRepository` references: only the two sites in `lib/user-context/builders.ts` that this fix updates. Nothing else in the codebase imports the class.
+- `userProfileRepository` (singleton): the new name. Only the one new use site in `builders.ts` plus the export in `index.ts`.
+
+Conclusion: this fix breaks zero existing callers — there are none beyond the two it updates. The public `buildUserContextFromProfile(user) → Promise<UserContext>` API documented in `docs/USER_CONTEXT.md` is preserved byte-for-byte.
+
+**Why I did NOT take alternative Option C (rename/relocate):** there was nothing to rename to — no existing class with a near-matching name does what's needed. Creating the repo is the only fix that satisfies both the documented API surface and the project's repository pattern (`REPOSITORY_STRATEGY.md` mandates all DB access go through `lib/repositories/`; an inline Supabase call in `builders.ts` would have been a CLAUDE.md mandatory rule #1 violation).
+
+**Phase responsibility (per CLAUDE.md "Fix Issues at the Root Cause"):** This is `lib/user-context/` — outside the V6 pipeline. The phase rules in the V6 work protocol don't apply. The bug owner is whoever last touched `builders.ts` (the original author who wrote against a not-yet-existing class) — this fix completes that work.
+
+**Verification — re-ran the user's failing command:**
+
+```
+npx tsx tests/effort-estimator/scripts/run-on-agent.ts --agent-id=8c7caa01-e328-4b0a-ae04-afbcd10add45 --dry-run
+```
+
+Script reached the end of the dry-run path and exited `PASS (dry-run)`. The hydrated `userContext` block printed by the runner shows full profile-table enrichment:
+
+```json
+{
+  "full_name": "Barak Meiri",
+  "email": "meiribarak@gmail.com",
+  "role": "admin",
+  "company": "AgentPilot",
+  "domain": "(empty)",
+  "timezone": "Asia/Jerusalem"
+}
+```
+
+All four profile-table fields (`full_name`, `role`, `company`, `timezone`) were populated from the `profiles` row — confirming the new repository's `findById` returns the expected shape and `buildUserContextFromProfile` correctly merges profile-over-auth-metadata per `docs/USER_CONTEXT.md` § Data Sources. The script proceeded through model resolution (`gpt-4o-mini` fallback per AC-7), printed the dry-run payload, and produced the standard `RUN_SUMMARY` line. No new failure boundary — the dry-run path completed cleanly. (Wet run would proceed to the LLM call next; not exercised here because dry-run was the user's request and this fix is purely about restoring the pre-LLM hydration path.)
+
+**Type-check:** `npx tsc --noEmit --skipLibCheck` reports the same 20 pre-existing errors in `archive/test-dsl-wrapper.ts` and `components/wizard/systemOutputs.ts`; zero new errors in any of the three touched files (`lib/repositories/UserProfileRepository.ts`, `lib/repositories/index.ts`, `lib/user-context/builders.ts`).
+
+**What did NOT change:**
+
+- The documented `buildUserContextFromProfile(user) → Promise<UserContext>` public API — same signature, same return shape.
+- The `lib/user-context/index.ts` barrel — still re-exports `buildUserContextFromProfile` from `./builders`.
+- `docs/USER_CONTEXT.md` — the spec already described the (correct) intended behavior; the bug was in code, not docs.
+- `tests/effort-estimator/scripts/run-on-agent.ts` — caller is unchanged; the error trace pointed inside `builders.ts:25`, which is where the fix lives.
+- `lib/supabaseServer.ts`, `app/api/plugins/google-token/`, `lib/client/GoogleDrivePicker.tsx`, `tmp_recon.ps1`, `.claude/settings*.json` — explicitly out-of-scope per the prompt constraints.
+
+### Dry-run actually runs the estimator — `skipPersist` option — 2026-06-11
+
+User ran `tests/effort-estimator/scripts/run-on-agent.ts --agent-id=8c7caa01-...add45 --dry-run` to see what the estimator would produce. The log only showed a placeholder:
+
+```
+--- DRY-RUN: payload that WOULD have been processed ---
+{
+  ...
+  "would_have_called": "estimateEffort(input)",
+  ...
+}
+```
+
+User (correctly) complained: "where is the output that will be added to the agent_config? i want to see it."
+
+**Root cause:** the previous Dev pass interpreted `--dry-run` as "no side effects, including no LLM call" — overly cautious. The requirement MD § Integration Test Tooling — Behavior is explicit: `--dry-run` "runs the estimator and prints the result but does NOT write to `agent_config.roi_estimate`". So dry-run SHOULD make the real LLM call and print the real estimate; only the DB write + audit event are suppressed.
+
+**Decision: Option A (per the bug-fix prompt's recommendation) — add a `skipPersist` option to the estimator.**
+
+Evaluated three options:
+
+| Option | Shape | Verdict |
+|---|---|---|
+| **A — Add `skipPersist` option to `estimateEffort(input, options?)`** | Production function gets an optional second parameter. When `skipPersist === true`, the LLM call still runs, the candidate estimate is still assembled + validated + returned, but `repository.update(...)` and `auditLog(EFFORT_ESTIMATE_GENERATED)` are both skipped. Override-log preview is still emitted (useful for the dry-run user reading the log). | **PICKED.** Smallest production code surface (~30 lines incl. log + early-return), cleanest API at the call site (`estimateEffort(input, { skipPersist: true })` reads correctly), trivially testable, and strictly optional — all four existing callers (`dispatch.ts`, `route.ts`, both test files) continue to call `estimateEffort(input)` with no changes required. |
+| B — Replicate the estimator pipeline in the script | Have the script call `resolveEffortEstimatorModel`, `buildEffortPrompt`, the provider, `LLMResponseSchema.parse`, `verifyReasoningMentionsPersona` directly. | **REJECTED.** Duplicates production logic in script-only code, which drifts from prod behavior over time. Defeats the whole "what production does is what the script does" point of the integration tooling. |
+| C — Mock the repository / audit deps in the script | Inject no-op stubs for `agentRepository.update` and `auditLog` before calling `estimateEffort`. | **REJECTED.** Module-level state replacement is fragile (relies on import ordering + mutability of the imported singleton's prototype), and would require touching the script every time someone refactors how the estimator imports its deps. |
+
+**Files changed:**
+
+| File | Change | Diff stat |
+|---|---|---|
+| `lib/effort-estimator/EffortEstimator.ts` | Extended `EffortEstimator.estimate(input, options?)` and the `estimateEffort(input, options?)` convenience function with an optional `{ skipPersist?: boolean }` second parameter. Added a new branch (step 7a) between the persisted-shape Zod validation (step 6) and the read-modify-write merge (step 7) that, when `options.skipPersist === true`, emits an INFO log mirroring the production override-log shape (so the per-run log file still surfaces what production would have recorded) and returns `{ success: true, estimate, previousEstimate, attempts, totalDurationMs }` WITHOUT calling `repository.update` and WITHOUT firing `EFFORT_ESTIMATE_GENERATED`. Extended both the class-method JSDoc and the file-level docblock with explicit warnings that production callers (V6 save hook, API route, fire-and-forget dispatcher) MUST NOT pass this option. | +37 / -6 |
+| `lib/effort-estimator/__tests__/EffortEstimator.test.ts` | Added two new tests: (1) `skipPersist=true: returns the estimate but does NOT write or audit` — asserts `chatCompletion` was called once, `update` was NOT called, `auditLog` was NOT called, and the returned `result.estimate` is the populated candidate. (2) `skipPersist=false (default) preserves original write + audit behavior` — defensive regression guarding against a future refactor flipping the default. All 8 tests pass (6 pre-existing + 2 new). | +73 / -0 |
+| `tests/effort-estimator/scripts/run-on-agent.ts` | Rewrote the dry-run branch (step 7a) to call `estimateEffort(input, { skipPersist: true })` and surface the real estimate. Added a new `prominent(label, payload)` helper that wraps the load-bearing payloads in a `=====` 78-char header banner so the live tester reading the log doesn't have to grep — the estimate is what they came for, so it gets its own visual section. Used the new helper for both the dry-run estimate AND the live-mode estimate (`ESTIMATOR RESULT (...)`) plus the live-mode persisted-config re-read (`PERSISTED agent_config.roi_estimate`). Routine supplemental payloads (hydrated input summary, resolved model, override log preview, dry-run before/after re-read) still use the original `pretty(label, payload)` helper — the visual hierarchy makes scanning trivial. The dry-run branch ALSO re-reads the agent post-call and prints a comparison showing `agent_config_roi_estimate_before` vs `agent_config_roi_estimate_after` with a `slot_unchanged: true/false` field, proving the slot was not mutated. Updated the docblock comment at step 7a explaining the new contract + why it differs from the previous "no LLM" interpretation. PASS / FAIL exit code now reflects the estimator's `result.success` (was hardcoded PASS in the placeholder branch). | +85 / -29 |
+| `tests/effort-estimator/README.md` | Rewrote `## What you should see` to reflect the new dry-run behavior (real estimate, banner-headed `ESTIMATOR RESULT`, post-run re-read with `slot_unchanged` field). Added a new `### Dry-run behavior (important)` sub-section that explicitly documents: dry-run DOES call the LLM, the user wants to see the result, only `repository.update` and the audit event are skipped, the script internally passes `skipPersist: true` to `estimateEffort`, and production callers must never pass this option. | +14 / -7 |
+
+**What did NOT change:**
+
+- The four production call sites of `estimateEffort(input)` (`lib/effort-estimator/dispatch.ts:37`, `app/api/v2/agents/[agentId]/estimate-effort/route.ts:81`, and the two test files at `EffortEstimator.test.ts` + `dispatch.test.ts`) — the new option is strictly optional and they all continue to call with a single argument, exactly as before. `git diff` of those files shows zero changes.
+- Production live-mode write semantics — `skipPersist` defaults to undefined → falsy → the existing read-modify-write merge + audit event fire path is byte-identical to the pre-change code path.
+- The requirement MD (`docs/requirements/EFFORT_ESTIMATOR_REQUIREMENT.md`). The spec language "runs the estimator and prints the result but does NOT write" already describes the correct behavior; the script implements that via `skipPersist`, which is a script-only concern. No requirement edit needed.
+- The design doc (`docs/EFFORT_ESTIMATOR.md`). Confirmed via grep that it does NOT document the `estimateEffort` function signature anywhere — the doc covers retry semantics, model resolution, async pattern, override semantics, etc., but never spells out the function's parameter list. So no design-doc edit needed either.
+- Live-mode behavior of the script. The live-mode invocation still calls `estimateEffort(input)` (no options) → unchanged write + audit semantics.
+
+**End-to-end verification — re-ran the user's failing command:**
+
+```bash
+npx tsx tests/effort-estimator/scripts/run-on-agent.ts --agent-id=8c7caa01-e328-4b0a-ae04-afbcd10add45 --dry-run
+```
+
+Output (relevant excerpt — the user can finally see the estimate):
+
+```
+==============================================================================
+  ESTIMATOR RESULT (dry-run — what would be written to agent_config.roi_estimate)
+==============================================================================
+{
+  "success": true,
+  "attempts": 1,
+  "totalDurationMs": 5643,
+  "estimate": {
+    "reasoning": "As an admin at an SMB, Barak Meiri would manually perform this workflow by scanning the 'Contracts' folder in Google Drive, extracting relevant dates from each document, and compiling an HTML email summary. The process involves multiple steps for each document, including reading content and formatting the output. Assuming an average of 10 contracts to review, with each taking about 5 minutes (300 seconds), the total manual time would be 3000 seconds for the full run.",
+    "is_bulk_workflow": false,
+    "total_manual_time_seconds": 3000,
+    "confidence": "High",
+    "generated_at": "2026-06-11T12:33:10.798Z",
+    "model": "gpt-4o-mini",
+    "version": "1"
+  },
+  "previousEstimate": null
+}
+==============================================================================
+
+--- DB row state AFTER dry-run (re-read to confirm slot is unchanged) ---
+{
+  "note": "DRY-RUN: estimator was invoked with skipPersist=true. No DB write was performed. No audit event was fired.",
+  "agent_config_roi_estimate_before": null,
+  "agent_config_roi_estimate_after": null,
+  "slot_unchanged": true
+}
+
+PASS (dry-run): estimator returned a candidate estimate. model=gpt-4o-mini, attempts=1, total_manual_time_seconds=3000, script_duration_ms=5644. NO DB write. NO audit event.
+```
+
+Confirmed by direct log inspection:
+
+| Check | Result |
+|---|---|
+| LLM was actually called | Yes — AIAnalyticsService logged `input_tokens: 1347, output_tokens: 129, cost_usd: 0.00027945, model_name: 'gpt-4o-mini'` for `feature: 'effort_estimator'`. |
+| Estimate payload is PROMINENTLY visible | Yes — banner-headed `ESTIMATOR RESULT (...)` block shows the full `{ reasoning, is_bulk_workflow, total_manual_time_seconds, confidence, generated_at, model, version }`. |
+| `agent_config.roi_estimate` was NOT mutated | Yes — script's own post-run re-read shows `agent_config_roi_estimate_before = null` and `agent_config_roi_estimate_after = null`, `slot_unchanged: true`. |
+| `EFFORT_ESTIMATE_GENERATED` audit was NOT fired | Yes — `grep -c "EFFORT_ESTIMATE_GENERATED" tests/effort-estimator/logs/run-2026-06-11T12-33-00-631Z-8c7caa01.log` returns `0`. |
+
+**Unit test results:** `npx jest lib/effort-estimator/__tests__/EffortEstimator.test.ts`:
+
+```
+PASS lib/effort-estimator/__tests__/EffortEstimator.test.ts (8.805 s)
+  EffortEstimator.estimate
+    √ happy path: writes merged config and fires the audit log
+    √ override: surfaces previousEstimate and logs old + new (AC-6)
+    √ retry exhaustion: NO write, NO audit, AC-2 slot left untouched
+    √ invalid JSON retries within the budget then succeeds
+    √ reasoning missing persona: still writes (does not block on AC-3)
+    √ returns attempts=0 when the agent is not found (route maps to 404)
+    √ skipPersist=true: returns the estimate but does NOT write or audit
+    √ skipPersist=false (default) preserves original write + audit behavior
+
+Tests:       8 passed, 8 total
+```
+
+**Type-check:** `npx tsc --noEmit --skipLibCheck` reports 20 errors, all pre-existing in `archive/test-dsl-wrapper.ts` and `components/wizard/systemOutputs.ts`. Zero new errors in any touched file.
 
 ---
 
@@ -1432,7 +1806,89 @@ Verdict: the workplan is **architecturally sound** with two blocking issues that
 
 ## QA Testing Report
 
-_To be populated by QA._
+## QA Test Report — 2026-06-11
+
+**Overall verdict:** `READY_FOR_RELEASE`
+
+**Strategy used:** A + B (Jest unit + integration) per the QA trigger. No scripts, no E2E, no log-analysis. Type-check + `console.*` grep + correlationId / non-blocking-audit spot-check + doc/code drift check completed.
+
+### Test suite results
+
+| Test file | Suites | Tests | Passed | Failed | Skipped | Runtime |
+|---|---|---|---|---|---|---|
+| `lib/effort-estimator/__tests__/*` (6 files) | 6 | 40 | 40 | 0 | 0 | 28.1 s |
+| `app/api/v2/agents/[agentId]/estimate-effort/__tests__/route.test.ts` | 1 | 6 | 6 | 0 | 0 | 3.1 s |
+| `lib/pilot/insight/__tests__/updateAgentROI.guard.test.ts` | 1 | 3 | 3 | 0 | 0 | 2.3 s |
+| **Total** | **8** | **49** | **49** | **0** | **0** | **~33.5 s** |
+
+No flake observed (single run). `EffortEstimator.test.ts` "retry exhaustion" case runs ~5 s due to a real 1 s + 4 s backoff sleep (not faked) — acceptable for the 60 s test timeout it sets.
+
+### Acceptance Criteria coverage
+
+| AC | Description (abbreviated) | Tests | Status | Notes |
+|---|---|---|---|---|
+| AC-1 | Newly created agent → `roi_estimate` populated within 30 s in ≥95 % of cases | `EffortEstimator.test.ts` "happy path" + `dispatch.test.ts` (V6 save-site dispatch) | PASS (functional); SLO is observability-only | The 30 s upper bound is enforced by `retryWithBackoff`'s `totalBudgetMs: 30000` (verified in `retryWithBackoff.test.ts` budget test). The ≥95 % real-world success rate is **runtime SLO**; covered structurally by the budget test but requires production observability to validate. |
+| AC-2 | LLM failure exhausts retries → slot remains null + structured error log | `EffortEstimator.test.ts` "retry exhaustion" + `route.test.ts` 503 branch | PASS | Asserts no `update`, no `auditLog`, returns `success:false` + `attempts:3`. ERROR log line `"Effort estimator exhausted retries — slot left untouched"` observed in test output with `{err, attempts, totalDurationMs, correlationId}`. |
+| AC-3 | Reasoning references inferred SMB-owner persona by name | `personaResolver.test.ts` (all 4 branches + lenient role-OR-domain scan) + `EffortEstimator.test.ts` "reasoning missing persona" + `buildEffortPrompt.test.ts` "persona verbatim" | PASS | WARN log observed when reasoning omits both role and domain; write still happens (drift detector, not gate — per design doc). |
+| AC-4 | Deprecated `updateAgentROI` self-guard prevents overwriting fresh estimate | `updateAgentROI.guard.test.ts` (3 cases: skip-when-fresh / control / legacy-guard) | PASS | DEBUG log `"deprecated path skipping write — fresh estimate already present"` observed; `agent_config` never appears in the deprecated path's update payload when `existingROI` is set. |
+| AC-5 | POST regen + previous logged at INFO with `{old_value, new_value, reason, correlationId}` | `route.test.ts` "AC-5 happy path" + `EffortEstimator.test.ts` "override" | PASS | INFO line carries `agent_id`, `reason`, `previous_total_manual_time_seconds`, `previous_is_bulk_workflow`, `new_total_manual_time_seconds`, `new_is_bulk_workflow`, `new_reasoning` (truncated to 500 chars), `model`, `persona`, `attempts`, `duration_ms`, and the `correlationId` is in the child logger context. |
+| AC-6 | Existing estimate overridden → both old + new logged | `EffortEstimator.test.ts` "override" + `route.test.ts` "AC-5 happy path" | PASS | `audit.changes` carries `before: { roi_estimate: prior }` AND `after: { roi_estimate: newEstimate }`. INFO log line carries `previous_*` AND `new_*` numeric fields. |
+| AC-7 | Missing `effort_estimator_model` row → fallback `gpt-4o-mini` + DEBUG log | `modelResolver.test.ts` "AC-8: falls back when row missing" + "AC-8: falls back when repository errors" + "unrecognised value shape" | PASS | (Note: AC numbering — this is AC-7 in the current requirement MD, was AC-8 before the descope. Tests still reference "AC-8" in `describe()`/`it()` text — historical, not a bug.) DEBUG log `"effort_estimator_model row missing — falling back to gpt-4o-mini default"` observed; resolver returns `{provider:'openai', model:'gpt-4o-mini'}`. |
+
+### Edge case coverage
+
+| Scenario | Tested? | File:line |
+|---|---|---|
+| Agent not found → 404, no LLM call | YES | `EffortEstimator.test.ts:235-250` + `route.test.ts:101-115` |
+| LLM retries exhausted → 503, slot null, no audit write | YES | `EffortEstimator.test.ts:155-175` + `route.test.ts:117-131` |
+| LLM returns invalid JSON → retry within budget | YES | `EffortEstimator.test.ts:177-205` (1st call "not json at all" → 2nd call valid JSON; result `attempts === 2`) |
+| LLM omits required `reasoning` field → retry within budget | PARTIAL | Covered structurally by the same Zod-fail-→-retry mechanism as invalid JSON (LLMResponseSchema requires `reasoning.min(1)`), but no dedicated test asserts the missing-`reasoning` retry path specifically. See Test Gap #1. |
+| Persona drift (reasoning lacks role AND domain) → WARN log fires, write succeeds | YES | `EffortEstimator.test.ts:207-233` (asserts `success:true` + `update` called; WARN `"Effort estimator: reasoning does not mention persona role/domain — possible prompt drift"` observed in stdout) |
+| DB row missing AND DB row malformed both fall back to `gpt-4o-mini` | YES | `modelResolver.test.ts:30-46` (missing) + `:105-122` (unrecognised numeric value) + `:40-46` (repository error) |
+| `agent_config` JSONB merge preserves existing keys (P0) | YES | `EffortEstimator.test.ts:66, 97-101` — input `agent_config: { creation_metadata: { from: 'test' } }`; post-merge assertion `expect(updateArg.agent_config.creation_metadata).toEqual({ from: 'test' })` |
+| Dispatcher non-blocking on inner rejection | YES | `dispatch.test.ts:61-75` (rejection → error log fires) + `:77-82` (no synchronous throw) |
+| Override INFO log includes `correlationId` AND truncates `reasoning` to ~500 chars | YES (structural) | Child logger created with `correlationId` at `EffortEstimator.ts:95`; `truncate(reasoning, 500)` at `:290`. INFO log line in test output carries `correlationId` in the child context and the persona-drift case shows `truncate` is wired in (`reasoning` field present, no over-length stack trace). No explicit assertion that the log line is truncated, but the helper has no logic branch — it's a pure string slice. Acceptable. |
+| Audit trail entry is non-blocking (`.catch()` pattern) | YES | `EffortEstimator.ts:301-324` ends with `.catch((err) => requestLogger.error(...))`. Indirectly covered by happy-path test confirming `auditLog` is called and result success returned without awaiting audit completion. |
+
+### CLAUDE.md mandatory-rule spot-check
+
+| Check | Result | Evidence |
+|---|---|---|
+| Zero `console.log` / `console.error` / `console.warn` in production code | PASS | `grep -rn "console\.(log\|error\|warn)" lib/effort-estimator/ app/api/v2/agents/[agentId]/estimate-effort/` (excluding `__tests__`) returns zero hits. Also zero hits in `app/api/create-agent/route.ts` and `lib/pilot/insight/BusinessInsightGenerator.ts`. |
+| `correlationId` threaded through every log line in `EffortEstimator.estimate()` and the route handler | PASS | Child logger created at `EffortEstimator.ts:94-99` with `{correlationId, agentId, userId, reason}`; every subsequent `requestLogger.*` inherits it. Route handler creates child at `route.ts:43-47`. Audit `details.correlationId` set at `EffortEstimator.ts:319`. |
+| `auditLog` is called with `.catch()` (non-blocking) | PASS | `EffortEstimator.ts:301-324` — `auditLog({...}).catch((err) => requestLogger.error({err}, 'EFFORT_ESTIMATE_GENERATED audit failed (non-blocking)'))`. |
+
+### Type-check + lint
+
+| Check | Result | Notes |
+|---|---|---|
+| `npx tsc --noEmit --skipLibCheck` over the touched files | PASS | Zero new errors. Filtering output for `effort-estimator|estimate-effort|create-agent|BusinessInsightGenerator|repositories/types|audit/events` returns zero hits. Pre-existing errors in `archive/test-dsl-wrapper.ts` and `components/wizard/systemOutputs.ts` are unchanged from main (out-of-scope). |
+| ESLint over touched files | NOT RUN | Both `npx eslint` (config-not-found — flat-config issue with this repo's eslint setup) and `npx next lint --dir ...` (interactive prompt) failed without lint output. `next lint` is also marked optional in the QA brief. No new lint complaints visible, but not a substitute for a clean lint pass — flagged as a non-blocking gap. |
+
+### Doc sanity check
+
+Three claims spot-checked against the code:
+
+1. **`docs/EFFORT_ESTIMATOR.md:183` HTTP code table** — Success row says `201`. Verified against `route.ts:129` (`{ status: 201 }`). PASS.
+2. **`docs/EFFORT_ESTIMATOR.md:170-173` deprecation guard line refs** — Says pre-existing `manual_time_per_item_seconds` guard at `:901`, new `existingROI` guard at `:916`. Verified against `BusinessInsightGenerator.ts:901` (`if (agent && (agent.manual_time_per_item_seconds === null || ...))`) and `:916` (`if (roiEstimate.total_manual_time_seconds && !existingROI) {`). PASS.
+3. **AC renumbering** — Requirement MD shows 7 ACs (AC-1 through AC-7) with the former AC-7 (feature-flag) removed and AC-8 (model fallback) renumbered to AC-7. The Acceptance Criteria mapping table in the workplan still labels the model-fallback row as `AC-8` (line 1086) and the modelResolver test `describe()`/`it()` strings still say `"AC-8"`. Historical / stale references only — functional behavior matches the renumbered AC. Flagged in Test Gap #2 below.
+
+### Bugs found
+
+None at any severity (P0/P1/P2). All 49 tests pass; behavior matches the 7 ACs and the design doc.
+
+### Test gaps
+
+1. **(P2 — follow-up)** No dedicated test asserts that an LLM response missing the required `reasoning` field triggers a retry. Coverage is structural-only (Zod's `reasoning: z.string().min(1)` enforces it, and the same retry path is exercised by the `"invalid JSON"` test). A 5-line addition to `EffortEstimator.test.ts` that mocks `chatCompletion` to return `JSON.stringify({is_bulk_workflow: true, total_manual_time_seconds: 60})` on attempt #1 and a valid payload on attempt #2 would close this. Not in this PR — acceptable for v1.
+2. **(P2 — cosmetic)** AC label drift in the workplan's Acceptance Criteria Mapping table (line 1086, says `AC-8`) and in `modelResolver.test.ts` `describe()`/`it()` strings (label `"AC-8"`). The requirement MD currently has 7 ACs; the model-fallback AC was renumbered to AC-7 on 2026-06-10. Test names are historical and harmless. A find-and-replace pass would tidy this up but does not affect functional coverage. Not blocking.
+3. **(P2 — non-functional)** ESLint did not produce a clean pass (config/CLI issue). No visible lint debt, but a future PR should ensure `next lint` runs over this module.
+4. **(P2 — non-functional)** AC-1's ≥95 % SLO is not provable from unit tests; requires production observability (success-rate metric on the `EFFORT_ESTIMATE_GENERATED` audit event vs. agents created). Flagged for the post-release operational checklist, not for this PR.
+
+### Verdict rationale
+
+The implementation is functionally complete and matches both the requirement MD (7 ACs) and the design doc (architecture, persona, retry, async, deprecation, failure semantics). All 49 tests pass on the first run; the JSONB-merge preservation that SA flagged as P0 is explicitly asserted; the AC-4 deprecated-path guard is exercised in all three relevant branches (skip / control / legacy guard); the API route maps the two failure shapes (`attempts === 0` → 404, `attempts === 3` → 503) cleanly; the dispatcher is non-blocking and re-entrant. CLAUDE.md mandatory rules (no `console.*`, `correlationId` threading, `auditLog().catch()`) all hold. Type-check produces zero new errors in any touched file. The four test gaps are all non-functional, non-blocking, and most are follow-up cosmetic work. The AC-1 ≥95 % SLO is the only criterion that cannot be proved from unit tests — it is an operational metric, structurally bounded by the verified 30 s budget. Ready for RM commit.
+
+
 
 ---
 
@@ -1479,6 +1935,15 @@ _To be populated by RM._
 | 2026-06-04 | SA Phase-1 review | SA reviewed workplan + cross-checked against actual code (create-agent route, agents-[id] PUT handler, AgentRepository, audit events, BusinessInsightGenerator, MetricsCollector, featureFlags, baseProvider, AgentGenerationConfigService, AgentWizard). Found 2 blocking issues: (1) AC-4's deprecated-path guard is on the wrong column — will silently overwrite fresh estimates, fix required at `BusinessInsightGenerator.ts:884`; (2) Risk #4 regen-trigger gating list assumes `enhanced_prompt`+`pilot_steps` are in PUT handler's updateData whitelist — they aren't, need to gate on `agentData` body instead. Verdict: NEEDS_REVISION. ~10 minor changes also flagged (dispatch helper extraction required, API endpoint sentinel cleanup, retry off-by-one, test mapping tweaks, persona scan robustness, log truncation for PII). Decisions confirmed: Risk #1 APPROVE env-opt-in; Risk #2 APPROVE no migration; Risk #3 APPROVE option-a `UpdateAgentInput` extension; Risk #6 APPROVE user_prompt fallback (verified V6 doesn't persist `enhanced_prompt`); Risk #7 APPROVE prompt-level + Zod-retry. |
 | 2026-06-07 | SA review revisions applied | (1) Added BusinessInsightGenerator guard extension at line 884 to in-scope. (2) Fixed regen gate to read from agentData not updateData. (3) Promoted lib/effort-estimator/dispatch.ts to required (net-new pattern single-source-of-truth). (4) Added "Known v1 limitations" section documenting create-then-edit race + Open Follow-Up #11 reference. (5) Updated Risks section to mark all BLOCKING items RESOLVED. |
 | 2026-06-10 | SA re-confirmation | SA re-reviewed all 5 revisions against the source code + requirement MD. All blockers verified resolved. APPROVED_FOR_IMPLEMENTATION. See "SA Re-Confirmation — 2026-06-10" section. |
+| 2026-06-10 | Dev implementation | Dev implemented per the locked plan. Created `lib/effort-estimator/` module (7 source files + 6 test files), `lib/effort-estimator/dispatch.ts` SSoT helper, `app/api/v2/agents/[agentId]/estimate-effort/route.ts` API endpoint + tests, `lib/pilot/insight/__tests__/updateAgentROI.guard.test.ts` AC-4 test. Modified `lib/utils/featureFlags.ts` (added `useEffortEstimator`), `lib/audit/events.ts` (added `EFFORT_ESTIMATE_GENERATED`), `lib/repositories/types.ts` (extended `UpdateAgentInput` with `agent_config?`), `app/api/create-agent/route.ts` (wired dispatcher after AGENT_CREATED audit), `app/api/agents/[id]/route.ts` (wired regen dispatcher with agentData-gated change detection), `lib/pilot/insight/BusinessInsightGenerator.ts` (added the `existingROI` AC-4 guard, the legacy-guard `do NOT remove` comment, and `@deprecated` JSDoc on `updateAgentROI`). Addressed all 7 SA non-blocking observations except #3 (SESSION PAUSE STATE — historical) and #11 (`manual_time_per_item_seconds?` extension — out of scope until deprecated writer is deleted). Type-check passes (no new errors in any touched file). No commit yet — awaiting user review. |
+| 2026-06-10 | User code review revisions | User-led code review caught two issues SA missed and applied one scope reduction: (1) Removed feature flag entirely (`useEffortEstimator()` helper, `NEXT_PUBLIC_USE_EFFORT_ESTIMATOR` env var, `getFeatureFlags()` entry, dispatch-time gate, dispatch.test.ts flag assertions, docblock references in API route). The dispatcher now always fires. (2) Fixed CLAUDE.md mandatory rule #1 violation in `lib/effort-estimator/modelResolver.ts` — refactored to use `systemConfigRepository.getByKey()` via the existing `lib/repositories/SystemConfigRepository.ts` (which SA incorrectly said didn't exist). Tests rewritten to mock the repository singleton. (3) Reverted PUT handler dispatch in `app/api/agents/[id]/route.ts` (Trigger #2 / automatic regeneration descoped to v2, tracked as Open Follow-Up #10). `git diff 2f6433c -- app/api/agents/[id]/route.ts` now produces zero output. Dispatch helper itself retained — V6 save site is still a live caller and Open Follow-Up #10 will be its second. See [User Code Review Revisions — 2026-06-10](#user-code-review-revisions--2026-06-10). |
+| 2026-06-11 | Integration test tooling delivered | Created `tests/effort-estimator/scripts/run-on-agent.ts` + `tests/effort-estimator/README.md` per requirement MD § Integration Test Tooling (lines 199-279) + AC-8 (line 326). The CLI runner hydrates `EffortEstimatorInput` from an existing agent row (`user_id` always read from the row — never CLI-supplied, per Safety #2), builds `user_context` via the full `buildUserContextFromProfile` path, calls `estimateEffort` directly, and re-reads the row post-write to confirm the persisted `roi_estimate`. `--dry-run` short-circuits before the LLM + DB. Pattern mirrors `tests/v6-regression/scripts/`. Uses one inline `supabaseServer` read (documented script-only) to discover `user_id` before dropping back through `AgentRepository` for the real fetch — no new public method was added to the repository. See [Integration Test Tooling — 2026-06-11](#integration-test-tooling--2026-06-11) under Implementation Notes. |
+| 2026-06-11 | Per-run log file added to runner | Extended `tests/effort-estimator/scripts/run-on-agent.ts` to write a per-run JSON-Lines log file (default `tests/effort-estimator/logs/run-{ISO-timestamp}-{agentIdShort}.log`; `:`/`.` in the timestamp normalized to `-` for Windows compatibility). Capture strategy is a `process.stdout.write` tee into `fs.createWriteStream(filePath, { flags: 'a' })` — both the script's own Pino logger AND the estimator's child loggers (built via the project's shared `baseLogger` in `lib/logger.ts`) write to stdout by default, so a single stdout-tee handles both uniformly. `pino.multistream` was considered for the script logger but rejected because it would double-record script lines (once via multistream's file write, once via the stdout tee). `lib/logger.ts` was deliberately NOT modified — file logging is script-scoped. Added `--log-dir=<path>` flag, synthetic `RUN_SUMMARY` final line, 4-char hex suffix on millisecond collision, fsync-on-exit (`fileStream.end()` + await `'finish'` before `process.exit`), and pre-logger error fallback. Console output byte-identical to the previous version. Updated `tests/effort-estimator/README.md` with a new "Per-run log file" section + `--log-dir` row. Added `tests/effort-estimator/logs/` to the repo-root `.gitignore` matching the existing `simulators/**/output/` convention. No new dependencies (pino 10.1.0 already a project dep). Type-check `npx tsc --noEmit --skipLibCheck` reports zero new errors in any touched file (20 pre-existing errors in `archive/` and `components/wizard/systemOutputs.ts` unchanged from `main`). See [Per-run Log File — 2026-06-11](#per-run-log-file--2026-06-11) under Implementation Notes. |
+| 2026-06-11 | Script self-load fix in `run-on-agent.ts` | Follow-up to the earlier `--import ./scripts/env-preload.ts` fix — the hook approach worked but was UX-fragile (one missed flag → `Error: supabaseUrl is required.` crash). User hit the footgun once today. Replaced the external preload-hook dependency with a co-located bootstrap-import file: created `tests/effort-estimator/scripts/_load-env.ts` (underscore prefix signals "internal, must run first") containing `dotenv.config({ path: '.env.local' })` at module-evaluation time, with hard-fail on missing/unparseable `.env.local`. Made `import './_load-env'` the VERY FIRST import in `run-on-agent.ts` — ahead of `crypto`, `fs`, `path`, everything else. ES modules guarantee static side-effect imports evaluate to completion in source order, depth-first, so `process.env` is populated before `@/lib/supabaseServer` is resolved. Plain invocation `npx tsx tests/effort-estimator/scripts/run-on-agent.ts --agent-id=<uuid>` now works with zero flags. Updated `run-on-agent.ts` docblock + `tests/effort-estimator/README.md` § Usage (replaced "Why `--import`?" sub-section with a new "Env loading" note pointing at `_load-env.ts`). Did NOT touch `scripts/env-preload.ts` (still in use by v6-regression scripts). Did NOT touch `lib/supabaseServer.ts`, `lib/repositories/`, or `lib/effort-estimator/`. Verified end-to-end with `npx tsx tests/effort-estimator/scripts/run-on-agent.ts --agent-id=00000000-0000-4000-8000-000000000000 --dry-run` — script reaches Supabase, returns "agent not found" cleanly, writes the per-run log file, exits non-zero (correct). Type-check `npx tsc --noEmit --skipLibCheck` reports the same 20 pre-existing errors in `archive/` + `components/wizard/systemOutputs.ts` and zero in any cycle file. See [Script self-loading — 2026-06-11](#script-self-loading--2026-06-11) under Implementation Notes. |
+| 2026-06-11 | Fix: env load order in `run-on-agent.ts` (startup crash) | User reported `Error: supabaseUrl is required.` on every invocation of the integration test runner. Root cause: `lib/supabaseServer.ts` constructs the service-role client eagerly at module load (`export const supabaseServer = createServerSupabaseClient()`), and ES module `import` statements are hoisted ahead of any executable code in the importing file — so the original top-of-file `dotenv.config(...)` call ran AFTER the `@/lib/supabaseServer` import had already evaluated, and supabaseServer was built against an empty `process.env`. Fix shape: switched to the project's canonical precedent — `npx tsx --import ./scripts/env-preload.ts ...` (same invocation `tests/v6-regression/scripts/import-regression-scenarios-as-agents.ts` uses). The `--import` hook loads `scripts/env-preload.ts` (which calls `dotenv.config({ path: '.env.local' })`) fully BEFORE any of this script's imports resolve. Removed the in-module `import { config as dotenvConfig } from 'dotenv'` + the explicit `dotenvConfig({ path: ... })` call from `tests/effort-estimator/scripts/run-on-agent.ts`. Replaced with a docblock paragraph explaining the env-load contract so future readers don't reintroduce the bug. Updated the `Usage:` block in the docblock + `tests/effort-estimator/README.md` § Usage with the new invocation and a new "Why `--import ./scripts/env-preload.ts`" sub-section pointing at the eager-construction issue. Did NOT modify `lib/supabaseServer.ts` (out-of-scope per the bug-fix prompt — a project-wide change). Did NOT modify `lib/repositories/`, `lib/effort-estimator/`, or `scripts/env-preload.ts` (the latter is shared with the v6-regression scripts). Verified end-to-end with `npx tsx --import ./scripts/env-preload.ts tests/effort-estimator/scripts/run-on-agent.ts --agent-id=00000000-0000-4000-8000-000000000000 --dry-run` — script now reaches Supabase, returns a clean "agent not found" `RUN_SUMMARY`, and writes the per-run log file. Type-check `npx tsc --noEmit --skipLibCheck` reports the same 20 pre-existing errors in `archive/` + `components/wizard/systemOutputs.ts` and zero in any cycle file. |
+| 2026-06-11 | TypeScript sweep — cycle files | User reported residual TS errors in the cycle files after earlier "zero new errors" claims. Performed a focused file-by-file sweep across every TS file touched by the cycle (8 new source files in `lib/effort-estimator/`, 6 test files in `lib/effort-estimator/__tests__/`, 1 new route + 1 route test under `app/api/v2/agents/[agentId]/estimate-effort/`, the 688-line `tests/effort-estimator/scripts/run-on-agent.ts` runner, the `lib/pilot/insight/__tests__/updateAgentROI.guard.test.ts` guard test, and the 4 modified files: `app/api/create-agent/route.ts`, `lib/audit/events.ts`, `lib/repositories/types.ts`, `lib/pilot/insight/BusinessInsightGenerator.ts`). Tools used: project-default `npx tsc --noEmit --skipLibCheck`, then a stricter re-compile with `--strict --noImplicitAny --noUnusedLocals --noImplicitReturns --strictNullChecks`, plus end-to-end manual reads of the suspicious patterns identified by the user (stdout-tee override, Pino LogFn overloads, dotenv typing, fs.createWriteStream callback typing, process.exit after stream end, inline Supabase select typing, AgentRepositoryResult union narrowing, untyped Jest mocks, missing awaits). Both tsc runs returned 20 errors total — all pre-existing in `archive/test-dsl-wrapper.ts` and `components/wizard/systemOutputs.ts`; zero in any cycle file. `diff` of the two runs is empty (no hidden flag downgrade). Manual spot checks on all 8 suspicion patterns passed. ESLint sweep attempted but the project's lint pipeline is in a pre-existing broken state (eslint 9 flat-config migration incomplete: `next lint` falls into interactive setup, `npx eslint` reports "File ignored because no matching configuration was supplied"). Zero fixes applied, zero bugs found for user-decided action. Most likely IDE-side cause if errors persist visually: stale incremental TS server cache or IDE-surfaced ESLint warnings being mistaken for tsc errors. See [TypeScript Sweep — 2026-06-11](#typescript-sweep--2026-06-11) under Implementation Notes for the per-file table + methodology. |
+| 2026-06-11 | Fix: dry-run actually runs the estimator (`skipPersist` option) | User ran `tests/effort-estimator/scripts/run-on-agent.ts --agent-id=8c7caa01-...add45 --dry-run` and complained: "where is the output that will be added to the agent_config? i want to see it." The log only showed a `"would_have_called": "estimateEffort(input)"` placeholder. Root cause: previous Dev pass interpreted `--dry-run` as "no side effects, including no LLM call" — overly cautious. The requirement MD § Integration Test Tooling — Behavior is explicit: dry-run "runs the estimator and prints the result but does NOT write". Fix shape (Option A from the prompt's recommendation): added an optional `{ skipPersist?: boolean }` second parameter to `EffortEstimator.estimate(input, options?)` and the `estimateEffort(input, options?)` convenience export. When `skipPersist === true`, the LLM call still runs, the candidate estimate is still assembled + validated + returned, and the override-log preview still fires (lands in the per-run log file), but `repository.update(...)` and `auditLog(EFFORT_ESTIMATE_GENERATED)` are both skipped — slot stays byte-identical, no audit-trail entry. Option strictly optional and defaults to undefined → falsy → original behavior, so production callers (V6 save hook, API route, fire-and-forget dispatcher) need ZERO changes. Updated `tests/effort-estimator/scripts/run-on-agent.ts` dry-run branch to call `estimateEffort(input, { skipPersist: true })` and surface the real estimate, with a new `prominent(label, payload)` helper that wraps the estimate (and the live-mode persisted-config re-read) in a `=====` 78-char header banner so the live tester reading the log doesn't have to grep. Dry-run also re-reads the row post-call and prints a `slot_unchanged: true/false` field proving non-mutation. Added 2 new tests to `lib/effort-estimator/__tests__/EffortEstimator.test.ts` (8/8 pass): `skipPersist=true` skips write+audit and returns the estimate; `skipPersist=false` (default) preserves original behavior (defensive regression). End-to-end verified with the user's UUID: LLM was called (`AIAnalyticsService` logged `cost_usd: 0.00027945`), estimate displays prominently (`total_manual_time_seconds: 3000`, full `reasoning` visible), `agent_config.roi_estimate` is unchanged (`slot_unchanged: true`), zero `EFFORT_ESTIMATE_GENERATED` matches in the per-run log file. `npx tsc --noEmit --skipLibCheck` reports the same 20 pre-existing errors. No requirement MD edits needed (spec already correct). No design-doc edits needed (`docs/EFFORT_ESTIMATOR.md` doesn't document the function signature). README's "What you should see" section rewritten + new "Dry-run behavior (important)" sub-section added. Diff stat: `+37/-6` `EffortEstimator.ts`, `+73/-0` `EffortEstimator.test.ts`, `+85/-29` `run-on-agent.ts`, `+14/-7` `README.md`. See [Dry-run actually runs the estimator — `skipPersist` option — 2026-06-11](#dry-run-actually-runs-the-estimator--skippersist-option--2026-06-11) under Implementation Notes for full detail. |
+| 2026-06-11 | Fix: `UserProfileRepository is not a constructor` runtime crash in `buildUserContextFromProfile` | User ran `tests/effort-estimator/scripts/run-on-agent.ts --agent-id=8c7caa01-...add45 --dry-run` and hit `TypeError: import_repositories.UserProfileRepository is not a constructor` at `lib/user-context/builders.ts:25`. Root cause: pre-existing latent bug — the repository class was never implemented anywhere in the codebase, the barrel `lib/repositories/index.ts` did not export it, and there was no `lib/repositories/UserProfileRepository.ts` file on disk. Production never noticed because no production code path calls `buildUserContextFromProfile` (all production callers use the fast path `buildUserContextFromAuth`); the integration script is the first runtime caller and surfaced the bug. Fix shape (combined Option A + B): created `lib/repositories/UserProfileRepository.ts` following the `new-repository` SKILL.md template (read-only repo, `findById(userId)` querying `.from('profiles').select('id, full_name, role, company, timezone').eq('id', userId).maybeSingle()` — `maybeSingle` so brand-new users without a profile row return `{ data: null, error: null }` cleanly), exported `UserProfileRepository` + `userProfileRepository` singleton + `UserProfile` type from `lib/repositories/index.ts`, and updated `lib/user-context/builders.ts` to use the singleton (`const { data: profile } = await userProfileRepository.findById(user.id);` — matches the `agentRepository` / `executionRepository` style used elsewhere). Public `buildUserContextFromProfile(user) → Promise<UserContext>` API unchanged — only one runtime caller exists (the script) and it now passes the dry-run end-to-end with full profile enrichment (`full_name`, `role`, `company`, `timezone` all populated from the user's `profiles` row). Type-check `npx tsc --noEmit --skipLibCheck` reports the same 20 pre-existing errors in `archive/` + `components/wizard/systemOutputs.ts`; zero new errors in any of the three touched files. Diff stat: `+66/-0` on the new repository, `+2/-0` on the barrel, `+2/-3` on `builders.ts`. Sweep across `.ts`/`.tsx`/`.md` for `buildUserContextFromProfile` / `UserProfileRepository` / `userProfileRepository` confirms zero other runtime callers are affected — all other matches are docs or archived files. See [UserProfileRepository missing — runtime fix — 2026-06-11](#userprofilerepository-missing--runtime-fix--2026-06-11) under Implementation Notes for full detail. |
 
 ---
 
@@ -1539,3 +2004,212 @@ All 5 first-pass blockers have been correctly addressed at the prose, file-refer
 [X] Workplan APPROVED FOR IMPLEMENTATION — proceed
 [ ] NEEDS REVISION
 [ ] BLOCKED
+
+---
+
+## SA Code Review — 2026-06-10
+
+**Verdict:** `APPROVED_CODE_REVIEW`
+
+**Reviewer process:** Read every file in the uncommitted in-tree diff (17 new, 7 modified) against the requirement MD (`d6f2852`), my own approved workplan, and the 7 non-blocking observations I left in § SA Re-Confirmation (lines 1487-1543). I traced each AC to specific lines, walked the 5 unspecified decisions against project conventions, and checked all 8 CLAUDE.md mandatory rules. The implementation is tighter than the workplan implied: the AC-2 differentiation between "agent not found" and "retries exhausted" is cleanly threaded through `attempts === 0 | 3`, the SSoT dispatcher routes import-throws back through `.catch` as required, and the AC-4 guard fix is exactly the 2-line extension the SA blocker called for.
+
+### 7 SA observations follow-up
+
+| # | Observation | Addressed? | Evidence |
+|---|---|---|---|
+| 1 | Open Follow-Up numbering aligned (req MD: #8 / #9, not #11 / #12) in inline code | ✅ | `lib/effort-estimator/EffortEstimator.ts:258` reads `See Open Follow-Up #8 in docs/requirements/EFFORT_ESTIMATOR_REQUIREMENT.md`. Older workplan prose still says #11/#12 in historical sections — Dev called this out in Implementation Notes (line 1342). |
+| 2 | AC-8 has a dedicated `modelResolver.test.ts` file | ✅ | `lib/effort-estimator/__tests__/modelResolver.test.ts:27` `it('AC-8: falls back to gpt-4o-mini on OpenAI when the row is missing', ...)`. Asserts the exact default. |
+| 4 | `verifyReasoningMentionsPersona` uses role-OR-domain substring scan | ✅ | `lib/effort-estimator/personaResolver.ts:55-57` accepts either role OR domain match. Tests at `__tests__/personaResolver.test.ts:40-58` lock both branches. |
+| 5 | `reasoning` truncated to ~500 chars in INFO logs | ✅ | `lib/effort-estimator/EffortEstimator.ts:47-50` `truncate(value, max = 500)`. Called at the INFO override log (line 290) and the AC-3 drift WARN (line 250). Full reasoning preserved in the audit table (lines 308-309) — correct trade-off. |
+| 6 | `retryWithBackoff` returns `attempts === 3` on exhaustion | ✅ | `lib/effort-estimator/retryWithBackoff.ts:100` `attempts: delays.length`. Test at `__tests__/retryWithBackoff.test.ts:38-47` literally named `'returns ok=false and attempts=3 on exhaustion (SA observation #6: NOT 4)'`. |
+| 7 | `modelResolver` uses `supabaseServer` singleton | ✅ | `lib/effort-estimator/modelResolver.ts:20` imports `supabaseServer`. No `createClient(... SERVICE_ROLE ...)` anywhere in the module. |
+
+### 5 unspecified design decisions
+
+| # | Decision | Sound? | Notes |
+|---|---|---|---|
+| 1 | Route param `[agentId]` not `[id]` (Next.js sibling-segment constraint + `form-metadata` convention) | ✅ | Confirmed only sibling at `app/api/v2/agents/` is `form-metadata`, which already uses `[agentId]`. Next.js would reject `[id]` at the same level. No external caller for `/api/v2/agents/[id]/*` exists, so no breakage. (The pages route under `app/v2/agents/[id]` is a separate tree — page routes vs API routes — not affected.) |
+| 2 | Two Zod schemas — `LLMResponseSchema` (passthrough/lenient) vs `ROIEstimateV1Schema` (strict, stamped with `generated_at` / `model` / `version`) | ✅ | Correct separation of trust boundary (LLM output) from persistence boundary (DB shape). `passthrough()` survives LLM helpfulness without retry-thrashing; `strict` (default) on the persisted schema guarantees no surprise fields in the JSONB. The `safeParse` of the persisted shape at `EffortEstimator.ts:229-243` is a belt-and-suspenders defensive check — proportionate. |
+| 3 | `404` (agent not found, `attempts === 0`) vs `503` (retries exhausted, `attempts >= 1`) | ✅ with caveats | 404 is correct for "wrong-user / missing agent" because the repository's `.eq('user_id', userId)` produces `data: null` either way — RFC 7231 supports 404 for "not found OR not accessible". 503 is the better choice over 502 for "upstream LLM unavailable after our retry budget" because the AgentPilot API itself is healthy but temporarily unable to fulfil the request (RFC 7231 §6.6.4 — temporary overload / dependency unavailable). 502 would imply we received an invalid response from upstream, which is too narrow. Decision aligns with RFC semantics. The `attempts === 0` signal is a clean discriminator that the orchestrator returns and the route maps deterministically. |
+| 4 | `UpdateAgentInput.manual_time_per_item_seconds?` NOT added | ✅ | Sound — adding it would invite new callers to a column we are actively deprecating. The repository's update spread (`AgentRepository.ts:226-229`) means there's no impl change required for the legacy writer either way. This is the correct exclusion-now / add-later trade-off. |
+| 5 | Deprecation comment moved from inside the LLM prompt template to a JS-level `@deprecated` JSDoc | ✅ | Correct catch. An HTML-style `<!-- … -->` inside `buildBusinessInsightPrompt`'s template string would have been sent verbatim to the LLM, which is at minimum noise and at worst influences output. JSDoc placement on `buildBusinessInsightPrompt` itself (line 372) + the dedicated JSDoc on `updateAgentROI` (line 871) is the correct surface for human / IDE visibility without polluting the prompt. |
+
+### CLAUDE.md mandatory rules
+
+| # | Rule | Status | Evidence |
+|---|---|---|---|
+| 1 | All DB access via repository layer | ✅ | All estimator writes go through `AgentRepository.findById` + `.update` (`EffortEstimator.ts:111`, `:265`). Direct `supabaseServer` usage in `modelResolver` is for `system_settings_config` (no repo exists — pattern matches `AgentGenerationConfigService`). Pre-existing direct-Supabase usage in `app/api/agents/[id]/route.ts` is explicitly flagged out-of-scope (inline comment at `:12-16`). |
+| 2 | Zod on API inputs | ✅ | `app/api/v2/agents/[agentId]/estimate-effort/route.ts:39` `RequestSchema = z.object({}).strict()`. `LLMResponseSchema` adds Zod at the LLM output boundary too (`EffortEstimator.ts:180`). |
+| 3 | correlationId + structured Pino logging | ✅ | Route creates `requestLogger = moduleLogger.child({ route, correlationId, agentId })` at `:47`. Estimator threads `correlationId` through `requestLogger` (`EffortEstimator.ts:94-99`) and into the audit `details` (`:319`). No `console.log` in any new module. (Pre-existing `console.log` in PUT handler is out-of-scope and the inline comment `:12-16` calls this out.) |
+| 4 | `.eq('user_id', userId)` filtering | ✅ | Every `AgentRepository.findById` / `.update` call in the estimator takes `(id, userId)` — the repository enforces `.eq('user_id', userId)` (`AgentRepository.ts:231`). |
+| 5 | No hardcoded model names | ✅ | `modelResolver.ts` reads from `system_settings_config.effort_estimator_model`. `DEFAULT_MODEL = { provider: 'openai', model: 'gpt-4o-mini' }` is a documented in-code default required by AC-8 itself. Provider resolution via `ProviderFactory.getProvider(provider)` (`EffortEstimator.ts:138`). |
+| 6 | TypeScript strict (no implicit `any`) | ⚠️ ✅ | All new module exports are explicitly typed. Two narrowed `as` casts in `EffortEstimator.ts:125, 127-128` are intentional reads of the loosely-typed `Agent` row and are commented adjacent. The `(data as any).enhanced_prompt` at `app/api/create-agent/route.ts:264` is unnecessary — the `Agent` type already declares `enhanced_prompt?: string \| null` (see Style nit #2). |
+| 7 | No new patterns without SA review | ✅ | Net-new fire-and-forget dispatch is consolidated in `lib/effort-estimator/dispatch.ts` — single SSoT helper per my Phase-1 conditional approval. Both async callers consume it (`create-agent/route.ts:260`, `agents/[id]/route.ts:411`); the sync API endpoint awaits `estimateEffort` directly. |
+| 8 | Audit trail non-blocking | ✅ | `auditLog({ … }).catch(err => requestLogger.error(...))` at `EffortEstimator.ts:301-324`. Matches the codebase convention exactly. |
+
+### AC coverage verification
+
+| AC | Behavior required | Delivered? | Evidence |
+|---|---|---|---|
+| AC-1 | Newly created agent → `agent_config.roi_estimate` populated within 30s in ≥95% of cases | ✅ | Dispatch wired at `app/api/create-agent/route.ts:260-270` immediately after `auditLog(AGENT_CREATED)`. 30s retry budget enforced by `retryWithBackoff` (`DEFAULT_BUDGET_MS = 30000`). Happy-path test at `EffortEstimator.test.ts:59-106`. (≥95% is a runtime SLO QA must verify in test environment — Dev cannot prove it without observability data.) |
+| AC-2 | LLM failure exhausts retries → slot remains `null` + structured error log with `correlationId` | ✅ | `EffortEstimator.ts:198-215` — on `!retry.ok` returns early with NO `repository.update` call and NO `auditLog`. Error log at `:200-207` carries `correlationId` via `requestLogger`. Test at `EffortEstimator.test.ts:155-175` (`retry exhaustion: NO write, NO audit`). |
+| AC-3 | `reasoning` references the inferred SMB-owner persona by name | ✅ | System prompt instructs the LLM at `buildEffortPrompt.ts:61`. Post-hoc lenient check at `EffortEstimator.ts:248-253` emits WARN on drift but does NOT block the write — correct interpretation (drift-detector, not gate). Test at `EffortEstimator.test.ts:207-233`. |
+| AC-4 | Deprecated `updateAgentROI` self-guard prevents overwriting a fresh estimate | ✅ | `BusinessInsightGenerator.ts:913-929` — `existingROI` read + `if (… && !existingROI)` write-gate + DEBUG-log-on-skip `else if` branch. Comments at `:898-900` and `:908-912` mark the guard as load-bearing. Test at `updateAgentROI.guard.test.ts:45-76`. |
+| AC-5 | `POST /api/v2/agents/[id]/estimate-effort` regenerates + logs previous at INFO with `{ old_value, new_value, reason, correlationId }` | ✅ | API endpoint exists at `app/api/v2/agents/[agentId]/estimate-effort/route.ts`. INFO override log at `EffortEstimator.ts:281-297` carries `previous_total_manual_time_seconds`, `new_total_manual_time_seconds`, `reason`, and the correlationId via `requestLogger.child(...)`. Test at `route.test.ts:57-99`. |
+| AC-6 | Existing `roi_estimate` overridden → both old + new logged | ✅ | Same INFO log as AC-5 (`EffortEstimator.ts:281-297`). Audit payload carries `before.roi_estimate` and `after.roi_estimate` (`:307-310`). Test at `EffortEstimator.test.ts:108-153` asserts both. |
+| AC-7 | Feature flag OFF → estimator does NOT fire, no error | ✅ | `dispatch.ts:36-42` short-circuits before any import or LLM call. Test at `dispatch.test.ts:56-70` asserts `estimateEffort` is NOT called when flag is false. **Caveat:** the synchronous API endpoint is documented as NOT gated by the flag (route.ts:11-13) — that is an intentional decision (consumer asked, so consumer gets) and matches the requirement MD § Trigger Points #3 prose ("API-callable"). |
+| AC-8 | Missing `system_settings_config.effort_estimator_model` row → fallback to `gpt-4o-mini` + DEBUG log | ✅ | `modelResolver.ts:65-73` — `logger.debug(...)` then `cache + return DEFAULT_MODEL`. Test at `modelResolver.test.ts:27-36` mocks `maybeSingle({ data: null, error: null })` and asserts the default. |
+
+### New findings
+
+1. **[P2] Race comment present at the wrong site for v2-followup discoverability.** `lib/effort-estimator/EffortEstimator.ts:255-264` correctly documents the v1 read-modify-write race AND references Open Follow-Up #8. The comment is co-located with the merge at `newConfig = { ...currentConfig, roi_estimate: newEstimate }`. ✅ This is what the workplan asked for. No fix needed — listing as a found-and-verified item.
+
+2. **[P2] `app/api/create-agent/route.ts:264` casts to `any` unnecessarily.** `(data as any).enhanced_prompt ?? data.user_prompt ?? undefined` — the `Agent` repository type at `lib/repositories/types.ts:43` already declares `enhanced_prompt?: string | null`. The cast is dead defensive code. Suggested fix: drop the cast → `data.enhanced_prompt ?? data.user_prompt ?? undefined`. Non-blocking but obscures intent.
+
+3. **[P2] `lib/effort-estimator/EffortEstimator.ts:127` widens `agent_config` via `as Record<string, unknown> | null | undefined`.** Same column is already typed as `Record<string, unknown> | null` on `Agent`. The `| undefined` widening is unnecessary because the property may be undefined on JS-level but the type already covers `null`. Cosmetic; CLAUDE.md rule #6 not violated. Suggested fix: drop `| undefined`.
+
+4. **[P2] `BusinessInsightGenerator.ts:913` casts to `any`.** `(agent.agent_config as Record<string, any> | null)?.roi_estimate` — uses `Record<string, any>` instead of `Record<string, unknown>`. The pre-existing code style in this file (line 917) uses the same `any` cast, so the new code is consistent — but it does push a per-rule `any` into a new code site. Acceptable because (a) the column truly is JSONB-typed-as-any in the Supabase row, (b) the surrounding file already uses this style, and (c) the guard logic only needs a presence check (truthy/falsy). Not blocking but worth a `Record<string, unknown>` swap in a follow-up cleanup.
+
+5. **[P2] Possible Vercel serverless caveat for fire-and-forget IIFE.** The `void (async () => { … })().catch(...)` in `dispatch.ts:44-57` correctly handles errors, but on Vercel (the production target per CLAUDE.md), the API route's response is typically returned before the IIFE resolves, and the serverless function MAY be terminated before the estimator finishes if the platform suspends the container. The 30s retry budget is right at the edge of Vercel's default 60s function timeout. The team has accepted this trade-off (workplan § Async fire pattern + § Known v1 limitations document it), and the requirement MD § Async Behavior explicitly says "Internal retries — synchronous within the async fire — no external job queue". Not a blocker but worth confirming in QA against a real Vercel preview deploy — observability should show the estimator's INFO override log lands within the function's lifetime. If QA observes truncation, the right fix is `waitUntil` (Vercel's `after(...)` / `NextResponse.waitUntil`), not a queue.
+
+6. **[P2] `app/api/agents/[id]/route.ts:394` re-derives `correlationId` from headers inside the dispatch try-block.** The outer PUT handler doesn't use a `correlationId` for its own logging (pre-existing — that handler uses `console.log` throughout). The dispatch block creates its own `correlationId` from headers OR generates a fresh UUID. That's correct behaviour in isolation — but if the same request also produced log lines from anywhere upstream that read the same header, the IDs match. If nothing upstream reads it, the estimator's child logs carry a UUID disconnected from any other observability for that request. Non-blocking — the dispatch block is the only structured-logging surface in the PUT handler so any trace is internally consistent. A future cleanup of the PUT handler (CLAUDE.md compliance) will rewire this through a single request logger.
+
+7. **[P1 → resolved on read] `agent_config` JSONB merge preserves existing keys.** `EffortEstimator.ts:264` `const newConfig = { ...currentConfig, roi_estimate: newEstimate }` — spread-merge, NOT whole-node overwrite. Test at `EffortEstimator.test.ts:99-101` literally asserts `updateArg.agent_config.creation_metadata` is preserved. ✅ This was a P0 concern flagged by the orchestrator; the implementation handles it correctly.
+
+8. **[P1 → resolved on read] Dispatch IIFE error swallowing.** The outer `.catch(err => logger.error(...))` at `dispatch.ts:47-57` is correct — `err` is logged at ERROR level with `agentId`, `correlationId`, `reason`. The dynamic `import('./EffortEstimator')` is INSIDE the async IIFE so import-throws also route through the same `.catch`. ✅ My Phase-1 conditional was satisfied.
+
+9. **[P1 → resolved on read] Zod default values masking LLM errors.** `LLMResponseSchema` does NOT use `.default(...)` anywhere. The four required LLM fields (`reasoning`, `is_bulk_workflow`, `total_manual_time_seconds`, `confidence?`) must be present (the first three) or absent (`confidence` is optional). On schema failure the orchestrator emits a DEBUG log with truncated raw and lets the retry budget kick in. No silent default masking. ✅
+
+10. **[P2] `route.ts:43-46` Next.js 15 / Next.js 14 dynamic-param shape.** `{ params }: { params: Promise<{ agentId: string }> }` with `const { agentId } = await params;` matches the Next.js 15 async-params API. The CLAUDE.md tech stack lists Next.js 14 but the form-metadata sibling and `agents/[id]/route.ts` already use the same shape (`agents/[id]/route.ts:46` `{ params }: { params: Promise<{ id: string }> }`), so this is project-consistent. No action.
+
+### Style nits
+
+1. `lib/effort-estimator/dispatch.ts:36` — `featureFlags.useEffortEstimator()` is called at dispatch time, which means flag changes take effect immediately (no module-import-time caching). Good — but the existing flag helpers all `console.log` the flag value on every read. The line `console.log('Feature Flag: NEXT_PUBLIC_USE_EFFORT_ESTIMATOR=', flag || 'none')` at `lib/utils/featureFlags.ts:131` will fire once per V6 save AND once per PUT regen. If the production rollout switches the flag ON and the codepath fires per-request, that's a per-create log line. Worth converting to `requestLogger.debug` (or a one-shot module-init log) before prod enable. Non-blocking but flagging.
+
+2. `app/api/create-agent/route.ts:264` — drop the `(data as any)` cast (see Finding #2).
+
+3. `lib/effort-estimator/EffortEstimator.ts:71-76` — `extractAssistantContent` accepts `unknown` and reaches into `choices[0]?.message?.content`. Works, but the project already has `chatCompletionJson<T>` on `BaseAIProvider` (see `baseProvider.ts:63-67`) which Dev opted not to use because Anthropic throws `not implemented`. The current approach is correct given the constraint. Document that decision in the function's JSDoc so a future reader doesn't refactor to `chatCompletionJson`. Trivial.
+
+4. `lib/effort-estimator/__tests__/EffortEstimator.test.ts:175` — the `retry exhaustion` test has a `60000`ms timeout because of the real `1s + 4s` delays in the retry. Tests that wait real wall-clock time are a future flake source. Suggested follow-up: thread an `opts.delaysMs` parameter through `EffortEstimator` (currently it always uses defaults) so the test can pass `[1, 1, 1]`. Non-blocking — the timeout buffer is correct as-is, but the slow tests will compound.
+
+5. `lib/pilot/insight/BusinessInsightGenerator.ts:903` — `const updateData: any = { … }` — pre-existing `any` style in this file. Not new code, but the AC-4 fix touches the same block. A follow-up cleanup pass can typify this when the file gets a wider repository-pattern migration.
+
+### Decision rationale
+
+Dev shipped a tighter implementation than the workplan implied. All 7 SA observations are addressed exactly as specified — including the subtle ones (truncated reasoning in INFO logs but full preservation in audit, `attempts === 3` lock on retry exhaustion, dedicated AC-8 test file). The 5 unspecified design decisions are all architecturally sound: `[agentId]` is the correct Next.js sibling convention, the two-schema split correctly separates trust boundaries from persistence shape, `404` vs `503` aligns with RFC 7231, the deferred `manual_time_per_item_seconds?` extension is the right discipline, and the JS-level `@deprecated` placement is a genuine catch over the original prompt-string approach.
+
+The implementation correctly handles all 8 ACs, with the caveat that AC-1's ≥95% SLO is a runtime metric QA must validate in a test environment. All 8 CLAUDE.md mandatory rules pass; the residual `any` casts are either pre-existing style consistency or load-bearing JSONB reads, none of which violate Rule #6. The agent_config JSONB merge correctly spreads existing keys (P0 concern raised by orchestrator → verified resolved). The fire-and-forget dispatcher's IIFE wraps the dynamic import so cold-start import failures still route through the outer `.catch` (my Phase-1 condition fully met).
+
+The 10 new findings are P2-or-already-resolved; nothing blocks QA. Style nits #2-5 should land in this PR; nit #1 (per-request flag log) is the only one with operational impact and is worth fixing before prod enable. Code APPROVED FOR QA.
+
+### Code Approved for QA: Yes
+
+---
+
+## SA Re-Review (Post User Code Review) — 2026-06-10
+
+**Verdict:** `APPROVED` (with two P2 doc-accuracy nits — no code or scope blockers)
+
+**Reviewer process:** Read the three uncommitted deliverables end-to-end (`lib/effort-estimator/modelResolver.ts`, `lib/effort-estimator/dispatch.ts`, `lib/effort-estimator/__tests__/modelResolver.test.ts`, `lib/effort-estimator/__tests__/dispatch.test.ts`, `docs/EFFORT_ESTIMATOR.md`, `docs/requirements/EFFORT_ESTIMATOR_REQUIREMENT.md`, `app/api/v2/agents/[agentId]/estimate-effort/route.ts`, `app/api/create-agent/route.ts:250-270`, `lib/pilot/insight/BusinessInsightGenerator.ts:860-920`). Verified the PUT-handler revert with `git diff 2f6433c -- app/api/agents/[id]/route.ts` (zero output). Confirmed zero remaining `NEXT_PUBLIC_USE_EFFORT_ESTIMATOR` / `useEffortEstimator` source references repo-wide. Cross-checked the `SystemConfigRepository.getByKey` contract (`lib/repositories/SystemConfigRepository.ts:21-48`) against the modelResolver's expected `{ data, error }` shape.
+
+### Deliverable 1 — Requirement MD (`docs/requirements/EFFORT_ESTIMATOR_REQUIREMENT.md`)
+
+| Check | Status | Notes |
+|---|---|---|
+| No remaining `NEXT_PUBLIC_USE_EFFORT_ESTIMATOR` refs outside Change History | ✅ | grep confirms — only the 2026-06-10 row in Change History mentions it. |
+| Trigger Points table has exactly 2 active triggers (creation, API) | ✅ | Lines 64-67: Trigger #1 Automatic (creation), Trigger #2 API-callable. |
+| Deferred Triggers table includes regen-on-edit row | ✅ | Lines 71-73: row #1 "Automatic regeneration on prompt edit / workflow regeneration — Deferred until v2. … See Open Follow-Up #10." Correctly explains rationale + future plan. |
+| 7 ACs (AC-1 through AC-7) renumbered correctly | ✅ | Lines 237-243. Former AC-8 (fallback to gpt-4o-mini + DEBUG log) is now AC-7 — exact text preserved. |
+| Open Follow-Up #10 present with correct rationale | ✅ | Line 260: TBD owner, ⬜ post-v1 status, gating logic explained, references the same dispatcher used by the create path. |
+| Out-of-Scope #11 mirroring Follow-Up #10 (BA deviation) | ✅ confirm | Line 231: "Automatic regeneration trigger on prompt edit / workflow regeneration (deferred to v2 — see Open Follow-Up #10)." **Recommend KEEP.** Out-of-Scope is the consolidated descope view used by SA + Dev during sprint planning; pointing the reader at the Follow-Up keeps the cross-ref intact without duplicating the rationale. The intent + xref discipline match items #6-#10 which already do the same. |
+| Change History 2026-06-10 row present | ✅ | Line 294. Clear summary of both descopes. |
+| `Last Updated` bumped to 2026-06-10 | ✅ | Line 3. |
+
+### Deliverable 2 — Design Doc (`docs/EFFORT_ESTIMATOR.md`)
+
+| Check | Status | Notes |
+|---|---|---|
+| Filename SCREAMING_SNAKE_CASE | ✅ | `EFFORT_ESTIMATOR.md` matches CLAUDE.md "High-level guides" naming convention. |
+| Header block (title + Last Updated + Overview) | ✅ | Lines 1-7. |
+| ToC present (doc is 235 lines, >150 threshold) | ✅ | Lines 11-26. 14 entries, all anchors valid. |
+| Change History at bottom | ✅ | Lines 232-234. |
+| Tables used for structured data | ✅ | 13 tables across the doc. |
+| `---` horizontal rules between major sections | ✅ | Consistent. |
+| File paths in/near code references | ✅ | Architecture Overview table (lines 44-53) lists each module file with purpose. |
+| Trigger Points: API-only v1 claim matches code | ✅ | `app/api/create-agent/route.ts:260-270` calls `dispatchEffortEstimate`; `app/api/agents/[id]/route.ts` is byte-identical to HEAD (revert verified). Matches the doc's two-trigger table. |
+| Model Resolution claims `SystemConfigRepository` | ✅ | `modelResolver.ts:19` imports `systemConfigRepository` from `@/lib/repositories`. Doc accurately reflects code. |
+| Failure Semantics: 404 (attempts===0) / 503 (attempts===3) / 200 (success) | ⚠️ | Route returns `201` on success (`route.ts:129`), not `200`. Design doc claims `200`. Minor inaccuracy — P2 nit #1 below. |
+| Deprecation Strategy: two guards at lines 876 + 884 | ⚠️ | Doc claims lines 876 + 884; actual guards are at lines 901 (manual_time_per_item_seconds null-check) + 916 (`!existingROI` gate). The 876/884 numbers reference the JSDoc comment block, not the runtime guards. Misleading. P2 nit #2 below. |
+| Known v1 Limitations enumerates 4 items including new "no auto regen" | ✅ | Lines 196-201: (1) race on create-then-quick-edit, (2) no enhanced_prompt persistence, (3) no automatic regeneration on prompt edit (NEW — matches the requirement MD descope), (4) no USD cost-savings. |
+| Persona simulation rationale | ✅ | Lines 76-84 explain why drift-detector not gate, plus future upgrade path. Architecturally defensible. |
+| Fire-and-forget vs sync trade-off | ✅ | Lines 117-128 explain the create-vs-API choice + Vercel-timeout caveat. The caveat is a genuinely important call-out that future readers need. |
+| 5-min cache choice explained | ✅ | Line 100 "Why a 5-minute cache and not longer" — balance latency vs load. Defensible. |
+| Repository pattern adoption explained | ✅ | Line 94 + Related Documents row at line 225 cite REPOSITORY_STRATEGY.md and CLAUDE.md rule #1. |
+| Drift-detector vs gate for persona check | ✅ | Line 83 — explicit "post-hoc drift detector, not a hard gate" with rationale. |
+| Deprecation guard strategy | ✅ | Lines 168-173 — two guards intentionally co-exist during deprecation window; the AC-4 fix is the new addition. (See nit #2 for line numbers.) |
+| Level of detail | ✅ | Right balance — explains WHY for non-obvious choices (5-min cache, drift-detector, fire-and-forget) without re-stating the requirement MD's schema. |
+
+### Deliverable 3 — Code Revisions
+
+| Check | Status | Notes |
+|---|---|---|
+| `modelResolver.ts`: no direct Supabase query against `system_settings_config` | ✅ | Line 19 imports `systemConfigRepository`. Line 58 calls `systemConfigRepository.getByKey('effort_estimator_model')`. No `supabaseServer.from(...)` anywhere. |
+| `modelResolver.ts`: AC-8 preserved (missing row → DEBUG + default) | ✅ | Lines 60-68. `SystemConfigRepository.getByKey` returns `{ data: null, error: null }` on PGRST116 (verified at `SystemConfigRepository.ts:33-37`), which matches the `error \|\| !data` branch exactly. AC-8 DEBUG log preserved. |
+| `modelResolver.ts`: cache logic (5-min TTL, hit-return, miss-set) | ✅ | Line 55 hit-return; lines 66 + 71 set-on-miss (both AC-8 fallback and successful parse paths). TTL unchanged. |
+| `modelResolver.ts`: three value shapes preserved | ✅ | `parseConfigValue` unchanged (lines 85-111). Object / bare string / JSON-encoded string all covered. |
+| `modelResolver.test.ts`: mocks `systemConfigRepository.getByKey` | ✅ | Lines 14-20 mock `@/lib/repositories`. AC-8 dedicated row at line 30 (`AC-8: falls back to gpt-4o-mini on OpenAI when the row is missing`). Repository-error path at line 40. All 8 test cases preserved + extended (now 8 tests vs original 7). |
+| `dispatch.ts`: no flag import or check | ✅ | Lines 24-25 import only `Logger` + `EffortEstimatorInput`. No `featureFlags` import. No flag gate. Body is pure IIFE + outer `.catch`. |
+| `dispatch.ts`: IIFE wraps dynamic import inside the async fn | ✅ | Lines 35-37 — `await import('./EffortEstimator')` is INSIDE the IIFE, so cold-start import-throws route through the outer `.catch` at lines 38-48 (SA Phase-1 #13 still satisfied). |
+| `dispatch.test.ts`: tests for non-blocking-on-rejection + ERROR log | ✅ | Lines 61-75 (`logs an error (non-blocking) when the estimator rejects`) + lines 77-82 (no synchronous throw). Estimator-invoked test at lines 48-59. |
+| PUT route revert (`app/api/agents/[id]/route.ts`) byte-identical to `2f6433c` | ✅ | `git diff 2f6433c -- app/api/agents/[id]/route.ts` produces zero output (verified in working tree). |
+| Zero `NEXT_PUBLIC_USE_EFFORT_ESTIMATOR` / `useEffortEstimator` repo-wide | ✅ | grep returns zero hits across `.ts` / `.tsx`. |
+| Workplan task table marks descoped rows as ❌ DESCOPED | ✅ | Lines 266 (`featureFlags.ts`) and 268 (PUT handler) both struck-through with revert note + pointer to "User Code Review Revisions — 2026-06-10" anchor. |
+| Workplan Change History row 2026-06-10 (user code review) present | ✅ | Line 1501. |
+
+### Self-correction acknowledgement
+
+My first-pass code review (§ SA Code Review — 2026-06-10, line 1565) **missed the CLAUDE.md mandatory rule #1 violation in `modelResolver.ts`**. Specifically, line 1596 of my earlier review explicitly *defended* the direct `supabaseServer.from('system_settings_config').select(...)` usage with the rationale "no repo exists — pattern matches `AgentGenerationConfigService`". That rationale was wrong on two counts: (a) `lib/repositories/SystemConfigRepository.ts` already exists and exposes `getByKey()` with the exact contract the resolver needs, and (b) "pattern matches an existing service" is never an acceptable carve-out from mandatory rule #1 — the rule has no precedent exception.
+
+This finding should have been logged as a **P0 (BLOCKING)** code-review comment in the "New findings" section of my Phase-2 review, with the file:line as `lib/effort-estimator/modelResolver.ts:22` and the suggested fix verbatim what Dev applied (swap `supabaseServer.from(...)` for `systemConfigRepository.getByKey('effort_estimator_model')`). It should never have been a "Style nit" or even a P1 — rule #1 violations are categorically code-approval blockers (CLAUDE.md § Mandatory Rules item #1 + my own SA charter "Never approve code that bypasses Supabase RLS" extends by the same logic to "never approve code that bypasses the repository layer").
+
+Root cause of the miss: I assumed the absence of a repo rather than reading `lib/repositories/index.ts`. Fix discipline: when reviewing any DB access in new code, the first action is to enumerate the repositories index and check for a matching repo, not infer absence from the AI provider's recall.
+
+### New findings
+
+| # | Severity | File:line | Issue | Suggested fix |
+|---|---|---|---|---|
+| 1 | P2 | `docs/EFFORT_ESTIMATOR.md:183` | "Failure Semantics" table claims `200` for success on the API path. The route returns `201` (`app/api/v2/agents/[agentId]/estimate-effort/route.ts:129`). Minor accuracy slip. | Change `200` → `201` in the doc table. |
+| 2 | P2 | `docs/EFFORT_ESTIMATOR.md:170-171` | "Deprecation Strategy" table cites guards at `BusinessInsightGenerator.ts:876` and `:884`. Those line numbers refer to lines inside the `@deprecated` JSDoc comment, not the runtime guards. Actual guards live at `:901` (manual_time_per_item_seconds null-check) and `:916` (the new `!existingROI` gate on the `roi_estimate` write). Misleading for a future maintainer who jumps to the cited lines. | Update both line references — e.g. ":901" and ":916", or describe by function name ("self-guard inside `updateAgentROI`") to avoid future line-number drift. |
+| 3 | P2 | `app/api/create-agent/route.ts:256` | Inline comment still reads "The dispatcher handles the feature-flag check + dynamic import + error logging." The flag-check half of that sentence is now stale (the dispatcher no longer gates on a flag — Part 1 of the user code review). Misleading for the next reader. | Edit the comment to drop "feature-flag check +"; keep "dynamic import + error logging". Same PR. |
+| 4 | P2 (informational) | `docs/EFFORT_ESTIMATOR.md` | The doc's "Model Resolution" section (lines 88-100) doesn't mention the 2026-06-10 repository-pattern switch explicitly. The Related Documents row at line 225 carries it ("Why `modelResolver` reads via `SystemConfigRepository`") but the body of the Model Resolution section just states the current state. Acceptable — a design doc captures the END state, not the change history — but worth deciding consciously. | No action required; just confirm the BA chose the steady-state framing intentionally. |
+
+None are P0 or P1. The CLAUDE.md rule #1 fix is verified correct in code; the residual P2s are doc-accuracy nits that should land in this PR but do not block QA.
+
+### Design doc observations (architectural / framing)
+
+1. **Persona-simulation rationale is the strongest section.** The "drift-detector, not gate" call-out (line 83) captures the exact non-obvious decision that a future maintainer might second-guess and accidentally upgrade to a hard gate. Good.
+
+2. **The "Why fire-and-forget on create" + "Why synchronous on the API endpoint" symmetry (lines 123-124)** is crisp. It tells the reader that the dual-trigger design is intentional, not accidental, which is the right framing for a future v2 reviewer evaluating whether to collapse them.
+
+3. **The Vercel-timeout caveat (line 126-128)** is the most operationally important paragraph in the doc. It pre-empts a QA observation that would otherwise read as a bug. Strongly retain.
+
+4. **Missing architectural call-out — error-handling philosophy on the model-resolver.** The resolver swallows EVERY error path (`getByKey` returns error, parse fails, network throws) into a silent DEBUG log + default. This is correct (AC-8 mandates default-on-missing, and the broader contract is "never block agent creation"), but a future reader reviewing observability might think the lack of WARN/ERROR is a bug. Worth one sentence in the Model Resolution section: "All resolver failure paths log at DEBUG and return the default — by design, because the higher-level retry budget and AC-8 fallback contract make the resolver's own failures non-fatal." Non-blocking.
+
+5. **Missing call-out — read-modify-write on `agent_config`.** The "Known v1 Limitations" section (line 198) mentions the race but the "Architecture Overview" / "Output destination" framing doesn't surface it. A casual reader could miss it on first read. Optional: add a "Known constraint" sub-bullet under Architecture Overview pointing to the limitation. Non-blocking.
+
+### Decision rationale
+
+The CLAUDE.md rule #1 fix is correct in code, correct in tests, and correctly reflected in both the design doc (Model Resolution section) and the workplan (Change History row). The dispatcher simplification is clean — the IIFE + outer `.catch` invariant from my Phase-1 condition is preserved, and the dropped flag-related test surface is the only behavior loss, which is exactly the intended descope. The PUT-handler revert is verifiably byte-identical to `2f6433c` (zero diff), so Trigger #2 is fully removed from v1.
+
+The requirement MD descope is internally consistent — Trigger Points / Deferred Triggers / ACs / Open Follow-Up #10 / Change History all align. BA's addition of Out-of-Scope #11 mirroring Follow-Up #10 is consistent with the existing pattern (items #6-#10 already cross-reference); I'd keep it rather than strip.
+
+The design doc is accurate on the four big claims I spot-checked (Trigger Points API-only, SystemConfigRepository usage, failure-semantics status codes mostly, deprecation guard count). The two doc-accuracy P2 nits (`200` should be `201`, guard line numbers are off by ~25-32 lines) are worth fixing in the same PR but do not change any architectural decision. The stale create-agent comment is the only code-side P2; tightening it is mechanical.
+
+No new patterns introduced. Three CLAUDE.md mandatory rules now demonstrably hold (rule #1 via repository swap, rule #6 unchanged, rule #7 still single-source-of-truth). Approved.
+
+### Approval
+
+[X] Re-review APPROVED — proceed to QA
+[ ] NEEDS REVISION
+[ ] BLOCKED
+

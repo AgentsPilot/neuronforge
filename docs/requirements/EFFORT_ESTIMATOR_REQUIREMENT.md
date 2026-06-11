@@ -1,6 +1,6 @@
 # Effort Estimator Requirement
 
-> **Last Updated**: 2026-06-10
+> **Last Updated**: 2026-06-11
 
 **Created by:** BA
 **Status:** Draft
@@ -8,7 +8,7 @@
 
 ## Overview
 
-The **Effort Estimator** is a new standalone module that estimates the work-savings (time) a user gains from running an agent in AgentPilot. It simulates a small/medium-business (SMB) owner persona via LLM, using the agent's enhanced prompt / V6 IntentContract output plus `user_context` (domain + role) as inputs. It is triggered automatically after agent creation and after prompt/workflow regeneration, and is also exposed as an API endpoint for on-demand recomputation. Output is written to the existing `agent_config.roi_estimate` slot, which is consumed by the existing insights/ROI pipeline. Cost-savings ($) is explicitly out of scope and reserved as a future extension.
+The **Effort Estimator** is a new standalone module that estimates the work-savings (time) a user gains from running an agent in AgentPilot. It simulates a small/medium-business (SMB) owner persona via LLM, using the agent's enhanced prompt / V6 IntentContract output plus `user_context` (domain + role) as inputs. It is triggered automatically after agent creation and is also exposed as an API endpoint for on-demand recomputation. Output is written to the existing `agent_config.roi_estimate` slot, which is consumed by the existing insights/ROI pipeline. Cost-savings ($) is explicitly out of scope and reserved as a future extension. Automatic regeneration on prompt edit is deferred to v2 (see Open Follow-Up #10).
 
 ---
 
@@ -24,12 +24,13 @@ The **Effort Estimator** is a new standalone module that estimates the work-savi
 8. [User Context Source](#user-context-source)
 9. [Architectural / Compliance Requirements](#architectural--compliance-requirements)
 10. [Insights Pipeline Contract (Existing — For Reference)](#insights-pipeline-contract-existing--for-reference)
-11. [Deprecation of Old Path](#deprecation-of-old-path)
-12. [Out of Scope](#out-of-scope)
-13. [Acceptance Criteria](#acceptance-criteria)
-14. [Open Follow-Ups (Post-Release Decisions)](#open-follow-ups-post-release-decisions)
-15. [References](#references)
-16. [Change History](#change-history)
+11. [Integration Test Tooling](#integration-test-tooling)
+12. [Deprecation of Old Path](#deprecation-of-old-path)
+13. [Out of Scope](#out-of-scope)
+14. [Acceptance Criteria](#acceptance-criteria)
+15. [Open Follow-Ups (Post-Release Decisions)](#open-follow-ups-post-release-decisions)
+16. [References](#references)
+17. [Change History](#change-history)
 
 ---
 
@@ -64,18 +65,18 @@ The **Effort Estimator** is a new standalone module that estimates the work-savi
 | # | Trigger | Description |
 |---|---------|-------------|
 | 1 | Automatic (creation) | Fires after V6 IntentContract has run and the agent is saved to the DB (initial creation). |
-| 2 | Automatic (regeneration) | Fires after agent prompt edits / workflow regeneration (same hook point as creation). |
-| 3 | API-callable | `POST /api/v2/agents/[id]/estimate-effort` exposes regeneration to any consumer (e.g., the insights module) when `roi_estimate` is missing. Final path subject to Dev/SA confirmation in the workplan. |
+| 2 | API-callable | `POST /api/v2/agents/[id]/estimate-effort` exposes regeneration to any consumer (e.g., the insights module) when `roi_estimate` is missing or stale. Final path subject to Dev/SA confirmation in the workplan. |
 
 ### Out of Scope (Deferred)
 
 | # | Deferred Trigger | Reason |
 |---|------------------|--------|
-| 1 | Workflow re-compilation auto-trigger | MetricsCollector re-fire would cover this in future if needed. |
-| 2 | On-demand UI button on agent detail page | API is sufficient for this scope. |
-| 3 | Auto re-fire from MetricsCollector at execution start | Consumer is responsible for calling the API if a missing slot is detected. |
-| 4 | Render-time re-fire from agent detail page | Deferred. |
-| 5 | Background cron job / backfill | Deferred. |
+| 1 | Automatic regeneration on prompt edit / workflow regeneration | Deferred until v2. v1 covers create-time (Trigger #1) and API on-demand (Trigger #2 in revised numbering). Consumers that detect a stale `roi_estimate` after a prompt edit can call the API endpoint to refresh. Future v2: re-add a server-side hook in the `PUT /api/agents/[id]` handler with the Risk #4 gate logic (`agentData.user_prompt !== existingAgent.user_prompt` OR workflow_steps diff). See Open Follow-Up #10. |
+| 2 | Workflow re-compilation auto-trigger | MetricsCollector re-fire would cover this in future if needed. |
+| 3 | On-demand UI button on agent detail page | API is sufficient for this scope. |
+| 4 | Auto re-fire from MetricsCollector at execution start | Consumer is responsible for calling the API if a missing slot is detected. |
+| 5 | Render-time re-fire from agent detail page | Deferred. |
+| 6 | Background cron job / backfill | Deferred. |
 
 ---
 
@@ -171,7 +172,6 @@ Same pattern as `OrchestrationService` / `RoutingService` AIS-based routing.
 | ✅ | Zod validation on any new API input. |
 | ✅ | Structured Pino logging with `correlationId`. See [SYSTEM_LOGGING_GUIDELINES.md](/docs/SYSTEM_LOGGING_GUIDELINES.md). |
 | ✅ | Audit trail event `EFFORT_ESTIMATE_GENERATED` (entityType `agent`), non-blocking with `.catch()`. |
-| ✅ | Feature flag `NEXT_PUBLIC_USE_EFFORT_ESTIMATOR`: ON in dev, OFF in prod until validated. See [feature_flags.md](/docs/feature_flags.md). |
 | ✅ | TypeScript strict mode; introduce a typed `ROIEstimate` interface in `lib/effort-estimator/types.ts` (extracted/adapted from `lib/pilot/insight/BusinessInsightGenerator.ts:50-54`). |
 
 ### Naming & Locations
@@ -183,7 +183,6 @@ Same pattern as `OrchestrationService` / `RoutingService` AIS-based routing.
 | Persisted slot | `agent_config.roi_estimate` (existing slot — kept as-is) |
 | API route (on-demand) | `POST /api/v2/agents/[id]/estimate-effort` (final path subject to Dev/SA confirmation) |
 | Audit event | `EFFORT_ESTIMATE_GENERATED` |
-| Feature flag | `NEXT_PUBLIC_USE_EFFORT_ESTIMATOR` |
 | DB config key | `effort_estimator_model` (in `system_settings_config`, default `gpt-4o-mini`) |
 
 ---
@@ -196,6 +195,103 @@ Both readers below remain **untouched** in this cycle.
 |-----------|----------|----------|
 | MetricsCollector | `lib/pilot/MetricsCollector.ts:197-223` | Reads `agent_config.roi_estimate` per execution. If `is_bulk_workflow` is true, uses `total_manual_time_seconds` as a flat per-run figure. |
 | BusinessInsightGenerator | `lib/pilot/insight/BusinessInsightGenerator.ts:269-333` (`calculateROIMetrics`) | Aggregates 7-day `execution_metrics` into weekly time/cost saved. |
+
+---
+
+## Integration Test Tooling
+
+A developer-facing CLI script that runs the Effort Estimator end-to-end against an **existing** agent so the feature can be live-tested without going through the full agent-creation flow. Follows the same convention as the existing V6 regression scripts under `tests/v6-regression/scripts/` (project-standard `tsx`-executed TypeScript entry point with `--`-flag CLI args).
+
+### Purpose
+
+| # | Purpose |
+|---|---------|
+| 1 | Let engineers (and the user) validate the estimator on a real agent + real LLM + real DB without recreating an agent. |
+| 2 | Provide a quick smoke path for pre-release live validation and post-merge spot checks. |
+| 3 | Reuse the production code paths exactly — no mocks, no shortcuts — so what the script does on disk is what production does. |
+
+### Location
+
+| Item | Value |
+|------|-------|
+| Folder | `tests/effort-estimator/` |
+| Scripts subfolder | `tests/effort-estimator/scripts/` |
+| Entry point | `tests/effort-estimator/scripts/run-on-agent.ts` |
+
+Layout intentionally mirrors `tests/v6-regression/scripts/` so the convention is consistent across V6 and Effort Estimator tooling.
+
+### Invocation
+
+```bash
+npx tsx tests/effort-estimator/scripts/run-on-agent.ts --agent-id=<uuid> [--dry-run] [--log-dir=<path>]
+```
+
+(Final command form — `tsx` vs. `ts-node` vs. project's existing runner — should match whatever the v6-regression scripts use; Dev to confirm during workplan.)
+
+### Inputs
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--agent-id=<uuid>` | ✅ | UUID of an existing agent row in the `agents` table to estimate effort for. |
+| `--dry-run` | ⬜ optional | When present, the script runs the estimator and prints the result but does NOT write to `agent_config.roi_estimate`. |
+| `--log-dir=<path>` | ⬜ optional | Overrides the default per-run log directory (`tests/effort-estimator/logs/`). Useful for dumping to `/tmp` or a CI artifact directory. See [Per-run Log File](#per-run-log-file). |
+
+### Behavior
+
+1. Loads environment variables via the project's existing convention (`dotenv` — same as v6-regression scripts).
+2. Fetches the target agent via `AgentRepository.findById(agent_id, user_id)`, where `user_id` is taken from the **agent row itself** (NOT from a CLI flag — see Safety below).
+3. Hydrates an `EffortEstimatorInput` from the agent's stored fields:
+   - `agent_id`
+   - `user_id`
+   - `user_prompt`
+   - `enhanced_prompt` (from `agent_config.enhanced_prompt`; falls back to `user_prompt` if absent — see Open Follow-Up #9)
+   - `workflow_steps`
+4. Builds `user_context` from the `profiles` table via `buildUserContextFromProfile(user)` — the **full path** persona is preferred over the auth fast path for live testing, because the live test is the place where persona quality matters most.
+5. Calls `estimateEffort(input, logger)` from the production `lib/effort-estimator/` module.
+6. Prints to stdout:
+   - The result object: `{ success, estimate, attempts, totalDurationMs, errorReason? }`
+   - The override log preview: `{ previous_total_manual_time_seconds, new_total_manual_time_seconds, reason, correlationId }`
+7. **Unless `--dry-run`** is set, persists the new estimate to `agent_config.roi_estimate` via the same code path the orchestrator uses (so production override semantics apply: old value logged at INFO, new value written via `AgentRepository`, `EFFORT_ESTIMATE_GENERATED` audit event fires).
+
+### Side Effects
+
+| Mode | DB Write | Logs | Audit Event |
+|------|----------|------|-------------|
+| Default (no `--dry-run`) | ✅ Writes new `agent_config.roi_estimate` for the agent | ✅ Override log at INFO | ✅ `EFFORT_ESTIMATE_GENERATED` fires |
+| `--dry-run` | ❌ No mutation | ✅ Override log preview printed (not persisted) | ❌ Audit event does NOT fire |
+
+### Safety
+
+| # | Rule |
+|---|------|
+| 1 | Requires real Supabase + AI provider env vars. Fail loud with a clear error if any required env var is missing. |
+| 2 | DOES NOT accept an arbitrary `--user-id` override. The script always uses the `user_id` stored on the agent row to prevent accidental cross-tenant testing. |
+| 3 | DOES NOT batch — single `--agent-id` per invocation. Loop in the shell if you need to test multiple. |
+| 4 | Print a one-line summary at the end (PASS / FAIL + duration + estimate id) for quick visual confirmation. |
+
+### Per-run Log File
+
+Every script execution writes a structured log file to disk capturing the full run trace, so engineers can debug behavioral issues post-hoc (LLM response shape, model resolution path, retry timings, hydrated input, persona drift warnings, audit-event payload, etc.) without re-running.
+
+| Aspect | Behavior |
+|--------|----------|
+| **Behavior** | Every invocation writes a per-run log file capturing the full run trace — every Pino log line emitted by the script AND every Pino log line emitted by the estimator during the run, plus request/response payloads and errors. |
+| **Default location** | `tests/effort-estimator/logs/` — folder is gitignored and created on first run if it does not exist. |
+| **File naming** | `run-{ISO-timestamp}-{agentIdShort}.log`, where `agentIdShort` is the first 8 characters of the agent UUID. The timestamp guarantees no overwrite on repeated runs against the same agent. |
+| **Format** | **JSON-Lines** — one Pino-formatted JSON record per line. Matches the project's structured logging convention ([SYSTEM_LOGGING_GUIDELINES.md](/docs/SYSTEM_LOGGING_GUIDELINES.md)). NOT plain text. |
+| **Content** | Every log line emitted by the script and the estimator during the run, plus a synthetic final `RUN_SUMMARY` line: `{ agent_id, dry_run, success, attempts, totalDurationMs, started_at, finished_at, log_file_path }`. |
+| **Configurable directory** | `--log-dir=<path>` overrides the default folder. Useful for dumping to `/tmp` or a CI artifact directory. |
+| **Dry-run behavior** | The log file is written in BOTH dry-run and live-write modes. Dry-run is exactly where post-run debugging matters most, so the file is mandatory either way. |
+| **Console behavior** | UNCHANGED — the user still sees the same console output as before. The log file is **in addition**, not a replacement. |
+
+### Out of Scope (for this tool)
+
+| # | Out-of-Scope Item |
+|---|-------------------|
+| 1 | Automated assertions — this is a developer-driven live test, not a CI-runnable test. QA's automated tests live elsewhere. |
+| 2 | LLM or DB mocking — real calls only. That is the entire point of the tool. |
+| 3 | Batch mode / multiple agents per invocation. |
+| 4 | UI / dashboard wrapping — CLI only. |
 
 ---
 
@@ -230,6 +326,7 @@ Full explicit list — captured for SA + Dev clarity.
 | 8 | Cron-based backfill (deferred). |
 | 9 | UI button for manual re-estimate (deferred; the API endpoint provides the mechanism). |
 | 10 | Final deletion of deprecated `updateAgentROI` writer (post-release decision). |
+| 11 | Automatic regeneration trigger on prompt edit / workflow regeneration (deferred to v2 — see Open Follow-Up #10). |
 
 ---
 
@@ -241,8 +338,8 @@ Full explicit list — captured for SA + Dev clarity.
 - [ ] **AC-4** Given the deprecated `updateAgentROI` path runs against an agent that already has a fresh `roi_estimate` from the new path, then `updateAgentROI`'s self-guard prevents overwriting the new value.
 - [ ] **AC-5** Given a call to `POST /api/v2/agents/[id]/estimate-effort`, when the call succeeds, then `agent_config.roi_estimate` is regenerated and the previous value is logged at INFO level with `{ old_value, new_value, reason, correlationId }`.
 - [ ] **AC-6** Given an agent that already had a `roi_estimate`, when the new path writes a new estimate, then the override is logged with old + new values.
-- [ ] **AC-7** Given the feature flag `NEXT_PUBLIC_USE_EFFORT_ESTIMATOR` is OFF, when an agent is created, then the estimator does NOT fire AND no error is raised.
-- [ ] **AC-8** Given the `system_settings_config.effort_estimator_model` row is missing, when the estimator runs, then it falls back to `gpt-4o-mini` AND logs the fallback at DEBUG level.
+- [ ] **AC-7** Given the `system_settings_config.effort_estimator_model` row is missing, when the estimator runs, then it falls back to `gpt-4o-mini` AND logs the fallback at DEBUG level.
+- [ ] **AC-8** Given an existing agent_id and the env is configured, when I run `npx tsx tests/effort-estimator/scripts/run-on-agent.ts --agent-id=<uuid>`, then the estimator hydrates from DB, runs end-to-end against the live LLM, prints the result + override log, writes a per-run JSON-Lines log file to `tests/effort-estimator/logs/run-{ISO-timestamp}-{agentIdShort}.log` (or to `--log-dir` if specified), and (unless `--dry-run`) writes the new estimate to `agent_config.roi_estimate` for that agent.
 
 ---
 
@@ -259,6 +356,7 @@ Full explicit list — captured for SA + Dev clarity.
 | 7 | Upgrade to `buildUserContextFromProfile` if auth metadata proves insufficient for persona quality. | BA | ⬜ pending observation |
 | 8 | `AgentRepository.mergeAgentConfig` RPC for atomic JSONB merge. The Effort Estimator's first write to `agent_config.roi_estimate` uses a read-modify-write pattern (read row → mutate `agent_config` JSON → update row). This is exposed to a race condition if the user edits the agent prompt while the estimator is still running (write-skew loses one of the two updates). v1 mitigation: log + accept the race as a known limitation (estimator wins on conflict because it runs after save). v2 fix: add a Supabase RPC `merge_agent_config(agent_id, patch jsonb)` that performs `UPDATE agents SET agent_config = agent_config \|\| patch WHERE id = ?` atomically, and expose it via `AgentRepository.mergeAgentConfig()`. | TBD | ⬜ post-v1 |
 | 9 | Persist V6 `enhanced_prompt` to the `agents` table. The Effort Estimator's prompt builder needs the *enhanced* prompt (rich V6 output), not the raw user prompt. Currently, the V6 pipeline produces `enhanced_prompt` in-memory during agent generation but does not persist it to `agents.enhanced_prompt` — it only writes to other columns. On a fresh estimator dispatch the estimator can read it from the V6 payload, but on a re-trigger (API on-demand or post-prompt-edit) the column is empty and the estimator must fall back to the raw user prompt, which produces a measurably lower-quality estimate. Fix: extend the V6 save path in `app/api/create-agent/route.ts` to write the enhanced prompt into a new (or existing) `agents.enhanced_prompt` column. | TBD | ⬜ blocks accurate re-triggers |
+| 10 | **Automatic regeneration trigger on prompt edit (descoped from v1).** When the user edits an agent's prompt or workflow steps, the `roi_estimate` becomes stale. v1 ships without an automatic refresh; v2 should add a server-side hook in `PUT /api/agents/[id]` that gates on `agentData.user_prompt !== existingAgent.user_prompt` OR a workflow_steps diff, then fires the same `dispatchEffortEstimate(...)` helper used by the create path. | TBD | ⬜ post-v1 |
 
 ### Cycle Plan (FYI — Tracked by TL, Not Authoritative Here)
 
@@ -283,7 +381,6 @@ Full explicit list — captured for SA + Dev clarity.
 - [SYSTEM_LOGGING_GUIDELINES.md](/docs/SYSTEM_LOGGING_GUIDELINES.md) — Pino logging standards
 - [USER_CONTEXT.md](/docs/USER_CONTEXT.md) — user context module
 - [AI_PROVIDER_MODELS.md](/docs/AI_PROVIDER_MODELS.md) — model catalog
-- [feature_flags.md](/docs/feature_flags.md) — feature flag conventions
 
 ---
 
@@ -291,5 +388,8 @@ Full explicit list — captured for SA + Dev clarity.
 
 | Date | Change | Details |
 |------|--------|---------|
-| 2026-06-03 | Initial draft | BA authored requirement for Effort Estimator feature after 7 clarification turns. Scope locked: automatic + regeneration + API trigger paths; output schema with `reasoning`, `is_bulk_workflow`, `total_manual_time_seconds`, optional `confidence`, `generated_at`, `model`, `version`; always-overwrite behavior on new path; 3-attempt 1s/4s/16s retry with 30s budget; fire-and-forget async; DB-driven model selection with `gpt-4o-mini` fallback; deprecation of `updateAgentROI` (no deletion); feature flag `NEXT_PUBLIC_USE_EFFORT_ESTIMATOR` (ON dev / OFF prod). |
+| 2026-06-03 | Initial draft | BA authored requirement for Effort Estimator feature after 7 clarification turns. Scope locked: automatic + regeneration + API trigger paths; output schema with `reasoning`, `is_bulk_workflow`, `total_manual_time_seconds`, optional `confidence`, `generated_at`, `model`, `version`; always-overwrite behavior on new path; 3-attempt 1s/4s/16s retry with 30s budget; fire-and-forget async; DB-driven model selection with `gpt-4o-mini` fallback; deprecation of `updateAgentROI` (no deletion). |
 | 2026-06-07 | Locked in deprecation guard fix; added Open Follow-Ups #8, #9 | Following SA review of the workplan, user approved a 2-line guard extension at BusinessInsightGenerator.ts:884 as in-scope, and approved adding Follow-Ups #8 (mergeAgentConfig RPC) and #9 (persist V6 enhanced_prompt) to capture known limitations. |
+| 2026-06-10 | Removed feature flag; descoped automatic regeneration trigger | Removed feature flag `NEXT_PUBLIC_USE_EFFORT_ESTIMATOR` (not requested by user — was BA addition per project convention). Descoped automatic regeneration trigger on prompt edit to deferred (v2); v1 covers create-time + API on-demand only. AC count drops from 8 to 7 (AC-7 removed, former AC-8 renumbered to AC-7). Added Open Follow-Up #10 referencing the deferred regeneration trigger for v2. |
+| 2026-06-11 | Added Integration Test Tooling section + AC-8 | CLI script `tests/effort-estimator/scripts/run-on-agent.ts` lets engineers test the estimator end-to-end against an existing agent without creating a new one. Live LLM call + live DB write (unless `--dry-run`). User-requested for pre-release live validation. |
+| 2026-06-11 | Extended Integration Test Tooling: per-run log file output | Each script execution writes a JSON-Lines log file (`tests/effort-estimator/logs/run-{timestamp}-{agentIdShort}.log` by default, configurable via `--log-dir`) capturing the full run trace (every script + estimator log line + synthetic `RUN_SUMMARY`) for post-run debugging. Works in both dry-run and live-write modes. Console output unchanged. AC-8 updated to assert the log file is produced. Inputs table updated to include `--log-dir=<path>` flag. |

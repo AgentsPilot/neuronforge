@@ -49,5 +49,8 @@ output/e2e-test-results/e2e-test-report.json
 # simulator output
 simulators/**/output/
 
+# effort-estimator per-run log files (written by tests/effort-estimator/scripts/run-on-agent.ts)
+tests/effort-estimator/logs/
+
 # vibeyard
 .vibeyardignore
