@@ -160,6 +160,10 @@ const PARAMETER_TEMPLATES = {
       export_format: "text/plain",
       max_size_mb: 5
     },
+    download_file: {
+      file_id: "1a2b3c4d5e6f7g8h9i0j",
+      max_size_mb: 25
+    },
     get_folder_contents: {
       folder_id: "1a2b3c4d5e6f7g8h9i0j",
       max_results: 50,

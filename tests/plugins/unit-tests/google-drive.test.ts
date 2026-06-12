@@ -97,6 +97,42 @@ describe('GoogleDrivePluginExecutor', () => {
       });
     });
 
+    // ---- download_file ----
+    describe('download_file', () => {
+      it('should download binary file bytes as base64 (not .text())', async () => {
+        const pdfBytes = Buffer.from('%PDF-1.4\n0xDE 0xAD 0xBE 0xEF fake invoice bytes', 'utf-8');
+        mockFetchSequence([
+          // Metadata call
+          { body: { id: 'pdf-1', name: 'invoice.pdf', mimeType: 'application/pdf', size: String(pdfBytes.length) } },
+          // Binary download call (alt=media)
+          { body: pdfBytes },
+        ]);
+
+        const result = await executor.executeAction(USER_ID, 'download_file', {
+          file_id: 'pdf-1',
+        });
+
+        expectSuccessResult(result);
+        expect(result.data.file_id).toBe('pdf-1');
+        expect(result.data.filename).toBe('invoice.pdf');
+        expect(result.data.mimeType).toBe('application/pdf');
+        // file_content is base64 of the RAW bytes, and round-trips back exactly
+        expect(result.data.file_content).toBe(pdfBytes.toString('base64'));
+        expect(Buffer.from(result.data.file_content, 'base64').equals(pdfBytes)).toBe(true);
+      });
+
+      it('should reject native Google files (no downloadable bytes)', async () => {
+        // Only the metadata call happens — the native-file guard throws before download
+        mockFetchSuccess({ id: 'gdoc-1', name: 'Notes', mimeType: 'application/vnd.google-apps.document', size: '500' });
+
+        const result = await executor.executeAction(USER_ID, 'download_file', {
+          file_id: 'gdoc-1',
+        });
+
+        expectErrorResult(result, 'native Google');
+      });
+    });
+
     // ---- get_folder_contents ----
     describe('get_folder_contents', () => {
       it('should list folder items separated into folders and files', async () => {

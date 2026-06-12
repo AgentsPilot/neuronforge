@@ -168,7 +168,34 @@ Access, search, and read files and folders in Google Drive. Use for accessing Go
 
 ---
 
-### 5. get_folder_contents
+### 5. download_file
+**Description**: Download a file's raw bytes as base64 (for binary files — PDF, image, DOCX) so file-based extractors (e.g. `document-extractor`) can OCR/parse them. Unlike `read_file_content` (which returns extracted *text*), this returns the original *bytes*.
+
+| Property | Value |
+|----------|-------|
+| HTTP Method | GET |
+| Endpoint | `/drive/v3/files/{file_id}?alt=media` |
+
+**Parameters**:
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| file_id | string | Yes | The ID of the file to download (from list_files / search_files) |
+| max_size_mb | number | No | Maximum file size to download in MB (1-50, default: 25) |
+
+**Response Structure**:
+| Field | Type | Description |
+|-------|------|-------------|
+| file_id | string | ID of the downloaded file |
+| filename | string | Name of the file |
+| mimeType | string | MIME type (e.g. application/pdf, image/png) |
+| file_content | string | Base64-encoded raw file bytes — pass to `document-extractor.file_content` |
+| file_size | string | Human-readable file size |
+
+> **Note**: Native Google Workspace files (Docs/Sheets/Slides) have no downloadable bytes — use `read_file_content` (export) for those. The download uses `arrayBuffer()` → base64 (never `.text()`, which corrupts binary). The output carries `x-semantic-type: file_attachment` so the V6 pipeline routes it to `document-extractor` rather than AI text extraction. See **WP-57** in `docs/v6/V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_WEAK_POINTS.md`.
+
+---
+
+### 6. get_folder_contents
 **Description**: Get all files and subfolders within a specific folder
 
 | Property | Value |
@@ -228,4 +255,5 @@ To obtain credentials:
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.1.0 | 2026-06-10 | Added `download_file` (base64 binary download for document extraction; `x-semantic-type: file_attachment`). Fixed `read_file_content` `output_schema.required` (referenced non-existent fields `id`/`name`/`mimeType`). See WP-57. |
 | 1.0.0 | 2025-11-30 | Initial plugin with 5 actions: list_files, search_files, get_file_metadata, read_file_content, get_folder_contents |

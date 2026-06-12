@@ -710,9 +710,9 @@
           }
         },
         "required": [
-          "id",
-          "name",
-          "mimeType"
+          "file_id",
+          "mime_type",
+          "content"
         ]
       },
       "output_guidance": {
@@ -744,6 +744,106 @@
           "message": "content contains base64-encoded binary data when export_format='application/pdf' — use 'text/plain' for readable text content"
         }
       ]
+    },
+    "download_file": {
+      "description": "Download a file's raw bytes from Google Drive as base64 (PDF, image, DOCX, etc.) for document extraction. Unlike read_file_content (which returns extracted TEXT), this returns the original BINARY content so file-based extractors can OCR/parse it.",
+      "usage_context": "Use before document-extractor.extract_structured_data when extracting structured fields from binary files in Google Drive (invoices, receipts, scanned PDFs, images). read_file_content is for TEXT (e.g. Google Docs); download_file is for BYTES.",
+      "idempotent": true,
+      "domain": "storage",
+      "capability": "fetch_content",
+      "input_entity": "file",
+      "output_entity": "file_attachment",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "output_fields": [
+        "file_id",
+        "filename",
+        "mimeType",
+        "file_content",
+        "file_size"
+      ],
+      "required_params": [
+        "file_id"
+      ],
+      "optional_params": [
+        "max_size_mb"
+      ],
+      "must_support": [
+        "binary_download",
+        "base64_encoding"
+      ],
+      "parameters": {
+        "type": "object",
+        "required": [
+          "file_id"
+        ],
+        "properties": {
+          "file_id": {
+            "type": "string",
+            "description": "The ID of the Google Drive file to download (from list_files / search_files '.id')",
+            "x-dynamic-options": {
+              "source": "list_files",
+              "description": "Fetches available files dynamically"
+            }
+          },
+          "max_size_mb": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 50,
+            "default": 25,
+            "description": "Maximum file size to download in megabytes"
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "x-semantic-type": "file_attachment",
+        "properties": {
+          "file_id": {
+            "type": "string",
+            "description": "ID of the downloaded file",
+            "x-guaranteed": true
+          },
+          "filename": {
+            "type": "string",
+            "description": "Name of the file"
+          },
+          "mimeType": {
+            "type": "string",
+            "description": "MIME type of the file (e.g. application/pdf, image/png)"
+          },
+          "file_content": {
+            "type": "string",
+            "description": "Base64-encoded raw file bytes — pass directly to document-extractor.file_content"
+          },
+          "file_size": {
+            "type": "string",
+            "description": "Human-readable file size (e.g., '1.5 MB')"
+          }
+        },
+        "required": [
+          "file_id",
+          "mimeType",
+          "file_content"
+        ]
+      },
+      "output_guidance": {
+        "success_description": "Returns the file's raw bytes base64-encoded in file_content, plus mimeType and filename. Feed the result (or its file_content) into document-extractor.extract_structured_data.",
+        "sample_output": {
+          "file_id": "1abc123xyz",
+          "filename": "invoice_042.pdf",
+          "mimeType": "application/pdf",
+          "file_content": "JVBERi0xLjQKJ...(base64-encoded bytes)...",
+          "file_size": "34.1 KB"
+        },
+        "common_errors": {
+          "auth_failed": "Your Google Drive connection has expired. Please reconnect in Settings → Connected Apps.",
+          "file_not_found": "The specified file was not found or you don't have access.",
+          "file_too_large": "The file is too large to download. Increase max_size_mb or choose a smaller file.",
+          "google_native_file": "Native Google files (Docs/Sheets/Slides) have no downloadable bytes — use read_file_content (export) instead.",
+          "insufficient_permissions": "Google Drive read permissions are insufficient. Please reconnect with full read access."
+        }
+      }
     },
     "get_folder_contents": {
       "description": "Get all files and subfolders within a specific folder",

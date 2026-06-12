@@ -109,6 +109,28 @@ conditionalDescribe('GoogleDrivePluginExecutor [integration]', () => {
       }
     });
 
+    it('should download a real file as base64 (round-trips to bytes, not .text())', async () => {
+      const creds = getCredentials(PLUGIN_KEY);
+      const fileId = creds?.extras.fileId;
+      if (!fileId) {
+        // No specific test file configured — set GOOGLE_DRIVE_TEST_FILE_ID to a binary
+        // file (e.g. a PDF invoice) to exercise the real download_file → base64 path (WP-57).
+        return;
+      }
+
+      const dl = await executor.executeAction(USER_ID, 'download_file', { file_id: fileId });
+
+      expect(dl.success).toBe(true);
+      expect(dl.data.mimeType).toBeTruthy();
+      // file_content must be non-empty base64 that decodes to real bytes
+      expect(typeof dl.data.file_content).toBe('string');
+      expect(dl.data.file_content.length).toBeGreaterThan(0);
+      const bytes = Buffer.from(dl.data.file_content, 'base64');
+      expect(bytes.length).toBeGreaterThan(0);
+      // canonical base64 — proves no corruption from a .text() round-trip
+      expect(bytes.toString('base64')).toBe(dl.data.file_content);
+    });
+
     it('should search for files by name', async () => {
       const result = await executor.executeAction(USER_ID, 'search_files', {
         query: 'agentpilot-integration-test-nonexistent',

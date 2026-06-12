@@ -33,6 +33,9 @@ export class GoogleDrivePluginExecutor extends GoogleBasePluginExecutor {
         case 'read_file_content':
           result = await this.readFileContent(connection, parameters);
           break;
+        case 'download_file':
+          result = await this.downloadFile(connection, parameters);
+          break;
         case 'get_folder_contents':
           result = await this.getFolderContents(connection, parameters);
           break;
@@ -344,6 +347,78 @@ export class GoogleDrivePluginExecutor extends GoogleBasePluginExecutor {
       contentLength: content.length,
       exportFormat: isGoogleDoc ? exportFormat : 'original',
       readAt: new Date().toISOString()
+    };
+  }
+
+  // Download a file's RAW BYTES as base64 (for binary files: PDF, image, DOCX, etc.).
+  // Unlike readFileContent (which `.text()`s the download and is for extracting text
+  // from Google Docs), this preserves the original bytes so file-based extractors like
+  // document-extractor can OCR/parse them. See WP-57.
+  private async downloadFile(connection: any, parameters: any): Promise<any> {
+    this.logger.debug('DEBUG: Downloading file bytes via Google Drive API');
+
+    const fileId = parameters.file_id;
+    if (!fileId) {
+      throw new Error('file_id is required');
+    }
+
+    // Fetch metadata first (name, mimeType, size)
+    const metadataUrl = new URL(`${this.googleApisUrl}/drive/v3/files/${fileId}`);
+    metadataUrl.searchParams.set('fields', 'id, name, mimeType, size');
+
+    const metadataResponse = await fetch(metadataUrl.toString(), {
+      headers: {
+        'Authorization': `Bearer ${connection.access_token}`,
+        'Accept': 'application/json',
+      },
+    });
+
+    if (!metadataResponse.ok) {
+      throw new Error(`File not found: ${metadataResponse.status}`);
+    }
+
+    const metadata = await metadataResponse.json();
+
+    // Native Google Workspace files have no downloadable bytes — they must be exported.
+    // Direct the caller to read_file_content (which exports Docs/Sheets/Slides to text).
+    if (metadata.mimeType?.startsWith('application/vnd.google-apps.')) {
+      throw new Error(
+        `'${metadata.name}' is a native Google file (${metadata.mimeType}) and has no downloadable bytes. ` +
+        `Use read_file_content (export) for Google Docs/Sheets/Slides.`
+      );
+    }
+
+    // Size guard
+    const maxSizeMb = parameters.max_size_mb || 25;
+    const maxSizeBytes = maxSizeMb * 1024 * 1024;
+    if (metadata.size && parseInt(metadata.size) > maxSizeBytes) {
+      throw new Error(`File too large: ${this.formatFileSize(metadata.size)}. Maximum allowed: ${maxSizeMb}MB`);
+    }
+
+    // Download raw bytes via alt=media and base64-encode them.
+    // CRITICAL: use arrayBuffer() + Buffer base64 — NOT .text(), which mangles binary
+    // content (the root cause of WP-57).
+    const downloadUrl = `${this.googleApisUrl}/drive/v3/files/${fileId}?alt=media`;
+    const downloadResponse = await fetch(downloadUrl, {
+      headers: {
+        'Authorization': `Bearer ${connection.access_token}`,
+      },
+    });
+
+    if (!downloadResponse.ok) {
+      throw new Error(`Failed to download file: ${downloadResponse.status}`);
+    }
+
+    const arrayBuffer = await downloadResponse.arrayBuffer();
+    const base64 = Buffer.from(arrayBuffer).toString('base64');
+
+    return {
+      file_id: fileId,
+      filename: metadata.name,
+      mimeType: metadata.mimeType,
+      file_content: base64,
+      file_size: this.formatFileSize(metadata.size),
+      downloaded_at: new Date().toISOString(),
     };
   }
 
