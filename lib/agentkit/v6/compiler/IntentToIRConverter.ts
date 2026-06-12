@@ -2035,9 +2035,24 @@ export class IntentToIRConverter {
       return 'unknown'
     }
 
+    // Authoritative signal, preferred over the field-name heuristic: a slot whose
+    // schema — or its array items — is annotated semantic_type=file_attachment is a
+    // file regardless of field names. A plugin output_schema's `x-semantic-type` is
+    // propagated to schema.semantic_type by workflow-data-schema.ts. This is the
+    // plugin-annotation path the WP-12 field-name heuristic was always meant to defer
+    // to (see the O-WP12 reroute comment). It only ever yields a positive 'file'
+    // signal, so it never reclassifies a text/email slot.
+    const FILE_SEMANTIC_TYPES = new Set(['file_attachment', 'file'])
+    const isFileBySemanticType = (schemaNode: any): boolean =>
+      !!schemaNode && (
+        FILE_SEMANTIC_TYPES.has(schemaNode.semantic_type) ||
+        FILE_SEMANTIC_TYPES.has(schemaNode.items?.semantic_type)
+      )
+
     // Direct slot match (e.g., variable === a top-level slot name)
     const directSlot = dataSchema.slots[inputName]
     if (directSlot?.schema) {
+      if (isFileBySemanticType(directSlot.schema)) return true
       const verdict = inspectObjectSchema(directSlot.schema)
       if (verdict !== 'unknown') return verdict === 'file'
     }
@@ -2057,6 +2072,7 @@ export class IntentToIRConverter {
           const verdict = inspectObjectSchema(propDef.items)
           if (verdict === 'text') sawTextItems = true
           if (verdict === 'file') sawFileItems = true
+          if (FILE_SEMANTIC_TYPES.has(propDef.items?.semantic_type)) sawFileItems = true
         }
       }
     }
