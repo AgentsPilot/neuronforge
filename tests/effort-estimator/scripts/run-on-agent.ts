@@ -396,7 +396,7 @@ async function main(): Promise<void> {
       });
       // eslint-disable-next-line no-console
       console.log(`\nLog file: ${logFilePath}`);
-      await flushAndExit(setup, 1);
+      return flushAndExit(setup, 1);
     }
 
     const userId = userIdRow.user_id as string;
@@ -420,7 +420,7 @@ async function main(): Promise<void> {
       });
       // eslint-disable-next-line no-console
       console.log(`\nLog file: ${logFilePath}`);
-      await flushAndExit(setup, 1);
+      return flushAndExit(setup, 1);
     }
 
     // ---- 3. Hydrate the EffortEstimatorInput -------------------------------
@@ -484,7 +484,7 @@ async function main(): Promise<void> {
       });
       // eslint-disable-next-line no-console
       console.log(`\nLog file: ${logFilePath}`);
-      await flushAndExit(setup, 1);
+      return flushAndExit(setup, 1);
     }
     const userContext = await buildUserContextFromProfile(authResult.user);
 
@@ -701,7 +701,7 @@ async function main(): Promise<void> {
         });
         // eslint-disable-next-line no-console
         console.log(`\nLog file: ${logFilePath}`);
-        await flushAndExit(setup, 1);
+        return flushAndExit(setup, 1);
       }
       const persistedConfig = (confirmAgent.agent_config as Record<string, unknown> | null) ?? {};
       prominent('PERSISTED agent_config.roi_estimate (re-read from DB)', persistedConfig.roi_estimate);
@@ -753,7 +753,7 @@ async function main(): Promise<void> {
     });
     // eslint-disable-next-line no-console
     console.log(`\nLog file: ${logFilePath}`);
-    await flushAndExit(setup, 1);
+    return flushAndExit(setup, 1);
   } catch (err) {
     // If setup is non-null we managed to open the file; route through the
     // logger so the failure lands in the file too. Otherwise the outer
@@ -764,7 +764,7 @@ async function main(): Promise<void> {
       console.error('\nFATAL error in effort-estimator runner:', err);
       // eslint-disable-next-line no-console
       console.log(`\nLog file: ${setup.filePath}`);
-      await flushAndExit(setup, 1);
+      return flushAndExit(setup, 1);
     }
     throw err;
   }
