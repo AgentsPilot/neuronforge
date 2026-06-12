@@ -60,6 +60,7 @@ interface ConversionContext {
   warnings: string[]
   config?: Array<{ key: string; type: string; description?: string; default?: any }> // Intent config for field resolution
   dataSchema?: WorkflowDataSchema // data_schema from binding phase for field reference validation
+  outputProducerPlugin: Map<string, string> // IR variable name -> plugin_key that produced it (for download auto-insert, WP-57)
 }
 
 /**
@@ -103,6 +104,7 @@ export class IntentToIRConverter {
       warnings: [],
       config: boundIntent.config,
       dataSchema: boundIntent.data_schema,
+      outputProducerPlugin: new Map(),
     }
 
     try {
@@ -269,7 +271,7 @@ export class IntentToIRConverter {
         return [this.convertArtifact(step as ArtifactStep & BoundStep, ctx)]
 
       case 'extract':
-        return [this.convertExtract(step as ExtractStep & BoundStep, ctx)]
+        return this.convertExtract(step as ExtractStep & BoundStep, ctx)
 
       case 'loop':
         return [this.convertLoop(step as LoopStep & BoundStep, ctx)]
@@ -340,6 +342,11 @@ export class IntentToIRConverter {
     }
 
     ctx.nodes.set(nodeId, node)
+    // WP-57: remember which plugin produced this output so a downstream file-extractor
+    // can find the right provider's download action.
+    if (step.plugin_key && outputVar) {
+      ctx.outputProducerPlugin.set(outputVar, step.plugin_key)
+    }
     return nodeId
   }
 
@@ -486,7 +493,7 @@ export class IntentToIRConverter {
    * Convert extract step to operation node
    * Now schema-aware for plugin-based extraction
    */
-  private convertExtract(step: ExtractStep & BoundStep, ctx: ConversionContext): string {
+  private convertExtract(step: ExtractStep & BoundStep, ctx: ConversionContext): string[] {
     const nodeId = this.generateNodeId(ctx)
     const outputVar = this.getOutputVariable(step, ctx)
 
@@ -542,6 +549,62 @@ export class IntentToIRConverter {
           )
           effectivePluginKey = undefined
         }
+      }
+    }
+
+    // WP-57 auto-insert: when extraction is bound to a file-input plugin (e.g.
+    // document-extractor) but the input slot is a file *reference* without bytes (a
+    // storage listing item — id/name/mimeType, no content), the extractor would receive
+    // metadata and fail. Insert a content-fetch step on the file's producer plugin to
+    // download the bytes first, then point the extract at that. Plugin-agnostic: the
+    // download action is discovered from the producer plugin's schema (an action that
+    // returns x-semantic-type=file_attachment bytes and takes a file_id). Narrowly
+    // guarded — only fires for the otherwise-broken reference case.
+    const prependNodeIds: string[] = []
+    if (
+      effectivePluginKey &&
+      effectivePluginKey !== 'chatgpt-research' &&
+      this.pluginManager &&
+      step.action &&
+      this.actionExpectsFileAttachment(effectivePluginKey, step.action) &&
+      !this.slotHasBytes(step.extract.input, ctx)
+    ) {
+      const resolvedInput = this.resolveRefName(step.extract.input, ctx)
+      const cleanRef = resolvedInput.replace(/\{\{|\}\}/g, '')
+      const producerPlugin =
+        ctx.outputProducerPlugin.get(cleanRef) ||
+        ctx.outputProducerPlugin.get(step.extract.input)
+      const dl = producerPlugin ? this.findDownloadAction(producerPlugin) : null
+      if (dl) {
+        const downloadNodeId = this.generateNodeId(ctx)
+        const downloadOutputVar = `${cleanRef}_bytes`
+        const downloadNode: ExecutionNode = {
+          id: downloadNodeId,
+          type: 'operation',
+          operation: {
+            operation_type: 'fetch',
+            fetch: {
+              plugin_key: dl.pluginKey,
+              action: dl.action,
+              config: { file_id: `{{${cleanRef}.id}}` },
+            },
+            description: `Download file bytes for '${cleanRef}' before extraction (WP-57 auto-insert)`,
+          },
+          outputs: [{ variable: downloadOutputVar }],
+          next: nodeId,
+        }
+        ctx.nodes.set(downloadNodeId, downloadNode)
+        ctx.outputProducerPlugin.set(downloadOutputVar, dl.pluginKey)
+        // Point the extractor at the downloaded bytes instead of the metadata reference.
+        genericConfig.input = downloadOutputVar
+        prependNodeIds.push(downloadNodeId)
+        logger.info(
+          `[O-WP57] Auto-inserted ${dl.pluginKey}.${dl.action} before extract '${step.id}' — ` +
+          `${effectivePluginKey} needs file bytes but input '${cleanRef}' is a metadata reference.`
+        )
+        ctx.warnings.push(
+          `[O-WP57] Auto-inserted ${dl.pluginKey}.${dl.action} before extract '${step.id}' to fetch file bytes for ${effectivePluginKey}.`
+        )
       }
     }
 
@@ -612,7 +675,8 @@ export class IntentToIRConverter {
     }
 
     ctx.nodes.set(nodeId, node)
-    return nodeId
+    // Any WP-57 download step is prepended so convertSteps wires prev → download → extract.
+    return [...prependNodeIds, nodeId]
   }
 
   /**
@@ -633,6 +697,13 @@ export class IntentToIRConverter {
     }
     const itemVar = step.loop.item_ref
     const outputVar = step.loop.collect?.collect_as || `${step.id}_results`
+
+    // WP-57: the loop item inherits the producer plugin of the collection it iterates,
+    // so a file-extractor in the loop body can find the right provider's download action.
+    const collectionProducer = ctx.outputProducerPlugin.get(collectionVar)
+    if (collectionProducer) {
+      ctx.outputProducerPlugin.set(itemVar, collectionProducer)
+    }
 
     // Convert loop body steps
     const bodyNodeIds = this.convertSteps(step.loop.do, ctx)
@@ -1282,6 +1353,20 @@ export class IntentToIRConverter {
     const outputVar = this.getOutputVariable(step, ctx)
 
     const inputVar = this.resolveRefName(step.transform.input, ctx)
+
+    // WP-57: shape-preserving transforms keep each item's identity, so the output
+    // inherits the input's producer plugin. This lets a downstream file-extractor still
+    // find the right provider's download action when a filter (e.g. "only PDFs") sits
+    // between the storage listing and the per-file loop.
+    {
+      const PASSTHROUGH_OPS = new Set(['filter', 'sort', 'dedupe', 'flatten'])
+      if (PASSTHROUGH_OPS.has(step.transform.op as string)) {
+        const inputProducer = ctx.outputProducerPlugin.get(inputVar.replace(/\{\{|\}\}/g, ''))
+        if (inputProducer && outputVar) {
+          ctx.outputProducerPlugin.set(outputVar, inputProducer)
+        }
+      }
+    }
 
     const transformConfig: any = {
       type: step.transform.op as any, // map, filter, reduce, flatten, custom, etc.
@@ -2004,6 +2089,50 @@ export class IntentToIRConverter {
       if (FILE_PARAM_NAMES.has(paramName)) return true
     }
     return false
+  }
+
+  /**
+   * WP-57: Does the named input slot already carry file BYTES (vs just a metadata
+   * reference)? A downloadable-content slot has a content field (file_content / content /
+   * data / base64); a storage-listing item (id, name, mimeType, webViewLink) does not.
+   * Used to decide whether a content-fetch step must be auto-inserted before a file
+   * extractor.
+   */
+  private slotHasBytes(refName: string, ctx: ConversionContext): boolean {
+    const slots = ctx.dataSchema?.slots
+    if (!slots) return false
+    const resolved = this.resolveRefName(refName, ctx).replace(/\{\{|\}\}/g, '')
+    const schema = slots[refName]?.schema || slots[resolved]?.schema
+    const props = (schema as any)?.properties || (schema as any)?.items?.properties
+    if (!props || typeof props !== 'object') return false
+    const BYTES_FIELDS = new Set(['file_content', 'content', 'data', 'base64'])
+    return Object.keys(props).some(k => BYTES_FIELDS.has(k))
+  }
+
+  /**
+   * WP-57: Find a download action on the given plugin that returns the raw file BYTES
+   * a file-extractor needs — schema-driven, plugin-agnostic. An action qualifies when
+   * its output is annotated `x-semantic-type: file_attachment`, exposes a content field
+   * (file_content / content / data), and takes a `file_id` parameter. Returns null when
+   * the plugin has no such action (the caller then leaves the workflow unchanged).
+   */
+  private findDownloadAction(pluginKey: string): { pluginKey: string; action: string } | null {
+    if (!this.pluginManager) return null
+    const def = this.pluginManager.getPluginDefinition(pluginKey)
+    const actions = (def as any)?.actions
+    if (!actions || typeof actions !== 'object') return null
+    const BYTES_FIELDS = new Set(['file_content', 'content', 'data', 'base64'])
+    for (const [actionName, action] of Object.entries(actions)) {
+      const out = (action as any).output_schema
+      if (out?.['x-semantic-type'] !== 'file_attachment') continue
+      const outProps = out?.properties || {}
+      const returnsBytes = Object.keys(outProps).some(k => BYTES_FIELDS.has(k))
+      const params = (action as any).parameters?.properties || {}
+      if (returnsBytes && 'file_id' in params) {
+        return { pluginKey, action: actionName }
+      }
+    }
+    return null
   }
 
   /**

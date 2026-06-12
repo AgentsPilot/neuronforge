@@ -416,7 +416,9 @@ export class GoogleDrivePluginExecutor extends GoogleBasePluginExecutor {
       file_id: fileId,
       filename: metadata.name,
       mimeType: metadata.mimeType,
-      file_content: base64,
+      // Base64 bytes live in `content` to match document-extractor's file_content
+      // x-input-mapping (from_file_object: "content") and its executor's `.content` check.
+      content: base64,
       file_size: this.formatFileSize(metadata.size),
       downloaded_at: new Date().toISOString(),
     };

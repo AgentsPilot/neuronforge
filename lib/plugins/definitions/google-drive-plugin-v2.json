@@ -759,7 +759,7 @@
         "file_id",
         "filename",
         "mimeType",
-        "file_content",
+        "content",
         "file_size"
       ],
       "required_params": [
@@ -812,9 +812,9 @@
             "type": "string",
             "description": "MIME type of the file (e.g. application/pdf, image/png)"
           },
-          "file_content": {
+          "content": {
             "type": "string",
-            "description": "Base64-encoded raw file bytes — pass directly to document-extractor.file_content"
+            "description": "Base64-encoded raw file bytes — pass directly to document-extractor.file_content (which reads a file object's 'content' field)"
           },
           "file_size": {
             "type": "string",
@@ -824,16 +824,16 @@
         "required": [
           "file_id",
           "mimeType",
-          "file_content"
+          "content"
         ]
       },
       "output_guidance": {
-        "success_description": "Returns the file's raw bytes base64-encoded in file_content, plus mimeType and filename. Feed the result (or its file_content) into document-extractor.extract_structured_data.",
+        "success_description": "Returns the file's raw bytes base64-encoded in the 'content' field, plus mimeType and filename. Feed the result (or its 'content') into document-extractor.extract_structured_data.",
         "sample_output": {
           "file_id": "1abc123xyz",
           "filename": "invoice_042.pdf",
           "mimeType": "application/pdf",
-          "file_content": "JVBERi0xLjQKJ...(base64-encoded bytes)...",
+          "content": "JVBERi0xLjQKJ...(base64-encoded bytes)...",
           "file_size": "34.1 KB"
         },
         "common_errors": {

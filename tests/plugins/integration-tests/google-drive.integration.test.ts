@@ -122,13 +122,13 @@ conditionalDescribe('GoogleDrivePluginExecutor [integration]', () => {
 
       expect(dl.success).toBe(true);
       expect(dl.data.mimeType).toBeTruthy();
-      // file_content must be non-empty base64 that decodes to real bytes
-      expect(typeof dl.data.file_content).toBe('string');
-      expect(dl.data.file_content.length).toBeGreaterThan(0);
-      const bytes = Buffer.from(dl.data.file_content, 'base64');
+      // content must be non-empty base64 that decodes to real bytes
+      expect(typeof dl.data.content).toBe('string');
+      expect(dl.data.content.length).toBeGreaterThan(0);
+      const bytes = Buffer.from(dl.data.content, 'base64');
       expect(bytes.length).toBeGreaterThan(0);
       // canonical base64 — proves no corruption from a .text() round-trip
-      expect(bytes.toString('base64')).toBe(dl.data.file_content);
+      expect(bytes.toString('base64')).toBe(dl.data.content);
     });
 
     it('should search for files by name', async () => {

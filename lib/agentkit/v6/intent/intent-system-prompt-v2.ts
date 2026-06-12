@@ -900,6 +900,28 @@ If you claim "filtering for X" in the description, you must either:
 **Field types:**
 "string" | "number" | "boolean" | "date" | "currency" | "object" | "array" | "unknown"
 
+**FILE-BASED EXTRACTION — fetch the bytes first (WP-57):**
+When you extract structured fields from a FILE held in a storage service (a PDF, image,
+scanned document, invoice, receipt in Drive/Dropbox/etc.), remember that a storage
+**listing** step (\`data_source\` / list / search) returns only file **metadata** — id,
+name, mimeType, link — **NOT the file's bytes**. A document/file extractor needs the
+actual content. So the data flow MUST be:
+
+\`\`\`
+data_source (list/search files)        → file metadata items (id, name, mimeType, link)
+  → data_source (fetch file content)   → the file's downloadable BYTES   (capability: "fetch_content", domain: "storage")
+    → extract (domain: "document")     → structured fields
+\`\`\`
+
+- Insert a \`data_source\` step bound to \`{ capability: "fetch_content", domain: "storage" }\`
+  between the listing step and the \`extract\` step, taking the file's \`id\`, and make the
+  \`extract\` step's \`input\` the **fetched-content** ref — NOT the raw listing item.
+- Inside a per-file loop, the fetch step goes in the loop body, before the extract step.
+- **Do NOT feed a file-listing item directly to a \`document\` extractor** — it has no bytes,
+  so extraction returns empty/failed for every file.
+- EXCEPTION: if the source already carries the bytes inline (e.g. an email **attachment**
+  whose item includes base64 content), no separate fetch step is needed — extract directly.
+
 ### 6.4.1) NESTED FIELD SHAPE (WP-15) — REQUIRED for arrays/objects
 
 This rule applies to BOTH \`extract.fields[]\` and \`generate.outputs[]\` (sections 6.4 and 6.7).

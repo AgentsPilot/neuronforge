@@ -188,7 +188,7 @@ Access, search, and read files and folders in Google Drive. Use for accessing Go
 | file_id | string | ID of the downloaded file |
 | filename | string | Name of the file |
 | mimeType | string | MIME type (e.g. application/pdf, image/png) |
-| file_content | string | Base64-encoded raw file bytes — pass to `document-extractor.file_content` |
+| content | string | Base64-encoded raw file bytes — pass to `document-extractor.file_content` (which reads a file object's `content` field) |
 | file_size | string | Human-readable file size |
 
 > **Note**: Native Google Workspace files (Docs/Sheets/Slides) have no downloadable bytes — use `read_file_content` (export) for those. The download uses `arrayBuffer()` → base64 (never `.text()`, which corrupts binary). The output carries `x-semantic-type: file_attachment` so the V6 pipeline routes it to `document-extractor` rather than AI text extraction. See **WP-57** in `docs/v6/V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_WEAK_POINTS.md`.

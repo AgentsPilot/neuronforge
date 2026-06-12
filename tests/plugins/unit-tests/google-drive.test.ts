@@ -116,9 +116,9 @@ describe('GoogleDrivePluginExecutor', () => {
         expect(result.data.file_id).toBe('pdf-1');
         expect(result.data.filename).toBe('invoice.pdf');
         expect(result.data.mimeType).toBe('application/pdf');
-        // file_content is base64 of the RAW bytes, and round-trips back exactly
-        expect(result.data.file_content).toBe(pdfBytes.toString('base64'));
-        expect(Buffer.from(result.data.file_content, 'base64').equals(pdfBytes)).toBe(true);
+        // content is base64 of the RAW bytes, and round-trips back exactly
+        expect(result.data.content).toBe(pdfBytes.toString('base64'));
+        expect(Buffer.from(result.data.content, 'base64').equals(pdfBytes)).toBe(true);
       });
 
       it('should reject native Google files (no downloadable bytes)', async () => {
