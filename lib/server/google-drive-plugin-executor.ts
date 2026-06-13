@@ -295,12 +295,14 @@ export class GoogleDrivePluginExecutor extends GoogleBasePluginExecutor {
 
     let content: string;
     let exportFormat = parameters.export_format || 'text/plain';
+    // The format we actually produced — reported back as export_format.
+    let reportedFormat: string;
 
     if (isGoogleDoc) {
       // Export Google Workspace files
       const exportUrl = `${this.googleApisUrl}/drive/v3/files/${fileId}/export`;
       const exportParams = new URLSearchParams({ mimeType: exportFormat });
-      
+
       const exportResponse = await fetch(`${exportUrl}?${exportParams}`, {
         headers: {
           'Authorization': `Bearer ${connection.access_token}`,
@@ -312,10 +314,11 @@ export class GoogleDrivePluginExecutor extends GoogleBasePluginExecutor {
       }
 
       content = await exportResponse.text();
+      reportedFormat = exportFormat;
     } else {
-      // Download regular files
+      // Download non-Google-Workspace files.
       const downloadUrl = `${this.googleApisUrl}/drive/v3/files/${fileId}?alt=media`;
-      
+
       const downloadResponse = await fetch(downloadUrl, {
         headers: {
           'Authorization': `Bearer ${connection.access_token}`,
@@ -326,7 +329,30 @@ export class GoogleDrivePluginExecutor extends GoogleBasePluginExecutor {
         throw new Error(`Failed to download file: ${downloadResponse.status}`);
       }
 
-      content = await downloadResponse.text();
+      if (metadata.mimeType === 'application/pdf') {
+        // Extract the PDF's real TEXT. Never `.text()` the raw bytes — that decodes binary
+        // as UTF-8 and corrupts the content (WP-57 root cause). pdf-parse reads the text
+        // layer of text-based PDFs. NOTE: scanned / image-only PDFs have no text layer and
+        // yield little or no text — route those to document-extractor (OCR) instead.
+        const buffer = Buffer.from(await downloadResponse.arrayBuffer());
+        try {
+          // eval('require') mirrors PdfTypeDetector — keeps the bundler from statically
+          // pulling pdf-parse (whose index runs a test fixture when bundled).
+          // eslint-disable-next-line @typescript-eslint/no-var-requires
+          const pdfParse = eval('require')('pdf-parse');
+          const parsed = await pdfParse(buffer);
+          content = parsed?.text || '';
+        } catch (err) {
+          this.logger.warn({ err, fileId }, 'read_file_content: PDF text extraction failed — returning empty content');
+          content = '';
+        }
+        reportedFormat = 'text/plain';
+      } else {
+        // Genuine text files (text/*, csv, html, json, …) decode cleanly. Other binaries
+        // (docx/xlsx/images) are unchanged here — route those to document-extractor.
+        content = await downloadResponse.text();
+        reportedFormat = 'original';
+      }
     }
 
     return {
@@ -337,7 +363,7 @@ export class GoogleDrivePluginExecutor extends GoogleBasePluginExecutor {
       mime_type: metadata.mimeType,
       content: content,
       content_length: content.length,
-      export_format: isGoogleDoc ? exportFormat : 'original',
+      export_format: reportedFormat,
       read_at: new Date().toISOString(),
       // Legacy format (camelCase for backward compatibility)
       fileId: fileId,
@@ -345,7 +371,7 @@ export class GoogleDrivePluginExecutor extends GoogleBasePluginExecutor {
       fileSize: this.formatFileSize(metadata.size),
       mimeType: metadata.mimeType,
       contentLength: content.length,
-      exportFormat: isGoogleDoc ? exportFormat : 'original',
+      exportFormat: reportedFormat,
       readAt: new Date().toISOString()
     };
   }

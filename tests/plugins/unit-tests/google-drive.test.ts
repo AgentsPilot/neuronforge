@@ -6,6 +6,8 @@ import { GoogleDrivePluginExecutor } from '@/lib/server/google-drive-plugin-exec
 import { createTestExecutor, expectSuccessResult, expectErrorResult, expectFetchCalledWith } from '../common/test-helpers';
 import { mockFetchSuccess, mockFetchError, mockFetchSequence, restoreFetch, getAllFetchCalls } from '../common/mock-fetch';
 import { runStandardErrorScenarios } from '../common/error-scenarios';
+import * as fs from 'fs';
+import * as path from 'path';
 
 const PLUGIN_KEY = 'google-drive';
 const USER_ID = 'test-user-id';
@@ -325,5 +327,30 @@ describe('GoogleDrivePluginExecutor', () => {
         expectErrorResult(result);
       });
     });
+  });
+
+  // ---- read_file_content: real PDF text extraction (WP-57 #2) ----
+  describe('read_file_content — PDF text extraction', () => {
+    const fixturePath = path.join(process.cwd(), 'tests', 'plugins', 'fixtures', 'Invoice677931.pdf');
+    const run = fs.existsSync(fixturePath) ? it : it.skip;
+
+    run('extracts real text from a PDF (not corrupted binary)', async () => {
+      const pdfBytes = fs.readFileSync(fixturePath);
+      mockFetchSequence([
+        // Metadata call (mimeType drives the PDF text-extraction branch)
+        { body: { id: 'pdf-1', name: 'Invoice677931.pdf', mimeType: 'application/pdf', size: String(pdfBytes.length) } },
+        // alt=media binary download
+        { body: pdfBytes },
+      ]);
+
+      const result = await executor.executeAction(USER_ID, 'read_file_content', { file_id: 'pdf-1' });
+
+      expectSuccessResult(result);
+      expect(result.data.mime_type).toBe('application/pdf');
+      expect(result.data.export_format).toBe('text/plain');
+      // Real extracted text — contains the invoice number, NOT UTF-8-mangled binary.
+      expect(result.data.content.length).toBeGreaterThan(0);
+      expect(result.data.content).toContain('677931');
+    }, 30000);
   });
 });
