@@ -900,27 +900,39 @@ If you claim "filtering for X" in the description, you must either:
 **Field types:**
 "string" | "number" | "boolean" | "date" | "currency" | "object" | "array" | "unknown"
 
-**FILE-BASED EXTRACTION — fetch the bytes first (WP-57):**
-When you extract structured fields from a FILE held in a storage service (a PDF, image,
-scanned document, invoice, receipt in Drive/Dropbox/etc.), remember that a storage
-**listing** step (\`data_source\` / list / search) returns only file **metadata** — id,
-name, mimeType, link — **NOT the file's bytes**. A document/file extractor needs the
-actual content. So the data flow MUST be:
+**EXTRACTING DATA FROM DOCUMENTS — use a document extractor for binary files (WP-57):**
+When a workflow must pull structured fields OUT OF a **binary document** — an invoice,
+receipt, contract, form, scanned page, or image (PDF / JPG / PNG / scan) — you **MUST** use an
+\`extract\` step with \`{ capability: "extract_structured_data", domain: "document" }\`, pointed
+at the document **file** (the listed file item). A document extractor reads the file's actual
+bytes and OCRs/parses them — the only reliable way to get fields out of PDFs, images, and
+scans. You do NOT add a separate text-read step first: a storage **listing** (\`data_source\` /
+list / search) returns only file metadata (id, name, mimeType, link), and the compiler
+resolves the file's bytes for the extractor when it sees a \`document\` extract fed a listed file.
 
-\`\`\`
-data_source (list/search files)        → file metadata items (id, name, mimeType, link)
-  → data_source (fetch file content)   → the file's downloadable BYTES   (capability: "fetch_content", domain: "storage")
-    → extract (domain: "document")     → structured fields
+**This is a rule, not a preference, for binary files.** Reading a binary file (PDF/image) as
+text corrupts it — the bytes get mangled into garbage — so any AI step you feed that text to
+receives nonsense and extracts nothing.
+
+❌ **WRONG — read the binary file as text, then ask an AI to parse it (extracts garbage):**
+\`\`\`json
+{ "id": "read",    "kind": "data_source", "uses": [{ "capability": "fetch_content", "domain": "storage" }], "output": "file_text" }
+{ "id": "extract", "kind": "generate",    "uses": [{ "capability": "generate", "domain": "internal" }],
+  "generate": { "input": "file_text", "instruction": "extract vendor, total, date ..." } }
 \`\`\`
 
-- Insert a \`data_source\` step bound to \`{ capability: "fetch_content", domain: "storage" }\`
-  between the listing step and the \`extract\` step, taking the file's \`id\`, and make the
-  \`extract\` step's \`input\` the **fetched-content** ref — NOT the raw listing item.
-- Inside a per-file loop, the fetch step goes in the loop body, before the extract step.
-- **Do NOT feed a file-listing item directly to a \`document\` extractor** — it has no bytes,
-  so extraction returns empty/failed for every file.
-- EXCEPTION: if the source already carries the bytes inline (e.g. an email **attachment**
-  whose item includes base64 content), no separate fetch step is needed — extract directly.
+✅ **RIGHT — feed the file itself to a document extractor (it OCRs/parses the bytes):**
+\`\`\`json
+{ "id": "extract", "kind": "extract", "uses": [{ "capability": "extract_structured_data", "domain": "document" }],
+  "extract": { "input": "<the listed file item>",
+               "fields": [ { "name": "vendor", "type": "string" }, { "name": "total", "type": "currency" }, { "name": "date", "type": "date" } ] } }
+\`\`\`
+
+**The ONLY exception — native TEXT sources.** For a Google Doc's exported text, an email body,
+a chat/Slack message, or a plain-text/markdown file, there are no binary bytes to OCR — read
+the text and let a \`generate\`/AI step parse it; a \`document\` extractor is unnecessary there.
+(If a source already carries the bytes inline — e.g. an email attachment with base64 content —
+feed that to the \`document\` extractor directly.)
 
 ### 6.4.1) NESTED FIELD SHAPE (WP-15) — REQUIRED for arrays/objects
 
