@@ -353,4 +353,50 @@ describe('GoogleDrivePluginExecutor', () => {
       expect(result.data.content).toContain('677931');
     }, 30000);
   });
+
+  // ---- Drive URL → ID normalization (WP-57 2B) ----
+  // Users paste full Drive/Docs URLs where actions expect a bare ID. The executor
+  // normalises url-shaped id params (folder_id/file_id/parent_folder_id) before use.
+  describe('Drive URL → ID normalization', () => {
+    it('list_files: extracts the folder ID from a pasted folder URL', async () => {
+      mockFetchSuccess({ files: [{ id: 'f1', name: 'Invoice.pdf', mimeType: 'application/pdf' }] });
+
+      await executor.executeAction(USER_ID, 'list_files', {
+        folder_id: 'https://drive.google.com/drive/u/0/folders/1Wszlm9qgqPVQyHYp1lWmlkipRFLVQLAk',
+      });
+
+      const call = getAllFetchCalls().find(c => c.url.includes('drive/v3/files'));
+      expect(call).toBeDefined();
+      // URLSearchParams encodes spaces as '+'; normalise before asserting.
+      const decoded = decodeURIComponent(call!.url).replace(/\+/g, ' ');
+      // The bare ID reaches the query; the raw URL does not leak into it.
+      expect(decoded).toContain("'1Wszlm9qgqPVQyHYp1lWmlkipRFLVQLAk' in parents");
+      expect(decoded).not.toContain('drive.google.com');
+    });
+
+    it('get_file_metadata: extracts the file ID from a /file/d/<id>/view link', async () => {
+      mockFetchSuccess({ id: '1AbC_dEf-123', name: 'Doc.pdf', mimeType: 'application/pdf', size: '10' });
+
+      await executor.executeAction(USER_ID, 'get_file_metadata', {
+        file_id: 'https://drive.google.com/file/d/1AbC_dEf-123/view?usp=sharing',
+      });
+
+      const call = getAllFetchCalls().find(c => c.url.includes('drive/v3/files'));
+      expect(call).toBeDefined();
+      expect(call!.url).toContain('1AbC_dEf-123');
+      expect(call!.url).not.toContain('https%3A');
+    });
+
+    it('passes a bare ID through unchanged', async () => {
+      mockFetchSuccess({ files: [] });
+
+      await executor.executeAction(USER_ID, 'list_files', {
+        folder_id: '1TAUlds9R8r2lznDszbOwovpdM0cN7aFK',
+      });
+
+      const call = getAllFetchCalls().find(c => c.url.includes('drive/v3/files'));
+      const decoded = decodeURIComponent(call!.url).replace(/\+/g, ' ');
+      expect(decoded).toContain("'1TAUlds9R8r2lznDszbOwovpdM0cN7aFK' in parents");
+    });
+  });
 });

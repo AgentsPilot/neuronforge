@@ -18,6 +18,11 @@ export class GoogleDrivePluginExecutor extends GoogleBasePluginExecutor {
     actionName: string,
     parameters: any
   ): Promise<any> {
+    // Users naturally paste full Drive URLs (folder/file links) where an action
+    // expects a bare ID. Normalise those URL-shaped id params to their ID before
+    // dispatch so every action accepts either form. Bare IDs/'root' pass through.
+    this.normalizeDriveIdParams(parameters);
+
     // Execute the specific action
       let result: any;
       switch (actionName) {
@@ -60,6 +65,31 @@ export class GoogleDrivePluginExecutor extends GoogleBasePluginExecutor {
       }
 
       return result;
+  }
+
+  /**
+   * Extract a bare Drive ID from a value that may be a full Drive/Docs URL.
+   * Handles folder links (`/folders/{id}`), file/doc links (`/d/{id}`), and
+   * `?id={id}` query forms. Non-URL values (a bare id, or `root`) are returned
+   * unchanged, so this is safe to apply unconditionally.
+   */
+  private extractDriveId(value: unknown): unknown {
+    if (typeof value !== 'string') return value;
+    const v = value.trim();
+    if (!/^https?:\/\//i.test(v)) return v; // already a bare id (or 'root')
+    const pathMatch = v.match(/\/(?:folders|d)\/([a-zA-Z0-9_-]+)/);
+    if (pathMatch) return pathMatch[1];
+    const queryMatch = v.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+    if (queryMatch) return queryMatch[1];
+    return v; // unrecognised URL shape — let the API surface a meaningful error
+  }
+
+  /** Normalise URL-shaped id params (folder_id / file_id / parent_folder_id) to bare IDs, in place. */
+  private normalizeDriveIdParams(parameters: any): void {
+    if (!parameters || typeof parameters !== 'object') return;
+    for (const key of ['folder_id', 'file_id', 'parent_folder_id']) {
+      if (parameters[key] != null) parameters[key] = this.extractDriveId(parameters[key]);
+    }
   }
 
   // List files with optional filtering
