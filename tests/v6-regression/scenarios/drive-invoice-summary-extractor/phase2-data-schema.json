@@ -156,6 +156,7 @@
       "scope": "global",
       "produced_by": "filter_invoice_files",
       "consumed_by": [
+        "check_invoices_found",
         "process_each_invoice"
       ]
     },
@@ -215,12 +216,11 @@
       "scope": "loop",
       "produced_by": "process_each_invoice",
       "consumed_by": [
-        "read_file_content",
-        "extract_invoice_fields",
-        "augment_with_file_metadata"
+        "download_invoice_file",
+        "enriched_extraction"
       ]
     },
-    "extracted_invoices": {
+    "extraction_results": {
       "schema": {
         "type": "array",
         "items": {
@@ -244,7 +244,7 @@
               "source": "ai_declared"
             },
             "total_amount": {
-              "type": "number",
+              "type": "string",
               "source": "ai_declared"
             },
             "currency": {
@@ -252,16 +252,32 @@
               "source": "ai_declared"
             },
             "tax_amount": {
-              "type": "number",
+              "type": "string",
               "source": "ai_declared"
             },
             "file_name": {
               "type": "string",
-              "source": "ai_declared"
+              "source": "ai_declared",
+              "required": true
             },
-            "file_modified": {
+            "last_modified": {
               "type": "string",
               "source": "ai_declared"
+            },
+            "has_vendor": {
+              "type": "boolean",
+              "source": "ai_declared",
+              "required": true
+            },
+            "has_invoice_number": {
+              "type": "boolean",
+              "source": "ai_declared",
+              "required": true
+            },
+            "has_total": {
+              "type": "boolean",
+              "source": "ai_declared",
+              "required": true
             }
           }
         },
@@ -270,64 +286,53 @@
       "scope": "global",
       "produced_by": "process_each_invoice",
       "consumed_by": [
-        "compute_metrics",
-        "generate_email_body"
+        "compute_aggregates",
+        "compose_summary_email"
       ]
     },
-    "file_content": {
+    "downloaded_file": {
       "schema": {
         "type": "object",
         "source": "plugin",
+        "semantic_type": "file_attachment",
         "properties": {
           "file_id": {
             "type": "string",
             "source": "plugin",
-            "description": "ID of the file that was read"
+            "description": "ID of the downloaded file",
+            "required": true
           },
-          "file_name": {
+          "filename": {
             "type": "string",
             "source": "plugin",
             "description": "Name of the file"
+          },
+          "mimeType": {
+            "type": "string",
+            "source": "plugin",
+            "description": "MIME type of the file (e.g. application/pdf, image/png)",
+            "required": true
+          },
+          "content": {
+            "type": "string",
+            "source": "plugin",
+            "description": "Base64-encoded raw file bytes — pass directly to document-extractor.file_content (which reads a file object's 'content' field)",
+            "required": true
           },
           "file_size": {
             "type": "string",
             "source": "plugin",
             "description": "Human-readable file size (e.g., '1.5 MB')"
-          },
-          "mime_type": {
-            "type": "string",
-            "source": "plugin",
-            "description": "MIME type of the file"
-          },
-          "content": {
-            "type": "string",
-            "source": "plugin",
-            "description": "Text content extracted from the file"
-          },
-          "content_length": {
-            "type": "number",
-            "source": "plugin",
-            "description": "Length of the extracted content in characters"
-          },
-          "export_format": {
-            "type": "string",
-            "source": "plugin",
-            "description": "Format the file was exported as (text/plain, text/html, or 'original')"
-          },
-          "read_at": {
-            "type": "string",
-            "source": "plugin",
-            "description": "Timestamp when file was read (ISO 8601)"
           }
         }
       },
       "scope": "loop",
-      "produced_by": "read_file_content",
+      "produced_by": "download_invoice_file",
       "consumed_by": [
         "extract_invoice_fields"
       ]
     },
-    "raw_extracted_fields": {
+    "extracted_fields": {
       "schema": {
         "type": "object",
         "properties": {
@@ -356,9 +361,9 @@
             "required": false
           },
           "total_amount": {
-            "type": "number",
+            "type": "string",
             "source": "ai_declared",
-            "description": "Total invoice amount",
+            "description": "Total amount on the invoice",
             "required": false
           },
           "currency": {
@@ -368,7 +373,7 @@
             "required": false
           },
           "tax_amount": {
-            "type": "number",
+            "type": "string",
             "source": "ai_declared",
             "description": "Tax or VAT amount",
             "required": false
@@ -379,10 +384,10 @@
       "scope": "loop",
       "produced_by": "extract_invoice_fields",
       "consumed_by": [
-        "augment_with_file_metadata"
+        "enriched_extraction"
       ]
     },
-    "extraction_result": {
+    "enriched_extraction": {
       "schema": {
         "type": "object",
         "source": "ai_declared",
@@ -404,7 +409,7 @@
             "source": "ai_declared"
           },
           "total_amount": {
-            "type": "number",
+            "type": "string",
             "source": "ai_declared"
           },
           "currency": {
@@ -412,21 +417,37 @@
             "source": "ai_declared"
           },
           "tax_amount": {
-            "type": "number",
+            "type": "string",
             "source": "ai_declared"
           },
           "file_name": {
             "type": "string",
-            "source": "ai_declared"
+            "source": "ai_declared",
+            "required": true
           },
-          "file_modified": {
+          "last_modified": {
             "type": "string",
             "source": "ai_declared"
+          },
+          "has_vendor": {
+            "type": "boolean",
+            "source": "ai_declared",
+            "required": true
+          },
+          "has_invoice_number": {
+            "type": "boolean",
+            "source": "ai_declared",
+            "required": true
+          },
+          "has_total": {
+            "type": "boolean",
+            "source": "ai_declared",
+            "required": true
           }
         }
       },
       "scope": "loop",
-      "produced_by": "augment_with_file_metadata",
+      "produced_by": "enriched_extraction",
       "consumed_by": [
         "process_each_invoice"
       ]
@@ -438,24 +459,12 @@
         "source": "inferred"
       },
       "scope": "global",
-      "produced_by": "compute_metrics",
+      "produced_by": "compute_aggregates",
       "consumed_by": [
-        "generate_email_body"
+        "compose_summary_email"
       ]
     },
-    "total_sum": {
-      "schema": {
-        "type": "number",
-        "description": "sum of total_amount",
-        "source": "inferred"
-      },
-      "scope": "global",
-      "produced_by": "compute_metrics",
-      "consumed_by": [
-        "generate_email_body"
-      ]
-    },
-    "invoices_missing_total": {
+    "missing_vendor_invoices": {
       "schema": {
         "type": "array",
         "items": {
@@ -479,7 +488,7 @@
               "source": "ai_declared"
             },
             "total_amount": {
-              "type": "number",
+              "type": "string",
               "source": "ai_declared"
             },
             "currency": {
@@ -487,28 +496,44 @@
               "source": "ai_declared"
             },
             "tax_amount": {
-              "type": "number",
+              "type": "string",
               "source": "ai_declared"
             },
             "file_name": {
               "type": "string",
-              "source": "ai_declared"
+              "source": "ai_declared",
+              "required": true
             },
-            "file_modified": {
+            "last_modified": {
               "type": "string",
               "source": "ai_declared"
+            },
+            "has_vendor": {
+              "type": "boolean",
+              "source": "ai_declared",
+              "required": true
+            },
+            "has_invoice_number": {
+              "type": "boolean",
+              "source": "ai_declared",
+              "required": true
+            },
+            "has_total": {
+              "type": "boolean",
+              "source": "ai_declared",
+              "required": true
             }
           }
         },
         "source": "inferred"
       },
       "scope": "global",
-      "produced_by": "compute_metrics",
+      "produced_by": "compute_aggregates",
       "consumed_by": [
-        "generate_email_body"
+        "compose_summary_email"
       ]
     },
-    "invoices_missing_invoice_number": {
+    "missing_number_invoices": {
       "schema": {
         "type": "array",
         "items": {
@@ -532,7 +557,7 @@
               "source": "ai_declared"
             },
             "total_amount": {
-              "type": "number",
+              "type": "string",
               "source": "ai_declared"
             },
             "currency": {
@@ -540,28 +565,113 @@
               "source": "ai_declared"
             },
             "tax_amount": {
-              "type": "number",
+              "type": "string",
               "source": "ai_declared"
             },
             "file_name": {
               "type": "string",
-              "source": "ai_declared"
+              "source": "ai_declared",
+              "required": true
             },
-            "file_modified": {
+            "last_modified": {
               "type": "string",
               "source": "ai_declared"
+            },
+            "has_vendor": {
+              "type": "boolean",
+              "source": "ai_declared",
+              "required": true
+            },
+            "has_invoice_number": {
+              "type": "boolean",
+              "source": "ai_declared",
+              "required": true
+            },
+            "has_total": {
+              "type": "boolean",
+              "source": "ai_declared",
+              "required": true
             }
           }
         },
         "source": "inferred"
       },
       "scope": "global",
-      "produced_by": "compute_metrics",
+      "produced_by": "compute_aggregates",
       "consumed_by": [
-        "generate_email_body"
+        "compose_summary_email"
       ]
     },
-    "invoice_metrics": {
+    "missing_total_invoices": {
+      "schema": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "source": "ai_declared",
+          "properties": {
+            "vendor_name": {
+              "type": "string",
+              "source": "ai_declared"
+            },
+            "invoice_number": {
+              "type": "string",
+              "source": "ai_declared"
+            },
+            "invoice_date": {
+              "type": "string",
+              "source": "ai_declared"
+            },
+            "due_date": {
+              "type": "string",
+              "source": "ai_declared"
+            },
+            "total_amount": {
+              "type": "string",
+              "source": "ai_declared"
+            },
+            "currency": {
+              "type": "string",
+              "source": "ai_declared"
+            },
+            "tax_amount": {
+              "type": "string",
+              "source": "ai_declared"
+            },
+            "file_name": {
+              "type": "string",
+              "source": "ai_declared",
+              "required": true
+            },
+            "last_modified": {
+              "type": "string",
+              "source": "ai_declared"
+            },
+            "has_vendor": {
+              "type": "boolean",
+              "source": "ai_declared",
+              "required": true
+            },
+            "has_invoice_number": {
+              "type": "boolean",
+              "source": "ai_declared",
+              "required": true
+            },
+            "has_total": {
+              "type": "boolean",
+              "source": "ai_declared",
+              "required": true
+            }
+          }
+        },
+        "source": "inferred"
+      },
+      "scope": "global",
+      "produced_by": "compute_aggregates",
+      "consumed_by": [
+        "compose_summary_email"
+      ]
+    },
+    "invoice_aggregates": {
       "schema": {
         "type": "object",
         "properties": {
@@ -570,12 +680,7 @@
             "description": "Count of invoice_count",
             "source": "inferred"
           },
-          "total_sum": {
-            "type": "number",
-            "description": "sum of total_amount",
-            "source": "inferred"
-          },
-          "invoices_missing_total": {
+          "missing_vendor_invoices": {
             "type": "array",
             "items": {
               "type": "object",
@@ -598,7 +703,7 @@
                   "source": "ai_declared"
                 },
                 "total_amount": {
-                  "type": "number",
+                  "type": "string",
                   "source": "ai_declared"
                 },
                 "currency": {
@@ -606,22 +711,38 @@
                   "source": "ai_declared"
                 },
                 "tax_amount": {
-                  "type": "number",
+                  "type": "string",
                   "source": "ai_declared"
                 },
                 "file_name": {
                   "type": "string",
-                  "source": "ai_declared"
+                  "source": "ai_declared",
+                  "required": true
                 },
-                "file_modified": {
+                "last_modified": {
                   "type": "string",
                   "source": "ai_declared"
+                },
+                "has_vendor": {
+                  "type": "boolean",
+                  "source": "ai_declared",
+                  "required": true
+                },
+                "has_invoice_number": {
+                  "type": "boolean",
+                  "source": "ai_declared",
+                  "required": true
+                },
+                "has_total": {
+                  "type": "boolean",
+                  "source": "ai_declared",
+                  "required": true
                 }
               }
             },
             "source": "inferred"
           },
-          "invoices_missing_invoice_number": {
+          "missing_number_invoices": {
             "type": "array",
             "items": {
               "type": "object",
@@ -644,7 +765,7 @@
                   "source": "ai_declared"
                 },
                 "total_amount": {
-                  "type": "number",
+                  "type": "string",
                   "source": "ai_declared"
                 },
                 "currency": {
@@ -652,16 +773,94 @@
                   "source": "ai_declared"
                 },
                 "tax_amount": {
-                  "type": "number",
+                  "type": "string",
                   "source": "ai_declared"
                 },
                 "file_name": {
                   "type": "string",
-                  "source": "ai_declared"
+                  "source": "ai_declared",
+                  "required": true
                 },
-                "file_modified": {
+                "last_modified": {
                   "type": "string",
                   "source": "ai_declared"
+                },
+                "has_vendor": {
+                  "type": "boolean",
+                  "source": "ai_declared",
+                  "required": true
+                },
+                "has_invoice_number": {
+                  "type": "boolean",
+                  "source": "ai_declared",
+                  "required": true
+                },
+                "has_total": {
+                  "type": "boolean",
+                  "source": "ai_declared",
+                  "required": true
+                }
+              }
+            },
+            "source": "inferred"
+          },
+          "missing_total_invoices": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "source": "ai_declared",
+              "properties": {
+                "vendor_name": {
+                  "type": "string",
+                  "source": "ai_declared"
+                },
+                "invoice_number": {
+                  "type": "string",
+                  "source": "ai_declared"
+                },
+                "invoice_date": {
+                  "type": "string",
+                  "source": "ai_declared"
+                },
+                "due_date": {
+                  "type": "string",
+                  "source": "ai_declared"
+                },
+                "total_amount": {
+                  "type": "string",
+                  "source": "ai_declared"
+                },
+                "currency": {
+                  "type": "string",
+                  "source": "ai_declared"
+                },
+                "tax_amount": {
+                  "type": "string",
+                  "source": "ai_declared"
+                },
+                "file_name": {
+                  "type": "string",
+                  "source": "ai_declared",
+                  "required": true
+                },
+                "last_modified": {
+                  "type": "string",
+                  "source": "ai_declared"
+                },
+                "has_vendor": {
+                  "type": "boolean",
+                  "source": "ai_declared",
+                  "required": true
+                },
+                "has_invoice_number": {
+                  "type": "boolean",
+                  "source": "ai_declared",
+                  "required": true
+                },
+                "has_total": {
+                  "type": "boolean",
+                  "source": "ai_declared",
+                  "required": true
                 }
               }
             },
@@ -670,8 +869,8 @@
         },
         "source": "inferred"
       },
-      "scope": "global",
-      "produced_by": "compute_metrics"
+      "scope": "loop",
+      "produced_by": "compute_aggregates"
     },
     "email_content": {
       "schema": {
@@ -690,10 +889,33 @@
         },
         "source": "ai_declared"
       },
-      "scope": "global",
-      "produced_by": "generate_email_body",
+      "scope": "loop",
+      "produced_by": "compose_summary_email",
       "consumed_by": [
         "send_summary_email"
+      ]
+    },
+    "no_invoices_email_content": {
+      "schema": {
+        "type": "object",
+        "properties": {
+          "subject": {
+            "type": "string",
+            "source": "ai_declared",
+            "description": "Email subject line"
+          },
+          "html_body": {
+            "type": "string",
+            "source": "ai_declared",
+            "description": "HTML email body stating no invoices found"
+          }
+        },
+        "source": "ai_declared"
+      },
+      "scope": "loop",
+      "produced_by": "compose_no_invoices_email",
+      "consumed_by": [
+        "send_no_invoices_email"
       ]
     }
   }

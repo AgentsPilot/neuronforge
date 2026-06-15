@@ -14,6 +14,7 @@ import { VariableStore } from './variable-store'
 import { DSLSimulator } from './dsl-simulator'
 import { Validator } from './validator'
 import { writeReport } from './report-generator'
+import { reconcileInputsToDsl } from '../../lib/pilot/reconcileInputsToDsl'
 
 async function main() {
   // --input-dir controls both where input files are read from and where the report is written.
@@ -31,9 +32,15 @@ async function main() {
   console.log('\n📁 Loading input files...')
   const { dslSteps, workflowConfig, dataSchema } = loadInputFiles(outputDir)
 
+  // Step 1b: Mirror WorkflowPilot.execute() — reconcile step-tagged namespaced
+  // inputs onto the DSL's `{{input.X}}` references (WP-57 2B Part 2) so static
+  // validation reflects the same resolved inputs the runtime sees. Fills missing
+  // keys only, so a genuinely-absent input still surfaces as unresolved here.
+  const reconciledConfig = reconcileInputsToDsl(dslSteps as any, workflowConfig)
+
   // Step 2: Initialize variable store with workflow config
   console.log('\n⚙️  Initializing variable store...')
-  const store = new VariableStore(workflowConfig)
+  const store = new VariableStore(reconciledConfig)
   console.log(`   Config keys: ${store.getConfigKeys().join(', ')}`)
 
   // Step 3: Run simulation
@@ -44,7 +51,7 @@ async function main() {
   // Step 4: Validate
   console.log('\n🔍 Running validation checks...')
   const validator = new Validator()
-  const validationReport = validator.validate(dslSteps, store, simulationResult.stepLog, workflowConfig)
+  const validationReport = validator.validate(dslSteps, store, simulationResult.stepLog, reconciledConfig)
 
   // Step 5: Write report
   const reportPath = writeReport(simulationResult, validationReport, outputDir)

@@ -29,6 +29,7 @@ import type {
 } from './types';
 import { ExecutionError, ValidationError } from './types';
 import { WorkflowParser } from './WorkflowParser';
+import { reconcileInputsToDsl } from './reconcileInputsToDsl';
 import { ExecutionContext } from './ExecutionContext';
 import { StateManager } from './StateManager';
 import { tokensToPilotCredits } from '@/lib/utils/pricingConfig';
@@ -353,6 +354,16 @@ export class WorkflowPilot {
         { agent_id: agent.id }
       );
     }
+
+    // WP-57 2B Part 2 — execution-time input reconciliation.
+    // The DSL reads `{{input.X}}` (e.g. `folder_id`), but a user-supplied value
+    // may arrive under a step-tagged namespaced key (`{plugin}__{capability}__{param}`,
+    // e.g. `google-drive__storage/list__folder_link`) that never reaches `X`.
+    // Route those step-tagged values onto the matching unmet references here —
+    // the single chokepoint shared by run-agent / cron / Phase E. Fills missing
+    // keys only (backward-safe); the Drive executor's extractDriveId (2B Part 1)
+    // then normalises any routed URL to a bare ID.
+    inputValues = reconcileInputsToDsl(workflowSteps, inputValues);
 
     const executionPlan = this.parser.parse(workflowSteps);
 

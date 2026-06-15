@@ -2,7 +2,7 @@
   {
     "step_id": "step1",
     "type": "action",
-    "description": "List all files in the specified Google Drive invoice folder",
+    "description": "List all files in the specified Google Drive folder (non-recursive)",
     "plugin": "google-drive",
     "output_variable": "folder_files",
     "output_schema": {
@@ -96,9 +96,10 @@
     "id": "step1",
     "params": {
       "folder_id": "{{input.folder_id}}",
-      "max_results": 100
+      "max_results": "{{input.max_files}}",
+      "order_by": "name"
     },
-    "name": "List all files in the specified Google Drive invoice folder",
+    "name": "List all files in the specified Google Drive folder (non-recursive)",
     "action": "list_files"
   },
   {
@@ -106,11 +107,11 @@
     "type": "transform",
     "operation": "filter",
     "input": "{{folder_files.files}}",
-    "description": "Filter to only PDF and image files (JPG, PNG) that are likely invoices",
+    "description": "Filter to only PDF and image files (common invoice formats)",
     "config": {
       "type": "filter",
       "input": "folder_files.files",
-      "custom_code": "Keep only files with PDF or image MIME types as candidate invoices",
+      "custom_code": "Keep only files with PDF or image MIME types (application/pdf, image/jpeg, image/png)",
       "condition": {
         "operator": "in",
         "value": [
@@ -182,240 +183,390 @@
       }
     },
     "id": "step2",
-    "_on_empty": "throw",
-    "name": "Filter to only PDF and image files (JPG, PNG) that are likely invoices"
+    "_on_empty": "warn",
+    "name": "Filter to only PDF and image files (common invoice formats)"
   },
   {
     "step_id": "step3",
-    "type": "scatter_gather",
-    "description": "Loop over invoice_files",
-    "scatter": {
-      "input": "{{invoice_files}}",
-      "steps": [
-        {
-          "step_id": "step4",
-          "type": "action",
-          "description": "Read the file content from Google Drive for extraction",
-          "plugin": "google-drive",
-          "output_variable": "file_content",
-          "output_schema": {
-            "type": "object",
-            "source": "plugin",
-            "properties": {
-              "file_id": {
-                "type": "string",
+    "type": "conditional",
+    "description": "Conditional: node_2",
+    "condition": {
+      "conditionType": "simple",
+      "field": "invoice_files.length",
+      "operator": "greater_than",
+      "value": 0
+    },
+    "steps": [
+      {
+        "step_id": "step4",
+        "type": "scatter_gather",
+        "description": "Loop over invoice_files",
+        "scatter": {
+          "input": "{{invoice_files}}",
+          "steps": [
+            {
+              "step_id": "step5",
+              "type": "action",
+              "description": "Download the raw binary content of the invoice file from Google Drive",
+              "plugin": "google-drive",
+              "output_variable": "downloaded_file",
+              "output_schema": {
+                "type": "object",
                 "source": "plugin",
-                "description": "ID of the file that was read"
+                "semantic_type": "file_attachment",
+                "properties": {
+                  "file_id": {
+                    "type": "string",
+                    "source": "plugin",
+                    "description": "ID of the downloaded file",
+                    "required": true
+                  },
+                  "filename": {
+                    "type": "string",
+                    "source": "plugin",
+                    "description": "Name of the file"
+                  },
+                  "mimeType": {
+                    "type": "string",
+                    "source": "plugin",
+                    "description": "MIME type of the file (e.g. application/pdf, image/png)",
+                    "required": true
+                  },
+                  "content": {
+                    "type": "string",
+                    "source": "plugin",
+                    "description": "Base64-encoded raw file bytes — pass directly to document-extractor.file_content (which reads a file object's 'content' field)",
+                    "required": true
+                  },
+                  "file_size": {
+                    "type": "string",
+                    "source": "plugin",
+                    "description": "Human-readable file size (e.g., '1.5 MB')"
+                  }
+                }
               },
-              "file_name": {
-                "type": "string",
-                "source": "plugin",
-                "description": "Name of the file"
+              "id": "step5",
+              "params": {
+                "file_id": "{{invoice_file.id}}"
               },
-              "file_size": {
-                "type": "string",
-                "source": "plugin",
-                "description": "Human-readable file size (e.g., '1.5 MB')"
+              "name": "Download the raw binary content of the invoice file from Google Drive",
+              "action": "download_file"
+            },
+            {
+              "step_id": "step6",
+              "type": "action",
+              "description": "Extract structured invoice fields from the downloaded document (vendor, invoice number, dates, totals, currency, tax)",
+              "plugin": "document-extractor",
+              "output_variable": "extracted_fields",
+              "output_schema": {
+                "type": "object",
+                "properties": {
+                  "vendor_name": {
+                    "type": "string",
+                    "source": "ai_declared",
+                    "description": "Vendor or supplier name on the invoice",
+                    "required": false
+                  },
+                  "invoice_number": {
+                    "type": "string",
+                    "source": "ai_declared",
+                    "description": "Invoice number or reference ID",
+                    "required": false
+                  },
+                  "invoice_date": {
+                    "type": "string",
+                    "source": "ai_declared",
+                    "description": "Date the invoice was issued",
+                    "required": false
+                  },
+                  "due_date": {
+                    "type": "string",
+                    "source": "ai_declared",
+                    "description": "Payment due date",
+                    "required": false
+                  },
+                  "total_amount": {
+                    "type": "string",
+                    "source": "ai_declared",
+                    "description": "Total amount on the invoice",
+                    "required": false
+                  },
+                  "currency": {
+                    "type": "string",
+                    "source": "ai_declared",
+                    "description": "Currency code (e.g., USD, EUR, ILS)",
+                    "required": false
+                  },
+                  "tax_amount": {
+                    "type": "string",
+                    "source": "ai_declared",
+                    "description": "Tax or VAT amount",
+                    "required": false
+                  }
+                },
+                "source": "ai_declared"
               },
-              "mime_type": {
-                "type": "string",
-                "source": "plugin",
-                "description": "MIME type of the file"
+              "id": "step6",
+              "params": {
+                "file_content": "{{downloaded_file.content}}",
+                "fields": [
+                  {
+                    "name": "vendor_name",
+                    "type": "string",
+                    "required": false
+                  },
+                  {
+                    "name": "invoice_number",
+                    "type": "string",
+                    "required": false
+                  },
+                  {
+                    "name": "invoice_date",
+                    "type": "date",
+                    "required": false
+                  },
+                  {
+                    "name": "due_date",
+                    "type": "date",
+                    "required": false
+                  },
+                  {
+                    "name": "total_amount",
+                    "type": "currency",
+                    "required": false
+                  },
+                  {
+                    "name": "currency",
+                    "type": "string",
+                    "required": false
+                  },
+                  {
+                    "name": "tax_amount",
+                    "type": "currency",
+                    "required": false
+                  }
+                ],
+                "deterministic": true
               },
-              "content": {
-                "type": "string",
-                "source": "plugin",
-                "description": "Text content extracted from the file"
+              "name": "Extract structured invoice fields from the downloaded document (vendor, invoice number, dates, totals, currency, tax)",
+              "action": "extract_structured_data"
+            },
+            {
+              "step_id": "step7",
+              "type": "transform",
+              "operation": "with_fields",
+              "input": "{{extracted_fields}}",
+              "description": "Combine extracted invoice fields with file metadata (file name, modified time) and generate notes for missing fields",
+              "config": {
+                "type": "with_fields",
+                "input": "extracted_fields",
+                "output_schema": {
+                  "type": "object",
+                  "properties": {
+                    "vendor_name": {
+                      "type": "string"
+                    },
+                    "invoice_number": {
+                      "type": "string"
+                    },
+                    "invoice_date": {
+                      "type": "string"
+                    },
+                    "due_date": {
+                      "type": "string"
+                    },
+                    "total_amount": {
+                      "type": "string"
+                    },
+                    "currency": {
+                      "type": "string"
+                    },
+                    "tax_amount": {
+                      "type": "string"
+                    },
+                    "file_name": {
+                      "type": "string"
+                    },
+                    "last_modified": {
+                      "type": "string"
+                    },
+                    "has_vendor": {
+                      "type": "boolean"
+                    },
+                    "has_invoice_number": {
+                      "type": "boolean"
+                    },
+                    "has_total": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "file_name",
+                    "has_vendor",
+                    "has_invoice_number",
+                    "has_total"
+                  ]
+                },
+                "fields": [
+                  {
+                    "name": "file_name",
+                    "expression": "{{invoice_file.name}}"
+                  },
+                  {
+                    "name": "last_modified",
+                    "expression": "{{invoice_file.modifiedTime}}"
+                  },
+                  {
+                    "name": "has_vendor",
+                    "expression": {
+                      "kind": "null_check",
+                      "invert": true,
+                      "value": {
+                        "kind": "ref",
+                        "ref": "item",
+                        "field": "vendor_name"
+                      }
+                    }
+                  },
+                  {
+                    "name": "has_invoice_number",
+                    "expression": {
+                      "kind": "null_check",
+                      "invert": true,
+                      "value": {
+                        "kind": "ref",
+                        "ref": "item",
+                        "field": "invoice_number"
+                      }
+                    }
+                  },
+                  {
+                    "name": "has_total",
+                    "expression": {
+                      "kind": "null_check",
+                      "invert": true,
+                      "value": {
+                        "kind": "ref",
+                        "ref": "item",
+                        "field": "total_amount"
+                      }
+                    }
+                  }
+                ]
               },
-              "content_length": {
-                "type": "number",
-                "source": "plugin",
-                "description": "Length of the extracted content in characters"
+              "output_variable": "enriched_extraction",
+              "output_schema": {
+                "type": "object",
+                "source": "ai_declared",
+                "properties": {
+                  "vendor_name": {
+                    "type": "string",
+                    "source": "ai_declared"
+                  },
+                  "invoice_number": {
+                    "type": "string",
+                    "source": "ai_declared"
+                  },
+                  "invoice_date": {
+                    "type": "string",
+                    "source": "ai_declared"
+                  },
+                  "due_date": {
+                    "type": "string",
+                    "source": "ai_declared"
+                  },
+                  "total_amount": {
+                    "type": "string",
+                    "source": "ai_declared"
+                  },
+                  "currency": {
+                    "type": "string",
+                    "source": "ai_declared"
+                  },
+                  "tax_amount": {
+                    "type": "string",
+                    "source": "ai_declared"
+                  },
+                  "file_name": {
+                    "type": "string",
+                    "source": "ai_declared",
+                    "required": true
+                  },
+                  "last_modified": {
+                    "type": "string",
+                    "source": "ai_declared"
+                  },
+                  "has_vendor": {
+                    "type": "boolean",
+                    "source": "ai_declared",
+                    "required": true
+                  },
+                  "has_invoice_number": {
+                    "type": "boolean",
+                    "source": "ai_declared",
+                    "required": true
+                  },
+                  "has_total": {
+                    "type": "boolean",
+                    "source": "ai_declared",
+                    "required": true
+                  }
+                }
               },
-              "export_format": {
-                "type": "string",
-                "source": "plugin",
-                "description": "Format the file was exported as (text/plain, text/html, or 'original')"
-              },
-              "read_at": {
-                "type": "string",
-                "source": "plugin",
-                "description": "Timestamp when file was read (ISO 8601)"
-              }
+              "id": "step7",
+              "name": "Combine extracted invoice fields with file metadata (file name, modified time) and generate notes for missing fields"
             }
-          },
-          "id": "step4",
-          "params": {
-            "file_id": "{{invoice_file.id}}",
-            "export_format": "application/pdf"
-          },
-          "name": "Read the file content from Google Drive for extraction",
-          "action": "read_file_content"
+          ],
+          "itemVariable": "invoice_file"
         },
-        {
-          "step_id": "step5",
-          "type": "ai_processing",
-          "input": "{{file_content}}",
-          "prompt": "Extract the following structured fields from the input text. For each email/message, read the subject, snippet, and body, then extract: vendor_name (string — Vendor or supplier name on the invoice); invoice_number (string — Invoice number or reference ID); invoice_date (date — Date the invoice was issued); due_date (date — Payment due date); total_amount (number — Total invoice amount); currency (string — Currency code (e.g., USD, EUR, ILS)); tax_amount (number — Tax or VAT amount). Return a JSON object with these fields. If a field cannot be found in the text, set its value to null.",
-          "description": "Extract structured invoice fields from the file content (vendor, invoice number, dates, totals, currency, tax)",
-          "config": {
-            "ai_type": "llm_extract",
-            "output_schema": {
-              "fields": [
-                {
-                  "name": "vendor_name",
-                  "type": "string",
-                  "description": "Vendor or supplier name on the invoice",
-                  "required": false
-                },
-                {
-                  "name": "invoice_number",
-                  "type": "string",
-                  "description": "Invoice number or reference ID",
-                  "required": false
-                },
-                {
-                  "name": "invoice_date",
-                  "type": "date",
-                  "description": "Date the invoice was issued",
-                  "required": false
-                },
-                {
-                  "name": "due_date",
-                  "type": "date",
-                  "description": "Payment due date",
-                  "required": false
-                },
-                {
-                  "name": "total_amount",
-                  "type": "number",
-                  "description": "Total invoice amount",
-                  "required": false
-                },
-                {
-                  "name": "currency",
-                  "type": "string",
-                  "description": "Currency code (e.g., USD, EUR, ILS)",
-                  "required": false
-                },
-                {
-                  "name": "tax_amount",
-                  "type": "number",
-                  "description": "Tax or VAT amount",
-                  "required": false
-                }
-              ]
-            },
-            "type": "llm_extract",
-            "instruction": "Extract the following structured fields from the input text. For each email/message, read the subject, snippet, and body, then extract: vendor_name (string — Vendor or supplier name on the invoice); invoice_number (string — Invoice number or reference ID); invoice_date (date — Date the invoice was issued); due_date (date — Payment due date); total_amount (number — Total invoice amount); currency (string — Currency code (e.g., USD, EUR, ILS)); tax_amount (number — Tax or VAT amount). Return a JSON object with these fields. If a field cannot be found in the text, set its value to null.",
-            "input": "{{file_content}}"
-          },
-          "output_variable": "raw_extracted_fields",
-          "output_schema": {
-            "type": "object",
-            "properties": {
-              "vendor_name": {
-                "type": "string",
-                "source": "ai_declared",
-                "description": "Vendor or supplier name on the invoice",
-                "required": false
-              },
-              "invoice_number": {
-                "type": "string",
-                "source": "ai_declared",
-                "description": "Invoice number or reference ID",
-                "required": false
-              },
-              "invoice_date": {
-                "type": "string",
-                "source": "ai_declared",
-                "description": "Date the invoice was issued",
-                "required": false
-              },
-              "due_date": {
-                "type": "string",
-                "source": "ai_declared",
-                "description": "Payment due date",
-                "required": false
-              },
-              "total_amount": {
-                "type": "number",
-                "source": "ai_declared",
-                "description": "Total invoice amount",
-                "required": false
-              },
-              "currency": {
-                "type": "string",
-                "source": "ai_declared",
-                "description": "Currency code (e.g., USD, EUR, ILS)",
-                "required": false
-              },
-              "tax_amount": {
-                "type": "number",
-                "source": "ai_declared",
-                "description": "Tax or VAT amount",
-                "required": false
-              }
-            },
-            "source": "ai_declared"
-          },
-          "id": "step5",
-          "name": "Extract structured invoice fields from the file content (vendor, invoice number, dates, totals, currency, tax)"
+        "gather": {
+          "operation": "collect"
         },
-        {
-          "step_id": "step6",
-          "type": "transform",
-          "operation": "with_fields",
-          "input": "{{raw_extracted_fields}}",
-          "description": "Augment extracted fields with file name and modification date from the Drive file metadata",
-          "config": {
-            "type": "with_fields",
-            "input": "raw_extracted_fields",
-            "output_schema": {
-              "type": "object",
-              "properties": {
-                "vendor_name": {
-                  "type": "string"
-                },
-                "invoice_number": {
-                  "type": "string"
-                },
-                "invoice_date": {
-                  "type": "string"
-                },
-                "due_date": {
-                  "type": "string"
-                },
-                "total_amount": {
-                  "type": "number"
-                },
-                "currency": {
-                  "type": "string"
-                },
-                "tax_amount": {
-                  "type": "number"
-                },
-                "file_name": {
-                  "type": "string"
-                },
-                "file_modified": {
-                  "type": "string"
-                }
-              }
-            },
-            "fields": [
-              {
-                "name": "file_name",
-                "expression": "{{invoice_file.name}}"
-              },
-              {
-                "name": "file_modified",
-                "expression": "{{invoice_file.modifiedTime}}"
-              }
-            ]
-          },
-          "output_variable": "extraction_result",
-          "output_schema": {
+        "output_variable": "extraction_results",
+        "id": "step4",
+        "name": "Loop over invoice_files"
+      },
+      {
+        "step_id": "step8",
+        "type": "transform",
+        "operation": "reduce",
+        "input": "{{extraction_results}}",
+        "description": "Count items for invoice_count",
+        "config": {
+          "type": "reduce",
+          "input": "extraction_results",
+          "reduce_operation": "count",
+          "reducer": "count"
+        },
+        "output_variable": "invoice_count",
+        "output_schema": {
+          "type": "number",
+          "description": "Count of invoice_count",
+          "source": "inferred"
+        },
+        "id": "step8",
+        "name": "Count items for invoice_count"
+      },
+      {
+        "step_id": "step9",
+        "type": "transform",
+        "operation": "filter",
+        "input": "{{extraction_results}}",
+        "description": "Filter subset for missing_vendor_invoices",
+        "config": {
+          "type": "filter",
+          "input": "extraction_results",
+          "condition": {
+            "operator": "eq",
+            "value": false,
+            "field": "item.has_vendor",
+            "conditionType": "simple"
+          }
+        },
+        "output_variable": "missing_vendor_invoices",
+        "output_schema": {
+          "type": "array",
+          "items": {
             "type": "object",
             "source": "ai_declared",
             "properties": {
@@ -436,7 +587,7 @@
                 "source": "ai_declared"
               },
               "total_amount": {
-                "type": "number",
+                "type": "string",
                 "source": "ai_declared"
               },
               "currency": {
@@ -444,326 +595,409 @@
                 "source": "ai_declared"
               },
               "tax_amount": {
-                "type": "number",
+                "type": "string",
                 "source": "ai_declared"
               },
               "file_name": {
                 "type": "string",
-                "source": "ai_declared"
+                "source": "ai_declared",
+                "required": true
               },
-              "file_modified": {
+              "last_modified": {
                 "type": "string",
                 "source": "ai_declared"
+              },
+              "has_vendor": {
+                "type": "boolean",
+                "source": "ai_declared",
+                "required": true
+              },
+              "has_invoice_number": {
+                "type": "boolean",
+                "source": "ai_declared",
+                "required": true
+              },
+              "has_total": {
+                "type": "boolean",
+                "source": "ai_declared",
+                "required": true
               }
             }
           },
-          "id": "step6",
-          "name": "Augment extracted fields with file name and modification date from the Drive file metadata"
-        }
-      ],
-      "itemVariable": "invoice_file"
-    },
-    "gather": {
-      "operation": "collect"
-    },
-    "output_variable": "extracted_invoices",
+          "source": "inferred"
+        },
+        "id": "step9",
+        "_on_empty": "warn",
+        "name": "Filter subset for missing_vendor_invoices"
+      },
+      {
+        "step_id": "step10",
+        "type": "transform",
+        "operation": "filter",
+        "input": "{{extraction_results}}",
+        "description": "Filter subset for missing_number_invoices",
+        "config": {
+          "type": "filter",
+          "input": "extraction_results",
+          "condition": {
+            "operator": "eq",
+            "value": false,
+            "field": "item.has_invoice_number",
+            "conditionType": "simple"
+          }
+        },
+        "output_variable": "missing_number_invoices",
+        "output_schema": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "source": "ai_declared",
+            "properties": {
+              "vendor_name": {
+                "type": "string",
+                "source": "ai_declared"
+              },
+              "invoice_number": {
+                "type": "string",
+                "source": "ai_declared"
+              },
+              "invoice_date": {
+                "type": "string",
+                "source": "ai_declared"
+              },
+              "due_date": {
+                "type": "string",
+                "source": "ai_declared"
+              },
+              "total_amount": {
+                "type": "string",
+                "source": "ai_declared"
+              },
+              "currency": {
+                "type": "string",
+                "source": "ai_declared"
+              },
+              "tax_amount": {
+                "type": "string",
+                "source": "ai_declared"
+              },
+              "file_name": {
+                "type": "string",
+                "source": "ai_declared",
+                "required": true
+              },
+              "last_modified": {
+                "type": "string",
+                "source": "ai_declared"
+              },
+              "has_vendor": {
+                "type": "boolean",
+                "source": "ai_declared",
+                "required": true
+              },
+              "has_invoice_number": {
+                "type": "boolean",
+                "source": "ai_declared",
+                "required": true
+              },
+              "has_total": {
+                "type": "boolean",
+                "source": "ai_declared",
+                "required": true
+              }
+            }
+          },
+          "source": "inferred"
+        },
+        "id": "step10",
+        "_on_empty": "warn",
+        "name": "Filter subset for missing_number_invoices"
+      },
+      {
+        "step_id": "step11",
+        "type": "transform",
+        "operation": "filter",
+        "input": "{{extraction_results}}",
+        "description": "Filter subset for missing_total_invoices",
+        "config": {
+          "type": "filter",
+          "input": "extraction_results",
+          "condition": {
+            "operator": "eq",
+            "value": false,
+            "field": "item.has_total",
+            "conditionType": "simple"
+          }
+        },
+        "output_variable": "missing_total_invoices",
+        "output_schema": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "source": "ai_declared",
+            "properties": {
+              "vendor_name": {
+                "type": "string",
+                "source": "ai_declared"
+              },
+              "invoice_number": {
+                "type": "string",
+                "source": "ai_declared"
+              },
+              "invoice_date": {
+                "type": "string",
+                "source": "ai_declared"
+              },
+              "due_date": {
+                "type": "string",
+                "source": "ai_declared"
+              },
+              "total_amount": {
+                "type": "string",
+                "source": "ai_declared"
+              },
+              "currency": {
+                "type": "string",
+                "source": "ai_declared"
+              },
+              "tax_amount": {
+                "type": "string",
+                "source": "ai_declared"
+              },
+              "file_name": {
+                "type": "string",
+                "source": "ai_declared",
+                "required": true
+              },
+              "last_modified": {
+                "type": "string",
+                "source": "ai_declared"
+              },
+              "has_vendor": {
+                "type": "boolean",
+                "source": "ai_declared",
+                "required": true
+              },
+              "has_invoice_number": {
+                "type": "boolean",
+                "source": "ai_declared",
+                "required": true
+              },
+              "has_total": {
+                "type": "boolean",
+                "source": "ai_declared",
+                "required": true
+              }
+            }
+          },
+          "source": "inferred"
+        },
+        "id": "step11",
+        "_on_empty": "warn",
+        "name": "Filter subset for missing_total_invoices"
+      },
+      {
+        "step_id": "step12",
+        "type": "ai_processing",
+        "input": "{{extraction_results}}",
+        "prompt": "Compose a professional HTML email body for an invoice summary. Use the data from extraction_results (array of invoice objects) and the aggregate values (invoice_count, missing_vendor_invoices, missing_number_invoices, missing_total_invoices). Structure the email as follows:\n\n1. HEADER: A short paragraph stating 'Invoice Summary' with the folder link from config and the total number of invoices found (invoice_count).\n\n2. TABLE: An HTML <table> with borders, header row background (#4472C4 white text), and alternating row shading. Columns: File Name, Vendor, Invoice #, Invoice Date, Due Date, Total, Currency, Notes. For each invoice in extraction_results, populate one row. If a field is null/empty, leave the cell blank and add a note in the Notes column (e.g., 'Missing vendor name', 'Missing invoice number', 'Missing total'). Multiple missing fields should be comma-separated in Notes.\n\n3. TOTALS SECTION: Below the table, show: (a) Total invoices processed, (b) Sum of all available total_amount values (skip nulls; note how many had missing totals), (c) A short list of exceptions — file names with missing key fields (vendor, invoice number, or total).\n\nUse inline CSS for styling. Keep the email clean and professional.",
+        "description": "Compose an HTML email body with a per-invoice table, roll-up totals, and exceptions list",
+        "config": {
+          "ai_type": "generate",
+          "output_schema": {
+            "type": "object",
+            "properties": {
+              "subject": {
+                "type": "string",
+                "description": "Email subject line"
+              },
+              "html_body": {
+                "type": "string",
+                "description": "Complete HTML email body with styled table and totals"
+              }
+            },
+            "required": [
+              "subject",
+              "html_body"
+            ]
+          },
+          "type": "generate",
+          "instruction": "Compose a professional HTML email body for an invoice summary. Use the data from extraction_results (array of invoice objects) and the aggregate values (invoice_count, missing_vendor_invoices, missing_number_invoices, missing_total_invoices). Structure the email as follows:\n\n1. HEADER: A short paragraph stating 'Invoice Summary' with the folder link from config and the total number of invoices found (invoice_count).\n\n2. TABLE: An HTML <table> with borders, header row background (#4472C4 white text), and alternating row shading. Columns: File Name, Vendor, Invoice #, Invoice Date, Due Date, Total, Currency, Notes. For each invoice in extraction_results, populate one row. If a field is null/empty, leave the cell blank and add a note in the Notes column (e.g., 'Missing vendor name', 'Missing invoice number', 'Missing total'). Multiple missing fields should be comma-separated in Notes.\n\n3. TOTALS SECTION: Below the table, show: (a) Total invoices processed, (b) Sum of all available total_amount values (skip nulls; note how many had missing totals), (c) A short list of exceptions — file names with missing key fields (vendor, invoice number, or total).\n\nUse inline CSS for styling. Keep the email clean and professional.",
+          "input": "{{extraction_results}}"
+        },
+        "output_variable": "email_content",
+        "output_schema": {
+          "type": "object",
+          "properties": {
+            "subject": {
+              "type": "string",
+              "source": "ai_declared",
+              "description": "Email subject line"
+            },
+            "html_body": {
+              "type": "string",
+              "source": "ai_declared",
+              "description": "Complete HTML email body with styled table and totals"
+            }
+          },
+          "source": "ai_declared"
+        },
+        "input_schema": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "source": "ai_declared",
+            "properties": {
+              "vendor_name": {
+                "type": "string",
+                "source": "ai_declared"
+              },
+              "invoice_number": {
+                "type": "string",
+                "source": "ai_declared"
+              },
+              "invoice_date": {
+                "type": "string",
+                "source": "ai_declared"
+              },
+              "due_date": {
+                "type": "string",
+                "source": "ai_declared"
+              },
+              "total_amount": {
+                "type": "string",
+                "source": "ai_declared"
+              },
+              "currency": {
+                "type": "string",
+                "source": "ai_declared"
+              },
+              "tax_amount": {
+                "type": "string",
+                "source": "ai_declared"
+              },
+              "file_name": {
+                "type": "string",
+                "source": "ai_declared",
+                "required": true
+              },
+              "last_modified": {
+                "type": "string",
+                "source": "ai_declared"
+              },
+              "has_vendor": {
+                "type": "boolean",
+                "source": "ai_declared",
+                "required": true
+              },
+              "has_invoice_number": {
+                "type": "boolean",
+                "source": "ai_declared",
+                "required": true
+              },
+              "has_total": {
+                "type": "boolean",
+                "source": "ai_declared",
+                "required": true
+              }
+            }
+          },
+          "source": "inferred"
+        },
+        "id": "step12",
+        "name": "Compose an HTML email body with a per-invoice table, roll-up totals, and exceptions list"
+      },
+      {
+        "step_id": "step13",
+        "type": "action",
+        "description": "Send the invoice summary HTML email via Gmail to the user",
+        "plugin": "google-mail",
+        "id": "step13",
+        "params": {
+          "recipients": {
+            "to": [
+              "{{input.recipient_email}}"
+            ]
+          },
+          "content": {
+            "subject": "{{input.email_subject}}",
+            "html_body": "{{email_content.html_body}}"
+          }
+        },
+        "name": "Send the invoice summary HTML email via Gmail to the user",
+        "action": "send_email"
+      }
+    ],
+    "else_steps": [
+      {
+        "step_id": "step14",
+        "type": "ai_processing",
+        "prompt": "Compose a short, professional HTML email body informing the recipient that no invoice files (PDF or image) were found in the specified Google Drive folder. Include the folder link from config so the user can check the folder directly. Suggest they verify the folder contains PDF or image invoice files.",
+        "description": "Compose an HTML email stating no invoices were found in the folder",
+        "config": {
+          "ai_type": "generate",
+          "output_schema": {
+            "type": "object",
+            "properties": {
+              "subject": {
+                "type": "string",
+                "description": "Email subject line"
+              },
+              "html_body": {
+                "type": "string",
+                "description": "HTML email body stating no invoices found"
+              }
+            },
+            "required": [
+              "subject",
+              "html_body"
+            ]
+          },
+          "type": "generate",
+          "instruction": "Compose a short, professional HTML email body informing the recipient that no invoice files (PDF or image) were found in the specified Google Drive folder. Include the folder link from config so the user can check the folder directly. Suggest they verify the folder contains PDF or image invoice files."
+        },
+        "output_variable": "no_invoices_email_content",
+        "output_schema": {
+          "type": "object",
+          "properties": {
+            "subject": {
+              "type": "string",
+              "source": "ai_declared",
+              "description": "Email subject line"
+            },
+            "html_body": {
+              "type": "string",
+              "source": "ai_declared",
+              "description": "HTML email body stating no invoices found"
+            }
+          },
+          "source": "ai_declared"
+        },
+        "id": "step14",
+        "name": "Compose an HTML email stating no invoices were found in the folder"
+      },
+      {
+        "step_id": "step15",
+        "type": "action",
+        "description": "Send email notifying user that no invoices were found",
+        "plugin": "google-mail",
+        "id": "step15",
+        "params": {
+          "recipients": {
+            "to": [
+              "{{input.recipient_email}}"
+            ]
+          },
+          "content": {
+            "subject": "Invoice summary from Google Drive folder — No invoices found",
+            "html_body": "{{no_invoices_email_content.html_body}}"
+          }
+        },
+        "name": "Send email notifying user that no invoices were found",
+        "action": "send_email"
+      }
+    ],
     "id": "step3",
-    "name": "Loop over invoice_files"
-  },
-  {
-    "step_id": "step7",
-    "type": "transform",
-    "operation": "reduce",
-    "input": "{{extracted_invoices}}",
-    "description": "Count items for invoice_count",
-    "config": {
-      "type": "reduce",
-      "input": "extracted_invoices",
-      "reduce_operation": "count",
-      "reducer": "count"
-    },
-    "output_variable": "invoice_count",
-    "output_schema": {
-      "type": "number",
-      "description": "Count of invoice_count",
-      "source": "inferred"
-    },
-    "id": "step7",
-    "name": "Count items for invoice_count"
-  },
-  {
-    "step_id": "step8",
-    "type": "transform",
-    "operation": "reduce",
-    "input": "{{extracted_invoices}}",
-    "description": "Aggregate sum for total_sum",
-    "config": {
-      "type": "reduce",
-      "input": "extracted_invoices",
-      "reduce_operation": "sum",
-      "reducer": "sum",
-      "field": "total_amount"
-    },
-    "output_variable": "total_sum",
-    "output_schema": {
-      "type": "number",
-      "description": "sum of total_amount",
-      "source": "inferred"
-    },
-    "id": "step8",
-    "name": "Aggregate sum for total_sum"
-  },
-  {
-    "step_id": "step9",
-    "type": "transform",
-    "operation": "filter",
-    "input": "{{extracted_invoices}}",
-    "description": "Filter subset for invoices_missing_total",
-    "config": {
-      "type": "filter",
-      "input": "extracted_invoices",
-      "condition": {
-        "conditionType": "complex_not",
-        "condition": {
-          "operator": "exists",
-          "field": "item.total_amount",
-          "conditionType": "simple"
-        }
-      }
-    },
-    "output_variable": "invoices_missing_total",
-    "output_schema": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "source": "ai_declared",
-        "properties": {
-          "vendor_name": {
-            "type": "string",
-            "source": "ai_declared"
-          },
-          "invoice_number": {
-            "type": "string",
-            "source": "ai_declared"
-          },
-          "invoice_date": {
-            "type": "string",
-            "source": "ai_declared"
-          },
-          "due_date": {
-            "type": "string",
-            "source": "ai_declared"
-          },
-          "total_amount": {
-            "type": "number",
-            "source": "ai_declared"
-          },
-          "currency": {
-            "type": "string",
-            "source": "ai_declared"
-          },
-          "tax_amount": {
-            "type": "number",
-            "source": "ai_declared"
-          },
-          "file_name": {
-            "type": "string",
-            "source": "ai_declared"
-          },
-          "file_modified": {
-            "type": "string",
-            "source": "ai_declared"
-          }
-        }
-      },
-      "source": "inferred"
-    },
-    "id": "step9",
-    "_on_empty": "warn",
-    "name": "Filter subset for invoices_missing_total"
-  },
-  {
-    "step_id": "step10",
-    "type": "transform",
-    "operation": "filter",
-    "input": "{{extracted_invoices}}",
-    "description": "Filter subset for invoices_missing_invoice_number",
-    "config": {
-      "type": "filter",
-      "input": "extracted_invoices",
-      "condition": {
-        "conditionType": "complex_not",
-        "condition": {
-          "operator": "exists",
-          "field": "item.invoice_number",
-          "conditionType": "simple"
-        }
-      }
-    },
-    "output_variable": "invoices_missing_invoice_number",
-    "output_schema": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "source": "ai_declared",
-        "properties": {
-          "vendor_name": {
-            "type": "string",
-            "source": "ai_declared"
-          },
-          "invoice_number": {
-            "type": "string",
-            "source": "ai_declared"
-          },
-          "invoice_date": {
-            "type": "string",
-            "source": "ai_declared"
-          },
-          "due_date": {
-            "type": "string",
-            "source": "ai_declared"
-          },
-          "total_amount": {
-            "type": "number",
-            "source": "ai_declared"
-          },
-          "currency": {
-            "type": "string",
-            "source": "ai_declared"
-          },
-          "tax_amount": {
-            "type": "number",
-            "source": "ai_declared"
-          },
-          "file_name": {
-            "type": "string",
-            "source": "ai_declared"
-          },
-          "file_modified": {
-            "type": "string",
-            "source": "ai_declared"
-          }
-        }
-      },
-      "source": "inferred"
-    },
-    "id": "step10",
-    "_on_empty": "warn",
-    "name": "Filter subset for invoices_missing_invoice_number"
-  },
-  {
-    "step_id": "step11",
-    "type": "ai_processing",
-    "input": "{{extracted_invoices}}",
-    "prompt": "Generate a professional HTML email body for an invoice summary. Structure it as follows:\n\n1. HEADER: Include a short greeting, the Google Drive folder link (from config folder_link), and the total number of invoices found (from invoice_count).\n\n2. If no invoices were found (invoice_count is 0), state that no invoices were found in the folder and include the folder link. Skip the table and totals.\n\n3. INVOICE TABLE: Create an HTML <table> with styled borders, header row with background color, and padding. Columns: File Name, Vendor, Invoice #, Invoice Date, Due Date, Total, Currency, Notes. One row per invoice from extracted_invoices. For any missing/null field, show a dash and add a note like 'Missing vendor name' in the Notes column. Multiple missing fields should be comma-separated in Notes.\n\n4. TOTALS SECTION: Below the table, show:\n   - Total invoices processed: (invoice_count)\n   - Sum of invoice totals: (total_sum, formatted with 2 decimal places; note if some invoices had no total)\n   - Exceptions: list file names from invoices_missing_total and invoices_missing_invoice_number if any exist.\n\n5. Use professional styling: table borders (#ddd), header background (#4472C4 with white text), alternating row colors, padding 8px.",
-    "description": "Generate an HTML email body with a header, per-invoice table, and roll-up totals/exceptions section",
-    "config": {
-      "ai_type": "generate",
-      "output_schema": {
-        "type": "object",
-        "properties": {
-          "subject": {
-            "type": "string",
-            "description": "Email subject line"
-          },
-          "html_body": {
-            "type": "string",
-            "description": "Complete HTML email body with styled table and totals"
-          }
-        },
-        "required": [
-          "subject",
-          "html_body"
-        ]
-      },
-      "type": "generate",
-      "instruction": "Generate a professional HTML email body for an invoice summary. Structure it as follows:\n\n1. HEADER: Include a short greeting, the Google Drive folder link (from config folder_link), and the total number of invoices found (from invoice_count).\n\n2. If no invoices were found (invoice_count is 0), state that no invoices were found in the folder and include the folder link. Skip the table and totals.\n\n3. INVOICE TABLE: Create an HTML <table> with styled borders, header row with background color, and padding. Columns: File Name, Vendor, Invoice #, Invoice Date, Due Date, Total, Currency, Notes. One row per invoice from extracted_invoices. For any missing/null field, show a dash and add a note like 'Missing vendor name' in the Notes column. Multiple missing fields should be comma-separated in Notes.\n\n4. TOTALS SECTION: Below the table, show:\n   - Total invoices processed: (invoice_count)\n   - Sum of invoice totals: (total_sum, formatted with 2 decimal places; note if some invoices had no total)\n   - Exceptions: list file names from invoices_missing_total and invoices_missing_invoice_number if any exist.\n\n5. Use professional styling: table borders (#ddd), header background (#4472C4 with white text), alternating row colors, padding 8px.",
-      "input": "{{extracted_invoices}}"
-    },
-    "output_variable": "email_content",
-    "output_schema": {
-      "type": "object",
-      "properties": {
-        "subject": {
-          "type": "string",
-          "source": "ai_declared",
-          "description": "Email subject line"
-        },
-        "html_body": {
-          "type": "string",
-          "source": "ai_declared",
-          "description": "Complete HTML email body with styled table and totals"
-        }
-      },
-      "source": "ai_declared"
-    },
-    "input_schema": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "source": "ai_declared",
-        "properties": {
-          "vendor_name": {
-            "type": "string",
-            "source": "ai_declared"
-          },
-          "invoice_number": {
-            "type": "string",
-            "source": "ai_declared"
-          },
-          "invoice_date": {
-            "type": "string",
-            "source": "ai_declared"
-          },
-          "due_date": {
-            "type": "string",
-            "source": "ai_declared"
-          },
-          "total_amount": {
-            "type": "number",
-            "source": "ai_declared"
-          },
-          "currency": {
-            "type": "string",
-            "source": "ai_declared"
-          },
-          "tax_amount": {
-            "type": "number",
-            "source": "ai_declared"
-          },
-          "file_name": {
-            "type": "string",
-            "source": "ai_declared"
-          },
-          "file_modified": {
-            "type": "string",
-            "source": "ai_declared"
-          }
-        }
-      },
-      "source": "inferred"
-    },
-    "id": "step11",
-    "name": "Generate an HTML email body with a header, per-invoice table, and roll-up totals/exceptions section"
-  },
-  {
-    "step_id": "step12",
-    "type": "action",
-    "description": "Send the invoice summary email via Gmail to the user",
-    "plugin": "google-mail",
-    "id": "step12",
-    "params": {
-      "recipients": {
-        "to": [
-          "{{input.recipient_email}}"
-        ]
-      },
-      "content": {
-        "subject": "{{email_content.subject}}",
-        "html_body": "{{email_content.html_body}}"
-      }
-    },
-    "name": "Send the invoice summary email via Gmail to the user",
-    "action": "send_email"
+    "name": "Conditional: node_2"
   }
 ]
