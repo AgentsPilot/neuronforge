@@ -1,6 +1,6 @@
 # V6 Open Items — Consolidated Backlog
 
-> **Last Updated:** 2026-06-10 (WP-57 filed — Drive→document-extractor base64 byte-source gap)
+> **Last Updated:** 2026-06-16 (WP-57 ✅ Fixed — Phase E live PASS; WP-58/WP-59 follow-ups filed)
 > **Purpose:** Single source of truth for everything that's deferred, partial, or "future" in V6. Aggregates from `V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_WEAK_POINTS.md`, `V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_INTENT_CONTRACT.md`, the regression `scenario.json` caveats, and session-level observations.
 
 ## How to use this doc
@@ -34,18 +34,20 @@ Sourced from [`V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_WEAK_POINTS.md`](./V6_
 | [WP-27](./V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_WEAK_POINTS.md#wp-27-sheets-append_rows-shifts-to-non-A-column-when-existing-data-has-empty-cells) | Sheets `append_rows` shifts off column A on sparse data | ⬜ Future | User workaround: add header row. ~5 lines compiler-side normalization. |
 | [WP-51](./V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_WEAK_POINTS.md#wp-51-datapreprocessor-shape-heuristic-routing-into-lossy-specialized-preprocessors-architectural) | `DataPreprocessor` shape-heuristic routing into lossy specialized preprocessors — family of WP-50-class false positives | ⬜ Documented (architectural) | First family member fixed as [WP-50](./V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_WEAK_POINTS.md#wp-50-datapreprocessor-misclassifies-any-object-with-a-summary-field-as-a-calendar-event--silently-eats-ai_processing-input) (2026-05-30). Three remaining clauses at risk (email / transaction / contact). Three intervention options in the WP body: (A) schema-driven routing, (B) non-destructive preprocessor contract, (C) hybrid auto-fallback. Bundle when next family member surfaces. |
 | [WP-56](./V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_WEAK_POINTS.md#wp-56-phase-1-references-the-wrong-field-name-on-a-scatterloop-iteration-variable-container-id-reused-for-items) | Phase 1 references a container's id field (`folder_id`) on a scatter/loop iteration variable whose items use a different name (`id`) → `undefined` at runtime → Docs API 400 (same incident agent as WP-49/53/54/55) | 🟡 Partial — prompt steering done | Root-cause **FIELD FIDELITY (WP-56)** rule added to § 6.9 LOOP in `intent-system-prompt-v2.ts` (2026-06-08). Still open: (i) deterministic reconciliation for iteration-variable field refs — WP-2 doesn't cover scatter/loop item-refs; calibration-side detector tracked as **P3** in `docs/workplans/CALIBRATION_FALSE_SUCCESS_FIX_WORKPLAN.md`; (ii) pin the `id`→`folder_id` data_schema mutation (now recoverable via WP-55 persistence). |
-| [WP-57](./V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_WEAK_POINTS.md#wp-57-google-drive--document-extractor-has-no-base64-byte-source) | Google Drive → `document-extractor` has no base64 byte source — `list_files` returns metadata-only, `read_file_content` `.text()`s binary files (corrupts PDFs/images), so extraction silently fails / wrong-data email (live agent `6ef48513`, captured in `tests/v6-regression/scenarios/drive-invoice-summary-extractor-asis`) | ⬜ Documented — Option A planned | New `google-drive.download_file` (base64 + `x-semantic-type: file_attachment`) so the IR converter keeps document-extractor; shape `list_files → download_file → document-extractor`. Branch `fix/v6-drive-extractor-flow`. Inverse of WP-12; related WP-34/53/56. |
+_WP-57 (Google Drive → document-extractor base64 byte source) ✅ Fixed 2026-06-16 — Phase E live PASS; removed from backlog. See [WEAK_POINTS § WP-57](./V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_WEAK_POINTS.md#wp-57-google-drive--document-extractor-has-no-base64-byte-source)._
 
 ### P2 (Phase D / Phase A realism + observability)
 
 | WP | One-line summary | Status | Notes |
 |---|---|---|---|
 | [WP-19](./V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_WEAK_POINTS.md#wp-19-ai_processing-on-array-input-bulk-vs-per-item) | `ai_processing` on array input runs as single bulk call instead of scatter-gather | ⬜ Future / latent | Revisit when Phase E observes token bloat or item drop. |
+| [WP-59](./V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_WEAK_POINTS.md#wp-59-document-extractor-deterministic-field-quality-on-real-receipts) | document-extractor deterministic field-quality — `tax_amount`/`due_date`/`invoice_number` mis-parsed on real receipts (Phase E, agent `6ef48513`) | ⬜ Documented — decision pending | `use_ai` path NOT implemented (would disable OCR), so this is real work in `DeterministicExtractor.ts` field segmentation. Hidden today by the downstream LLM summarizer. Invest only if accurate per-field data is required. Full diagnosis: WP57 summary. |
 
 ### P3 (lower priority / defer)
 
 | WP | One-line summary | Status | Notes |
 |---|---|---|---|
+| [WP-58](./V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_WEAK_POINTS.md#wp-58-multi-input-aigenerate-steps-bind-only-one-input) | Multi-input AI/`generate` IR steps bind only one input (`AIConfig` has no `additional_inputs`); Phase-1 IC omits config inputs like `folder_link` | ⬜ Documented — benign | Verified benign Phase E 2026-06-15 (runtime config scope + LLM re-derivation compensate). Cleanup: add `additional_inputs` to `AIConfig` + populate in converter/resolver; declare config inputs in Phase-1 IC. Defer. |
 | [WP-9](./V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_WEAK_POINTS.md#wp-9-phase-ad-mock-gap--llm-output-shape-validation) | Phase A/D mock gap — no LLM output shape validation | ⬜ Deferred | F7, has token cost. |
 | [WP-38](./V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_WEAK_POINTS.md#wp-38-self-referential-gmail-queries-pick-up-the-agents-own-past-confirmation-emails) | Self-referential Gmail queries pick up agent's own past confirmation emails | ⬜ Prompt-level fix deferred | Affects orders-po + po-monitor scenarios. Phase 1 prompt should steer toward `-from:me` exclusions. |
 

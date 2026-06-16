@@ -630,6 +630,21 @@ export class IntentToIRConverter {
                   break
                 }
               }
+
+              // WP-59 cleanup: the IR grammar carries `deterministic`, but file
+              // extractors express the same intent via `use_ai` (deterministic === !use_ai).
+              // Translate to the plugin's real param when its schema declares it; otherwise
+              // drop the unknown key so we don't emit a no-op param (it reached the executor
+              // as dead config and tripped a Phase-A "Unknown parameter" warning).
+              if ('deterministic' in finalConfig) {
+                if (finalConfig === genericConfig) finalConfig = { ...genericConfig }
+                const isDeterministic = finalConfig.deterministic
+                delete finalConfig.deterministic
+                if ('use_ai' in paramSchema) {
+                  finalConfig.use_ai = !isDeterministic
+                  logger.debug(`  → Translated deterministic=${isDeterministic} → use_ai=${!isDeterministic}`)
+                }
+              }
             }
           }
 
