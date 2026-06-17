@@ -6000,6 +6000,30 @@ export class ExecutionGraphCompiler {
   }
 
   /**
+   * WP-60: role-suffix tokens denote how an entity is *referenced* (an id, a
+   * link, a url) rather than what it *is*. Treating them as part of the key
+   * blocks the binder from matching `folder_id` (an action param) to
+   * `folder_link` (the config key carrying the same folder as a URL) — plain
+   * token-Jaccard scores them 1/3 = 0.333, below the 0.4 fuzzy threshold, so
+   * the param is left unbound and the action defaults (list_files → Drive root).
+   */
+  private static readonly ROLE_SUFFIX_TOKENS = new Set(['id', 'ids', 'link', 'links', 'url', 'urls'])
+
+  /**
+   * Reduce a key to its entity stem by dropping a single trailing role-suffix
+   * token. `folder_id`/`folder_link`/`folder_url` → `folder`;
+   * `parent_folder_id` → `parent_folder`; `file_id` → `file`, `sheet_id` →
+   * `sheet` (kept distinct). Never reduces a key to empty.
+   */
+  private stemKey(key: string): string {
+    const tokens = this.tokenizeKey(key)
+    if (tokens.length > 1 && ExecutionGraphCompiler.ROLE_SUFFIX_TOKENS.has(tokens[tokens.length - 1])) {
+      return tokens.slice(0, -1).join('_')
+    }
+    return tokens.join('_')
+  }
+
+  /**
    * Find best matching config key using token-based fuzzy matching
    * Returns undefined if no match found above threshold
    */
@@ -6012,10 +6036,21 @@ export class ExecutionGraphCompiler {
     let bestMatch: string | undefined
     let bestScore = 0
 
+    // WP-60: a config key whose stem equals the target's stem (after dropping a
+    // trailing id/link/url role suffix) refers to the same entity in a different
+    // reference form — a strong, exact signal. Treat it as a full match so
+    // `folder_id` binds to `folder_link`, while genuinely different stems stay
+    // apart (`file_id` vs `sheet_id`). This is an exact stem check, NOT a
+    // relaxation of the Jaccard threshold, so it introduces no partial-overlap
+    // false positives.
+    const targetStem = this.stemKey(targetKey)
+
     for (const configKey of Object.keys(workflowConfig)) {
-      const score = this.calculateTokenOverlap(targetKey, configKey)
+      const overlap = this.calculateTokenOverlap(targetKey, configKey)
+      const stemMatch = targetStem.length > 0 && this.stemKey(configKey) === targetStem
+      const score = stemMatch ? Math.max(overlap, 1) : overlap
       if (ctx) {
-        this.log(ctx, `  → Fuzzy compare: '${targetKey}' vs '${configKey}' = ${score.toFixed(3)}`)
+        this.log(ctx, `  → Fuzzy compare: '${targetKey}' vs '${configKey}' = ${overlap.toFixed(3)}${stemMatch ? ` (stem '${targetStem}' match → 1.000)` : ''}`)
       }
       if (score > bestScore && score >= threshold) {
         bestScore = score

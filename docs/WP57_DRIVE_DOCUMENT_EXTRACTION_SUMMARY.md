@@ -229,6 +229,56 @@ and the remaining steps.
     wrong. This is output correctness, not cosmetics. **Scope is real work (extractor engine), not a
     param tweak** — size accordingly.
 
+- **🔴 NEW (WP-60) — folder-routing regression on a FRESHLY-CREATED agent (compile-time binding gap, distinct from 2B).**
+  Surfaced 2026-06-16: a newly-created agent (`48d587d4`) run via batch calibration listed the **Drive root**, not the
+  user's folder — the exact symptom 2B addressed, but a different root cause one layer up.
+  - **Diagnosis (from dev.log):** the compiled `list_files` step has **no `folder_id` binding at all**. The compiler's
+    param auto-binder ([ExecutionGraphCompiler.ts:6208-6247](../lib/agentkit/v6/compiler/ExecutionGraphCompiler.ts)) third pass
+    fuzzy-matches the action param `folder_id` against config keys via token-Jaccard (threshold **0.4**); the only folder-ish
+    key is `folder_link`, and `{folder,id}`∩`{folder,link}`/`{folder,id,link}` = **0.333 < 0.4** → unbound → root. The
+    namespaced `google-drive__list__folder_link` key is **not in the compiler's `workflowConfig`** (runtime-owned), so the
+    binder never sees it.
+  - **Why 2B didn't catch it:** 2B Part 2 (`reconcileInputsToDsl`) only fills an *existing* `{{input.folder_id}}` ref; 2B
+    Part 1 (`extractDriveId`) only converts a URL already in `folder_id`. Both assume the compiler emitted a `folder_id`
+    binding. Here it emitted none. **Why the WP-57 scenario passed:** its IntentContract config declared an explicit
+    `folder_id` key (exact-match bind); the live creation flow emitted only `folder_link`.
+  - **Fix ✅ IMPLEMENTED 2026-06-16 (compiler, uncommitted):** stem-aware match in `findBestConfigMatch`
+    ([ExecutionGraphCompiler.ts](../lib/agentkit/v6/compiler/ExecutionGraphCompiler.ts)) — a config key whose stem (trailing
+    `id`/`link`/`url` dropped) equals the param's stem is a full match, so `folder_id` binds to `folder_link`. Emits
+    `folder_id: {{config.folder_link}}`; runtime `StructuralRepairEngine` rewrites `{{config.X}}`→`{{input.X}}`, resolves to
+    the URL, and `extractDriveId` converts URL→ID. Exact stem check (not a Jaccard relaxation) → `file_id`↔`sheet_id` and
+    `invoice_id`↔`invoice_date` stay unmatched. +7 unit tests; typecheck clean.
+  - **▶ Execution impact (next execution vs rebuild):** the compiler fix (A) **requires a DSL REBUILD** — it only affects
+    future compilations, so the already-created agent stays broken until regenerated. **Decision (2026-06-17): ship A + B
+    as layered defense** (same shape as 2B Part 1 + Part 2), so existing agents are repaired at runtime without a rebuild.
+
+  - **✅ Chosen solution — combined A (compile-time) + B (runtime safety net):**
+    | Layer | Role | Fires | Repairs existing agents? | Status |
+    |---|---|---|---|---|
+    | **A — compiler stem match** (`findBestConfigMatch`) | Fix-for-the-future: new agents compile `folder_id` bound, DSL correct on disk | agent creation / regen | ❌ (needs rebuild) | ✅ implemented (uncommitted) |
+    | **B — runtime param-injector** (`WorkflowPilot.execute()`) | Safety net: bind unbound required action params on the stored DSL at run time; repairs already-saved agents + catches future compiler misses | every `execute()` | ✅ yes | ⬜ designed, not yet implemented |
+
+  - **B design (decided defaults):** a **new, separate** function (keep `reconcileInputsToDsl` pure) run right after reconcile
+    in `execute()`, with plugin-manager access:
+    1. **Deterministic step targeting via the namespaced key.** Parse step-tagged input keys `{plugin}__{capability}__{param}`
+       and match by **`plugin` + `capability`** to the action step (e.g. `google-drive__list__*` → the `google-drive`/`list_files`
+       step). No string-similarity guessing about *which* step.
+    2. **Schema-aware param pick.** Look up the step's action schema (via plugin manager). Pick the unbound param by the schema's
+       own annotation first (the plugin marks the folder/resource-reference param); **fall back to a stem check only within that
+       single already-identified step** (`folder_link`→`folder_id`) — a far narrower, safer use of the suffix heuristic than A's
+       global fuzzy.
+    3. **Conservative injection.** Only inject when there is exactly **one** unbound resource-ish param matching exactly **one**
+       step-tagged key (no ambiguity); skip otherwise. Inject the value (URL) into `step.params[param]`; the executor's
+       `extractDriveId` (2B-1) converts URL→ID. In-memory for that execution only (not persisted), like reconcile.
+    4. **Backward-safe:** never overwrites a param already bound; no-op when nothing matches.
+  - **Why B reduces the hardcoding concern (raised 2026-06-17):** B keys off the namespaced key's `plugin`+`capability` (a
+    deterministic, system-generated mapping) for step targeting; the `id`/`link`/`url` suffix list survives only as a
+    last-resort *param* tiebreaker inside one deterministically-chosen step — not as the primary matcher.
+  - **Deepest root cause (not in scope, noted):** the creation flow tags the input `folder_link` while the action param is
+    `folder_id`; if it emitted the action's real param name (`google-drive__list__folder_id`) everything would bind by exact
+    match with **zero** heuristics at any layer. Bigger upstream change; doesn't repair existing agents. Tracked as a future option.
+  - Full entry: [WEAK_POINTS § WP-60](./v6/V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_WEAK_POINTS.md#wp-60-compiler-param-binder-cant-match-folder_id-to-folder_link-stem-so-list_files-defaults-to-drive-root).
+
 ---
 
 ## Next steps
