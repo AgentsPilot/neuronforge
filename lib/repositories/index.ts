@@ -19,6 +19,27 @@ export { CalibrationHistoryRepository } from './CalibrationHistoryRepository';
 export { InsightRepository } from './InsightRepository';
 export { UserProfileRepository, userProfileRepository } from './UserProfileRepository';
 export type { UserProfile } from './UserProfileRepository';
+export {
+  OrganizationRepository,
+  organizationRepository,
+} from './OrganizationRepository';
+export type {
+  Organization,
+  OrganizationMember,
+  OrganizationRole,
+  CreateOrganizationInput,
+  UpdateOrganizationInput,
+} from './OrganizationRepository';
+export {
+  WorkflowGroupRepository,
+  workflowGroupRepository,
+} from './WorkflowGroupRepository';
+export type {
+  WorkflowGroup,
+  WorkflowGroupWithStats,
+  CreateWorkflowGroupInput,
+  UpdateWorkflowGroupInput,
+} from './WorkflowGroupRepository';
 
 // Types
 export type {

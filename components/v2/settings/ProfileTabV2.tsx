@@ -22,12 +22,19 @@ export default function ProfileTabV2({
   const [successMessage, setSuccessMessage] = useState('')
   const [errorMessage, setErrorMessage] = useState('')
 
+  // Organisation name from profileForm (read-only - editable in Organisation tab)
+  const organisationName = (profileForm as { organisation_name?: string }).organisation_name || ''
+
   // Timezone search state
   const [timezoneSearch, setTimezoneSearch] = useState('')
   const [isTimezoneDropdownOpen, setIsTimezoneDropdownOpen] = useState(false)
 
   // Role dropdown state
   const [isRoleDropdownOpen, setIsRoleDropdownOpen] = useState(false)
+
+  // Job title dropdown state
+  const [jobTitleSearch, setJobTitleSearch] = useState('')
+  const [isJobTitleDropdownOpen, setIsJobTitleDropdownOpen] = useState(false)
 
   // Role options
   const roleOptions = [
@@ -56,6 +63,61 @@ export default function ProfileTabV2({
   }
 
   const currentRoleConfig = getRoleConfig(profileForm.role || 'user')
+
+  // Job title options - organized with common roles first
+  const jobTitleOptions = [
+    // Most common roles first (mixed from all categories)
+    'Software Engineer', 'Product Manager', 'Designer', 'Data Analyst',
+    'Project Manager', 'Marketing Manager', 'Sales Representative',
+    'Account Manager', 'Customer Success Manager', 'Operations Manager',
+    'Business Analyst', 'Consultant', 'Founder', 'Manager',
+    // Technical
+    'Senior Software Engineer', 'Staff Engineer', 'Principal Engineer',
+    'Engineering Manager', 'Tech Lead', 'Frontend Developer',
+    'Backend Developer', 'Full Stack Developer', 'DevOps Engineer',
+    'Site Reliability Engineer', 'Data Engineer', 'Machine Learning Engineer',
+    'AI Engineer', 'Cloud Engineer', 'Security Engineer', 'QA Engineer',
+    'Test Engineer', 'Solutions Architect', 'Enterprise Architect',
+    'System Administrator',
+    // Design
+    'UI Designer', 'UX Designer', 'Product Designer',
+    'Graphic Designer', 'Visual Designer', 'Design Lead',
+    // Data & Analytics
+    'Data Scientist', 'Business Intelligence Analyst', 'Research Analyst',
+    // Management
+    'Team Lead', 'Department Head', 'Supervisor', 'Program Manager',
+    'Sales Manager', 'HR Manager', 'Finance Manager',
+    // Executive / Leadership
+    'CEO', 'CTO', 'CFO', 'COO', 'CMO', 'CIO', 'CISO',
+    'Co-Founder', 'President', 'Vice President',
+    'Director', 'Managing Director', 'General Manager',
+    // Marketing & Sales
+    'Marketing Specialist', 'Digital Marketing Manager',
+    'Content Manager', 'SEO Specialist', 'Growth Manager',
+    'Account Executive', 'Sales Engineer', 'Customer Support Specialist',
+    // HR & Operations
+    'HR Specialist', 'Recruiter', 'Talent Acquisition',
+    'Office Manager', 'Executive Assistant', 'Administrative Assistant',
+    // Finance
+    'Accountant', 'Financial Analyst', 'Controller',
+    // Other
+    'Freelancer', 'Contractor', 'Intern', 'Student', 'Other'
+  ]
+
+  // Filter job titles based on search
+  const filteredJobTitles = useMemo(() => {
+    if (!jobTitleSearch.trim()) return jobTitleOptions
+    const searchTerm = jobTitleSearch.toLowerCase().trim()
+    return jobTitleOptions.filter(title =>
+      title.toLowerCase().includes(searchTerm)
+    )
+  }, [jobTitleSearch])
+
+  const handleJobTitleSelect = (title: string) => {
+    setProfileForm(prev => ({ ...prev, job_title: title }))
+    setJobTitleSearch('')
+    setIsJobTitleDropdownOpen(false)
+  }
 
   // Comprehensive timezone list
   const timezones = [
@@ -153,14 +215,13 @@ export default function ProfileTabV2({
         .eq('id', user.id)
         .single()
 
-      // Save profile fields
+      // Save profile fields (without company - now using organisation)
       const { error: profileError } = await supabase
         .from('profiles')
         .upsert({
           id: user.id,
           full_name: profileForm.full_name,
           avatar_url: profileForm.avatar_url,
-          company: profileForm.company,
           job_title: profileForm.job_title,
           role: profileForm.role,
           updated_at: new Date().toISOString()
@@ -246,9 +307,9 @@ export default function ProfileTabV2({
             {profileForm.full_name || user?.email || 'User'}
           </h4>
           <p className="text-xs text-[var(--v2-text-secondary)] truncate">
-            {profileForm.job_title && profileForm.company
-              ? `${profileForm.job_title} at ${profileForm.company}`
-              : profileForm.job_title || profileForm.company || 'Complete your profile'
+            {profileForm.job_title && organisationName
+              ? `${profileForm.job_title} at ${organisationName}`
+              : profileForm.job_title || organisationName || 'Complete your profile'
             }
           </p>
         </div>
@@ -283,33 +344,142 @@ export default function ProfileTabV2({
         </div>
 
         <div className="space-y-1">
-          <label className="block text-xs font-medium text-[var(--v2-text-primary)]">Company</label>
+          <label className="block text-xs font-medium text-[var(--v2-text-primary)]">Organisation</label>
           <div className="relative">
             <Building className="w-3.5 h-3.5 absolute left-2.5 top-1/2 transform -translate-y-1/2 text-[var(--v2-text-muted)]" />
             <input
               type="text"
-              value={profileForm.company || ''}
-              onChange={(e) => setProfileForm(prev => ({ ...prev, company: e.target.value }))}
-              className="w-full pl-8 pr-3 py-2 text-sm border border-gray-200 dark:border-gray-700 bg-[var(--v2-surface)] text-[var(--v2-text-primary)] placeholder-[var(--v2-text-muted)] focus:outline-none focus:ring-1 focus:ring-[var(--v2-primary)] focus:border-transparent transition-all"
+              value={organisationName}
+              disabled
+              className="w-full pl-8 pr-3 py-2 text-sm border border-gray-200 dark:border-gray-700 bg-[var(--v2-bg)] text-[var(--v2-text-muted)]"
               style={{ borderRadius: 'var(--v2-radius-button)' }}
-              placeholder="Your company name"
+              placeholder="No organisation"
             />
           </div>
         </div>
 
-        <div className="space-y-1">
+        {/* Job Title - Searchable Dropdown */}
+        <div className="space-y-1 relative">
           <label className="block text-xs font-medium text-[var(--v2-text-primary)]">Job Title</label>
-          <div className="relative">
-            <Briefcase className="w-3.5 h-3.5 absolute left-2.5 top-1/2 transform -translate-y-1/2 text-[var(--v2-text-muted)]" />
-            <input
-              type="text"
-              value={profileForm.job_title || ''}
-              onChange={(e) => setProfileForm(prev => ({ ...prev, job_title: e.target.value }))}
-              className="w-full pl-8 pr-3 py-2 text-sm border border-gray-200 dark:border-gray-700 bg-[var(--v2-surface)] text-[var(--v2-text-primary)] placeholder-[var(--v2-text-muted)] focus:outline-none focus:ring-1 focus:ring-[var(--v2-primary)] focus:border-transparent transition-all"
-              style={{ borderRadius: 'var(--v2-radius-button)' }}
-              placeholder="Your job title"
-            />
-          </div>
+
+          {/* Selected job title display */}
+          {profileForm.job_title && !isJobTitleDropdownOpen && (
+            <div className="w-full px-3 py-2 text-sm border border-gray-200 dark:border-gray-700 bg-[var(--v2-bg)]" style={{ borderRadius: 'var(--v2-radius-button)' }}>
+              <div className="flex justify-between items-center">
+                <div className="flex items-center gap-1.5">
+                  <Briefcase className="w-3.5 h-3.5 text-[var(--v2-text-muted)]" />
+                  <span className="text-xs text-[var(--v2-text-primary)] truncate">{profileForm.job_title}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsJobTitleDropdownOpen(true)
+                    setJobTitleSearch('')
+                  }}
+                  className="text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] text-xs px-1.5 py-0.5"
+                >
+                  Change
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Search input */}
+          {(!profileForm.job_title || isJobTitleDropdownOpen) && (
+            <>
+              {/* Backdrop to close dropdown */}
+              <div
+                className="fixed inset-0 z-40"
+                onClick={() => {
+                  setIsJobTitleDropdownOpen(false)
+                  setJobTitleSearch('')
+                }}
+              />
+
+              <div className="relative z-50">
+                <Briefcase className="w-3.5 h-3.5 absolute left-2.5 top-1/2 transform -translate-y-1/2 text-[var(--v2-text-muted)]" />
+                <input
+                  type="text"
+                  placeholder="Search job title..."
+                  value={jobTitleSearch}
+                  onChange={(e) => setJobTitleSearch(e.target.value)}
+                  className="w-full pl-8 pr-8 py-2 text-sm border border-gray-200 dark:border-gray-700 bg-[var(--v2-surface)] text-[var(--v2-text-primary)] placeholder-[var(--v2-text-muted)] focus:outline-none focus:ring-1 focus:ring-[var(--v2-primary)]"
+                  style={{ borderRadius: 'var(--v2-radius-button)' }}
+                  autoComplete="off"
+                  autoFocus={isJobTitleDropdownOpen}
+                />
+
+                {/* Search/Clear icon */}
+                <div className="absolute inset-y-0 right-0 pr-2.5 flex items-center">
+                  {jobTitleSearch ? (
+                    <button
+                      type="button"
+                      onClick={() => setJobTitleSearch('')}
+                      className="text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)]"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  ) : (
+                    <Search className="w-3.5 h-3.5 text-[var(--v2-text-muted)]" />
+                  )}
+                </div>
+              </div>
+
+              {/* Dropdown results */}
+              <div className="absolute z-50 w-full mt-1 bg-[var(--v2-surface)] border border-gray-200 dark:border-gray-700 shadow-lg max-h-48 overflow-y-auto" style={{ borderRadius: 'var(--v2-radius-card)' }}>
+                {filteredJobTitles.length === 0 ? (
+                  <div className="px-3 py-2 text-xs text-[var(--v2-text-muted)]">
+                    {jobTitleSearch.trim() ?
+                      `No job titles found for "${jobTitleSearch}"` :
+                      'Start typing to search job titles...'
+                    }
+                  </div>
+                ) : (
+                  <>
+                    {jobTitleSearch.trim() && (
+                      <div className="px-3 py-1.5 text-xs text-[var(--v2-text-secondary)] bg-[var(--v2-bg)] border-b border-gray-200 dark:border-gray-700">
+                        {filteredJobTitles.length} title{filteredJobTitles.length !== 1 ? 's' : ''} found
+                      </div>
+                    )}
+
+                    {filteredJobTitles.map((title) => (
+                      <button
+                        key={title}
+                        type="button"
+                        onClick={() => handleJobTitleSelect(title)}
+                        className={`w-full px-3 py-2 text-left text-sm hover:bg-[var(--v2-bg)] focus:bg-[var(--v2-bg)] focus:outline-none ${
+                          profileForm.job_title === title ? 'bg-[var(--v2-bg)]' : ''
+                        }`}
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="font-medium text-[var(--v2-text-primary)] text-xs">
+                            {title}
+                          </span>
+                          {profileForm.job_title === title && (
+                            <CheckCircle className="w-3 h-3 text-[var(--v2-primary)]" />
+                          )}
+                        </div>
+                      </button>
+                    ))}
+                  </>
+                )}
+              </div>
+
+              {/* Cancel button */}
+              {profileForm.job_title && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsJobTitleDropdownOpen(false)
+                    setJobTitleSearch('')
+                  }}
+                  className="mt-1 text-xs text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)]"
+                >
+                  Cancel
+                </button>
+              )}
+            </>
+          )}
         </div>
 
         {/* Role Selection - Compact Dropdown */}

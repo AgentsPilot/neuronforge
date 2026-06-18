@@ -477,6 +477,7 @@ export class InsightRepository {
     cache_hit?: boolean;
     time_saved_hours_per_week?: number;
     cost_saved_usd_per_week?: number;
+    hourly_rate_usd?: number;  // Capture the hourly rate used for ROI calculation
     pattern_data?: any;
   }): Promise<boolean> {
     try {
@@ -504,6 +505,7 @@ export class InsightRepository {
           cache_hit: params.cache_hit ?? false,
           time_saved_hours_per_week: params.time_saved_hours_per_week,
           cost_saved_usd_per_week: params.cost_saved_usd_per_week,
+          hourly_rate_usd: params.hourly_rate_usd,  // Store the rate used for this calculation
           pattern_data: params.pattern_data,
         });
 

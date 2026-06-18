@@ -179,12 +179,13 @@ export default function V2DashboardPage() {
           .order('created_at', { ascending: false })
           .limit(200),
         // Get actual execution counts from agent_executions table (filtered by time for Recent Activity)
+        // Use eq('run_mode', 'production') to match AI Advisor's query
         supabase
           .from('agent_executions')
           .select('agent_id, started_at, agents!inner (agent_name, status)')
           .eq('user_id', user.id)
           .eq('agents.status', 'active')
-          .neq('run_mode', 'calibration')
+          .eq('run_mode', 'production')
           .gte('started_at', recentActivityFilterDate)
           .order('started_at', { ascending: false }),
         // Get ALL TIME execution counts from agent_executions table for Agent List (no time filter)
@@ -193,7 +194,7 @@ export default function V2DashboardPage() {
           .select('agent_id, started_at, agents!inner (agent_name, status)')
           .eq('user_id', user.id)
           .eq('agents.status', 'active')
-          .neq('run_mode', 'calibration')
+          .eq('run_mode', 'production')
           .order('started_at', { ascending: false }),
         // Get user profile for full name
         supabase
@@ -208,11 +209,12 @@ export default function V2DashboardPage() {
           .eq('user_id', user.id)
           .single(),
         // Get all executions with logs for money saved calculation (filtered by time for System Status)
+        // Use eq('run_mode', 'production') to match AI Advisor's query (not neq calibration)
         supabase
           .from('agent_executions')
           .select('id, agent_id, status, logs')
           .eq('user_id', user.id)
-          .neq('run_mode', 'calibration')
+          .eq('run_mode', 'production')
           .gte('started_at', systemStatusFilterDate),
         // Get active insights count (status = 'new' or 'viewed')
         supabase

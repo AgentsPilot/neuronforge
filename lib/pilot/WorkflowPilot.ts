@@ -2478,9 +2478,34 @@ export class WorkflowPilot {
       // Import dependencies (removed InsightGenerator - using only BusinessInsightGenerator via InsightAnalyzer)
       const { InsightAnalyzer } = await import('@/lib/pilot/insight/InsightAnalyzer');
       const { InsightRepository } = await import('@/lib/repositories/InsightRepository');
+      const { OrganizationSettingsService } = await import('@/lib/services/OrganizationSettingsService');
 
       const repository = new InsightRepository(this.supabase);
       const analyzer = new InsightAnalyzer(this.supabase);
+      const orgSettingsService = new OrganizationSettingsService(this.supabase);
+
+      // Fetch ROI data: hourly rate + time saved from this execution
+      const [hourlyRate, { data: metricsResult }] = await Promise.all([
+        orgSettingsService.getAgentHourlyRate(agentId, userId),
+        this.supabase
+          .from('execution_metrics')
+          .select('time_saved_seconds')
+          .eq('execution_id', executionId)
+          .single(),
+      ]);
+
+      // Calculate ROI metrics from actual execution data
+      const timeSavedSeconds = metricsResult?.time_saved_seconds ?? 0;
+      // Estimate weekly impact (assume ~7 executions/week or use schedule if available)
+      const executionsPerWeek = 7;
+      const timeSavedHoursPerWeek = (timeSavedSeconds / 3600) * executionsPerWeek;
+      const costSavedUsdPerWeek = timeSavedHoursPerWeek * hourlyRate;
+
+      console.log(`💡 [WorkflowPilot] ROI metrics calculated:`);
+      console.log(`   - Hourly rate: $${hourlyRate}`);
+      console.log(`   - Time saved this run: ${timeSavedSeconds}s`);
+      console.log(`   - Est. weekly time saved: ${timeSavedHoursPerWeek.toFixed(2)}h`);
+      console.log(`   - Est. weekly cost saved: $${costSavedUsdPerWeek.toFixed(2)}`);
 
       // Run unified analysis (detects patterns + generates insights via BusinessInsightGenerator)
       console.log(`💡 [WorkflowPilot] Running unified analysis for agent ${agentId}...`);
@@ -2520,6 +2545,10 @@ export class WorkflowPilot {
             llm_called: false, // Pattern detectors don't use LLM
             cache_hit: false,
             pattern_data: pattern.pattern_data,
+            // ROI metrics captured at execution time for historical accuracy
+            hourly_rate_usd: hourlyRate,
+            time_saved_hours_per_week: timeSavedHoursPerWeek,
+            cost_saved_usd_per_week: costSavedUsdPerWeek,
           });
 
           if (runStored) {
@@ -2599,6 +2628,10 @@ export class WorkflowPilot {
             latency_ms: undefined,
             llm_called: true,
             cache_hit: false,
+            // ROI metrics captured at execution time for historical accuracy
+            hourly_rate_usd: hourlyRate,
+            time_saved_hours_per_week: timeSavedHoursPerWeek,
+            cost_saved_usd_per_week: costSavedUsdPerWeek,
           });
 
           if (runStored) {
@@ -2620,11 +2653,8 @@ export class WorkflowPilot {
             continue;
           }
 
-          // Use ROI metrics from InsightAnalyzer (already calculated by BusinessInsightGenerator)
-          const timeSavedHoursPerWeek = analysisResult.roiMetrics?.timeSavedHoursPerWeek;
-          const costSavedUsdPerWeek = analysisResult.roiMetrics?.costSavedUsdPerWeek;
-
           // Create new insight in execution_insights (current active state)
+          // ROI metrics are calculated above from actual execution data + hourly rate
           console.log(`💡 [WorkflowPilot] Creating new business insight: "${insight.title}"`);
           const createResult = await repository.create({
             user_id: userId,
@@ -2641,7 +2671,7 @@ export class WorkflowPilot {
             pattern_data: { occurrences: 0, affected_steps: [] } as any,  // Patterns already processed by BusinessInsightGenerator
             metrics: { total_executions: 0, affected_executions: 0, pattern_frequency: 0 } as any,
             status: 'new',
-            // ROI metrics (Phase 1.4)
+            // ROI metrics from actual execution data
             time_saved_hours_per_week: timeSavedHoursPerWeek,
             cost_saved_usd_per_week: costSavedUsdPerWeek,
           });
@@ -2977,7 +3007,7 @@ export class WorkflowPilot {
                 // This allows frontend to show repair UI
                 if (decision.action === 'stop_execution') {
                   throw new ExecutionError(
-                    decision.message || 'Calibration stop: Parameter error detected',
+                    decision.reason || 'Calibration stop: Parameter error detected',
                     step.id,
                     { errorCode: result.metadata?.errorCode }
                   );

@@ -126,7 +126,7 @@ export function PerformanceTrends({ executions, hourlyRate, timePeriod, onTimePe
       <div className="p-6 border-b border-[var(--v2-border)] bg-gradient-to-br from-blue-500/5 to-purple-500/5">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <h3 className="text-lg font-bold text-[var(--v2-text-primary)] flex items-center gap-2">
+            <h3 className="text-base font-semibold text-[var(--v2-text-primary)] flex items-center gap-2">
               <TrendingUp className="w-5 h-5 text-[var(--v2-primary)]" />
               Performance Trends
             </h3>
@@ -242,23 +242,23 @@ export function PerformanceTrends({ executions, hourlyRate, timePeriod, onTimePe
                 <Clock className="w-4 h-4 text-blue-500" />
                 <div className="text-xs font-semibold text-[var(--v2-text-muted)] uppercase tracking-wider">Avg Duration</div>
               </div>
-              <div className="text-2xl font-bold text-[var(--v2-text-primary)] tabular-nums">{stats.avgDuration.toFixed(1)}s</div>
+              <div className="text-lg font-bold text-[var(--v2-text-primary)] tabular-nums">{stats.avgDuration.toFixed(1)}s</div>
             </div>
             <div className="bg-[var(--v2-surface)] p-5 hover:bg-[var(--v2-hover)] transition-colors">
               <div className="flex items-center gap-2 mb-2">
                 <TrendingUp className="w-4 h-4 text-emerald-500" />
                 <div className="text-xs font-semibold text-[var(--v2-text-muted)] uppercase tracking-wider">Success Rate</div>
               </div>
-              <div className="text-2xl font-bold text-[var(--v2-text-primary)] tabular-nums">{stats.successRate.toFixed(0)}%</div>
+              <div className="text-lg font-bold text-[var(--v2-text-primary)] tabular-nums">{stats.successRate.toFixed(0)}%</div>
             </div>
             <div className="bg-[var(--v2-surface)] p-5 hover:bg-[var(--v2-hover)] transition-colors">
               <div className="flex items-center gap-2 mb-2">
                 <DollarSign className="w-4 h-4 text-purple-500" />
                 <div className="text-xs font-semibold text-[var(--v2-text-muted)] uppercase tracking-wider">{hourlyRate ? 'Total Saved' : 'Runs'}</div>
               </div>
-              <div className="text-2xl font-bold text-[var(--v2-text-primary)] tabular-nums">
+              <div className="text-lg font-bold text-[var(--v2-text-primary)] tabular-nums">
                 {hourlyRate ? (
-                  stats.totalSaved > 0 ? formatCurrency(stats.totalSaved) : <span className="text-base text-[var(--v2-text-muted)]">Not tracked</span>
+                  stats.totalSaved > 0 ? formatCurrency(stats.totalSaved) : <span className="text-sm text-[var(--v2-text-muted)]">Not tracked</span>
                 ) : (
                   executions.length
                 )}

@@ -76,7 +76,7 @@ export function AgentHeader({
       <div className="p-8 border-b border-[var(--v2-border)]">
         <div className="flex items-start justify-between mb-6">
           <div className="flex-1">
-            <h1 className="text-3xl font-bold text-[var(--v2-text-primary)] mb-3">
+            <h1 className="text-2xl font-bold text-[var(--v2-text-primary)] mb-3">
               {agent.agent_name}
             </h1>
             <div className="flex items-center gap-3">
@@ -139,7 +139,7 @@ export function AgentHeader({
             <span className="text-xs font-semibold text-[var(--v2-text-muted)] uppercase tracking-wider">Total Runs</span>
             <BarChart3 className="w-4 h-4 text-[var(--v2-text-muted)] opacity-50" />
           </div>
-          <div className="text-3xl font-bold text-[var(--v2-text-primary)] tabular-nums">{stats.runCount.toLocaleString()}</div>
+          <div className="text-2xl font-bold text-[var(--v2-text-primary)] tabular-nums">{stats.runCount.toLocaleString()}</div>
           {timePeriodLabel && <div className="text-xs text-[var(--v2-text-muted)] mt-1">{timePeriodLabel}</div>}
         </div>
         <div className="bg-[var(--v2-surface)] p-6 hover:bg-[var(--v2-hover)] transition-colors">
@@ -147,7 +147,7 @@ export function AgentHeader({
             <span className="text-xs font-semibold text-[var(--v2-text-muted)] uppercase tracking-wider">Success Rate</span>
             <Target className="w-4 h-4 text-[var(--v2-text-muted)] opacity-50" />
           </div>
-          <div className="text-3xl font-bold text-[var(--v2-text-primary)] tabular-nums">{stats.successRate.toFixed(1)}%</div>
+          <div className="text-2xl font-bold text-[var(--v2-text-primary)] tabular-nums">{stats.successRate.toFixed(1)}%</div>
           {timePeriodLabel && <div className="text-xs text-[var(--v2-text-muted)] mt-1">{timePeriodLabel}</div>}
         </div>
         <div className="bg-[var(--v2-surface)] p-6 hover:bg-[var(--v2-hover)] transition-colors">
@@ -155,7 +155,7 @@ export function AgentHeader({
             <span className="text-xs font-semibold text-[var(--v2-text-muted)] uppercase tracking-wider">Run Mode</span>
             {getRunModeIcon()}
           </div>
-          <div className="text-xl font-bold text-[var(--v2-text-primary)]">{getRunModeText()}</div>
+          <div className="text-lg font-bold text-[var(--v2-text-primary)]">{getRunModeText()}</div>
           {agent.schedule_cron && (
             <div className="text-xs text-[var(--v2-text-muted)] mt-1">{formatSchedule()}</div>
           )}

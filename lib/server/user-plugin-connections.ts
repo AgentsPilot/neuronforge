@@ -623,13 +623,7 @@ export class UserPluginConnections {
     const expiryDate = new Date(expiresAt);
     const isValid = expiryDate.getTime() > now;
 
-    // Only log once per unique token expiry (not on every call)
-    if (!cached) {
-      logger.debug({
-        isValid,
-        expiresAt: expiryDate.toISOString()
-      }, 'Token validity checked');
-    }
+    // Token validity logging removed - too noisy
 
     // Evict stale entries when cache exceeds max size
     if (this.tokenValidationCache.size >= this.TOKEN_CACHE_MAX_SIZE) {

@@ -189,3 +189,82 @@ export interface AgentBreakdownItem {
   moneySaved: number; // USD
   lastRun: string | null; // ISO date string
 }
+
+// Business Dashboard Types (for HTML mockup implementation)
+export interface DashboardTrends {
+  executions_change_pct: number;
+  time_saved_change_pct: number;
+  money_saved_change_pct: number;
+  success_rate_change: number; // Absolute change, not percentage
+}
+
+export interface DashboardValueMetrics {
+  time_saved_seconds: number;
+  time_saved_hours: number;
+  work_days_saved: number;
+  money_saved_usd: number;
+  hourly_rate: number;
+  tasks_completed: number;
+  avg_tasks_per_day: number;
+  trends: DashboardTrends;
+}
+
+export interface HealthScoreData {
+  score: number;
+  status: 'excellent' | 'good' | 'warning' | 'critical';
+  breakdown: {
+    reliability: number;
+    efficiency: number;
+    coverage: number;
+  };
+}
+
+export interface AttentionItem {
+  id: string;
+  type: 'warning' | 'info';
+  title: string;
+  description: string;
+  impact: string;
+  agent_id?: string;
+  agent_name?: string;
+  created_at: string;
+}
+
+export interface AIRecommendation {
+  id: string;
+  type: 'save_money' | 'save_time' | 'grow';
+  title: string;
+  description: string;
+  estimated_value: string;
+  action_label: string;
+  action_type: 'learn_more' | 'try_this' | 'create_this';
+}
+
+export interface CategoryMetrics {
+  group_id: string;
+  group_name: string;
+  group_color: string | null;
+  workflow_count: number;
+  workflow_names: string[];
+  hours_saved: number;
+  trend_pct: number | null;
+}
+
+export interface ActivityItem {
+  id: string;
+  status: 'success' | 'warning' | 'error';
+  agent_name: string;
+  action: string;
+  timestamp: string;
+  relative_time: string;
+}
+
+export interface GoalProgress {
+  id: string;
+  label: string;
+  current_value: number;
+  goal_value: number;
+  unit: string;
+  status: 'exceeding' | 'meeting' | 'on_track' | 'at_risk' | 'behind';
+  progress_pct: number;
+}

@@ -13,13 +13,29 @@
 
 import { SupabaseClient } from '@supabase/supabase-js';
 import { DetectedPattern, ExecutionSummary, ConfidenceMode, StepSummary } from './types';
-import { calculateConfidenceMode, getConfidenceScore } from './ConfidenceCalculator';
+import { calculateConfidenceMode } from './ConfidenceCalculator';
 import { DataQualityDetector } from './detectors/DataQualityDetector';
 import { CostDetector } from './detectors/CostDetector';
 import { AutomationDetector } from './detectors/AutomationDetector';
 import { ReliabilityDetector } from './detectors/ReliabilityDetector';
 import { TrendAnalyzer } from './TrendAnalyzer';
-import { BusinessInsightGenerator, type BusinessInsight, type ROIMetrics } from './BusinessInsightGenerator';
+import { BusinessInsightGenerator, type BusinessInsight } from './BusinessInsightGenerator';
+
+/**
+ * ROI Metrics calculated at execution time
+ *
+ * Architecture Note:
+ * - ESTIMATED ROI (agent creation): EffortEstimator writes to agent_config.roi_estimate
+ * - ACTUAL ROI (execution time): WorkflowPilot calculates using execution metrics + hourly rate
+ *
+ * This type is used in the analyze() return to pass ROI data to WorkflowPilot,
+ * which then stores it in execution_insight_runs for historical accuracy.
+ */
+export interface ROIMetrics {
+  timeSavedHoursPerWeek?: number;
+  costSavedUsdPerWeek?: number;
+  hourlyRateUsed?: number;
+}
 
 export class InsightAnalyzer {
   private dataQualityDetector: DataQualityDetector;
@@ -169,7 +185,7 @@ export class InsightAnalyzer {
             );
 
             businessInsights = result.insights;
-            roiMetrics = result.roiMetrics;
+            // Note: ROI metrics are calculated in WorkflowPilot using actual execution data + hourly rate
 
             console.log(`[InsightAnalyzer] Generated ${businessInsights.length} insights (trends + 7-run progression) for agent ${agentId}`);
           }
@@ -184,7 +200,7 @@ export class InsightAnalyzer {
         );
 
         businessInsights = result.insights;
-        roiMetrics = result.roiMetrics;
+        // Note: ROI metrics are calculated in WorkflowPilot using actual execution data + hourly rate
 
         console.log(`[InsightAnalyzer] Generated ${businessInsights.length} insights (patterns only) for agent ${agentId}`);
       }

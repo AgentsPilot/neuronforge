@@ -128,6 +128,10 @@ export class MetricsCollector {
       manual_time_per_item_seconds: agentData?.manual_time_per_item_seconds || undefined,
     };
 
+    // Track if we've already counted items from the first step with data
+    // Steps are ordered by created_at (ascending), so first step = data source
+    let hasCountedDataSource = false;
+
     // Aggregate metrics from step executions
     for (const stepExec of stepExecutions || []) {
       // Count failed steps
@@ -177,8 +181,20 @@ export class MetricsCollector {
         });
       }
 
-      // Aggregate total items (for overall execution metrics)
-      metrics.total_items += itemCount;
+      // Use the FIRST step's item count as total_items
+      // Steps are ordered by created_at (ascending), so first non-system step = data source
+      // This prevents double-counting when same items flow through multiple steps
+      // e.g., "fetch 10 emails" → "filter emails" → "send emails" should count as 10, not 30
+      if (itemCount > 0 && !hasCountedDataSource) {
+        metrics.total_items = itemCount;
+        hasCountedDataSource = true;
+        logger.debug({
+          executionId,
+          stepName: stepExec.step_name,
+          action: stepExec.action,
+          itemCount,
+        }, 'Counted items from first step (data source)');
+      }
 
       // Check for empty results
       if (stepExec.item_count === 0) {

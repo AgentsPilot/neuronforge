@@ -132,7 +132,7 @@ export function LatestRunCard({ execution, isRunning, advancedMode, hourlyRate }
     <div className="bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-xl shadow-sm overflow-hidden h-full flex flex-col">
       <div className="p-6 border-b border-[var(--v2-border)] bg-gradient-to-br from-blue-500/5 to-purple-500/5 flex-shrink-0">
         <div className="flex items-center justify-between mb-1">
-          <h3 className="text-lg font-bold text-[var(--v2-text-primary)] flex items-center gap-2">
+          <h3 className="text-base font-semibold text-[var(--v2-text-primary)] flex items-center gap-2">
             {getStatusIcon()}
             Latest Run
           </h3>
@@ -237,7 +237,7 @@ export function LatestRunCard({ execution, isRunning, advancedMode, hourlyRate }
                   <Clock className="w-3.5 h-3.5 text-blue-500" />
                   <span className="text-xs font-semibold text-[var(--v2-text-muted)] uppercase tracking-wider">Duration</span>
                 </div>
-                <div className="text-xl font-bold text-[var(--v2-text-primary)] tabular-nums">
+                <div className="text-lg font-bold text-[var(--v2-text-primary)] tabular-nums">
                   {formatDuration(execution.execution_duration_ms)}
                 </div>
               </div>
@@ -248,7 +248,7 @@ export function LatestRunCard({ execution, isRunning, advancedMode, hourlyRate }
                   <Timer className="w-3.5 h-3.5 text-emerald-500" />
                   <span className="text-xs font-semibold text-[var(--v2-text-muted)] uppercase tracking-wider">Time Saved</span>
                 </div>
-                <div className="text-xl font-bold text-emerald-600 dark:text-emerald-400 tabular-nums">
+                <div className="text-lg font-bold text-emerald-600 dark:text-emerald-400 tabular-nums">
                   {timeSavedSeconds > 0 ? formatTimeSaved(timeSavedSeconds) : 'N/A'}
                 </div>
               </div>
@@ -259,7 +259,7 @@ export function LatestRunCard({ execution, isRunning, advancedMode, hourlyRate }
                   <Cpu className="w-3.5 h-3.5 text-purple-500" />
                   <span className="text-xs font-semibold text-[var(--v2-text-muted)] uppercase tracking-wider">Tokens</span>
                 </div>
-                <div className="text-xl font-bold text-[var(--v2-text-primary)] tabular-nums">
+                <div className="text-lg font-bold text-[var(--v2-text-primary)] tabular-nums">
                   {execution.logs?.tokensUsed?.total ? `${(execution.logs.tokensUsed.total / 1000).toFixed(1)}k` : 'N/A'}
                 </div>
               </div>

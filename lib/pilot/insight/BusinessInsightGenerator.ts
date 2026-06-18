@@ -15,6 +15,38 @@
  * - Only call Claude API when trends change significantly
  * - Result: ~1 LLM call per week for stable workflows
  *
+ * ============================================================================
+ * ROI ARCHITECTURE NOTES
+ * ============================================================================
+ *
+ * ROI calculation is split between two systems:
+ *
+ * 1. ESTIMATED ROI (at agent creation time):
+ *    - Module: lib/effort-estimator/EffortEstimator.ts
+ *    - Writes to: agent_config.roi_estimate (JSONB)
+ *    - Method: LLM-driven persona simulation ("logistics-ops manager at a supply-chain SMB")
+ *    - Fields: { is_bulk_workflow, total_manual_time_seconds, reasoning, confidence }
+ *    - Purpose: Show users expected value BEFORE running the agent
+ *
+ * 2. ACTUAL ROI (at execution time):
+ *    - Module: lib/pilot/MetricsCollector.ts + lib/pilot/WorkflowPilot.ts
+ *    - Reads: agent_config.roi_estimate (for is_bulk_workflow flag)
+ *    - Calculates: time_saved_seconds = items × manual_time_per_item_seconds
+ *    - Stores: execution_metrics.time_saved_seconds
+ *    - WorkflowPilot then calculates cost:
+ *      - Fetches hourly_rate_usd via OrganizationSettingsService.getAgentHourlyRate()
+ *      - cost_saved_usd_per_week = (time_saved_seconds / 3600) × hourly_rate × executions_per_week
+ *    - Stores: execution_insight_runs.hourly_rate_usd (for historical accuracy)
+ *
+ * These are COMPLEMENTARY, not redundant:
+ * - Effort estimate = "expected savings" (before first run)
+ * - Execution ROI = "realized savings" (after each run)
+ *
+ * The hourly_rate_usd is stored with each insight run so historical ROI remains
+ * accurate even if the user changes their hourly rate later.
+ *
+ * ============================================================================
+ *
  * @module lib/pilot/insight/BusinessInsightGenerator
  */
 
@@ -44,33 +76,10 @@ export interface BusinessInsight {
 }
 
 /**
- * ROI estimate from LLM analysis
- * Supports both per-item workflows and bulk/filtering workflows
- */
-export interface ROIEstimate {
-  manual_time_per_item_seconds: number; // For per-item workflows (Type A)
-  total_manual_time_seconds?: number;    // For bulk workflows (Type B) - overrides per-item calculation
-  reasoning: string;
-}
-
-/**
- * ROI metrics calculated from trends and user profile
- */
-export interface ROIMetrics {
-  timeSavedHoursPerWeek: number;
-  costSavedUsdPerWeek: number;
-  hourlyRate: number;
-  itemsPerRun: number;
-  runsPerWeek: number;
-  manualTimePerItem?: number; // Optional - not used for bulk workflows
-}
-
-/**
  * Result from business insight generation
  */
 export interface BusinessInsightResult {
   insights: BusinessInsight[];
-  roiMetrics?: ROIMetrics;
 }
 
 export class BusinessInsightGenerator {
@@ -146,17 +155,19 @@ export class BusinessInsightGenerator {
           }, '✅ Reusing cached business insight - trends stable (NO LLM CALL)');
 
           // Convert cached insight to BusinessInsight format
-          return [{
-            type: cachedInsight.insight_type as BusinessInsight['type'],
-            severity: cachedInsight.severity as BusinessInsight['severity'],
-            title: cachedInsight.title,
-            description: cachedInsight.description,
-            business_impact: cachedInsight.business_impact || '',
-            recommendation: cachedInsight.recommendation || '',
-            confidence: typeof cachedInsight.confidence === 'number'
-              ? cachedInsight.confidence
-              : 0.8,  // Default confidence for cached insights
-          }];
+          return {
+            insights: [{
+              type: cachedInsight.insight_type as BusinessInsight['type'],
+              severity: cachedInsight.severity as BusinessInsight['severity'],
+              title: cachedInsight.title,
+              description: cachedInsight.description,
+              business_impact: cachedInsight.business_impact || '',
+              recommendation: cachedInsight.recommendation || '',
+              confidence: typeof cachedInsight.confidence === 'number'
+                ? cachedInsight.confidence
+                : 0.8,  // Default confidence for cached insights
+            }]
+          };
         }
 
         logger.info({
@@ -189,8 +200,8 @@ export class BusinessInsightGenerator {
       llmResponsePreview: response.substring(0, 500),
     }, '📝 LLM response received');
 
-    // Parse and validate insights + ROI estimate
-    const { insights, roiEstimate } = this.parseInsightsWithROI(response);
+    // Parse and validate insights
+    const insights = this.parseInsights(response);
 
     const llmTime = Date.now() - generationTime;
     const totalTime = Date.now() - startTime;
@@ -198,8 +209,6 @@ export class BusinessInsightGenerator {
     logger.info({
       agentId: agent.id,
       insightsGenerated: insights.length,
-      hasROIEstimate: !!roiEstimate,
-      manualTimePerItem: roiEstimate?.manual_time_per_item_seconds,
       llmTimeMs: llmTime,
       totalTimeMs: totalTime,
       llmCalled: true,
@@ -211,130 +220,9 @@ export class BusinessInsightGenerator {
     // NOTE: Storage is handled by WorkflowPilot to ensure proper dual-table pattern
     // (execution_insights + execution_insight_runs) with correct insight_id linking
 
-    // Update agent's manual_time_per_item_seconds if ROI estimate provided
-    if (roiEstimate && roiEstimate.manual_time_per_item_seconds > 0) {
-      await this.updateAgentROI(agent.id, roiEstimate);
-    }
+    // ROI estimation is now handled by lib/effort-estimator at agent creation time
 
-    // Calculate ROI metrics if we have data
-    const roiMetrics = await this.calculateROIMetrics(agent, trends, roiEstimate);
-
-    return {
-      insights,
-      roiMetrics,
-    };
-  }
-
-  /**
-   * Calculate ROI metrics from trends and user profile
-   *
-   * Formula:
-   * - time_saved_seconds_per_week = items_per_run × manual_time_per_item × runs_per_week
-   * - time_saved_hours_per_week = time_saved_seconds_per_week / 3600
-   * - cost_saved_usd_per_week = time_saved_hours_per_week × hourly_rate
-   *
-   * @param agent - Agent configuration
-   * @param trends - Statistical trends with metric_value_recent (items per run)
-   * @param roiEstimate - LLM-estimated manual time per item
-   * @returns ROI metrics or undefined if insufficient data
-   */
-  private async calculateROIMetrics(
-    agent: Agent,
-    trends: TrendMetrics,
-    _roiEstimate?: ROIEstimate | null
-  ): Promise<ROIMetrics | undefined> {
-    try {
-      // Fetch agent data
-      const { data: agentData } = await this.supabase
-        .from('agents')
-        .select('user_id')
-        .eq('id', agent.id)
-        .single();
-
-      if (!agentData) {
-        logger.error({ agentId: agent.id }, 'Agent not found - cannot calculate ROI');
-        return undefined;
-      }
-
-      // Fetch user's hourly rate from profiles table
-      const { data: profile } = await this.supabase
-        .from('profiles')
-        .select('hourly_rate_usd')
-        .eq('id', agentData.user_id)
-        .single();
-
-      const hourlyRate = profile?.hourly_rate_usd || 50; // Default to $50/hour
-
-      // Fetch executions from last 7 days to calculate weekly savings
-      const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
-
-      const { data: recentExecutions } = await this.supabase
-        .from('agent_executions')
-        .select('id, created_at')
-        .eq('agent_id', agent.id)
-        .gte('created_at', sevenDaysAgo)
-        .eq('status', 'completed')
-        .order('created_at', { ascending: false });
-
-      if (!recentExecutions || recentExecutions.length === 0) {
-        logger.debug({ agentId: agent.id }, 'No recent executions - skipping ROI calculation');
-        return undefined;
-      }
-
-      // Fetch stored time_saved_seconds from execution_metrics
-      // IMPORTANT: Use pre-calculated values (supports both bulk and per-item workflows)
-      const executionIds = recentExecutions.map(e => e.id);
-      const { data: metrics } = await this.supabase
-        .from('execution_metrics')
-        .select('execution_id, time_saved_seconds')
-        .in('execution_id', executionIds);
-
-      if (!metrics || metrics.length === 0) {
-        logger.debug({ agentId: agent.id }, 'No execution metrics found - skipping ROI calculation');
-        return undefined;
-      }
-
-      // Sum up time saved from all executions in the last 7 days
-      let totalTimeSavedSeconds = 0;
-      metrics.forEach(metric => {
-        if (metric.time_saved_seconds && metric.time_saved_seconds > 0) {
-          totalTimeSavedSeconds += metric.time_saved_seconds;
-        }
-      });
-
-      if (totalTimeSavedSeconds === 0) {
-        logger.debug({ agentId: agent.id }, 'No time saved recorded - skipping ROI calculation');
-        return undefined;
-      }
-
-      // Calculate weekly averages
-      const timeSavedHoursPerWeek = totalTimeSavedSeconds / 3600;
-      const costSavedUsdPerWeek = timeSavedHoursPerWeek * hourlyRate;
-      const runsPerWeek = recentExecutions.length;
-      const itemsPerRun = trends.metric_value_recent || 0;
-
-      logger.info({
-        agentId: agent.id,
-        runsInLast7Days: recentExecutions.length,
-        metricsFound: metrics.length,
-        totalTimeSavedSeconds,
-        timeSavedHoursPerWeek: timeSavedHoursPerWeek.toFixed(2),
-        costSavedUsdPerWeek: costSavedUsdPerWeek.toFixed(2),
-        hourlyRate,
-      }, '💰 ROI metrics calculated for business insight (from stored execution_metrics)');
-
-      return {
-        timeSavedHoursPerWeek,
-        costSavedUsdPerWeek,
-        hourlyRate,
-        itemsPerRun,
-        runsPerWeek,
-        manualTimePerItem: undefined, // Not used - we read from stored values
-      };
-    } catch (error) {
-      logger.error({ err: error, agentId: agent.id }, 'Failed to calculate ROI metrics (non-fatal)');
-      return undefined;
-    }
+    return { insights };
   }
 
   /**
@@ -369,15 +257,8 @@ export class BusinessInsightGenerator {
   /**
    * Build LLM prompt for business insight generation.
    *
-   * @deprecated 2026-06-10 (the ROI Estimate Guidelines block only) — The
-   * ROI estimation responsibility has moved to `lib/effort-estimator`. The
-   * "ROI Estimate Guidelines" section of this prompt stays during the
-   * deprecation window so the existing insights pipeline keeps producing
-   * ROI estimates for agents created before the new module was wired in.
-   * New code MUST NOT extend that section — extend the new estimator's
-   * prompt at `lib/effort-estimator/buildEffortPrompt.ts` instead.
-   *
-   * The non-ROI business-insight portion of this prompt is NOT deprecated.
+   * Note: ROI estimation has been moved to `lib/effort-estimator` which runs
+   * once at agent creation. This prompt now focuses solely on business insights.
    */
   private buildBusinessInsightPrompt(
     workflowContext: string,
@@ -535,12 +416,7 @@ Respond in JSON:
       "recommendation": "Specific action in plain English (1-2 sentences)",
       "confidence": 0.0-1.0
     }
-  ],
-  "roi_estimate": {
-    "manual_time_per_item_seconds": <number>,
-    "total_manual_time_seconds": <number or omit>,
-    "reasoning": "<brief explanation: workflow type (A or B) and how you estimated the time>"
-  }
+  ]
 }
 \`\`\`
 
@@ -555,35 +431,6 @@ Respond in JSON:
 - Show celebratory insights for good news with LOW severity
 - Show problems/concerns with MEDIUM-HIGH severity
 - Critical = business-impacting issue requiring immediate action
-
-**ROI Estimate Guidelines:**
-
-CRITICAL: First determine the workflow type:
-
-**Type A - Per-Item Workflows (each item needs individual attention):**
-- Examples: Responding to emails, data entry, invoice processing, lead qualification
-- Estimate: SECONDS per item
-- Examples:
-  - Simple email triage (read, categorize, file): 30-60 seconds per email
-  - Email with response (read, compose reply, send): 120-180 seconds per email
-  - Data entry from document to spreadsheet: 60-120 seconds per row
-  - Invoice processing (review, approve, file): 180-300 seconds per invoice
-  - Lead qualification (research, score, update CRM): 300-600 seconds per lead
-
-**Type B - Bulk/Filtering Workflows (process all items together):**
-- Examples: Filter and report critical items, aggregate data, scan for patterns, create summaries
-- Estimate: TOTAL SECONDS for the entire task (regardless of item count)
-- Examples:
-  - Filter 100 GitHub issues for critical bugs and email summary: 300-600 seconds TOTAL
-  - Scan 50 support tickets for urgent ones and create report: 240-480 seconds TOTAL
-  - Review 200 leads and identify top 10: 600-900 seconds TOTAL
-  - Aggregate sales data from 1000 rows into summary: 180-300 seconds TOTAL
-
-**How to respond:**
-- If Type A (per-item): Set "manual_time_per_item_seconds" to time per individual item
-- If Type B (bulk): Set "manual_time_per_item_seconds" to 0 and add a "total_manual_time_seconds" field with the total time
-
-Look at the workflow description and determine which type it is. Be realistic - err on the conservative side
 
 Generate insights now.`;
   }
@@ -743,9 +590,9 @@ Look for other notable patterns: performance changes, failures, data quality iss
   }
 
   /**
-   * Parse and validate LLM response - returns both insights and ROI estimate
+   * Parse and validate LLM response for business insights
    */
-  private parseInsightsWithROI(response: string): { insights: BusinessInsight[]; roiEstimate: ROIEstimate | null } {
+  private parseInsights(response: string): BusinessInsight[] {
     try {
       // Extract JSON from response (might be wrapped in markdown code blocks)
       const jsonMatch = response.match(/```json\n([\s\S]+?)\n```/) ||
@@ -761,8 +608,7 @@ Look for other notable patterns: performance changes, failures, data quality iss
       // Attempt to repair common JSON errors from LLM
       // 1. Remove trailing commas before closing braces/brackets
       jsonStr = jsonStr.replace(/,(\s*[}\]])/g, '$1');
-      // 2. Fix unescaped quotes in strings (common LLM mistake)
-      // 3. Remove any trailing content after final }
+      // 2. Remove any trailing content after final }
       const lastBrace = jsonStr.lastIndexOf('}');
       if (lastBrace !== -1) {
         jsonStr = jsonStr.substring(0, lastBrace + 1);
@@ -794,21 +640,6 @@ Look for other notable patterns: performance changes, failures, data quality iss
         throw new Error('Response missing insights array');
       }
 
-      // Extract ROI estimate if present
-      let roiEstimate: ROIEstimate | null = null;
-      if (parsed.roi_estimate && typeof parsed.roi_estimate.manual_time_per_item_seconds === 'number') {
-        roiEstimate = {
-          manual_time_per_item_seconds: parsed.roi_estimate.manual_time_per_item_seconds,
-          total_manual_time_seconds: parsed.roi_estimate.total_manual_time_seconds,
-          reasoning: parsed.roi_estimate.reasoning || '',
-        };
-        logger.info({
-          manualTimePerItem: roiEstimate.manual_time_per_item_seconds,
-          totalManualTime: roiEstimate.total_manual_time_seconds,
-          reasoning: roiEstimate.reasoning,
-        }, '💰 ROI estimate extracted from LLM response');
-      }
-
       // Validate each insight
       const validTypes = ['volume_trend', 'category_shift', 'operational_anomaly', 'scale_opportunity'];
       const validInsights = parsed.insights.filter((insight: any) => {
@@ -832,7 +663,7 @@ Look for other notable patterns: performance changes, failures, data quality iss
       // Allow empty insights array (workflow is healthy, no insights needed)
       if (validInsights.length === 0 && parsed.insights.length === 0) {
         logger.info('LLM returned zero insights - workflow is healthy, no issues to report');
-        return { insights: [], roiEstimate };
+        return [];
       }
 
       if (validInsights.length === 0 && parsed.insights.length > 0) {
@@ -843,10 +674,9 @@ Look for other notable patterns: performance changes, failures, data quality iss
       logger.info({
         totalInsights: parsed.insights.length,
         validInsights: validInsights.length,
-        hasROIEstimate: !!roiEstimate,
       }, 'Insights parsed and validated');
 
-      return { insights: validInsights as BusinessInsight[], roiEstimate };
+      return validInsights as BusinessInsight[];
     } catch (error: any) {
       logger.error({
         err: error,
@@ -855,103 +685,7 @@ Look for other notable patterns: performance changes, failures, data quality iss
       }, 'Failed to parse LLM response - returning empty array');
 
       // Return empty array instead of throwing - insights are non-critical
-      // The calling code will handle empty results gracefully
-      return { insights: [], roiEstimate: null };
-    }
-  }
-
-  /**
-   * Legacy method for backward compatibility
-   */
-  private parseInsights(response: string): BusinessInsight[] {
-    return this.parseInsightsWithROI(response).insights;
-  }
-
-  /**
-   * @deprecated 2026-06-10 — Replaced by `lib/effort-estimator`. This writer
-   * is kept temporarily during the deprecation window so the existing
-   * insights/ROI pipeline does not regress. The self-guard at line 876
-   * (`manual_time_per_item_seconds` null-check) MUST remain — it prevents
-   * this path from overwriting a user-provided manual-time value. The
-   * companion guard added 2026-06-10 (the `existingROI` check on the
-   * `agent_config.roi_estimate` write below) MUST also remain — it prevents
-   * this path from overwriting a fresh estimate written by the new effort
-   * estimator (AC-4 root-cause fix).
-   *
-   * Final delete/keep decision is tracked in
-   * EFFORT_ESTIMATOR_REQUIREMENT.md § Open Follow-Ups #1.
-   *
-   * Update agent's manual_time_per_item_seconds with ROI estimate from LLM.
-   * Only updates if the agent doesn't already have a value set (user-provided
-   * takes precedence). For bulk workflows: stores total_manual_time_seconds
-   * in agent_config.roi_estimate.
-   */
-  private async updateAgentROI(agentId: string, roiEstimate: ROIEstimate): Promise<void> {
-    try {
-      // Check if agent already has a manual_time_per_item_seconds set
-      const { data: agent } = await this.supabase
-        .from('agents')
-        .select('manual_time_per_item_seconds, agent_config')
-        .eq('id', agentId)
-        .single();
-
-      // CRITICAL: self-guard — do NOT remove. Prevents this deprecated path
-      // from overwriting a user-provided `manual_time_per_item_seconds`. This
-      // guard is on a DIFFERENT column from the AC-4 guard below; both must stay.
-      if (agent && (agent.manual_time_per_item_seconds === null || agent.manual_time_per_item_seconds === undefined || agent.manual_time_per_item_seconds === 0)) {
-        // Prepare update object
-        const updateData: any = {
-          manual_time_per_item_seconds: roiEstimate.manual_time_per_item_seconds,
-          updated_at: new Date().toISOString()
-        };
-
-        // AC-4 (Effort Estimator cycle, 2026-06-10): do NOT overwrite a fresh
-        // `agent_config.roi_estimate` written by the new effort estimator. The
-        // legacy self-guard above is on `manual_time_per_item_seconds`, a
-        // separate column. Without this dedicated check the deprecated path
-        // would silently stomp the new estimator's output.
-        const existingROI = (agent.agent_config as Record<string, any> | null)?.roi_estimate;
-
-        // If this is a bulk workflow (has total_manual_time_seconds), store it in agent_config
-        if (roiEstimate.total_manual_time_seconds && !existingROI) {
-          const agentConfig = (agent.agent_config as Record<string, any>) || {};
-          agentConfig.roi_estimate = {
-            total_manual_time_seconds: roiEstimate.total_manual_time_seconds,
-            reasoning: roiEstimate.reasoning,
-            is_bulk_workflow: true
-          };
-          updateData.agent_config = agentConfig;
-        } else if (existingROI) {
-          logger.debug(
-            { agentId, existingROI },
-            'deprecated path skipping write — fresh estimate already present'
-          );
-        }
-
-        const { error } = await this.supabase
-          .from('agents')
-          .update(updateData)
-          .eq('id', agentId);
-
-        if (error) {
-          logger.error({ err: error, agentId }, 'Failed to update agent ROI');
-        } else {
-          logger.info({
-            agentId,
-            manualTimePerItem: roiEstimate.manual_time_per_item_seconds,
-            totalManualTime: roiEstimate.total_manual_time_seconds,
-            isBulkWorkflow: !!roiEstimate.total_manual_time_seconds,
-            reasoning: roiEstimate.reasoning,
-          }, '💰 Agent ROI estimate updated from LLM');
-        }
-      } else {
-        logger.debug({
-          agentId,
-          existingValue: agent?.manual_time_per_item_seconds,
-        }, 'Skipping ROI update - agent already has manual_time_per_item_seconds configured');
-      }
-    } catch (error) {
-      logger.error({ err: error, agentId }, 'Error updating agent ROI');
+      return [];
     }
   }
 
@@ -991,16 +725,19 @@ Look for other notable patterns: performance changes, failures, data quality iss
   /**
    * Store business insights in database for persistence
    *
+   * Note: This method is currently not called - storage is handled by WorkflowPilot
+   * to ensure proper dual-table pattern (execution_insights + execution_insight_runs).
+   * Kept for potential future use.
+   *
    * Stores insights in the same execution_insights table as technical insights
    * Category: 'business_intelligence'
-   * Pattern data: TrendMetrics + ROI estimate for future comparison
+   * Pattern data: TrendMetrics for future comparison
    */
   private async storeInsights(
     agent: Agent,
     insights: BusinessInsight[],
     trends: TrendMetrics,
-    executionIds: string[],
-    roiEstimate?: ROIEstimate | null
+    executionIds: string[]
   ): Promise<void> {
     try {
       // Get user_id from agent
@@ -1015,39 +752,6 @@ Look for other notable patterns: performance changes, failures, data quality iss
         return;
       }
 
-      // Fetch user's hourly rate from profiles table for ROI calculation
-      const { data: profile } = await this.supabase
-        .from('profiles')
-        .select('hourly_rate_usd')
-        .eq('id', agentData.user_id)
-        .single();
-
-      const hourlyRate = profile?.hourly_rate_usd || 50; // Default to $50/hour
-
-      // Calculate ROI metrics if we have execution metrics
-      let timeSavedHoursPerWeek: number | undefined;
-      let costSavedUsdPerWeek: number | undefined;
-
-      if (trends.metric_value_recent > 0 && roiEstimate?.manual_time_per_item_seconds) {
-        // Estimate runs per week from 7-day trend data
-        const runsPerWeek = trends.recent_execution_count || 7; // Default to 7 if not available
-
-        // Calculate time saved: items_per_run × manual_time_per_item × runs_per_week
-        const timeSavedSecondsPerWeek = trends.metric_value_recent * roiEstimate.manual_time_per_item_seconds * runsPerWeek;
-        timeSavedHoursPerWeek = timeSavedSecondsPerWeek / 3600;
-        costSavedUsdPerWeek = timeSavedHoursPerWeek * hourlyRate;
-
-        logger.info({
-          agentId: agent.id,
-          itemsPerRun: trends.metric_value_recent,
-          manualTimePerItem: roiEstimate.manual_time_per_item_seconds,
-          runsPerWeek,
-          timeSavedHoursPerWeek: timeSavedHoursPerWeek.toFixed(2),
-          costSavedUsdPerWeek: costSavedUsdPerWeek.toFixed(2),
-          hourlyRate,
-        }, '💰 ROI metrics calculated for business insight');
-      }
-
       // Store each insight
       for (const insight of insights) {
         const stored = await this.insightRepository.create({
@@ -1057,28 +761,18 @@ Look for other notable patterns: performance changes, failures, data quality iss
           insight_type: insight.type,
           category: 'business_insight',  // Business insights = AI-powered business intelligence from LLM
           severity: insight.severity,
-          confidence: insight.confidence,  // FIXED: Store numeric confidence directly (0.0-1.0)
+          confidence: insight.confidence,
           title: insight.title,
           description: insight.description,
           business_impact: insight.business_impact,
           recommendation: insight.recommendation,
-          pattern_data: {
-            ...trends,
-            // Include ROI estimate in pattern_data for historical tracking
-            roi_estimate: roiEstimate ? {
-              manual_time_per_item_seconds: roiEstimate.manual_time_per_item_seconds,
-              reasoning: roiEstimate.reasoning,
-            } : null,
-          } as unknown as any,
+          pattern_data: trends as unknown as any,
           metrics: {
             total_executions: executionIds.length,
             affected_executions: executionIds.length,
             pattern_frequency: 1.0,
           },
           status: 'new',
-          // ROI metrics (Phase 1.4)
-          time_saved_hours_per_week: timeSavedHoursPerWeek,
-          cost_saved_usd_per_week: costSavedUsdPerWeek,
         });
 
         if (stored) {
@@ -1087,9 +781,7 @@ Look for other notable patterns: performance changes, failures, data quality iss
             insightId: stored.id,
             insightType: insight.type,
             severity: insight.severity,
-            timeSavedHoursPerWeek,
-            costSavedUsdPerWeek,
-          }, '✅ Business insight stored in database with ROI metrics');
+          }, '✅ Business insight stored in database');
         }
       }
     } catch (error) {

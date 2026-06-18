@@ -1,0 +1,644 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Business Analytics Dashboard - AgentPilot</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-primary: #0a0a0f;
+      --bg-surface: #12121a;
+      --bg-elevated: #1a1a24;
+      --border: #2a2a3a;
+      --text-primary: #ffffff;
+      --text-secondary: #a0a0b0;
+      --text-muted: #6a6a7a;
+      --accent-green: #10b981;
+      --accent-blue: #3b82f6;
+      --accent-purple: #8b5cf6;
+      --accent-amber: #f59e0b;
+      --accent-red: #ef4444;
+    }
+
+    body {
+      font-family: 'Inter', sans-serif;
+      background: var(--bg-primary);
+      color: var(--text-primary);
+    }
+
+    .glass-card {
+      background: linear-gradient(135deg, rgba(255,255,255,0.05) 0%, rgba(255,255,255,0.02) 100%);
+      border: 1px solid var(--border);
+      backdrop-filter: blur(10px);
+    }
+
+    .gradient-text {
+      background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .pulse-dot {
+      animation: pulse 2s infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+
+    .trend-up { color: var(--accent-green); }
+    .trend-down { color: var(--accent-red); }
+
+    .progress-ring {
+      transform: rotate(-90deg);
+    }
+
+    .health-excellent { --health-color: #10b981; }
+    .health-good { --health-color: #3b82f6; }
+    .health-warning { --health-color: #f59e0b; }
+    .health-critical { --health-color: #ef4444; }
+  </style>
+</head>
+<body class="min-h-screen p-6">
+
+  <!-- Header -->
+  <header class="mb-8">
+    <div class="flex items-center justify-between">
+      <div>
+        <h1 class="text-2xl font-bold text-white">Good morning, Sarah</h1>
+        <p class="text-[var(--text-secondary)] mt-1">Here's how your business automations are performing</p>
+      </div>
+      <div class="flex items-center gap-4">
+        <select class="bg-[var(--bg-elevated)] border border-[var(--border)] rounded-lg px-3 py-2 text-sm text-[var(--text-secondary)]">
+          <option>Last 30 days</option>
+          <option>Last 7 days</option>
+          <option>Last 90 days</option>
+          <option>This year</option>
+        </select>
+        <button class="flex items-center gap-2 px-4 py-2 bg-[var(--accent-blue)] text-white rounded-lg text-sm font-medium hover:bg-blue-600 transition">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+          </svg>
+          Refresh
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Grid Layout -->
+  <div class="grid grid-cols-12 gap-6">
+
+    <!-- LEFT COLUMN: Business Health Score (spans 4 cols) -->
+    <div class="col-span-4">
+      <div class="glass-card rounded-2xl p-6 h-full">
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="text-lg font-semibold">Business Health</h2>
+          <span class="px-2 py-1 bg-emerald-500/20 text-emerald-400 rounded-full text-xs font-medium">Excellent</span>
+        </div>
+
+        <!-- Large Health Score Circle -->
+        <div class="flex justify-center my-8">
+          <div class="relative">
+            <svg class="w-40 h-40 progress-ring">
+              <circle cx="80" cy="80" r="70" stroke="var(--border)" stroke-width="8" fill="none"/>
+              <circle cx="80" cy="80" r="70" stroke="var(--accent-green)" stroke-width="8" fill="none"
+                      stroke-dasharray="440" stroke-dashoffset="26" stroke-linecap="round"/>
+            </svg>
+            <div class="absolute inset-0 flex flex-col items-center justify-center">
+              <span class="text-4xl font-bold text-white">94</span>
+              <span class="text-sm text-[var(--text-muted)]">out of 100</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Health Breakdown -->
+        <div class="space-y-3">
+          <div class="flex items-center justify-between">
+            <span class="text-sm text-[var(--text-secondary)]">Reliability</span>
+            <div class="flex items-center gap-2">
+              <div class="w-24 h-2 bg-[var(--bg-elevated)] rounded-full overflow-hidden">
+                <div class="h-full bg-emerald-500 rounded-full" style="width: 98%"></div>
+              </div>
+              <span class="text-sm font-medium text-emerald-400">98%</span>
+            </div>
+          </div>
+          <div class="flex items-center justify-between">
+            <span class="text-sm text-[var(--text-secondary)]">Efficiency</span>
+            <div class="flex items-center gap-2">
+              <div class="w-24 h-2 bg-[var(--bg-elevated)] rounded-full overflow-hidden">
+                <div class="h-full bg-blue-500 rounded-full" style="width: 92%"></div>
+              </div>
+              <span class="text-sm font-medium text-blue-400">92%</span>
+            </div>
+          </div>
+          <div class="flex items-center justify-between">
+            <span class="text-sm text-[var(--text-secondary)]">Coverage</span>
+            <div class="flex items-center gap-2">
+              <div class="w-24 h-2 bg-[var(--bg-elevated)] rounded-full overflow-hidden">
+                <div class="h-full bg-purple-500 rounded-full" style="width: 85%"></div>
+              </div>
+              <span class="text-sm font-medium text-purple-400">85%</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- CENTER COLUMN: Value Delivered (spans 5 cols) -->
+    <div class="col-span-5">
+      <div class="glass-card rounded-2xl p-6">
+        <h2 class="text-lg font-semibold mb-6">Value Delivered This Month</h2>
+
+        <!-- Big Numbers Row -->
+        <div class="grid grid-cols-2 gap-6 mb-6">
+          <!-- Time Saved -->
+          <div class="bg-[var(--bg-elevated)] rounded-xl p-5">
+            <div class="flex items-start justify-between">
+              <div>
+                <p class="text-sm text-[var(--text-muted)] mb-1">Time You Didn't Spend</p>
+                <p class="text-3xl font-bold text-white">127 hours</p>
+                <p class="text-sm text-[var(--text-secondary)] mt-1">That's <span class="text-emerald-400 font-medium">16 work days</span></p>
+              </div>
+              <div class="p-2 bg-emerald-500/20 rounded-lg">
+                <svg class="w-6 h-6 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+              </div>
+            </div>
+            <div class="flex items-center gap-1 mt-3 text-emerald-400 text-sm">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 10l7-7m0 0l7 7m-7-7v18" />
+              </svg>
+              <span>+18% vs last month</span>
+            </div>
+          </div>
+
+          <!-- Money Saved -->
+          <div class="bg-[var(--bg-elevated)] rounded-xl p-5">
+            <div class="flex items-start justify-between">
+              <div>
+                <p class="text-sm text-[var(--text-muted)] mb-1">Value of Time Saved</p>
+                <p class="text-3xl font-bold text-white">$6,350</p>
+                <p class="text-sm text-[var(--text-secondary)] mt-1">At your rate of <span class="text-blue-400">$50/hr</span></p>
+              </div>
+              <div class="p-2 bg-blue-500/20 rounded-lg">
+                <svg class="w-6 h-6 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+              </div>
+            </div>
+            <div class="flex items-center gap-1 mt-3 text-emerald-400 text-sm">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 10l7-7m0 0l7 7m-7-7v18" />
+              </svg>
+              <span>+$890 vs last month</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tasks Completed -->
+        <div class="bg-[var(--bg-elevated)] rounded-xl p-5">
+          <div class="flex items-center justify-between mb-4">
+            <div>
+              <p class="text-sm text-[var(--text-muted)]">Tasks Completed Automatically</p>
+              <p class="text-2xl font-bold text-white mt-1">2,847 tasks</p>
+            </div>
+            <div class="text-right">
+              <p class="text-sm text-[var(--text-muted)]">Avg per day</p>
+              <p class="text-lg font-semibold text-purple-400">95 tasks</p>
+            </div>
+          </div>
+          <!-- Mini chart placeholder -->
+          <div class="h-16 flex items-end gap-1">
+            <div class="flex-1 bg-purple-500/30 rounded-t" style="height: 60%"></div>
+            <div class="flex-1 bg-purple-500/30 rounded-t" style="height: 45%"></div>
+            <div class="flex-1 bg-purple-500/30 rounded-t" style="height: 70%"></div>
+            <div class="flex-1 bg-purple-500/30 rounded-t" style="height: 55%"></div>
+            <div class="flex-1 bg-purple-500/30 rounded-t" style="height: 80%"></div>
+            <div class="flex-1 bg-purple-500/30 rounded-t" style="height: 65%"></div>
+            <div class="flex-1 bg-purple-500/40 rounded-t" style="height: 90%"></div>
+            <div class="flex-1 bg-purple-500/40 rounded-t" style="height: 75%"></div>
+            <div class="flex-1 bg-purple-500/50 rounded-t" style="height: 85%"></div>
+            <div class="flex-1 bg-purple-500/50 rounded-t" style="height: 70%"></div>
+            <div class="flex-1 bg-purple-500/60 rounded-t" style="height: 95%"></div>
+            <div class="flex-1 bg-purple-500 rounded-t" style="height: 100%"></div>
+          </div>
+          <div class="flex justify-between mt-2 text-xs text-[var(--text-muted)]">
+            <span>Jun 1</span>
+            <span>Today</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- RIGHT COLUMN: Needs Attention (spans 3 cols) -->
+    <div class="col-span-3">
+      <div class="glass-card rounded-2xl p-6 h-full">
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="text-lg font-semibold">Needs Attention</h2>
+          <span class="flex items-center gap-1.5 px-2 py-1 bg-amber-500/20 text-amber-400 rounded-full text-xs font-medium">
+            <span class="w-2 h-2 bg-amber-400 rounded-full pulse-dot"></span>
+            2 items
+          </span>
+        </div>
+
+        <div class="space-y-3">
+          <!-- Issue 1 -->
+          <div class="bg-[var(--bg-elevated)] rounded-xl p-4 border-l-4 border-amber-500">
+            <div class="flex items-start gap-3">
+              <div class="p-1.5 bg-amber-500/20 rounded-lg mt-0.5">
+                <svg class="w-4 h-4 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+              </div>
+              <div class="flex-1">
+                <p class="text-sm font-medium text-white">Invoice Processor isn't finding data</p>
+                <p class="text-xs text-[var(--text-muted)] mt-1">Failed 3 of last 5 runs</p>
+                <p class="text-xs text-amber-400 mt-2">You might be missing client invoices</p>
+              </div>
+            </div>
+            <div class="flex gap-2 mt-3">
+              <button class="flex-1 px-3 py-1.5 bg-amber-500 text-black text-xs font-medium rounded-lg hover:bg-amber-400 transition">
+                Fix This
+              </button>
+              <button class="px-3 py-1.5 text-[var(--text-muted)] text-xs hover:text-white transition">
+                Later
+              </button>
+            </div>
+          </div>
+
+          <!-- Issue 2 -->
+          <div class="bg-[var(--bg-elevated)] rounded-xl p-4 border-l-4 border-blue-500">
+            <div class="flex items-start gap-3">
+              <div class="p-1.5 bg-blue-500/20 rounded-lg mt-0.5">
+                <svg class="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+              </div>
+              <div class="flex-1">
+                <p class="text-sm font-medium text-white">Email Digest hasn't run in 3 days</p>
+                <p class="text-xs text-[var(--text-muted)] mt-1">Usually runs daily</p>
+                <p class="text-xs text-blue-400 mt-2">Is this intentional?</p>
+              </div>
+            </div>
+            <div class="flex gap-2 mt-3">
+              <button class="flex-1 px-3 py-1.5 bg-blue-500 text-white text-xs font-medium rounded-lg hover:bg-blue-400 transition">
+                Check
+              </button>
+              <button class="px-3 py-1.5 text-[var(--text-muted)] text-xs hover:text-white transition">
+                Ignore
+              </button>
+            </div>
+          </div>
+
+          <!-- All Good State (hidden when issues exist) -->
+          <!--
+          <div class="flex flex-col items-center justify-center py-8 text-center">
+            <div class="p-3 bg-emerald-500/20 rounded-full mb-3">
+              <svg class="w-8 h-8 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+              </svg>
+            </div>
+            <p class="text-sm font-medium text-white">Everything looks good!</p>
+            <p class="text-xs text-[var(--text-muted)] mt-1">No issues need your attention</p>
+          </div>
+          -->
+        </div>
+      </div>
+    </div>
+
+    <!-- SECOND ROW: AI Recommendations (Full Width) -->
+    <div class="col-span-12">
+      <div class="glass-card rounded-2xl p-6">
+        <div class="flex items-center justify-between mb-6">
+          <div class="flex items-center gap-3">
+            <div class="p-2 bg-gradient-to-br from-purple-500 to-blue-500 rounded-xl">
+              <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+              </svg>
+            </div>
+            <div>
+              <h2 class="text-lg font-semibold">AI Recommendations</h2>
+              <p class="text-sm text-[var(--text-muted)]">Personalized suggestions based on your automation patterns</p>
+            </div>
+          </div>
+          <button class="text-sm text-[var(--text-secondary)] hover:text-white transition flex items-center gap-1">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+            </svg>
+            Regenerate
+          </button>
+        </div>
+
+        <!-- Recommendations Grid -->
+        <div class="grid grid-cols-3 gap-4">
+          <!-- Recommendation 1: Cost -->
+          <div class="bg-[var(--bg-elevated)] rounded-xl p-5 hover:bg-[var(--bg-elevated)]/80 transition cursor-pointer group">
+            <div class="flex items-start justify-between mb-3">
+              <span class="px-2 py-0.5 bg-emerald-500/20 text-emerald-400 rounded text-xs font-medium">💰 Save Money</span>
+              <span class="text-lg font-bold text-emerald-400">+$240/mo</span>
+            </div>
+            <h3 class="text-sm font-medium text-white mb-2">Combine your email automations</h3>
+            <p class="text-xs text-[var(--text-secondary)] leading-relaxed">
+              Your "Email Summary" and "Daily Digest" do similar things. Merging them would simplify your setup and save about 4 hours per month.
+            </p>
+            <button class="mt-4 w-full py-2 bg-emerald-500/20 text-emerald-400 text-xs font-medium rounded-lg group-hover:bg-emerald-500 group-hover:text-black transition">
+              Learn More
+            </button>
+          </div>
+
+          <!-- Recommendation 2: Time -->
+          <div class="bg-[var(--bg-elevated)] rounded-xl p-5 hover:bg-[var(--bg-elevated)]/80 transition cursor-pointer group">
+            <div class="flex items-start justify-between mb-3">
+              <span class="px-2 py-0.5 bg-blue-500/20 text-blue-400 rounded text-xs font-medium">⏱️ Save Time</span>
+              <span class="text-lg font-bold text-blue-400">+6 hrs/mo</span>
+            </div>
+            <h3 class="text-sm font-medium text-white mb-2">Speed up your lead processing</h3>
+            <p class="text-xs text-[var(--text-secondary)] leading-relaxed">
+              Your Lead Processor runs 3 times a day. Running it hourly during business hours could capture leads faster and improve response time.
+            </p>
+            <button class="mt-4 w-full py-2 bg-blue-500/20 text-blue-400 text-xs font-medium rounded-lg group-hover:bg-blue-500 group-hover:text-white transition">
+              Try This
+            </button>
+          </div>
+
+          <!-- Recommendation 3: Growth -->
+          <div class="bg-[var(--bg-elevated)] rounded-xl p-5 hover:bg-[var(--bg-elevated)]/80 transition cursor-pointer group">
+            <div class="flex items-start justify-between mb-3">
+              <span class="px-2 py-0.5 bg-purple-500/20 text-purple-400 rounded text-xs font-medium">🚀 Grow</span>
+              <span class="text-lg font-bold text-purple-400">New</span>
+            </div>
+            <h3 class="text-sm font-medium text-white mb-2">Automate your client follow-ups</h3>
+            <p class="text-xs text-[var(--text-secondary)] leading-relaxed">
+              You're manually following up with clients after invoices. Similar businesses save 3+ hours weekly by automating this with a simple reminder workflow.
+            </p>
+            <button class="mt-4 w-full py-2 bg-purple-500/20 text-purple-400 text-xs font-medium rounded-lg group-hover:bg-purple-500 group-hover:text-white transition">
+              Create This
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- THIRD ROW: By Category + Recent Activity -->
+    <div class="col-span-7">
+      <div class="glass-card rounded-2xl p-6">
+        <div class="flex items-center justify-between mb-6">
+          <h2 class="text-lg font-semibold">By Category</h2>
+          <button class="text-sm text-[var(--text-secondary)] hover:text-white transition">
+            Manage Categories →
+          </button>
+        </div>
+
+        <div class="space-y-4">
+          <!-- Category 1: Client Work -->
+          <div class="bg-[var(--bg-elevated)] rounded-xl p-4">
+            <div class="flex items-center justify-between mb-3">
+              <div class="flex items-center gap-3">
+                <div class="w-3 h-3 bg-blue-500 rounded-full"></div>
+                <span class="font-medium text-white">Client Work</span>
+                <span class="text-xs text-[var(--text-muted)]">4 automations</span>
+              </div>
+              <div class="flex items-center gap-4">
+                <div class="text-right">
+                  <p class="text-sm font-semibold text-white">68 hours saved</p>
+                  <p class="text-xs text-emerald-400">+12% this month</p>
+                </div>
+                <svg class="w-5 h-5 text-[var(--text-muted)]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
+                </svg>
+              </div>
+            </div>
+            <div class="flex gap-2">
+              <span class="px-2 py-1 bg-[var(--bg-surface)] rounded text-xs text-[var(--text-secondary)]">Invoice Processor</span>
+              <span class="px-2 py-1 bg-[var(--bg-surface)] rounded text-xs text-[var(--text-secondary)]">Contract Generator</span>
+              <span class="px-2 py-1 bg-[var(--bg-surface)] rounded text-xs text-[var(--text-secondary)]">+2 more</span>
+            </div>
+          </div>
+
+          <!-- Category 2: Marketing -->
+          <div class="bg-[var(--bg-elevated)] rounded-xl p-4">
+            <div class="flex items-center justify-between mb-3">
+              <div class="flex items-center gap-3">
+                <div class="w-3 h-3 bg-purple-500 rounded-full"></div>
+                <span class="font-medium text-white">Marketing</span>
+                <span class="text-xs text-[var(--text-muted)]">3 automations</span>
+              </div>
+              <div class="flex items-center gap-4">
+                <div class="text-right">
+                  <p class="text-sm font-semibold text-white">42 hours saved</p>
+                  <p class="text-xs text-emerald-400">+8% this month</p>
+                </div>
+                <svg class="w-5 h-5 text-[var(--text-muted)]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
+                </svg>
+              </div>
+            </div>
+            <div class="flex gap-2">
+              <span class="px-2 py-1 bg-[var(--bg-surface)] rounded text-xs text-[var(--text-secondary)]">Lead Capture</span>
+              <span class="px-2 py-1 bg-[var(--bg-surface)] rounded text-xs text-[var(--text-secondary)]">Social Posts</span>
+              <span class="px-2 py-1 bg-[var(--bg-surface)] rounded text-xs text-[var(--text-secondary)]">Newsletter</span>
+            </div>
+          </div>
+
+          <!-- Category 3: Internal Ops -->
+          <div class="bg-[var(--bg-elevated)] rounded-xl p-4">
+            <div class="flex items-center justify-between mb-3">
+              <div class="flex items-center gap-3">
+                <div class="w-3 h-3 bg-amber-500 rounded-full"></div>
+                <span class="font-medium text-white">Internal Operations</span>
+                <span class="text-xs text-[var(--text-muted)]">2 automations</span>
+              </div>
+              <div class="flex items-center gap-4">
+                <div class="text-right">
+                  <p class="text-sm font-semibold text-white">17 hours saved</p>
+                  <p class="text-xs text-[var(--text-muted)]">No change</p>
+                </div>
+                <svg class="w-5 h-5 text-[var(--text-muted)]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
+                </svg>
+              </div>
+            </div>
+            <div class="flex gap-2">
+              <span class="px-2 py-1 bg-[var(--bg-surface)] rounded text-xs text-[var(--text-secondary)]">Daily Digest</span>
+              <span class="px-2 py-1 bg-[var(--bg-surface)] rounded text-xs text-[var(--text-secondary)]">File Backup</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Recent Activity -->
+    <div class="col-span-5">
+      <div class="glass-card rounded-2xl p-6 h-full">
+        <div class="flex items-center justify-between mb-6">
+          <h2 class="text-lg font-semibold">Recent Activity</h2>
+          <span class="flex items-center gap-1.5 text-xs text-emerald-400">
+            <span class="w-2 h-2 bg-emerald-400 rounded-full pulse-dot"></span>
+            Live
+          </span>
+        </div>
+
+        <div class="space-y-4">
+          <!-- Activity Item -->
+          <div class="flex items-start gap-3">
+            <div class="p-1.5 bg-emerald-500/20 rounded-lg mt-0.5">
+              <svg class="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+              </svg>
+            </div>
+            <div class="flex-1">
+              <p class="text-sm text-white"><span class="font-medium">Lead Capture</span> processed 5 new leads</p>
+              <p class="text-xs text-[var(--text-muted)]">2 minutes ago</p>
+            </div>
+          </div>
+
+          <div class="flex items-start gap-3">
+            <div class="p-1.5 bg-emerald-500/20 rounded-lg mt-0.5">
+              <svg class="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+              </svg>
+            </div>
+            <div class="flex-1">
+              <p class="text-sm text-white"><span class="font-medium">Invoice Processor</span> sent 3 invoices</p>
+              <p class="text-xs text-[var(--text-muted)]">15 minutes ago</p>
+            </div>
+          </div>
+
+          <div class="flex items-start gap-3">
+            <div class="p-1.5 bg-amber-500/20 rounded-lg mt-0.5">
+              <svg class="w-4 h-4 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+              </svg>
+            </div>
+            <div class="flex-1">
+              <p class="text-sm text-white"><span class="font-medium">Contract Generator</span> needs attention</p>
+              <p class="text-xs text-[var(--text-muted)]">1 hour ago</p>
+            </div>
+          </div>
+
+          <div class="flex items-start gap-3">
+            <div class="p-1.5 bg-emerald-500/20 rounded-lg mt-0.5">
+              <svg class="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+              </svg>
+            </div>
+            <div class="flex-1">
+              <p class="text-sm text-white"><span class="font-medium">Social Posts</span> published 4 posts</p>
+              <p class="text-xs text-[var(--text-muted)]">2 hours ago</p>
+            </div>
+          </div>
+
+          <div class="flex items-start gap-3">
+            <div class="p-1.5 bg-emerald-500/20 rounded-lg mt-0.5">
+              <svg class="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+              </svg>
+            </div>
+            <div class="flex-1">
+              <p class="text-sm text-white"><span class="font-medium">File Backup</span> backed up 128 files</p>
+              <p class="text-xs text-[var(--text-muted)]">3 hours ago</p>
+            </div>
+          </div>
+        </div>
+
+        <button class="w-full mt-4 py-2 text-sm text-[var(--text-secondary)] hover:text-white transition">
+          View All Activity →
+        </button>
+      </div>
+    </div>
+
+    <!-- FOURTH ROW: Goals -->
+    <div class="col-span-12">
+      <div class="glass-card rounded-2xl p-6">
+        <div class="flex items-center justify-between mb-6">
+          <div>
+            <h2 class="text-lg font-semibold">Your Goals</h2>
+            <p class="text-sm text-[var(--text-muted)]">Standards you've set for your automations</p>
+          </div>
+          <button class="flex items-center gap-2 px-3 py-1.5 text-sm text-[var(--text-secondary)] border border-[var(--border)] rounded-lg hover:text-white hover:border-white/30 transition">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+            </svg>
+            Add Goal
+          </button>
+        </div>
+
+        <div class="grid grid-cols-4 gap-4">
+          <!-- Goal 1: Reliability -->
+          <div class="bg-[var(--bg-elevated)] rounded-xl p-4">
+            <div class="flex items-center justify-between mb-3">
+              <span class="text-xs text-[var(--text-muted)]">Reliability</span>
+              <span class="px-2 py-0.5 bg-emerald-500/20 text-emerald-400 rounded text-xs">Exceeding</span>
+            </div>
+            <div class="flex items-end gap-2 mb-2">
+              <span class="text-2xl font-bold text-white">98.2%</span>
+              <span class="text-sm text-[var(--text-muted)] mb-1">/ 95% goal</span>
+            </div>
+            <div class="w-full h-2 bg-[var(--bg-surface)] rounded-full overflow-hidden">
+              <div class="h-full bg-emerald-500 rounded-full" style="width: 100%"></div>
+            </div>
+          </div>
+
+          <!-- Goal 2: Response Time -->
+          <div class="bg-[var(--bg-elevated)] rounded-xl p-4">
+            <div class="flex items-center justify-between mb-3">
+              <span class="text-xs text-[var(--text-muted)]">Speed</span>
+              <span class="px-2 py-0.5 bg-emerald-500/20 text-emerald-400 rounded text-xs">Meeting</span>
+            </div>
+            <div class="flex items-end gap-2 mb-2">
+              <span class="text-2xl font-bold text-white">3.2s</span>
+              <span class="text-sm text-[var(--text-muted)] mb-1">/ 5s goal</span>
+            </div>
+            <div class="w-full h-2 bg-[var(--bg-surface)] rounded-full overflow-hidden">
+              <div class="h-full bg-emerald-500 rounded-full" style="width: 64%"></div>
+            </div>
+          </div>
+
+          <!-- Goal 3: Daily Tasks -->
+          <div class="bg-[var(--bg-elevated)] rounded-xl p-4">
+            <div class="flex items-center justify-between mb-3">
+              <span class="text-xs text-[var(--text-muted)]">Daily Tasks</span>
+              <span class="px-2 py-0.5 bg-emerald-500/20 text-emerald-400 rounded text-xs">Exceeding</span>
+            </div>
+            <div class="flex items-end gap-2 mb-2">
+              <span class="text-2xl font-bold text-white">95</span>
+              <span class="text-sm text-[var(--text-muted)] mb-1">/ 50 goal</span>
+            </div>
+            <div class="w-full h-2 bg-[var(--bg-surface)] rounded-full overflow-hidden">
+              <div class="h-full bg-emerald-500 rounded-full" style="width: 100%"></div>
+            </div>
+          </div>
+
+          <!-- Goal 4: Monthly Savings -->
+          <div class="bg-[var(--bg-elevated)] rounded-xl p-4">
+            <div class="flex items-center justify-between mb-3">
+              <span class="text-xs text-[var(--text-muted)]">Monthly Savings</span>
+              <span class="px-2 py-0.5 bg-blue-500/20 text-blue-400 rounded text-xs">On Track</span>
+            </div>
+            <div class="flex items-end gap-2 mb-2">
+              <span class="text-2xl font-bold text-white">$6.3k</span>
+              <span class="text-sm text-[var(--text-muted)] mb-1">/ $8k goal</span>
+            </div>
+            <div class="w-full h-2 bg-[var(--bg-surface)] rounded-full overflow-hidden">
+              <div class="h-full bg-blue-500 rounded-full" style="width: 79%"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Footer -->
+  <footer class="mt-8 text-center">
+    <p class="text-xs text-[var(--text-muted)]">
+      Last updated: Just now • <a href="#" class="hover:text-white">View detailed reports</a>
+    </p>
+  </footer>
+
+</body>
+</html>

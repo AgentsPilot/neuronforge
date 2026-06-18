@@ -147,13 +147,14 @@ export class SystemAnalyticsService {
     endDate: Date,
     days: number
   ): Promise<HeroMetrics> {
-    // 1. Get current period executions (excluding calibration runs)
+    // 1. Get current period executions (production runs only)
     // Include logs to get token usage for cost calculation
+    // Use eq('run_mode', 'production') to match AI Advisor's query
     const { data: currentExecutions, error: currentError } = await this.supabase
       .from('agent_executions')
       .select('id, status, started_at, agent_id, logs')
       .eq('user_id', userId)
-      .neq('run_mode', 'calibration') // Only production runs
+      .eq('run_mode', 'production')
       .gte('started_at', startDate.toISOString())
       .lte('started_at', endDate.toISOString());
 
@@ -167,7 +168,7 @@ export class SystemAnalyticsService {
       .from('agent_executions')
       .select('id, status')
       .eq('user_id', userId)
-      .neq('run_mode', 'calibration')
+      .eq('run_mode', 'production')
       .gte('started_at', previousStartDate.toISOString())
       .lt('started_at', startDate.toISOString());
 
@@ -265,7 +266,7 @@ export class SystemAnalyticsService {
       .from('agent_executions')
       .select('status, started_at')
       .eq('user_id', userId)
-      .neq('run_mode', 'calibration')
+      .eq('run_mode', 'production')
       .gte('started_at', startDate.toISOString())
       .lte('started_at', endDate.toISOString())
       .order('started_at', { ascending: true });
@@ -436,7 +437,7 @@ export class SystemAnalyticsService {
       .from('agent_executions')
       .select('id, agent_id, status, started_at')
       .in('agent_id', agentIds)
-      .neq('run_mode', 'calibration')
+      .eq('run_mode', 'production')
       .gte('started_at', startDate.toISOString())
       .lte('started_at', endDate.toISOString());
 
@@ -508,7 +509,7 @@ export class SystemAnalyticsService {
       .from('agent_executions')
       .select('status')
       .eq('user_id', userId)
-      .neq('run_mode', 'calibration')
+      .eq('run_mode', 'production')
       .gte('started_at', startDate.toISOString())
       .lte('started_at', endDate.toISOString());
 

@@ -102,23 +102,23 @@ export function RunHistoryTable({
         <table className="w-full">
           <thead className="bg-[var(--v2-hover)] border-b border-[var(--v2-border)]">
             <tr>
-              <th className="px-6 py-3 text-left text-xs font-medium text-[var(--v2-text-muted)] uppercase tracking-wider">
+              <th className="px-4 py-2 text-left text-xs font-medium text-[var(--v2-text-muted)] uppercase tracking-wider">
                 Status
               </th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-[var(--v2-text-muted)] uppercase tracking-wider">
+              <th className="px-4 py-2 text-left text-xs font-medium text-[var(--v2-text-muted)] uppercase tracking-wider">
                 Time
               </th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-[var(--v2-text-muted)] uppercase tracking-wider">
+              <th className="px-4 py-2 text-left text-xs font-medium text-[var(--v2-text-muted)] uppercase tracking-wider">
                 Duration
               </th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-[var(--v2-text-muted)] uppercase tracking-wider">
+              <th className="px-4 py-2 text-left text-xs font-medium text-[var(--v2-text-muted)] uppercase tracking-wider">
                 Run Mode
               </th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-[var(--v2-text-muted)] uppercase tracking-wider">
+              <th className="px-4 py-2 text-left text-xs font-medium text-[var(--v2-text-muted)] uppercase tracking-wider">
                 Steps
               </th>
               {hourlyRate && (
-                <th className="px-6 py-3 text-left text-xs font-medium text-[var(--v2-text-muted)] uppercase tracking-wider">
+                <th className="px-4 py-2 text-left text-xs font-medium text-[var(--v2-text-muted)] uppercase tracking-wider">
                   Value Saved
                 </th>
               )}
@@ -148,42 +148,42 @@ export function RunHistoryTable({
                       : 'hover:bg-[var(--v2-hover)] border-l-4 border-l-transparent'
                   }`}
                 >
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="flex items-center gap-2">
+                  <td className="px-4 py-2.5 whitespace-nowrap">
+                    <div className="flex items-center gap-1.5">
                       {getStatusIcon(execution.status)}
-                      <span className="text-sm font-medium text-[var(--v2-text-primary)] capitalize">
+                      <span className="text-xs font-medium text-[var(--v2-text-primary)] capitalize">
                         {execution.status === 'completed' ? 'success' : execution.status}
                       </span>
                     </div>
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-[var(--v2-text-muted)]">
+                  <td className="px-4 py-2.5 whitespace-nowrap text-xs text-[var(--v2-text-muted)]">
                     {formatTime(execution.created_at)}
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-[var(--v2-text-primary)]">
+                  <td className="px-4 py-2.5 whitespace-nowrap text-xs text-[var(--v2-text-primary)]">
                     {formatDuration(execution.execution_duration_ms)}
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <span className={`text-xs font-semibold px-2 py-1 rounded ${
+                  <td className="px-4 py-2.5 whitespace-nowrap">
+                    <span className={`text-[10px] font-semibold px-2 py-0.5 rounded ${
                       execution.run_mode === 'calibration'
                         ? 'bg-orange-500/10 text-orange-600 dark:text-orange-400'
                         : 'bg-green-500/10 text-green-600 dark:text-green-400'
                     }`}>
-                      {execution.run_mode === 'calibration' ? 'Calibration' : 'Production'}
+                      {execution.run_mode === 'calibration' ? 'Cal' : 'Prod'}
                     </span>
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-[var(--v2-text-primary)]">
+                  <td className="px-4 py-2.5 whitespace-nowrap text-xs text-[var(--v2-text-primary)]">
                     {totalSteps > 0 ? (
                       <span className="flex items-center gap-1">
                         <span className="font-medium">{totalSteps}</span>
                         {stepsFailed > 0 && (
-                          <span className="text-xs text-red-500">({stepsFailed} failed)</span>
+                          <span className="text-[10px] text-red-500">({stepsFailed}×)</span>
                         )}
                       </span>
-                    ) : 'N/A'}
+                    ) : <span className="text-[var(--v2-text-muted)]">—</span>}
                   </td>
                   {hourlyRate && (
-                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-emerald-600 dark:text-emerald-400">
-                      {valueSaved !== null ? `$${valueSaved.toFixed(2)}` : 'N/A'}
+                    <td className="px-4 py-2.5 whitespace-nowrap text-xs font-semibold text-emerald-600 dark:text-emerald-400 tabular-nums">
+                      {valueSaved !== null ? `$${valueSaved.toFixed(2)}` : <span className="text-[var(--v2-text-muted)]">—</span>}
                     </td>
                   )}
                 </tr>

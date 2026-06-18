@@ -21,6 +21,7 @@ import { SystemConfigService } from '@/lib/services/SystemConfigService';
 import { ExecutionService } from '@/lib/services/ExecutionService';
 import { ExecutionResultsBuilder } from './ExecutionResultsBuilder';
 import { MetricsCollector } from './MetricsCollector';
+import { SLAEvaluator } from '@/lib/services/SLAEvaluator';
 
 // Create admin client inline to avoid module initialization issues
 const supabaseAdmin = createClient(
@@ -424,6 +425,23 @@ export class StateManager {
     } catch (metricsError) {
       // Non-fatal - don't fail execution if metrics collection fails
       console.error('[StateManager] Failed to collect metrics (non-fatal):', metricsError);
+    }
+
+    // Evaluate SLAs after metrics are collected
+    // This updates current_value on SLA records and detects violations
+    try {
+      const slaEvaluator = new SLAEvaluator(supabaseAdmin);
+      const evalResult = await slaEvaluator.evaluateAfterExecution(
+        executionId,
+        context.agentId,
+        context.userId
+      );
+      if (evalResult.evaluatedCount > 0) {
+        console.log(`[StateManager] ✅ SLA evaluation complete: ${evalResult.evaluatedCount} SLAs checked, ${evalResult.violationsCount} violations, ${evalResult.recoveriesCount} recoveries`);
+      }
+    } catch (slaError) {
+      // Non-fatal - don't fail execution if SLA evaluation fails
+      console.error('[StateManager] Failed to evaluate SLAs (non-fatal):', slaError);
     }
 
     // Update workflow_executions table (internal tracking)

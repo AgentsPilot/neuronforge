@@ -281,6 +281,7 @@ export async function PUT(
     if (agentData.agent_config !== undefined) updateData.agent_config = agentData.agent_config || null;
     if (agentData.insights_enabled !== undefined) updateData.insights_enabled = agentData.insights_enabled;
     if (agentData.production_ready !== undefined) updateData.production_ready = agentData.production_ready;
+    if (agentData.hourly_rate_usd !== undefined) updateData.hourly_rate_usd = agentData.hourly_rate_usd;
 
     // CRITICAL FIX: Only include mode field if explicitly provided
     // The timezone-safe function only updates schedule_cron, timezone, and next_run
@@ -298,6 +299,7 @@ export async function PUT(
 
     console.log('Update data prepared:', Object.keys(updateData));
     console.log('insights_enabled in updateData:', updateData.insights_enabled);
+    console.log('hourly_rate_usd in updateData:', updateData.hourly_rate_usd);
 
     // Update the agent with non-schedule fields
     const { data: updatedAgent, error: updateError } = await supabase
@@ -330,6 +332,7 @@ export async function PUT(
     console.log('updatedAgent.mode:', updatedAgent.mode);
     console.log('updatedAgent.next_run:', updatedAgent.next_run);
     console.log('updatedAgent.timezone:', updatedAgent.timezone);
+    console.log('updatedAgent.hourly_rate_usd:', updatedAgent.hourly_rate_usd);
     if (scheduleUpdateResult) {
       console.log('Schedule function result:', scheduleUpdateResult);
     }

@@ -28,6 +28,9 @@ export interface Agent {
   created_at: string;
   updated_at: string;
   deleted_at?: string | null;
+  // Organization and grouping (Automation Intelligence Platform)
+  org_id?: string | null;              // Organization this agent belongs to
+  tags?: string[] | null;              // User-defined tags for flexible categorization
   // Additional fields used in agent detail page
   mode?: string | null;
   plugins_required?: string[] | null;
@@ -49,6 +52,8 @@ export interface Agent {
   workflow_purpose?: string | null;
   // ROI tracking - estimated time saved per item automated (in seconds)
   manual_time_per_item_seconds?: number | null;
+  // ROI tracking - hourly rate for this automation (different tasks have different costs)
+  hourly_rate_usd?: number | null;
   // Creation metadata + AI context (JSONB column populated at agent creation time;
   // shape matches CreateAgentInput.agent_config — creation_metadata + ai_context)
   agent_config?: Record<string, unknown> | null;
@@ -118,6 +123,8 @@ export interface UpdateAgentInput {
   agent_config?: Record<string, unknown> | null;
   schedule_cron?: string | null;
   timezone?: string | null;
+  // ROI tracking - hourly rate for this automation
+  hourly_rate_usd?: number | null;
 }
 
 export interface UpdateAgentDetailsInput {

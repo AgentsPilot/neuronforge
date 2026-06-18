@@ -264,6 +264,7 @@ export default function V2AgentDetailPage() {
   const [savingHourlyRate, setSavingHourlyRate] = useState(false)
   const [userHourlyRate, setUserHourlyRate] = useState<number | null>(null) // null = not fetched yet
   const [pendingInsightsToggle, setPendingInsightsToggle] = useState(false) // True when waiting to enable insights after hourly rate dialog
+  const [orgSettingsComplete, setOrgSettingsComplete] = useState<boolean | null>(null) // null = not checked yet
 
   // Sharing data
   const [shareCreditsAwarded, setShareCreditsAwarded] = useState(0)
@@ -900,7 +901,7 @@ export default function V2AgentDetailPage() {
 
   // Save hourly rate and continue to insights (or enable insights if pending)
   const saveHourlyRateAndContinue = async () => {
-    if (!user?.id) return
+    if (!user?.id || !agent) return
 
     const rate = parseFloat(hourlyRateInput)
     if (isNaN(rate) || rate <= 0) {
@@ -910,30 +911,35 @@ export default function V2AgentDetailPage() {
 
     setSavingHourlyRate(true)
     try {
-      const { error } = await supabase
-        .from('profiles')
-        .update({ hourly_rate_usd: rate })
-        .eq('id', user.id)
+      // Save hourly rate to agent table via API (per-agent rate)
+      // Using agentApi.update instead of direct supabase client to avoid RLS issues
+      const updateResult = await agentApi.update(agent.id, user.id, {
+        hourly_rate_usd: rate
+      })
 
-      if (error) throw error
+      if (!updateResult.success) {
+        throw new Error(updateResult.error || 'Failed to save hourly rate')
+      }
 
+      // Update local agent state with new hourly rate
+      setAgent({ ...agent, hourly_rate_usd: rate })
       setUserHourlyRate(rate)
       setShowHourlyRateDialog(false)
 
       // If we're enabling insights via the toggle, complete that action
-      if (pendingInsightsToggle && agent) {
+      if (pendingInsightsToggle) {
         console.log('[saveHourlyRateAndContinue] Completing pending insights toggle')
         setPendingInsightsToggle(false)
 
-        // Enable insights on the agent
-        setAgent({ ...agent, insights_enabled: true })
+        // Enable insights on the agent (hourly_rate_usd already updated above)
+        setAgent({ ...agent, insights_enabled: true, hourly_rate_usd: rate })
 
         const result = await agentApi.update(agent.id, user.id, {
           insights_enabled: true
         })
 
         if (result.success && result.data) {
-          setAgent(result.data as Agent)
+          setAgent({ ...result.data as Agent, hourly_rate_usd: rate })
           clientLogger.info('Insights enabled after hourly rate confirmation', { agentId: agent.id })
           console.log('✅ Insights enabled successfully')
         } else {
@@ -1320,22 +1326,45 @@ export default function V2AgentDetailPage() {
       // Store the pending toggle so we can complete it after dialog
       setPendingInsightsToggle(true)
 
-      // Fetch current hourly rate and show dialog
+      // Fetch current hourly rate - check agent first, then profile
       try {
-        const { data, error } = await supabase
-          .from('profiles')
-          .select('hourly_rate_usd')
-          .eq('id', user.id)
+        // First check if agent has hourly_rate_usd set
+        let rate = agent.hourly_rate_usd
+
+        // If not set on agent, fall back to profile
+        if (!rate) {
+          const { data, error } = await supabase
+            .from('profiles')
+            .select('hourly_rate_usd')
+            .eq('id', user.id)
+            .single()
+
+          console.log('[handleToggleInsights] Profile response:', { data, error })
+          rate = data?.hourly_rate_usd ?? 50
+        }
+
+        // Also check if organisation settings are complete
+        const { data: orgData } = await supabase
+          .from('organizations')
+          .select('settings')
+          .eq('owner_user_id', user.id)
           .single()
 
-        console.log('[handleToggleInsights] Profile response:', { data, error })
-        const rate = data?.hourly_rate_usd ?? 50
+        const settings = orgData?.settings as Record<string, unknown> | null
+        const hasRequiredOrgSettings = !!(
+          settings?.industry &&
+          settings?.company_size &&
+          settings?.primary_goal
+        )
+        setOrgSettingsComplete(hasRequiredOrgSettings)
+
         setUserHourlyRate(rate)
         setHourlyRateInput(rate.toString())
         setShowHourlyRateDialog(true)
       } catch (error) {
         console.error('[handleToggleInsights] Error fetching hourly rate:', error)
         setHourlyRateInput('50')
+        setOrgSettingsComplete(false)
         setShowHourlyRateDialog(true)
       }
       return // Don't toggle yet - will be done after dialog
@@ -2032,8 +2061,8 @@ export default function V2AgentDetailPage() {
           </div>
         )}
 
-        {/* Insight Preview */}
-        {insights.length > 0 && (
+        {/* Insight Preview (Advanced Mode Only) */}
+        {advancedMode && insights.length > 0 && (
           <InsightPreview
             insights={normalizeInsights(insights)}
             onViewAll={handleOpenInsights}
@@ -2969,9 +2998,19 @@ export default function V2AgentDetailPage() {
       {/* Hourly Rate Dialog */}
       {showHourlyRateDialog && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-          <div className="bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-2xl shadow-2xl max-w-md w-full overflow-hidden">
+          <div className="bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-2xl shadow-2xl max-w-md w-full overflow-hidden relative">
+            {/* Close button */}
+            <button
+              onClick={() => {
+                setShowHourlyRateDialog(false)
+                setPendingInsightsToggle(false)
+              }}
+              className="absolute top-4 right-4 p-1 text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)] transition-colors z-10"
+            >
+              <X className="w-5 h-5" />
+            </button>
             <div className="p-6">
-              <div className="flex items-center gap-3 mb-4">
+              <div className="flex items-center gap-3 mb-4 pr-8">
                 <div className="w-10 h-10 rounded-full bg-gradient-to-br from-emerald-500 to-green-600 flex items-center justify-center">
                   <DollarSign className="w-5 h-5 text-white" />
                 </div>
@@ -2984,13 +3023,28 @@ export default function V2AgentDetailPage() {
               </div>
 
               <p className="text-sm text-[var(--v2-text-secondary)] mb-4">
-                Your hourly rate is used to calculate the business value of your automations.
-                Confirm or update it below to see accurate cost savings in your insights.
+                This automation&apos;s hourly rate is used to calculate the business value saved.
+                Different tasks may have different costs based on who performs them.
               </p>
+
+              {/* Organisation settings check - REQUIRED to enable insights */}
+              {orgSettingsComplete === false && (
+                <div className="mb-4 p-3 bg-red-500/10 border border-red-500/20 rounded-lg">
+                  <p className="text-sm text-red-600 dark:text-red-400">
+                    <span className="font-medium">Required:</span> Complete your organisation settings before enabling insights. This helps the AI Advisor understand your business context.
+                  </p>
+                  <a
+                    href="/v2/settings?tab=organisation"
+                    className="inline-flex items-center gap-1 mt-2 text-sm font-medium text-red-600 dark:text-red-400 hover:underline"
+                  >
+                    Complete Organisation Settings →
+                  </a>
+                </div>
+              )}
 
               <div className="mb-6">
                 <label className="block text-sm font-medium text-[var(--v2-text-primary)] mb-2">
-                  Your hourly rate (USD)
+                  Hourly rate for this automation (USD)
                 </label>
                 <div className="relative">
                   <span className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--v2-text-muted)]">$</span>
@@ -3013,25 +3067,42 @@ export default function V2AgentDetailPage() {
               <div className="flex gap-3">
                 <button
                   onClick={async () => {
+                    if (!agent || !user) return
+
+                    const rate = parseFloat(hourlyRateInput)
                     setShowHourlyRateDialog(false)
 
+                    // Save current rate to agent if it's different from what's stored
+                    if (rate && rate !== agent.hourly_rate_usd) {
+                      try {
+                        await supabase
+                          .from('agents')
+                          .update({ hourly_rate_usd: rate })
+                          .eq('id', agent.id)
+                          .eq('user_id', user.id)
+                        setAgent({ ...agent, hourly_rate_usd: rate })
+                      } catch (error) {
+                        console.error('[Use Current] Error saving hourly rate:', error)
+                      }
+                    }
+
                     // If we're enabling insights via the toggle, complete that action
-                    if (pendingInsightsToggle && agent && user) {
+                    if (pendingInsightsToggle) {
                       console.log('[Use Current] Completing pending insights toggle')
                       setPendingInsightsToggle(false)
 
                       // Enable insights on the agent
-                      setAgent({ ...agent, insights_enabled: true })
+                      setAgent((prev) => prev ? { ...prev, insights_enabled: true, hourly_rate_usd: rate } : prev)
 
                       const result = await agentApi.update(agent.id, user.id, {
                         insights_enabled: true
                       })
 
                       if (result.success && result.data) {
-                        setAgent(result.data as Agent)
+                        setAgent({ ...result.data as Agent, hourly_rate_usd: rate })
                         console.log('✅ Insights enabled successfully')
                       } else {
-                        setAgent({ ...agent, insights_enabled: false })
+                        setAgent((prev) => prev ? { ...prev, insights_enabled: false } : prev)
                         console.error('❌ Failed to enable insights:', result.error)
                       }
                     } else {
@@ -3039,13 +3110,18 @@ export default function V2AgentDetailPage() {
                       setShowInsightsModal(true)
                     }
                   }}
-                  className="flex-1 px-4 py-2.5 text-sm font-medium text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] transition-colors"
+                  disabled={orgSettingsComplete === false}
+                  className={`flex-1 px-4 py-2.5 text-sm font-medium transition-colors ${
+                    orgSettingsComplete === false
+                      ? 'text-[var(--v2-text-muted)] cursor-not-allowed opacity-50'
+                      : 'text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)]'
+                  }`}
                 >
                   Use Current (${hourlyRateInput}/hr)
                 </button>
                 <button
                   onClick={saveHourlyRateAndContinue}
-                  disabled={savingHourlyRate}
+                  disabled={savingHourlyRate || orgSettingsComplete === false}
                   className="flex-1 px-4 py-2.5 text-sm font-semibold text-white bg-gradient-to-r from-emerald-500 to-green-600 rounded-lg hover:from-emerald-600 hover:to-green-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                 >
                   {savingHourlyRate ? (

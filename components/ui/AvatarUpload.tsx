@@ -124,7 +124,7 @@ const AvatarUpload: React.FC<AvatarUploadProps> = ({
       <button
         onClick={() => setShowMenu(!showMenu)}
         disabled={uploading}
-        className={`absolute bottom-0 right-0 ${config.button} bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-xl hover:from-indigo-700 hover:to-purple-700 shadow-lg transition-all duration-300 group-hover:scale-110 disabled:opacity-50 disabled:scale-100 flex items-center justify-center`}
+        className={`absolute -bottom-1 -right-1 ${config.button} bg-[var(--v2-primary)] text-white rounded-xl hover:opacity-90 shadow-lg transition-all duration-300 group-hover:scale-110 disabled:opacity-50 disabled:scale-100 flex items-center justify-center`}
       >
         <Camera className={config.icon} />
       </button>

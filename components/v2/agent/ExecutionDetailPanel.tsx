@@ -274,7 +274,7 @@ export function ExecutionDetailPanel({
         {/* Header */}
         <div className="sticky top-0 bg-gradient-to-br from-blue-500/5 to-purple-500/5 border-b border-[var(--v2-border)] backdrop-blur-md px-6 py-4 flex items-center justify-between z-10">
           <div>
-            <h2 className="text-xl font-bold text-[var(--v2-text-primary)]">Execution Details</h2>
+            <h2 className="text-base font-bold text-[var(--v2-text-primary)]">Execution Details</h2>
             <div className="flex items-center gap-2 mt-1 text-xs text-[var(--v2-text-muted)]">
               <Hash className="w-3 h-3" />
               <span className="font-mono">{execution.id.slice(0, 8)}</span>
@@ -298,7 +298,7 @@ export function ExecutionDetailPanel({
               ) : (
                 <XCircle className="w-6 h-6 text-red-600 dark:text-red-400" />
               )}
-              <span className={`text-lg font-semibold ${
+              <span className={`text-sm font-semibold ${
                 isSuccess
                   ? 'text-emerald-600 dark:text-emerald-400'
                   : 'text-red-600 dark:text-red-400'
@@ -308,7 +308,7 @@ export function ExecutionDetailPanel({
             </div>
 
             {/* Timing Info */}
-            <div className="grid grid-cols-2 gap-4 text-sm">
+            <div className="grid grid-cols-2 gap-4 text-xs">
               <div className="flex items-center gap-2">
                 <PlayCircle className="w-4 h-4 text-[var(--v2-text-muted)]" />
                 <span className="text-[var(--v2-text-muted)]">Started:</span>
@@ -330,7 +330,7 @@ export function ExecutionDetailPanel({
                 <Clock className="w-3.5 h-3.5" />
                 Duration
               </div>
-              <div className="text-xl font-bold text-[var(--v2-text-primary)]">
+              <div className="text-lg font-bold text-[var(--v2-text-primary)]">
                 {formatDuration(execution.execution_duration_ms)}
               </div>
             </div>
@@ -341,7 +341,7 @@ export function ExecutionDetailPanel({
                 <Zap className="w-3.5 h-3.5 text-amber-500" />
                 Tokens
               </div>
-              <div className="text-xl font-bold text-[var(--v2-text-primary)]">
+              <div className="text-lg font-bold text-[var(--v2-text-primary)]">
                 {formatTokens(tokens)}
               </div>
             </div>
@@ -352,7 +352,7 @@ export function ExecutionDetailPanel({
                 <Timer className="w-3.5 h-3.5 text-emerald-500" />
                 Time Saved
               </div>
-              <div className="text-xl font-bold text-emerald-600 dark:text-emerald-400">
+              <div className="text-lg font-bold text-emerald-600 dark:text-emerald-400">
                 {formatTimeSaved(timeSaved) || 'N/A'}
               </div>
             </div>
@@ -364,7 +364,7 @@ export function ExecutionDetailPanel({
                   <DollarSign className="w-3.5 h-3.5 text-purple-500" />
                   Value Saved
                 </div>
-                <div className="text-xl font-bold text-purple-600 dark:text-purple-400">
+                <div className="text-lg font-bold text-purple-600 dark:text-purple-400">
                   {valueSaved && valueSaved > 0 ? `$${valueSaved.toFixed(2)}` : 'N/A'}
                 </div>
               </div>
@@ -377,10 +377,10 @@ export function ExecutionDetailPanel({
                   <Layers className="w-3.5 h-3.5 text-blue-500" />
                   Steps
                 </div>
-                <div className="text-xl font-bold text-[var(--v2-text-primary)]">
+                <div className="text-lg font-bold text-[var(--v2-text-primary)]">
                   {stepsCompleted}/{totalSteps}
                   {stepsFailed > 0 && (
-                    <span className="text-sm text-red-500 ml-1">({stepsFailed} failed)</span>
+                    <span className="text-xs text-red-500 ml-1">({stepsFailed}×)</span>
                   )}
                 </div>
               </div>
@@ -393,7 +393,7 @@ export function ExecutionDetailPanel({
                   <Target className="w-3.5 h-3.5 text-indigo-500" />
                   Items Processed
                 </div>
-                <div className="text-xl font-bold text-[var(--v2-text-primary)]">
+                <div className="text-lg font-bold text-[var(--v2-text-primary)]">
                   {executionDetails.roi.items_processed}
                 </div>
               </div>

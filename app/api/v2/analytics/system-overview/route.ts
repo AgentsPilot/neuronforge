@@ -5,6 +5,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { SystemAnalyticsService } from '@/lib/services/SystemAnalyticsService';
+import { MetricBaselineService } from '@/lib/services/MetricBaselineService';
+import { OrganizationSettingsService } from '@/lib/services/OrganizationSettingsService';
 import { AuditTrailService } from '@/lib/services/AuditTrailService';
 import { z } from 'zod';
 import type { TimeRange } from '@/types/analytics';
@@ -50,7 +52,32 @@ export async function GET(request: NextRequest) {
 
     // 3. Get analytics data
     const analyticsService = new SystemAnalyticsService();
-    const data = await analyticsService.getBusinessOverview(user.id, range as TimeRange);
+    const baselineService = new MetricBaselineService();
+    const settingsService = new OrganizationSettingsService();
+
+    // Fetch base analytics and trend data in parallel
+    const [data, trendComparison, settings] = await Promise.all([
+      analyticsService.getBusinessOverview(user.id, range as TimeRange),
+      baselineService.getTrendComparison(user.id, 'monthly'),
+      settingsService.getSettings(user.id),
+    ]);
+
+    // Enhance response with trend data and business settings
+    const enhancedData = {
+      ...data,
+      trends: trendComparison.trends,
+      businessSettings: {
+        hourly_rate_usd: settings.data?.hourly_rate_usd ?? 50,
+        work_hours_per_day: settings.data?.work_hours_per_day ?? 8,
+      },
+      valueMetrics: {
+        time_saved_hours: data.heroMetrics.hoursAutomated,
+        work_days_saved: data.heroMetrics.hoursAutomated / (settings.data?.work_hours_per_day ?? 8),
+        money_saved_usd: data.heroMetrics.moneySaved,
+        time_saved_change_pct: trendComparison.trends.time_saved_change_pct,
+        money_saved_change_pct: trendComparison.trends.money_saved_change_pct,
+      },
+    };
 
     // 4. Audit log (non-blocking)
     auditTrail.log({
@@ -59,14 +86,14 @@ export async function GET(request: NextRequest) {
       entityId: 'analytics',
       userId: user.id,
       resourceName: 'System Analytics Dashboard',
-      metadata: { timeRange: range, heroMetrics: data.heroMetrics },
+      metadata: { timeRange: range, heroMetrics: enhancedData.heroMetrics },
       severity: 'info',
       request,
     }).catch(err => requestLogger.error({ err }, 'Audit failed (non-blocking)'));
 
-    requestLogger.info({ userId: user.id, range, dataSize: JSON.stringify(data).length }, 'Analytics fetched successfully');
+    requestLogger.info({ userId: user.id, range, dataSize: JSON.stringify(enhancedData).length }, 'Analytics fetched successfully');
 
-    return NextResponse.json({ success: true, data });
+    return NextResponse.json({ success: true, data: enhancedData });
 
   } catch (error) {
     requestLogger.error({ err: error }, 'Failed to fetch analytics');

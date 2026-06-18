@@ -7,12 +7,14 @@ import { useSearchParams, useRouter } from 'next/navigation'
 import {
   User,
   Shield,
+  Building2,
   ArrowLeft
 } from 'lucide-react'
 import { V2Logo, V2Controls } from '@/components/v2/V2Header'
 import { ModernHelpDialog } from '@/components/v2/ModernHelpDialog'
 import ProfileTabV2 from '@/components/v2/settings/ProfileTabV2'
 import SecurityTabV2 from '@/components/v2/settings/SecurityTabV2'
+import OrganisationTabV2 from '@/components/v2/settings/OrganisationTabV2'
 import { UserProfile, NotificationSettings, PluginConnection } from '@/types/settings'
 
 export default function V2SettingsPage() {
@@ -38,6 +40,12 @@ export default function V2SettingsPage() {
       label: 'Profile',
       icon: <User className="w-4 h-4" />,
       description: 'Personal information and settings'
+    },
+    {
+      id: 'organisation',
+      label: 'Organisation',
+      icon: <Building2 className="w-4 h-4" />,
+      description: 'Business context for AI insights'
     },
     {
       id: 'security',
@@ -66,9 +74,9 @@ export default function V2SettingsPage() {
     try {
       setLoading(true)
 
-      // Load all data in parallel
+      // Load all data in parallel (including organisation via join)
       const [profileRes, preferencesRes, notificationsRes, connectionsRes] = await Promise.all([
-        supabase.from('profiles').select('*').eq('id', user.id).single(),
+        supabase.from('profiles').select('*, organizations:org_id(id, name)').eq('id', user.id).single(),
         supabase.from('user_preferences').select('*').eq('user_id', user.id).single(),
         supabase.from('notification_settings').select('*').eq('user_id', user.id).single(),
         supabase.from('plugin_connections').select('*').eq('user_id', user.id).neq('status', 'disconnected').order('connected_at', { ascending: false })
@@ -76,12 +84,16 @@ export default function V2SettingsPage() {
 
       // Set profile data - merge profile and preferences
       if (profileRes.data) {
+        // Extract organisation name from joined data
+        const orgData = profileRes.data.organizations as { id: string; name: string } | null
         const profileData = {
           ...profileRes.data,
           // Add preferences data
           preferred_currency: preferencesRes.data?.preferred_currency || 'USD',
           timezone: preferencesRes.data?.timezone,
-          preferred_language: preferencesRes.data?.preferred_language
+          preferred_language: preferencesRes.data?.preferred_language,
+          // Add organisation name
+          organisation_name: orgData?.name || ''
         }
         setProfile(profileData)
         setProfileForm(profileData)
@@ -89,7 +101,8 @@ export default function V2SettingsPage() {
         const defaultProfile = {
           id: user.id,
           full_name: user.user_metadata?.full_name || '',
-          avatar_url: user.user_metadata?.avatar_url || ''
+          avatar_url: user.user_metadata?.avatar_url || '',
+          organisation_name: ''
         }
         setProfile(defaultProfile)
         setProfileForm(defaultProfile)
@@ -185,6 +198,7 @@ export default function V2SettingsPage() {
             setProfileForm={setProfileForm}
           />
         )}
+        {activeTab === 'organisation' && <OrganisationTabV2 />}
         {activeTab === 'security' && <SecurityTabV2 />}
       </div>
 
