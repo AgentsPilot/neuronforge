@@ -7,6 +7,7 @@ import { createLogger, Logger } from '@/lib/logger';
 import type {
   Agent,
   AgentStatus,
+  CalibrationGateStatus,
   CreateAgentInput,
   UpdateAgentInput,
   UpdateAgentDetailsInput,
@@ -230,6 +231,70 @@ export class AgentRepository {
         .eq('id', id)
         .eq('user_id', userId)
         .neq('status', 'deleted')
+        .select()
+        .single();
+
+      if (error) throw error;
+      return { data, error: null };
+    } catch (error) {
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
+   * Record the user's response to the post-creation calibration prompt.
+   *
+   * Distinct from calibration OUTCOME (is_calibrated / calibration_history):
+   * this captures whether the user accepted or declined when offered calibration
+   * right after creation. The decided-at timestamp is stamped server-side.
+   *
+   * Also seeds the calibration GATE (Phase 2): accepting starts a background run
+   * ('running'); declining defers it ('skipped'). Both leave the agent gated
+   * until a clean pass.
+   */
+  async recordCalibrationPromptDecision(
+    id: string,
+    userId: string,
+    decision: 'accepted' | 'declined'
+  ): Promise<AgentRepositoryResult<Agent>> {
+    try {
+      const { data, error } = await this.supabase
+        .from('agents')
+        .update({
+          calibration_prompt_decision: decision,
+          calibration_prompt_decided_at: new Date().toISOString(),
+          calibration_status: decision === 'accepted' ? 'running' : 'skipped',
+        })
+        .eq('id', id)
+        .eq('user_id', userId)
+        .select()
+        .single();
+
+      if (error) throw error;
+      return { data, error: null };
+    } catch (error) {
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
+   * Set the post-creation calibration GATE status (Phase 2).
+   *
+   * Used by the background calibration run to record its outcome
+   * ('passed' / 'failed'), and anywhere the gate state must be updated.
+   * User-scoped; does not touch the prompt-decision columns.
+   */
+  async setCalibrationStatus(
+    id: string,
+    userId: string,
+    status: CalibrationGateStatus
+  ): Promise<AgentRepositoryResult<Agent>> {
+    try {
+      const { data, error } = await this.supabase
+        .from('agents')
+        .update({ calibration_status: status })
+        .eq('id', id)
+        .eq('user_id', userId)
         .select()
         .single();
 

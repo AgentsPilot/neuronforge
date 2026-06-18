@@ -20,7 +20,8 @@ import {
   Bot,
   User,
   AlertCircle,
-  Activity
+  Activity,
+  Loader2
 } from 'lucide-react'
 import { AgentInputFields } from '@/components/v2/AgentInputFields'
 import { DynamicSelectField } from '@/components/v2/DynamicSelectField'
@@ -633,6 +634,16 @@ export function CalibrationSetup({
       chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight
     }
   }, [messages])
+
+  // Reflect externally-triggered runs in the UI. The Run-button handlers set
+  // hasStarted locally, but a run can also be started by the parent (e.g. the
+  // post-creation auto-start via ?from=creation). Without this, isRunning would
+  // be true while hasStarted stayed false, so the progress view never rendered.
+  useEffect(() => {
+    if (isRunning) {
+      setHasStarted(true)
+    }
+  }, [isRunning])
 
   // Simulate progress when running with chat messages
   useEffect(() => {
@@ -1799,13 +1810,14 @@ export function CalibrationSetup({
                                   allRequired={true}
                                 />
 
-                                {/* Run button - disabled until all fields are filled */}
+                                {/* Run button - disabled until all fields are filled, and while a run is in progress */}
                                 <button
                                   onClick={() => {
+                                    if (isRunning) return
                                     onRun(inputValues)
                                     setHasStarted(true)
                                   }}
-                                  disabled={(() => {
+                                  disabled={isRunning || (() => {
                                     // All input fields are mandatory for calibration test
                                     return inputSchemaArray.some((p: any) => {
                                       const value = inputValues[p.name]
@@ -1814,8 +1826,17 @@ export function CalibrationSetup({
                                   })()}
                                   className="w-full flex items-center justify-center gap-2 px-6 py-3 bg-[var(--v2-primary)] text-white hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed transition-opacity font-medium rounded-lg"
                                 >
-                                  <Play className="w-4 h-4" />
-                                  Run Test
+                                  {isRunning ? (
+                                    <>
+                                      <Loader2 className="w-4 h-4 animate-spin" />
+                                      Running...
+                                    </>
+                                  ) : (
+                                    <>
+                                      <Play className="w-4 h-4" />
+                                      Run Test
+                                    </>
+                                  )}
                                 </button>
                               </div>
                             </Card>
@@ -2036,11 +2057,21 @@ export function CalibrationSetup({
             {!hasStarted && !isWaitingForConfig && (
               <div className="p-6 border-t border-[var(--v2-border)] flex-shrink-0">
                 <button
-                  onClick={handleRun}
-                  className="w-full flex items-center justify-center gap-2 px-6 py-3 bg-[var(--v2-primary)] text-white hover:opacity-90 transition-opacity font-medium rounded-lg"
+                  onClick={() => { if (!isRunning) handleRun() }}
+                  disabled={isRunning}
+                  className="w-full flex items-center justify-center gap-2 px-6 py-3 bg-[var(--v2-primary)] text-white hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed transition-opacity font-medium rounded-lg"
                 >
-                  <Play className="w-5 h-5" fill="currentColor" />
-                  <span>Start Test</span>
+                  {isRunning ? (
+                    <>
+                      <Loader2 className="w-5 h-5 animate-spin" />
+                      <span>Running...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Play className="w-5 h-5" fill="currentColor" />
+                      <span>Start Test</span>
+                    </>
+                  )}
                 </button>
               </div>
             )}

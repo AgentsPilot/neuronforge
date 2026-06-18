@@ -105,18 +105,18 @@ export function useV6ReviewMode(): boolean {
 }
 
 /**
- * Show the "Run Calibration" entry on the agent detail page.
+ * Move the user to calibration after agent creation.
  *
- * Temporary: calibration is being phased out as a user-facing surface, so the
- * default is OFF — the hidden state is the intended long-term state. Opt in via
- * NEXT_PUBLIC_SHOW_CALIBRATION_BUTTON=true for testing/diagnosis. The button
- * navigates to /v2/sandbox/[agentId], which hosts the batch-calibration flow.
+ * Default OFF. When off, agent creation auto-redirects to the agent page as
+ * today. When on, a choice card invites the user to calibrate the new agent
+ * before going live (approve → /v2/sandbox/[id]?from=creation, decline →
+ * /agents/[id]). Opt-in via NEXT_PUBLIC_MOVE_TO_CALIBRATION_AFTER_AGENT_CREATION=true.
  *
- * @returns {boolean} True if the calibration entry should be shown
+ * @returns {boolean} True if the post-creation calibration prompt should show
  */
-export function useCalibrationButton(): boolean {
-  const flag = process.env.NEXT_PUBLIC_SHOW_CALIBRATION_BUTTON;
-  clientLogger.debug({ flag: 'NEXT_PUBLIC_SHOW_CALIBRATION_BUTTON', value: flag ?? null, default: false }, 'Feature flag evaluated');
+export function useMoveToCalibrationAfterCreation(): boolean {
+  const flag = process.env.NEXT_PUBLIC_MOVE_TO_CALIBRATION_AFTER_AGENT_CREATION;
+  clientLogger.debug({ flag: 'NEXT_PUBLIC_MOVE_TO_CALIBRATION_AFTER_AGENT_CREATION', value: flag ?? null, default: false }, 'Feature flag evaluated');
   return parseBooleanFlag(flag, false);
 }
 
@@ -137,5 +137,6 @@ export function getFeatureFlags() {
     useNewAgentCreationUI: useNewAgentCreationUI(),
     useV6AgentGeneration: useV6AgentGeneration(),
     useV6ReviewMode: useV6ReviewMode(),
+    useMoveToCalibrationAfterCreation: useMoveToCalibrationAfterCreation(),
   };
 }

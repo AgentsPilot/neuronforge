@@ -28,7 +28,8 @@ import { ArrowLeft, Bot, Sparkles, MessageSquare, Zap, CheckCircle2, Clock,
   AlertCircle,
   HelpCircle,  // V10: For question message variant
   FileText,    // V10: For plan summary message variant
-  Check        // V14: For multi-select checkboxes
+  Check,       // V14: For multi-select checkboxes
+  FlaskConical // Post-creation calibration prompt
 } from 'lucide-react'
 import { useAgentBuilderState } from '@/hooks/useAgentBuilderState'
 import { useAgentBuilderMessages } from '@/hooks/useAgentBuilderMessages'
@@ -42,7 +43,7 @@ import type {
 } from '@/components/agent-creation/types/generate-agent-v2'
 import { isGenerateAgentV2Success } from '@/components/agent-creation/types/generate-agent-v2'
 import { formatScheduleDisplay } from '@/lib/utils/scheduleFormatter'
-import { useV6AgentGeneration } from '@/lib/utils/featureFlags'
+import { useV6AgentGeneration, useMoveToCalibrationAfterCreation } from '@/lib/utils/featureFlags'
 import { createTimedThinkingWordCycler, getWordsForCategories } from '@/lib/ui/thinking-words'
 
 // ============================================================================
@@ -458,6 +459,10 @@ function V2AgentBuilderContent() {
   // Final approval state
   const [isAwaitingFinalApproval, setIsAwaitingFinalApproval] = useState(false)
   const [agentCreated, setAgentCreated] = useState(false)
+
+  // Post-creation calibration prompt (gated by NEXT_PUBLIC_MOVE_TO_CALIBRATION_AFTER_AGENT_CREATION)
+  const [showCalibrationPrompt, setShowCalibrationPrompt] = useState(false)
+  const [createdAgentId, setCreatedAgentId] = useState<string | null>(null)
 
   // Input state
   const [inputValue, setInputValue] = useState('')
@@ -1142,6 +1147,54 @@ function V2AgentBuilderContent() {
     }
   }
 
+  // ==================== POST-CREATION CALIBRATION PROMPT ====================
+
+  // Record the user's prompt decision on the agent (non-blocking — navigation
+  // must never wait on this; consent is already enforced by the click). The
+  // server stamps the decided-at timestamp.
+  const recordCalibrationDecision = (agentId: string, decision: 'accepted' | 'declined') => {
+    fetch(`/api/v2/agents/${agentId}/calibration-decision`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ decision })
+    }).catch(err => console.warn('⚠️ Failed to record calibration decision (non-blocking)', err))
+  }
+
+  const handleStartCalibration = () => {
+    if (!createdAgentId) return
+    const agentId = createdAgentId
+    setShowCalibrationPrompt(false)
+    // Echo the user's choice + a bot follow-up so the conversation reflects it.
+    addUserMessage('Yes, test it')
+    addAIMessage("Great — we're testing your agent now. You'll get an email with the result, and it'll unlock in your agents list once it passes.")
+    // Record the decision (sets calibration_status='running').
+    recordCalibrationDecision(agentId, 'accepted')
+    // Fire the calibration in the BACKGROUND — do NOT await. The server keeps
+    // running after we navigate away; its tail records pass/fail + emails the user.
+    fetch('/api/v2/calibrate/batch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ agentId, inputValues: inputParameterValues, background: true })
+    }).catch(err => console.warn('⚠️ Failed to trigger background calibration (non-blocking)', err))
+    // Move the user on — they watch their inbox / the agents list, not a progress screen.
+    setTimeout(() => {
+      router.push('/v2/agent-list')
+    }, 600)
+  }
+
+  const handleSkipCalibration = () => {
+    if (!createdAgentId) return
+    const agentId = createdAgentId
+    setShowCalibrationPrompt(false)
+    addUserMessage('Skip for now')
+    addAIMessage("No problem — your agent is in your agents list. You can run the test whenever you're ready.")
+    // Record the decision (sets calibration_status='skipped' → gated; click routes to the sandbox).
+    recordCalibrationDecision(agentId, 'declined')
+    setTimeout(() => {
+      router.push('/v2/agent-list')
+    }, 600)
+  }
+
   // ==================== THINKING WORDS HELPERS ====================
 
   const startThinkingWords = (initialMessage?: string) => {
@@ -1530,13 +1583,24 @@ function V2AgentBuilderContent() {
 
       // Stop thinking words and show success message
       stopThinkingWords()
-      addAIMessage('Your agent has been created successfully! Taking you to your new agent...')
 
-      // E9 + Option A: 1000 ms → 300 ms. The message stays briefly readable
-      // while Next.js starts the route transition.
-      setTimeout(() => {
-        router.push(`/agents/${result.agent.id}`)
-      }, 300)
+      if (useMoveToCalibrationAfterCreation()) {
+        // Flag ON: offer the user a choice to calibrate before going live.
+        // Navigation happens ONLY on a button click (handleStartCalibration /
+        // handleSkipCalibration) — never auto-redirect (workplan R3).
+        setCreatedAgentId(result.agent.id)
+        addAIMessage("Your agent is ready! Want to test it on a real example first? Calibration runs it once, catches issues, and auto-fixes what it safely can.")
+        setShowCalibrationPrompt(true)
+      } else {
+        // Flag OFF (default): unchanged behaviour — auto-redirect to the agent page.
+        addAIMessage('Your agent has been created successfully! Taking you to your new agent...')
+
+        // E9 + Option A: 1000 ms → 300 ms. The message stays briefly readable
+        // while Next.js starts the route transition.
+        setTimeout(() => {
+          router.push(`/agents/${result.agent.id}`)
+        }, 300)
+      }
 
     } catch (error: any) {
       console.error('❌ Agent creation error:', error)
@@ -3561,6 +3625,55 @@ function V2AgentBuilderContent() {
                           </div>
                         </div>
                       ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Post-creation calibration prompt — approve/decline (workplan R1-R4) */}
+                {showCalibrationPrompt && createdAgentId && (
+                  <div className="flex justify-start mt-4">
+                    <div className="w-8 h-8 flex-shrink-0" /> {/* Spacer for avatar alignment */}
+
+                    <div className="flex-1 max-w-3xl">
+                      <div
+                        className="bg-[var(--v2-surface)] border border-[var(--v2-border)] p-4 flex items-center justify-between"
+                        style={{ borderRadius: 'var(--v2-radius-card)', boxShadow: 'var(--v2-shadow-card)' }}
+                      >
+                        <div className="flex items-center gap-3">
+                          <div
+                            className="w-10 h-10 bg-[var(--v2-primary)]/10 flex items-center justify-center"
+                            style={{ borderRadius: 'var(--v2-radius-button)' }}
+                          >
+                            <FlaskConical className="h-5 w-5 text-[var(--v2-primary)]" />
+                          </div>
+                          <div>
+                            <p className="font-medium text-[var(--v2-text-primary)]">
+                              Test your agent before going live?
+                            </p>
+                            <p className="text-xs text-[var(--v2-text-muted)]">
+                              Calibration runs it once on a real example and repairs what it safely can
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="flex gap-2">
+                          <button
+                            onClick={handleStartCalibration}
+                            className="px-4 py-2 bg-[var(--v2-primary)] text-white font-medium flex items-center gap-2 hover:opacity-90 transition-all"
+                            style={{ borderRadius: 'var(--v2-radius-button)' }}
+                          >
+                            Test it now
+                          </button>
+
+                          <button
+                            onClick={handleSkipCalibration}
+                            className="px-4 py-2 border border-[var(--v2-border)] text-[var(--v2-text-secondary)] font-medium hover:bg-[var(--v2-surface-hover)] transition-all"
+                            style={{ borderRadius: 'var(--v2-radius-button)' }}
+                          >
+                            Skip for now
+                          </button>
+                        </div>
+                      </div>
                     </div>
                   </div>
                 )}

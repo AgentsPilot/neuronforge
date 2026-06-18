@@ -40,6 +40,7 @@ interface Agent {
   input_schema?: any[]
   user_id: string
   enhanced_prompt?: string | any
+  calibration_status?: 'running' | 'passed' | 'failed' | 'skipped' | null
 }
 
 type FlowState = 'setup' | 'running' | 'dashboard' | 'fixes-applied' | 'testing' | 'success'
@@ -55,6 +56,8 @@ export default function BatchCalibrationPage() {
   // Check if user wants to start fresh (skip session restoration)
   const searchParams = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null
   const startFresh = searchParams?.get('fresh') === 'true'
+  // Arrived here via a gated dashboard click (agent hasn't passed calibration).
+  const arrivedGated = searchParams?.get('gated') === '1'
 
   // State
   const [agent, setAgent] = useState<Agent | null>(null)
@@ -397,6 +400,13 @@ export default function BatchCalibrationPage() {
   // Run batch calibration
   const handleRunCalibration = async (inputValues: Record<string, any>) => {
     if (!agent) return
+    // Guard against re-entry: don't start a second run while one is in flight
+    // (covers a stray button click and a duplicate auto-start). The batch route
+    // also holds a per-agent distributed lock, but we stop it at the UI first.
+    if (flowState === 'running') {
+      console.warn('[Calibration] Run already in progress — ignoring duplicate start')
+      return
+    }
 
     try {
       setFlowState('running')
@@ -1196,6 +1206,17 @@ export default function BatchCalibrationPage() {
           {error && (
             <div className="mb-4 sm:mb-5 lg:mb-6 p-3 sm:p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
               <p className="text-sm text-red-900 dark:text-red-200">{error}</p>
+            </div>
+          )}
+
+          {/* Redirect prompt — shown when the user reached the sandbox via a gated
+              dashboard click (agent hasn't passed calibration yet). */}
+          {arrivedGated && agent && agent.calibration_status !== 'passed' && (
+            <div className="mb-4 sm:mb-5 lg:mb-6 p-4 bg-[var(--v2-primary)]/5 border border-[var(--v2-primary)]/30 rounded-lg">
+              <p className="text-sm text-[var(--v2-text-primary)]">
+                You've been redirected to the calibration page. To view this agent we first want to make sure
+                its first run is successful — please run the calibration below.
+              </p>
             </div>
           )}
 

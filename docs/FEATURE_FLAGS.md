@@ -40,6 +40,7 @@ Feature flag functions are defined in:
 |------|---------------------|-------|---------|---------------|
 | V6 Agent Generation | `NEXT_PUBLIC_USE_V6_AGENT_GENERATION` | Client | `false` | `/v2/agents/new`, `/test-plugins-v2` |
 | V6 Review Mode | `NEXT_PUBLIC_USE_V6_REVIEW_MODE` | Client | `true` | `/v2/agents/new`, `/test-plugins-v2` |
+| Move to Calibration After Creation | `NEXT_PUBLIC_MOVE_TO_CALIBRATION_AFTER_AGENT_CREATION` | Client | `false` | `/v2/agents/new` |
 | Thread-Based Agent Creation | `NEXT_PUBLIC_USE_THREAD_BASED_AGENT_CREATION` | Client | `false` | Legacy: `/agents/new/chat` only |
 | New Agent Creation UI | `NEXT_PUBLIC_USE_NEW_AGENT_CREATION_UI` | Client | `false` | Legacy: `/agents/new/chat` only |
 
@@ -120,6 +121,20 @@ if (useV6) {
   }
 }
 ```
+
+---
+
+### 2b. Move to Calibration After Creation
+
+**Environment Variable**: `NEXT_PUBLIC_MOVE_TO_CALIBRATION_AFTER_AGENT_CREATION`
+
+**Helper**: `useMoveToCalibrationAfterCreation()`
+
+**Default**: `false` (auto-redirect to the agent page after creation, as before).
+
+When enabled, the agent-creation flow (`/v2/agents/new`) shows a choice card after a successful create instead of auto-redirecting. The user explicitly **approves** ("Test it now" → `/v2/sandbox/[id]?from=creation`, where calibration auto-starts) or **declines** ("Skip for now" → `/agents/[id]`). The decision is persisted on the agent (`calibration_prompt_decision`). Navigation only happens on a button click — the flow never force-navigates to calibration.
+
+> **Related change (not flag-gated):** the agent-detail "Run Calibration" button (`/v2/agents/[id]`) is no longer gated by a feature flag. It now shows automatically while an agent has **not** passed calibration (`!is_calibrated`) and hides once it has. The former `NEXT_PUBLIC_SHOW_CALIBRATION_BUTTON` flag / `useCalibrationButton()` helper were removed.
 
 ---
 
