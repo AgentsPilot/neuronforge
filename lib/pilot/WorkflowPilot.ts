@@ -30,6 +30,7 @@ import type {
 import { ExecutionError, ValidationError } from './types';
 import { WorkflowParser } from './WorkflowParser';
 import { reconcileInputsToDsl } from './reconcileInputsToDsl';
+import { injectUnboundActionParams } from './injectUnboundActionParams';
 import { ExecutionContext } from './ExecutionContext';
 import { StateManager } from './StateManager';
 import { tokensToPilotCredits } from '@/lib/utils/pricingConfig';
@@ -364,6 +365,32 @@ export class WorkflowPilot {
     // keys only (backward-safe); the Drive executor's extractDriveId (2B Part 1)
     // then normalises any routed URL to a bare ID.
     inputValues = reconcileInputsToDsl(workflowSteps, inputValues);
+
+    // WP-60 Part B — runtime safety net. The compiler may have left a required
+    // action param UNBOUND when it couldn't match the param name to a config key
+    // (e.g. list_files.folder_id ← folder_link). For agents compiled before the
+    // Part A fix (or any future miss), inject the step-tagged value into the
+    // unbound param here — matched by the namespaced key's plugin and the action
+    // schema, conservative + backward-safe. Repairs stored DSLs without a rebuild.
+    //
+    // execute()-only by design: it mutates the in-memory steps for THIS run, not
+    // the persisted pilot_steps, so resume() (which re-parses the stored DSL) does
+    // not re-inject. Acceptable for WP-60 — the affected step (folder listing) runs
+    // up front, before any resumable failure boundary. (See SA review NIT-2.)
+    try {
+      const { PluginManagerV2 } = await import('../server/plugin-manager-v2');
+      const pm = await PluginManagerV2.getInstance();
+      injectUnboundActionParams(workflowSteps, inputValues, (plugin, action) => {
+        const props = pm.getPluginDefinition(plugin)?.actions?.[action]?.parameters?.properties;
+        return props ? Object.keys(props) : null;
+      });
+    } catch (err) {
+      // Non-fatal: if plugin schemas can't be loaded, fall through with the DSL
+      // as-is (Part A still covers freshly compiled agents).
+      createLogger({ module: 'WorkflowPilot' }).warn(
+        { err }, 'injectUnboundActionParams skipped (non-fatal)'
+      );
+    }
 
     const executionPlan = this.parser.parse(workflowSteps);
 

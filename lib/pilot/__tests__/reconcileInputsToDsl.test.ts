@@ -196,15 +196,20 @@ describe('reconcileInputsToDsl — QA edge cases', () => {
 
   it('integration: routes folder URL onto folder_id using the REAL drive scenario fixtures', () => {
     const steps = loadFixture('phase4-pilot-dsl-steps.json') as WorkflowStep[];
-    const inputValues = loadFixture('phase4-workflow-config.json');
+    const fixture = loadFixture('phase4-workflow-config.json');
 
-    // Sanity: the fixture really is the unmet shape this fix targets.
+    // The committed snapshot happens to carry an exact `folder_id` key (its IC
+    // declared one). Reconstruct the WP-60 *unmet* shape — an agent whose creation
+    // flow emitted only `folder_link` (+ the step-tagged namespaced key) and no
+    // `folder_id` — which is exactly the case this fix targets.
+    const { folder_id: _drop, ...inputValues } = fixture;
     expect(inputValues.folder_id).toBeUndefined();
     expect(inputValues['google-drive__storage/list__folder_link']).toBeTruthy();
 
     const result = reconcileInputsToDsl(steps, inputValues);
 
-    // step1 (google-drive list_files) reads {{input.folder_id}} → must be filled.
+    // step1 (google-drive list_files) reads {{input.folder_id}} → must be filled
+    // from the step-tagged namespaced key.
     expect(result.folder_id).toBe(
       inputValues['google-drive__storage/list__folder_link']
     );

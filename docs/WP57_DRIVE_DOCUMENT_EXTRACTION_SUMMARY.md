@@ -256,7 +256,7 @@ and the remaining steps.
     | Layer | Role | Fires | Repairs existing agents? | Status |
     |---|---|---|---|---|
     | **A — compiler stem match** (`findBestConfigMatch`) | Fix-for-the-future: new agents compile `folder_id` bound, DSL correct on disk | agent creation / regen | ❌ (needs rebuild) | ✅ implemented (uncommitted) |
-    | **B — runtime param-injector** (`WorkflowPilot.execute()`) | Safety net: bind unbound required action params on the stored DSL at run time; repairs already-saved agents + catches future compiler misses | every `execute()` | ✅ yes | ⬜ designed, not yet implemented |
+    | **B — runtime param-injector** (`WorkflowPilot.execute()`) | Safety net: bind unbound action params on the stored DSL at run time; repairs already-saved agents + catches future compiler misses | every `execute()` | ✅ yes | ✅ implemented (uncommitted) — `lib/pilot/injectUnboundActionParams.ts`, +12 tests |
 
   - **B design (decided defaults):** a **new, separate** function (keep `reconcileInputsToDsl` pure) run right after reconcile
     in `execute()`, with plugin-manager access:

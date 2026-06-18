@@ -42,10 +42,10 @@ const logger = createLogger({ module: 'reconcileInputsToDsl' });
 /** Matches `{{input.X}}` / `{{inputs.X}}` and captures `X` (may be dotted). */
 const INPUT_REF_RE = /\{\{\s*inputs?\.([a-zA-Z0-9_$.]+)\s*\}\}/g;
 
-const isEmpty = (v: unknown): boolean => v === undefined || v === null || v === '';
+export const isEmpty = (v: unknown): boolean => v === undefined || v === null || v === '';
 
 /** Strip a trailing role suffix (`_id`/`_link`/`_url`) to get the semantic stem. */
-function stemOf(name: string): string {
+export function stemOf(name: string): string {
   return name.replace(/_(id|link|url)$/i, '').toLowerCase();
 }
 
@@ -54,7 +54,7 @@ function stemOf(name: string): string {
  * The param (last segment) may itself contain dots (e.g. `recipients.to`);
  * only `__` separates the three parts. Returns null for non-namespaced keys.
  */
-function parseNamespacedKey(key: string): { plugin: string; param: string } | null {
+export function parseNamespacedKey(key: string): { plugin: string; param: string } | null {
   const parts = key.split('__');
   if (parts.length < 3) return null;
   const plugin = parts[0];
