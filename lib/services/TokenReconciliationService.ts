@@ -17,6 +17,9 @@
 
 import { SupabaseClient } from '@supabase/supabase-js';
 import { AuditTrailService } from './AuditTrailService';
+import { createLogger } from '@/lib/logger';
+
+const logger = createLogger({ service: 'TokenReconciliationService' });
 
 export interface ReconciliationResult {
   executionId: string;
@@ -67,7 +70,7 @@ export class TokenReconciliationService {
    * ✅ P0: Called automatically after execution to verify accuracy
    */
   async reconcileExecution(executionId: string): Promise<ReconciliationResult> {
-    console.log(`🔍 [TokenReconciliation] Reconciling execution: ${executionId}`);
+    logger.info({ executionId }, 'Reconciling execution token counts');
 
     try {
       // 1. Get total from token_usage table (sum all records for this execution)
@@ -149,12 +152,24 @@ export class TokenReconciliationService {
 
       // 4. Log result
       if (isReconciled) {
-        console.log(`✅ [TokenReconciliation] Execution ${executionId} reconciled successfully`);
-        console.log(`   token_usage: ${tokenUsageTotal}, agent_executions: ${agentExecutionsTotal}, diff: ${discrepancy}`);
+        logger.info(
+          { executionId, tokenUsageTotal, agentExecutionsTotal, discrepancy },
+          'Execution reconciled successfully'
+        );
       } else {
-        console.error(`❌ [TokenReconciliation] Discrepancy detected for execution ${executionId}`);
-        console.error(`   token_usage: ${tokenUsageTotal}, agent_executions: ${agentExecutionsTotal}, diff: ${discrepancy} (${discrepancyPercentage.toFixed(2)}%)`);
-        console.error(`   Breakdown: LLM=${llmTokens}, Memory=${memoryTokens}, Classification=${classificationTokens}, Plugin=${pluginTokens}`);
+        // Anomaly, not a crash — the audit trail below records it as critical
+        // (revenue integrity). WARN here keeps it visible without ERROR noise.
+        logger.warn(
+          {
+            executionId,
+            tokenUsageTotal,
+            agentExecutionsTotal,
+            discrepancy,
+            discrepancyPercentage: Number(discrepancyPercentage.toFixed(2)),
+            breakdown: { llmTokens, memoryTokens, classificationTokens, pluginTokens },
+          },
+          'Token reconciliation discrepancy detected (logged to audit trail)'
+        );
 
         // Log to audit trail for investigation
         await this.auditTrail.log({
@@ -177,7 +192,8 @@ export class TokenReconciliationService {
 
       return result;
     } catch (error: any) {
-      console.error(`❌ [TokenReconciliation] Reconciliation failed for ${executionId}:`, error);
+      // Genuine failure — the reconciliation process itself threw. Keep ERROR.
+      logger.error({ err: error, executionId }, 'Reconciliation failed');
       throw error;
     }
   }
@@ -192,7 +208,7 @@ export class TokenReconciliationService {
     endDate: Date,
     limit: number = 100
   ): Promise<ReconciliationBatchResult> {
-    console.log(`🔍 [TokenReconciliation] Batch reconciliation from ${startDate.toISOString()} to ${endDate.toISOString()}`);
+    logger.info({ startDate: startDate.toISOString(), endDate: endDate.toISOString(), limit }, 'Starting batch reconciliation');
 
     try {
       // Get all executions in date range
@@ -222,11 +238,11 @@ export class TokenReconciliationService {
             discrepancyCount++;
           }
         } catch (error: any) {
-          console.error(`Failed to reconcile ${execution.execution_id}:`, error.message);
+          logger.error({ err: error, executionId: execution.execution_id }, 'Failed to reconcile execution in batch');
         }
       }
 
-      console.log(`✅ [TokenReconciliation] Batch complete: ${reconciledCount} reconciled, ${discrepancyCount} discrepancies`);
+      logger.info({ reconciledCount, discrepancyCount, total: results.length }, 'Batch reconciliation complete');
 
       return {
         totalExecutions: results.length,
@@ -235,7 +251,7 @@ export class TokenReconciliationService {
         results,
       };
     } catch (error: any) {
-      console.error(`❌ [TokenReconciliation] Batch reconciliation failed:`, error);
+      logger.error({ err: error }, 'Batch reconciliation failed');
       throw error;
     }
   }

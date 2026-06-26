@@ -122,7 +122,10 @@ export async function refreshAccessToken(
 
   if (!response.ok) {
     const errorText = await response.text();
-    logger.error({ status: response.status, errorText }, 'Token refresh failed');
+    // Expected, recoverable condition (e.g. invalid_grant on an expired/revoked
+    // refresh token) — the caller handles it by returning null and prompting the
+    // user to reconnect. WARN, not ERROR, to avoid false-alarm noise.
+    logger.warn({ status: response.status, errorText }, 'Token refresh failed - user needs to reconnect');
     return null;
   }
 

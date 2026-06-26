@@ -187,7 +187,7 @@ export class UserPluginConnections {
 
         // Only attempt refresh if we have a refresh token
         if (!connection.refresh_token) {
-          logger.error({ pluginKey }, 'Smart Refresh Failed: No refresh token available - user needs to reconnect');
+          logger.warn({ pluginKey }, 'Smart Refresh: No refresh token available - user needs to reconnect');
           return null;
         }
 
@@ -341,9 +341,9 @@ export class UserPluginConnections {
     }, 'Token Refresh: Attempting to refresh token');
 
     if (!connection.refresh_token) {
-      logger.error({
+      logger.warn({
         pluginKey: connection.plugin_key
-      }, 'Token Refresh Failed: No refresh token available - user needs to reconnect');
+      }, 'Token refresh: No refresh token available - user needs to reconnect');
       return null;
     }
 
@@ -352,12 +352,12 @@ export class UserPluginConnections {
       const tokens = await refreshAccessToken(connection.refresh_token, authConfig);
 
       if (!tokens) {
-        logger.error({
-          pluginKey: connection.plugin_key
-        }, 'Token Refresh Failed - User needs to reconnect in Settings');
-        logger.error({
-          pluginKey: connection.plugin_key
-        }, 'Common causes: Refresh token expired (Google: 6mo), token revoked, or OAuth credentials changed');
+        // Expected lifecycle event (token expired/revoked) — handled by returning
+        // null + prompting reconnect. WARN, with the likely cause folded in.
+        logger.warn({
+          pluginKey: connection.plugin_key,
+          commonCauses: 'refresh token expired (Google ~6mo), token revoked, or OAuth credentials changed'
+        }, 'Token refresh failed - user needs to reconnect in Settings');
         return null;
       }
 
