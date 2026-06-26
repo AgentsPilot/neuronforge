@@ -81,6 +81,15 @@ export class ExecutionContext implements IExecutionContext {
   // See workplan: docs/workplans/runmode-into-scatter-failure-handling.md
   public runMode: 'production' | 'calibration' | 'batch_calibration' = 'production';
 
+  // Calibration round (Phase 4 — calibration outbound-message marking).
+  // Monotonic per workflow execution, set by the calibration orchestrator
+  // (each Layer-3 dry-run / batch-loop iteration / post-fix re-run gets its own
+  // number). Read by StepExecutor to tag outbound actions (e.g. emails) sent
+  // during calibration so the recipient can tell it was a test run and which
+  // round produced it. Undefined outside calibration.
+  // See workplan: docs/workplans/v2-post-creation-calibration-prompt-workplan.md (Phase 4)
+  public calibrationRound?: number;
+
   // Workflow data schema for runtime validation (Phase 5)
   private dataSchema: WorkflowDataSchema | null = null;
 

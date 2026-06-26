@@ -188,7 +188,8 @@ export class WorkflowPilot {
     debugMode?: boolean,
     providedDebugRunId?: string,
     providedExecutionId?: string,
-    runMode?: 'calibration' | 'production' | 'batch_calibration'
+    runMode?: 'calibration' | 'production' | 'batch_calibration',
+    calibrationRound?: number
   ): Promise<WorkflowExecutionResult> {
     console.log(`🚀 [WorkflowPilot] Starting execution for agent ${agent.id}: ${agent.agent_name}`);
 
@@ -529,6 +530,10 @@ export class WorkflowPilot {
       scatterExplicitShapeRequired, // Phase 6 — Tier 2 Fix #3
       effectiveRunMode // Phase 6 — Tier 2 Fix #4
     );
+
+    // Phase 4 (calibration outbound-message marking): record the calibration
+    // round so StepExecutor can tag outbound actions sent during this run.
+    context.calibrationRound = calibrationRound;
 
     // Phase 6 — Tier 1 Fix #3: deferred writes for resources received as
     // method args. Writing onto `context.scope` instead of `(this as any)`

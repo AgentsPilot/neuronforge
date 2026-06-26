@@ -50,6 +50,28 @@ export class GmailPluginExecutor extends GoogleBasePluginExecutor {
   private async sendEmail(connection: any, parameters: any): Promise<any> {
     this.logger.debug('Sending email via Gmail API');
 
+    // Phase 4 — calibration outbound-message marking. If this send is happening
+    // during a calibration run, prepend a round-numbered banner to the subject
+    // and body so the recipient can tell it was a test run (and which round).
+    // No-op outside calibration. Wrapped defensively — never break a real send.
+    try {
+      const notice = this.getCalibrationNotice(parameters);
+      if (notice.isCalibration && parameters?.content) {
+        const content = parameters.content;
+        content.subject = typeof content.subject === 'string' && content.subject.length > 0
+          ? notice.subjectPrefix + content.subject
+          : notice.subjectPrefix.trim();
+        if (typeof content.html_body === 'string' && content.html_body.length > 0) {
+          content.html_body = notice.htmlBanner + content.html_body;
+        }
+        if (typeof content.body === 'string' && content.body.length > 0) {
+          content.body = notice.textBanner + content.body;
+        }
+      }
+    } catch (err) {
+      this.logger.warn({ err }, 'Failed to apply calibration banner (non-blocking)');
+    }
+
     // Build email message
     const message = this.buildEmailMessage(parameters);
 
