@@ -70,7 +70,7 @@ Triggered by TL after Dev marks implementation complete.
 
 ### What to check
 
-1. **Standards compliance** — TypeScript strict, Zod on all API boundaries, Pino logging
+1. **Standards compliance** — TypeScript strict, Zod on all API boundaries, Pino logging. **Any file in the diff that still logs via `console.*` is a code-review comment: the Dev should have flagged it and proposed converting it to the Pino standard. If a touched file is left non-compliant without the user explicitly declining the conversion, mark it 🔄 Fix Required.** (See CLAUDE.md § Logging.)
 2. **Skill checklist** — if the work scaffolds an API route / repository / plugin, walk through the matching `.claude/skills/<name>/SKILL.md` "Final checklist" against the diff. Every unchecked item is a code review comment.
 3. **Security** — no RLS bypasses, no secrets in code, input sanitisation
 4. **Performance** — unnecessary re-renders, unoptimised DB queries, missing caching

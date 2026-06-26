@@ -168,7 +168,7 @@ The following documents define **mandatory development standards** for this proj
 
 1. All DB access via `lib/repositories/` — no direct Supabase calls in routes/services/components
 2. All API route inputs validated with Zod before any business logic
-3. All API routes use `correlationId` and structured Pino logging — no `console.log`
+3. All server/app code uses structured Pino logging via `createLogger` — never `console.*` (API routes also attach a `correlationId`). **If you touch a file that still logs via `console.*`, surface it and propose converting it to the Pino standard — proceed with the conversion once the user approves, unless they explicitly decline. Treat this as a basic coding standard, not an optional cleanup.**
 4. All Supabase queries **must** include `.eq('user_id', userId)` unless intentionally bypassed with `supabaseServer` (document why)
 5. No hardcoded model names — use provider factory + feature flags
 6. TypeScript strict mode — no implicit `any`; if `any` is unavoidable, add a comment explaining why
@@ -536,6 +536,16 @@ logger.debug({ payload }, 'Request payload');
 // Child logger with correlation ID for request tracing
 const requestLogger = logger.child({ correlationId });
 ```
+
+### Non-compliant files you touch (mandatory)
+
+`console.*` is not an accepted logging path anywhere in `lib/`, `app/`, or `components/`. When you open or modify a file that still uses `console.log` / `console.warn` / `console.error` for logging:
+
+1. **Flag it** to the user — name the file and the count of `console.*` calls.
+2. **Propose converting** the whole file to the Pino standard (`createLogger` + structured `logger.*({ ...context }, 'message')`, errors as `{ err }`).
+3. **Convert it once the user approves** — proceed unless the user explicitly says they don't want it converted.
+
+This is a basic coding standard, not optional cleanup. Don't silently leave a touched file non-compliant, and don't reformat files you aren't otherwise working on.
 
 ---
 
