@@ -463,6 +463,9 @@ function V2AgentBuilderContent() {
   // Post-creation calibration prompt (gated by NEXT_PUBLIC_MOVE_TO_CALIBRATION_AFTER_AGENT_CREATION)
   const [showCalibrationPrompt, setShowCalibrationPrompt] = useState(false)
   const [createdAgentId, setCreatedAgentId] = useState<string | null>(null)
+  // Tracks the user's calibration choice for the Setup Progress "Calibration Test Run"
+  // box (null = not yet decided; set briefly before navigating away).
+  const [calibrationChoice, setCalibrationChoice] = useState<null | 'accepted' | 'declined'>(null)
 
   // Input state
   const [inputValue, setInputValue] = useState('')
@@ -1165,6 +1168,7 @@ function V2AgentBuilderContent() {
     const agentId = createdAgentId
     setShowCalibrationPrompt(false)
     // Echo the user's choice + a bot follow-up so the conversation reflects it.
+    setCalibrationChoice('accepted')
     addUserMessage('Yes, test it')
     addAIMessage("Great — we're testing your agent now. You'll get an email with the result, and it'll unlock in your agents list once it passes.")
     // Record the decision (sets calibration_status='running').
@@ -1186,6 +1190,7 @@ function V2AgentBuilderContent() {
     if (!createdAgentId) return
     const agentId = createdAgentId
     setShowCalibrationPrompt(false)
+    setCalibrationChoice('declined')
     addUserMessage('Skip for now')
     addAIMessage("No problem — your agent is in your agents list. You can run the test whenever you're ready.")
     // Record the decision (sets calibration_status='skipped' → gated; click routes to the sandbox).
@@ -1589,7 +1594,7 @@ function V2AgentBuilderContent() {
         // Navigation happens ONLY on a button click (handleStartCalibration /
         // handleSkipCalibration) — never auto-redirect (workplan R3).
         setCreatedAgentId(result.agent.id)
-        addAIMessage("Your agent is ready! Want to test it on a real example first? Calibration runs it once, catches issues, and auto-fixes what it safely can.")
+        addAIMessage("Your agent is ready! Want to test it now? Heads up: calibration runs it once on real data (it may send/create real items), so make sure everything it needs is in place first.")
         setShowCalibrationPrompt(true)
       } else {
         // Flag OFF (default): unchanged behaviour — auto-redirect to the agent page.
@@ -2497,6 +2502,52 @@ function V2AgentBuilderContent() {
                     </p>
                   </div>
                 </div>
+
+                {/* Step 8: Calibration Test Run — only when the post-creation
+                    calibration feature is enabled (flag). */}
+                {useMoveToCalibrationAfterCreation() && (() => {
+                  const isActive = showCalibrationPrompt && !calibrationChoice
+                  const isCalibrating = calibrationChoice === 'accepted'
+                  const isSkipped = calibrationChoice === 'declined'
+                  const isLive = isActive || isCalibrating
+                  const isPending = !isLive && !isSkipped
+                  return (
+                    <div
+                      className={`flex items-start gap-2.5 p-2.5 rounded-lg border ${isPending ? 'opacity-60' : ''}`}
+                      style={
+                        isLive
+                          ? { backgroundColor: 'var(--v2-status-executing-bg)', borderColor: 'var(--v2-status-executing-border)' }
+                          : { backgroundColor: 'var(--v2-surface)', borderColor: 'var(--v2-border)' }
+                      }
+                    >
+                      {isLive ? (
+                        <FlaskConical
+                          className="w-5 h-5 flex-shrink-0 mt-0.5 animate-pulse"
+                          style={{ color: 'var(--v2-status-executing-text)' }}
+                        />
+                      ) : (
+                        <div
+                          className="w-5 h-5 border-2 rounded-full flex-shrink-0 mt-0.5"
+                          style={{ borderColor: 'var(--v2-text-muted)' }}
+                        />
+                      )}
+                      <div className="flex-1">
+                        <p className="text-sm font-medium text-[var(--v2-text-primary)] mb-1">
+                          Calibration Test Run
+                        </p>
+                        <p className="text-xs text-[var(--v2-text-muted)]">
+                          {isCalibrating
+                            ? 'Calibrating your agent…'
+                            : isActive
+                            ? 'Ready to test — choose above'
+                            : isSkipped
+                            ? 'Skipped for now'
+                            : 'Validate your agent on real data'}
+                        </p>
+                      </div>
+                    </div>
+                  )
+                })()}
               </div>
 
               {/* Bottom Info Section */}
@@ -3651,7 +3702,7 @@ function V2AgentBuilderContent() {
                               Test your agent before going live?
                             </p>
                             <p className="text-xs text-[var(--v2-text-muted)]">
-                              Calibration runs it once on a real example and repairs what it safely can
+                              Calibration runs your agent once on real data — make sure the data it needs is ready before you start. It catches issues and auto-fixes what it safely can.
                             </p>
                           </div>
                         </div>
