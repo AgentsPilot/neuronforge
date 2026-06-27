@@ -501,7 +501,7 @@ Steps (full detail captured in chat 2026-06-26; condensed here):
 
 ## Phase 4 — Mark agent outbound messages sent during calibration (PLANNED)
 
-> **Status:** 🔨 Implemented 2026-06-26 — tsc neutral (error count unchanged 1676=1676 vs baseline; all repo-pre-existing). Live verification pending. Built: `_calibration` meta param in StepExecutor (mirrors `_idempotency_key`), `calibrationRound` on ExecutionContext threaded from the batch loop via WorkflowPilot.execute, `BasePluginExecutor.getCalibrationNotice()` helper, Gmail `send_email` prepends subject + body/html banner. Engine stays plugin-agnostic; round = batch `loopIteration`. (Dry-run/Layer-3 sends not yet round-tagged — follow-up if needed.)
+> **Status:** ✅ Implemented + live-tested (2026-06-27). Built: `_calibration` meta param in StepExecutor (mirrors `_idempotency_key`); `calibrationRound` + `calibrationOwnerEmail` on ExecutionContext threaded from the batch route via `WorkflowPilot.execute` **and `DryRunValidator.validateWithDryRun`** (so dry-run + each loop iteration share a monotonic round); `BasePluginExecutor.getCalibrationNotice()` (round shown only from #2; exposes `redirectTo`); Gmail `send_email` prepends the banner **and redirects recipients to the owner**, noting the original recipients. Unit tests cover `getCalibrationNotice`. Engine stays plugin-agnostic.
 > **Area:** Pilot **execution engine** + **plugin executors** — distinct from the calibration UI (Phases 1–3). Intersects the `v6-pipeline` and `new-plugin` skills; should arguably become its **own** workplan if it grows. Drafted here per request.
 
 ### Problem
@@ -541,7 +541,7 @@ This honors the platform principles: no hardcoded plugin/action names in the eng
 
 ### Decisions (resolved 2026-06-26)
 1. **Dedupe — NO.** The goal is to *see* each round's test send, so keep every send and label each with its round. No suppression.
-2. **Recipient redirect — DEFERRED** (not implemented now). See Future enhancements below.
+2. **Recipient redirect — ✅ IMPLEMENTED 2026-06-27** (was deferred). During calibration, the Gmail executor redirects outbound mail to the **agent owner** (`_calibration.redirectTo`, threaded from the batch route's `user.email` via ExecutionContext) and notes the original recipients in the banner — so a test never reaches a real third party.
 3. **Banner placement — subject + body.** ✅
 
 ### Risks / invariants
@@ -551,8 +551,9 @@ This honors the platform principles: no hardcoded plugin/action names in the eng
 - Multi-channel: the marker is generic; banner implemented per messaging executor (Gmail first).
 
 ### Future enhancements (not now)
-- **Route notification + calibration emails through the owner's google-mail plugin connection** instead of the env `GMAIL_*` account. Diagnosed 2026-06-26: the env Gmail (`offir.omer@gmail.com`, contact-form account) had a dead refresh token (`invalid_grant`) so the notification email failed — while the agent's own emails sent fine via the user's google-mail *plugin* connection (`meiribarak@gmail.com`, auto-refreshed). Using the owner's plugin connection would be more robust (valid, auto-refreshing) and send from the right identity. Design change (transport needs userId + connection system); deferred. `scripts/validate-gmail.mjs` checks the env Gmail token; `scripts/validate-resend.mjs` checks Resend.
-- **🚩 Recipient redirect during calibration.** The round banner clarifies but does **not** stop a calibration send from reaching a **real third party** — an agent that emails a *customer* would email that real customer a (labeled) test message. A future option: in calibration mode, override all outbound recipients to the agent owner's email (same `_calibration` marker; executor swaps `to`). **Deferred by decision 2026-06-26 — revisit before agents that message third parties are calibrated at scale.**
+- **Apply the recipient redirect + banner to non-Gmail messaging executors** (Slack, SMS, etc.). The `_calibration` marker (incl. `redirectTo`) is already injected generically; only the Gmail executor consumes it today. Add the same ~few lines to other messaging executors as those agents get calibrated.
+
+> The "route emails through the owner's google-mail plugin connection" idea is **not a future item** — it's the **agreed, shipped behavior**: the email transport's priority is Resend → env Gmail → owner's plugin connection → console (see Phase 3). `scripts/validate-gmail.mjs` / `validate-resend.mjs` diagnose the env providers.
 
 ### Out of scope
 - Dedupe / suppressing duplicate calibration sends (decision: keep all, labeled).
@@ -596,6 +597,14 @@ The left "Setup Progress" panel ([page.tsx:2150-2152](../../app/v2/agents/new/pa
 
 ---
 
+## Status snapshot (2026-06-27)
+
+Phases 1–5 implemented, committed, and **live-tested OK**. Email transport ships with the Resend → env Gmail → owner plugin-connection → console fallback. Calibration outbound sends are marked (round banner) **and redirected to the owner** during calibration. Unit tests added for `getCalibrationNotice` + `AgentRepository` calibration methods.
+
+**Still open:** integration test for the calibration-decision route; operator email config (valid `RESEND_API_KEY` or refreshed env Gmail token) — fallback covers dev; production rollout decision for the global flag (R18 blast radius). **Deferred:** apply the redirect/banner to non-Gmail messaging executors; re-calibration on workflow edits (Q4).
+
+---
+
 ## Change History
 
 | Date | Change | Details |
@@ -603,6 +612,7 @@ The left "Setup Progress" panel ([page.tsx:2150-2152](../../app/v2/agents/new/pa
 | 2026-06-14 | Created | Initial workplan for the post-creation calibration prompt. Awaiting user approval before implementation. |
 | 2026-06-14 | Revised per review | Flag renamed to `NEXT_PUBLIC_MOVE_TO_CALIBRATION_AFTER_AGENT_CREATION`; made approve/decline an explicit mandatory requirement (R3); added persistence of the prompt decision (R4: migration + AgentRepository method + dedicated route); confirmed calibration-outcome tracking reuses existing `is_calibrated`/`calibration_history` (R5, no new outcome columns). |
 | 2026-06-14 | Revised per review (round 2) | Added R7: remove `useCalibrationButton()` / `NEXT_PUBLIC_SHOW_CALIBRATION_BUTTON` and gate the agent-detail "Run Calibration" button on `!agent.is_calibrated` (show when not passed, hide when passed). Investigated: single flag consumer at `app/v2/agents/[id]/page.tsx`; agent object already has `is_calibrated` via `select('*')`; `Agent` type needs the field added. Documented the deliberate reversal of the "phasing out" default and the V1/V2 detail-surface distinction. |
+| 2026-06-27 | Recipient redirect + unit tests + docs | Implemented the calibration recipient redirect (Gmail sends go to the owner via `_calibration.redirectTo`, threaded from `user.email` through ExecutionContext + DryRunValidator; original recipients noted in the banner). Added unit tests: `getCalibrationNotice` (6) + `AgentRepository` calibration methods (5), all green. Refreshed stale statuses (live-tested ✅; dry-run round-tagging confirmed). Removed the "plugin-connection as primary" future item (it's the shipped behavior). Updated calibration docs + the V2 thread-based agent-creation flow doc. |
 | 2026-06-26 | Phase 5 implemented | 5.1: prompt chat message + card subtitle now state calibration runs on real data / ensure data is ready. 5.2: added flag-gated "Calibration Test Run" box to the left Setup Progress map (pending → active "Ready to test" → "Calibrating…"/"Skipped for now"), driven by new `calibrationChoice` state set in the accept/skip handlers. tsc clean. |
 | 2026-06-26 | Phase 5 defined | Two creation-flow UX tasks: (5.1) clarify in the calibration prompt that it runs on real data + user should ensure data is ready (wording pending user); (5.2) add a flag-gated "Calibration Test Run" box to the left Setup Progress flow map (pending → active → briefly calibrating/skipped). No code. |
 | 2026-06-26 | Email transport: plugin-connection fallback | Added owner's google-mail plugin connection as a last-resort transport (Resend → env Gmail → owner plugin connection → console). `emailTransport.sendEmail` gains `ownerUserId` + a lazy-imported `PluginExecuterV2.execute('google-mail','send_email')` step; threaded through NotificationService + calibrationResultEmail + the batch route tail (`runCtx.userId`). Unblocks notification email in dev without fixing the env Gmail token. Also documented the env-Gmail OAuth setup as an operator config task (Gmail API + consent screen + token mint). tsc clean. |

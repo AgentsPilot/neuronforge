@@ -117,6 +117,7 @@ If you have **30 minutes** and want to understand the feature end-to-end:
 
 | Doc | Summary |
 |---|---|
+| [POST_CREATION_CALIBRATION_FLOW.md](/docs/Calibration/POST_CREATION_CALIBRATION_FLOW.md) ⭐ | Post-creation flow: the `/v2/agents/new` prompt, background run + result email, the `agents.calibration_status` gate, the provider-agnostic email transport, and calibration outbound-message marking + recipient redirect. Flag: `NEXT_PUBLIC_MOVE_TO_CALIBRATION_AFTER_AGENT_CREATION`. |
 | [CALIBRATION_HISTORY_IMPLEMENTATION.md](/docs/Calibration/CALIBRATION_HISTORY_IMPLEMENTATION.md) ⭐ | `calibration_history` table, `CalibrationHistoryRepository`, removed columns from `agents`, analytics view. |
 | [CALIBRATION_STATUS_TRACKING.md](/docs/Calibration/CALIBRATION_STATUS_TRACKING.md) ⭐ | Fast-path: when `workflow_hash` matches a previous `status='success'`, run a single verification instead of full 3-iteration loop. |
 | [CALIBRATION_TABLES_ANALYSIS.md](/docs/Calibration/CALIBRATION_TABLES_ANALYSIS.md) | Why three calibration objects coexist: `calibration_sessions` (active runs), `calibration_history` (analytics), `calibration_success_metrics` (view). |
@@ -240,5 +241,6 @@ Point-in-time fix notes from the early-2026 calibration push, moved to [docs/arc
 
 | Date | Change | Details |
 |------|--------|---------|
+| 2026-06-27 | Post-creation flow doc | Added [POST_CREATION_CALIBRATION_FLOW.md](/docs/Calibration/POST_CREATION_CALIBRATION_FLOW.md) under Data Model & Lifecycle — the post-creation prompt, background run + email, `agents.calibration_status` gate, provider-agnostic email transport, and calibration outbound marking + recipient redirect. |
 | 2026-06-02 | Consolidated docs + audit | Moved all live calibration docs from repo root and `docs/` into `docs/Calibration/` (30 docs incl. this index); moved 11 superseded fix-notes to `docs/archive/`. Fixed stale "Planned" headers on the multi-step framework + missing-flatten docs. Added Dead Code / Cleanup Backlog section from the 2026-06-02 audit. Rewrote all index links to new paths. |
 | 2026-05-24 | Created | Initial overview/index covering 22 docs across root + `docs/`. Confirmed Phase 1 of multi-step framework is implemented, hardcode V3 is the live approach, and story-driven UX is shipped. |
