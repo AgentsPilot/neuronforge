@@ -1,6 +1,6 @@
 {
   "name": "Google Drive Invoice Summary Email Agent — captured from live agent",
-  "description": "Reverse-engineered from live agent 6ef48513-f49c-4635-b0dc-bdd9bf2f80a6 (created 2026-06-02). Reads invoice files from a Google Drive folder, extracts invoice fields per file inside a scatter_gather loop, computes roll-up totals, and emails an HTML summary table via Gmail. NOTABLE: the EP lists `document-extractor` in services_involved and the Phase 1 IC correctly emits an `extract` step with `document/extract_structured_data`, but Phase 2 binding does NOT bind it to the document-extractor plugin — the compiler routes extraction to an `ai_processing` step instead (plugins_used = google-drive, google-mail only). This matches the live agent's stored steps (scatter_gather + ai_processing, no bound extractor) and is the document-extractor-vs-AI-extraction behavior this scenario locks in. Captured headless via tests/v6-regression/scripts/capture-scenario-from-agent.ts (mirrors /api/v6/generate-ir-intent-contract Phases 0-4). Phase 1 is non-deterministic — snapshot reflects the 2026-06-09 capture run.",
+  "description": "Reverse-engineered from live agent 6ef48513-f49c-4635-b0dc-bdd9bf2f80a6 (created 2026-06-02). Reads invoice files from a Google Drive folder, downloads each file's bytes, extracts invoice fields per file via the document-extractor plugin inside a scatter_gather loop, computes roll-up aggregates, and emails an HTML summary table via Gmail (with an empty-folder branch). UPDATED 2026-06-16 (WP-57 fix): the snapshot was regenerated and now compiles the full extractor path — `list_files → filter → conditional[ scatter: download_file → document-extractor → with_fields, aggregates, ai/generate, send_email ]`. The earlier capture (2026-06-09) routed extraction to `ai_processing` because there was no base64 byte source; WP-57 (google-drive.download_file + compiler auto-insert + firmed §6.4 nudge) fixed that, so document-extractor is now bound. Captured headless via tests/v6-regression/scripts/capture-scenario-from-agent.ts (mirrors /api/v6/generate-ir-intent-contract Phases 0-4). Phase 1 is non-deterministic.",
   "created": "2026-06-09",
   "source": {
     "type": "live-agent-capture",
@@ -14,18 +14,20 @@
   "plugins": ["google-drive", "document-extractor", "google-mail"],
   "expected": {
     "min_steps": 9,
-    "step_types": ["action", "transform", "scatter_gather", "ai_processing"],
+    "step_types": ["action", "transform", "conditional", "scatter_gather", "ai_processing"],
     "phase_a_checks": 0,
     "phase_d_success": true
   },
   "status": {
-    "compile": "PASS — verified 2026-06-09 (IC compiles to a 9-step DSL).",
-    "phase_a": "PASS — verified 2026-06-09 (execution simulator, 14/14 checks, 0 errors).",
-    "phase_d": "NOT RUN — not yet validated via run-regression.ts Phase D.",
-    "phase_e": "NOT RUN — this is the compile-suite (IC-based) capture; Phase E live was exercised on the sibling `-asis` scenario instead."
+    "compile": "PASS — regenerated 2026-06-15 (full extractor path: download_file → document-extractor, conditional empty-folder branch).",
+    "phase_a": "PASS — verified 2026-06-15 (execution simulator, 14/14 checks, 0 errors, 0 warnings).",
+    "phase_d": "PASS — verified 2026-06-15 (mocked WorkflowPilot, 12/12 steps, 0 failed; execution_metrics FK noise is the mock agent id only).",
+    "phase_e": "PASS — verified 2026-06-15 (LIVE on agent 6ef48513). 13/13 steps, real email received; folder routing (WP-57 2B) + Textract extraction of 4 files incl. a PNG verified.",
+    "phase_e_success": true,
+    "phase_e_caveat": "Email is complete but document-extractor field quality is imperfect in deterministic mode (tax_amount/due_date/invoice_number mis-parsed — tracked as WP-59); the LLM summarizer smooths it. Multi-input AI wiring gap tracked as WP-58 (benign — runtime config scope + LLM re-derivation compensate)."
   },
   "exercises": [
-    "document-extractor selection: IC emits document/extract_structured_data but binding routes to ai_processing rather than the document-extractor plugin (plugins_used = google-drive, google-mail)",
+    "document-extractor selection (WP-57): IC emits document/extract_structured_data and the compiler now binds it to the document-extractor plugin, auto-inserting google-drive.download_file to supply base64 bytes (plugins_used = google-drive, document-extractor, google-mail)",
     "scatter_gather per-file extraction loop over Google Drive files",
     "aggregate roll-up totals (sum of invoice amounts) feeding an HTML summary email",
     "Contrast with contracts-googledocs-v2ui-pipeline-a (Google Docs content read + internal AI date extraction)"

@@ -6,6 +6,8 @@ import { GoogleDrivePluginExecutor } from '@/lib/server/google-drive-plugin-exec
 import { createTestExecutor, expectSuccessResult, expectErrorResult, expectFetchCalledWith } from '../common/test-helpers';
 import { mockFetchSuccess, mockFetchError, mockFetchSequence, restoreFetch, getAllFetchCalls } from '../common/mock-fetch';
 import { runStandardErrorScenarios } from '../common/error-scenarios';
+import * as fs from 'fs';
+import * as path from 'path';
 
 const PLUGIN_KEY = 'google-drive';
 const USER_ID = 'test-user-id';
@@ -94,6 +96,42 @@ describe('GoogleDrivePluginExecutor', () => {
 
         expectSuccessResult(result);
         expect(result.data.file_name).toBe('Notes.doc');
+      });
+    });
+
+    // ---- download_file ----
+    describe('download_file', () => {
+      it('should download binary file bytes as base64 (not .text())', async () => {
+        const pdfBytes = Buffer.from('%PDF-1.4\n0xDE 0xAD 0xBE 0xEF fake invoice bytes', 'utf-8');
+        mockFetchSequence([
+          // Metadata call
+          { body: { id: 'pdf-1', name: 'invoice.pdf', mimeType: 'application/pdf', size: String(pdfBytes.length) } },
+          // Binary download call (alt=media)
+          { body: pdfBytes },
+        ]);
+
+        const result = await executor.executeAction(USER_ID, 'download_file', {
+          file_id: 'pdf-1',
+        });
+
+        expectSuccessResult(result);
+        expect(result.data.file_id).toBe('pdf-1');
+        expect(result.data.filename).toBe('invoice.pdf');
+        expect(result.data.mimeType).toBe('application/pdf');
+        // content is base64 of the RAW bytes, and round-trips back exactly
+        expect(result.data.content).toBe(pdfBytes.toString('base64'));
+        expect(Buffer.from(result.data.content, 'base64').equals(pdfBytes)).toBe(true);
+      });
+
+      it('should reject native Google files (no downloadable bytes)', async () => {
+        // Only the metadata call happens — the native-file guard throws before download
+        mockFetchSuccess({ id: 'gdoc-1', name: 'Notes', mimeType: 'application/vnd.google-apps.document', size: '500' });
+
+        const result = await executor.executeAction(USER_ID, 'download_file', {
+          file_id: 'gdoc-1',
+        });
+
+        expectErrorResult(result, 'native Google');
       });
     });
 
@@ -288,6 +326,77 @@ describe('GoogleDrivePluginExecutor', () => {
         const result = await ctx.executor.executeAction(USER_ID, 'list_files', {});
         expectErrorResult(result);
       });
+    });
+  });
+
+  // ---- read_file_content: real PDF text extraction (WP-57 #2) ----
+  describe('read_file_content — PDF text extraction', () => {
+    const fixturePath = path.join(process.cwd(), 'tests', 'plugins', 'fixtures', 'Invoice677931.pdf');
+    const run = fs.existsSync(fixturePath) ? it : it.skip;
+
+    run('extracts real text from a PDF (not corrupted binary)', async () => {
+      const pdfBytes = fs.readFileSync(fixturePath);
+      mockFetchSequence([
+        // Metadata call (mimeType drives the PDF text-extraction branch)
+        { body: { id: 'pdf-1', name: 'Invoice677931.pdf', mimeType: 'application/pdf', size: String(pdfBytes.length) } },
+        // alt=media binary download
+        { body: pdfBytes },
+      ]);
+
+      const result = await executor.executeAction(USER_ID, 'read_file_content', { file_id: 'pdf-1' });
+
+      expectSuccessResult(result);
+      expect(result.data.mime_type).toBe('application/pdf');
+      expect(result.data.export_format).toBe('text/plain');
+      // Real extracted text — contains the invoice number, NOT UTF-8-mangled binary.
+      expect(result.data.content.length).toBeGreaterThan(0);
+      expect(result.data.content).toContain('677931');
+    }, 30000);
+  });
+
+  // ---- Drive URL → ID normalization (WP-57 2B) ----
+  // Users paste full Drive/Docs URLs where actions expect a bare ID. The executor
+  // normalises url-shaped id params (folder_id/file_id/parent_folder_id) before use.
+  describe('Drive URL → ID normalization', () => {
+    it('list_files: extracts the folder ID from a pasted folder URL', async () => {
+      mockFetchSuccess({ files: [{ id: 'f1', name: 'Invoice.pdf', mimeType: 'application/pdf' }] });
+
+      await executor.executeAction(USER_ID, 'list_files', {
+        folder_id: 'https://drive.google.com/drive/u/0/folders/1Wszlm9qgqPVQyHYp1lWmlkipRFLVQLAk',
+      });
+
+      const call = getAllFetchCalls().find(c => c.url.includes('drive/v3/files'));
+      expect(call).toBeDefined();
+      // URLSearchParams encodes spaces as '+'; normalise before asserting.
+      const decoded = decodeURIComponent(call!.url).replace(/\+/g, ' ');
+      // The bare ID reaches the query; the raw URL does not leak into it.
+      expect(decoded).toContain("'1Wszlm9qgqPVQyHYp1lWmlkipRFLVQLAk' in parents");
+      expect(decoded).not.toContain('drive.google.com');
+    });
+
+    it('get_file_metadata: extracts the file ID from a /file/d/<id>/view link', async () => {
+      mockFetchSuccess({ id: '1AbC_dEf-123', name: 'Doc.pdf', mimeType: 'application/pdf', size: '10' });
+
+      await executor.executeAction(USER_ID, 'get_file_metadata', {
+        file_id: 'https://drive.google.com/file/d/1AbC_dEf-123/view?usp=sharing',
+      });
+
+      const call = getAllFetchCalls().find(c => c.url.includes('drive/v3/files'));
+      expect(call).toBeDefined();
+      expect(call!.url).toContain('1AbC_dEf-123');
+      expect(call!.url).not.toContain('https%3A');
+    });
+
+    it('passes a bare ID through unchanged', async () => {
+      mockFetchSuccess({ files: [] });
+
+      await executor.executeAction(USER_ID, 'list_files', {
+        folder_id: '1TAUlds9R8r2lznDszbOwovpdM0cN7aFK',
+      });
+
+      const call = getAllFetchCalls().find(c => c.url.includes('drive/v3/files'));
+      const decoded = decodeURIComponent(call!.url).replace(/\+/g, ' ');
+      expect(decoded).toContain("'1TAUlds9R8r2lznDszbOwovpdM0cN7aFK' in parents");
     });
   });
 });

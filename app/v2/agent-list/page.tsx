@@ -7,6 +7,7 @@ import React, { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@/components/UserProvider'
 import { supabase } from '@/lib/supabaseClient'
+import { useMoveToCalibrationAfterCreation } from '@/lib/utils/featureFlags'
 import { V2Logo, V2Controls } from '@/components/v2/V2Header'
 import { ModernHelpDialog } from '@/components/v2/ModernHelpDialog'
 import {
@@ -42,10 +43,48 @@ type Agent = {
   created_at?: string
   memory_count?: number
   total_runs?: number
+  calibration_status?: 'running' | 'passed' | 'failed' | 'skipped' | null
 }
 
 type FilterType = 'all' | 'active' | 'inactive' | 'draft'
 type SortType = 'created_desc' | 'created_asc' | 'name_asc' | 'name_desc' | 'runs_desc' | 'runs_asc'
+
+// Post-creation calibration gate (Phase 2). When the feature flag is ON, an agent
+// opens normally only once calibration has passed; otherwise clicking it routes to
+// the sandbox (to run/fix calibration) or shows a "still running" message. NULL
+// (legacy/pre-existing) is treated as deferred. Flag OFF ⇒ no gating at all.
+type CalibrationGate = {
+  action: 'open' | 'sandbox' | 'wait'
+  badge?: { label: string; tone: 'running' | 'warning' }
+  tooltip?: string
+}
+
+function getCalibrationGate(agent: Agent, gateOn: boolean): CalibrationGate {
+  if (!gateOn) return { action: 'open' }
+  switch (agent.calibration_status) {
+    case 'passed':
+      return { action: 'open', tooltip: 'Calibrated ✓' }
+    case 'running':
+      return {
+        action: 'wait',
+        badge: { label: 'Calibrating…', tone: 'running' },
+        tooltip: "Calibration in progress — we'll email you when it's done.",
+      }
+    case 'failed':
+      return {
+        action: 'sandbox',
+        badge: { label: 'Needs attention', tone: 'warning' },
+        tooltip: 'First run had issues — click to review and fix in calibration.',
+      }
+    case 'skipped':
+    default: // null / legacy → deferred
+      return {
+        action: 'sandbox',
+        badge: { label: 'Not calibrated', tone: 'warning' },
+        tooltip: 'Not yet calibrated — click to run calibration.',
+      }
+  }
+}
 
 type Toast = {
   id: string
@@ -125,6 +164,7 @@ const ToastNotification = ({
 export default function V2AgentListPage() {
   const router = useRouter()
   const { user } = useAuth()
+  const calibrationGateOn = useMoveToCalibrationAfterCreation()
   const [agents, setAgents] = useState<Agent[]>([])
   const [loading, setLoading] = useState(true)
   const [searchQuery, setSearchQuery] = useState('')
@@ -217,10 +257,39 @@ export default function V2AgentListPage() {
     setToasts(prev => prev.filter(toast => toast.id !== id))
   }, [])
 
+  // Route an agent-row click through the calibration gate (Phase 2).
+  const handleAgentClick = (agent: Agent) => {
+    const gate = getCalibrationGate(agent, calibrationGateOn)
+    if (gate.action === 'wait') {
+      addToast("Calibration is still running — please wait for it to finish. We'll email you when it's done.", 'info')
+      return
+    }
+    if (gate.action === 'sandbox') {
+      router.push(`/v2/sandbox/${agent.id}?gated=1`)
+      return
+    }
+    router.push(`/v2/agents/${agent.id}`)
+  }
+
   const handleExecuteAgent = async (e: React.MouseEvent, agentId: string, agentName: string) => {
     e.stopPropagation()
 
     if (executingAgents.has(agentId)) return
+
+    // Block running while the calibration gate is closed (Phase 2).
+    const targetAgent = agents.find(a => a.id === agentId)
+    if (targetAgent) {
+      const gate = getCalibrationGate(targetAgent, calibrationGateOn)
+      if (gate.action !== 'open') {
+        addToast(
+          gate.action === 'wait'
+            ? 'Calibration is still running — please wait for it to finish.'
+            : 'This agent needs to pass calibration before it can run. Click it to calibrate.',
+          'info'
+        )
+        return
+      }
+    }
 
     setExecutingAgents(prev => new Set(prev).add(agentId))
 
@@ -648,12 +717,14 @@ export default function V2AgentListPage() {
                   const statusConfig = getStatusConfig(agent.status)
                   const isExecuting = executingAgents.has(agent.id)
                   const isPausing = pausingAgents.has(agent.id)
+                  const calibrationGate = getCalibrationGate(agent, calibrationGateOn)
+                  const tooltipText = calibrationGate.tooltip || agent.description
 
                   return (
                     <tr
                       key={agent.id}
                       className="hover:bg-[var(--v2-surface-hover)] transition-colors cursor-pointer group relative"
-                      onClick={() => router.push(`/v2/agents/${agent.id}`)}
+                      onClick={() => handleAgentClick(agent)}
                       onMouseEnter={() => setHoveredAgent(agent.id)}
                       onMouseLeave={() => setHoveredAgent(null)}
                     >
@@ -666,14 +737,26 @@ export default function V2AgentListPage() {
                               {agent.agent_name}
                             </h3>
                           </div>
+                          {/* Calibration gate badge (Phase 2) */}
+                          {calibrationGate.badge && (
+                            <span
+                              className={`flex-shrink-0 inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full ${
+                                calibrationGate.badge.tone === 'running'
+                                  ? 'bg-[var(--v2-primary)]/10 text-[var(--v2-primary)]'
+                                  : 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'
+                              }`}
+                            >
+                              {calibrationGate.badge.label}
+                            </span>
+                          )}
                         </div>
 
-                        {/* Tooltip */}
-                        {hoveredAgent === agent.id && agent.description && (
+                        {/* Tooltip — calibration status takes precedence over description */}
+                        {hoveredAgent === agent.id && tooltipText && (
                           <div className="absolute left-0 top-full mt-1 z-50 px-3 py-2 bg-[var(--v2-surface)] border border-[var(--v2-border)] shadow-lg text-xs text-[var(--v2-text-secondary)] max-w-xs pointer-events-none"
                             style={{ borderRadius: 'var(--v2-radius-card)' }}
                           >
-                            {agent.description}
+                            {tooltipText}
                           </div>
                         )}
                       </td>

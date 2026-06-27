@@ -163,12 +163,47 @@ Access, search, and read files and folders in Google Drive. Use for accessing Go
 | mime_type | string | MIME type of the file |
 | content | string | Text content extracted from the file |
 | content_length | integer | Length of extracted content in characters |
-| export_format | string | Format the file was exported as |
+| export_format | string | Format actually produced (`text/plain` for Google-Docs export and parsed PDFs; `original` for plain-text files) |
 | read_at | string | Timestamp when file was read |
+
+**Behavior by file type** (the `content` field — binary files are never UTF-8-decoded, which would corrupt them):
+- **Google Docs/Sheets/Slides** → exported as text (`export_format` controls the target; default `text/plain`).
+- **PDF** → the PDF's **text layer** is extracted via `pdf-parse`; `export_format` is reported as `text/plain`. Scanned / image-only PDFs have **no text layer** and return little/no text — use [`download_file`](#5-download_file) → `document-extractor` (OCR) for those.
+- **Plain-text files** (`.txt`, `.csv`, `.html`, `.json`) → returned as-is (`export_format`: `original`).
+- **Other binaries** (docx/xlsx/images) → not text-extractable here; use [`download_file`](#5-download_file) + `document-extractor`.
+
+See **WP-57** in `docs/v6/V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_WEAK_POINTS.md`.
 
 ---
 
-### 5. get_folder_contents
+### 5. download_file
+**Description**: Download a file's raw bytes as base64 (for binary files — PDF, image, DOCX) so file-based extractors (e.g. `document-extractor`) can OCR/parse them. Unlike `read_file_content` (which returns extracted *text*), this returns the original *bytes*.
+
+| Property | Value |
+|----------|-------|
+| HTTP Method | GET |
+| Endpoint | `/drive/v3/files/{file_id}?alt=media` |
+
+**Parameters**:
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| file_id | string | Yes | The ID of the file to download (from list_files / search_files) |
+| max_size_mb | number | No | Maximum file size to download in MB (1-50, default: 25) |
+
+**Response Structure**:
+| Field | Type | Description |
+|-------|------|-------------|
+| file_id | string | ID of the downloaded file |
+| filename | string | Name of the file |
+| mimeType | string | MIME type (e.g. application/pdf, image/png) |
+| content | string | Base64-encoded raw file bytes — pass to `document-extractor.file_content` (which reads a file object's `content` field) |
+| file_size | string | Human-readable file size |
+
+> **Note**: Native Google Workspace files (Docs/Sheets/Slides) have no downloadable bytes — use `read_file_content` (export) for those. The download uses `arrayBuffer()` → base64 (never `.text()`, which corrupts binary). The output carries `x-semantic-type: file_attachment` so the V6 pipeline routes it to `document-extractor` rather than AI text extraction. See **WP-57** in `docs/v6/V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_WEAK_POINTS.md`.
+
+---
+
+### 6. get_folder_contents
 **Description**: Get all files and subfolders within a specific folder
 
 | Property | Value |
@@ -228,4 +263,6 @@ To obtain credentials:
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.2.0 | 2026-06-13 | `read_file_content` now extracts the real text layer from PDFs (`pdf-parse`) instead of UTF-8-decoding the binary (which corrupted it); `export_format` reports the actual format (`text/plain` for parsed PDFs). Scanned/image PDFs still need `download_file` + document-extractor. See WP-57. |
+| 1.1.0 | 2026-06-10 | Added `download_file` (base64 binary download for document extraction; `x-semantic-type: file_attachment`). Fixed `read_file_content` `output_schema.required` (referenced non-existent fields `id`/`name`/`mimeType`). See WP-57. |
 | 1.0.0 | 2025-11-30 | Initial plugin with 5 actions: list_files, search_files, get_file_metadata, read_file_content, get_folder_contents |

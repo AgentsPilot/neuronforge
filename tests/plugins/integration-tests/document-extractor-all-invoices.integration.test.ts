@@ -20,6 +20,11 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { DeterministicExtractor } from '@/lib/extraction/DeterministicExtractor';
 import type { OutputSchema } from '@/lib/extraction/types';
+import dotenv from 'dotenv';
+
+// Load real credentials (e.g. AWS Textract for image OCR). No-op in CI without
+// .env.local; does not override env already set by jest-setup.
+dotenv.config({ path: path.join(process.cwd(), '.env.local') });
 
 // Mock LLMFieldMapper to prevent real LLM API calls during integration tests.
 jest.mock('@/lib/extraction/LLMFieldMapper', () => {
@@ -88,7 +93,10 @@ async function extractFromFixture(base64Content: string, filename: string) {
     filename,
     config: {
       outputSchema: STANDARD_SCHEMA,
-      ocrFallback: true,
+      // These specific assertions verify the pure pdf-parse (text) path, so keep
+      // Textract off here — it stays deterministic regardless of whether AWS creds
+      // are loaded. The Textract/image path is covered by the data-driven block below.
+      ocrFallback: false,
     },
   });
 }
@@ -223,5 +231,45 @@ describe('DeterministicExtractor — all invoices (integration)', () => {
       const pdfFiles = fs.readdirSync(FIXTURES_DIR).filter(f => f.endsWith('.pdf'));
       expect(pdfFiles.length).toBeGreaterThanOrEqual(4);
     });
+  });
+
+  // ==========================================================================
+  // Data-driven: every fixture in the folder extracts successfully (incl. images).
+  // Images go through Textract (AWS); skipped cleanly when AWS isn't configured.
+  // ==========================================================================
+  describe('all fixtures extract successfully', () => {
+    const awsConfigured = !!(process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY && process.env.AWS_REGION);
+    const mimeFor = (name: string): string | null => {
+      const ext = name.toLowerCase().split('.').pop();
+      if (ext === 'pdf') return 'application/pdf';
+      if (ext === 'png') return 'image/png';
+      if (ext === 'jpg' || ext === 'jpeg') return 'image/jpeg';
+      if (ext === 'tif' || ext === 'tiff') return 'image/tiff';
+      return null;
+    };
+    const fixtures = fs.existsSync(FIXTURES_DIR) ? fs.readdirSync(FIXTURES_DIR) : [];
+
+    for (const filename of fixtures) {
+      const mimeType = mimeFor(filename);
+      if (!mimeType) continue;
+      const isImage = mimeType.startsWith('image/');
+      // Images need Textract (AWS) — skip the case (don't fail) when AWS is absent.
+      const testFn = isImage && !awsConfigured ? it.skip : it;
+
+      testFn(`extracts at least one field from ${filename}`, async () => {
+        const base64 = fs.readFileSync(path.join(FIXTURES_DIR, filename)).toString('base64');
+        const extractor = new DeterministicExtractor(true);
+        const result = await extractor.extract({
+          content: base64,
+          mimeType,
+          // Only images need (paid) Textract OCR; PDFs use the free pdf-parse path.
+          config: { outputSchema: STANDARD_SCHEMA, ocrFallback: isImage },
+          filename,
+        });
+
+        expect(result.success).toBe(true);
+        expect(result.metadata.fieldsExtracted).toBeGreaterThanOrEqual(1);
+      }, 60000);
+    }
   });
 });

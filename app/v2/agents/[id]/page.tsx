@@ -74,7 +74,6 @@ import {
 import { PluginIcon } from '@/components/PluginIcon'
 import { AgentIntensityCardV2 } from '@/components/v2/agents/AgentIntensityCardV2'
 import { formatScheduleDisplay, formatNextRun } from '@/lib/utils/scheduleFormatter'
-import { useCalibrationButton } from '@/lib/utils/featureFlags'
 import { InlineLoading } from '@/components/v2/ui/loading'
 import { clientLogger } from '@/lib/logger/client'
 import { MiniInsightCard, HealthStatus, NoIssuesState } from '@/components/v2/execution/MiniInsightCard'
@@ -2657,7 +2656,10 @@ export default function V2AgentDetailPage() {
               Agent Actions
             </h3>
             <div className="space-y-2">
-              {useCalibrationButton() && (
+              {/* Show "Run Calibration" only until the agent has passed calibration.
+                  Visibility is tied to agent state (is_calibrated) rather than a
+                  global flag — see workplan R7. */}
+              {!agent.is_calibrated && (
                 <button
                   onClick={handleSandboxClick}
                   className="w-full flex items-center gap-3 p-4 bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg hover:bg-[var(--v2-border)] transition-all"

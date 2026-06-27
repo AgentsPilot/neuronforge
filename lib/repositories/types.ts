@@ -14,6 +14,10 @@ export enum AgentStatusEnum {
 // Type alias for flexibility (can use enum values or string literals)
 export type AgentStatus = 'draft' | 'active' | 'inactive' | 'deleted' | 'archived';
 
+// Post-creation background-calibration gate state (Phase 2). NULL on the agent
+// row means legacy/pre-existing — interpreted at read-time as deferred.
+export type CalibrationGateStatus = 'running' | 'passed' | 'failed' | 'skipped';
+
 export interface Agent {
   id: string;
   user_id: string;
@@ -48,6 +52,13 @@ export interface Agent {
   // Intelligence features
   insights_enabled?: boolean;
   production_ready?: boolean;
+  // Calibration state
+  is_calibrated?: boolean;
+  last_successful_calibration_id?: string | null;
+  calibration_prompt_decision?: 'accepted' | 'declined' | null;
+  calibration_prompt_decided_at?: string | null;
+  // Post-creation background-calibration gate (Phase 2)
+  calibration_status?: CalibrationGateStatus | null;
   // Business intelligence context
   workflow_purpose?: string | null;
   // ROI tracking - estimated time saved per item automated (in seconds)

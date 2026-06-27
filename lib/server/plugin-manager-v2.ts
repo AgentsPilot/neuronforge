@@ -455,8 +455,8 @@ export class PluginManagerV2 {
               connection: refreshedConnection
             };
           } else {
-            logger.error({ pluginKey }, 'Token refresh failed - user needs to reconnect, skipping from executable list');
-            // Plugin not executable - skip it
+            logger.warn({ pluginKey }, 'Token refresh failed - user needs to reconnect, skipping from executable list');
+            // Plugin not executable - skip it (handled gracefully)
           }
           continue;
         }

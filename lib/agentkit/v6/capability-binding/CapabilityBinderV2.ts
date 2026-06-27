@@ -140,8 +140,13 @@ export class CapabilityBinderV2 {
       '[CapabilityBinderV2] Loaded plugins (user + system)'
     )
 
+    // WP-57: a `fetch_content` step that feeds a document extractor must return file
+    // BYTES (download_file), not text (read_file_content). Mark those steps so bindStep
+    // can prefer the bytes-returning candidate.
+    const bytesFetchSteps = this.collectFetchStepsFeedingDocExtractor(intent.steps)
+
     // Phase 1: Bind all steps
-    const boundSteps = await this.bindSteps(intent.steps, connectedPlugins)
+    const boundSteps = await this.bindSteps(intent.steps, connectedPlugins, bytesFetchSteps)
 
     const boundIntent: BoundIntentContract = {
       ...intent,
@@ -207,29 +212,71 @@ export class CapabilityBinderV2 {
   /**
    * Recursively bind steps (handles nested loops, decisions, parallel)
    */
+  /**
+   * WP-57: collect the IDs of `data_source`/`fetch_content` steps whose output is
+   * consumed by an `extract` step in the `document` domain. Those fetches must return
+   * file BYTES (download_file), not text (read_file_content) — enforced in bindStep.
+   * Plugin-agnostic: pattern-matched on step kinds/capabilities, no action names.
+   */
+  private collectFetchStepsFeedingDocExtractor(steps: IntentStep[]): Set<string> {
+    const marked = new Set<string>()
+    const usesDomain = (s: any, domain: string) =>
+      Array.isArray(s?.uses) && s.uses.some((u: any) => u?.domain === domain)
+    const hasFetchContent = (s: any) =>
+      Array.isArray(s?.uses) && s.uses.some((u: any) => u?.capability === 'fetch_content')
+
+    const walk = (list: any[]) => {
+      if (!Array.isArray(list)) return
+      // Map each output RefName → its producing step (within this scope).
+      const byOutput = new Map<string, any>()
+      for (const s of list) {
+        if (s?.output) byOutput.set(s.output, s)
+      }
+      for (const s of list) {
+        if (s?.kind === 'extract' && usesDomain(s, 'document')) {
+          const inputRef = s?.extract?.input
+          const producer = typeof inputRef === 'string' ? byOutput.get(inputRef) : undefined
+          if (producer && producer.kind === 'data_source' && hasFetchContent(producer)) {
+            marked.add(producer.id)
+          }
+        }
+        // Recurse into nested scopes.
+        if (s?.loop?.do) walk(s.loop.do)
+        if (s?.decide?.then) walk(s.decide.then)
+        if (s?.decide?.else) walk(s.decide.else)
+        if (s?.parallel?.branches) {
+          for (const b of s.parallel.branches) if (b?.steps) walk(b.steps)
+        }
+      }
+    }
+    walk(steps as any[])
+    return marked
+  }
+
   private async bindSteps(
     steps: IntentStep[],
-    connectedPlugins: Record<string, any>
+    connectedPlugins: Record<string, any>,
+    bytesFetchSteps: Set<string> = new Set()
   ): Promise<BoundStep[]> {
     const boundSteps: BoundStep[] = []
 
     for (const step of steps) {
-      const boundStep = await this.bindStep(step, connectedPlugins)
+      const boundStep = await this.bindStep(step, connectedPlugins, bytesFetchSteps)
 
       // Handle nested steps in loops
       if (step.kind === 'loop' && (step as any).loop?.do) {
-        const nestedBound = await this.bindSteps((step as any).loop.do, connectedPlugins)
+        const nestedBound = await this.bindSteps((step as any).loop.do, connectedPlugins, bytesFetchSteps)
         ;(boundStep as any).loop.do = nestedBound
       }
 
       // Handle nested steps in decisions
       if (step.kind === 'decide' && (step as any).decide) {
         if ((step as any).decide.then) {
-          const thenBound = await this.bindSteps((step as any).decide.then, connectedPlugins)
+          const thenBound = await this.bindSteps((step as any).decide.then, connectedPlugins, bytesFetchSteps)
           ;(boundStep as any).decide.then = thenBound
         }
         if ((step as any).decide.else) {
-          const elseBound = await this.bindSteps((step as any).decide.else, connectedPlugins)
+          const elseBound = await this.bindSteps((step as any).decide.else, connectedPlugins, bytesFetchSteps)
           ;(boundStep as any).decide.else = elseBound
         }
       }
@@ -240,7 +287,7 @@ export class CapabilityBinderV2 {
         for (let i = 0; i < branches.length; i++) {
           const branch = branches[i]
           if (branch.steps) {
-            branch.steps = await this.bindSteps(branch.steps, connectedPlugins)
+            branch.steps = await this.bindSteps(branch.steps, connectedPlugins, bytesFetchSteps)
           }
         }
       }
@@ -256,7 +303,8 @@ export class CapabilityBinderV2 {
    */
   private async bindStep(
     step: IntentStep,
-    connectedPlugins: Record<string, any>
+    connectedPlugins: Record<string, any>,
+    bytesFetchSteps: Set<string> = new Set()
   ): Promise<BoundStep> {
     const boundStep: BoundStep = { ...step }
 
@@ -319,9 +367,20 @@ export class CapabilityBinderV2 {
       scoredCandidates = this.filterByMustSupport(scoredCandidates, capabilityUse.preferences.must_support)
     }
 
-    // Validate entity contracts if we have downstream step info
-    // TODO: This requires knowledge of next step's requirements
-    // For now, we trust that output_entity matches downstream needs
+    // WP-57: downstream-aware preference. If this fetch step feeds a document extractor,
+    // prefer the candidate that returns file BYTES (output annotated
+    // x-semantic-type: file_attachment, e.g. download_file) over a text reader
+    // (read_file_content) — the extractor needs bytes. Plugin-agnostic: keys off the
+    // output annotation, not action names. Fills the downstream-context gap noted here.
+    if (bytesFetchSteps.has(step.id)) {
+      for (const c of scoredCandidates) {
+        const out = (c.action as any)?.output_schema
+        if (out && out['x-semantic-type'] === 'file_attachment') {
+          c.score += 0.5
+          c.reasons.push('✅ Preferred bytes-returning fetch — feeds a document extractor (WP-57)')
+        }
+      }
+    }
 
     // Select best candidate
     if (scoredCandidates.length === 0) {

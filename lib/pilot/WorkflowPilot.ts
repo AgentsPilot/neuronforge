@@ -29,6 +29,8 @@ import type {
 } from './types';
 import { ExecutionError, ValidationError } from './types';
 import { WorkflowParser } from './WorkflowParser';
+import { reconcileInputsToDsl } from './reconcileInputsToDsl';
+import { injectUnboundActionParams } from './injectUnboundActionParams';
 import { ExecutionContext } from './ExecutionContext';
 import { StateManager } from './StateManager';
 import { tokensToPilotCredits } from '@/lib/utils/pricingConfig';
@@ -186,7 +188,9 @@ export class WorkflowPilot {
     debugMode?: boolean,
     providedDebugRunId?: string,
     providedExecutionId?: string,
-    runMode?: 'calibration' | 'production' | 'batch_calibration'
+    runMode?: 'calibration' | 'production' | 'batch_calibration',
+    calibrationRound?: number,
+    calibrationOwnerEmail?: string
   ): Promise<WorkflowExecutionResult> {
     console.log(`🚀 [WorkflowPilot] Starting execution for agent ${agent.id}: ${agent.agent_name}`);
 
@@ -354,6 +358,42 @@ export class WorkflowPilot {
       );
     }
 
+    // WP-57 2B Part 2 — execution-time input reconciliation.
+    // The DSL reads `{{input.X}}` (e.g. `folder_id`), but a user-supplied value
+    // may arrive under a step-tagged namespaced key (`{plugin}__{capability}__{param}`,
+    // e.g. `google-drive__storage/list__folder_link`) that never reaches `X`.
+    // Route those step-tagged values onto the matching unmet references here —
+    // the single chokepoint shared by run-agent / cron / Phase E. Fills missing
+    // keys only (backward-safe); the Drive executor's extractDriveId (2B Part 1)
+    // then normalises any routed URL to a bare ID.
+    inputValues = reconcileInputsToDsl(workflowSteps, inputValues);
+
+    // WP-60 Part B — runtime safety net. The compiler may have left a required
+    // action param UNBOUND when it couldn't match the param name to a config key
+    // (e.g. list_files.folder_id ← folder_link). For agents compiled before the
+    // Part A fix (or any future miss), inject the step-tagged value into the
+    // unbound param here — matched by the namespaced key's plugin and the action
+    // schema, conservative + backward-safe. Repairs stored DSLs without a rebuild.
+    //
+    // execute()-only by design: it mutates the in-memory steps for THIS run, not
+    // the persisted pilot_steps, so resume() (which re-parses the stored DSL) does
+    // not re-inject. Acceptable for WP-60 — the affected step (folder listing) runs
+    // up front, before any resumable failure boundary. (See SA review NIT-2.)
+    try {
+      const { PluginManagerV2 } = await import('../server/plugin-manager-v2');
+      const pm = await PluginManagerV2.getInstance();
+      injectUnboundActionParams(workflowSteps, inputValues, (plugin, action) => {
+        const props = pm.getPluginDefinition(plugin)?.actions?.[action]?.parameters?.properties;
+        return props ? Object.keys(props) : null;
+      });
+    } catch (err) {
+      // Non-fatal: if plugin schemas can't be loaded, fall through with the DSL
+      // as-is (Part A still covers freshly compiled agents).
+      createLogger({ module: 'WorkflowPilot' }).warn(
+        { err }, 'injectUnboundActionParams skipped (non-fatal)'
+      );
+    }
+
     const executionPlan = this.parser.parse(workflowSteps);
 
     console.log(`📋 [WorkflowPilot] Execution plan:\n${this.parser.visualize(executionPlan)}`);
@@ -491,6 +531,12 @@ export class WorkflowPilot {
       scatterExplicitShapeRequired, // Phase 6 — Tier 2 Fix #3
       effectiveRunMode // Phase 6 — Tier 2 Fix #4
     );
+
+    // Phase 4 (calibration outbound-message marking): record the calibration
+    // round + owner email so StepExecutor can tag and redirect outbound actions
+    // sent during this run.
+    context.calibrationRound = calibrationRound;
+    context.calibrationOwnerEmail = calibrationOwnerEmail;
 
     // Phase 6 — Tier 1 Fix #3: deferred writes for resources received as
     // method args. Writing onto `context.scope` instead of `(this as any)`

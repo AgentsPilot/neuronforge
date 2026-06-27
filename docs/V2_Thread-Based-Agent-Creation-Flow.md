@@ -361,11 +361,20 @@ This diagram shows the complete user journey through the V2 agent creation page 
 │        that route remains the canonical write for post-creation     │
 │        edits from the agent edit page.)                             │
 │     • Links thread to agent (thread_id passed)                      │
-│     • Shows success message; 300 ms later, router.push to           │
-│       /agents/{id}.                                                 │
+│     • Post-creation handoff:                                         │
+│       - Flag OFF (default): success message; 300 ms later           │
+│         router.push to /agents/{id}.  (legacy behavior)             │
+│       - Flag ON (NEXT_PUBLIC_MOVE_TO_CALIBRATION_AFTER_AGENT_        │
+│         CREATION): show "Test it now? (runs on REAL data)" card     │
+│         + a "Calibration Test Run" step on the left Setup Progress  │
+│         map. Accept → records decision + fires background           │
+│         calibration → /v2/agent-list. Decline → /v2/agent-list.     │
+│         (See docs/Calibration/POST_CREATION_CALIBRATION_FLOW.md)    │
 │                                                                     │
 └─────────────────────────────────────────────────────────────────────┘
 ```
+
+> **Note (post-creation calibration, 2026-06-27):** When `NEXT_PUBLIC_MOVE_TO_CALIBRATION_AFTER_AGENT_CREATION` is ON, `executeAgentCreation()` no longer auto-redirects to `/agents/{id}`. Instead it surfaces a calibration prompt (approve/decline) and routes to `/v2/agent-list`, where the new agent is gated by `agents.calibration_status` until calibration passes. Accepting fires a background calibration that emails the result. Full detail: [POST_CREATION_CALIBRATION_FLOW.md](/docs/Calibration/POST_CREATION_CALIBRATION_FLOW.md). Flag OFF = the legacy 300 ms redirect, unchanged.
 
 > **Note (R1 cleanup, 2026-05-24):** Phase 4 ("Technical Workflow Generation") has been removed from the agent-creation flow. The V2 frontend only ever orchestrates Phases 1-3 (Describe → Clarify → Enhance → Approve), after which agent generation runs via V6 or V4 directly. Phase 4 was never wired into the production frontend; the supporting backend branch, validation schema, and helper utility were removed in R1.
 
@@ -547,7 +556,8 @@ API Calls (V4):  init-thread + process-message × (N+1)  +  generate-agent-v4 + 
 | `handleConnectPlugin()` | OAuth plugin connection — re-runs Phase 3 with updated `connected_services` |
 | `handleSkipPlugin()` | Decline plugin and re-run Phase 3 with `declined_services` |
 | `createAgent()` | Calls V6 (`/api/v6/generate-ir-intent-contract`) or V4 (`/api/generate-agent-v4`) per `useV6AgentGeneration()` |
-| `executeAgentCreation()` | Single POST to `/api/create-agent` (with `input_values` folded in — E9), then redirect |
+| `executeAgentCreation()` | Single POST to `/api/create-agent` (with `input_values` folded in — E9). Then, flag-gated: either the legacy redirect to `/agents/{id}`, or the post-creation calibration prompt → `/v2/agent-list`. |
+| `handleStartCalibration()` / `handleSkipCalibration()` | Post-creation calibration prompt handlers — record the decision, set `calibrationChoice` (drives the Setup Progress "Calibration Test Run" box), fire a background calibration on accept, navigate to `/v2/agent-list`. Gated by `useMoveToCalibrationAfterCreation()`. |
 | `handleSend()` | Handles user input — answers, feedback, free-text |
 | `handleApprove()` | Approve plan → start the create flow |
 | `handleEdit()` | V10: Start edit flow with `user_feedback` |
@@ -674,6 +684,7 @@ Try-Catch Boundaries:
 
 | Date | Change | Details |
 |------|--------|---------|
+| 2026-06-27 | Post-creation calibration handoff | Documented the flag-gated post-creation calibration prompt: `executeAgentCreation()` now branches on `NEXT_PUBLIC_MOVE_TO_CALIBRATION_AFTER_AGENT_CREATION` — flag OFF keeps the legacy 300 ms redirect to `/agents/{id}`; flag ON shows an approve/decline calibration prompt (+ a "Calibration Test Run" step on the left Setup Progress map) and routes to `/v2/agent-list`, where the agent is gated by `agents.calibration_status`. Accept fires a background calibration that emails the result. See [POST_CREATION_CALIBRATION_FLOW.md](/docs/Calibration/POST_CREATION_CALIBRATION_FLOW.md). |
 | 2026-06-01 | Phase 2 single-question + v16 prompt + V6 Pipeline A + E9 + flag retirement | Major update reflecting the merged feature cycle. Phase 2 is now SINGLE-QUESTION per turn (FR4 strict contract: `{ question, phase2_done, ai_reasoning? }` validated by `lib/validation/phase2-schema.ts`). Prompt bumped to v16. V6 endpoint corrected from `/api/v6/generate-ir-semantic` to `/api/v6/generate-ir-intent-contract` (Pipeline A — IntentContract). `/api/create-agent` now folds the input-values save inline (E9 — no separate `/api/agent-configurations/save-inputs` in the create flow; that route remains for post-creation edits). `USE_AGENT_GENERATION_ENHANCED_TECHNICAL_WORKFLOW_REVIEW` flag retired; V5 generator no longer reachable from this route. Added: F1 (answer-keying race), F2 (per-session cap reset), F3 (Phase 3 normalizer + context-aware nudge), C1 (cap to 10 inclusive), E1 (mid-loop context omission), E2 (Phase 3 entrenchment retry), E3/E3.5 (client-side hints + opening message), E4 (running Question N), E5 (no re-ask + qID uniqueness), E6 (`ai_reasoning` telemetry), E7 (Phase 3 thread-context omission by signature), E8 (Agent Draft accordions). Dropped volatile per-line refs in favour of function-name anchors. |
 | 2026-05-24 | R1 Phase 4 cleanup | Removed Phase 4 documentation as part of R1 cleanup (Phase 4 was never wired in the production frontend). System prompt bumped to v15; `process-message` now handles Phases 1-3 only; `phase4-schema.ts` no longer exists at that path; `schema-services-generator.ts` deleted. |
 | 2026-04-01 | Updated for V6 pipeline + accurate line refs | Documented V6/V4 branching in agent generation, updated system prompt to v14, fixed all line number references, added `ai_provider`/`ai_model` to thread schema, added agent generation APIs table |

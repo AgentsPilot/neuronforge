@@ -12,8 +12,34 @@
  */
 
 import type { ApprovalRequest, HumanApprovalStep } from './types';
+import { sendEmail } from '@/lib/notifications/emailTransport';
+import { createLogger } from '@/lib/logger';
+
+const logger = createLogger({ module: 'NotificationService' });
 
 export class NotificationService {
+  /**
+   * Send a one-off transactional email to a user via Resend.
+   *
+   * Public wrapper over the internal sendEmailNotification — for user-facing
+   * notification emails (e.g. post-creation calibration results) that aren't
+   * tied to an approval request.
+   *
+   * @returns `true` if the email was actually dispatched to Resend, `false` if
+   *   it was skipped because RESEND_API_KEY is not configured. Throws on a
+   *   Resend API error (caller decides how to handle). Letting callers
+   *   distinguish skipped-vs-sent avoids misleading "email sent" logs.
+   */
+  async sendTransactionalEmail(
+    to: string[],
+    subject: string,
+    html: string,
+    from?: string,
+    ownerUserId?: string
+  ): Promise<boolean> {
+    return this.sendEmailNotification(to, subject, html, { from, ownerUserId });
+  }
+
   /**
    * Send notifications for approval request
    */
@@ -21,10 +47,10 @@ export class NotificationService {
     approvalRequest: ApprovalRequest,
     step: HumanApprovalStep
   ): Promise<void> {
-    console.log(`📢 [NotificationService] Sending notifications for ${approvalRequest.id}`);
+    logger.info({ approvalRequestId: approvalRequest.id }, 'Sending approval notifications');
 
     if (!step.notificationChannels || step.notificationChannels.length === 0) {
-      console.log(`  ℹ️  No notification channels configured`);
+      logger.info({ approvalRequestId: approvalRequest.id }, 'No notification channels configured');
       return;
     }
 
@@ -33,7 +59,7 @@ export class NotificationService {
     );
 
     await Promise.allSettled(notifications);
-    console.log(`✅ [NotificationService] Notifications sent`);
+    logger.info({ approvalRequestId: approvalRequest.id, channels: step.notificationChannels.length }, 'Approval notifications sent');
   }
 
   /**
@@ -62,10 +88,10 @@ export class NotificationService {
           break;
 
         default:
-          console.warn(`⚠️  [NotificationService] Unknown channel type: ${channel.type}`);
+          logger.warn({ channelType: channel.type }, 'Unknown notification channel type');
       }
     } catch (error: any) {
-      console.error(`❌ [NotificationService] Failed to send ${channel.type} notification:`, error.message);
+      logger.error({ err: error, channelType: channel.type }, 'Failed to send notification');
     }
   }
 
@@ -82,7 +108,7 @@ export class NotificationService {
       throw new Error('Webhook URL not configured');
     }
 
-    console.log(`🔔 [NotificationService] Sending webhook to ${url}`);
+    logger.info({ url, approvalRequestId: approvalRequest.id }, 'Sending webhook notification');
 
     const payload = {
       type: 'approval_request',
@@ -111,7 +137,7 @@ export class NotificationService {
       throw new Error(`Webhook returned ${response.status}: ${response.statusText}`);
     }
 
-    console.log(`✅ [NotificationService] Webhook sent successfully`);
+    logger.info({ url }, 'Webhook sent successfully');
   }
 
   /**
@@ -127,7 +153,7 @@ export class NotificationService {
       throw new Error('Email recipient not configured');
     }
 
-    console.log(`📧 [NotificationService] Sending email to ${to}`);
+    logger.info({ to, approvalRequestId: approvalRequest.id }, 'Sending approval email');
 
     // Generate approval URL
     const approvalUrl = this.generateApprovalUrl(approvalRequest.id);
@@ -152,7 +178,7 @@ export class NotificationService {
       }
     );
 
-    console.log(`✅ [NotificationService] Email notification sent`);
+    logger.info({ to }, 'Approval email notification sent');
   }
 
   /**
@@ -168,7 +194,7 @@ export class NotificationService {
       throw new Error('Slack webhook URL not configured');
     }
 
-    console.log(`💬 [NotificationService] Sending Slack message`);
+    logger.info({ channel, approvalRequestId: approvalRequest.id }, 'Sending Slack notification');
 
     const approvalUrl = this.generateApprovalUrl(approvalRequest.id);
 
@@ -239,7 +265,7 @@ export class NotificationService {
       throw new Error(`Slack webhook returned ${response.status}`);
     }
 
-    console.log(`✅ [NotificationService] Slack message sent`);
+    logger.info({ channel }, 'Slack notification sent');
   }
 
   /**
@@ -255,7 +281,7 @@ export class NotificationService {
       throw new Error('Teams webhook URL not configured');
     }
 
-    console.log(`💬 [NotificationService] Sending Teams message`);
+    logger.info({ approvalRequestId: approvalRequest.id }, 'Sending Teams notification');
 
     const approvalUrl = this.generateApprovalUrl(approvalRequest.id);
 
@@ -304,7 +330,7 @@ export class NotificationService {
       throw new Error(`Teams webhook returned ${response.status}`);
     }
 
-    console.log(`✅ [NotificationService] Teams message sent`);
+    logger.info({ approvalRequestId: approvalRequest.id }, 'Teams notification sent');
   }
 
   /**
@@ -368,57 +394,23 @@ export class NotificationService {
   }
 
   /**
-   * Send email notification via Resend
-   * Falls back gracefully if RESEND_API_KEY is not configured
+   * Send email notification via the provider-agnostic transport
+   * (Resend → Gmail OAuth2 → console preview). Best-effort: does not throw.
+   *
+   * @returns true if actually dispatched by some provider, false otherwise.
    */
   private async sendEmailNotification(
     to: string[],
     subject: string,
     body: string,
     data: any
-  ): Promise<void> {
-    // Use Resend for email notifications
-    const RESEND_API_KEY = process.env.RESEND_API_KEY;
-
-    if (!RESEND_API_KEY) {
-      console.warn('⚠️  [NotificationService] RESEND_API_KEY not configured - skipping email');
-      console.log(`📧 [NotificationService] Email preview:`, {
-        to,
-        subject,
-        bodyLength: body.length,
-        from: data.from || 'NeuronForge <notifications@neuronforge.app>',
-      });
-      return;
+  ): Promise<boolean> {
+    const result = await sendEmail({ to, subject, html: body, from: data?.from, ownerUserId: data?.ownerUserId });
+    if (result.sent) {
+      logger.info({ provider: result.provider, recipients: to.length }, 'Email sent');
+    } else {
+      logger.warn({ provider: result.provider, error: result.error, recipients: to.length, subject }, 'Email not sent');
     }
-
-    try {
-      const response = await fetch('https://api.resend.com/emails', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${RESEND_API_KEY}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          from: data.from || 'NeuronForge <notifications@neuronforge.app>',
-          to: to,
-          subject: subject,
-          html: body,
-        }),
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Resend API error (${response.status}): ${errorText}`);
-      }
-
-      const result = await response.json();
-      console.log(`✅ [NotificationService] Email sent via Resend:`, {
-        id: result.id,
-        to: to.length,
-      });
-    } catch (error: any) {
-      console.error(`❌ [NotificationService] Email failed:`, error.message);
-      throw error;
-    }
+    return result.sent;
   }
 }

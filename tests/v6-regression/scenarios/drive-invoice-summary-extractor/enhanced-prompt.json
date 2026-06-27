@@ -3,7 +3,7 @@
   "plan_description": "Reads invoice files from a specific Google Drive folder, extracts key invoice details, and emails a summary to you using Gmail.",
   "sections": {
     "data": [
-      "- Use the Google Drive folder at https://drive.google.com/drive/folders/1TAUlds9R8r2lznDszbOwovpdM0cN7aFK as the only source location for invoices.",
+      "- Use the Google Drive folder at https://drive.google.com/drive/u/0/folders/1Wszlm9qgqPVQyHYp1lWmlkipRFLVQLAk as the only source location for invoices.",
       "- Consider files in that folder as candidate invoices, prioritizing common invoice formats (PDF first; also allow image files like JPG/PNG if present).",
       "- For each candidate file, retrieve the file name and basic file details (for example: last updated date) to include in the summary when helpful."
     ],
@@ -23,7 +23,7 @@
     ],
     "delivery": [
       "- Send the summary email using Gmail.",
-      "- Send the email to offir.omer@gmail.com.",
+      "- Send the email to meiribarak@gmail.com.",
       "- Use a clear subject line such as: \"Invoice summary from Google Drive folder\".",
       "- Put the table directly in the email body (HTML table) so it is readable without downloading anything."
     ],
@@ -46,15 +46,15 @@
     "resolved_user_inputs": [
       {
         "key": "user_email",
-        "value": "offir.omer@gmail.com"
+        "value": "meiribarak@gmail.com"
       },
       {
         "key": "google-drive__storage/list__folder_link",
-        "value": "https://drive.google.com/drive/folders/1TAUlds9R8r2lznDszbOwovpdM0cN7aFK"
+        "value": "https://drive.google.com/drive/u/0/folders/1Wszlm9qgqPVQyHYp1lWmlkipRFLVQLAk"
       },
       {
         "key": "google-mail__email/send_message__recipients.to",
-        "value": "offir.omer@gmail.com"
+        "value": "meiribarak@gmail.com"
       },
       {
         "key": "email_service",

@@ -50,6 +50,7 @@ async function main() {
   const { ExecutionContext } = await import('../../lib/pilot/ExecutionContext')
   const { StepExecutor } = await import('../../lib/pilot/StepExecutor')
   const { ParallelExecutor } = await import('../../lib/pilot/ParallelExecutor')
+  const { reconcileInputsToDsl } = await import('../../lib/pilot/reconcileInputsToDsl')
 
   console.log('  ✅ ExecutionContext loaded')
   console.log('  ✅ StepExecutor loaded')
@@ -81,15 +82,19 @@ async function main() {
   }
 
   // Step 5: Create real ExecutionContext
+  // Mirror WorkflowPilot.execute(): reconcile step-tagged namespaced inputs onto
+  // the DSL's `{{input.X}}` references (WP-57 2B Part 2) BEFORE building the
+  // context, so Phase D/E exercise the same input routing the live runtime does.
   console.log('\n🔧 Creating execution context...')
+  const reconciledConfig = reconcileInputsToDsl(dslSteps as any, workflowConfig)
   const context = new ExecutionContext(
     'sim-exec-001',
     fakeAgent as any,
     'sim-user-001',
     'sim-session-001',
-    workflowConfig
+    reconciledConfig
   )
-  console.log(`  Config keys injected: ${Object.keys(workflowConfig).join(', ')}`)
+  console.log(`  Config keys injected: ${Object.keys(reconciledConfig).join(', ')}`)
 
   // Step 6: Create real StepExecutor with mock supabase, no stateManager
   const mockSupabase = createMockSupabase()

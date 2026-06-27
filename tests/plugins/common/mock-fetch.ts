@@ -25,7 +25,18 @@ function buildResponse(body: unknown, status: number, statusText = ''): Response
     clone: () => buildResponse(body, status, statusText),
     body: null,
     bodyUsed: false,
-    arrayBuffer: async () => new ArrayBuffer(0),
+    // Derive bytes from the body so binary-download paths (e.g. arrayBuffer()→base64)
+    // can be exercised. A Buffer/Uint8Array body returns its exact bytes; a string body
+    // is UTF-8 encoded.
+    arrayBuffer: async () => {
+      if (Buffer.isBuffer(body)) {
+        return body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength);
+      }
+      if (body instanceof Uint8Array) {
+        return body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength);
+      }
+      return new TextEncoder().encode(bodyStr).buffer;
+    },
     blob: async () => new Blob([bodyStr]),
     formData: async () => new FormData(),
     redirected: false,

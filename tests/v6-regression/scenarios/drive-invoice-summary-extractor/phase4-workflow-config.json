@@ -1,70 +1,11 @@
 {
-  "input_schema": [
-    {
-      "name": "recipient_email",
-      "type": "string",
-      "label": "Recipient Email",
-      "hidden": false,
-      "required": true,
-      "description": "",
-      "placeholder": ""
-    },
-    {
-      "name": "email_subject",
-      "type": "string",
-      "label": "Email Subject",
-      "hidden": false,
-      "required": true,
-      "description": "",
-      "placeholder": ""
-    },
-    {
-      "name": "user_email",
-      "type": "string",
-      "label": "User Email",
-      "hidden": false,
-      "required": true,
-      "description": "",
-      "placeholder": "offir.omer@gmail.com"
-    },
-    {
-      "name": "google-drive__storage/list__folder_link",
-      "type": "string",
-      "label": "Google-Drive  Storage/List  Folder Link",
-      "hidden": false,
-      "required": true,
-      "description": "",
-      "placeholder": "https://drive.google.com/drive/folders/1TAUlds9R8r2lznDszbOwovpdM0cN7aFK"
-    },
-    {
-      "name": "google-mail__email/send_message__recipients.to",
-      "type": "string",
-      "label": "Google-Mail  Email/Send Message  Recipients.To",
-      "hidden": false,
-      "required": true,
-      "description": "",
-      "placeholder": "offir.omer@gmail.com"
-    },
-    {
-      "name": "email_service",
-      "type": "string",
-      "label": "Email Service",
-      "hidden": false,
-      "required": true,
-      "description": "",
-      "placeholder": "google-mail"
-    }
-  ],
-  "plugins_used": [
-    "google-drive",
-    "google-mail"
-  ],
-  "creation_metadata": {
-    "agent_id": "6ef48513-f49c-4635-b0dc-bdd9bf2f80a6",
-    "agent_name": "Google Drive Invoice Summary Email Agent",
-    "created_at": "2026-06-02T17:21:55.615+00:00",
-    "thread_id": "thread_kDN4NUTczmBIRmkkif9uoVlx",
-    "session_id": "c0178b7a-b07e-4b67-bc2e-32e7d2b00dfe",
-    "platform_version": "v6.0"
-  }
+  "folder_id": "1Wszlm9qgqPVQyHYp1lWmlkipRFLVQLAk",
+  "folder_link": "https://drive.google.com/drive/u/0/folders/1Wszlm9qgqPVQyHYp1lWmlkipRFLVQLAk",
+  "recipient_email": "meiribarak@gmail.com",
+  "email_subject": "Invoice summary from Google Drive folder",
+  "max_files": 50,
+  "user_email": "meiribarak@gmail.com",
+  "google-drive__storage/list__folder_link": "https://drive.google.com/drive/u/0/folders/1Wszlm9qgqPVQyHYp1lWmlkipRFLVQLAk",
+  "google-mail__email/send_message__recipients.to": "meiribarak@gmail.com",
+  "email_service": "google-mail"
 }

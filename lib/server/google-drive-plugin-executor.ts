@@ -18,6 +18,11 @@ export class GoogleDrivePluginExecutor extends GoogleBasePluginExecutor {
     actionName: string,
     parameters: any
   ): Promise<any> {
+    // Users naturally paste full Drive URLs (folder/file links) where an action
+    // expects a bare ID. Normalise those URL-shaped id params to their ID before
+    // dispatch so every action accepts either form. Bare IDs/'root' pass through.
+    this.normalizeDriveIdParams(parameters);
+
     // Execute the specific action
       let result: any;
       switch (actionName) {
@@ -32,6 +37,9 @@ export class GoogleDrivePluginExecutor extends GoogleBasePluginExecutor {
           break;
         case 'read_file_content':
           result = await this.readFileContent(connection, parameters);
+          break;
+        case 'download_file':
+          result = await this.downloadFile(connection, parameters);
           break;
         case 'get_folder_contents':
           result = await this.getFolderContents(connection, parameters);
@@ -57,6 +65,31 @@ export class GoogleDrivePluginExecutor extends GoogleBasePluginExecutor {
       }
 
       return result;
+  }
+
+  /**
+   * Extract a bare Drive ID from a value that may be a full Drive/Docs URL.
+   * Handles folder links (`/folders/{id}`), file/doc links (`/d/{id}`), and
+   * `?id={id}` query forms. Non-URL values (a bare id, or `root`) are returned
+   * unchanged, so this is safe to apply unconditionally.
+   */
+  private extractDriveId(value: unknown): unknown {
+    if (typeof value !== 'string') return value;
+    const v = value.trim();
+    if (!/^https?:\/\//i.test(v)) return v; // already a bare id (or 'root')
+    const pathMatch = v.match(/\/(?:folders|d)\/([a-zA-Z0-9_-]+)/);
+    if (pathMatch) return pathMatch[1];
+    const queryMatch = v.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+    if (queryMatch) return queryMatch[1];
+    return v; // unrecognised URL shape — let the API surface a meaningful error
+  }
+
+  /** Normalise URL-shaped id params (folder_id / file_id / parent_folder_id) to bare IDs, in place. */
+  private normalizeDriveIdParams(parameters: any): void {
+    if (!parameters || typeof parameters !== 'object') return;
+    for (const key of ['folder_id', 'file_id', 'parent_folder_id']) {
+      if (parameters[key] != null) parameters[key] = this.extractDriveId(parameters[key]);
+    }
   }
 
   // List files with optional filtering
@@ -292,12 +325,14 @@ export class GoogleDrivePluginExecutor extends GoogleBasePluginExecutor {
 
     let content: string;
     let exportFormat = parameters.export_format || 'text/plain';
+    // The format we actually produced — reported back as export_format.
+    let reportedFormat: string;
 
     if (isGoogleDoc) {
       // Export Google Workspace files
       const exportUrl = `${this.googleApisUrl}/drive/v3/files/${fileId}/export`;
       const exportParams = new URLSearchParams({ mimeType: exportFormat });
-      
+
       const exportResponse = await fetch(`${exportUrl}?${exportParams}`, {
         headers: {
           'Authorization': `Bearer ${connection.access_token}`,
@@ -309,10 +344,11 @@ export class GoogleDrivePluginExecutor extends GoogleBasePluginExecutor {
       }
 
       content = await exportResponse.text();
+      reportedFormat = exportFormat;
     } else {
-      // Download regular files
+      // Download non-Google-Workspace files.
       const downloadUrl = `${this.googleApisUrl}/drive/v3/files/${fileId}?alt=media`;
-      
+
       const downloadResponse = await fetch(downloadUrl, {
         headers: {
           'Authorization': `Bearer ${connection.access_token}`,
@@ -323,7 +359,30 @@ export class GoogleDrivePluginExecutor extends GoogleBasePluginExecutor {
         throw new Error(`Failed to download file: ${downloadResponse.status}`);
       }
 
-      content = await downloadResponse.text();
+      if (metadata.mimeType === 'application/pdf') {
+        // Extract the PDF's real TEXT. Never `.text()` the raw bytes — that decodes binary
+        // as UTF-8 and corrupts the content (WP-57 root cause). pdf-parse reads the text
+        // layer of text-based PDFs. NOTE: scanned / image-only PDFs have no text layer and
+        // yield little or no text — route those to document-extractor (OCR) instead.
+        const buffer = Buffer.from(await downloadResponse.arrayBuffer());
+        try {
+          // eval('require') mirrors PdfTypeDetector — keeps the bundler from statically
+          // pulling pdf-parse (whose index runs a test fixture when bundled).
+          // eslint-disable-next-line @typescript-eslint/no-var-requires
+          const pdfParse = eval('require')('pdf-parse');
+          const parsed = await pdfParse(buffer);
+          content = parsed?.text || '';
+        } catch (err) {
+          this.logger.warn({ err, fileId }, 'read_file_content: PDF text extraction failed — returning empty content');
+          content = '';
+        }
+        reportedFormat = 'text/plain';
+      } else {
+        // Genuine text files (text/*, csv, html, json, …) decode cleanly. Other binaries
+        // (docx/xlsx/images) are unchanged here — route those to document-extractor.
+        content = await downloadResponse.text();
+        reportedFormat = 'original';
+      }
     }
 
     return {
@@ -334,7 +393,7 @@ export class GoogleDrivePluginExecutor extends GoogleBasePluginExecutor {
       mime_type: metadata.mimeType,
       content: content,
       content_length: content.length,
-      export_format: isGoogleDoc ? exportFormat : 'original',
+      export_format: reportedFormat,
       read_at: new Date().toISOString(),
       // Legacy format (camelCase for backward compatibility)
       fileId: fileId,
@@ -342,8 +401,82 @@ export class GoogleDrivePluginExecutor extends GoogleBasePluginExecutor {
       fileSize: this.formatFileSize(metadata.size),
       mimeType: metadata.mimeType,
       contentLength: content.length,
-      exportFormat: isGoogleDoc ? exportFormat : 'original',
+      exportFormat: reportedFormat,
       readAt: new Date().toISOString()
+    };
+  }
+
+  // Download a file's RAW BYTES as base64 (for binary files: PDF, image, DOCX, etc.).
+  // Unlike readFileContent (which `.text()`s the download and is for extracting text
+  // from Google Docs), this preserves the original bytes so file-based extractors like
+  // document-extractor can OCR/parse them. See WP-57.
+  private async downloadFile(connection: any, parameters: any): Promise<any> {
+    this.logger.debug('DEBUG: Downloading file bytes via Google Drive API');
+
+    const fileId = parameters.file_id;
+    if (!fileId) {
+      throw new Error('file_id is required');
+    }
+
+    // Fetch metadata first (name, mimeType, size)
+    const metadataUrl = new URL(`${this.googleApisUrl}/drive/v3/files/${fileId}`);
+    metadataUrl.searchParams.set('fields', 'id, name, mimeType, size');
+
+    const metadataResponse = await fetch(metadataUrl.toString(), {
+      headers: {
+        'Authorization': `Bearer ${connection.access_token}`,
+        'Accept': 'application/json',
+      },
+    });
+
+    if (!metadataResponse.ok) {
+      throw new Error(`File not found: ${metadataResponse.status}`);
+    }
+
+    const metadata = await metadataResponse.json();
+
+    // Native Google Workspace files have no downloadable bytes — they must be exported.
+    // Direct the caller to read_file_content (which exports Docs/Sheets/Slides to text).
+    if (metadata.mimeType?.startsWith('application/vnd.google-apps.')) {
+      throw new Error(
+        `'${metadata.name}' is a native Google file (${metadata.mimeType}) and has no downloadable bytes. ` +
+        `Use read_file_content (export) for Google Docs/Sheets/Slides.`
+      );
+    }
+
+    // Size guard
+    const maxSizeMb = parameters.max_size_mb || 25;
+    const maxSizeBytes = maxSizeMb * 1024 * 1024;
+    if (metadata.size && parseInt(metadata.size) > maxSizeBytes) {
+      throw new Error(`File too large: ${this.formatFileSize(metadata.size)}. Maximum allowed: ${maxSizeMb}MB`);
+    }
+
+    // Download raw bytes via alt=media and base64-encode them.
+    // CRITICAL: use arrayBuffer() + Buffer base64 — NOT .text(), which mangles binary
+    // content (the root cause of WP-57).
+    const downloadUrl = `${this.googleApisUrl}/drive/v3/files/${fileId}?alt=media`;
+    const downloadResponse = await fetch(downloadUrl, {
+      headers: {
+        'Authorization': `Bearer ${connection.access_token}`,
+      },
+    });
+
+    if (!downloadResponse.ok) {
+      throw new Error(`Failed to download file: ${downloadResponse.status}`);
+    }
+
+    const arrayBuffer = await downloadResponse.arrayBuffer();
+    const base64 = Buffer.from(arrayBuffer).toString('base64');
+
+    return {
+      file_id: fileId,
+      filename: metadata.name,
+      mimeType: metadata.mimeType,
+      // Base64 bytes live in `content` to match document-extractor's file_content
+      // x-input-mapping (from_file_object: "content") and its executor's `.content` check.
+      content: base64,
+      file_size: this.formatFileSize(metadata.size),
+      downloaded_at: new Date().toISOString(),
     };
   }
 

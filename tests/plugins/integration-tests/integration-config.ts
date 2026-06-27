@@ -58,6 +58,8 @@ const CREDENTIAL_MAP: Record<string, {
     refreshEnv: 'GOOGLE_DRIVE_TEST_REFRESH_TOKEN',
     extras: {
       folderId: 'GOOGLE_DRIVE_TEST_FOLDER_ID',
+      // Optional: a binary file (e.g. a PDF invoice) to exercise download_file → base64.
+      fileId: 'GOOGLE_DRIVE_TEST_FILE_ID',
     },
   },
 };

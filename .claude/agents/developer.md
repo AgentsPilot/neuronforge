@@ -103,6 +103,7 @@ Save to `docs/workplans/[feature-slug]-workplan.md` **before writing a single li
 - **Components:** functional components only, hooks in dedicated files
 - **API routes:** always validate input with Zod, always return structured JSON responses
 - **Error handling:** never swallow errors silently — log with Pino and return appropriate status codes
+- **Logging:** structured Pino via `createLogger` everywhere — never `console.*`. **When you open or modify a file that still logs via `console.*`, flag it to the user (name the file + count of calls) and propose converting the whole file to the Pino standard. Convert it once the user approves — proceed unless they explicitly decline. This is a basic standard, not optional cleanup; don't leave a file you touched non-compliant, and don't reformat files you aren't working on.** (See CLAUDE.md § Logging.)
 - **Supabase:** always use RLS-aware queries, never bypass RLS in client code
 - **Comments:** comment the *why*, not the *what*
 

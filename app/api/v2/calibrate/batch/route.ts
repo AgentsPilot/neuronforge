@@ -19,6 +19,8 @@ import { WorkflowValidator } from '@/lib/pilot/WorkflowValidator';
 import { CalibrationSessionRepository } from '@/lib/repositories/CalibrationSessionRepository';
 import { CalibrationHistoryRepository } from '@/lib/repositories/CalibrationHistoryRepository';
 import { acquireLock, releaseLock } from '@/lib/utils/distributedLock';
+import { AgentRepository } from '@/lib/repositories/AgentRepository';
+import { sendCalibrationResultEmail } from '@/lib/calibration/calibrationResultEmail';
 import { createLogger } from '@/lib/logger';
 import type { CollectedIssue } from '@/lib/pilot/types';
 // NOTE: this route historically imported `Agent` from `@/types/agent`, a module
@@ -34,10 +36,29 @@ type Agent = any;
 
 const logger = createLogger({ module: 'BatchCalibrationAPI', service: 'api' });
 
+// Calibration can run for the better part of a minute (real execution + LLM
+// layers). Give it headroom — same ceiling as the queue worker. Also the budget
+// for the Phase 2 background path, where the client fires this and navigates away.
+export const maxDuration = 60;
+
 export async function POST(req: NextRequest) {
   let sessionId: string | null = null;
   let lockKey: string | null = null;
   let lockAcquired = false;
+
+  // Phase 2 background-calibration tail. When the post-creation flow fires this
+  // route in the background (client doesn't await), we record the gate outcome
+  // and email the user at the end. Captured during the run, used in `finally`.
+  // None of this affects the synchronous/manual sandbox path (background=false).
+  let isBackground = false;
+  let calibrationStarted = false;
+  let runCtx: {
+    supabase: Awaited<ReturnType<typeof createAuthenticatedServerClient>>;
+    userId: string;
+    userEmail: string | null;
+    agentId: string;
+    agentName: string;
+  } | null = null;
 
   try {
     // 1. Authenticate user
@@ -53,7 +74,8 @@ export async function POST(req: NextRequest) {
     }
 
     // 2. Parse request body
-    const { agentId, inputValues } = await req.json();
+    const { agentId, inputValues, background } = await req.json();
+    isBackground = background === true;
 
     if (!agentId) {
       logger.warn({ userId: user.id }, 'Missing agentId in batch calibration request');
@@ -102,6 +124,17 @@ export async function POST(req: NextRequest) {
         { status: 403 }
       );
     }
+
+    // Capture context for the Phase 2 calibration tail (used in `finally`).
+    // Captured for ALL runs (not just background) so a manual sandbox pass also
+    // clears the gate; the email itself is still background-only.
+    runCtx = {
+      supabase,
+      userId: user.id,
+      userEmail: user.email ?? null,
+      agentId,
+      agentName: agent.agent_name || 'your agent',
+    };
 
     // 5. Validate workflow exists
     const workflowSteps = agent.pilot_steps || agent.workflow_steps || [];
@@ -209,6 +242,11 @@ export async function POST(req: NextRequest) {
         { status: 500 }
       );
     }
+
+    // From here a real calibration run is underway — the background tail (finally)
+    // may record its outcome + email the user. Pre-run rejections above must NOT
+    // trigger that, hence this flag is set only now.
+    calibrationStarted = true;
 
     sessionId = session.id;
     logger.info({ sessionId, agentId }, 'Calibration session created');
@@ -1018,12 +1056,17 @@ export async function POST(req: NextRequest) {
       logger.error({ err, sessionId, agentId }, '[ScatterItemField] validation/auto-repair failed (non-blocking)');
     }
 
+    // Phase 4 — monotonic "round" across every workflow execution in this
+    // calibration (dry-run + each loop iteration + re-runs), so each outbound
+    // message the agent sends is uniquely numbered for the recipient.
+    let calibrationRound = 0;
+
     // 6.10. LAYER 3: Dry-Run Validation (Context-Aware with Real Data)
     logger.info({ sessionId, agentId }, '[Layer 3] Running dry-run validation with real user data');
     const { DryRunValidator } = await import('@/lib/pilot/shadow/DryRunValidator');
     const dryRunValidator = new DryRunValidator();
 
-    const dryRunResult = await dryRunValidator.validateWithDryRun(agent, inputValues, user.id);
+    const dryRunResult = await dryRunValidator.validateWithDryRun(agent, inputValues, user.id, ++calibrationRound, user.email ?? undefined);
 
     logger.info({
       sessionId,
@@ -1659,7 +1702,9 @@ export async function POST(req: NextRequest) {
         false, // debugMode
         undefined, // debugRunId
         undefined, // providedExecutionId
-        'batch_calibration' // runMode: batch_calibration
+        'batch_calibration', // runMode: batch_calibration
+        ++calibrationRound, // monotonic round across dry-run + iterations (Phase 4)
+        user.email ?? undefined // redirect outbound messages to the owner (Phase 4)
       );
 
       finalResult = result;
@@ -4385,6 +4430,62 @@ export async function POST(req: NextRequest) {
     if (lockAcquired && lockKey) {
       await releaseLock(lockKey);
       logger.info({ lockKey }, 'Distributed lock released');
+    }
+
+    // Phase 2 calibration tail: record the gate outcome (any run — so a manual
+    // sandbox pass also clears the gate) and, for BACKGROUND runs only, email the
+    // user. Best-effort and fully isolated — must never change the route's
+    // response or throw.
+    if (calibrationStarted && runCtx) {
+      try {
+        const histRepo = new CalibrationHistoryRepository(runCtx.supabase);
+        const { data: rows } = await histRepo.getByAgent(runCtx.agentId, runCtx.userId, 1);
+        const latest = rows?.[0];
+
+        // Clean pass = the run wrote a 'success' history row with 0 remaining issues.
+        const issuesFound = (latest?.issues_found || []).length;
+        const issuesFixed = (latest?.issues_fixed || []).length;
+        const issuesRemaining = (latest?.issues_remaining || []).length;
+        const passed = latest?.status === 'success' && issuesRemaining === 0;
+
+        // Update the gate for every run (foreground manual pass must unlock too).
+        const agentRepo = new AgentRepository(runCtx.supabase);
+        await agentRepo.setCalibrationStatus(runCtx.agentId, runCtx.userId, passed ? 'passed' : 'failed');
+
+        // Email only for the background (post-creation) path — the manual sandbox
+        // user is watching live and doesn't need an email.
+        if (isBackground && runCtx.userEmail) {
+          const base = process.env.NEXT_PUBLIC_APP_URL || new URL(req.url).origin;
+          const ctaUrl = passed
+            ? `${base}/agents/${runCtx.agentId}`
+            : `${base}/v2/sandbox/${runCtx.agentId}`;
+          const remainingIssueTitles = (latest?.issues_remaining || [])
+            .map((i: any) => i?.title || i?.message || i?.description)
+            .filter(Boolean);
+
+          await sendCalibrationResultEmail({
+            to: runCtx.userEmail,
+            agentId: runCtx.agentId,
+            agentName: runCtx.agentName,
+            passed,
+            issuesFound,
+            issuesFixed,
+            issuesRemaining,
+            remainingIssueTitles,
+            ctaUrl,
+            ownerUserId: runCtx.userId, // enables google-mail plugin-connection fallback
+          });
+        }
+
+        logger.info({ agentId: runCtx.agentId, passed, isBackground }, 'Calibration tail completed');
+      } catch (tailErr) {
+        // Never let the tail break the run. Best effort: mark failed so a
+        // background agent doesn't stay stuck on "running".
+        logger.error({ err: tailErr, agentId: runCtx.agentId }, 'Calibration tail failed');
+        try {
+          await new AgentRepository(runCtx.supabase).setCalibrationStatus(runCtx.agentId, runCtx.userId, 'failed');
+        } catch { /* swallow */ }
+      }
     }
   }
 }

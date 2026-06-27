@@ -811,6 +811,24 @@ export class StepExecutor {
     // See workplan: docs/workplans/idempotency-keys-per-plugin-action.md
     transformedParams._idempotency_key = this.deriveIdempotencyKey(context, step);
 
+    // Phase 4 — calibration outbound-message marking. During calibration the
+    // agent's real workflow runs (and re-runs), so side-effecting steps like
+    // `send_email` actually fire, multiple times. Inject a meta marker (same
+    // opt-in contract as `_idempotency_key`): messaging plugin executors read
+    // `params._calibration` and prepend a round-numbered "this was a test run"
+    // banner. Plugins that don't read it ignore it — zero behavior change. Never
+    // injected in production.
+    // See workplan: docs/workplans/v2-post-creation-calibration-prompt-workplan.md (Phase 4)
+    if (context.runMode === 'calibration' || context.runMode === 'batch_calibration') {
+      transformedParams._calibration = {
+        isCalibration: true,
+        round: context.calibrationRound,
+        // Redirect target: messaging executors send to the owner instead of the
+        // real (possibly third-party) recipients during a calibration test.
+        redirectTo: context.calibrationOwnerEmail,
+      };
+    }
+
     // Log transformed params for debugging plugin execution
     logger.debug({
       stepId: step.id,
