@@ -56,7 +56,8 @@ export class DryRunValidator {
     agent: RepoAgent,
     inputValues: Record<string, any>,
     userId: string,
-    calibrationRound?: number
+    calibrationRound?: number,
+    calibrationOwnerEmail?: string
   ): Promise<DryRunResult> {
     const startTime = Date.now();
     const issues: DryRunIssue[] = [];
@@ -86,7 +87,8 @@ export class DryRunValidator {
         undefined, // providedDebugRunId
         undefined, // providedExecutionId
         'batch_calibration', // runMode - collects issues, continues on errors
-        calibrationRound // Phase 4 — tag outbound messages with the test round
+        calibrationRound, // Phase 4 — tag outbound messages with the test round
+        calibrationOwnerEmail // Phase 4 — redirect outbound messages to the owner
       );
 
       logger.info({

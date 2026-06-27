@@ -90,6 +90,13 @@ export class ExecutionContext implements IExecutionContext {
   // See workplan: docs/workplans/v2-post-creation-calibration-prompt-workplan.md (Phase 4)
   public calibrationRound?: number;
 
+  // Calibration recipient redirect (Phase 4). During calibration, outbound
+  // messages are redirected to the agent owner so a test run never reaches a
+  // real third party. Set by the calibration orchestrator (the owner's email),
+  // read by StepExecutor → injected into the `_calibration` marker → messaging
+  // executors swap recipients. Undefined outside calibration.
+  public calibrationOwnerEmail?: string;
+
   // Workflow data schema for runtime validation (Phase 5)
   private dataSchema: WorkflowDataSchema | null = null;
 

@@ -1066,7 +1066,7 @@ export async function POST(req: NextRequest) {
     const { DryRunValidator } = await import('@/lib/pilot/shadow/DryRunValidator');
     const dryRunValidator = new DryRunValidator();
 
-    const dryRunResult = await dryRunValidator.validateWithDryRun(agent, inputValues, user.id, ++calibrationRound);
+    const dryRunResult = await dryRunValidator.validateWithDryRun(agent, inputValues, user.id, ++calibrationRound, user.email ?? undefined);
 
     logger.info({
       sessionId,
@@ -1703,7 +1703,8 @@ export async function POST(req: NextRequest) {
         undefined, // debugRunId
         undefined, // providedExecutionId
         'batch_calibration', // runMode: batch_calibration
-        ++calibrationRound // monotonic round across dry-run + iterations (Phase 4)
+        ++calibrationRound, // monotonic round across dry-run + iterations (Phase 4)
+        user.email ?? undefined // redirect outbound messages to the owner (Phase 4)
       );
 
       finalResult = result;

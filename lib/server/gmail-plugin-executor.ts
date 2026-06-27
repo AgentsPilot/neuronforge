@@ -50,26 +50,11 @@ export class GmailPluginExecutor extends GoogleBasePluginExecutor {
   private async sendEmail(connection: any, parameters: any): Promise<any> {
     this.logger.debug('Sending email via Gmail API');
 
-    // Phase 4 — calibration outbound-message marking. If this send is happening
-    // during a calibration run, prepend a round-numbered banner to the subject
-    // and body so the recipient can tell it was a test run (and which round).
-    // No-op outside calibration. Wrapped defensively — never break a real send.
-    try {
-      const notice = this.getCalibrationNotice(parameters);
-      if (notice.isCalibration && parameters?.content) {
-        const content = parameters.content;
-        content.subject = typeof content.subject === 'string' && content.subject.length > 0
-          ? notice.subjectPrefix + content.subject
-          : notice.subjectPrefix.trim();
-        if (typeof content.html_body === 'string' && content.html_body.length > 0) {
-          content.html_body = notice.htmlBanner + content.html_body;
-        }
-        if (typeof content.body === 'string' && content.body.length > 0) {
-          content.body = notice.textBanner + content.body;
-        }
-      }
-    } catch (err) {
-      this.logger.warn({ err }, 'Failed to apply calibration banner (non-blocking)');
+    // Phase 4 — during a calibration test run, redirect + label this email.
+    // Details live in applyCalibrationModeToEmail; no-op outside calibration.
+    const calibration = this.getCalibrationNotice(parameters);
+    if (calibration.isCalibration) {
+      this.applyCalibrationModeToEmail(parameters, calibration);
     }
 
     // Build email message
@@ -104,6 +89,55 @@ export class GmailPluginExecutor extends GoogleBasePluginExecutor {
       recipients: parameters.recipients,
       subject: parameters.content?.subject || '(no subject)'
     };
+  }
+
+  /**
+   * Phase 4 — calibration-mode behavior for an outgoing email. Mutates
+   * `parameters` in place so a test run is safe and clearly labeled:
+   *   1. Redirect to the agent owner (`notice.redirectTo`) so the test never
+   *      reaches a real third party; remember the original recipients.
+   *   2. Prepend the calibration banner (incl. who it was originally for) to the
+   *      subject + body/html_body.
+   * Best-effort — never throws (a labeling/redirect glitch must not break the run).
+   * Called only when `getCalibrationNotice(...).isCalibration` is true.
+   */
+  private applyCalibrationModeToEmail(
+    parameters: any,
+    notice: { subjectPrefix: string; htmlBanner: string; textBanner: string; redirectTo?: string }
+  ): void {
+    try {
+      const content = parameters?.content;
+      if (!content) return;
+
+      // (1) Recipient redirect — send to the owner instead of the real recipients.
+      let originalRecipientsNote = '';
+      if (notice.redirectTo) {
+        const fmt = (v: any): string => Array.isArray(v) ? v.join(', ') : (typeof v === 'string' ? v : '');
+        const orig = parameters.recipients || {};
+        const parts = [fmt(orig.to), orig.cc ? `cc: ${fmt(orig.cc)}` : '', orig.bcc ? `bcc: ${fmt(orig.bcc)}` : '']
+          .filter(Boolean).join('; ');
+        originalRecipientsNote = parts ? ` Originally addressed to: ${parts} — redirected to you for the test.` : '';
+        parameters.recipients = { to: [notice.redirectTo] };
+      }
+
+      // (2) Banner + subject prefix (banner includes the redirect note).
+      const htmlNote = originalRecipientsNote
+        ? `<div style="color:#9a3412;font-size:12px;margin-bottom:14px;">${originalRecipientsNote.trim()}</div>`
+        : '';
+      const textNote = originalRecipientsNote ? `${originalRecipientsNote.trim()}\n\n` : '';
+
+      content.subject = typeof content.subject === 'string' && content.subject.length > 0
+        ? notice.subjectPrefix + content.subject
+        : notice.subjectPrefix.trim();
+      if (typeof content.html_body === 'string' && content.html_body.length > 0) {
+        content.html_body = notice.htmlBanner + htmlNote + content.html_body;
+      }
+      if (typeof content.body === 'string' && content.body.length > 0) {
+        content.body = notice.textBanner + textNote + content.body;
+      }
+    } catch (err) {
+      this.logger.warn({ err }, 'Failed to apply calibration mode to email (non-blocking)');
+    }
   }
 
   // Search emails via Gmail API

@@ -823,6 +823,9 @@ export class StepExecutor {
       transformedParams._calibration = {
         isCalibration: true,
         round: context.calibrationRound,
+        // Redirect target: messaging executors send to the owner instead of the
+        // real (possibly third-party) recipients during a calibration test.
+        redirectTo: context.calibrationOwnerEmail,
       };
     }
 
