@@ -4,27 +4,16 @@ import React, { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@/components/UserProvider'
 import { supabase } from '@/lib/supabaseClient'
-import { Card } from '@/components/v2/ui/card'
 import { V2Logo, V2Controls } from '@/components/v2/V2Header'
 import { ModernHelpDialog } from '@/components/v2/ModernHelpDialog'
 import { getPricingConfig } from '@/lib/utils/pricingConfig'
-import { PieChart, Pie, Cell, ResponsiveContainer } from 'recharts'
 import {
-  Search,
-  Mail,
-  FileText,
-  AlertCircle,
-  TrendingUp,
-  Activity,
-  Coins,
   CheckCircle2,
-  XCircle,
+  Sparkles,
   Bot,
   Mic,
   MicOff,
-  ArrowRight,
-  ChevronDown,
-  Calendar
+  ArrowRight
 } from 'lucide-react'
 
 interface AgentStat {
@@ -95,18 +84,15 @@ export default function V2DashboardPage() {
   const recognitionRef = React.useRef<any>(null)
   const isListeningRef = React.useRef(false)
   const [loading, setLoading] = useState(true)
-  const [lastUpdated, setLastUpdated] = useState<Date>(new Date())
   const [searchQuery, setSearchQuery] = useState('')
   const [userName, setUserName] = useState<string>('')
   const [promptIdeas, setPromptIdeas] = useState<any[]>([])
   const [showIdeas, setShowIdeas] = useState(false)
-  const [accountFrozen, setAccountFrozen] = useState(false)
+  const [accountFrozen] = useState(false)
   const [helpOpen, setHelpOpen] = useState(false)
   const textareaRef = React.useRef<HTMLTextAreaElement>(null)
-  const [systemStatusTimeFilter, setSystemStatusTimeFilter] = useState<7 | 30 | 90 | 'all'>(30)
-  const [recentActivityTimeFilter, setRecentActivityTimeFilter] = useState<7 | 30 | 90 | 'all'>(30)
-  const [showSystemStatusMenu, setShowSystemStatusMenu] = useState(false)
-  const [showRecentActivityMenu, setShowRecentActivityMenu] = useState(false)
+  const [systemStatusTimeFilter] = useState<7 | 30 | 90 | 'all'>(30)
+  const [recentActivityTimeFilter] = useState<7 | 30 | 90 | 'all'>(30)
 
   const fetchDashboardData = React.useCallback(async () => {
     if (!user) return
@@ -383,8 +369,6 @@ export default function V2DashboardPage() {
         executionsUsed: subscriptionData?.executions_used || 0,
         executionsAlertThreshold: subscriptionData?.executions_alert_threshold || 0.90
       })
-
-      setLastUpdated(new Date())
     } catch (error) {
       console.error('Error fetching dashboard data:', error)
     } finally {
@@ -462,11 +446,6 @@ export default function V2DashboardPage() {
   }, [])
 
   // Quick stats calculation
-  const totalRuns = stats.agentStats.reduce((sum, stat) => sum + stat.count, 0)
-  const lastRunTime = stats.agentStats.length > 0 && stats.agentStats[0].lastRun
-    ? new Date(stats.agentStats[0].lastRun)
-    : null
-
   const getTimeAgo = (date: Date | null) => {
     if (!date) return 'Never'
     const now = new Date()
@@ -550,9 +529,6 @@ export default function V2DashboardPage() {
           <h1 className="text-2xl sm:text-3xl lg:text-4xl font-semibold text-[var(--v2-text-primary)] mb-1 leading-tight">
             Hi {capitalizedName},
           </h1>
-          <p className="text-base sm:text-lg lg:text-xl text-[var(--v2-text-secondary)] font-normal">
-            what do you want to automate today?
-          </p>
         </div>
         {/* Token Display + User Menu */}
         <div className="flex-shrink-0">
@@ -563,94 +539,100 @@ export default function V2DashboardPage() {
         </div>
       </div>
 
-      {/* Search Box */}
-      <div className="bg-[var(--v2-surface)] shadow-[var(--v2-shadow-card)]" style={{ borderRadius: 'var(--v2-radius-card)' }}>
-        <div className={`p-2.5 sm:p-3 ${accountFrozen || stats.creditBalance < 2000 ? 'opacity-50 cursor-not-allowed' : ''}`}>
-          {/* Main Input Row */}
-          <div className="flex items-start gap-2 sm:gap-3">
-            <Search className="w-4 h-4 sm:w-5 sm:h-5 text-[var(--v2-text-muted)] flex-shrink-0 mt-1" />
-            <textarea
-              ref={textareaRef}
-              value={searchQuery}
-              onChange={(e) => {
-                if (!(accountFrozen || stats.creditBalance < 2000)) {
-                  setSearchQuery(e.target.value)
-                  // Auto-grow textarea up to max height
-                  const target = e.target as HTMLTextAreaElement
-                  target.style.height = 'auto'
-                  const newHeight = Math.min(target.scrollHeight, 256)
-                  target.style.height = newHeight + 'px'
-                }
-              }}
-              placeholder={accountFrozen ? "Account frozen - Purchase tokens to continue" : stats.creditBalance < 2000 ? "Insufficient balance - Need 2000 tokens to create agent" : "Describe what you want to automate..."}
-              className="flex-1 bg-transparent border-none outline-none text-sm sm:text-base text-[var(--v2-text-secondary)] placeholder:text-[var(--v2-text-muted)] resize-none max-h-64 overflow-y-auto scroll-smooth scrollbar-thin"
-              style={{
-                height: '48px',
-                minHeight: '48px',
-                scrollbarWidth: 'thin',
-                scrollbarColor: 'rgba(209, 213, 219, 0.5) transparent'
-              }}
-              disabled={accountFrozen || stats.creditBalance < 2000}
-              rows={1}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.shiftKey && searchQuery.trim().length >= 20 && !accountFrozen && stats.creditBalance >= 2000) {
-                  e.preventDefault()
-                  router.push(`/v2/agents/new?prompt=${encodeURIComponent(searchQuery)}`)
-                  setShowIdeas(false)
-                }
-              }}
-            />
+      {/* HERO: Chat Input - Command Center Style */}
+      <div
+        className={`bg-gradient-to-br from-[var(--v2-primary)]/10 via-[var(--v2-secondary)]/10 to-[var(--v2-primary)]/5 border border-[var(--v2-primary)]/20 transition-all duration-300 ${accountFrozen || stats.creditBalance < 2000 ? 'opacity-50' : 'hover:border-[var(--v2-primary)]/40 focus-within:border-[var(--v2-primary)]/50 focus-within:shadow-lg focus-within:shadow-[var(--v2-primary)]/10'}`}
+        style={{ borderRadius: 'var(--v2-radius-card)' }}
+      >
+        <div className="p-4 sm:p-6">
+          {/* Main Input Row with AI Avatar */}
+          <div className="flex items-start gap-3 sm:gap-4">
+            {/* AI Icon - No background */}
+            <Sparkles className="w-6 h-6 sm:w-7 sm:h-7 text-[var(--v2-primary)] flex-shrink-0" />
+            <div className="flex-1">
+              <textarea
+                ref={textareaRef}
+                value={searchQuery}
+                onChange={(e) => {
+                  if (!(accountFrozen || stats.creditBalance < 2000)) {
+                    setSearchQuery(e.target.value)
+                    // Auto-grow textarea up to max height
+                    const target = e.target as HTMLTextAreaElement
+                    target.style.height = 'auto'
+                    const newHeight = Math.min(target.scrollHeight, 256)
+                    target.style.height = newHeight + 'px'
+                  }
+                }}
+                placeholder={accountFrozen ? "Account frozen - Purchase tokens to continue" : stats.creditBalance < 2000 ? "Insufficient balance - Need 2000 tokens to create agent" : "Tell me what you want to automate... I'll build it for you."}
+                className="w-full bg-transparent border-none outline-none text-base sm:text-lg text-[var(--v2-text-primary)] placeholder:text-[var(--v2-text-muted)] resize-none max-h-64 overflow-y-auto scroll-smooth scrollbar-thin"
+                style={{
+                  height: '56px',
+                  minHeight: '56px',
+                  scrollbarWidth: 'thin',
+                  scrollbarColor: 'rgba(209, 213, 219, 0.5) transparent'
+                }}
+                disabled={accountFrozen || stats.creditBalance < 2000}
+                rows={2}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey && searchQuery.trim().length >= 20 && !accountFrozen && stats.creditBalance >= 2000) {
+                    e.preventDefault()
+                    router.push(`/v2/agents/new?prompt=${encodeURIComponent(searchQuery)}`)
+                    setShowIdeas(false)
+                  }
+                }}
+              />
+            </div>
           </div>
 
           {/* Bottom Action Bar */}
-          <div className="flex items-center justify-between mt-2 pt-2 border-t border-[var(--v2-border)]">
-            {/* Left Side: Character Counter */}
-            <div className="flex items-center gap-2 text-xs text-[var(--v2-text-muted)]">
-              {searchQuery.length > 0 ? (
-                <>
-                  <span className={`font-medium ${searchQuery.trim().length < 20 ? 'text-red-500' : 'text-green-600'}`}>
-                    {searchQuery.length}
-                  </span>
-                  <span className="text-[var(--v2-text-muted)]">/ 20 min</span>
-                </>
-              ) : (
-                <span className="text-[var(--v2-text-muted)]">20 characters minimum</span>
-              )}
-            </div>
-
-            {/* Right Side: Action Buttons */}
-            <div className="flex items-center gap-2">
-              {/* Show Ideas Button */}
-              {promptIdeas.length > 0 && !accountFrozen && stats.creditBalance >= 2000 && (
-                <button
-                  onClick={() => setShowIdeas(!showIdeas)}
-                  className="px-3 py-1.5 text-xs font-medium text-[var(--v2-primary)] hover:text-[var(--v2-secondary)] transition-colors"
-                >
-                  {showIdeas ? 'Hide' : 'Show'} Ideas
-                </button>
-              )}
-
+          <div className="flex items-center justify-between mt-4 pt-4 border-t border-[var(--v2-border)]/50">
+            {/* Left Side: Voice + Character Counter */}
+            <div className="flex items-center gap-3">
               {/* Microphone Button */}
               {isVoiceSupported && !accountFrozen && stats.creditBalance >= 2000 && (
                 <button
                   type="button"
                   onClick={toggleListening}
-                  className={`w-8 h-8 rounded-md flex items-center justify-center transition-all ${
+                  className={`p-2 rounded-lg transition-all ${
                     isListening
                       ? 'bg-gradient-to-r from-red-500 to-pink-500 shadow-sm animate-pulse'
-                      : 'hover:bg-[var(--v2-surface-hover)] border border-transparent hover:border-[var(--v2-border)]'
+                      : 'hover:bg-[var(--v2-surface-hover)] text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)]'
                   }`}
                   title={isListening ? 'Stop recording' : 'Start voice input'}
                 >
                   {isListening ? (
-                    <MicOff className="w-4 h-4 text-white" />
+                    <MicOff className="w-5 h-5 text-white" />
                   ) : (
-                    <Mic className={`w-4 h-4 transition-colors ${isListening ? 'text-white' : 'text-[var(--v2-text-muted)] group-hover:text-[var(--v2-primary)]'}`} />
+                    <Mic className="w-5 h-5" />
                   )}
                 </button>
               )}
 
-              {/* Submit Arrow Button */}
+              {/* Character Counter */}
+              <div className="text-xs text-[var(--v2-text-muted)]">
+                {searchQuery.length > 0 ? (
+                  <span className={`font-medium ${searchQuery.trim().length < 20 ? 'text-red-500' : 'text-green-600'}`}>
+                    {searchQuery.length} / 20 min
+                  </span>
+                ) : (
+                  <span>20 characters minimum</span>
+                )}
+              </div>
+            </div>
+
+            {/* Right Side: Ideas + Create Button */}
+            <div className="flex items-center gap-3">
+              {/* Show Ideas Button */}
+              {promptIdeas.length > 0 && !accountFrozen && stats.creditBalance >= 2000 && (
+                <button
+                  onClick={() => setShowIdeas(!showIdeas)}
+                  className="px-3 py-1.5 text-sm font-medium text-[var(--v2-primary)] hover:text-[var(--v2-secondary)] transition-colors"
+                >
+                  {showIdeas ? 'Hide' : 'Show'} Ideas
+                </button>
+              )}
+
+              {/* Create Button */}
               <button
                 onClick={() => {
                   if (accountFrozen || stats.creditBalance < 2000 || searchQuery.trim().length < 20) return
@@ -658,7 +640,8 @@ export default function V2DashboardPage() {
                   setShowIdeas(false)
                 }}
                 disabled={accountFrozen || stats.creditBalance < 2000 || searchQuery.trim().length < 20}
-                className={`w-8 h-8 bg-gradient-to-r from-[var(--v2-primary)] to-[var(--v2-secondary)] text-white hover:opacity-90 transition-all rounded-md flex items-center justify-center ${accountFrozen || stats.creditBalance < 2000 || searchQuery.trim().length < 20 ? 'opacity-50 cursor-not-allowed' : 'shadow-sm'}`}
+                className={`px-5 py-2.5 bg-gradient-to-r from-[var(--v2-primary)] to-[var(--v2-secondary)] text-white font-medium hover:opacity-90 transition-all flex items-center gap-2 ${accountFrozen || stats.creditBalance < 2000 || searchQuery.trim().length < 20 ? 'opacity-50 cursor-not-allowed' : 'shadow-md hover:shadow-lg'}`}
+                style={{ borderRadius: 'var(--v2-radius-button)' }}
                 title={
                   accountFrozen
                     ? "Account frozen - Purchase tokens to continue"
@@ -669,6 +652,7 @@ export default function V2DashboardPage() {
                     : "Start Agent Builder with this prompt"
                 }
               >
+                <span>Create</span>
                 <ArrowRight className="w-4 h-4" />
               </button>
             </div>
@@ -676,643 +660,240 @@ export default function V2DashboardPage() {
         </div>
       </div>
 
-      {/* Cards Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-4 items-start">
-          {/* Active Automations Card */}
-          <Card
-            hoverable
-            onClick={() => router.push('/v2/agent-list')}
-            className="cursor-pointer !p-3 sm:!p-4 !h-[280px] overflow-hidden !box-border active:scale-[0.98] transition-transform"
-          >
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Bot className="w-6 h-6 sm:w-7 sm:h-7 text-[#10B981]" />
-                    <h3 className="text-lg sm:text-xl font-semibold text-[var(--v2-text-primary)]">
-                      Active Automations
-                    </h3>
-                  </div>
-                </div>
-                <p className="text-sm text-[var(--v2-text-secondary)]">
-                  Your running automations
-                </p>
-
-              {stats.agentStats.length > 0 ? (
-                <div className="pt-0 space-y-3">
-                  {/* Agent List */}
-                  <div className="space-y-2">
-                    {stats.agentStats.slice(0, 4).map((agent, index) => (
-                      <div
-                        key={index}
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          router.push(`/v2/agents/${agent.id}`)
-                        }}
-                        className="flex items-center justify-between py-2.5 sm:py-2 px-3 bg-gray-50 dark:bg-gray-800/50 hover:bg-gray-100 dark:hover:bg-gray-800 active:scale-[0.98] transition-all duration-200 cursor-pointer"
-                        style={{ borderRadius: 'var(--v2-radius-button)' }}
-                      >
-                        <div className="flex items-center gap-2 flex-1 min-w-0">
-                          <div className="w-2 h-2 bg-green-500 rounded-full flex-shrink-0"></div>
-                          <span className="text-sm font-medium text-[var(--v2-text-primary)] truncate" title={agent.name}>
-                            {agent.name}
-                          </span>
-                        </div>
-                        <div className="flex items-center gap-1 flex-shrink-0 ml-2">
-                          <span className="text-sm font-bold text-[var(--v2-text-primary)]">
-                            {agent.count.toLocaleString()}
-                          </span>
-                          <span className="text-[10px] text-[var(--v2-text-muted)]">runs</span>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ) : (
-                <div className="flex flex-col items-center justify-center py-8 text-center">
-                  <Bot className="w-12 h-12 opacity-20 mb-2" />
-                  <p className="text-xs text-[var(--v2-text-muted)]">No active automations yet</p>
-                </div>
-              )}
-              </div>
-            </Card>
-
-          {/* Performance Overview Card */}
-          <Card
-            hoverable
-            onClick={() => router.push('/v2/analytics')}
-            className="cursor-pointer !p-3 sm:!p-4 !h-[280px] overflow-hidden !box-border active:scale-[0.98] transition-transform"
-          >
-              <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <TrendingUp className="w-6 h-6 sm:w-7 sm:h-7 text-[#06B6D4]" />
-                  <h3 className="text-lg sm:text-xl font-semibold text-[var(--v2-text-primary)]">
-                    Performance Overview
-                  </h3>
-                </div>
-                <div className="relative">
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      setShowSystemStatusMenu(!showSystemStatusMenu)
-                    }}
-                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium whitespace-nowrap bg-[var(--v2-surface)] text-[var(--v2-text-primary)] border border-[var(--v2-border)] hover:border-[var(--v2-border-hover)] transition-all rounded-lg"
-                  >
-                    <Calendar className="w-3.5 h-3.5 text-[var(--v2-text-muted)]" />
-                    {systemStatusTimeFilter === 'all' ? 'All Time' : `Last ${systemStatusTimeFilter} Days`}
-                    <ChevronDown className={`w-3.5 h-3.5 text-[var(--v2-text-muted)] transition-transform ${showSystemStatusMenu ? 'rotate-180' : ''}`} />
-                  </button>
-
-                  {showSystemStatusMenu && (
-                    <>
-                      <div
-                        className="fixed inset-0 z-[100]"
-                        onClick={() => setShowSystemStatusMenu(false)}
-                      />
-                      <div
-                        className="absolute top-full right-0 mt-2 w-48 bg-[var(--v2-surface)] border border-[var(--v2-border)] shadow-xl z-[101] rounded-lg overflow-hidden"
-                      >
-                        {[
-                          { value: 7 as const, label: 'Last 7 Days' },
-                          { value: 30 as const, label: 'Last 30 Days' },
-                          { value: 90 as const, label: 'Last 90 Days' },
-                          { value: 'all' as const, label: 'All Time' }
-                        ].map((option) => (
-                          <button
-                            key={option.value}
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              setSystemStatusTimeFilter(option.value)
-                              setShowSystemStatusMenu(false)
-                            }}
-                            className={`w-full text-left px-4 py-2.5 text-sm transition-colors ${
-                              systemStatusTimeFilter === option.value
-                                ? 'bg-[var(--v2-primary)] text-white'
-                                : 'text-[var(--v2-text-secondary)] hover:bg-[var(--v2-hover)]'
-                            }`}
-                          >
-                            {option.label}
-                          </button>
-                        ))}
-                      </div>
-                    </>
-                  )}
-                </div>
-              </div>
-              <p className="text-sm text-[var(--v2-text-secondary)]">
-                How your automations are performing
-              </p>
-
-              {/* Modern Executive Summary Layout */}
-              <div className="space-y-4">
-
-                {/* System Health Status Banner */}
-                {(() => {
-                  // Collect all system alerts
-                  const alerts = []
-
-                  if ((stats.totalRuns30d - stats.successfulRuns30d) > 0) {
-                    alerts.push({
-                      type: 'error',
-                      label: 'Failed',
-                      count: stats.totalRuns30d - stats.successfulRuns30d,
-                      color: 'red'
-                    })
-                  }
-
-                  if (stats.successRate < 90) {
-                    alerts.push({
-                      type: 'warning',
-                      label: 'Low Success',
-                      count: `${stats.successRate}%`,
-                      color: 'yellow'
-                    })
-                  }
-
-                  if (stats.activeInsightsCount > 0) {
-                    alerts.push({
-                      type: 'info',
-                      label: 'Insights',
-                      count: stats.activeInsightsCount,
-                      color: 'orange'
-                    })
-                  }
-
-                  // Check execution quota (if quota exists and not unlimited)
-                  if (stats.executionsQuota !== null && stats.executionsQuota > 0) {
-                    const usagePercent = stats.executionsUsed / stats.executionsQuota
-                    if (usagePercent >= stats.executionsAlertThreshold) {
-                      const remaining = stats.executionsQuota - stats.executionsUsed
-                      alerts.push({
-                        type: 'warning',
-                        label: 'Quota',
-                        count: remaining,
-                        color: remaining <= 0 ? 'red' : 'yellow'
-                      })
-                    }
-                  }
-
-                  const isHealthy = alerts.length === 0
-
-                  return (
-                    <div className={`p-3 rounded-xl border backdrop-blur-sm transition-all ${
-                      isHealthy
-                        ? 'bg-gradient-to-br from-emerald-500/10 via-green-500/10 to-teal-500/10 dark:from-emerald-500/20 dark:via-green-500/20 dark:to-teal-500/20 border-emerald-300/40 dark:border-emerald-700/50'
-                        : 'bg-gradient-to-br from-red-500/10 via-orange-500/10 to-amber-500/10 dark:from-red-500/20 dark:via-orange-500/20 dark:to-amber-500/20 border-red-300/40 dark:border-red-700/50'
-                    }`}>
-                      <div className="flex items-center justify-between gap-3">
-                        <div className="flex items-center gap-3 min-w-0 flex-1">
-                          <div className={`p-2 rounded-lg flex-shrink-0 ${
-                            isHealthy
-                              ? 'bg-emerald-500/20 dark:bg-emerald-500/30'
-                              : 'bg-red-500/20 dark:bg-red-500/30'
-                          }`}>
-                            {isHealthy ? (
-                              <CheckCircle2 className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />
-                            ) : (
-                              <AlertCircle className="w-5 h-5 text-red-600 dark:text-red-400" />
-                            )}
-                          </div>
-                          <div className="min-w-0 flex-1">
-                            <div className={`text-sm font-bold ${
-                              isHealthy
-                                ? 'text-emerald-800 dark:text-emerald-200'
-                                : 'text-red-800 dark:text-red-200'
-                            }`}>
-                              {isHealthy ? 'All Systems Operational' : `${alerts.length} Issue${alerts.length > 1 ? 's' : ''} Detected`}
-                            </div>
-                            <div className={`text-[10px] font-medium mt-0.5 ${
-                              isHealthy
-                                ? 'text-emerald-700/80 dark:text-emerald-300/80'
-                                : 'text-red-700/80 dark:text-red-300/80'
-                            }`}>
-                              {isHealthy
-                                ? `${stats.successRate}% success rate • ${stats.totalRuns30d} runs (30 days)`
-                                : 'View Analytics page for full details'
-                              }
-                            </div>
-                          </div>
-                        </div>
-
-                        {/* Alert Badges - Wraps if too many */}
-                        {!isHealthy && alerts.length > 0 && (
-                          <div className="flex items-center gap-1.5 flex-wrap justify-end flex-shrink-0">
-                            {alerts.map((alert, index) => (
-                              <div
-                                key={index}
-                                className={`px-2 py-1 rounded-lg border ${
-                                  alert.color === 'red'
-                                    ? 'bg-red-500/20 dark:bg-red-500/30 border-red-500/40'
-                                    : alert.color === 'yellow'
-                                    ? 'bg-yellow-500/20 dark:bg-yellow-500/30 border-yellow-500/40'
-                                    : 'bg-orange-500/20 dark:bg-orange-500/30 border-orange-500/40'
-                                }`}
-                              >
-                                <div className={`text-xs font-bold ${
-                                  alert.color === 'red'
-                                    ? 'text-red-700 dark:text-red-300'
-                                    : alert.color === 'yellow'
-                                    ? 'text-yellow-700 dark:text-yellow-300'
-                                    : 'text-orange-700 dark:text-orange-300'
-                                }`}>
-                                  {alert.count}
-                                </div>
-                                <div className={`text-[8px] font-semibold uppercase tracking-wider ${
-                                  alert.color === 'red'
-                                    ? 'text-red-600/80 dark:text-red-400/80'
-                                    : alert.color === 'yellow'
-                                    ? 'text-yellow-600/80 dark:text-yellow-400/80'
-                                    : 'text-orange-600/80 dark:text-orange-400/80'
-                                }`}>
-                                  {alert.label}
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  )
-                })()}
-
-                {/* Key Performance Metrics - 2 row grid */}
-                <div className="grid grid-cols-4 gap-2.5">
-
-                  {/* Row 1: Core Metrics */}
-                  {/* Success Rate */}
-                  <div className={`group relative overflow-hidden p-3 rounded-xl border backdrop-blur-sm transition-all hover:scale-105 hover:shadow-md ${
-                    stats.successRate >= 95
-                      ? 'bg-gradient-to-br from-emerald-500/10 to-teal-500/10 dark:from-emerald-500/20 dark:to-teal-500/20 border-emerald-300/30 dark:border-emerald-700/40'
-                      : stats.successRate >= 90
-                      ? 'bg-gradient-to-br from-yellow-500/10 to-amber-500/10 dark:from-yellow-500/20 dark:to-amber-500/20 border-yellow-300/30 dark:border-yellow-700/40'
-                      : 'bg-gradient-to-br from-red-500/10 to-rose-500/10 dark:from-red-500/20 dark:to-rose-500/20 border-red-300/30 dark:border-red-700/40'
-                  }`}>
-                    <div className={`absolute top-0 right-0 w-16 h-16 rounded-full blur-2xl -translate-y-1/2 translate-x-1/2 ${
-                      stats.successRate >= 95 ? 'bg-gradient-to-br from-emerald-500/20 to-teal-500/20' :
-                      stats.successRate >= 90 ? 'bg-gradient-to-br from-yellow-500/20 to-amber-500/20' :
-                      'bg-gradient-to-br from-red-500/20 to-rose-500/20'
-                    }`} />
-                    <div className="relative text-center">
-                      <div className={`text-2xl font-bold text-transparent bg-clip-text bg-gradient-to-br mb-0.5 ${
-                        stats.successRate >= 95 ? 'from-emerald-600 to-teal-600 dark:from-emerald-400 dark:to-teal-400' :
-                        stats.successRate >= 90 ? 'from-yellow-600 to-amber-600 dark:from-yellow-400 dark:to-amber-400' :
-                        'from-red-600 to-rose-600 dark:from-red-400 dark:to-rose-400'
-                      }`}>
-                        {stats.successRate}%
-                      </div>
-                      <div className={`text-[9px] font-semibold tracking-wider uppercase ${
-                        stats.successRate >= 95 ? 'text-emerald-700/70 dark:text-emerald-300/70' :
-                        stats.successRate >= 90 ? 'text-yellow-700/70 dark:text-yellow-300/70' :
-                        'text-red-700/70 dark:text-red-300/70'
-                      }`}>
-                        Success Rate
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Total Runs */}
-                  <div className="group relative overflow-hidden p-3 rounded-xl bg-gradient-to-br from-blue-500/10 to-indigo-500/10 dark:from-blue-500/20 dark:to-indigo-500/20 border border-blue-300/30 dark:border-blue-700/40 backdrop-blur-sm transition-all hover:scale-105 hover:shadow-md">
-                    <div className="absolute top-0 right-0 w-16 h-16 bg-gradient-to-br from-blue-500/20 to-indigo-500/20 rounded-full blur-2xl -translate-y-1/2 translate-x-1/2" />
-                    <div className="relative text-center">
-                      <div className="text-2xl font-bold text-transparent bg-clip-text bg-gradient-to-br from-blue-600 to-indigo-600 dark:from-blue-400 dark:to-indigo-400 mb-0.5">
-                        {stats.totalRuns30d.toLocaleString()}
-                      </div>
-                      <div className="text-[9px] text-blue-700/70 dark:text-blue-300/70 font-semibold tracking-wider uppercase">
-                        Total Runs
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Money Saved */}
-                  <div className={`group relative overflow-hidden p-3 rounded-xl border backdrop-blur-sm transition-all hover:scale-105 hover:shadow-md ${
-                    stats.moneySavedTotal > 0
-                      ? 'bg-gradient-to-br from-green-500/10 to-lime-500/10 dark:from-green-500/20 dark:to-lime-500/20 border-green-300/30 dark:border-green-700/40'
-                      : 'bg-gradient-to-br from-gray-500/5 to-slate-500/5 dark:from-gray-700/20 dark:to-slate-700/20 border-gray-300/20 dark:border-gray-700/30'
-                  }`}>
-                    <div className={`absolute top-0 right-0 w-16 h-16 rounded-full blur-2xl -translate-y-1/2 translate-x-1/2 ${
-                      stats.moneySavedTotal > 0
-                        ? 'bg-gradient-to-br from-green-500/20 to-lime-500/20'
-                        : 'bg-gradient-to-br from-gray-500/10 to-slate-500/10'
-                    }`} />
-                    <div className="relative text-center">
-                      <div className={`text-2xl font-bold text-transparent bg-clip-text bg-gradient-to-br mb-0.5 ${
-                        stats.moneySavedTotal > 0
-                          ? 'from-green-600 to-lime-600 dark:from-green-400 dark:to-lime-400'
-                          : 'from-gray-400 to-slate-400 dark:from-gray-500 dark:to-slate-500'
-                      }`}>
-                        {stats.moneySavedTotal > 0
-                          ? stats.moneySavedTotal >= 1000
-                            ? `$${(stats.moneySavedTotal / 1000).toFixed(1)}K`
-                            : `$${stats.moneySavedTotal}`
-                          : '—'
-                        }
-                      </div>
-                      <div className={`text-[9px] font-semibold tracking-wider uppercase ${
-                        stats.moneySavedTotal > 0
-                          ? 'text-green-700/70 dark:text-green-300/70'
-                          : 'text-gray-500/70 dark:text-gray-400/70'
-                      }`}>
-                        Value Saved
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Time Saved */}
-                  <div className="group relative overflow-hidden p-3 rounded-xl bg-gradient-to-br from-purple-500/10 to-violet-500/10 dark:from-purple-500/20 dark:to-violet-500/20 border border-purple-300/30 dark:border-purple-700/40 backdrop-blur-sm transition-all hover:scale-105 hover:shadow-md">
-                    <div className="absolute top-0 right-0 w-16 h-16 bg-gradient-to-br from-purple-500/20 to-violet-500/20 rounded-full blur-2xl -translate-y-1/2 translate-x-1/2" />
-                    <div className="relative text-center">
-                      <div className="text-2xl font-bold text-transparent bg-clip-text bg-gradient-to-br from-purple-600 to-violet-600 dark:from-purple-400 dark:to-violet-400 mb-0.5">
-                        {stats.totalTimeSavedSeconds > 0
-                          ? `${Math.round(stats.totalTimeSavedSeconds / 3600).toLocaleString()}h`
-                          : '—'
-                        }
-                      </div>
-                      <div className="text-[9px] text-purple-700/70 dark:text-purple-300/70 font-semibold tracking-wider uppercase">
-                        Time Saved
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-              </div>
-            </Card>
-
-          {/* Recent Activity Card - Horizontal Bar List */}
-          <Card
-            className="!p-3 sm:!p-4 !h-[280px] overflow-hidden !box-border"
-          >
-              <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Activity className="w-6 h-6 sm:w-7 sm:h-7 text-[#8B5CF6]" />
-                  <h3 className="text-lg sm:text-xl font-semibold text-[var(--v2-text-primary)]">
-                    Recent Activity
-                  </h3>
-                </div>
-                <div className="relative">
-                  <button
-                    onClick={() => setShowRecentActivityMenu(!showRecentActivityMenu)}
-                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium whitespace-nowrap bg-[var(--v2-surface)] text-[var(--v2-text-primary)] border border-[var(--v2-border)] hover:border-[var(--v2-border-hover)] transition-all rounded-lg"
-                  >
-                    <Calendar className="w-3.5 h-3.5 text-[var(--v2-text-muted)]" />
-                    {recentActivityTimeFilter === 'all' ? 'All Time' : `Last ${recentActivityTimeFilter} Days`}
-                    <ChevronDown className={`w-3.5 h-3.5 text-[var(--v2-text-muted)] transition-transform ${showRecentActivityMenu ? 'rotate-180' : ''}`} />
-                  </button>
-
-                  {showRecentActivityMenu && (
-                    <>
-                      <div
-                        className="fixed inset-0 z-[100]"
-                        onClick={() => setShowRecentActivityMenu(false)}
-                      />
-                      <div
-                        className="absolute top-full right-0 mt-2 w-48 bg-[var(--v2-surface)] border border-[var(--v2-border)] shadow-xl z-[101] rounded-lg overflow-hidden"
-                      >
-                        {[
-                          { value: 7 as const, label: 'Last 7 Days' },
-                          { value: 30 as const, label: 'Last 30 Days' },
-                          { value: 90 as const, label: 'Last 90 Days' },
-                          { value: 'all' as const, label: 'All Time' }
-                        ].map((option) => (
-                          <button
-                            key={option.value}
-                            onClick={() => {
-                              setRecentActivityTimeFilter(option.value)
-                              setShowRecentActivityMenu(false)
-                            }}
-                            className={`w-full text-left px-4 py-2.5 text-sm transition-colors ${
-                              recentActivityTimeFilter === option.value
-                                ? 'bg-[var(--v2-primary)] text-white'
-                                : 'text-[var(--v2-text-secondary)] hover:bg-[var(--v2-hover)]'
-                            }`}
-                          >
-                            {option.label}
-                          </button>
-                        ))}
-                      </div>
-                    </>
-                  )}
-                </div>
-              </div>
-              <p className="text-sm text-[var(--v2-text-secondary)]">
-                Top 3 most active automations
-              </p>
-              <div className="pt-3 pb-0">
-                {stats.agentStats.length > 0 ? (
-                  <div className="space-y-4">
-                    {(() => {
-                      // Take top 3 agents by execution count
-                      const topAgents = [...stats.agentStats]
-                        .sort((a, b) => b.count - a.count)
-                        .slice(0, 3)
-
-                      const maxCount = Math.max(...topAgents.map(a => a.count))
-
-                      // Color palette for agents
-                      const colors = ['#8B5CF6', '#06B6D4', '#10B981', '#F59E0B', '#EF4444']
-
-                      return topAgents.map((agent, index) => {
-                        const widthPercent = maxCount > 0 ? (agent.count / maxCount) * 100 : 0
-                        const color = colors[index]
-
-                        // Create gradient colors based on base color
-                        const gradients = {
-                          '#8B5CF6': 'from-purple-500 via-purple-400 to-purple-500', // Purple
-                          '#06B6D4': 'from-cyan-500 via-cyan-400 to-cyan-500', // Cyan
-                          '#10B981': 'from-emerald-500 via-emerald-400 to-emerald-500', // Emerald
-                          '#F59E0B': 'from-amber-500 via-amber-400 to-amber-500', // Amber
-                          '#EF4444': 'from-red-500 via-red-400 to-red-500' // Red
-                        }
-                        const gradient = gradients[color as keyof typeof gradients]
-
-                        return (
-                          <div key={index} className="space-y-2">
-                            {/* Agent name and count */}
-                            <div className="flex items-center justify-between text-xs">
-                              <div className="flex items-center gap-2.5 flex-1 min-w-0">
-                                <div
-                                  className="w-2.5 h-2.5 rounded-full flex-shrink-0 shadow-sm"
-                                  style={{
-                                    backgroundColor: color,
-                                    boxShadow: `0 0 8px ${color}40`
-                                  }}
-                                />
-                                <span className="font-semibold text-[var(--v2-text-primary)] truncate">
-                                  {agent.name}
-                                </span>
-                              </div>
-                              <span className="font-bold text-[var(--v2-text-primary)] ml-2 tabular-nums">
-                                {agent.count.toLocaleString()}
-                              </span>
-                            </div>
-
-                            {/* Modern progress bar with gradient and glow */}
-                            <div className="relative w-full bg-gradient-to-r from-gray-100 via-gray-50 to-gray-100 dark:from-gray-800 dark:via-gray-850 dark:to-gray-800 rounded-full h-2.5 overflow-visible shadow-inner">
-                              <div
-                                className={`h-full rounded-full transition-all duration-500 ease-out bg-gradient-to-r ${gradient} relative`}
-                                style={{
-                                  width: `${widthPercent}%`,
-                                  minWidth: agent.count > 0 ? '8px' : '0',
-                                  boxShadow: `0 2px 8px ${color}30, inset 0 1px 0 rgba(255,255,255,0.3)`
-                                }}
-                              >
-                                {/* Shimmer effect overlay */}
-                                <div className="absolute inset-0 rounded-full bg-gradient-to-r from-transparent via-white/20 to-transparent animate-shimmer"
-                                     style={{
-                                       backgroundSize: '200% 100%',
-                                       animation: 'shimmer 2s infinite'
-                                     }}
-                                />
-                              </div>
-                            </div>
-                          </div>
-                        )
-                      })
-                    })()}
-                  </div>
-                ) : (
-                  <div className="flex items-center justify-center h-[180px] text-[var(--v2-text-muted)]">
-                    <div className="text-center">
-                      <Activity className="w-12 h-12 opacity-20 mx-auto mb-2" />
-                      <p className="text-xs">No automations created yet</p>
-                    </div>
-                  </div>
-                )}
-              </div>
-              </div>
-            </Card>
-
-          {/* Credit Balance Card - Speedometer Gauge */}
-          <Card
-            hoverable
-            onClick={() => router.push('/v2/billing')}
-            className="cursor-pointer !p-3 sm:!p-4 !h-[280px] overflow-hidden !box-border active:scale-[0.98] transition-transform"
-          >
-              <div className="space-y-2">
-              <div className="flex items-center gap-2">
-                <Coins className="w-6 h-6 sm:w-7 sm:h-7 text-[#F59E0B]" />
-                <h3 className="text-lg sm:text-xl font-semibold text-[var(--v2-text-primary)]">
-                  Credit Usage
-                </h3>
-              </div>
-              <p className="text-sm text-[var(--v2-text-secondary)]">
-                Monitor your credit consumption
-              </p>
-
-              {/* Content: Stack vertically on mobile, side by side on larger screens */}
-              <div className="flex flex-col sm:flex-row items-center justify-between gap-3 sm:gap-4 pt-0 pb-0">
-                {/* Left side - Stats */}
-                <div className="flex-1 w-full sm:w-auto space-y-2">
-                  <div className="flex items-center justify-between sm:block">
-                    <div className="text-xs text-[var(--v2-text-muted)] mb-0 sm:mb-1">Available</div>
-                    <div className="text-2xl sm:text-3xl font-bold text-[var(--v2-text-primary)]">
-                      {stats.creditBalance >= 1000
-                        ? `${(stats.creditBalance / 1000).toFixed(1)}K`
-                        : stats.creditBalance.toLocaleString()}
-                    </div>
-                  </div>
-                  <div className="flex items-center justify-between sm:block">
-                    <div className="text-xs text-[var(--v2-text-muted)] mb-0 sm:mb-1">Used</div>
-                    <div className="text-lg font-semibold text-[var(--v2-text-secondary)]">
-                      {stats.totalSpent >= 1000
-                        ? `${(stats.totalSpent / 1000).toFixed(1)}K`
-                        : stats.totalSpent.toLocaleString()}
-                    </div>
-                  </div>
-                </div>
-
-                {/* Right side - Modern Speedometer Gauge */}
-                <div className="flex-shrink-0 w-full sm:w-auto flex justify-center">
-                  <div className="relative w-48">
-                    {/* Gauge container */}
-                    <div className="relative h-28">
-                      {/* Modern SVG Gauge Arc - Three color segments */}
-                      <svg className="w-full h-full" viewBox="0 0 200 110">
-                        {/* Green segment (0-33%) */}
-                        <path
-                          d="M 20 100 A 80 80 0 0 1 73.5 36.5"
-                          fill="none"
-                          stroke="#10B981"
-                          strokeWidth="14"
-                          strokeLinecap="round"
-                        />
-                        {/* Yellow segment (33-66%) */}
-                        <path
-                          d="M 73.5 36.5 A 80 80 0 0 1 126.5 36.5"
-                          fill="none"
-                          stroke="#F59E0B"
-                          strokeWidth="14"
-                          strokeLinecap="round"
-                        />
-                        {/* Red segment (66-100%) */}
-                        <path
-                          d="M 126.5 36.5 A 80 80 0 0 1 180 100"
-                          fill="none"
-                          stroke="#EF4444"
-                          strokeWidth="14"
-                          strokeLinecap="round"
-                        />
-                      </svg>
-
-                      {/* Clean Needle */}
-                      <div
-                        className="absolute"
-                        style={{
-                          left: '50%',
-                          bottom: '10px',
-                          width: '3px',
-                          height: '60px',
-                          backgroundColor: 'var(--v2-text-primary)',
-                          transformOrigin: 'bottom center',
-                          transform: (() => {
-                            const totalCredits = stats.creditBalance + stats.totalSpent
-                            const percentage = totalCredits > 0 ? (stats.totalSpent / totalCredits) * 100 : 0
-                            const angle = -90 + (percentage * 1.8)
-                            return `translateX(-50%) rotate(${angle}deg)`
-                          })(),
-                          transition: 'transform 0.8s cubic-bezier(0.4, 0.0, 0.2, 1)',
-                          borderRadius: '2px',
-                          zIndex: 10
-                        }}
-                      >
-                        {/* Needle tip */}
-                        <div className="absolute -top-1.5 left-1/2 -translate-x-1/2 w-0 h-0 border-l-[5px] border-r-[5px] border-b-[8px] border-l-transparent border-r-transparent border-b-[var(--v2-text-primary)]" />
-                      </div>
-
-                      {/* Center pivot */}
-                      <div
-                        className="absolute w-4 h-4 rounded-full bg-[var(--v2-text-primary)] border-2 border-[var(--v2-surface)]"
-                        style={{
-                          left: '50%',
-                          bottom: '10px',
-                          transform: 'translate(-50%, 50%)',
-                          zIndex: 12
-                        }}
-                      />
-
-                      {/* Percentage Display - Clean style */}
-                      <div className="absolute inset-0 flex items-center justify-center pt-8">
-                        <div className="text-xl font-semibold text-[var(--v2-text-primary)]">
-                          {(() => {
-                            const totalCredits = stats.creditBalance + stats.totalSpent
-                            return Math.round(totalCredits > 0 ? (stats.totalSpent / totalCredits) * 100 : 0)
-                          })()}%
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Labels below chart */}
-                    <div className="flex items-center justify-between px-2 mt-2">
-                      <div className="text-xs text-[var(--v2-text-muted)]">0</div>
-                      <div className="text-[10px] text-[var(--v2-text-muted)] uppercase tracking-wide">used</div>
-                      <div className="text-xs text-[var(--v2-text-muted)]">100</div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-              </div>
-            </Card>
+      {/* Quick Idea Chips - Show user's personalized ideas from onboarding */}
+      {showIdeas && promptIdeas.length > 0 && !accountFrozen && stats.creditBalance >= 2000 && (
+        <div className="flex flex-wrap gap-2 mt-4">
+          {promptIdeas.map((idea: any, index: number) => (
+            <button
+              key={index}
+              onClick={() => {
+                setSearchQuery(idea.prompt || idea.label || idea)
+                setShowIdeas(false)
+                if (textareaRef.current) {
+                  textareaRef.current.focus()
+                }
+              }}
+              className="px-4 py-2 rounded-full bg-[var(--v2-surface)] border border-[var(--v2-border)] text-sm text-[var(--v2-text-secondary)] hover:bg-[var(--v2-surface-hover)] hover:text-[var(--v2-text-primary)] hover:border-[var(--v2-primary)]/30 transition-all"
+            >
+              {idea.emoji || '💡'} {idea.label || idea.prompt || idea}
+            </button>
+          ))}
         </div>
+      )}
+
+      {/* Today's Impact + Credits Row */}
+      <div className="grid grid-cols-1 lg:grid-cols-[1fr_auto] gap-4 mt-4">
+        {/* Today's Impact Section */}
+        <div className="bg-gradient-to-br from-emerald-500/5 via-green-500/5 to-teal-500/5 border border-emerald-500/20 p-4 sm:p-6" style={{ borderRadius: 'var(--v2-radius-card)' }}>
+          <div className="flex items-start justify-between">
+            <div>
+              <p className="text-sm font-medium text-emerald-600 dark:text-emerald-400 mb-2">Today so far</p>
+              <h2 className="text-3xl sm:text-4xl font-bold text-[var(--v2-text-primary)] mb-2">
+                {stats.totalTimeSavedSeconds > 0
+                  ? `You saved ${(stats.totalTimeSavedSeconds / 3600).toFixed(1)} hours`
+                  : 'No automation runs yet'
+                }
+              </h2>
+              <p className="text-base sm:text-lg text-[var(--v2-text-secondary)]">
+                {stats.moneySavedTotal > 0 ? (
+                  <>
+                    That's <span className="font-semibold text-emerald-600 dark:text-emerald-400">${stats.moneySavedTotal.toLocaleString()}</span> worth of your time
+                  </>
+                ) : (
+                  'Run your automations to start saving time'
+                )}
+              </p>
+            </div>
+            <div className="relative hidden sm:block">
+              <div className="w-14 h-14 sm:w-16 sm:h-16 rounded-full bg-emerald-500/20 flex items-center justify-center">
+                <CheckCircle2 className="w-7 h-7 sm:w-8 sm:h-8 text-emerald-500" />
+              </div>
+            </div>
+          </div>
+
+          {/* What happened breakdown */}
+          {stats.totalRuns30d > 0 && (
+            <div className="mt-6 pt-6 border-t border-emerald-500/20">
+              <p className="text-sm font-medium text-[var(--v2-text-muted)] mb-4">What your automations did:</p>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4">
+                <div
+                  className="bg-[var(--v2-surface)] rounded-xl p-3 sm:p-4 text-center border border-[var(--v2-border)] cursor-pointer hover:border-[var(--v2-primary)]/30 transition-all"
+                  onClick={() => router.push('/v2/analytics')}
+                >
+                  <p className="text-xl sm:text-2xl font-bold text-[var(--v2-text-primary)]">{stats.totalRuns30d}</p>
+                  <p className="text-xs sm:text-sm text-[var(--v2-text-muted)]">tasks completed</p>
+                </div>
+                <div
+                  className="bg-[var(--v2-surface)] rounded-xl p-3 sm:p-4 text-center border border-[var(--v2-border)] cursor-pointer hover:border-[var(--v2-primary)]/30 transition-all"
+                  onClick={() => router.push('/v2/analytics')}
+                >
+                  <p className={`text-xl sm:text-2xl font-bold ${
+                    stats.successRate >= 95 ? 'text-emerald-600 dark:text-emerald-400' :
+                    stats.successRate >= 90 ? 'text-amber-600 dark:text-amber-400' :
+                    'text-red-600 dark:text-red-400'
+                  }`}>{stats.successRate}%</p>
+                  <p className="text-xs sm:text-sm text-[var(--v2-text-muted)]">success rate</p>
+                </div>
+                <div
+                  className="bg-[var(--v2-surface)] rounded-xl p-3 sm:p-4 text-center border border-[var(--v2-border)] cursor-pointer hover:border-[var(--v2-primary)]/30 transition-all"
+                  onClick={() => router.push('/v2/analytics')}
+                >
+                  <p className="text-xl sm:text-2xl font-bold text-[var(--v2-text-primary)]">{stats.agentStats.length}</p>
+                  <p className="text-xs sm:text-sm text-[var(--v2-text-muted)]">automations</p>
+                </div>
+                <div
+                  className="bg-[var(--v2-surface)] rounded-xl p-3 sm:p-4 text-center border border-[var(--v2-border)] cursor-pointer hover:border-[var(--v2-primary)]/30 transition-all"
+                  onClick={() => router.push('/v2/analytics')}
+                >
+                  <p className="text-xl sm:text-2xl font-bold text-[var(--v2-text-primary)]">
+                    {stats.totalTimeSavedSeconds > 0
+                      ? `${Math.round(stats.totalTimeSavedSeconds / 3600)}h`
+                      : '—'
+                    }
+                  </p>
+                  <p className="text-xs sm:text-sm text-[var(--v2-text-muted)]">time saved this month</p>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Credits Card - Side by side */}
+        <div
+          className="bg-[var(--v2-surface)] border border-[var(--v2-border)] p-4 sm:p-6 hover:border-amber-500/30 transition-all cursor-pointer flex flex-col justify-center lg:w-48"
+          style={{ borderRadius: 'var(--v2-radius-card)' }}
+          onClick={() => router.push('/v2/billing')}
+        >
+          <div className="flex items-center justify-between mb-3">
+            <p className="text-sm font-medium text-[var(--v2-text-muted)]">Pilot Credits</p>
+            <ArrowRight className="w-4 h-4 text-[var(--v2-text-muted)]" />
+          </div>
+          {/* Circular Gauge - Centered */}
+          <div className="flex flex-col items-center">
+            <div className="relative w-20 h-20 sm:w-24 sm:h-24">
+              <svg className="w-full h-full -rotate-90" viewBox="0 0 36 36">
+                {/* Background circle */}
+                <circle cx="18" cy="18" r="14" fill="none" stroke="var(--v2-border)" strokeWidth="3"/>
+                {/* Progress circle */}
+                <circle
+                  cx="18"
+                  cy="18"
+                  r="14"
+                  fill="none"
+                  stroke="url(#creditGradientV2)"
+                  strokeWidth="3"
+                  strokeDasharray="87.96"
+                  strokeDashoffset={(() => {
+                    const totalCredits = stats.creditBalance + stats.totalSpent
+                    const remainingPercent = totalCredits > 0 ? (stats.creditBalance / totalCredits) : 1
+                    return 87.96 * (1 - remainingPercent)
+                  })()}
+                  strokeLinecap="round"
+                />
+                <defs>
+                  <linearGradient id="creditGradientV2" x1="0%" y1="0%" x2="100%" y2="0%">
+                    <stop offset="0%" stopColor="#10b981"/>
+                    <stop offset="50%" stopColor="#f59e0b"/>
+                    <stop offset="100%" stopColor="#ef4444"/>
+                  </linearGradient>
+                </defs>
+              </svg>
+              <div className="absolute inset-0 flex items-center justify-center">
+                <span className="text-sm sm:text-base font-bold text-[var(--v2-text-primary)]">
+                  {(() => {
+                    const totalCredits = stats.creditBalance + stats.totalSpent
+                    return Math.round(totalCredits > 0 ? (stats.creditBalance / totalCredits) * 100 : 100)
+                  })()}%
+                </span>
+              </div>
+            </div>
+            <div className="text-center mt-3">
+              <p className="text-xl sm:text-2xl font-bold text-[var(--v2-text-primary)]">
+                {stats.creditBalance >= 1000
+                  ? `${(stats.creditBalance / 1000).toFixed(1)}K`
+                  : stats.creditBalance.toLocaleString()}
+              </p>
+              <p className="text-xs text-[var(--v2-text-muted)]">available</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Active Automations List */}
+      <div className="mt-6">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-lg sm:text-xl font-semibold text-[var(--v2-text-primary)]">Active Automations</h2>
+          <button
+            onClick={() => router.push('/v2/agent-list')}
+            className="text-sm text-[var(--v2-primary)] hover:text-[var(--v2-secondary)] transition-colors flex items-center gap-1"
+          >
+            View all <ArrowRight className="w-4 h-4" />
+          </button>
+        </div>
+
+        {stats.agentStats.length > 0 ? (
+          <div className="space-y-2">
+            {(() => {
+              const visibleAgents = stats.agentStats.slice(0, 4)
+              const maxCount = Math.max(...visibleAgents.map(a => a.count), 1)
+
+              return visibleAgents.map((agent, index) => {
+                // Color palette for status bars and progress bars
+                const colors = [
+                  { bar: 'bg-blue-500', dot: 'bg-blue-500' },
+                  { bar: 'bg-purple-500', dot: 'bg-purple-500' },
+                  { bar: 'bg-amber-500', dot: 'bg-amber-500' },
+                  { bar: 'bg-emerald-500', dot: 'bg-emerald-500' },
+                ]
+                const color = colors[index % colors.length]
+                const barWidth = agent.count > 0 ? Math.max((agent.count / maxCount) * 100, 5) : 0
+
+                return (
+                  <div
+                    key={agent.id}
+                    onClick={() => router.push(`/v2/agents/${agent.id}`)}
+                    className="bg-[var(--v2-surface)] border border-[var(--v2-border)] p-4 cursor-pointer hover:bg-[var(--v2-surface-hover)] hover:border-[var(--v2-border-hover)] transition-all active:scale-[0.99]"
+                    style={{ borderRadius: 'var(--v2-radius-card)' }}
+                  >
+                    <div className="flex items-center gap-4">
+                      {/* Status Bar - matches agent-list style */}
+                      <div className={`w-1.5 h-12 rounded-full ${color.dot} flex-shrink-0`} />
+                      <div className="flex-1 min-w-0">
+                        <p className="font-medium text-[var(--v2-text-primary)] truncate">{agent.name}</p>
+                        <p className="text-xs text-[var(--v2-text-muted)]">
+                          {agent.lastRun ? `Last: ${getTimeAgo(new Date(agent.lastRun))}` : 'No runs yet'}
+                        </p>
+                      </div>
+                      {/* Execution Progress Bar - Centered */}
+                      <div className="flex-1 max-w-32 sm:max-w-48">
+                        <div className="h-2 bg-[var(--v2-border)] rounded-full overflow-hidden">
+                          <div
+                            className={`h-full ${color.bar} rounded-full transition-all duration-500`}
+                            style={{ width: `${barWidth}%` }}
+                          />
+                        </div>
+                      </div>
+                      <div className="text-right flex-shrink-0">
+                        <p className="text-sm font-medium text-[var(--v2-text-primary)]">{agent.count.toLocaleString()} runs</p>
+                      </div>
+                      <span className="w-2 h-2 rounded-full bg-emerald-500 flex-shrink-0"></span>
+                    </div>
+                  </div>
+                )
+              })
+            })()}
+          </div>
+        ) : (
+          <div
+            className="bg-[var(--v2-surface)] border border-[var(--v2-border)] p-8 text-center"
+            style={{ borderRadius: 'var(--v2-radius-card)' }}
+          >
+            <Bot className="w-12 h-12 text-[var(--v2-text-muted)] opacity-30 mx-auto mb-3" />
+            <p className="text-[var(--v2-text-muted)]">No active automations yet</p>
+            <p className="text-sm text-[var(--v2-text-muted)] mt-1">Create your first automation above to get started</p>
+          </div>
+        )}
+      </div>
 
       {/* Help Dialog */}
       <ModernHelpDialog
