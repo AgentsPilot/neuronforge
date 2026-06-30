@@ -8,12 +8,13 @@
 
 ## Overview
 
-The Test Plugins V2 page is a multi-tabbed testing interface that provides developers and administrators with tools to test and manage various aspects of the NeuronForge system. It includes five main functional areas accessible through tabs:
+The Test Plugins V2 page is a multi-tabbed testing interface that provides developers and administrators with tools to test and manage various aspects of the NeuronForge system. It includes six main functional areas accessible through tabs:
 1. **Plugins** - Plugin connectivity, authentication, and action execution
 2. **AI Services** - Prompt analysis and enhancement testing
 3. **Thread Conversation** - Multi-provider conversational agent creation workflow
 4. **Free Tier Users** - User subscription and quota management
 5. **Agent Execution** - Agent testing with debug mode and step visualization
+6. **Notification Service** - Send a test system email through the production transport to verify environment email settings
 
 ---
 
@@ -645,6 +646,31 @@ Manages SSE connection for real-time debug events:
 - `POST /api/run-agent` - Execute agent (with optional `debugMode`, `debugRunId`)
 - `GET /api/debug/stream?runId={runId}` - SSE stream for debug events
 - `POST /api/debug/control` - Send debug control commands
+
+---
+
+## Tab 6: Notification Service
+
+### Purpose
+Send a real **system email** through the **production email transport** to verify the environment's email settings (the same path used for calibration result emails and human-approval notifications).
+
+### Features
+- **To / Subject / Body** form. `To` prefills from `NEXT_PUBLIC_TEST_PAGE_USER_EMAIL`; if left blank, the route defaults to `SIMULATOR_USER_EMAIL` (server-side).
+- **Send test email** → `POST /api/test/notification`, which calls `lib/notifications/emailTransport.sendEmail(...)` — the exact production transport.
+- **Result panel** shows which provider delivered (`resend` / `gmail` / `gmail-plugin` / `none`), sent/failed, and any error — so you can confirm which environment path is active.
+
+### Transport priority (what's being tested)
+```
+Resend (RESEND_API_KEY starts with "re_")  →  env Gmail OAuth2 (GMAIL_*)  →  owner's google-mail plugin connection (ownerUserId)  →  console preview
+```
+
+### Env vars
+- `NEXT_PUBLIC_TEST_PAGE_USER_EMAIL` — prefills the To field (client-readable).
+- `SIMULATOR_USER_EMAIL` — server-side default recipient when To is blank.
+- Email providers: `RESEND_API_KEY` (+ `RESEND_FROM_EMAIL`) and/or `GMAIL_USER`/`GMAIL_CLIENT_ID`/`GMAIL_CLIENT_SECRET`/`GMAIL_REFRESH_TOKEN`.
+
+### Related
+- The calibration result email's summary model/provider is DB-configurable (keys `agent_calibration_notification_email_provider` / `_model`, default `openai`/`gpt-4o-mini`) via `GET/PUT /api/admin/calibration-email-config`.
 
 ---
 

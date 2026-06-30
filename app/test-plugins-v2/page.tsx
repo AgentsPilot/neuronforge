@@ -30,7 +30,7 @@ interface DebugLog {
   message: string;
 }
 
-type TabType = 'plugins' | 'ai-services' | 'thread-conversation' | 'free-tier-users' | 'agent-execution';
+type TabType = 'plugins' | 'ai-services' | 'thread-conversation' | 'free-tier-users' | 'agent-execution' | 'notification-service';
 
 // Provider and model options for AI provider selection
 const PROVIDER_OPTIONS = ['openai', 'anthropic', 'kimi'] as const;
@@ -683,6 +683,30 @@ export default function TestPluginsPage() {
   // Initialize userId from env variable if available (add NEXT_PUBLIC_TEST_PAGE_USER_ID to .env.local)
   const [userId, setUserId] = useState(process.env.NEXT_PUBLIC_TEST_PAGE_USER_ID || '');
   const [apiClient] = useState(() => new PluginAPIClient());
+
+  // Notification Service tab — send a test system email through the production
+  // transport to verify env email settings. `to` prefills from env.
+  const [notifyTo, setNotifyTo] = useState(process.env.NEXT_PUBLIC_TEST_PAGE_USER_EMAIL || '');
+  const [notifySubject, setNotifySubject] = useState('NeuronForge — Notification Service test');
+  const [notifyBody, setNotifyBody] = useState('<p>This is a test system email to verify environment email settings.</p>');
+  const [notifyResult, setNotifyResult] = useState<any>(null);
+  const [notifyLoading, setNotifyLoading] = useState(false);
+  const sendTestNotification = async () => {
+    setNotifyLoading(true);
+    setNotifyResult(null);
+    try {
+      const res = await fetch('/api/test/notification', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId, to: notifyTo, subject: notifySubject, body: notifyBody }),
+      });
+      setNotifyResult(await res.json());
+    } catch (e: any) {
+      setNotifyResult({ success: false, error: e?.message || 'Request failed' });
+    } finally {
+      setNotifyLoading(false);
+    }
+  };
   
   // Plugin data
   const [availablePlugins, setAvailablePlugins] = useState<PluginInfo[]>([]);
@@ -2583,6 +2607,21 @@ export default function TestPluginsPage() {
         >
           Agent Execution
         </button>
+        <button
+          onClick={() => setActiveTab('notification-service')}
+          style={{
+            padding: '10px 20px',
+            backgroundColor: activeTab === 'notification-service' ? '#007bff' : '#f8f9fa',
+            color: activeTab === 'notification-service' ? 'white' : '#333',
+            border: 'none',
+            borderBottom: activeTab === 'notification-service' ? '3px solid #0056b3' : 'none',
+            cursor: 'pointer',
+            fontSize: '16px',
+            fontWeight: activeTab === 'notification-service' ? 'bold' : 'normal'
+          }}
+        >
+          Notification Service
+        </button>
       </div>
 
       {/* User Section */}
@@ -2609,6 +2648,87 @@ export default function TestPluginsPage() {
           </div>
         )}
       </div>
+
+      {/* Notification Service Tab Content */}
+      {activeTab === 'notification-service' && (
+        <div style={{ padding: '20px', border: '1px solid #ccc', borderRadius: '5px' }}>
+          <h2 style={{ marginTop: 0 }}>Notification Service — Test System Email</h2>
+          <p style={{ color: '#555', fontSize: '14px' }}>
+            Sends a real email through the production transport
+            (<strong>Resend → env Gmail → owner&apos;s google-mail plugin connection → console</strong>),
+            so you can verify the environment email settings. The result shows which provider actually delivered.
+          </p>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', maxWidth: '640px' }}>
+            <label style={{ fontWeight: 'bold' }}>
+              To
+              <input
+                type="email"
+                value={notifyTo}
+                onChange={(e) => setNotifyTo(e.target.value)}
+                placeholder="defaults to SIMULATOR_USER_EMAIL if left blank"
+                style={{ width: '100%', padding: '8px', marginTop: '4px', border: '1px solid #ccc', borderRadius: '4px' }}
+              />
+            </label>
+            <label style={{ fontWeight: 'bold' }}>
+              Subject
+              <input
+                type="text"
+                value={notifySubject}
+                onChange={(e) => setNotifySubject(e.target.value)}
+                style={{ width: '100%', padding: '8px', marginTop: '4px', border: '1px solid #ccc', borderRadius: '4px' }}
+              />
+            </label>
+            <label style={{ fontWeight: 'bold' }}>
+              Body (HTML or text)
+              <textarea
+                value={notifyBody}
+                onChange={(e) => setNotifyBody(e.target.value)}
+                rows={6}
+                style={{ width: '100%', padding: '8px', marginTop: '4px', border: '1px solid #ccc', borderRadius: '4px', fontFamily: 'monospace' }}
+              />
+            </label>
+            <button
+              onClick={sendTestNotification}
+              disabled={notifyLoading}
+              style={{
+                padding: '10px 20px',
+                backgroundColor: notifyLoading ? '#999' : '#007bff',
+                color: 'white',
+                border: 'none',
+                borderRadius: '4px',
+                cursor: notifyLoading ? 'not-allowed' : 'pointer',
+                fontSize: '16px',
+                alignSelf: 'flex-start',
+              }}
+            >
+              {notifyLoading ? 'Sending…' : 'Send test email'}
+            </button>
+          </div>
+
+          {notifyResult && (
+            <div
+              style={{
+                marginTop: '20px',
+                padding: '15px',
+                borderRadius: '5px',
+                border: `1px solid ${notifyResult.sent ? '#16a34a' : '#d97706'}`,
+                backgroundColor: notifyResult.sent ? '#f0fdf4' : '#fff7ed',
+              }}
+            >
+              <strong>
+                {notifyResult.sent ? '✅ Sent' : '⚠️ Not delivered'}
+                {notifyResult.provider ? ` — provider: ${notifyResult.provider}` : ''}
+              </strong>
+              {notifyResult.to && <div style={{ fontSize: '13px', color: '#555' }}>to: {notifyResult.to}</div>}
+              {notifyResult.error && <div style={{ fontSize: '13px', color: '#9a3412', marginTop: '6px' }}>error: {notifyResult.error}</div>}
+              <pre style={{ marginTop: '10px', fontSize: '12px', background: '#f8f9fa', padding: '8px', borderRadius: '4px', overflow: 'auto' }}>
+                {JSON.stringify(notifyResult, null, 2)}
+              </pre>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Plugins Tab Content */}
       {activeTab === 'plugins' && (
