@@ -4,14 +4,15 @@
 // existing Resend path via NotificationService.
 
 import { NotificationService } from '@/lib/pilot/NotificationService';
-import { ProviderFactory } from '@/lib/ai/providerFactory';
+import { ProviderFactory, PROVIDERS, type ProviderName } from '@/lib/ai/providerFactory';
+import { CALIBRATION_EMAIL_DEFAULTS } from '@/lib/calibration/CalibrationEmailConfigService';
 import { createLogger } from '@/lib/logger';
 
 const logger = createLogger({ module: 'CalibrationResultEmail', service: 'v6-calibration' });
 
-// Mirrors the model used elsewhere in the calibration subsystem
-// (ConstrainedSemanticValidator) — fast + accurate for short summaries.
-const SUMMARY_MODEL = 'claude-sonnet-4-5-20250929';
+// Provider/model come from the call site (DB-config-driven). When absent, fall
+// back to the single source of truth in CalibrationEmailConfigService.
+const SUPPORTED_PROVIDERS = new Set<string>(Object.values(PROVIDERS));
 
 export interface CalibrationResultEmailInput {
   to: string;
@@ -27,6 +28,9 @@ export interface CalibrationResultEmailInput {
   ctaUrl: string;
   /** Agent owner's userId — enables the google-mail plugin-connection fallback transport. */
   ownerUserId?: string;
+  /** LLM provider/model for the summary (DB-config-driven; falls back to the cheap default). */
+  summaryProvider?: string;
+  summaryModel?: string;
 }
 
 /**
@@ -60,7 +64,13 @@ export async function sendCalibrationResultEmail(input: CalibrationResultEmailIn
 /** LLM-generated friendly summary, with a deterministic fallback. */
 async function buildSummary(input: CalibrationResultEmailInput): Promise<string> {
   try {
-    const provider = ProviderFactory.getProvider('anthropic');
+    // Provider/model are DB-config-driven (passed in); validate the provider
+    // against the factory's supported set and fall back to the cheap default.
+    const providerName: ProviderName = (input.summaryProvider && SUPPORTED_PROVIDERS.has(input.summaryProvider))
+      ? input.summaryProvider as ProviderName
+      : CALIBRATION_EMAIL_DEFAULTS.provider;
+    const model = input.summaryModel?.trim() || CALIBRATION_EMAIL_DEFAULTS.model;
+    const provider = ProviderFactory.getProvider(providerName);
     const prompt = [
       'Write a short, friendly 2-3 sentence summary of an automation calibration result for a non-technical user.',
       'Do not use markdown, headings, or bullet points — plain prose only.',
@@ -79,7 +89,7 @@ async function buildSummary(input: CalibrationResultEmailInput): Promise<string>
 
     const response = await provider.chatCompletion(
       {
-        model: SUMMARY_MODEL,
+        model,
         temperature: 0.4,
         messages: [{ role: 'user', content: prompt }],
         max_tokens: 300,

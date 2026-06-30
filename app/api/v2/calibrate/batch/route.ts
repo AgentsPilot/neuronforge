@@ -21,6 +21,7 @@ import { CalibrationHistoryRepository } from '@/lib/repositories/CalibrationHist
 import { acquireLock, releaseLock } from '@/lib/utils/distributedLock';
 import { AgentRepository } from '@/lib/repositories/AgentRepository';
 import { sendCalibrationResultEmail } from '@/lib/calibration/calibrationResultEmail';
+import { getCalibrationEmailConfig } from '@/lib/calibration/CalibrationEmailConfigService';
 import { createLogger } from '@/lib/logger';
 import type { CollectedIssue } from '@/lib/pilot/types';
 // NOTE: this route historically imported `Agent` from `@/types/agent`, a module
@@ -4463,6 +4464,9 @@ export async function POST(req: NextRequest) {
             .map((i: any) => i?.title || i?.message || i?.description)
             .filter(Boolean);
 
+          // Summary model/provider are DB-config-driven (default: cheapest).
+          const { provider: summaryProvider, model: summaryModel } = await getCalibrationEmailConfig(runCtx.supabase);
+
           await sendCalibrationResultEmail({
             to: runCtx.userEmail,
             agentId: runCtx.agentId,
@@ -4474,6 +4478,8 @@ export async function POST(req: NextRequest) {
             remainingIssueTitles,
             ctaUrl,
             ownerUserId: runCtx.userId, // enables google-mail plugin-connection fallback
+            summaryProvider,
+            summaryModel,
           });
         }
 
