@@ -170,6 +170,7 @@ The hardcode sub-system runs **inside** calibration but has its own self-contain
 
 | Doc | Summary |
 |---|---|
+| [CALIBRATION_RCA_RUNBOOK.md](/docs/Calibration/CALIBRATION_RCA_RUNBOOK.md) | **Methodical RCA procedure for a failed calibration** (any agent ID): gather evidence → earliest-step/cascade → classify the root-cause layer → conclude. Backs the `calibration-rca` skill; companion script `scripts/dump-calibration.ts`. |
 | [CALIBRATION_VALIDATION_MONITORING.md](/docs/Calibration/CALIBRATION_VALIDATION_MONITORING.md) | Expected Layer 1 / Layer 2 log sequences during a calibration run. |
 | [CALIBRATION_LOG_GUIDE.md](/docs/Calibration/CALIBRATION_LOG_GUIDE.md) | Quick reference: `monitor-calibration.sh`, what log lines indicate Multi-Step Detection success/failure. |
 
