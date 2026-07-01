@@ -60,6 +60,11 @@ export async function POST(req: NextRequest) {
     agentName: string;
   } | null = null;
 
+  // Option A: plain-English disclosures for parameter values the resolver looked
+  // up from the live data source ("What we changed"). Declared at function scope
+  // so the finally-block email tail can read them. Empty unless a resolver fires.
+  const resolverDisclosures: string[] = [];
+
   try {
     // 1. Authenticate user
     const supabase = await createAuthenticatedServerClient();
@@ -1108,10 +1113,6 @@ export async function POST(req: NextRequest) {
     let autoFixesApplied = 0;
     let currentAgent = agent; // Track agent state across iterations
     let allIssuesForUI: any[] = []; // Collect all issues for final UI display
-    // Option A: plain-English disclosures for parameter fixes the resolver looked
-    // up from the live data source ("What we changed"). Threaded into the summary
-    // email in Phase 2.5. Empty until a resolver is registered + fires.
-    const resolverDisclosures: string[] = [];
 
     // Phase 6 — Calibration audit fix (G-CAL-1): surface dry-run findings to the UI.
     // Previously dryRunResult.issues was only logged — critical issues silently
@@ -4550,6 +4551,7 @@ export async function POST(req: NextRequest) {
             issuesFixed,
             issuesRemaining,
             remainingIssueTitles,
+            appliedFixNotes: resolverDisclosures.length ? [...resolverDisclosures] : undefined,
             ctaUrl,
             ownerUserId: runCtx.userId, // enables google-mail plugin-connection fallback
           });

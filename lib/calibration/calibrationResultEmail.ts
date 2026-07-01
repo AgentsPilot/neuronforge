@@ -23,6 +23,13 @@ export interface CalibrationResultEmailInput {
   issuesRemaining: number;
   /** Titles of issues still needing the user's attention (failed runs). */
   remainingIssueTitles?: string[];
+  /**
+   * Plain-English notes about parameter values calibration looked up from the
+   * live data source and set for the user (e.g. "The spreadsheet has one tab,
+   * 'Leads', so I set the sheet to it."). Rendered in a "What we changed" block —
+   * shown on BOTH passed and failed runs so the user always sees what was decided.
+   */
+  appliedFixNotes?: string[];
   /** Where the email's primary button points (agent page on pass, sandbox on fail). */
   ctaUrl: string;
   /** Agent owner's userId — enables the google-mail plugin-connection fallback transport. */
@@ -71,6 +78,9 @@ async function buildSummary(input: CalibrationResultEmailInput): Promise<string>
       input.remainingIssueTitles?.length
         ? `Remaining issues: ${input.remainingIssueTitles.slice(0, 5).join('; ')}`
         : '',
+      input.appliedFixNotes?.length
+        ? `Specific things we adjusted automatically (mention these plainly): ${input.appliedFixNotes.slice(0, 5).join(' ')}`
+        : '',
       '',
       input.passed
         ? 'Tone: congratulatory and reassuring.'
@@ -106,7 +116,9 @@ function fallbackSummary(input: CalibrationResultEmailInput): string {
   } still need your attention before it's ready. Open it to review and fix what's left.`;
 }
 
-function renderHtml(input: CalibrationResultEmailInput, summary: string): string {
+// Exported for unit testing the deterministic HTML (the "What we changed" block,
+// escaping); not used elsewhere.
+export function renderHtml(input: CalibrationResultEmailInput, summary: string): string {
   const ctaLabel = input.passed ? 'View your agent' : 'Review & fix';
   const accent = input.passed ? '#16a34a' : '#d97706';
   const esc = (s: string) =>
@@ -127,6 +139,13 @@ function renderHtml(input: CalibrationResultEmailInput, summary: string): string
             <tr><td style="padding:4px 0;">Fixed automatically</td><td style="padding:4px 0;text-align:right;font-weight:600;">${input.issuesFixed}</td></tr>
             <tr><td style="padding:4px 0;">Still needs attention</td><td style="padding:4px 0;text-align:right;font-weight:600;">${input.issuesRemaining}</td></tr>
           </table>
+          ${input.appliedFixNotes?.length ? `
+          <div style="margin:0 0 20px;padding:12px 14px;background:#f0f9ff;border:1px solid #bae6fd;border-radius:8px;">
+            <p style="margin:0 0 6px;font-size:13px;font-weight:600;color:#0369a1;">What we changed</p>
+            <ul style="margin:0;padding-left:18px;font-size:13px;color:#334155;line-height:1.5;">
+              ${input.appliedFixNotes.map((n) => `<li style="margin:0 0 4px;">${esc(n)}</li>`).join('')}
+            </ul>
+          </div>` : ''}
           <a href="${input.ctaUrl}" style="display:inline-block;background:${accent};color:#fff;text-decoration:none;padding:12px 22px;border-radius:8px;font-weight:600;font-size:15px;">${ctaLabel}</a>
         </div>
         <div style="padding:16px 24px;background:#fafafa;border-top:1px solid #eee;color:#999;font-size:12px;">
