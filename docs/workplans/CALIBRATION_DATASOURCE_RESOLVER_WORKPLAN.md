@@ -1,7 +1,7 @@
 # Calibration Data-Source Resolver Framework — Workplan (Option A)
 
 > **Last Updated**: 2026-07-01
-> **Status**: 🟡 In progress — SA-reviewed + signed off (headless revision). **Phase 1 core done** (engine + registry + types + 11 unit tests, plugin-agnostic). Pending: real `FixApplier` + batch-route hook, Phase 2 (Sheets resolver), Phase 2.5 (summary-email disclosure).
+> **Status**: 🟢 Implemented end-to-end (uncommitted-doc = this update). Engine + registry + applier + batch-loop wiring (strategy B) + Google Sheets resolver (registered → **feature live**) + summary-email disclosure. Commits: `72e1f30`, `a06347b`, `c05f29c`, `afc07b6`. **Pending:** Phase 3 live test on `3fc703fd` (user-run, needs OAuth); Phase 4 docs; and one **deviation** — disclosures are sent to the email only, not persisted on `calibration_history`, so the sandbox `FixesApplied` card doesn't show them (see Open Items / Deviations).
 > **Origin**: RCA on agent `3fc703fd` (Sheets `range="Sheet1"` → "Unable to parse range"). See `docs/Calibration/CALIBRATION_RCA_RUNBOOK.md` and the handoff `docs/investigations/AGENT_CREATION_RCA_HANDOFF_sheets-range.md`.
 > **Skills**: load `calibration` (architecture) before implementing; `calibration-rca` for the failing-agent context.
 
@@ -163,26 +163,26 @@ This input-vs-DSL distinction is a first-class engine responsibility (see § 6).
 - [x] Define `ParameterResolver` / `ResolverContext` / `ResolverResult` types. *(→ `lib/pilot/shadow/parameterResolvers/types.ts`; also `ApplyTarget`, `PlannedFix`, `EngineOutcome`.)*
 - [x] Build `ParameterResolverRegistry` (lookup by `plugin.action.parameter`). *(→ `parameterResolvers/index.ts` + `defaultParameterResolverRegistry`; ships with 0 resolvers.)*
 - [x] Build `ParameterResolverEngine`: iterate `parameter_error` issues → lookup → `appliesTo` → `resolve` → apply/report/skip. Non-blocking try/catch per resolver. *(→ `ParameterResolverEngine.ts`; zero plugin-specific code.)*
-- [~] Implement **apply** for both targets: input-config value AND DSL literal. *Engine side done* — `computeApplyTarget` distinguishes `{{input.X}}` (input) from literal (DSL) and emits a `PlannedFix`. The **actual persist + in-memory mutation** is delegated to an injected `FixApplier` — the **real applier is the next chunk** (route wiring).
+- [x] Implement **apply** for both targets: input-config value AND DSL literal. *(→ `CalibrationFixApplier`: input → mutate `mergedInputValues` + persist via `AgentConfigurationRepository.saveInputValues`; dsl → rewrite the step param. Injected persistence; 7 tests. Commit `a06347b`.)*
 - [x] **[SA headless revision]** apply-and-disclose for ambiguous (best-effort `candidates[0]` + `disclosure` tagged best-effort), NOT a wizard surface. Each `PlannedFix` carries a plain-English `disclosure`. *(Interactive wiring intentionally NOT built.)*
-- [ ] Hook the engine into `app/api/v2/calibrate/batch/route.ts` (after the pre-loop dry-run, before the loop — alongside the P3 auto-fix block ~L1023). Register fixes in `fixHistory` via `trackFix`. **← next chunk (with the real `FixApplier`).**
+- [x] Hook the engine into `app/api/v2/calibrate/batch/route.ts`. **Done via strategy B** (`a06347b`): the parameter errors are only available *in-loop* (`result.collectedIssues`), so a resolve-and-attach pass runs `engine.plan()` there and attaches a `resolve_parameter_value` `autoRepairProposal`; the loop's **existing** apply pipeline writes it via `CalibrationFixApplier`, `trackFix`-guarded, then re-runs/converges. (The pre-loop dry-run only exposes high-level issues, not the actionable `parameter_error` — hence in-loop, not pre-loop.)
 - [x] Unit tests for the engine with a **mock resolver** (resolved→confident-disclosure, ambiguous→best-effort-apply+disclosure, unresolved→untouched, resolver-throws→non-blocking; input-target vs DSL-target). *(→ `__tests__/ParameterResolverEngine.test.ts`, 11 passing.)*
 
-**Phase 2 — Google Sheets range resolver**
-- [ ] Implement `googleSheetsRange` resolver (`appliesTo` on the parse-range error; `resolve` reads spreadsheet metadata via the connected account).
-- [ ] Confidence heuristic (single tab / clear match / ambiguous→best-effort first tab / no valid tab→unresolved).
-- [ ] Register it for `google-sheets.read_range.range` only (SA § 6 Q7 — do NOT add `table/get` without a real failure).
-- [ ] Unit tests with **mocked Sheets metadata** (1 tab → confident; multi-tab no match → best-effort first tab + disclosure; zero tabs / read fails → unresolved; valid user-set tab → no-op/unresolved per Risk 3).
+**Phase 2 — Google Sheets range resolver** *(done — commit `c05f29c`)*
+- [x] Implement `googleSheetsRange` resolver. *(→ `parameterResolvers/googleSheetsRange.ts`; `appliesTo` on `/Unable to parse range/`; reads metadata by reusing the plugin connection/auth via `UserPluginConnections` — not a fresh googleapis client, SA Q6.)*
+- [x] Confidence heuristic (1 tab → resolved 0.95; requested name matches a tab → unresolved/no-clobber; multi-tab no match → ambiguous→best-effort first tab; no id / unreadable / no tabs → unresolved). Preserves any A1 suffix (`Sheet1!A1:B10` → `Leads!A1:B10`).
+- [x] Registered for `google-sheets.read_range.range` only. *(→ `parameterResolvers/index.ts` — this activates the whole chain.)*
+- [x] Unit tests with **mocked Sheets metadata** (9 tests: single/ambiguous/no-clobber/A1-preservation/no-tabs/reader-throws/no-id/EP-key-hint id).
 
-**Phase 2.5 — [SA headless revision] Summary-email disclosure (load-bearing, not optional)**
-- [ ] Add `appliedFixNotes?: string[]` to `CalibrationResultEmailInput` (`lib/calibration/calibrationResultEmail.ts`) — no such field exists today.
-- [ ] Thread it into `buildSummary`'s LLM prompt AND render a deterministic "What we changed" block in `renderHtml` (must appear on `passed === true` too). Escape user-supplied values (tab names) via the existing `esc()`.
-- [ ] At the email call site (route ~L4462), map the resolver disclosure strings from the auto-fix records (`issues_fixed` / `prioritized.autoRepairs`) into `appliedFixNotes`. Add a `disclosure?: string` field to the auto-fix record shape if none exists — do not overload `title`.
-- [ ] Verify the disclosure is also stored on the `calibration_history` row (via `issues_fixed`) so the sandbox `FixesApplied` card shows it — one source, both surfaces.
+**Phase 2.5 — [SA headless revision] Summary-email disclosure (load-bearing, not optional)** *(done — commit `afc07b6`)*
+- [x] Add `appliedFixNotes?: string[]` to `CalibrationResultEmailInput` (`lib/calibration/calibrationResultEmail.ts`).
+- [x] Thread it into `buildSummary`'s LLM prompt AND render a deterministic "What we changed" block in `renderHtml` (renders on `passed === true` too). Escaped via the existing `esc()`. 5 email render tests.
+- [x] Wire the disclosures at the email call site. **Deviation from plan:** instead of mapping from `issues_fixed`/`prioritized.autoRepairs`, the resolver collects disclosures directly into a function-scoped `resolverDisclosures` array (mutated in the apply handler, read in the `finally`-block email tail) and passes them as `appliedFixNotes`. Simpler + avoids overloading the auto-fix record — but see the gap below.
+- [ ] ⚠️ **NOT done (deviation → Open Item):** the disclosures are **not** persisted on the `calibration_history` row, so the sandbox `FixesApplied` card does **not** show them (email-only today). The "one source, both surfaces" goal is unmet. See § Open Items / Deviations.
 
 **Phase 3 — Verify**
-- [ ] `npx tsc --noEmit` clean on touched files; `npx jest lib/pilot/shadow` green.
-- [ ] **Live test on agent `3fc703fd`**: re-run calibration → confirm the resolver reads the sheet, fixes `range`, step1 reads data, calibration converges (or asks if the sheet is multi-tab). Capture via `dump-calibration.ts`.
+- [x] `npx tsc --noEmit` clean on touched files; `npx jest lib/pilot/shadow` green (68/68) + email tests (5/5).
+- [ ] **Live test on agent `3fc703fd`** (user-run, needs OAuth): re-run calibration → confirm the resolver reads the sheet, fixes `range`, step1 reads data, calibration converges (best-effort discloses if multi-tab). Capture via `dump-calibration.ts`.
 
 **Phase 4 — Docs**
 - [ ] New `docs/Calibration/PARAMETER_RESOLVER_FRAMEWORK.md` (the durable design) + link in `CALIBRATION_OVERVIEW.md`.
@@ -283,10 +283,22 @@ Net effect: the resolver is now **apply-and-disclose in every case** (never "ask
 
 ---
 
+## Open Items / Deviations
+
+| Item | Status | Detail |
+|---|---|---|
+| **Sandbox `FixesApplied` card doesn't show disclosures** | ⬜ Open | Phase 2.5 was implemented by passing `resolverDisclosures` straight to the email, not by persisting them on `calibration_history.issues_fixed`. So the interactive sandbox `FixesApplied` card is unaware of resolver fixes (email-only). To close: attach each disclosure to the auto-fix record that flows into `issues_fixed` (add a `disclosure?` field — don't overload `title`), so both surfaces read one source (the SA's original "one source, both surfaces" intent). |
+| **Phase 3 — live test on `3fc703fd`** | ⬜ Open | End-to-end run (user, OAuth). Definitive proof the resolver reads the sheet + fixes `range` + converges. |
+| **Phase 4 — durable docs** | ⬜ Open | `docs/Calibration/PARAMETER_RESOLVER_FRAMEWORK.md` + link in `CALIBRATION_OVERVIEW.md`; update the `calibration` skill (new repair path). |
+
 ## Change History
 
 | Date | Change | Details |
 |------|--------|---------|
+| 2026-07-01 | Phase 2.5 — email disclosure (`afc07b6`) | `appliedFixNotes` on `CalibrationResultEmailInput` + a deterministic "What we changed" block (renders on pass **and** fail, `esc`-escaped) + an LLM-summary line; `resolverDisclosures` moved to function scope + passed at the email call site. 5 email render tests. **Deviation:** email-only, not persisted to `calibration_history` (sandbox-card gap — see Open Items). |
+| 2026-07-01 | Phase 2 — Google Sheets range resolver (`c05f29c`) | `googleSheetsRange` resolver (metadata via the reused plugin connection/auth, not a fresh client) + registered → **feature live**. Heuristic: 1 tab → 0.95, requested-name match → unresolved/no-clobber, multi-tab → best-effort first tab, A1 suffix preserved. 9 tests. |
+| 2026-07-01 | Applier + strategy-B wiring (`a06347b`) | `CalibrationFixApplier` (input → repo `saveInputValues` + `mergedInputValues`; dsl → step param; injected persistence; 7 tests). `engine.plan()` (resolve-only). Route: in-loop resolve-and-attach → `resolve_parameter_value` proposal → existing apply pipeline (`trackFix` + re-run). Inert until a resolver is registered. Chose **strategy B** (reuse the proven apply/re-run machinery) over a parallel pass. |
+| 2026-07-01 | Phase 1 core (`72e1f30`) | `ParameterResolver`/`ResolverContext`/`ResolverResult`/`ApplyTarget`/`PlannedFix` types + `ParameterResolverRegistry` + `ParameterResolverEngine` (plugin-agnostic). 11 unit tests. |
 | 2026-07-01 | SA review (headless revision) | Constraint clarified: primary flow is headless background, no interactive UI; one-way channel = summary email (verified in-code at route L4457 `isBackground` gate). Revised Q2 (ambiguous → best-effort auto-apply first tab + disclose, chosen over report-only), Q5 (add `appliedFixNotes` to `CalibrationResultEmailInput` — no such field today — + deterministic "What we changed" email block shown on pass too; new Phase 2.5). Q3 confident case unchanged but must also disclose. Dropped the interactive wizard candidate-picker + `CollectedIssue`/`userFacing` wiring from scope (optional follow-up). Rewrote Risks 1 & 3; added reversibility/no-clobber test. Q1/Q3/Q4/Q6/Q7 unchanged. |
 | 2026-06-30 | SA review | Verdict: ready with § 6 decisions. Decided all 7 open questions (static registry; tab-title range; repository-based input persist + in-memory mutation; 0.9 threshold; hook after pre-loop dry-run w/ `trackFix` guard; capped+timed live call w/ non-blocking fallback; `read_range.range` only). Added 5 risks: CollectedIssue/userFacing wiring, persist-on-needs_review guard, ambiguous→apply-fixes target continuity, spreadsheet_id availability, plugin-auth reuse. |
 | 2026-06-30 | Created | Option A design + phased tracklist. Generic resolver engine + registry + Google Sheets range resolver (first tenant); auto-apply ≥0.9 / ask-on-ambiguous; input-vs-DSL apply targets. Awaiting SA sign-off on § 6 open questions before implementation. Origin: RCA on agent `3fc703fd`. |
