@@ -77,46 +77,58 @@ export function computeApplyTarget(step: any, parameter: string): ApplyTarget {
 
 export class ParameterResolverEngine {
   /**
-   * Plan + apply resolver fixes for the given parameter-error issues.
-   * Never throws — a failing resolver/apply is logged and left as report-only
-   * (the ShadowAgent must never break the main calibration flow).
+   * PLAN only — resolve the correct values (this makes the live look-up calls)
+   * and return the fixes to apply, WITHOUT applying them. Used by the batch route
+   * (strategy B): the route attaches each PlannedFix to its issue as an
+   * `autoRepairProposal`, and the loop's existing apply pipeline writes it.
+   * Never throws — a failing resolver is logged and dropped to report-only.
    */
-  async run(issues: any[], ctx: EngineContext, deps: EngineDeps): Promise<EngineOutcome> {
-    const outcome: EngineOutcome = { applied: [], reportOnly: [], appliedFixNotes: [] };
-    if (!Array.isArray(issues) || issues.length === 0) return outcome;
+  async plan(
+    issues: any[],
+    ctx: EngineContext,
+    registry: ParameterResolverRegistry,
+  ): Promise<{ planned: PlannedFix[]; reportOnly: EngineOutcome['reportOnly'] }> {
+    const planned: PlannedFix[] = [];
+    const reportOnly: EngineOutcome['reportOnly'] = [];
+    if (!Array.isArray(issues) || issues.length === 0) return { planned, reportOnly };
 
     for (const issue of issues) {
       try {
-        const planned = await this.planIssue(issue, ctx, deps.registry);
-        if (!planned) continue; // no resolver / not applicable → leave the issue as today
+        const p = await this.planIssue(issue, ctx, registry);
+        if (!p) continue; // no resolver / not applicable → leave the issue as today
+        if (p.kind === 'report') reportOnly.push({ issueId: issue?.id, stepId: p.stepId, reason: p.reason });
+        else planned.push(p.fix);
+      } catch (err) {
+        // Non-blocking: a resolver failure must never abort calibration.
+        logger.error({ err, issueId: issue?.id }, '[ParameterResolver] Resolve failed (non-blocking)');
+        reportOnly.push({ issueId: issue?.id, reason: 'resolver_error' });
+      }
+    }
+    return { planned, reportOnly };
+  }
 
-        if (planned.kind === 'report') {
-          outcome.reportOnly.push({ issueId: issue?.id, stepId: planned.stepId, reason: planned.reason });
-          continue;
-        }
+  /**
+   * Plan + apply (for direct use / tests). Never throws.
+   * The batch route uses plan() + the loop's apply pipeline instead (strategy B).
+   */
+  async run(issues: any[], ctx: EngineContext, deps: EngineDeps): Promise<EngineOutcome> {
+    const { planned, reportOnly } = await this.plan(issues, ctx, deps.registry);
+    const outcome: EngineOutcome = { applied: [], reportOnly, appliedFixNotes: [] };
 
-        await deps.applier.apply(planned.fix, ctx);
-        outcome.applied.push(planned.fix);
-        outcome.appliedFixNotes.push(planned.fix.disclosure);
+    for (const fix of planned) {
+      try {
+        await deps.applier.apply(fix, ctx);
+        outcome.applied.push(fix);
+        outcome.appliedFixNotes.push(fix.disclosure);
         logger.info(
-          {
-            issueId: issue?.id,
-            stepId: planned.fix.stepId,
-            parameter: planned.fix.parameter,
-            target: planned.fix.target,
-            value: planned.fix.value,
-            kind: planned.fix.kind,
-            confidence: planned.fix.confidence,
-          },
+          { issueId: fix.issueId, stepId: fix.stepId, parameter: fix.parameter, target: fix.target, value: fix.value, kind: fix.kind, confidence: fix.confidence },
           '[ParameterResolver] Applied resolved parameter fix',
         );
       } catch (err) {
-        // Non-blocking: a resolver or apply failure must never abort calibration.
-        logger.error({ err, issueId: issue?.id }, '[ParameterResolver] Resolver/apply failed (non-blocking)');
-        outcome.reportOnly.push({ issueId: issue?.id, reason: 'resolver_error' });
+        logger.error({ err, issueId: fix.issueId }, '[ParameterResolver] Apply failed (non-blocking)');
+        outcome.reportOnly.push({ issueId: fix.issueId, stepId: fix.stepId, reason: 'apply_error' });
       }
     }
-
     return outcome;
   }
 

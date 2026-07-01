@@ -1108,6 +1108,10 @@ export async function POST(req: NextRequest) {
     let autoFixesApplied = 0;
     let currentAgent = agent; // Track agent state across iterations
     let allIssuesForUI: any[] = []; // Collect all issues for final UI display
+    // Option A: plain-English disclosures for parameter fixes the resolver looked
+    // up from the live data source ("What we changed"). Threaded into the summary
+    // email in Phase 2.5. Empty until a resolver is registered + fires.
+    const resolverDisclosures: string[] = [];
 
     // Phase 6 — Calibration audit fix (G-CAL-1): surface dry-run findings to the UI.
     // Previously dryRunResult.issues was only logged — critical issues silently
@@ -1746,6 +1750,53 @@ export async function POST(req: NextRequest) {
         }, '[StructuralRepair] Injecting transformation issues into first iteration');
 
         iterationIssues = [...transformationIssues, ...iterationIssues];
+      }
+
+      // P-Resolver (Option A): for parameter_errors whose correct value must be
+      // looked up from the live data source, resolve the value and attach an
+      // auto-repair proposal so the loop's existing apply pipeline writes it
+      // (strategy B). INERT until a resolver is registered — the Phase 1 registry
+      // is empty, so this is a no-op today. Non-blocking.
+      try {
+        const paramErrors = iterationIssues.filter(
+          (i: any) => i?.category === 'parameter_error' && i?.suggestedFix?.action?.parameterName,
+        );
+        if (paramErrors.length > 0) {
+          const { ParameterResolverEngine } = await import('@/lib/pilot/shadow/ParameterResolverEngine');
+          const { defaultParameterResolverRegistry } = await import('@/lib/pilot/shadow/parameterResolvers');
+          const { planned } = await new ParameterResolverEngine().plan(
+            paramErrors,
+            {
+              workflowSteps: currentAgent.pilot_steps || currentAgent.workflow_steps || [],
+              resolvedInputs: mergedInputValues,
+              userId: user.id,
+            },
+            defaultParameterResolverRegistry,
+          );
+          for (const fix of planned) {
+            const issue =
+              iterationIssues.find((i: any) => i?.id === fix.issueId) ??
+              iterationIssues.find(
+                (i: any) => i?.affectedSteps?.[0]?.stepId === fix.stepId && i?.suggestedFix?.action?.parameterName === fix.parameter,
+              );
+            if (!issue) continue;
+            // Mark auto-fixable + attach the resolved fix so the existing apply
+            // pipeline (below) writes it via trackFix + the loop re-run.
+            issue.autoRepairAvailable = true;
+            issue.requiresUserInput = false;
+            issue.autoRepairProposal = {
+              type: 'resolve_parameter_value',
+              targetStepId: fix.stepId,
+              confidence: 0.9, // engine already decided to apply; clear the loop's 0.80 gate
+              resolverFix: fix,
+            };
+          }
+          if (planned.length > 0) {
+            logger.info({ sessionId, loopIteration, resolved: planned.length }, '[ParameterResolver] Attached resolver proposals');
+          }
+        }
+      } catch (err) {
+        logger.error({ err, sessionId, loopIteration }, '[ParameterResolver] Resolve pass failed (non-blocking)');
       }
 
       // CRITICAL: Detect scatter-gather errors from BOTH sources:
@@ -3104,7 +3155,34 @@ export async function POST(req: NextRequest) {
         const affectedStepId = issue.affectedSteps?.[0]?.stepId || proposal.targetStepId || proposal.stepId || 'unknown';
 
         try {
-          if (proposal.action === 'add_flatten_field') {
+          if (proposal.type === 'resolve_parameter_value') {
+            // Option A: write a value the resolver looked up from the live data
+            // source. input target → persist via the config repo + mutate
+            // mergedInputValues (re-validated next iteration); dsl target →
+            // mutate updatedSteps (persisted with this round's batch below).
+            // trackFix-guarded so a still-failing fix can't loop forever.
+            const fix = (proposal as any).resolverFix;
+            const canApplyFix = trackFix(fix.stepId, `resolve_parameter:${fix.parameter}`);
+            if (canApplyFix) {
+              const { CalibrationFixApplier } = await import('@/lib/pilot/shadow/parameterResolvers/CalibrationFixApplier');
+              const { AgentConfigurationRepository } = await import('@/lib/repositories/AgentConfigurationRepository');
+              const configRepo = new AgentConfigurationRepository(supabase);
+              await new CalibrationFixApplier({
+                mergedInputValues,
+                pilotSteps: updatedSteps,
+                persistInputValues: async (iv) => { await configRepo.saveInputValues(agentId, user.id, iv); },
+                persistPilotSteps: async () => { /* updatedSteps is persisted after this loop */ },
+              }).apply(fix, { workflowSteps: updatedSteps, resolvedInputs: mergedInputValues, userId: user.id });
+              fixesAppliedThisRound++;
+              resolverDisclosures.push(fix.disclosure);
+              logger.info(
+                { sessionId, loopIteration, stepId: fix.stepId, parameter: fix.parameter, target: fix.target, value: fix.value, kind: fix.kind },
+                '[ParameterResolver] Applied resolver fix via loop pipeline',
+              );
+            } else {
+              fixesSkippedThisRound++;
+            }
+          } else if (proposal.action === 'add_flatten_field') {
             // ⚠️ CRITICAL: Only add field if it's TRULY MISSING
             // If field already exists (even if wrong), execution can correct it at runtime
             const targetStep = findStepByIdRecursive(updatedSteps, proposal.targetStepId);
