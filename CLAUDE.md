@@ -224,6 +224,7 @@ Every open item must have exactly **one authoritative source** (WEAK_POINTS for 
 | Never expose internal error details to client in production | Use `process.env.NODE_ENV === 'development'` guard already in API pattern |
 | No secrets or API keys in code — environment variables only | RM must check before every commit |
 | Input sanitised via Zod before use | Never trust client-supplied data |
+| Admin authz via `AdminAccessService` — **never** `profiles.role` | `profiles.role` is user-writable (self-promotion) and overloaded with onboarding personas; the `admin_users` table is the only trusted admin signal. See [ADMIN_IDENTIFICATION_AND_ACCESS.md](/docs/admin/ADMIN_IDENTIFICATION_AND_ACCESS.md) |
 
 ---
 
@@ -760,6 +761,7 @@ npm run lint       # ESLint
 | [PLUGIN_GENERATION_WORKFLOW.md](/docs/PLUGIN_GENERATION_WORKFLOW.md) | Interactive plugin generation guide for Claude Code | not tracked |
 | [AI_PROVIDER_MODELS.md](/docs/AI_PROVIDER_MODELS.md) | Complete LLM provider/model catalogue with token limits and pricing | 2026-04-08 |
 | [EFFORT_ESTIMATOR.md](/docs/EFFORT_ESTIMATOR.md) | Effort Estimator feature design doc — work-savings estimation via SMB persona simulation. Architecture, trigger points, persona simulation, model resolution, retry/async, deprecation strategy, failure semantics, v1 limitations. | 2026-06-11 |
+| [ADMIN_IDENTIFICATION_AND_ACCESS.md](/docs/admin/ADMIN_IDENTIFICATION_AND_ACCESS.md) | How platform admins are identified: the `admin_users` source of truth, `AdminAccessService`/`AdminUserRepository`, env/SQL bootstrap, runtime resolution flow, and open follow-ups. **Read before any admin-authz work — never use `profiles.role`.** | 2026-07-01 |
 
 ---
 
