@@ -1,7 +1,7 @@
 # Calibration Data-Source Resolver Framework — Workplan (Option A)
 
-> **Last Updated**: 2026-06-30
-> **Status**: ⬜ Planning — design drafted, **no code written yet**. Awaiting SA review + sign-off on the open questions (§ 6) before implementation.
+> **Last Updated**: 2026-07-01
+> **Status**: 🟡 In progress — SA-reviewed + signed off (headless revision). **Phase 1 core done** (engine + registry + types + 11 unit tests, plugin-agnostic). Pending: real `FixApplier` + batch-route hook, Phase 2 (Sheets resolver), Phase 2.5 (summary-email disclosure).
 > **Origin**: RCA on agent `3fc703fd` (Sheets `range="Sheet1"` → "Unable to parse range"). See `docs/Calibration/CALIBRATION_RCA_RUNBOOK.md` and the handoff `docs/investigations/AGENT_CREATION_RCA_HANDOFF_sheets-range.md`.
 > **Skills**: load `calibration` (architecture) before implementing; `calibration-rca` for the failing-agent context.
 
@@ -107,6 +107,8 @@ interface ParameterResolver {
 
 The engine is the only caller; resolvers never touch the DSL or the DB directly (the engine owns applying + persisting).
 
+> **SA:** Add a typed `ApplyTarget = { kind: 'input'; field: string } | { kind: 'dsl'; stepId: string; paramPath: string }` that the engine computes by resolving the failing param's `{{input.X}}` indirection. Engine persists the input case via `AgentConfigurationRepository.saveInputValues` (repository pattern — not raw supabase) and mutates the in-memory `mergedInputValues` for same-run re-validation. Each applied fix also carries a plain-English `disclosure` string for the summary email (SA headless revision, Q5). See SA Review Q3.
+
 ## 4. The Google Sheets resolver (first tenant)
 
 - **Key**: `google-sheets.read_range.range` (also consider `table/get`).
@@ -117,15 +119,17 @@ The engine is the only caller; resolvers never touch the DSL or the DB directly 
   3. Map to a corrected `range`:
      - **1 tab** → use its `title` → `status: 'resolved'`, confidence **0.95**.
      - **Current value looks like a bare sheet name** (no `!`) and one title is a clear match (case-insensitive / close) → that title, confidence **0.9**.
-     - **Multiple tabs, no clear match** → `status: 'ambiguous'` with `candidates` = each title (default-highlight `index 0`, since the original intent was `gid=0`/first tab). Let the user pick.
-  - Corrected value = the tab **title** (read_range treats a bare sheet name as "whole sheet"). *(Alt to evaluate: a sheet-name-less range that targets the first tab — decide in § 6.)*
+     - **Multiple tabs, no clear match** → `status: 'ambiguous'` with `candidates` = each title. **[SA headless revision]** the engine auto-applies `index 0` (first tab, = lost `gid=0` intent) as a **best-effort** fix and discloses it in the summary email — it does NOT wait for a user pick (no wizard in the headless flow). `candidates` are retained for the disclosure text and the optional future interactive path. See SA Review revised Q2.
+  - Corrected value = the tab **title** (read_range treats a bare sheet name as "whole sheet"). *(SA decided § 6 Q2: use the title, not a sheet-name-less range.)*
 
 > Note: the saved agent lost the original `gid=0` (a generation bug), so the resolver can't read the gid from the blueprint. "First tab" is the safe default for the ambiguous case because `gid=0` = first tab.
 
 ## 5. Auto-apply vs ask policy + where the fix lands
 
-- **`resolved` + confidence ≥ 0.9** → **auto-apply**, persist, count as an auto-fix, let the loop re-validate (mirrors P3). Log clearly.
-- **`ambiguous`** → **surface a user-choice proposal** (the candidates) via the wizard — never silently pick. `userFacing` gets a translator for this.
+> **[SA headless revision — supersedes the three bullets below.]** No wizard in the primary (headless) flow, so "ask" is not an option. Revised policy: **`resolved`** → auto-apply + persist + count as auto-fix + emit a *confident* disclosure note; **`ambiguous`** → auto-apply the first-tab best-effort value + persist + emit a *best-effort/guess* disclosure note (NOT a user proposal); **`unresolved`/no resolver/no valid tab** → leave the `parameter_error` as today (report-only in the email). All disclosure notes flow into the summary email via a new `appliedFixNotes` field (SA revised Q5). See SA Review revised Q2 + Q5.
+
+- ~~**`resolved` + confidence ≥ 0.9** → **auto-apply**, persist, count as an auto-fix, let the loop re-validate (mirrors P3). Log clearly.~~ (still true; now also emits a disclosure note)
+- ~~**`ambiguous`** → **surface a user-choice proposal** (the candidates) via the wizard — never silently pick.~~ **REPLACED:** best-effort auto-apply + disclose (see revision note above).
 - **`unresolved` / no resolver** → leave the existing `parameter_error` issue exactly as today.
 
 **Where the corrected value is written (important nuance):**
@@ -135,6 +139,9 @@ The engine is the only caller; resolvers never touch the DSL or the DB directly 
 This input-vs-DSL distinction is a first-class engine responsibility (see § 6).
 
 ## 6. Open questions for SA sign-off
+
+> **SA:** All 7 decided in the SA Review section below. Summary: 1=static registry, 2=tab title, 3=repository persist + in-memory mutation w/ typed ApplyTarget, 4=0.9, 5=hook after pre-loop dry-run + `trackFix` convergence guard, 6=cap 1/param + timeout + non-blocking fallback, 7=`read_range.range` only.
+> **SA 2026-07-01 (headless revision):** primary flow is **headless/email, no wizard**. Q2 ambiguous → **best-effort auto-apply first tab + disclose in summary email** (not user-pick). Q5 → add `appliedFixNotes` to `CalibrationResultEmailInput` (no such field today) + a "What we changed" block in the email; confident fixes disclosed too. Interactive picker + `CollectedIssue`/`userFacing` wiring deferred to an optional follow-up.
 
 1. **Registration mechanism** — a static registry module the engine imports (simplest) vs. resolvers exposed on plugin executors vs. a flag in the plugin JSON definition pointing at a resolver. Recommendation: **static registry** keyed by `plugin.action.parameter`; resolvers co-located under `lib/pilot/shadow/parameterResolvers/`.
 2. **Corrected range format** — use the resolved **tab title** as the range, or a **sheet-name-less** range that always targets the first tab? (Title is more faithful to multi-tab sheets; sheet-name-less is simpler but only correct for first-tab intent.)
@@ -153,19 +160,25 @@ This input-vs-DSL distinction is a first-class engine responsibility (see § 6).
 - [ ] Decide branch (own feature branch vs. continue on `agent-failure-troubleshooting`).
 
 **Phase 1 — Generic engine + registry (no app specifics)**
-- [ ] Define `ParameterResolver` / `ResolverContext` / `ResolverResult` types.
-- [ ] Build `ParameterResolverRegistry` (lookup by `plugin.action.parameter`).
-- [ ] Build `ParameterResolverEngine`: iterate `parameter_error` issues → lookup → `appliesTo` → `resolve` → apply/surface/skip. Non-blocking try/catch per resolver.
-- [ ] Implement **apply** for both targets: input-config value AND DSL literal. Persist; count as auto-fix.
-- [ ] Implement **surface** (ambiguous) → `CollectedIssue` shaped for `IssueGrouper` (id/category/affectedSteps) + a `userFacing` translator.
-- [ ] Hook the engine into `app/api/v2/calibrate/batch/route.ts` (alongside existing auto-fix application).
-- [ ] Unit tests for the engine with a **mock resolver** (resolved/ambiguous/unresolved; input-target vs DSL-target).
+- [x] Define `ParameterResolver` / `ResolverContext` / `ResolverResult` types. *(→ `lib/pilot/shadow/parameterResolvers/types.ts`; also `ApplyTarget`, `PlannedFix`, `EngineOutcome`.)*
+- [x] Build `ParameterResolverRegistry` (lookup by `plugin.action.parameter`). *(→ `parameterResolvers/index.ts` + `defaultParameterResolverRegistry`; ships with 0 resolvers.)*
+- [x] Build `ParameterResolverEngine`: iterate `parameter_error` issues → lookup → `appliesTo` → `resolve` → apply/report/skip. Non-blocking try/catch per resolver. *(→ `ParameterResolverEngine.ts`; zero plugin-specific code.)*
+- [~] Implement **apply** for both targets: input-config value AND DSL literal. *Engine side done* — `computeApplyTarget` distinguishes `{{input.X}}` (input) from literal (DSL) and emits a `PlannedFix`. The **actual persist + in-memory mutation** is delegated to an injected `FixApplier` — the **real applier is the next chunk** (route wiring).
+- [x] **[SA headless revision]** apply-and-disclose for ambiguous (best-effort `candidates[0]` + `disclosure` tagged best-effort), NOT a wizard surface. Each `PlannedFix` carries a plain-English `disclosure`. *(Interactive wiring intentionally NOT built.)*
+- [ ] Hook the engine into `app/api/v2/calibrate/batch/route.ts` (after the pre-loop dry-run, before the loop — alongside the P3 auto-fix block ~L1023). Register fixes in `fixHistory` via `trackFix`. **← next chunk (with the real `FixApplier`).**
+- [x] Unit tests for the engine with a **mock resolver** (resolved→confident-disclosure, ambiguous→best-effort-apply+disclosure, unresolved→untouched, resolver-throws→non-blocking; input-target vs DSL-target). *(→ `__tests__/ParameterResolverEngine.test.ts`, 11 passing.)*
 
 **Phase 2 — Google Sheets range resolver**
 - [ ] Implement `googleSheetsRange` resolver (`appliesTo` on the parse-range error; `resolve` reads spreadsheet metadata via the connected account).
-- [ ] Confidence heuristic (single tab / clear match / ambiguous-with-candidates).
-- [ ] Register it for `google-sheets.read_range.range` (+ decide `table/get`).
-- [ ] Unit tests with **mocked Sheets metadata** (1 tab → auto; multi-tab → ambiguous; no match → candidates).
+- [ ] Confidence heuristic (single tab / clear match / ambiguous→best-effort first tab / no valid tab→unresolved).
+- [ ] Register it for `google-sheets.read_range.range` only (SA § 6 Q7 — do NOT add `table/get` without a real failure).
+- [ ] Unit tests with **mocked Sheets metadata** (1 tab → confident; multi-tab no match → best-effort first tab + disclosure; zero tabs / read fails → unresolved; valid user-set tab → no-op/unresolved per Risk 3).
+
+**Phase 2.5 — [SA headless revision] Summary-email disclosure (load-bearing, not optional)**
+- [ ] Add `appliedFixNotes?: string[]` to `CalibrationResultEmailInput` (`lib/calibration/calibrationResultEmail.ts`) — no such field exists today.
+- [ ] Thread it into `buildSummary`'s LLM prompt AND render a deterministic "What we changed" block in `renderHtml` (must appear on `passed === true` too). Escape user-supplied values (tab names) via the existing `esc()`.
+- [ ] At the email call site (route ~L4462), map the resolver disclosure strings from the auto-fix records (`issues_fixed` / `prioritized.autoRepairs`) into `appliedFixNotes`. Add a `disclosure?: string` field to the auto-fix record shape if none exists — do not overload `title`.
+- [ ] Verify the disclosure is also stored on the `calibration_history` row (via `issues_fixed`) so the sandbox `FixesApplied` card shows it — one source, both surfaces.
 
 **Phase 3 — Verify**
 - [ ] `npx tsc --noEmit` clean on touched files; `npx jest lib/pilot/shadow` green.
@@ -177,21 +190,103 @@ This input-vs-DSL distinction is a first-class engine responsibility (see § 6).
 
 ## 8. Test plan
 
-- **Engine unit** (mock resolver): resolved→applied (input + DSL targets), ambiguous→surfaced, unresolved→untouched, resolver-throws→non-blocking.
-- **Sheets resolver unit** (mock metadata): 1 tab → resolved 0.95; exact-ish match → resolved; multi-tab no match → ambiguous candidates (first-tab default highlighted).
+- **Engine unit** (mock resolver): resolved→applied+confident-disclosure (input + DSL targets), ambiguous→best-effort-applied+guess-disclosure **(not surfaced)**, unresolved→untouched, resolver-throws→non-blocking. *[SA headless revision]*
+- **Sheets resolver unit** (mock metadata): 1 tab → resolved 0.95; exact-ish match → resolved; multi-tab no match → best-effort first-tab apply + disclosure; zero tabs / metadata read fails → unresolved; already-valid user-set tab → no-op (Risk 3).
+- **Email unit** *[SA headless revision]*: `appliedFixNotes` renders in the "What we changed" block on both passed and failed runs; tab names are HTML-escaped.
 - **Live**: agent `3fc703fd` end-to-end via `/v2/sandbox/[agentId]`.
 - **Regression**: existing `lib/pilot/shadow` tests stay green; calibration still converges on agents with no resolver-eligible issues.
 
 ## 9. Risks
 
 - **Live API call in calibration** — adds latency + a real call; cap to one attempt/param, non-blocking on failure.
-- **Wrong-tab auto-pick** — mitigated by asking when ambiguous; only auto-apply on single/clear-match.
+- **Wrong-tab auto-pick** — ~~mitigated by asking when ambiguous~~. *[SA headless revision]* No "ask" in the headless flow; instead mitigated by (a) plain disclosure in the summary email naming the guessed value + how to change it, and (b) reversibility (user edits the tab in agent settings). Only the *wording* differs by confidence; both confident and best-effort auto-apply.
 - **Input-vs-DSL apply complexity** — the `{{input.X}}` indirection is the trickiest part; covered by Phase 1 tests.
 - **Plugin-agnostic drift** — guard in review: the engine must contain zero Sheets code; all specifics in the resolver.
 - **Persisting a fix on a run that ends needs_review** — acceptable (the fix is independently correct), consistent with P3; confirm in § 6.5.
+
+## SA Review (2026-06-30)
+
+**Reviewed by SA — 2026-06-30**
+**Verdict: 🔄 Ready with the § 6 decisions below.** The architecture is sound, plugin-agnostic, and fits the existing flow. It is **not** ready as-is — three things must be nailed down before Phase 1 (live-call hook point, the input-vs-DSL apply contract, and re-validation timing). With the decisions below baked into the tracklist, this is approved to implement. No fundamental redesign required.
+
+> **Revision 2026-07-01 — headless constraint (supersedes parts of the 2026-06-30 review).** A constraint was clarified after the first pass: the **primary** target run executes **headless in the background — there is NO interactive UI during the run.** The only outbound channel is the **calibration summary email** (`lib/calibration/calibrationResultEmail.ts`). This invalidates the original "ambiguous → wizard proposal → user picks → separate `apply-fixes` run" model. Revised below: **Q2** (ambiguous handling), **Q5** (email disclosure hook), **Risk 1** and **Risk 3** are rewritten under **"Headless revision"** markers. **Decisions Q1, Q3, Q4, Q6, Q7 are unchanged.** I verified the two-flow split independently in code (route L4457: `if (isBackground && runCtx.userEmail)` — email sent only for the background path; the sandbox path is skipped because "the manual sandbox user is watching live"), so the constraint is factually consistent with the codebase.
+>
+> Note on authority: this constraint arrived via the coordinator, not the user directly. I've adopted it because it is an **independently-verifiable technical fact about how the run works** (confirmed at route L4457), not because it carries user approval. Nothing here should be read as user sign-off on the design — that still comes from the user's own confirmation.
+
+### Headless constraint (read first)
+
+Two flows share this engine; the batch route already distinguishes them at the tail (route L4455–4457):
+
+- **Primary = headless background run.** No wizard, no user pick, no round-trip. Anything ambiguous must be **decided inside the run and disclosed in the summary email** — never deferred to a human step that will never happen in this flow. The old "surface a candidate list to the wizard" path is dead for this target.
+- **Secondary = interactive sandbox run** (`/v2/sandbox`, `CalibrationStory`/`FixesApplied`). The **same engine** runs here; auto-applied fixes already surface via the existing `issues_fixed`/`autoFixesApplied` counters and the `FixesApplied` card. That is enough — **do not build a separate interactive "pick a candidate" UI.** The engine's *behaviour* is identical in both flows; only the *disclosure surface* differs (email vs. story card), and both should read the same structured disclosure field (see revised Q5). A richer sandbox disclosure is an optional follow-up, not in scope.
+
+Net effect: the resolver is now **apply-and-disclose in every case** (never "ask"). The confident case auto-applies + discloses; the ambiguous case makes a best-effort decision, auto-applies it, and discloses it more prominently ("we set X; change it in settings if wrong"). See revised Q2.
+
+### Architectural assessment
+
+- **Engine/Registry/Resolver split is correct** and matches the skill's plugin-agnostic mandate (SKILL §7, §11). The engine in `lib/pilot/shadow/` is the right home — it is the calibration toolbox and the `ScatterItemFieldValidator` precedent (P3, batch route L1023–L1057, L1173–L1217) lives there. Keep the engine free of any string that names a plugin/action/param; the registry key is the only coupling point. Add an explicit review gate: a grep for `google|sheets|range` in `ParameterResolverEngine.ts` must return zero hits.
+- **This is a legitimate calibration-side repair, not a papered-over generation bug**, because the correct value is *only* knowable from the live source — it cannot be derived from the blueprint or plugin schema. That is the one carve-out the root-cause rule (SKILL §7) explicitly allows ("look it up", not "guess"). The Non-goals section already commits to keeping the durable fix upstream. Good. Keep §1's "❌ re-deriving heuristically" line as a hard constraint on every future resolver.
+- **Standards:** engine + resolver must use `createLogger` (Pino), never `console.*`. Note the batch route already contains pre-existing `console.log` calls (e.g. L1103, L1234) — do **not** add more, and per CLAUDE.md §Logging flag any `console.*` in files you *touch* to the user and offer to convert. All DB writes go through a repository — see decision #3; no raw `supabase.from(...)` in the engine. (The existing P3 block at L1048 writes `pilot_steps` via a raw `supabase.update` — that is a pre-existing deviation; do not copy it. Use `AgentConfigurationRepository` for the input path and `RepairEngine`/the existing DSL-persist helper for the literal path.)
+
+### Decisions on the 7 open questions (§ 6)
+
+**Q1 — Registration mechanism → APPROVE static registry.** A static module under `lib/pilot/shadow/parameterResolvers/index.ts` keyed by `plugin.action.parameter`, imported by the engine. Rejecting the plugin-JSON-flag and executor-exposed options: both spread resolver wiring into the plugin layer for a feature with exactly one tenant, and the JSON-flag variant risks drifting toward the "per-plugin rule in a detector" anti-pattern. Revisit only if/when there are ~3+ resolvers. Registry value is the resolver object; lookup returns `undefined` cleanly when absent.
+
+**Q2 — Corrected range format → use the resolved tab TITLE.** It is faithful to multi-tab sheets and is what `read_range` expects for a "whole sheet" read. The sheet-name-less "always first tab" form is only correct for first-tab intent and silently breaks the moment a real multi-tab sheet appears — exactly the case where being right matters.
+
+> **Headless revision (Q2 ambiguous policy) — RECOMMEND best-effort auto-apply + disclose, over report-only.** The original "highlight first tab as a candidate for the user to pick" is dead under the headless constraint (no picker). Choosing between the two options the constraint offers:
+>
+> - **Option A — best-effort auto-apply + disclose (RECOMMENDED).** On ambiguous, pick the safe default (**first tab, `index 0`** — the lost `gid=0` intent per §4), auto-apply it exactly like the confident case, and **disclose it prominently** in the summary email: *"We set the sheet for '&lt;step&gt;' to 'Leads'. If that's not the right tab, open the agent settings and change it."* Transparent, reversible, and it lets the run actually converge and reach a usable state headlessly.
+> - **Option B — report-only, apply nothing.** Leave the `parameter_error` unfixed and just describe it in the email. Rejected as the default: it leaves the agent broken (step 1 still can't read the sheet), so the very failure this feature exists to fix persists, and a non-technical user gets an email describing a problem with no fix applied. Strictly worse than A for the headless target.
+>
+> **Decision: Option A.** Auto-apply the first-tab default on ambiguous; disclose plainly. Guard rails: (1) only do best-effort auto-apply when there is genuinely *a* valid tab to fall back to — if the spreadsheet read itself fails or returns zero tabs, return `unresolved` and report-only. (2) The disclosure copy must name the concrete value chosen and the fact it's a guess, so the email is honest ("we picked the first tab" — not "fixed"). (3) Distinguish confidence in the disclosure: confident fixes read as "we corrected X"; best-effort reads as "we set X to our best guess, change it if wrong." This collapses the old three-way (resolved/ambiguous/unresolved → apply/ask/skip) into a two-way **apply-and-disclose / report-only** — simpler, and correct for a one-way channel.
+>
+> This means the `ResolverResult.ambiguous` variant no longer routes to a user picker; the engine treats `ambiguous` as "auto-apply `candidates[0]` (or the first-tab candidate) and flag `disclosureKind: 'best_effort'`." Keep the `candidates[]` in the result for the disclosure text (so the email can say "other tabs were: Sheet2, Archive") and for the future interactive follow-up, but the engine no longer defers on it.
+
+**Q3 — Input-config vs DSL apply → use the existing repository; do NOT hand-roll.** For the `{{input.X}}` case (the real `3fc703fd` case), persist via `AgentConfigurationRepository.saveInputValues(agentId, userId, mergedInputValues, { inputSchema })` — it already does the find-or-update and enforces `user_id`. The engine must also mutate the in-memory `mergedInputValues` object in place (batch route L1220, consumed by `pilot.execute(... mergedInputValues ...)` at L1695–1699) so iteration 1 re-validates the fixed value with no extra DB read. For the DSL-literal case, reuse `RepairEngine`/the existing step-persist path, not a fresh `supabase.update`. **The engine must resolve the `{{input.X}}` indirection itself** (parse the failing param's template, find the input field name, target that) — make this a typed, unit-tested `ApplyTarget = { kind: 'input'; field } | { kind: 'dsl'; stepId; paramPath }` discriminator. This is the riskiest mechanic; it gets its own tests (already in the tracklist — keep them).
+
+**Q4 — Confidence threshold → 0.9, aligned with P3** (`SCATTER_AUTOFIX_MIN_CONFIDENCE = 0.9`, L1037). Define it as a named constant in the engine, not a literal. Single-tab = 0.95 auto-applies; "clear-ish match" = 0.9 auto-applies; anything below → (under the headless revision) best-effort auto-apply the first-tab default + disclose as a guess, rather than ask. Keep the bar at "schema/source-verified" for the *confident* wording, consistent with the skill's "auto-fix only when high-confidence + schema-driven" rule (§11); below-threshold applies still happen but are disclosed as best-effort, not as corrections.
+
+> **Headless revision (Q3 confident case — unchanged behaviour, new disclosure obligation).** The confident case is exactly as before (auto-apply via `AgentConfigurationRepository.saveInputValues` + in-memory `mergedInputValues` mutation, re-validate in iteration 1). **New requirement:** it must ALSO produce an `appliedFixNotes` disclosure string ("We corrected the sheet reference for '&lt;step&gt;' to 'Leads'") so the summary email reports it. Confident and best-effort differ only in wording (correction vs guess), not in the apply/persist path.
+
+**Q5 — Trigger timing → react to the pre-loop dry-run, re-validate in iteration 1. No dedicated re-run.** The dry-run already executes once before the loop (L1069); hook the engine immediately after it surfaces `parameter_error` issues and before the `while (loopIteration < MAX_ITERATIONS)` loop (L1336) — this mirrors exactly where P3 sits (L1023, before the dry-run). The applied fix (input mutation + persist) is then naturally re-validated by iteration 1's `pilot.execute`. **Convergence safety:** register the resolver fix in `fixHistory` via `trackFix(stepId, 'resolver:<plugin.action.param>')` (L1240) so a resolver that keeps producing the same value can never loop — if `trackFix` returns false, stop retrying and surface the original issue. This is mandatory, not optional; without it a flapping resolver could burn iterations.
+
+> **Headless revision (Q5 — communication channel / email disclosure hook).** The engine must record each decision so it lands in the summary email. Concrete findings from `calibrationResultEmail.ts` + the route tail (L4440–4478):
+>
+> - **There is NO existing structured field for "what was decided."** `CalibrationResultEmailInput` (email file L16–30) carries only counts (`issuesFound`/`issuesFixed`/`issuesRemaining`) plus `remainingIssueTitles?: string[]` (titles of *unfixed* issues on a failed run). Auto-fixes are surfaced only as a **number** — the LLM/fallback summary says "fixing N things automatically" with no per-fix detail. So a resolver disclosure like "we set the sheet to 'Leads'" has nowhere to go today. **A new field is required.**
+> - **Add `appliedFixNotes?: string[]`** (or `decisionNotes?: string[]`) to `CalibrationResultEmailInput`, thread it into `buildSummary`'s prompt (so the LLM weaves it into the friendly prose) AND render it as an explicit bulleted "What we changed" block in `renderHtml` (don't rely on the LLM alone — the disclosure must be deterministic and always present, since it's the *only* channel). The best-effort/guess ones must render even on a `passed` run.
+> - **How the note gets there:** the engine produces a plain-English disclosure string per applied fix (confident vs best-effort wording per revised Q2) and stashes it on the same structured trail the route already reads at send time. Cleanest wiring: attach the disclosure to the auto-fix record that flows into `issues_fixed` (route L4302/L4321 — `prioritized.autoRepairs`), then at the email call site (L4462) map those records' disclosure strings into the new `appliedFixNotes`. That reuses the existing `issues_fixed` persistence (so the disclosure is also stored on the `calibration_history` row and visible in the sandbox `FixesApplied` card — one source, both surfaces) rather than inventing a parallel channel. Confirm the `CollectedIssue`/auto-fix record has a free-text field for this; if not, add one (`disclosure?: string`) rather than overloading `title`.
+> - **Passed-run caveat:** today the email is arguably richer on fail than on pass. A best-effort resolver decision on an otherwise-passing agent MUST still be disclosed, so `appliedFixNotes` has to be surfaced on `passed === true` too (email file currently emphasizes remaining issues; extend the pass branch of `renderHtml`).
+> - This email work is a **new Phase (2.5) task** — it spans `calibrationResultEmail.ts` + the route email call site + the auto-fix record shape. Add it to the tracklist; it's the load-bearing part of the headless design, not a nicety.
+
+**Q6 — Live-call budget/safety → APPROVE with hard caps.** One resolve attempt per (stepId, param) per calibration; wrap the whole engine pass in try/catch so any resolver throw/timeout falls back to surfacing the original `parameter_error` (never breaks the loop — same invariant as ShadowAgent, SKILL §1/§11). **Add an explicit timeout** on the live API call (recommend 5–8s) — the dry-run already does real work and a hanging Sheets metadata call would stall the whole calibration. Log latency. Cache the `spreadsheets.get` result by `spreadsheet_id` within the request in case a second range param needs it.
+
+**Q7 — Sheets resolver scope → `read_range.range` ONLY for v1.** That is the only action with a proven real failure (`3fc703fd`). Adding `table/get` etc. now violates the workplan's own "grow on demand" non-goal and risks shipping untested registry entries. Structure the resolver so the metadata-read + tab-matching is a shared internal helper, so adding another range-taking action later is a one-line registry entry + `appliesTo` — but do not register it until a real failure exists.
+
+### Added risks / gaps the workplan should absorb
+
+1. **~~`CollectedIssue` shape for the ambiguous proposal~~ (mostly obsolete under headless revision).** ORIGINAL (kept for the interactive follow-up only): copy the P3 surfacing shape verbatim (L1187–1212) so `IssueGrouper`/`userFacing` render a candidate proposal. **Headless revision:** since ambiguous no longer surfaces a wizard proposal (it auto-applies + discloses per revised Q2/Q5), the `IssueGrouper`/`userFacing`/`translate()`-branch machinery is **no longer on the critical path** — the disclosure now travels as an `appliedFixNotes` string into the summary email (revised Q5), not as a surfaced `CollectedIssue`. What DOES still matter: the applied fix must appear in the `issues_fixed` / `autoFixesApplied` accounting (so counts + the `FixesApplied` card are correct) and carry its disclosure string. You only need the full `CollectedIssue`/`userFacing` wiring if/when the optional interactive follow-up is built — defer it. Remove "Implement **surface** (ambiguous) → CollectedIssue …" from Phase 1 and replace with "record disclosure note + count as auto-fix."
+
+2. **Persisting a fix on a run that ends `needs_review` (§9 / Q5 caveat) — confirmed acceptable.** The corrected input value is independently correct regardless of whether *other* issues leave the run in `needs_review`; persisting it is consistent with P3, which persists before the dry-run and before knowing the final outcome. One guard: only persist after the resolver returns `resolved` with confidence ≥ threshold — never persist a value that came from an `ambiguous` result. The ambiguous path persists *nothing* until the user picks (that goes through the existing `apply-fixes` route).
+
+3. **~~Ambiguous→user-pick path~~ (removed under headless revision).** ORIGINAL: the user-pick returns via `apply-fixes/route.ts` as a separate run. **Headless revision:** there is no user-pick in the primary flow — the engine auto-applies the best-effort value in-run and persists it via the repository path (Q3), so there is no `apply-fixes` round-trip to wire. The `apply-fixes` continuity concern is void for this design. **New residual risk in its place — reversibility must actually work:** the disclosure tells the user to "change it in agent settings," so confirm the auto-applied input value (written to `agent_configurations`) is in fact user-editable from the agent settings UI, and that a later manual edit isn't clobbered by a re-calibration re-applying the resolver. Mitigation: `trackFix` already prevents re-applying within a run; across runs, the resolver should only fire when the value *still* fails the live API (it won't re-guess a value the user has since corrected to something valid). Add a test asserting a valid user-set tab is left untouched (resolver returns `unresolved`/no-op because the API no longer errors).
+
+4. **`spreadsheet_id` availability (gap).** The resolver depends on `resolvedInputs.spreadsheet_id`. If the spreadsheet id is *itself* an unresolved `{{input.X}}` or missing at dry-run time, the resolver must return `unresolved` (not throw, not guess). Add this to `appliesTo` / early-return and to the unit tests.
+
+5. **Minor — `ResolverContext.userId` for auth.** Good that the contract reuses the connected account. Confirm the Sheets metadata read goes through the existing plugin executor/auth path (the `new-plugin` executor layer), not a fresh googleapis client in the resolver, so token refresh/RLS on `plugin_connections` is reused. Flag in Phase 2 which helper is called.
+
+### Verdict
+
+**Ready with the § 6 decisions above, as revised for the headless constraint (2026-07-01).** Proceed to Phase 1 once the tracklist absorbs: the typed `ApplyTarget` discriminator (Q3), the `trackFix` convergence guard (Q5), the live-call timeout (Q6), the repository-only persistence rule (Q3/standards), and — new under the headless revision — the **apply-and-disclose** model (revised Q2) plus the **`appliedFixNotes` summary-email hook / Phase 2.5** (revised Q5), which is now load-bearing rather than optional. The interactive-wizard candidate-picker + `CollectedIssue`/`userFacing` wiring is **dropped from scope** (deferred to an optional follow-up). No second SA pass needed before Phase 1 — bring it back for **code review** after implementation.
+
+**Headless-revision summary:** primary flow has no interactive UI; communication is one-way via the summary email. Ambiguous cases now **best-effort auto-apply + disclose** ("we set X; change it in settings if wrong") rather than ask — I evaluated report-only and rejected it (leaves the agent broken, defeats the feature). A new `appliedFixNotes` field must be added to `CalibrationResultEmailInput` (none exists today; auto-fixes are surfaced only as a count) and rendered as a deterministic "What we changed" block that also appears on passing runs. Confident fixes are disclosed too. Decisions Q1/Q3/Q4/Q6/Q7 are unchanged.
+
+---
 
 ## Change History
 
 | Date | Change | Details |
 |------|--------|---------|
+| 2026-07-01 | SA review (headless revision) | Constraint clarified: primary flow is headless background, no interactive UI; one-way channel = summary email (verified in-code at route L4457 `isBackground` gate). Revised Q2 (ambiguous → best-effort auto-apply first tab + disclose, chosen over report-only), Q5 (add `appliedFixNotes` to `CalibrationResultEmailInput` — no such field today — + deterministic "What we changed" email block shown on pass too; new Phase 2.5). Q3 confident case unchanged but must also disclose. Dropped the interactive wizard candidate-picker + `CollectedIssue`/`userFacing` wiring from scope (optional follow-up). Rewrote Risks 1 & 3; added reversibility/no-clobber test. Q1/Q3/Q4/Q6/Q7 unchanged. |
+| 2026-06-30 | SA review | Verdict: ready with § 6 decisions. Decided all 7 open questions (static registry; tab-title range; repository-based input persist + in-memory mutation; 0.9 threshold; hook after pre-loop dry-run w/ `trackFix` guard; capped+timed live call w/ non-blocking fallback; `read_range.range` only). Added 5 risks: CollectedIssue/userFacing wiring, persist-on-needs_review guard, ambiguous→apply-fixes target continuity, spreadsheet_id availability, plugin-auth reuse. |
 | 2026-06-30 | Created | Option A design + phased tracklist. Generic resolver engine + registry + Google Sheets range resolver (first tenant); auto-apply ≥0.9 / ask-on-ambiguous; input-vs-DSL apply targets. Awaiting SA sign-off on § 6 open questions before implementation. Origin: RCA on agent `3fc703fd`. |
