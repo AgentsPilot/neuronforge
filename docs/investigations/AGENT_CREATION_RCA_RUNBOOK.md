@@ -12,6 +12,15 @@ A methodical, repeatable procedure for diagnosing **why the V2 thread-based agen
 
 **Golden rule:** conclude the RCA — **which phase authored the defect, why, and which surface owns the fix** — before discussing fixes. A creation-flow defect is almost always authored in exactly one phase's LLM response; find that turn first.
 
+**Doc map for the `3fc703fd` "Sheet1" cycle** (the names are easy to confuse — they are *different scopes*, not duplicates):
+
+| Doc | Scope |
+|---|---|
+| `EP_PRODUCTION_RCA_CONCLUSION_sheets-range.md` | **This runbook's worked example** — the chat-flow / EP-production RCA (why Phase 3 fabricated `"Sheet1"`). The canonical conclusion. |
+| `EP_PRODUCTION_RCA_HANDOFF_sheets-range.md` | The kickoff brief for that RCA. ✅ Superseded by the conclusion above — kept for provenance. |
+| `AGENT_CREATION_RCA_CONCLUSION_sheets-range.md` | The **V6 / downstream** conclusion (why V6 propagated the value + "Defect B"). Despite the name, this is *not* the chat-flow RCA. |
+| `AGENT_CREATION_RCA_HANDOFF_sheets-range.md` | The original ask + the calibration-RCA summary that pointed upstream. |
+
 ## Table of Contents
 
 1. [When this fires](#when-this-fires)
@@ -116,7 +125,8 @@ Ask in order:
 | 2 | Is the value wrong only in the **structured** part while the **narrative** is right? | **EP-production gap** — v16 Phase 3 (owner: `agent-creation-flow`). The fix gives the model a faithful structured option. |
 | 3 | Is the value wrong in the **narrative too**? | Phase 1/2 misunderstanding (owner: `agent-creation-flow`, but a different phase's rules). |
 | 4 | Are narrative **and** structure both correct, but the compiled DSL/step is wrong? | **V6 generation** (owner: `v6-pipeline`). Hand off — not a creation-flow defect. |
-| 5 | Is everything in the EP correct and the failure is at execution? | **Runtime / executor / external API** (owner: plugin executor). Hand off. |
+| 5 | Is the EP correct, but the **saved agent's `input_schema`** has duplicate / mismatched / unfilled fields (e.g. a clean `sheet_range` **and** a namespaced `google-sheets__table/get__range`, only one carrying the value)? | **V2 UI schema builder** — `extractInputSchema()` in `app/v2/agents/new/page.tsx` merges two key namespaces (step-scanned `{{input.X}}` refs + EP `resolved_user_inputs`) deduped by *exact name only*, so logically-identical inputs both surface; the runtime `reconcileInputsToDsl` (WP-57) bridges them by plugin+param stem. Owner: `agent-creation-flow` (`page.tsx`), **not V6**. This is "Defect B" from the `3fc703fd` cycle. |
+| 6 | Is everything in the EP correct and the failure is at execution? | **Runtime / executor / external API** (owner: plugin executor). Hand off. |
 
 **Common combo:** the value is wrong *because Phase 3 had no faithful way to encode a known-but-unnameable fact* (an opaque id, a positional reference). Name the class ("don't fabricate human-readable names from opaque ids"), not just the instance.
 
@@ -132,6 +142,7 @@ Ask in order:
 - **Non-determinism — don't re-generate to diagnose.** Phase 1 and Phase 3 are LLM calls; re-running `/v2/agents/new` may not reproduce the defect. Use the **persisted** `iterations[]`. A live re-run is only for **testing a prompt fix**, never for establishing what happened.
 - **Phase 2 "skipping" a question is often correct.** The PACING/no-re-ask hard rules make Phase 2 fold a queued ambiguity into a safe default when a prior answer resolved it. A skipped question is a defect only if the info was genuinely still needed *and* couldn't be defaulted — verify against the answers before blaming Phase 2.
 - **The plugin schema can be the culprit, not the prompt.** A misleading example or constraint in `lib/plugins/definitions/{plugin}-plugin-v2.json` gets injected verbatim into `plugin_action_summary`. Check the plugin JSON when the model's guess mirrors a schema example (e.g. it emitted `Sheet1` and the schema's leading example is `'Sheet1!A1:D10'`).
+- **A "bad value" can be a UI schema-build artifact, not a chat-flow authoring defect.** If the EP's `resolved_user_inputs` is correct but the *saved agent's* `input_schema` shows duplicate/mismatched fields (a clean `{{input.X}}` key and a namespaced `{plugin}__{cap}__{param}` key for the same thing, only one holding the value), the defect is in `extractInputSchema()` (`app/v2/agents/new/page.tsx`), which merges the two namespaces deduped by exact name — **not** in the chat flow. The runtime `reconcileInputsToDsl` (WP-57) usually masks it by bridging value→ref at execution, so it won't show up as a run failure. Don't chase it through `iterations[]` — it's authored *after* the thread, in the UI. (See classification row 5.)
 
 ---
 

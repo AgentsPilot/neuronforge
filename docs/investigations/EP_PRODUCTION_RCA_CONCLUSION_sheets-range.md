@@ -1,7 +1,7 @@
 # EP-Production RCA Conclusion — the "Sheet1" range fabrication
 
 > **Created**: 2026-07-01
-> **Agent**: `3fc703fd-9834-420d-af5b-206be912e5df` ("High-Qualified Leads Email Summary Agent")
+> **Agent**: `3fc703fd-9834-420d-af5b-026f62e25cbe` ("High-Qualified Leads Email Summary Agent") · **Thread**: `08c05035-c598-4839-bbe7-206be912e5df`
 > **Scope**: The V2 thread-based agent-creation flow (`/v2/agents/new`, v16 prompt Phases 1→2→3). Why the chat flow turned a `gid=0` spreadsheet URL into the guessed tab name `"Sheet1"`.
 > **Companions**: [EP_PRODUCTION_RCA_HANDOFF_sheets-range.md](./EP_PRODUCTION_RCA_HANDOFF_sheets-range.md) (the ask) · [AGENT_CREATION_RCA_CONCLUSION_sheets-range.md](./AGENT_CREATION_RCA_CONCLUSION_sheets-range.md) (the concluded V6/downstream RCA — not re-done here).
 > **Status**: RCA concluded. Fix direction decided. **No code changed** (conclude-before-implement discipline).

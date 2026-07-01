@@ -74,6 +74,7 @@ State: **authoring phase/turn → prose-vs-structured verdict → why (exact lin
 | Value wrong only in the **structured** part, narrative right? | **EP-production gap** → `agent-creation-flow` (v16 Phase 3). |
 | Value wrong in the **narrative too**? | Phase 1/2 misunderstanding → `agent-creation-flow` (different phase's rules). |
 | EP fully correct, but compiled **DSL/step** wrong? | **V6 generation** → `v6-pipeline`. Hand off. |
+| EP correct, but the **saved agent's `input_schema`** has duplicate/mismatched fields (clean `{{input.X}}` key **and** namespaced `{plugin}__{cap}__{param}` for the same input, only one holding the value)? | **V2 UI `extractInputSchema()`** (`app/v2/agents/new/page.tsx`) — merges step-scanned refs + EP `resolved_user_inputs` deduped by exact name; runtime `reconcileInputsToDsl` (WP-57) bridges them. Owner: `agent-creation-flow` (`page.tsx`), **not V6**. ("Defect B", `3fc703fd` cycle.) |
 | EP correct, failure at **execution**? | **Runtime / executor / external API** → plugin executor. Hand off. |
 
 **Common combo:** value wrong *because Phase 3 had no faithful way to encode a known-but-unnameable fact* (opaque id, positional ref). Name the **class** ("don't fabricate human-readable names from opaque ids"), not just the instance.
@@ -90,6 +91,7 @@ State: **authoring phase/turn → prose-vs-structured verdict → why (exact lin
 - **Non-determinism — don't re-generate to diagnose** — Phase 1 & 3 are LLM calls; a re-run may not reproduce. Use the persisted `iterations[]`. Live re-run is only for **testing a fix**.
 - **Phase-2 "skipping" is often correct** — PACING + no-re-ask fold a queued ambiguity into a safe default once a prior answer resolves it. A skip is a defect only if the info was still needed AND couldn't be defaulted.
 - **The plugin schema can be the culprit** — a misleading example/constraint in `lib/plugins/definitions/{plugin}-plugin-v2.json` is injected verbatim. Check it when the guess mirrors a schema example.
+- **A "bad value" can be a UI schema-build artifact, not a chat-flow defect** — if the EP is correct but the *saved* `input_schema` has duplicate/mismatched fields, it's `extractInputSchema()` in `page.tsx` (namespace merge), masked at runtime by `reconcileInputsToDsl` (WP-57). Authored *after* the thread — don't chase it through `iterations[]`. See classification table.
 
 ---
 

@@ -1,5 +1,7 @@
 # Handoff — EP-Production / Agent-Creation-Flow RCA for the "Sheet1" range failure
 
+> ✅ **RESOLVED 2026-07-01 — this handoff has been carried out. Conclusion: [EP_PRODUCTION_RCA_CONCLUSION_sheets-range.md](./EP_PRODUCTION_RCA_CONCLUSION_sheets-range.md).** The RCA method it describes was also distilled into the `agent-creation-rca` skill + [AGENT_CREATION_RCA_RUNBOOK.md](./AGENT_CREATION_RCA_RUNBOOK.md) and the `scripts/dump-agent-thread.ts` evidence script. Kept for provenance; start from the conclusion, not here.
+>
 > **Created**: 2026-07-01
 > **Purpose**: Self-contained context to start a NEW session investigating the **Enhanced Prompt (EP) production** root cause — i.e. the **V2 thread-based agent-creation flow** (`/v2/agents/new`, Phases 1→2→3). The **V6-generation RCA** and the **calibration RCA** are already concluded (below). This handoff drives the *most upstream* RCA: **why the chat flow turned a `gid=0` spreadsheet URL into a guessed tab name `"Sheet1"` instead of capturing a usable range.**
 > **Load these skills at the start of the new session**: `agent-creation-flow` (PRIMARY — the flow being investigated), and `v6-pipeline` (context for what the EP feeds into).
