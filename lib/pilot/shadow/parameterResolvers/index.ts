@@ -36,9 +36,10 @@ export class ParameterResolverRegistry {
 
 /**
  * The default registry used by the calibration route. Register real resolvers
- * here as they're built (Phase 2 will add the Google Sheets range resolver):
- *
- *   import { googleSheetsRangeResolver } from './googleSheetsRange';
- *   defaultParameterResolverRegistry.register(googleSheetsRangeResolver);
+ * here as they're built. Add more only when a real failure justifies one.
  */
 export const defaultParameterResolverRegistry = new ParameterResolverRegistry();
+
+// Phase 2 — first (and only current) tenant: Google Sheets range.
+import { googleSheetsRangeResolver } from './googleSheetsRange';
+defaultParameterResolverRegistry.register(googleSheetsRangeResolver);
