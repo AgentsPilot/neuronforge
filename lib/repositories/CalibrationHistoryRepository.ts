@@ -237,4 +237,66 @@ export class CalibrationHistoryRepository {
       return { data: null, error: error as Error };
     }
   }
+
+  /**
+   * Whether an admin failure alert has already been sent for this agent's
+   * current workflow version (dedup key = workflow_hash). Backs IMP-2 so a
+   * broken version only pages the admins once. Fail-closed on error → returns
+   * `true` so we do NOT risk spamming when the check itself fails.
+   */
+  async hasAdminAlertBeenSent(
+    agentId: string,
+    userId: string,
+    workflowHash: string
+  ): Promise<CalibrationHistoryRepositoryResult<boolean>> {
+    try {
+      const { data, error } = await this.supabase
+        .from('calibration_history')
+        .select('id')
+        .eq('agent_id', agentId)
+        .eq('user_id', userId)
+        .eq('workflow_hash', workflowHash)
+        .eq('metadata->>admin_alerted', 'true')
+        .limit(1)
+        .maybeSingle();
+
+      if (error) throw error;
+
+      return { data: !!data, error: null };
+    } catch (error) {
+      logger.error(
+        { err: error, agentId, workflowHash },
+        'Failed to check admin-alert dedup — treating as already-sent to avoid spam'
+      );
+      return { data: true, error: error as Error };
+    }
+  }
+
+  /**
+   * Mark a calibration_history row as having triggered an admin failure alert
+   * (IMP-2 dedup marker). Merges into existing metadata so nothing is lost.
+   */
+  async markAdminAlerted(
+    id: string,
+    existingMetadata: Record<string, any> | null | undefined
+  ): Promise<CalibrationHistoryRepositoryResult<boolean>> {
+    try {
+      const metadata = {
+        ...(existingMetadata || {}),
+        admin_alerted: true,
+        admin_alerted_at: new Date().toISOString(),
+      };
+      const { error } = await this.supabase
+        .from('calibration_history')
+        .update({ metadata })
+        .eq('id', id);
+
+      if (error) throw error;
+
+      return { data: true, error: null };
+    } catch (error) {
+      logger.error({ err: error, id }, 'Failed to mark calibration_history row as admin-alerted');
+      return { data: null, error: error as Error };
+    }
+  }
 }

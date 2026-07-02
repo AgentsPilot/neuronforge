@@ -50,3 +50,35 @@ describe('calibration email — "What we changed" block', () => {
     expect((html.match(/<li /g) || []).length).toBe(2);
   });
 });
+
+describe('calibration email — managed failure variant (IMP-1)', () => {
+  it('shows the deterministic reassurance line on a FAILED run', () => {
+    const html = renderHtml(input({ passed: false }), 'summary');
+    expect(html).toContain('Our team is working to resolve this');
+    expect(html).toContain('no action needed from you');
+  });
+
+  it('uses managed h1 + "View your agents" CTA on a FAILED run', () => {
+    const html = renderHtml(input({ passed: false }), 'summary');
+    expect(html).toContain("We're getting your agent ready");
+    expect(html).toContain('View your agents');
+    expect(html).not.toContain('Review & fix');
+  });
+
+  it('suppresses the issue-count table on a FAILED run', () => {
+    const html = renderHtml(
+      input({ passed: false, issuesFound: 3, issuesFixed: 1, issuesRemaining: 2 }),
+      'summary',
+    );
+    expect(html).not.toContain('Still needs attention');
+    expect(html).not.toContain('Issues found');
+  });
+
+  it('keeps the success layout unchanged on a PASSED run', () => {
+    const html = renderHtml(input({ passed: true }), 'summary');
+    expect(html).toContain('Your agent is ready');
+    expect(html).toContain('Still needs attention');
+    expect(html).toContain('View your agent');
+    expect(html).not.toContain('Our team is working to resolve this');
+  });
+});

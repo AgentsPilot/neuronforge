@@ -21,6 +21,8 @@ import { CalibrationHistoryRepository } from '@/lib/repositories/CalibrationHist
 import { acquireLock, releaseLock } from '@/lib/utils/distributedLock';
 import { AgentRepository } from '@/lib/repositories/AgentRepository';
 import { sendCalibrationResultEmail } from '@/lib/calibration/calibrationResultEmail';
+import { sendCalibrationAdminAlert } from '@/lib/calibration/calibrationAdminAlert';
+import { AdminAccessService } from '@/lib/services/AdminAccessService';
 import { createLogger } from '@/lib/logger';
 import type { CollectedIssue } from '@/lib/pilot/types';
 // NOTE: this route historically imported `Agent` from `@/types/agent`, a module
@@ -64,6 +66,12 @@ export async function POST(req: NextRequest) {
   // up from the live data source ("What we changed"). Declared at function scope
   // so the finally-block email tail can read them. Empty unless a resolver fires.
   const resolverDisclosures: string[] = [];
+
+  // IMP-2: the input values the last run executed with ("the data the agent was
+  // processing"). Lifted to function scope so the finally-block admin alert can
+  // include it. Also carries the last executionId for RCA links.
+  let lastRunInputs: Record<string, any> | null = null;
+  let lastExecutionId: string | null = null;
 
   try {
     // 1. Authenticate user
@@ -1713,6 +1721,10 @@ export async function POST(req: NextRequest) {
       );
 
       finalResult = result;
+      // IMP-2: snapshot the inputs + execution id used for this run so the admin
+      // failure alert (finally block) can report what the agent was processing.
+      lastRunInputs = { ...(mergedInputValues || {}) };
+      lastExecutionId = result.executionId ?? null;
 
       logger.info({
         sessionId,
@@ -4531,16 +4543,16 @@ export async function POST(req: NextRequest) {
         const agentRepo = new AgentRepository(runCtx.supabase);
         await agentRepo.setCalibrationStatus(runCtx.agentId, runCtx.userId, passed ? 'passed' : 'failed');
 
+        const base = process.env.NEXT_PUBLIC_APP_URL || new URL(req.url).origin;
+
         // Email only for the background (post-creation) path — the manual sandbox
         // user is watching live and doesn't need an email.
         if (isBackground && runCtx.userEmail) {
-          const base = process.env.NEXT_PUBLIC_APP_URL || new URL(req.url).origin;
+          // IMP-1: on failure the email is "managed / we're on it" — CTA points
+          // at the agents list, not the sandbox (the user isn't asked to self-fix).
           const ctaUrl = passed
             ? `${base}/agents/${runCtx.agentId}`
-            : `${base}/v2/sandbox/${runCtx.agentId}`;
-          const remainingIssueTitles = (latest?.issues_remaining || [])
-            .map((i: any) => i?.title || i?.message || i?.description)
-            .filter(Boolean);
+            : `${base}/v2/agent-list`;
 
           await sendCalibrationResultEmail({
             to: runCtx.userEmail,
@@ -4550,11 +4562,60 @@ export async function POST(req: NextRequest) {
             issuesFound,
             issuesFixed,
             issuesRemaining,
-            remainingIssueTitles,
             appliedFixNotes: resolverDisclosures.length ? [...resolverDisclosures] : undefined,
             ctaUrl,
             ownerUserId: runCtx.userId, // enables google-mail plugin-connection fallback
           });
+        }
+
+        // IMP-2: on a FAILED background calibration, alert the system admins so
+        // they can start RCA — this fulfils IMP-1's "our team is on it" promise.
+        // Deduped by workflow_hash (one alert per broken version). Fully isolated.
+        if (isBackground && !passed && latest?.workflow_hash) {
+          try {
+            const dedup = await histRepo.hasAdminAlertBeenSent(
+              runCtx.agentId,
+              runCtx.userId,
+              latest.workflow_hash
+            );
+            if (dedup.data === true) {
+              logger.info(
+                { agentId: runCtx.agentId, workflowHash: latest.workflow_hash },
+                'Admin alert already sent for this workflow version — skipping (dedup)'
+              );
+            } else {
+              const adminEmails = await AdminAccessService.getInstance().listAdminEmails();
+              const sent = await sendCalibrationAdminAlert({
+                adminEmails,
+                agentId: runCtx.agentId,
+                agentName: runCtx.agentName,
+                ownerUserId: runCtx.userId,
+                ownerEmail: runCtx.userEmail,
+                status: latest.status || 'failed',
+                iterations: latest.iterations ?? 0,
+                autoFixesApplied: latest.auto_fixes_applied ?? 0,
+                stepsCompleted: latest.steps_completed ?? 0,
+                stepsFailed: latest.steps_failed ?? 0,
+                stepsSkipped: latest.steps_skipped ?? 0,
+                issuesRemaining: (latest.issues_remaining || []) as any[],
+                issuesFixed: (latest.issues_fixed || []) as any[],
+                appliedFixNotes: resolverDisclosures.length ? [...resolverDisclosures] : undefined,
+                workflowHash: latest.workflow_hash,
+                sessionId: latest.session_id ?? sessionId,
+                calibrationHistoryId: latest.id ?? null,
+                executionId: lastExecutionId,
+                inputValues: lastRunInputs,
+                appBaseUrl: base,
+              });
+              // Mark only if actually dispatched, so a transport failure lets a
+              // later run retry the alert instead of silently swallowing it.
+              if (sent && latest.id) {
+                await histRepo.markAdminAlerted(latest.id, latest.metadata);
+              }
+            }
+          } catch (alertErr) {
+            logger.error({ err: alertErr, agentId: runCtx.agentId }, 'Admin failure alert failed (non-blocking)');
+          }
         }
 
         logger.info({ agentId: runCtx.agentId, passed, isBackground }, 'Calibration tail completed');
