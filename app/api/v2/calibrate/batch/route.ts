@@ -1113,7 +1113,7 @@ export async function POST(req: NextRequest) {
 
     // 7. AUTO-CALIBRATION LOOP - Fix issues before execution, then re-run until perfect
     logger.info({ sessionId, agentId, inputValues }, 'Starting auto-calibration loop');
-    console.log('[BatchCalibration] Input values received:', JSON.stringify(inputValues, null, 2));
+    logger.debug({ sessionId, inputValues }, '[BatchCalibration] Input values received');
 
     let loopIteration = 0;
     const MAX_ITERATIONS = 10; // Increased to handle multiple fix rounds
@@ -1244,7 +1244,7 @@ export async function POST(req: NextRequest) {
         }
       }
     }
-    console.log('[BatchCalibration] Merged input values (with defaults):', JSON.stringify(mergedInputValues, null, 2));
+    logger.debug({ sessionId, mergedInputValues }, '[BatchCalibration] Merged input values (with defaults)');
 
     // CONVERGENCE DETECTION: Track which fixes were applied to which steps
     // Key: stepId, Value: Set of fix types applied
@@ -4152,10 +4152,14 @@ export async function POST(req: NextRequest) {
       }
 
       // No semantic issues - mark session as completed
-      console.log('📊 [Batch Calibration] Storing execution summary:', {
-        hasExecutionSummary: !!finalResult.execution_summary,
-        executionSummary: finalResult.execution_summary
-      });
+      logger.debug(
+        {
+          sessionId,
+          hasExecutionSummary: !!finalResult.execution_summary,
+          executionSummary: finalResult.execution_summary,
+        },
+        '[Batch Calibration] Storing execution summary'
+      );
       await sessionRepo.update(sessionId, {
         status: 'completed',
         execution_id: finalResult.executionId,
