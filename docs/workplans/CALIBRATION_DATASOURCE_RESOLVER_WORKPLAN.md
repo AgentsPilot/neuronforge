@@ -291,10 +291,79 @@ Net effect: the resolver is now **apply-and-disclose in every case** (never "ask
 | **Phase 3 — live test on `3fc703fd`** | ⬜ Open | End-to-end run (user, OAuth). Definitive proof the resolver reads the sheet + fixes `range` + converges. |
 | **Phase 4 — durable docs** | ⬜ Open | `docs/Calibration/PARAMETER_RESOLVER_FRAMEWORK.md` + link in `CALIBRATION_OVERVIEW.md`; update the `calibration` skill (new repair path). |
 
+## Improvement Features (proposed — NOT implemented)
+
+> Related calibration-email improvements captured here for tracking. Design only; not built. Each can graduate to its own workplan if it grows.
+
+### IMP-1 — Failure email reframed to "managed / we're on it"
+
+**Goal:** in the headless/background calibration email, a **failed** run should reassure the user that the platform team is resolving it (not ask the user to self-fix), while a **passed** run is unchanged.
+
+**Behavior**
+- `passed = true` → unchanged (success email, "ready to use", CTA → agent page).
+- `passed = false` → **high-level only (no technical issue titles)**, and:
+  - add a **deterministic reassurance line**: *"Our team is working to resolve this and will email you as soon as your agent is ready to use — no action needed from you."*
+  - **CTA → the agents list** (`/v2/agent-list`), label "View your agents" (replaces "Review & fix" → sandbox).
+  - reframe **subject + h1** from "needs a quick review" → "we're getting it ready"; shift the `buildSummary`/`fallbackSummary` tone from *"you review & fix"* → *"we're resolving it"*; **drop the `remainingIssueTitles` list** from the user email (it moves to the admin email, IMP-2).
+
+**Touch-points (design)**
+- `lib/calibration/calibrationResultEmail.ts` — failure `subject`, `renderHtml` h1 + deterministic reassurance block + CTA label; `buildSummary` prompt + `fallbackSummary` (managed tone).
+- `app/api/v2/calibrate/batch/route.ts` (email tail, ctaUrl ternary) — failure `ctaUrl` → `${base}/v2/agent-list`.
+
+**"We'll let you know" fulfillment:** by the **existing success-email-on-pass** — when the team fixes the agent and it later passes a *background* calibration, the success email fires. No new "notify" mechanism needed. **Dependency:** the eventual fix + re-calibration must run via the **background** (email-enabled) path; a sandbox re-run won't email.
+
+**Decisions (locked 2026-07-02)**
+1. **High-level only** — the failure email does NOT list technical issue titles; it says we found setup issues and our team is resolving them (the user isn't expected to act). The technical detail moves to the admin email (IMP-2).
+2. **Unconditional** — every failed background calibration uses the managed email; no feature flag (the interactive sandbox path has no email anyway).
+
+**Tracklist (not started)**
+- [ ] Reframe failure `subject` + `renderHtml` h1 + summary tone (managed).
+- [ ] Add the deterministic reassurance line on failure (renders regardless of LLM summary).
+- [ ] Change the failure CTA → `/v2/agent-list` ("View your agents").
+- [ ] Remove the `remainingIssueTitles` list from the user failure email (high-level only).
+- [ ] Email render tests for the new failure variant (reassurance present; no issue titles; CTA → list; success unchanged).
+
+### IMP-2 — Notify system admins of a failed calibration (so they can investigate)
+
+**Goal:** on a failed background calibration, email the **system admins** the agent + failure details so they can start RCA immediately — this is what *fulfills* IMP-1's "our team is working on it" promise. (IMP-1 reassures the user; IMP-2 hands the admins the work. Together = the managed-failure loop: user reassured → admins notified → fix + re-calibrate → success email to the user.)
+
+**Recipients:** `AdminAccessService.listAdminEmails()` — `admin_users` DB rows ∪ the `ADMIN_EMAILS` env allow-list.
+
+**Trigger:** in the calibration email tail (`app/api/v2/calibrate/batch/route.ts`, `finally` block), when `!passed && isBackground` — send the admin alert alongside the user email. Best-effort / non-blocking (must never break calibration).
+
+**Content (internal/technical — this is an admin-only alert; be thorough):**
+- Agent: id, name, owner (userId + email).
+- Outcome: status (`needs_review`/`failed`), iterations, `auto_fixes_applied`, steps completed/failed.
+- **Embedded diagnostic summary (inline):** the earliest failing step + each remaining issue (`category`, `message`, `technicalDetails`) + any parameter errors, rendered right in the email so admins see the breakdown at a glance. Plus `execution_id`, `session_id`, `workflow_hash`, `calibration_history` id.
+- **The data the agent was processing** (the rows/inputs it read, e.g. the sheet values) — embedded for immediate debugging (internal-only; see decision 3).
+- Jump-in: agent + sandbox links, and the RCA entry points — `npx tsx scripts/dump-calibration.ts <agentId>` + `docs/Calibration/CALIBRATION_RCA_RUNBOOK.md`.
+
+**Delivery:** reuse `NotificationService.sendTransactionalEmail` via the **system transport** (Resend / Gmail-app) — NOT the owner's google-mail plugin connection. New module `lib/calibration/calibrationAdminAlert.ts`. Deterministic technical template (no LLM summary).
+
+**Touch-points (design)**
+- New `lib/calibration/calibrationAdminAlert.ts` (build + send the admin email).
+- `app/api/v2/calibrate/batch/route.ts` (email tail) — on `!passed && isBackground`, resolve admin emails + call it with the failure context.
+- Reuse `AdminAccessService.listAdminEmails()`.
+
+**Decisions (locked 2026-07-02)**
+1. **Dedupe by `workflow_hash`** — one alert per broken agent version (repeated failures of the same version don't re-spam admins). Persist the last-alerted hash so re-calibration of a *changed* version alerts again.
+2. **System transport** — send via `sendTransactionalEmail` with no `ownerUserId` (Resend / Gmail-app), never a per-user plugin connection. (Confirm this path at implementation — the owner-plugin fallback must not trigger for admin alerts.)
+3. **Include the user's data** the agent was processing (rows/inputs it read) for immediate debugging. ⚠️ This makes the alert contain customer data — it is **strictly internal / admin-only**; admins must not forward it. Document this in the email footer.
+4. **Embed the diagnostic summary inline** (failing steps + each issue breakdown) so admins triage from the email itself, **plus** the `npx tsx scripts/dump-calibration.ts <agentId>` command + key IDs + `CALIBRATION_RCA_RUNBOOK.md` link as the deeper jump-in.
+
+**Tracklist (not started)**
+- [ ] `calibrationAdminAlert.ts` — deterministic email: agent + IDs, **embedded diagnostic summary** (failing steps + issues), **the data the agent processed**, + RCA command/links.
+- [ ] Wire into the email tail on `!passed && isBackground` via `listAdminEmails()`.
+- [ ] Dedupe by `workflow_hash` (one alert per broken version; persist last-alerted hash).
+- [ ] System-transport delivery (no owner plugin fallback).
+- [ ] Internal-only footer note (contains customer data — do not forward).
+- [ ] Unit tests (render incl. diagnostic + data; recipient resolution; dedup by hash).
+
 ## Change History
 
 | Date | Change | Details |
 |------|--------|---------|
+| 2026-07-02 | IMP-1 + IMP-2 designed (not implemented) | Added the managed-failure loop: **IMP-1** reframes the failure email to "we're on it" (high-level only — no technical issue titles; unconditional, no flag; CTA → agents list); **IMP-2** emails system admins on a failed background calibration with the embedded diagnostic summary + the user's data + RCA command, deduped by `workflow_hash`, via system transport (internal-only). 5 design decisions locked with the user. Design only — implementation pending. |
 | 2026-07-01 | Phase 2.5 — email disclosure (`afc07b6`) | `appliedFixNotes` on `CalibrationResultEmailInput` + a deterministic "What we changed" block (renders on pass **and** fail, `esc`-escaped) + an LLM-summary line; `resolverDisclosures` moved to function scope + passed at the email call site. 5 email render tests. **Deviation:** email-only, not persisted to `calibration_history` (sandbox-card gap — see Open Items). |
 | 2026-07-01 | Phase 2 — Google Sheets range resolver (`c05f29c`) | `googleSheetsRange` resolver (metadata via the reused plugin connection/auth, not a fresh client) + registered → **feature live**. Heuristic: 1 tab → 0.95, requested-name match → unresolved/no-clobber, multi-tab → best-effort first tab, A1 suffix preserved. 9 tests. |
 | 2026-07-01 | Applier + strategy-B wiring (`a06347b`) | `CalibrationFixApplier` (input → repo `saveInputValues` + `mergedInputValues`; dsl → step param; injected persistence; 7 tests). `engine.plan()` (resolve-only). Route: in-loop resolve-and-attach → `resolve_parameter_value` proposal → existing apply pipeline (`trackFix` + re-run). Inert until a resolver is registered. Chose **strategy B** (reuse the proven apply/re-run machinery) over a parallel pass. |
