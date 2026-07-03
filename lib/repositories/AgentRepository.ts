@@ -15,6 +15,18 @@ import type {
 } from './types';
 import { STATUS_TRANSITIONS } from './types';
 
+/** Lean agent projection for admin operator pickers (cross-user). */
+export interface AdminAgentListItem {
+  id: string;
+  agent_name: string | null;
+  user_id: string;
+  calibration_status: string | null;
+  is_calibrated: boolean | null;
+  production_ready: boolean | null;
+  status: string | null;
+  updated_at: string | null;
+}
+
 export class AgentRepository {
   private supabase: SupabaseClient;
   private logger: Logger;
@@ -112,6 +124,39 @@ export class AgentRepository {
 
       return { data: data || [], error: null };
     } catch (error) {
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
+   * ADMIN-ONLY: list agents across ALL users for admin operator surfaces (e.g.
+   * the calibration test trigger). Intentionally NOT scoped by `user_id` — this
+   * bypasses the per-user rule BY DESIGN and must only be called behind an
+   * `AdminAccessService` gate. Relies on the service-role client (the repository
+   * default). Returns a lean projection for a picker (not full agents).
+   */
+  async findAllForAdmin(
+    options?: { search?: string; limit?: number }
+  ): Promise<AgentRepositoryResult<AdminAgentListItem[]>> {
+    try {
+      let query = this.supabase
+        .from('agents')
+        .select('id, agent_name, user_id, calibration_status, is_calibrated, production_ready, status, updated_at')
+        .neq('status', 'deleted')
+        .order('updated_at', { ascending: false });
+
+      const search = options?.search?.trim();
+      if (search) {
+        // Match on name, agent id, or owner id (admin disambiguation).
+        query = query.or(`agent_name.ilike.%${search}%,id.ilike.%${search}%,user_id.ilike.%${search}%`);
+      }
+      query = query.limit(options?.limit ?? 100);
+
+      const { data, error } = await query;
+      if (error) throw error;
+      return { data: (data as AdminAgentListItem[]) || [], error: null };
+    } catch (error) {
+      this.logger.error({ err: error }, 'findAllForAdmin failed');
       return { data: null, error: error as Error };
     }
   }

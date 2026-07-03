@@ -54,6 +54,8 @@ export interface CalibrationAdminAlertInput {
   executionId?: string | null;
   /** The input values the agent ran with — "the data the agent was processing". */
   inputValues?: Record<string, any> | null;
+  /** Set when an admin triggered this run on behalf of the owner (test flow). */
+  initiatedByAdminId?: string | null;
   /** Base app URL for building links. */
   appBaseUrl: string;
 }
@@ -142,6 +144,10 @@ export function renderAdminAlertHtml(input: CalibrationAdminAlertInput): string 
           <h1 style="margin:0;font-size:17px;color:#7f1d1d;">🚨 Calibration failed — RCA needed</h1>
           <p style="margin:6px 0 0;font-size:14px;color:#991b1b;">"${esc(input.agentName)}" landed on <strong>${esc(input.status)}</strong> after ${input.iterations} iteration${input.iterations === 1 ? '' : 's'}.</p>
         </div>
+        ${input.initiatedByAdminId ? `
+        <div style="padding:10px 24px;background:#eef2ff;border-bottom:1px solid #c7d2fe;">
+          <p style="margin:0;font-size:13px;color:#3730a3;">🧪 <strong>Admin test run</strong> — triggered on behalf of the owner by admin <code>${esc(input.initiatedByAdminId)}</code>. This is a manual test, not a live user failure.</p>
+        </div>` : ''}
 
         <div style="padding:20px 24px;color:#333;font-size:14px;line-height:1.5;">
           <h2 style="margin:0 0 8px;font-size:13px;text-transform:uppercase;letter-spacing:.04em;color:#6b7280;">Agent & run</h2>

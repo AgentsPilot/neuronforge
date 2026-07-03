@@ -85,4 +85,13 @@ describe('calibration admin alert — renderAdminAlertHtml', () => {
     expect(html).toContain('Remaining issues (0)');
     expect(html).toContain('(none recorded)');
   });
+
+  it('shows the admin-test banner only when initiatedByAdminId is set', () => {
+    const withAdmin = renderAdminAlertHtml(input({ initiatedByAdminId: 'admin-42' }));
+    expect(withAdmin).toContain('Admin test run');
+    expect(withAdmin).toContain('admin-42');
+
+    const withoutAdmin = renderAdminAlertHtml(input({ initiatedByAdminId: null }));
+    expect(withoutAdmin).not.toContain('Admin test run');
+  });
 });

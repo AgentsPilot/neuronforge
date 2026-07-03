@@ -111,29 +111,62 @@ The remaining ~4,200 lines keep using `supabase` / `user` **unchanged** — they
 
 ## Tracklist
 
-**Backend**
-- [ ] Rename initial auth vars → `authSupabase`/`authUser`; compute `isAdmin`; fetch agent with service-role when admin.
-- [ ] Compute `adminInitiated`; replace the hard 403 with the admin-aware check.
-- [ ] **Impersonate at the boundary:** define `supabase` / `user` / `adminActorId` once (owner id + service-role client for admin runs). Rest of route unchanged. *(review the ~75-line top region only)*
-- [ ] `force` flag (admin-only) to bypass the already-calibrated / production-ready guards.
-- [ ] User email → system transport for admin runs (no owner-plugin fallback).
-- [ ] Tag the IMP-2 alert with `adminActorId` + "admin test" note.
-- [ ] Extend the route response with an `emails` dispatch summary for admin runs.
-- [ ] `GET /api/admin/agents` (admin-gated, repository-based) for the picker.
+**Backend** — ✅ implemented (uncommitted)
+- [x] Rename initial auth vars → `authSupabase`/`authUser`; compute `isAdmin`; fetch agent with service-role when admin.
+- [x] Compute `adminInitiated`; replace the hard 403 with the admin-aware check.
+- [x] **Impersonate at the boundary:** define `supabase` / `user` / `adminActorId` once (owner id + service-role client for admin runs). Rest of route unchanged. Verified only `user.id`/`user.email` are used downstream; tsc clean.
+- [x] `force` flag (admin-only) → `forceCalibrate = adminInitiated && force === true` bypasses the production-ready / already-calibrated guards.
+- [x] User email → system transport for admin runs (`ownerUserId` dropped when `adminActorId`).
+- [x] Tag the IMP-2 alert with `initiatedByAdminId` (+ "🧪 Admin test run" banner in `calibrationAdminAlert.ts`); owner email nulled on admin runs to avoid mislabeling.
+- [x] `GET /api/admin/agents` (admin-gated via `AdminAccessService`, `AgentRepository.findAllForAdmin` cross-user + best-effort owner-email enrichment).
+- [~] ~~Extend the route response with an `emails` dispatch summary~~ → **dropped** (see deviation): the emails fire in the `finally` block *after* the response body is built, so they can't be injected. The modal shows a deterministic note ("result email → you; admin alert → admins on failure") and the admin observes the real emails in their inbox.
 
-**Frontend**
-- [ ] Admin-gated "Run Calibration (Admin)" entry on `/test-plugins-v2`.
-- [ ] Agent-picker modal (search, owner email, status) + input overrides + force checkbox.
-- [ ] Trigger the run + show live status + dispatched-emails summary.
+**Frontend** — ✅ implemented (uncommitted)
+- [x] Admin-gated "🧪 Run Calibration (Admin)" entry on `/test-plugins-v2` — self-contained `components/admin/AdminCalibrationTrigger.tsx`, self-hides via a `GET /api/admin/agents` probe.
+- [x] Agent-picker modal (debounced search, owner email + calibration status badges) + input-overrides JSON + force checkbox.
+- [x] Trigger the run + show outcome (status, message, iterations, fixes, session/exec ids) + deterministic email note.
 
-**Tests**
-- [ ] Route: non-admin cross-user → 403 (unchanged); admin cross-user → impersonated run (`user.id` = owner, `supabase` = service-role).
-- [ ] Route: non-admin run byte-for-byte unchanged (RLS client + real `user`).
-- [ ] Route: user email `to` = admin; IMP-2 alert still to admins; `force` bypasses guards for admin only.
-- [ ] `/api/admin/agents`: admin → list; non-admin → 403.
-- [ ] Identity regression: for an admin run, history/gate rows are written under the owner's `user_id`.
+**Tests** — ✅ (14 new; 91/91 calibration+shadow)
+- [x] **Identity split extracted to a pure helper** `lib/calibration/adminCalibrationIdentity.ts` (`resolveCalibrationIdentity`) so the risky logic is unit-testable in isolation from the 4,600-line route. The route now calls it.
+- [x] `adminCalibrationIdentity`: same-user normal path; admin-on-own-agent NOT impersonated; non-admin cross-user → forbidden; admin cross-user → owner id + admin email + service-role + actor; `force` honored only on admin runs (7 tests).
+- [x] `AgentRepository.findAllForAdmin`: no `user_id` filter (cross-user), search across name/agent-id/owner-id, default+explicit limit, error surfaced (3 tests).
+- [x] `GET /api/admin/agents`: 401 unauthenticated, 403 non-admin, 200 admin + owner-email enrichment, enrichment failure non-fatal, limit clamped (5 tests).
+- [x] `calibrationAdminAlert`: admin-test banner renders only when `initiatedByAdminId` set.
+- [ ] *(deferred)* Full end-to-end route test (admin run writes history under the owner's `user_id`) — the batch route is too heavy to unit-test end-to-end; covered indirectly by the identity-helper tests + the manual live run below.
 
 ---
+
+## How to run it (via the test page)
+
+**Prerequisites**
+- You are an admin — your email/id is in the `admin_users` table (or the `ADMIN_EMAILS` env allow-list). The button is hidden otherwise.
+- Email transport is configured (`RESEND_API_KEY`, or the Gmail-app vars) so you actually receive the result email; without it, delivery is skipped and only logged.
+
+**Steps**
+1. Go to **`/test-plugins-v2`**. The **🧪 Run Calibration (Admin)** button appears top-right (it self-hides for non-admins via a `GET /api/admin/agents` probe).
+2. Click it → search for any agent (by name, agent id, or owner id). Rows show the owner email + `prod` / `calibrated` / calibration-status badges.
+3. (Optional) Provide **input overrides** as JSON (e.g. `{ "spreadsheet_id": "…" }`), and/or tick **Force re-calibrate** to bypass the production-ready / already-calibrated guards.
+4. Click **Run calibration**. The modal shows the outcome (status, message, iterations, auto-fixes, session/execution ids).
+5. **Check your inbox:** the user-facing result email (managed "we're on it" copy on failure — IMP-1) is routed to **you**, and on failure the **admin alert** (IMP-2, with the 🧪 *Admin test run* banner) goes to all admins.
+
+**Two agents worth testing**
+- `3fc703fd-…` (Sheets range = `"Sheet1"`, not a real tab) — should exercise the resolver auto-fix → ideally a **pass** + user success email.
+- Any known-broken agent → **failure** path → managed user email to you + admin alert.
+
+## Log callouts to watch (`npm run dev:pretty`)
+
+| Log message | Module | Means |
+|---|---|---|
+| `Starting batch calibration` (`isAdmin: true`) | `BatchCalibration` | The caller was recognised as an admin. |
+| `Admin-initiated calibration — running on behalf of the owner (service-role client, owner identity)` | `BatchCalibration` | ✅ Impersonation engaged — the run is scoped to the owner. Carries `adminActorId` + `ownerId`. |
+| `Admin force-calibrate — bypassing production-ready / already-calibrated guards` | `BatchCalibration` | The `force` flag took effect (admin only). |
+| `Admin agent list returned` (`count`, `search`) | `AdminAgentsAPI` | The picker query succeeded. |
+| `Non-admin attempted to list all agents` | `AdminAgentsAPI` | A non-admin hit `/api/admin/agents` → 403 (expected if you're testing the gate). |
+| `Owner-email enrichment failed (non-fatal)` | `AdminAgentsAPI` | The picker still works; owner emails just show as the user-id prefix. |
+| `Calibration result email sent` / `…not delivered — no email transport succeeded` | `CalibrationResultEmail` | Whether the user email actually went out (check transport env if "not delivered"). |
+| `Calibration admin alert sent` / `Admin alert already sent for this workflow version — skipping (dedup)` | `CalibrationAdminAlert` / `BatchCalibration` | The IMP-2 alert fired, or was deduped because this workflow version already alerted. |
+
+> **If you re-run the same failing agent and get no admin alert**, that's the `workflow_hash` dedup working (`…already sent…skipping (dedup)`). Edit the workflow (new hash) or clear `metadata.admin_alerted` on the row to force a fresh alert.
 
 ## Risks
 
@@ -156,5 +189,7 @@ The remaining ~4,200 lines keep using `supabase` / `user` **unchanged** — they
 
 | Date | Change | Details |
 |------|--------|---------|
+| 2026-07-03 | Tests + helper extraction | Extracted the identity split into a pure `resolveCalibrationIdentity` helper (route now calls it); 14 new tests (identity 7, `findAllForAdmin` 3, `/api/admin/agents` 5) — 91/91 calibration+shadow, tsc clean. Added "How to run (test page)" + "Log callouts to watch" sections. Full end-to-end route test deferred (route too heavy; covered by the helper tests + manual live run). |
+| 2026-07-02 | Implemented (uncommitted) | Backend impersonation-at-the-boundary in the batch route (owner id + service-role on the admin branch; `force` bypass; user email → system transport; IMP-2 tagged w/ "admin test" banner). New `GET /api/admin/agents` + `AgentRepository.findAllForAdmin`. New `components/admin/AdminCalibrationTrigger.tsx` (self-gating modal) mounted on `/test-plugins-v2`. tsc clean; calibration+shadow 85/85. **Deviation:** dropped the response `emails` summary (emails fire post-response in `finally`) → modal shows a deterministic note instead. **Route-level auth/identity tests still pending.** |
 | 2026-07-02 | Impersonation approach | Replaced the "audit every `user.id`" identity-split with **impersonate-at-the-boundary** (single substitution: owner `user.id` + service-role `supabase` on the admin branch). Verified 3 enabling facts (connections resolve by passed userId via service-role; client injected by constructor; auth derived once). Top risk downgraded to a ~75-line review. |
 | 2026-07-02 | Created | Admin calibration trigger design. Decisions locked: test-plugins-v2 modal, run-as-owner, user-email-to-admin. Tracklist. Awaiting go-ahead to implement. |

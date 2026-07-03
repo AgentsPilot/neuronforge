@@ -12,6 +12,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createAuthenticatedServerClient } from '@/lib/supabaseServerAuth';
+import { supabaseServer } from '@/lib/supabaseServer';
 import { WorkflowPilot } from '@/lib/pilot/WorkflowPilot';
 import { IssueGrouper } from '@/lib/pilot/shadow/IssueGrouper';
 import { SmartLogicAnalyzer } from '@/lib/pilot/shadow/SmartLogicAnalyzer';
@@ -22,6 +23,7 @@ import { acquireLock, releaseLock } from '@/lib/utils/distributedLock';
 import { AgentRepository } from '@/lib/repositories/AgentRepository';
 import { sendCalibrationResultEmail } from '@/lib/calibration/calibrationResultEmail';
 import { sendCalibrationAdminAlert } from '@/lib/calibration/calibrationAdminAlert';
+import { resolveCalibrationIdentity } from '@/lib/calibration/adminCalibrationIdentity';
 import { AdminAccessService } from '@/lib/services/AdminAccessService';
 import { createLogger } from '@/lib/logger';
 import type { CollectedIssue } from '@/lib/pilot/types';
@@ -60,6 +62,8 @@ export async function POST(req: NextRequest) {
     userEmail: string | null;
     agentId: string;
     agentName: string;
+    /** Admin who triggered an on-behalf-of run (null for normal owner runs). */
+    adminActorId: string | null;
   } | null = null;
 
   // Option A: plain-English disclosures for parameter values the resolver looked
@@ -74,11 +78,12 @@ export async function POST(req: NextRequest) {
   let lastExecutionId: string | null = null;
 
   try {
-    // 1. Authenticate user
-    const supabase = await createAuthenticatedServerClient();
-    const { data: { user }, error: authError } = await supabase.auth.getUser();
+    // 1. Authenticate the CALLER (this identity is the admin gate + the
+    //    impersonation boundary — see step 4).
+    const authSupabase = await createAuthenticatedServerClient();
+    const { data: { user: authUser }, error: authError } = await authSupabase.auth.getUser();
 
-    if (authError || !user) {
+    if (authError || !authUser) {
       logger.warn({ error: authError }, 'Unauthorized batch calibration attempt');
       return NextResponse.json(
         { error: 'Unauthorized', message: 'You must be logged in to run batch calibration' },
@@ -87,22 +92,29 @@ export async function POST(req: NextRequest) {
     }
 
     // 2. Parse request body
-    const { agentId, inputValues, background } = await req.json();
+    const { agentId, inputValues, background, force } = await req.json();
     isBackground = background === true;
 
     if (!agentId) {
-      logger.warn({ userId: user.id }, 'Missing agentId in batch calibration request');
+      logger.warn({ userId: authUser.id }, 'Missing agentId in batch calibration request');
       return NextResponse.json(
         { error: 'Missing agentId', message: 'agentId is required' },
         { status: 400 }
       );
     }
 
-    logger.info({ agentId, userId: user.id }, 'Starting batch calibration');
+    // Admin gate — admins may calibrate agents they don't own (test capability).
+    // Resolved ONLY via AdminAccessService (never profiles.role).
+    const isAdmin = await AdminAccessService.getInstance().isAdmin({ id: authUser.id, email: authUser.email });
 
-    // 3. Fetch agent
+    logger.info({ agentId, userId: authUser.id, isAdmin }, 'Starting batch calibration');
+
+    // 3. Fetch agent. Admins read cross-user, so use the service-role client for
+    // the fetch when the caller is an admin (the RLS client would hide another
+    // user's agent). Non-admins keep the RLS client (unchanged behavior).
     let agent: Agent | null = null;
-    const { data: fetchedAgent, error: agentError } = await supabase
+    const agentFetchClient = isAdmin ? supabaseServer : authSupabase;
+    const { data: fetchedAgent, error: agentError } = await agentFetchClient
       .from('agents')
       .select('*')
       .eq('id', agentId)
@@ -129,12 +141,43 @@ export async function POST(req: NextRequest) {
       })) || []
     }, 'Agent fetched - checking input_schema for config values');
 
-    // 4. Authorization check
-    if (agent.user_id !== user.id) {
-      logger.warn({ agentId, userId: user.id, ownerId: agent.user_id }, 'Unauthorized agent access');
+    // 4. Authorization + impersonation boundary.
+    //   - Non-admin cross-user → 403 (unchanged).
+    //   - Admin cross-user (adminInitiated) → run ON BEHALF OF the owner. From
+    //     here down, `supabase` is the service-role client and `user.id` is the
+    //     OWNER, so plugin connections + calibration_history/gate rows are the
+    //     owner's — a realistic test. We keep the ADMIN's email as the notify
+    //     recipient (decision 3) and record the admin id as the actor. Every
+    //     downstream `supabase`/`user` reference is unchanged — it transparently
+    //     points at the impersonated identity.
+    const identity = resolveCalibrationIdentity({
+      isAdmin,
+      callerId: authUser.id,
+      callerEmail: authUser.email ?? null,
+      ownerId: agent.user_id,
+      force,
+    });
+    if (identity.forbidden) {
+      logger.warn({ agentId, userId: authUser.id, ownerId: agent.user_id }, 'Unauthorized agent access');
       return NextResponse.json(
         { error: 'Forbidden', message: 'You do not have permission to calibrate this agent' },
         { status: 403 }
+      );
+    }
+
+    // service-role for admin runs is an INTENTIONAL RLS bypass — we are acting as
+    // the owner. Scoped strictly to the adminInitiated branch; non-admin runs keep
+    // the RLS client + the real auth user (byte-for-byte unchanged).
+    const adminInitiated = identity.adminInitiated;
+    const supabase = identity.useServiceRole ? supabaseServer : authSupabase;
+    const user: { id: string; email: string | null } = { id: identity.userId, email: identity.userEmail };
+    const adminActorId = identity.adminActorId; // audit actor + IMP-2 tag
+    const forceCalibrate = identity.forceCalibrate;
+
+    if (adminInitiated) {
+      logger.warn(
+        { agentId, adminActorId, ownerId: agent.user_id },
+        'Admin-initiated calibration — running on behalf of the owner (service-role client, owner identity)'
       );
     }
 
@@ -147,6 +190,7 @@ export async function POST(req: NextRequest) {
       userEmail: user.email ?? null,
       agentId,
       agentName: agent.agent_name || 'your agent',
+      adminActorId,
     };
 
     // 5. Validate workflow exists
@@ -159,9 +203,16 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Admins may pass `force` to re-run calibration on an agent that is already
+    // production-ready / calibrated (for testing). `forceCalibrate` was resolved
+    // in the identity step above (admin-only; ignored for non-admins).
+    if (forceCalibrate) {
+      logger.warn({ agentId, adminActorId }, 'Admin force-calibrate — bypassing production-ready / already-calibrated guards');
+    }
+
     // 5a. Block calibration for production-ready workflows
     const isProductionReady = (agent as any).production_ready === true;
-    if (isProductionReady) {
+    if (isProductionReady && !forceCalibrate) {
       logger.warn({
         agentId,
         productionReady: true
@@ -176,7 +227,7 @@ export async function POST(req: NextRequest) {
 
     // 5b. Block calibration for already-calibrated workflows
     const isCalibrated = (agent as any).is_calibrated === true;
-    if (isCalibrated) {
+    if (isCalibrated && !forceCalibrate) {
       logger.warn({
         agentId,
         isCalibrated: true
@@ -4568,7 +4619,10 @@ export async function POST(req: NextRequest) {
             issuesRemaining,
             appliedFixNotes: resolverDisclosures.length ? [...resolverDisclosures] : undefined,
             ctaUrl,
-            ownerUserId: runCtx.userId, // enables google-mail plugin-connection fallback
+            // Normal runs: enable the owner's google-mail plugin-connection fallback.
+            // Admin test runs: the recipient is the admin, so use the system
+            // transport (no owner-plugin fallback).
+            ownerUserId: runCtx.adminActorId ? undefined : runCtx.userId,
           });
         }
 
@@ -4594,7 +4648,11 @@ export async function POST(req: NextRequest) {
                 agentId: runCtx.agentId,
                 agentName: runCtx.agentName,
                 ownerUserId: runCtx.userId,
-                ownerEmail: runCtx.userEmail,
+                // On an admin test run, runCtx.userEmail is the admin's, not the
+                // owner's — don't mislabel it as the owner. (Owner-email lookup is
+                // a best-effort future enhancement; see the workplan.)
+                ownerEmail: runCtx.adminActorId ? null : runCtx.userEmail,
+                initiatedByAdminId: runCtx.adminActorId,
                 status: latest.status || 'failed',
                 iterations: latest.iterations ?? 0,
                 autoFixesApplied: latest.auto_fixes_applied ?? 0,
