@@ -38,6 +38,7 @@ Users describe what they want (e.g. *"Summarize my last 10 Gmail emails and save
 | System Architect | SA | User or TL |
 | Quality Assurance | QA | User or TL |
 | Release Manager | RM | User or TL |
+| Troubleshooter | TS | User or TL |
 
 **Standard flow:**
 User → TL → BA → Dev (workplan) → SA (workplan review) → Dev (implement)
