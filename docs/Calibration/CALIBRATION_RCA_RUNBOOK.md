@@ -34,6 +34,8 @@ It is **generic** (works for any agent) and **diagnostic-only** (it concludes RC
 
 You do **not** need a local reproduction — most of the evidence is already persisted in the DB.
 
+> **Start from the automated RCA if one exists.** When `CALIBRATION_AUTO_RCA_ENABLED` is on, a background calibration failure now runs an **automated** version of this exact 6-step method at failure time and persists the result to **`calibration_history.metadata.auto_rca`** (an 8-field conclusion + one of the 5 root-cause layers), alongside `metadata.auto_rca_status` (`success` \| `timeout` \| `llm_error` \| `invalid_output` \| `evidence_error` \| `skipped_budget`) and `metadata.correlation_id`. If `auto_rca` is present, read it first and verify/refine it — it is a machine-generated **starting point**, not a hand-verified conclusion. If `auto_rca_status` is a non-`success` value (or absent), fall back to the full manual method below. See [POST_CREATION_CALIBRATION_FLOW.md § Admin failure alert + automated RCA](/docs/Calibration/POST_CREATION_CALIBRATION_FLOW.md#admin-failure-alert--automated-rca-best-effort-augmentation).
+
 ---
 
 ## The 6-step method
@@ -177,4 +179,5 @@ State the RCA in this shape, then stop (don't jump to fixing unless asked):
 
 | Date | Change | Details |
 |------|--------|---------|
+| 2026-07-05 | Automated RCA note | Added a "start from the automated RCA if one exists" note under [When to use](#when-to-use): a background calibration failure now runs this method automatically (flag `CALIBRATION_AUTO_RCA_ENABLED`) and persists the result to `calibration_history.metadata.auto_rca` (+ `auto_rca_status`, `correlation_id`), so a human doing the manual RCA can start from it. |
 | 2026-06-30 | Created | Initial RCA runbook: 6-step method (gather → read issues → earliest-step/cascade → classify layer → calibration-correctness → conclude), data-model reference, traps, and two worked examples (`3fc703fd` Sheets range, `8c7caa01` scatter item-ref). Backs the `calibration-rca` skill; companion script `scripts/dump-calibration.ts`. |

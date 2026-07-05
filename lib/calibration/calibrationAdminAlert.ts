@@ -20,6 +20,7 @@
 
 import { NotificationService } from '@/lib/pilot/NotificationService';
 import { createLogger } from '@/lib/logger';
+import type { CalibrationAutoRca } from './calibrationRca-schema';
 
 const logger = createLogger({ module: 'CalibrationAdminAlert', service: 'v6-calibration' });
 
@@ -65,6 +66,12 @@ export interface CalibrationAdminAlertInput {
   initiatedByAdminId?: string | null;
   /** Base app URL for building links. */
   appBaseUrl: string;
+  /**
+   * Optional LLM-generated root-cause analysis (FR-22). When present, an
+   * additive "Automated RCA" section is rendered. When absent/null, the email
+   * output is byte-identical to the deterministic-only alert.
+   */
+  autoRca?: CalibrationAutoRca | null;
 }
 
 /**
@@ -142,6 +149,43 @@ function kvRow(label: string, value: string): string {
   return `<tr><td style="padding:3px 12px 3px 0;color:#6b7280;white-space:nowrap;">${esc(label)}</td><td style="padding:3px 0;color:#111;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;">${esc(value)}</td></tr>`;
 }
 
+/**
+ * Render the additive, LLM-generated RCA section (FR-3/FR-4/FR-6). Every dynamic
+ * field — including the LLM output — is HTML-escaped. Rendered only when an RCA
+ * is present; otherwise the caller emits today's byte-identical output.
+ */
+function rcaSection(rca: CalibrationAutoRca): string {
+  const solutions = rca.suggestedSolutions
+    .map((s) => `<li style="margin:0 0 4px;">${esc(s)}</li>`)
+    .join('');
+
+  const field = (label: string, value: string): string => `
+    <div style="margin:0 0 10px;">
+      <div style="font-size:12px;text-transform:uppercase;letter-spacing:.03em;color:#6b7280;margin-bottom:2px;">${esc(label)}</div>
+      <div style="font-size:13px;color:#111;">${esc(value)}</div>
+    </div>`;
+
+  return `
+          <div style="margin:0 0 20px;padding:14px 16px;background:#f0f9ff;border:1px solid #bae6fd;border-radius:8px;">
+            <h2 style="margin:0 0 4px;font-size:14px;color:#075985;">🤖 Automated RCA (LLM-generated — verify before acting)</h2>
+            <p style="margin:0 0 12px;font-size:12px;color:#0369a1;">Machine-produced starting point. Confirm against the evidence before routing a fix.</p>
+            ${field('Symptom', rca.symptom)}
+            ${field('Evidence', rca.evidence)}
+            ${field('Earliest failing step + cascade', rca.earliestFailingStep)}
+            ${field('Root-cause layer', rca.rootCauseLayer)}
+            <div style="margin:0 0 10px;">
+              <div style="font-size:12px;text-transform:uppercase;letter-spacing:.03em;color:#6b7280;margin-bottom:2px;">Root cause</div>
+              <pre style="margin:0;padding:8px;background:#0b1020;color:#d1d5db;border-radius:6px;font-size:12px;white-space:pre-wrap;word-break:break-word;">${esc(rca.rootCause)}</pre>
+            </div>
+            ${field('Fix owner', rca.fixOwner)}
+            <div style="margin:0 0 10px;">
+              <div style="font-size:12px;text-transform:uppercase;letter-spacing:.03em;color:#6b7280;margin-bottom:2px;">Suggested solutions</div>
+              <ul style="margin:0;padding-left:18px;font-size:13px;color:#111;">${solutions}</ul>
+            </div>
+            ${field('Remediation path', rca.remediationPath)}
+          </div>`;
+}
+
 /** Deterministic technical HTML. Exported for unit testing. */
 export function renderAdminAlertHtml(input: CalibrationAdminAlertInput): string {
   const dataJson = input.inputValues && Object.keys(input.inputValues).length
@@ -167,6 +211,7 @@ export function renderAdminAlertHtml(input: CalibrationAdminAlertInput): string 
         </div>` : ''}
 
         <div style="padding:20px 24px;color:#333;font-size:14px;line-height:1.5;">
+          ${input.autoRca ? rcaSection(input.autoRca) : ''}
           <h2 style="margin:0 0 8px;font-size:13px;text-transform:uppercase;letter-spacing:.04em;color:#6b7280;">Agent & run</h2>
           <table style="border-collapse:collapse;font-size:13px;margin:0 0 20px;">
             ${kvRow('Agent', `${input.agentName}`)}

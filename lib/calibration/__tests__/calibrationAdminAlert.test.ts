@@ -4,6 +4,21 @@
  */
 
 import { renderAdminAlertHtml, type CalibrationAdminAlertInput } from '../calibrationAdminAlert';
+import type { CalibrationAutoRca } from '../calibrationRca-schema';
+
+function rca(overrides: Partial<CalibrationAutoRca> = {}): CalibrationAutoRca {
+  return {
+    symptom: 'Calibration needs_review with 1 remaining issue',
+    evidence: 'issues_remaining + pilot_steps step_2',
+    earliestFailingStep: 'step_2 failed; step_3 cascaded',
+    rootCauseLayer: 'V6 generation',
+    rootCause: 'range hardcoded to Sheet1',
+    fixOwner: 'v6-pipeline',
+    suggestedSolutions: ['Derive the tab name from the gid'],
+    remediationPath: 'full cycle',
+    ...overrides,
+  };
+}
 
 function input(overrides: Partial<CalibrationAdminAlertInput> = {}): CalibrationAdminAlertInput {
   return {
@@ -93,5 +108,50 @@ describe('calibration admin alert — renderAdminAlertHtml', () => {
 
     const withoutAdmin = renderAdminAlertHtml(input({ initiatedByAdminId: null }));
     expect(withoutAdmin).not.toContain('Admin test run');
+  });
+
+  // ---- Automated RCA section (FR-3/FR-4/FR-6/FR-22, AC-1/AC-9/AC-12) ----
+
+  it('renders NO RCA section when autoRca is absent (byte-compatible fallback)', () => {
+    const html = renderAdminAlertHtml(input());
+    expect(html).not.toContain('Automated RCA');
+    // Deterministic content still present.
+    expect(html).toContain('npx tsx scripts/dump-calibration.ts agent-123');
+  });
+
+  it('renders the additive RCA section with all 8 fields when autoRca is present', () => {
+    const html = renderAdminAlertHtml(input({ autoRca: rca() }));
+    expect(html).toContain('Automated RCA (LLM-generated — verify before acting)');
+    expect(html).toContain('Calibration needs_review with 1 remaining issue'); // symptom
+    expect(html).toContain('issues_remaining + pilot_steps step_2'); // evidence
+    expect(html).toContain('step_2 failed; step_3 cascaded'); // earliest failing step
+    expect(html).toContain('V6 generation'); // layer
+    expect(html).toContain('range hardcoded to Sheet1'); // root cause
+    expect(html).toContain('v6-pipeline'); // fix owner
+    expect(html).toContain('Derive the tab name from the gid'); // suggested solution
+    expect(html).toContain('full cycle'); // remediation path
+  });
+
+  it('keeps ALL deterministic content when the RCA section is added (additive)', () => {
+    const html = renderAdminAlertHtml(input({ autoRca: rca() }));
+    expect(html).toContain('npx tsx scripts/dump-calibration.ts agent-123');
+    expect(html).toContain('CALIBRATION_RCA_RUNBOOK.md');
+    expect(html).toContain('Remaining issues (1)');
+    expect(html).toContain('Internal only');
+    expect(html).toContain('Do not forward');
+  });
+
+  it('HTML-escapes malicious LLM output in the RCA section (no injection)', () => {
+    const html = renderAdminAlertHtml(
+      input({
+        autoRca: rca({
+          rootCause: '<script>alert(1)</script>',
+          suggestedSolutions: ['<img src=x onerror=alert(2)>'],
+        }),
+      }),
+    );
+    expect(html).toContain('&lt;script&gt;alert(1)&lt;/script&gt;');
+    expect(html).toContain('&lt;img src=x onerror=alert(2)&gt;');
+    expect(html).not.toContain('<script>alert(1)</script>');
   });
 });

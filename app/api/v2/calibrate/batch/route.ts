@@ -23,6 +23,8 @@ import { acquireLock, releaseLock } from '@/lib/utils/distributedLock';
 import { AgentRepository } from '@/lib/repositories/AgentRepository';
 import { sendCalibrationResultEmail } from '@/lib/calibration/calibrationResultEmail';
 import { sendCalibrationAdminAlert } from '@/lib/calibration/calibrationAdminAlert';
+import { generateCalibrationRca, buildRcaAttemptMetadata, type CalibrationRcaResult, type RcaAttemptOutcome } from '@/lib/calibration/calibrationRcaService';
+import { isCalibrationAutoRcaEnabled } from '@/lib/calibration/calibrationRcaConfig';
 import { resolveCalibrationIdentity } from '@/lib/calibration/adminCalibrationIdentity';
 import { AdminAccessService } from '@/lib/services/AdminAccessService';
 import { createLogger } from '@/lib/logger';
@@ -46,6 +48,12 @@ const logger = createLogger({ module: 'BatchCalibrationAPI', service: 'api' });
 export const maxDuration = 60;
 
 export async function POST(req: NextRequest) {
+  // Request-start anchor for the budget-aware RCA timeout (C2) and the durable
+  // log-join key (FR-23). Both captured at the very top of POST so the finally
+  // tail can reason about remaining wall-clock budget against maxDuration = 60.
+  const reqStart = Date.now();
+  const correlationId = req.headers.get('x-correlation-id') || crypto.randomUUID();
+
   let sessionId: string | null = null;
   let lockKey: string | null = null;
   let lockAcquired = false;
@@ -4626,6 +4634,22 @@ export async function POST(req: NextRequest) {
           });
         }
 
+        const tailLogger = logger.child({ correlationId });
+
+        // FR-23: persist the request correlationId on every non-passing background
+        // run (the durable log-join key), BEFORE/OUTSIDE the dedup branch so a
+        // dedup-skipped repeat still records its own row's correlationId. Fully
+        // independent of the RCA feature flag and of RCA success. Best-effort.
+        if (isBackground && !passed && latest?.id) {
+          const cidResult = await histRepo.mergeMetadata(latest.id, { correlation_id: correlationId });
+          if (cidResult.error) {
+            tailLogger.error(
+              { err: cidResult.error, agentId: runCtx.agentId },
+              'Failed to persist correlationId on calibration row (non-blocking)'
+            );
+          }
+        }
+
         // IMP-2: on a FAILED background calibration, alert the system admins so
         // they can start RCA — this fulfils IMP-1's "our team is on it" promise.
         // Deduped by workflow_hash (one alert per broken version). Fully isolated.
@@ -4642,6 +4666,73 @@ export async function POST(req: NextRequest) {
                 'Admin alert already sent for this workflow version — skipping (dedup)'
               );
             } else {
+              // FR-1/FR-2/FR-7/FR-8: best-effort, flag-gated, budget-aware auto-RCA.
+              // Runs ONLY in this non-dedup branch (one RCA per broken version).
+              const rcaEnabled = isCalibrationAutoRcaEnabled();
+              let rcaResult: CalibrationRcaResult | null = null;
+              // The attempt outcome (Item 3 / Q3): set ONLY when the flag is on
+              // and an attempt is made (generation OR budget-skip). Stays null
+              // when the flag is off, so AC-9 holds — no metadata write at all.
+              let rcaOutcome: RcaAttemptOutcome | null = null;
+              if (rcaEnabled && latest.id) {
+                // C2: derive an effective RCA budget from the remaining wall-clock
+                // inside maxDuration = 60, reserving a floor for the email send +
+                // persistence that follow. Skip RCA entirely if we're too close to
+                // the ceiling — a mid-send Vercel kill would lose the alert (FR-7).
+                const RCA_SEND_RESERVE_MS = 10_000; // reserved for send + persistence
+                const RCA_MIN_BUDGET_MS = 3_000; // not worth calling below this
+                const remainingBudgetMs = 60_000 - (Date.now() - reqStart);
+                const maxBudgetMs = remainingBudgetMs - RCA_SEND_RESERVE_MS;
+
+                if (maxBudgetMs >= RCA_MIN_BUDGET_MS) {
+                  rcaResult = await generateCalibrationRca({
+                    agentId: runCtx.agentId,
+                    userId: runCtx.userId,
+                    sessionId: latest.session_id ?? sessionId,
+                    executionId: lastExecutionId,
+                    latest,
+                    inputValues: lastRunInputs,
+                    correlationId,
+                    supabase: runCtx.supabase,
+                    maxBudgetMs,
+                  });
+                  rcaOutcome = { kind: 'result', result: rcaResult };
+                  if (!rcaResult.ok) {
+                    tailLogger.warn(
+                      { agentId: runCtx.agentId, reason: rcaResult.reason },
+                      'Auto-RCA not generated — falling back to deterministic alert'
+                    );
+                  }
+                } else {
+                  rcaOutcome = { kind: 'skipped_budget' };
+                  tailLogger.warn(
+                    { agentId: runCtx.agentId, remainingBudgetMs },
+                    'Skipping auto-RCA — insufficient remaining budget for RCA + send'
+                  );
+                }
+              }
+
+              // FR-17/FR-18 + Item 3/Q3: persist the RCA ATTEMPT marker
+              // INDEPENDENTLY of the send outcome (unlike markAdminAlerted, which
+              // is gated on `sent`). Records `auto_rca_status` + attempted-at for
+              // EVERY attempt — success, every ok:false reason, and the
+              // budget-skip — plus the full RCA payload on success. Returns null
+              // (nothing written) when the flag is off (AC-9). Composes with C1's
+              // no-clobber mergeMetadata. Sequence: attempt → persist marker →
+              // send → markAdminAlerted only if sent.
+              if (rcaOutcome && latest.id) {
+                const rcaPatch = buildRcaAttemptMetadata(rcaEnabled, rcaOutcome);
+                if (rcaPatch) {
+                  const rcaPersist = await histRepo.mergeMetadata(latest.id, rcaPatch);
+                  if (rcaPersist.error) {
+                    tailLogger.error(
+                      { err: rcaPersist.error, agentId: runCtx.agentId },
+                      'Failed to persist auto-RCA attempt marker (non-blocking)'
+                    );
+                  }
+                }
+              }
+
               const adminEmails = await AdminAccessService.getInstance().listAdminEmails();
               const sent = await sendCalibrationAdminAlert({
                 adminEmails,
@@ -4668,11 +4759,15 @@ export async function POST(req: NextRequest) {
                 executionId: lastExecutionId,
                 inputValues: lastRunInputs,
                 appBaseUrl: base,
+                // Additive: only set when RCA generation succeeded within budget.
+                autoRca: rcaResult?.ok ? rcaResult.rca : undefined,
               });
               // Mark only if actually dispatched, so a transport failure lets a
               // later run retry the alert instead of silently swallowing it.
+              // markAdminAlerted re-reads current metadata (mergeMetadata) so it
+              // composes with the correlation_id / auto_rca writes above (C1).
               if (sent && latest.id) {
-                await histRepo.markAdminAlerted(latest.id, latest.metadata);
+                await histRepo.markAdminAlerted(latest.id);
               }
             }
           } catch (alertErr) {

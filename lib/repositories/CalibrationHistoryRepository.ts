@@ -273,19 +273,32 @@ export class CalibrationHistoryRepository {
   }
 
   /**
-   * Mark a calibration_history row as having triggered an admin failure alert
-   * (IMP-2 dedup marker). Merges into existing metadata so nothing is lost.
+   * Shallow-merge a patch into a calibration_history row's `metadata`, re-reading
+   * the row's CURRENT metadata inside this method first so multiple metadata
+   * writes on the same row within one run compose instead of clobbering each
+   * other (the last full-object write from a stale snapshot would otherwise
+   * silently drop the other keys). All calibration-tail metadata writes
+   * (`correlation_id`, `auto_rca*`, `admin_alerted`) route through here.
+   *
+   * Best-effort: returns an error result on failure (callers treat as non-fatal).
    */
-  async markAdminAlerted(
+  async mergeMetadata(
     id: string,
-    existingMetadata: Record<string, any> | null | undefined
+    patch: Record<string, any>
   ): Promise<CalibrationHistoryRepositoryResult<boolean>> {
     try {
-      const metadata = {
-        ...(existingMetadata || {}),
-        admin_alerted: true,
-        admin_alerted_at: new Date().toISOString(),
-      };
+      // Re-read the current metadata INSIDE the method (fresh read) — this is
+      // what makes composing writes safe (see method doc / C1).
+      const { data: row, error: readErr } = await this.supabase
+        .from('calibration_history')
+        .select('metadata')
+        .eq('id', id)
+        .single();
+
+      if (readErr) throw readErr;
+
+      const metadata = { ...(row?.metadata || {}), ...patch };
+
       const { error } = await this.supabase
         .from('calibration_history')
         .update({ metadata })
@@ -295,8 +308,24 @@ export class CalibrationHistoryRepository {
 
       return { data: true, error: null };
     } catch (error) {
-      logger.error({ err: error, id }, 'Failed to mark calibration_history row as admin-alerted');
+      logger.error({ err: error, id }, 'Failed to merge calibration_history metadata');
       return { data: null, error: error as Error };
     }
+  }
+
+  /**
+   * Mark a calibration_history row as having triggered an admin failure alert
+   * (IMP-2 dedup marker). Routes through `mergeMetadata` so it re-reads current
+   * metadata and never clobbers a sibling write (e.g. correlation_id / auto_rca).
+   */
+  async markAdminAlerted(id: string): Promise<CalibrationHistoryRepositoryResult<boolean>> {
+    const result = await this.mergeMetadata(id, {
+      admin_alerted: true,
+      admin_alerted_at: new Date().toISOString(),
+    });
+    if (result.error) {
+      logger.error({ err: result.error, id }, 'Failed to mark calibration_history row as admin-alerted');
+    }
+    return result;
   }
 }
