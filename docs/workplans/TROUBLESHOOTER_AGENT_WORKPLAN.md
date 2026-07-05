@@ -329,4 +329,18 @@ None (not applicable — no runtime code).
 All 12 acceptance criteria pass. No High/Medium/Low bugs. Two optional non-blocking polish notes only. **Ready for commit** (RM: stage only the 3 TS feature files + requirement/workplan docs).
 
 ## Commit Info
-_(RM will populate)_
+
+| Field | Value |
+|-------|-------|
+| Commit hash | `17b14719fac62c2beda6d84d6e1de21e4a74c8fc` (short `17b1471`) |
+| Branch | `agent-failure-troubleshooting` (NOT merged to `main`) |
+| Date | 2026-07-05 |
+| Merge status | No merge, no push — feature-branch commit only, per user instruction |
+
+**Staged files (exactly 5):**
+
+- `.claude/agents/troubleshooter.md` (new agent definition)
+- `.claude/agents/team-leader.md` (TS routing + conclusion-doc handshake)
+- `CLAUDE.md` (Troubleshooter row added to Agent Team table)
+- `docs/requirements/TROUBLESHOOTER_AGENT_REQUIREMENT.md` (new)
+- `docs/workplans/TROUBLESHOOTER_AGENT_WORKPLAN.md` (new)
