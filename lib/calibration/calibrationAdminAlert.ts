@@ -3,10 +3,17 @@
 // failure details so they can start RCA immediately. This is what fulfils IMP-1's
 // "our team is on it" promise to the user (see calibrationResultEmail.ts).
 //
-// Design constraints (locked 2026-07-02):
+// Design constraints (locked 2026-07-02; transport revised 2026-07-05):
 //  - Deterministic (no LLM) — this is an internal technical alert.
-//  - System transport only: sendTransactionalEmail with NO ownerUserId, so it
-//    uses Resend / Gmail-app, never a per-user plugin connection.
+//  - Transport: prefer system transport (Resend → Gmail-app), but fall back to
+//    the run user's own google-mail plugin connection as a LAST RESORT when no
+//    system transport is configured/working. Deliverability wins — if the system
+//    is misconfigured, admins must still learn a calibration failed, even if the
+//    mail is sent from the user's account. (Was "system transport only"; that
+//    silently swallowed the alert on envs without Resend/Gmail-app — e.g. local.)
+//    Note: on an admin-triggered run, ownerUserId is the impersonated owner, so
+//    the last-resort send would come from the owner's Gmail — acceptable per the
+//    deliverability-first decision (and admin runs use configured infra anyway).
 //  - Deduped by workflow_hash upstream (route) — one alert per broken version.
 //  - INTERNAL ONLY: embeds the user's data the agent was processing. Admins must
 //    not forward it (stated in the footer).
@@ -76,9 +83,19 @@ export async function sendCalibrationAdminAlert(input: CalibrationAdminAlertInpu
     const html = renderAdminAlertHtml(input);
 
     const notificationService = new NotificationService();
-    // NO ownerUserId → system transport (Resend / Gmail-app), never a per-user
-    // plugin connection. This is an internal alert, not a user-owned message.
-    const dispatched = await notificationService.sendTransactionalEmail(input.adminEmails, subject, html);
+    // Prefer system transport (Resend → Gmail-app); pass ownerUserId so the
+    // transport can fall back to the run user's google-mail plugin connection as
+    // a LAST RESORT when no system transport is working. Deliverability of a
+    // failure alert outranks the "internal mail shouldn't use a user connection"
+    // preference — an undelivered alert is worse than one sent from the user's
+    // account. See the transport-priority chain in lib/notifications/emailTransport.ts.
+    const dispatched = await notificationService.sendTransactionalEmail(
+      input.adminEmails,
+      subject,
+      html,
+      undefined,
+      input.ownerUserId
+    );
 
     if (dispatched) {
       logger.info(
