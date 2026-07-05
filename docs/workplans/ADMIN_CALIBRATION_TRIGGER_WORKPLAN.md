@@ -1,7 +1,7 @@
 # Admin Calibration Trigger — Workplan
 
-> **Last Updated**: 2026-07-02
-> **Status**: Draft (design approved; awaiting go-ahead to implement)
+> **Last Updated**: 2026-07-05
+> **Status**: ✅ Implemented + committed (`ab68f84`) — backend, frontend, and tests all shipped. Live UI smoke pending.
 > **Branch**: `agent-failure-troubleshooting`
 
 ## Overview
@@ -111,7 +111,7 @@ The remaining ~4,200 lines keep using `supabase` / `user` **unchanged** — they
 
 ## Tracklist
 
-**Backend** — ✅ implemented (uncommitted)
+**Backend** — ✅ implemented + committed (`ab68f84`)
 - [x] Rename initial auth vars → `authSupabase`/`authUser`; compute `isAdmin`; fetch agent with service-role when admin.
 - [x] Compute `adminInitiated`; replace the hard 403 with the admin-aware check.
 - [x] **Impersonate at the boundary:** define `supabase` / `user` / `adminActorId` once (owner id + service-role client for admin runs). Rest of route unchanged. Verified only `user.id`/`user.email` are used downstream; tsc clean.
@@ -121,7 +121,7 @@ The remaining ~4,200 lines keep using `supabase` / `user` **unchanged** — they
 - [x] `GET /api/admin/agents` (admin-gated via `AdminAccessService`, `AgentRepository.findAllForAdmin` cross-user + best-effort owner-email enrichment).
 - [~] ~~Extend the route response with an `emails` dispatch summary~~ → **dropped** (see deviation): the emails fire in the `finally` block *after* the response body is built, so they can't be injected. The modal shows a deterministic note ("result email → you; admin alert → admins on failure") and the admin observes the real emails in their inbox.
 
-**Frontend** — ✅ implemented (uncommitted)
+**Frontend** — ✅ implemented + committed (`ab68f84`)
 - [x] Admin-gated "🧪 Run Calibration (Admin)" entry on `/test-plugins-v2` — self-contained `components/admin/AdminCalibrationTrigger.tsx`, self-hides via a `GET /api/admin/agents` probe.
 - [x] Agent-picker modal (debounced search, owner email + calibration status badges) + input-overrides JSON + force checkbox.
 - [x] Trigger the run + show outcome (status, message, iterations, fixes, session/exec ids) + deterministic email note.
@@ -189,6 +189,7 @@ The remaining ~4,200 lines keep using `supabase` / `user` **unchanged** — they
 
 | Date | Change | Details |
 |------|--------|---------|
+| 2026-07-05 | Committed | Feature landed in `ab68f84` (`feat(calibration): admin-only trigger to calibrate any agent`) — 12 files, 853 insertions: batch-route impersonation boundary, `GET /api/admin/agents` + `AgentRepository.findAllForAdmin`, `AdminCalibrationTrigger` modal on `/test-plugins-v2`, `resolveCalibrationIdentity` helper, admin-alert test-banner, + 14 tests. Status flipped Draft/uncommitted → committed. Live UI smoke still pending. |
 | 2026-07-03 | Tests + helper extraction | Extracted the identity split into a pure `resolveCalibrationIdentity` helper (route now calls it); 14 new tests (identity 7, `findAllForAdmin` 3, `/api/admin/agents` 5) — 91/91 calibration+shadow, tsc clean. Added "How to run (test page)" + "Log callouts to watch" sections. Full end-to-end route test deferred (route too heavy; covered by the helper tests + manual live run). |
 | 2026-07-02 | Implemented (uncommitted) | Backend impersonation-at-the-boundary in the batch route (owner id + service-role on the admin branch; `force` bypass; user email → system transport; IMP-2 tagged w/ "admin test" banner). New `GET /api/admin/agents` + `AgentRepository.findAllForAdmin`. New `components/admin/AdminCalibrationTrigger.tsx` (self-gating modal) mounted on `/test-plugins-v2`. tsc clean; calibration+shadow 85/85. **Deviation:** dropped the response `emails` summary (emails fire post-response in `finally`) → modal shows a deterministic note instead. **Route-level auth/identity tests still pending.** |
 | 2026-07-02 | Impersonation approach | Replaced the "audit every `user.id`" identity-split with **impersonate-at-the-boundary** (single substitution: owner `user.id` + service-role `supabase` on the admin branch). Verified 3 enabling facts (connections resolve by passed userId via service-role; client injected by constructor; auth derived once). Top risk downgraded to a ~75-line review. |
