@@ -64,4 +64,19 @@ describe('getCalibrationNotice', () => {
     const n = exec.notice({ _calibration: { isCalibration: true, round: 2, redirectTo: '' } });
     expect(n.redirectTo).toBeUndefined();
   });
+
+  it('exposes suppressSend when the marker sets it (degraded run)', () => {
+    const n = exec.notice({ _calibration: { isCalibration: true, round: 1, suppressSend: true } });
+    expect(n.suppressSend).toBe(true);
+  });
+
+  it('defaults suppressSend to false when the marker omits it', () => {
+    const n = exec.notice({ _calibration: { isCalibration: true, round: 1 } });
+    expect(n.suppressSend).toBe(false);
+  });
+
+  it('reports suppressSend=false outside calibration', () => {
+    const n = exec.notice({ content: { subject: 'Hi' } });
+    expect(n.suppressSend).toBe(false);
+  });
 });

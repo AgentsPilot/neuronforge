@@ -227,10 +227,16 @@ export abstract class BasePluginExecutor {
     htmlBanner: string;
     textBanner: string;
     redirectTo?: string;
+    /**
+     * True when the calibration run is degraded (an earlier step failed). A
+     * messaging executor should SKIP the real send rather than deliver an
+     * empty/placeholder message. Opt-in — same contract as redirectTo.
+     */
+    suppressSend?: boolean;
   } {
     const cal = parameters?._calibration;
     if (!cal?.isCalibration) {
-      return { isCalibration: false, subjectPrefix: '', htmlBanner: '', textBanner: '' };
+      return { isCalibration: false, subjectPrefix: '', htmlBanner: '', textBanner: '', suppressSend: false };
     }
     // Only show a round number from the 2nd send onward. A calibration that
     // produces a single message needs no "round 1" noise; the number appears
@@ -247,6 +253,7 @@ export abstract class BasePluginExecutor {
       htmlBanner: `<div style="background:#fff7ed;border:1px solid #fed7aa;color:#9a3412;padding:10px 14px;border-radius:8px;margin-bottom:14px;font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;font-size:13px;">${sentence}</div>`,
       textBanner: `${sentence}\n\n`,
       redirectTo,
+      suppressSend: cal.suppressSend === true,
     };
   }
 

@@ -54,6 +54,28 @@ export class GmailPluginExecutor extends GoogleBasePluginExecutor {
     // Details live in applyCalibrationModeToEmail; no-op outside calibration.
     const calibration = this.getCalibrationNotice(parameters);
     if (calibration.isCalibration) {
+      // Degraded run (an upstream step failed) → skip the real send entirely.
+      // Prevents the classic "empty digest" side-effect where calibration
+      // re-runs a broken workflow and dispatches a placeholder ("No data
+      // available.") email each time. No API call, no delivery; return a
+      // success-shaped result so the workflow completes and calibration can
+      // still evaluate the rest of the run.
+      if (calibration.suppressSend) {
+        this.logger.info(
+          { recipientCount: this.countRecipients(parameters.recipients) },
+          'Calibration: suppressing outbound email — run had failed steps (empty/degraded output not delivered)'
+        );
+        return {
+          message_id: null,
+          thread_id: null,
+          sent_at: new Date().toISOString(),
+          recipient_count: 0,
+          recipients: parameters.recipients,
+          subject: parameters.content?.subject || '(no subject)',
+          calibration_suppressed: true,
+          note: 'Calibration: send suppressed because the run had failed steps; no email was delivered.',
+        };
+      }
       this.applyCalibrationModeToEmail(parameters, calibration);
     }
 

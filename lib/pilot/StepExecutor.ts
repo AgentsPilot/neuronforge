@@ -820,13 +820,33 @@ export class StepExecutor {
     // injected in production.
     // See workplan: docs/workplans/v2-post-creation-calibration-prompt-workplan.md (Phase 4)
     if (context.runMode === 'calibration' || context.runMode === 'batch_calibration') {
+      // Suppress outbound delivery when the run is degraded — i.e. an earlier
+      // step genuinely FAILED. A messaging executor that honors this skips the
+      // real send instead of delivering an empty/placeholder message (e.g. a
+      // digest built on a "No data available." fallback after an upstream fetch
+      // failed). Gated on real failures only: a step that legitimately produces
+      // an empty result SUCCEEDS (0 rows ≠ failure), so a working "no results
+      // today" agent still sends its message during calibration. Same opt-in
+      // contract as redirectTo — executors that don't read it are unaffected.
+      // Reads failures recorded so far; a sibling that fails in the SAME
+      // parallel group (recorded on the parent only after the group resolves)
+      // isn't seen — fail-open, fine for the sequential fetch→process→send
+      // topology this targets.
+      const suppressSend = context.failedSteps.length > 0;
       transformedParams._calibration = {
         isCalibration: true,
         round: context.calibrationRound,
         // Redirect target: messaging executors send to the owner instead of the
         // real (possibly third-party) recipients during a calibration test.
         redirectTo: context.calibrationOwnerEmail,
+        suppressSend,
       };
+      if (suppressSend) {
+        logger.info(
+          { stepId: step.id, plugin: step.plugin, action: step.action, failedSteps: context.failedSteps },
+          'Calibration: run has failed steps — flagging outbound delivery for suppression (no empty/degraded send)'
+        );
+      }
     }
 
     // Log transformed params for debugging plugin execution
