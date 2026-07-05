@@ -46,6 +46,7 @@ This doc is **distilled from concrete failures** — it doesn't add new architec
 **Evidence:**
 - [WP-13](./V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_WEAK_POINTS.md): AI step fabricated two-row table with fake package numbers when search returned 0 emails
 - [WP-34](./V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_WEAK_POINTS.md): `DeterministicExtractor` swallows PDF-parse exceptions; plugin substitutes `"Unknown <Field>"` for missing required fields → fabricated content sent to suppliers in po-monitor scenario
+- [WP-61](./V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_WEAK_POINTS.md#wp-61-search-subject-dropped-by-schema-mapping-action-compiles-with-empty-params-topic-drop): a required plugin input dropped at compile (`research_topic` → `params:{}`) — the fix (P3.1 compiler guard) **warns/surfaces** the empty required param and **never auto-fills** it; P3.2 binds a genuinely-present subject upstream. Fabricating a default `topic` would be the Sheet1 (Anti-pattern C) sibling.
 
 **How to apply:**
 - For required fields that fail extraction: return `null` (forcing downstream code to handle it explicitly), throw a typed error, or set a distinct sentinel like `__EXTRACTION_FAILED__` that downstream conditionals can branch on.

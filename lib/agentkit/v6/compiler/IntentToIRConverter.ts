@@ -319,6 +319,24 @@ export class IntentToIRConverter {
       if (schema) {
         logger.debug(`[IntentToIRConverter] Using schema for ${step.plugin_key}.${step.action}`)
         finalParams = this.mapParamsToSchema(genericParams, schema, ctx)
+        // P3.2 (EP required-plugin-param cycle): bind a dropped search subject to
+        // the action's single unbound required string param (schema-driven).
+        this.bindSearchSubjectToRequiredParam(finalParams, genericParams, schema, step, ctx)
+
+        // B5: required-param warning for parity with convertDeliver/convertArtifact
+        // (convertDataSource previously had none — the search path emitted params:{}
+        // with not even a warning). Runs AFTER P3.2 so it only fires on genuinely
+        // unbound required params. The compiler's P3.1 pass is the plugin-agnostic
+        // backstop; this catches it one phase earlier for search/data-source steps.
+        if (schema.parameters.required) {
+          for (const requiredParam of schema.parameters.required) {
+            if (!finalParams[requiredParam]) {
+              ctx.warnings.push(
+                `Step ${(step as any).id ?? ''}: Missing required parameter '${requiredParam}' for ${step.plugin_key}.${step.action}`
+              )
+            }
+          }
+        }
       } else {
         logger.debug(`[IntentToIRConverter] No schema found for ${step.plugin_key}.${step.action}, using generic params`)
       }
@@ -2352,5 +2370,62 @@ export class IntentToIRConverter {
     }
 
     return mappedParams
+  }
+
+  /**
+   * P3.2 (EP required-plugin-param cycle — `df67bf69` topic-drop RCA):
+   * Bind a free-text search SUBJECT to the bound action's required text param when
+   * it would otherwise be dropped. `mapParamsToSchema` only copies a generic param
+   * through if its key exists in the action schema; a search subject arrives as
+   * `query`, but an action may name its required text param differently (e.g.
+   * `research_topic`'s `topic`) and have NO `query` property — so `query` is
+   * silently dropped → `params:{}` → runtime "<param> is required". This binds the
+   * subject to the action's SINGLE unbound required string param.
+   *
+   * Schema-driven and plugin-agnostic (no plugin/action names — Principle 6). When
+   * the target is ambiguous (0 or ≥2 unbound required string params) it does NOT
+   * guess (Principle 2 / Anti-pattern C) — it records a warning and leaves the param
+   * unbound for the compiler's no-empty-required-params guard (P3.1) to surface.
+   */
+  private bindSearchSubjectToRequiredParam(
+    finalParams: Record<string, any>,
+    genericParams: Record<string, any>,
+    schema: ActionDefinition,
+    step: DataSourceStep & BoundStep,
+    ctx: ConversionContext
+  ): void {
+    const subject = genericParams.query
+    const paramSchema = (schema.parameters?.properties || {}) as Record<string, any>
+    // Only act when a subject exists AND the schema has no `query` param (i.e. the
+    // subject was dropped by schema mapping). If `query` is a real param, it was used.
+    if (subject === undefined || paramSchema.query) return
+
+    const required = Array.isArray(schema.parameters?.required) ? schema.parameters.required : []
+    const unboundRequiredStrings = required.filter((r) => {
+      const p = paramSchema[r]
+      return p && p.type === 'string' && finalParams[r] === undefined
+    })
+    if (unboundRequiredStrings.length === 0) return
+
+    const where = `${step.plugin_key}.${step.action}`
+    if (unboundRequiredStrings.length === 1) {
+      const target = unboundRequiredStrings[0]
+      const p = paramSchema[target]
+      // Sanity-gate a LITERAL value against the param's length bounds; skip for {{refs}}
+      // whose length isn't known until runtime.
+      const literal = typeof subject === 'string' && !subject.includes('{{') ? subject : null
+      const withinBounds =
+        literal === null ||
+        ((p.minLength === undefined || literal.length >= p.minLength) &&
+          (p.maxLength === undefined || literal.length <= p.maxLength))
+      if (withinBounds) {
+        finalParams[target] = subject
+        logger.debug(`[IntentToIRConverter] P3.2: bound search subject → required string param '${target}' (single unbound target) for ${where}`)
+      } else {
+        ctx.warnings.push(`[P3.2] Search subject did not satisfy '${target}' length bounds for ${where}; left unbound for the required-param guard.`)
+      }
+    } else if (unboundRequiredStrings.length > 1) {
+      ctx.warnings.push(`[P3.2] Ambiguous search subject for ${where}: ${unboundRequiredStrings.length} unbound required string params (${unboundRequiredStrings.join(', ')}); not guessing — deferring to the required-param guard.`)
+    }
   }
 }
