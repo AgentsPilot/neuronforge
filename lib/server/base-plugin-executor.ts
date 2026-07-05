@@ -194,11 +194,17 @@ export abstract class BasePluginExecutor {
   // character count, inflating `total_recipients` (e.g., "user@x.com" → 10).
   protected countRecipients(recipients: any): number {
     if (!recipients) return 0;
+    // Recursively count actual addresses. Flattens nested arrays (e.g. [["a@b.com"]]
+    // that arise when an array-typed input is wrapped in a DSL array literal) and
+    // splits comma-separated strings — a flat `v.length` undercounts a nested list
+    // (counting the inner array as 1), which both misreports recipient_count AND can
+    // bypass the total_recipients >10/>50 safety guards. See RUNTIME_RCA for the email
+    // recipient-nesting bug (agent bb821b6b, 2026-07-05).
     const countField = (v: unknown): number => {
-      if (Array.isArray(v)) return v.length;
-      if (typeof v === 'string' && v.length > 0) return 1;
+      if (Array.isArray(v)) return v.reduce((n: number, e) => n + countField(e), 0);
+      if (typeof v === 'string') return v.split(',').map((s) => s.trim()).filter(Boolean).length;
       return 0;
-    }
+    };
     return countField(recipients.to) + countField(recipients.cc) + countField(recipients.bcc);
   }
 
