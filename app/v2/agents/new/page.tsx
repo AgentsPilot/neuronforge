@@ -42,6 +42,7 @@ import type {
   CreateAgentAIContext
 } from '@/components/agent-creation/types/generate-agent-v2'
 import { isGenerateAgentV2Success } from '@/components/agent-creation/types/generate-agent-v2'
+import { buildV6AiContext } from './buildV6AiContext'
 import { formatScheduleDisplay } from '@/lib/utils/scheduleFormatter'
 import { useV6AgentGeneration, useMoveToCalibrationAfterCreation } from '@/lib/utils/featureFlags'
 import { createTimedThinkingWordCycler, getWordsForCategories } from '@/lib/ui/thinking-words'
@@ -240,43 +241,15 @@ function mapV6ResponseToAgent(
     detected_categories: (workflow.suggested_plugins || []).map((p: string) => ({
       plugin: p,
       detected: true
-    })),
-    agent_config: {
-      creation_metadata: {
-        ai_generated_at: new Date().toISOString(),
-        session_id: context.sessionId,
-        agent_id: context.agentId,
-        thread_id: '', // V6 doesn't use threads
-        prompt_type: 'enhanced',
-        clarification_answers: {},
-        version: '6.0',
-        platform_version: 'v6.0',
-        enhanced_prompt_data: {
-          ...context.enhancedPromptData,
-          // V6-specific metadata
-          v6_metadata: {
-            architecture: 'semantic_plan_5_phase',
-            latency_ms: context.latencyMs,
-            phase_times_ms: metadata.phase_times_ms,
-            grounding_confidence: metadata.grounding_confidence,
-            steps_generated: metadata.steps_generated
-          }
-        }
-      },
-      ai_context: {
-        reasoning: `Generated via V6 5-phase semantic pipeline. ${metadata.steps_generated} steps created in ${metadata.total_time_ms}ms.`,
-        confidence: metadata.grounding_confidence || 0.8,
-        original_prompt: context.initialPrompt || '',
-        enhanced_prompt: context.enhancedPromptData?.enhanced_prompt || '',
-        generated_plan: '',
-        // WP-55: persist Phase 1 IntentContract + Phase 2 data_schema so
-        // post-hoc diagnosis of this agent's LLM emission becomes a SQL
-        // lookup instead of a non-deterministic LLM re-run. ~40 KB total
-        // on representative agents; well within JSONB practical limits.
-        intent_contract: v6Response.intent_contract ?? null,
-        data_schema: v6Response.data_schema ?? null
-      }
-    }
+    }))
+    // NOTE: `agent_config` is intentionally NOT built here. The save handler
+    // (`createAgent`) constructs the authoritative agent_config — richer
+    // creation_metadata (real thread_id / clarification_answers) plus ai_context
+    // via buildV6AiContext — and overrides whatever this mapper returns. Building
+    // a second copy here previously diverged from the save handler and clobbered
+    // the WP-55 intent_contract/data_schema fields. Single source of truth = the
+    // save handler. See docs/investigations/
+    // AGENT_RCA_CONCLUSION_gmail-expense-attachment-flatten.md (Addendum).
   }
 }
 
@@ -1362,13 +1335,19 @@ function V2AgentBuilderContent() {
             platform_version: 'v6.0',
             enhanced_prompt_data: enhancedPromptData
           },
-          ai_context: {
+          // WP-55: buildV6AiContext is the single source of truth for ai_context.
+          // It persists the Phase-1 IntentContract + Phase-2 data_schema so
+          // post-hoc diagnosis of this agent's LLM emission is a SQL lookup, not
+          // a non-deterministic re-run. (mapV6ResponseToAgent no longer builds a
+          // divergent copy — see its NOTE.)
+          ai_context: buildV6AiContext({
             reasoning: v6Agent.ai_reasoning || '',
             confidence: v6Agent.ai_confidence || 0,
-            original_prompt: initialPrompt || '',
-            enhanced_prompt: builderState.enhancedPrompt || '',
-            generated_plan: ''
-          }
+            originalPrompt: initialPrompt || '',
+            enhancedPrompt: builderState.enhancedPrompt || '',
+            intentContract: v6Data.intent_contract,
+            dataSchema: v6Data.data_schema
+          })
         }
 
         // Build final agent data
