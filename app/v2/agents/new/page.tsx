@@ -11,7 +11,6 @@ import { V2Logo, V2Controls } from '@/components/v2/V2Header'
 import { ArrowLeft, Bot, Sparkles, MessageSquare, Zap, CheckCircle2, Clock,
   Settings,
   Loader2,
-  Brain,
   Calendar,
   Activity,
   ArrowRight,
@@ -46,6 +45,7 @@ import { buildV6AiContext } from './buildV6AiContext'
 import { formatScheduleDisplay } from '@/lib/utils/scheduleFormatter'
 import { useV6AgentGeneration, useMoveToCalibrationAfterCreation } from '@/lib/utils/featureFlags'
 import { createTimedThinkingWordCycler, getWordsForCategories } from '@/lib/ui/thinking-words'
+import { motion } from 'framer-motion'
 
 // ============================================================================
 // V6 Agent Generation Types and Helpers
@@ -254,6 +254,29 @@ function mapV6ResponseToAgent(
 }
 
 // ============================================================================
+// Left-rail decision summaries (UI #1)
+// ============================================================================
+
+/**
+ * Turn a stored clarification answer into a short, human-readable string for the
+ * left-rail "decision map". Single-question mode stores plain-string labels
+ * (see `submitPhase2Answer`); the legacy batch path may store structured
+ * `{ mode, selected, custom }` answers, so handle both shapes.
+ */
+function answerToText(answer: unknown): string {
+  if (!answer) return ''
+  if (typeof answer === 'string') return answer.trim()
+  if (typeof answer === 'object') {
+    const a = answer as { mode?: string; selected?: unknown; custom?: string }
+    if (a.mode === 'custom') return (a.custom || '').trim()
+    if (a.mode === 'selected') {
+      return Array.isArray(a.selected) ? a.selected.join(', ') : String(a.selected ?? '').trim()
+    }
+  }
+  return ''
+}
+
+// ============================================================================
 // Main Component
 // ============================================================================
 
@@ -289,6 +312,7 @@ function V2AgentBuilderContent() {
     addAIMessage,
     addAIQuestion,      // V10: Question variant
     addPlanSummary,     // V10: Plan summary variant
+    addSuccessMessage,  // Animated "Agent created!" inline success card
     addSystemMessage,
     addTypingIndicator,
     removeTypingIndicator,
@@ -1153,10 +1177,13 @@ function V2AgentBuilderContent() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ agentId, inputValues: inputParameterValues, background: true })
     }).catch(err => console.warn('⚠️ Failed to trigger background calibration (non-blocking)', err))
-    // Move the user on — they watch their inbox / the agents list, not a progress screen.
+    // Move the user on — they watch their inbox / the agents list, not a progress
+    // screen. Hold long enough (3.5s) for the two-sentence "we're testing your
+    // agent now… you'll get an email" message to be read before the route
+    // transition (UI #4). The 600ms original flashed past before it was readable.
     setTimeout(() => {
       router.push('/v2/agent-list')
-    }, 600)
+    }, 3500)
   }
 
   const handleSkipCalibration = () => {
@@ -1168,9 +1195,11 @@ function V2AgentBuilderContent() {
     addAIMessage("No problem — your agent is in your agents list. You can run the test whenever you're ready.")
     // Record the decision (sets calibration_status='skipped' → gated; click routes to the sandbox).
     recordCalibrationDecision(agentId, 'declined')
+    // Hold long enough (2.5s) for the confirmation message to be read before the
+    // route transition (UI #4).
     setTimeout(() => {
       router.push('/v2/agent-list')
-    }, 600)
+    }, 2500)
   }
 
   // ==================== THINKING WORDS HELPERS ====================
@@ -1562,19 +1591,31 @@ function V2AgentBuilderContent() {
         console.warn('⚠️ Agent created but inline input save failed — user can re-save from the agent edit page')
       }
 
-      // Mark agent as created
+      // Mark agent as created (drives the left-rail "Agent Ready" step)
       setAgentCreated(true)
 
-      // Stop thinking words and show success message
+      // Stop thinking words and show the animated success card as an INLINE chat
+      // message so it holds its place in the conversation — any calibration Q&A
+      // added afterwards renders BELOW it (previously the card was a trailing
+      // block pinned to the bottom, so later messages slotted above it and looked
+      // like they never appeared).
       stopThinkingWords()
+      const createdAgentName =
+        (agentData?.agent_name || enhancedPromptData?.plan_title || 'Your agent is ready.').toString().trim()
+      addSuccessMessage(createdAgentName)
 
       if (useMoveToCalibrationAfterCreation()) {
         // Flag ON: offer the user a choice to calibrate before going live.
         // Navigation happens ONLY on a button click (handleStartCalibration /
         // handleSkipCalibration) — never auto-redirect (workplan R3).
         setCreatedAgentId(result.agent.id)
-        addAIMessage("Your agent is ready! Want to test it now? Heads up: calibration runs it once on real data (it may send/create real items), so make sure everything it needs is in place first.")
-        setShowCalibrationPrompt(true)
+        // Spotlight the success card: let its entrance animation (~1.2s) play
+        // ALONE first, THEN reveal the calibration message + prompt. Otherwise
+        // all three mount at once and the animation is lost in the flurry.
+        setTimeout(() => {
+          addAIMessage("Your agent is ready! Want to test it now? Heads up: calibration runs it once on real data (it may send/create real items), so make sure everything it needs is in place first.")
+          setShowCalibrationPrompt(true)
+        }, 1400)
       } else {
         // Flag OFF (default): unchanged behaviour — auto-redirect to the agent page.
         addAIMessage('Your agent has been created successfully! Taking you to your new agent...')
@@ -2108,6 +2149,30 @@ function V2AgentBuilderContent() {
     )
   }
 
+  // UI #1: compact per-step "decision map" summaries for the left rail. Each is
+  // the real choice the user made at that step, shown (line-clamped) once the
+  // step is complete; falls back to the step's generic subtitle when empty.
+  // Qualitative only — no counts/denominators (FR7.20-safe).
+  // Clarification: showing the raw pasted answers (URLs etc.) is noisy. While
+  // questions are being asked show a qualitative status; once done show a
+  // numerator-only count ("N answers captured") — no denominator/cap (FR7.20).
+  const clarificationAnswerCount = Object.values(builderState.clarificationAnswers)
+    .map(answerToText)
+    .filter(Boolean)
+    .length
+  // Input Parameters: a giant value dump reads as clutter in the rail. Show a
+  // count instead ("N input parameters configured"). This is the config-step
+  // count, unrelated to the Phase 2 question-cap secrecy (FR7.20).
+  const inputParamsCount = Object.values(inputParameterValues)
+    .filter(v => v != null && String(v).trim() !== '')
+    .length
+  const inputParamsSummary = inputParamsCount > 0
+    ? `${inputParamsCount} input parameter${inputParamsCount === 1 ? '' : 's'} configured`
+    : ''
+  const scheduleSummary = scheduleCompleted
+    ? formatScheduleDisplay(selectedScheduleMode, scheduleCron || undefined)
+    : ''
+
   return (
     <div className="space-y-4 sm:space-y-5 lg:space-y-6">
       {/* Logo - First Line */}
@@ -2131,7 +2196,7 @@ function V2AgentBuilderContent() {
 
       {/* Main Grid Layout - Two Columns: Setup Progress → Chat (Extended) */}
       <div className="relative">
-        <div className="grid grid-cols-1 lg:grid-cols-[1fr_auto_3fr] gap-4 lg:gap-6 items-start">
+        <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_auto_minmax(0,3fr)] gap-4 lg:gap-6 items-start">
           {/* Left Column - Setup Progress (hidden on mobile) */}
           <div className="hidden lg:block space-y-4 sm:space-y-5">
             <Card className="!p-4 sm:!p-6 h-[800px] max-h-[calc(100vh-120px)] flex flex-col overflow-hidden">
@@ -2173,12 +2238,12 @@ function V2AgentBuilderContent() {
                         : 'var(--v2-text-muted)'
                     }}
                   />
-                  <div className="flex-1">
+                  <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium text-[var(--v2-text-primary)] mb-1">
                       Initial Request
                     </p>
-                    <p className="text-xs text-[var(--v2-text-muted)]">
-                      Received your agent request
+                    <p className="text-xs text-[var(--v2-text-muted)] line-clamp-2 break-words">
+                      {initialPrompt?.trim() || 'Received your agent request'}
                     </p>
                   </div>
                 </div>
@@ -2220,12 +2285,16 @@ function V2AgentBuilderContent() {
                       style={{ borderColor: 'var(--v2-text-muted)' }}
                     />
                   )}
-                  <div className="flex-1">
+                  <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium text-[var(--v2-text-primary)] mb-1">
                       Analysis Complete
                     </p>
                     <p className="text-xs text-[var(--v2-text-muted)]">
-                      {builderState.workflowPhase === 'analysis' ? 'Analyzing your request...' : 'Understanding requirements'}
+                      {builderState.workflowPhase === 'analysis'
+                        ? 'Analyzing your request...'
+                        : builderState.workflowPhase === 'initial'
+                        ? 'Understand your request'
+                        : 'Requirements understood'}
                     </p>
                   </div>
                 </div>
@@ -2267,18 +2336,20 @@ function V2AgentBuilderContent() {
                       style={{ borderColor: 'var(--v2-text-muted)' }}
                     />
                   )}
-                  <div className="flex-1">
+                  <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium text-[var(--v2-text-primary)] mb-1">
                       Clarification Questions
                     </p>
-                    <p className="text-xs text-[var(--v2-text-muted)]">
-                      {/* NOTE (2026-05-28): no count shown. Single-question mode asks one
-                          question at a time with no known total, so an "X/Y" progress
-                          fraction would be meaningless and leak a count (FR7 grep gate). */}
+                    <p className="text-xs text-[var(--v2-text-muted)] line-clamp-2 break-words">
+                      {/* NOTE (2026-05-28): no DENOMINATOR/total shown — single-question
+                          mode has no known total, and leaking the cap is a FR7.20 gate.
+                          While asking: a qualitative status. Once done: a numerator-only
+                          count of answers captured (no total). */}
                       {builderState.workflowPhase === 'questions'
-                        ? 'Answering a few quick questions'
-                        : 'Answer clarifying questions'
-                      }
+                        ? 'Collecting your answers…'
+                        : clarificationAnswerCount > 0
+                        ? `${clarificationAnswerCount} answer${clarificationAnswerCount === 1 ? '' : 's'} captured`
+                        : 'Answer clarifying questions'}
                     </p>
                   </div>
                 </div>
@@ -2320,12 +2391,13 @@ function V2AgentBuilderContent() {
                       style={{ borderColor: 'var(--v2-text-muted)' }}
                     />
                   )}
-                  <div className="flex-1">
+                  <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium text-[var(--v2-text-primary)] mb-1">
                       Plan Creation
                     </p>
-                    <p className="text-xs text-[var(--v2-text-muted)]">
-                      {builderState.workflowPhase === 'enhancement' ? 'Creating agent plan...' : 'Generate detailed plan'}
+                    <p className="text-xs text-[var(--v2-text-muted)] line-clamp-2 break-words">
+                      {enhancedPromptData?.plan_title?.trim() ||
+                        (builderState.workflowPhase === 'enhancement' ? 'Creating agent plan...' : 'Generate detailed plan')}
                     </p>
                   </div>
                 </div>
@@ -2368,13 +2440,15 @@ function V2AgentBuilderContent() {
                       style={{ borderColor: 'var(--v2-text-muted)' }}
                     />
                   )}
-                  <div className="flex-1">
+                  <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium text-[var(--v2-text-primary)] mb-1">
                       Input Parameters
                     </p>
-                    <p className="text-xs text-[var(--v2-text-muted)]">
+                    <p className="text-xs text-[var(--v2-text-muted)] line-clamp-2 break-words">
                       {isAwaitingInputParameter
                         ? `Configuring settings (${currentInputIndex + 1}/${requiredInputs.length})`
+                        : (inputParametersComplete && inputParamsSummary)
+                        ? inputParamsSummary
                         : 'Configure agent settings'
                       }
                     </p>
@@ -2419,12 +2493,14 @@ function V2AgentBuilderContent() {
                       style={{ borderColor: 'var(--v2-text-muted)' }}
                     />
                   )}
-                  <div className="flex-1">
+                  <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium text-[var(--v2-text-primary)] mb-1">
                       Scheduling
                     </p>
-                    <p className="text-xs text-[var(--v2-text-muted)]">
-                      {isAwaitingSchedule && !scheduleCompleted ? 'Configuring schedule...' : 'Set when agent runs'}
+                    <p className="text-xs text-[var(--v2-text-muted)] line-clamp-2 break-words">
+                      {isAwaitingSchedule && !scheduleCompleted
+                        ? 'Configuring schedule...'
+                        : scheduleSummary || 'Set when agent runs'}
                     </p>
                   </div>
                 </div>
@@ -2467,15 +2543,17 @@ function V2AgentBuilderContent() {
                       style={{ borderColor: 'var(--v2-text-muted)' }}
                     />
                   )}
-                  <div className="flex-1">
+                  <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium text-[var(--v2-text-primary)] mb-1">
                       Agent Ready
                     </p>
-                    <p className="text-xs text-[var(--v2-text-muted)]">
+                    <p className="text-xs text-[var(--v2-text-muted)] line-clamp-2 break-words">
                       {isAwaitingFinalApproval
                         ? 'Reviewing agent draft...'
                         : agentCreated
-                        ? 'Agent created!'
+                        ? (pendingAgentData?.agent_name?.trim()
+                            ? `Created: ${pendingAgentData.agent_name.trim()}`
+                            : 'Agent created!')
                         : 'Deploy your agent'
                       }
                     </p>
@@ -2510,7 +2588,7 @@ function V2AgentBuilderContent() {
                           style={{ borderColor: 'var(--v2-text-muted)' }}
                         />
                       )}
-                      <div className="flex-1">
+                      <div className="flex-1 min-w-0">
                         <p className="text-sm font-medium text-[var(--v2-text-primary)] mb-1">
                           Calibration Test Run
                         </p>
@@ -2531,16 +2609,6 @@ function V2AgentBuilderContent() {
 
               {/* Bottom Info Section */}
               <div className="mt-auto pt-4 border-t border-[var(--v2-border)] space-y-3">
-                <div className="flex items-center gap-3">
-                  <Brain className="w-5 h-5 text-[var(--v2-text-secondary)]" />
-                  <div>
-                    <p className="text-xs text-[var(--v2-text-muted)]">Builder Type</p>
-                    <p className="text-sm font-medium text-[var(--v2-text-primary)]">
-                      Conversational AI Builder
-                    </p>
-                  </div>
-                </div>
-
                 <div className="flex items-center gap-3">
                   <Activity className="w-5 h-5 text-[var(--v2-text-secondary)]" />
                   <div>
@@ -2595,8 +2663,85 @@ function V2AgentBuilderContent() {
               <div className="flex-1 overflow-y-auto space-y-4 mb-4">
                 {messages.map((message, index) => (
                   <div key={index}>
-                    {/* System messages (centered, no avatar) */}
-                    {message.role === 'system' ? (
+                    {/* UI #3: animated "Agent created!" success card, rendered
+                        INLINE in the stream so later messages append below it.
+                        The whole moment is delayed ~0.35s so the chat's smooth
+                        auto-scroll settles and the card is IN VIEW before it
+                        animates. `message.content` carries the agent name. */}
+                    {message.variant === 'success' ? (
+                      <div className="flex justify-start mt-4">
+                        <div className="w-8 h-8 flex-shrink-0" /> {/* Spacer for avatar alignment */}
+                        <motion.div
+                          initial={{ opacity: 0, scale: 0.9, y: 12 }}
+                          animate={{ opacity: 1, scale: 1, y: 0 }}
+                          transition={{ type: 'spring', stiffness: 200, damping: 16, delay: 0.35 }}
+                          className="flex-1 max-w-3xl"
+                        >
+                          <div
+                            className="bg-[var(--v2-surface)] border p-5 flex items-center gap-4"
+                            style={{
+                              borderRadius: 'var(--v2-radius-card)',
+                              boxShadow: 'var(--v2-shadow-card)',
+                              borderColor: 'var(--v2-status-success-border)'
+                            }}
+                          >
+                            {/* Animated check with two staggered radiating ring pulses */}
+                            <div className="relative flex-shrink-0 w-14 h-14 flex items-center justify-center">
+                              {[0, 1].map((i) => (
+                                <motion.span
+                                  key={i}
+                                  className="absolute inset-0 rounded-full"
+                                  style={{ backgroundColor: 'var(--v2-status-success-text)' }}
+                                  initial={{ opacity: 0.4, scale: 0.5 }}
+                                  animate={{ opacity: 0, scale: 2 }}
+                                  transition={{ duration: 1.4, ease: 'easeOut', delay: 0.55 + i * 0.35, repeat: 1, repeatDelay: 0.3 }}
+                                />
+                              ))}
+                              {/* The circle "pops" in with an overshoot spring */}
+                              <motion.div
+                                className="relative w-14 h-14 rounded-full flex items-center justify-center"
+                                style={{ backgroundColor: 'var(--v2-status-success-bg)' }}
+                                initial={{ scale: 0 }}
+                                animate={{ scale: 1 }}
+                                transition={{ type: 'spring', stiffness: 280, damping: 12, delay: 0.5 }}
+                              >
+                                <motion.svg
+                                  width="30" height="30" viewBox="0 0 24 24" fill="none"
+                                  stroke="var(--v2-status-success-text)" strokeWidth="3"
+                                  strokeLinecap="round" strokeLinejoin="round"
+                                >
+                                  <motion.path
+                                    d="M4 12.5l5 5L20 6"
+                                    initial={{ pathLength: 0 }}
+                                    animate={{ pathLength: 1 }}
+                                    transition={{ delay: 0.7, duration: 0.45, ease: 'easeInOut' }}
+                                  />
+                                </motion.svg>
+                              </motion.div>
+                            </div>
+                            <div className="min-w-0">
+                              <motion.p
+                                className="font-semibold text-[var(--v2-text-primary)]"
+                                initial={{ opacity: 0, y: 6 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                transition={{ delay: 0.7, duration: 0.35 }}
+                              >
+                                Agent created!
+                              </motion.p>
+                              <motion.p
+                                className="text-sm text-[var(--v2-text-secondary)] truncate"
+                                initial={{ opacity: 0, y: 6 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                transition={{ delay: 0.85, duration: 0.35 }}
+                              >
+                                {message.content}
+                              </motion.p>
+                            </div>
+                          </div>
+                        </motion.div>
+                      </div>
+                    ) : /* System messages (centered, no avatar) */
+                    message.role === 'system' ? (
                       <div className="flex justify-center">
                         <div
                           className="bg-[var(--v2-primary)]/10 text-[var(--v2-primary)] text-xs px-3 py-2"
@@ -2823,7 +2968,7 @@ function V2AgentBuilderContent() {
                                                   )}
                                                 </div>
                                               )}
-                                              <div className="flex-1">
+                                              <div className="flex-1 min-w-0">
                                                 <span className="text-sm font-medium">{opt.label}</span>
                                                 {opt.description && (
                                                   <span className="text-xs text-[var(--v2-text-muted)] ml-1">— {opt.description}</span>
@@ -3028,7 +3173,7 @@ function V2AgentBuilderContent() {
                                         >
                                           {stepIndex + 1}
                                         </div>
-                                        <div className="flex-1">
+                                        <div className="flex-1 min-w-0">
                                           <p className="text-sm text-[var(--v2-text-secondary)] leading-relaxed">{step}</p>
                                         </div>
                                       </div>
@@ -3433,7 +3578,7 @@ function V2AgentBuilderContent() {
                                     >
                                       {stepIndex + 1}
                                     </div>
-                                    <div className="flex-1">
+                                    <div className="flex-1 min-w-0">
                                       <p className="text-sm text-[var(--v2-text-secondary)] leading-relaxed">{step}</p>
                                     </div>
                                   </div>
@@ -3669,14 +3814,14 @@ function V2AgentBuilderContent() {
                         className="bg-[var(--v2-surface)] border border-[var(--v2-border)] p-4 flex items-center justify-between"
                         style={{ borderRadius: 'var(--v2-radius-card)', boxShadow: 'var(--v2-shadow-card)' }}
                       >
-                        <div className="flex items-center gap-3">
+                        <div className="flex items-center gap-3 min-w-0">
                           <div
-                            className="w-10 h-10 bg-[var(--v2-primary)]/10 flex items-center justify-center"
+                            className="w-10 h-10 bg-[var(--v2-primary)]/10 flex items-center justify-center flex-shrink-0"
                             style={{ borderRadius: 'var(--v2-radius-button)' }}
                           >
                             <FlaskConical className="h-5 w-5 text-[var(--v2-primary)]" />
                           </div>
-                          <div>
+                          <div className="min-w-0">
                             <p className="font-medium text-[var(--v2-text-primary)]">
                               Test your agent before going live?
                             </p>
@@ -3686,10 +3831,10 @@ function V2AgentBuilderContent() {
                           </div>
                         </div>
 
-                        <div className="flex gap-2">
+                        <div className="flex flex-col sm:flex-row gap-2 flex-shrink-0">
                           <button
                             onClick={handleStartCalibration}
-                            className="px-4 py-2 bg-[var(--v2-primary)] text-white font-medium flex items-center gap-2 hover:opacity-90 transition-all"
+                            className="px-4 py-2 bg-[var(--v2-primary)] text-white font-medium flex items-center justify-center gap-2 whitespace-nowrap hover:opacity-90 transition-all"
                             style={{ borderRadius: 'var(--v2-radius-button)' }}
                           >
                             Test it now
@@ -3697,7 +3842,7 @@ function V2AgentBuilderContent() {
 
                           <button
                             onClick={handleSkipCalibration}
-                            className="px-4 py-2 border border-[var(--v2-border)] text-[var(--v2-text-secondary)] font-medium hover:bg-[var(--v2-surface-hover)] transition-all"
+                            className="px-4 py-2 border border-[var(--v2-border)] text-[var(--v2-text-secondary)] font-medium whitespace-nowrap hover:bg-[var(--v2-surface-hover)] transition-all"
                             style={{ borderRadius: 'var(--v2-radius-button)' }}
                           >
                             Skip for now
