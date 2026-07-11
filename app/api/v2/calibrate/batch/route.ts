@@ -1128,6 +1128,87 @@ export async function POST(req: NextRequest) {
       logger.error({ err, sessionId, agentId }, '[ScatterItemField] validation/auto-repair failed (non-blocking)');
     }
 
+    // Item 7 (WP-56 backfill) — in-place field-fidelity CORRECTION for existing
+    // agents, run BEFORE the dry-run so the dry-run executes the repaired
+    // workflow. The rewrite is deterministic and plugin-grounded (shared Phase 0
+    // reconciliation core): only clearly-same-field spellings (e.g. a flatten's
+    // declared `mime_type` → the Gmail producer's real `mimeType`) are rewritten;
+    // ambiguous/derived fields are left untouched. Every correction is audited and
+    // a pre-rewrite snapshot is kept on the session (reversibility). The G1
+    // coverage-floor cap on the verdict is applied later. Non-blocking.
+    const pluginTruthResolver = (plugin: string, action: string) =>
+      pluginManager.getActionDefinition(plugin, action)?.output_schema ?? null;
+    let fieldFidelityCorrected = false;
+    const fieldFidelityCorrections: any[] = [];
+    try {
+      const { FieldFidelityCorrector } = await import('@/lib/pilot/shadow/FieldFidelityCorrector');
+      const targetSteps = agent.pilot_steps || agent.workflow_steps || [];
+      const { correctedSteps, corrections, changed } = new FieldFidelityCorrector(pluginTruthResolver).correct(targetSteps);
+      if (changed) {
+        const preCorrectionSnapshot = JSON.parse(JSON.stringify(targetSteps)); // reversibility snapshot
+        agent.pilot_steps = correctedSteps;
+        // Persist via the repository (owner-scoped write, mandatory repo pattern).
+        const { error: correctorWriteError } = await new AgentRepository(supabase)
+          .updatePilotSteps(agentId, user.id, correctedSteps);
+        if (correctorWriteError) {
+          logger.error({ err: correctorWriteError, sessionId, agentId }, '[FieldFidelity] failed to persist corrected pilot_steps (non-blocking)');
+        }
+        fieldFidelityCorrected = true;
+        fieldFidelityCorrections.push(...corrections);
+
+        // Reversibility: keep the pre-rewrite snapshot on the session.
+        await sessionRepo.update(sessionId, { backup_pilot_steps: preCorrectionSnapshot })
+          .catch((err: unknown) => logger.error({ err, sessionId, agentId }, '[FieldFidelity] snapshot persist failed (non-blocking)'));
+
+        // Audit every correction (surfaced + reversible per Item 7 AC).
+        const { AuditTrailService } = await import('@/lib/services/AuditTrailService');
+        const auditTrail = AuditTrailService.getInstance();
+        for (const c of corrections) {
+          auditTrail.log({
+            action: 'AGENT_CALIBRATION_FIELD_CORRECTED',
+            entityType: 'agent',
+            entityId: agentId,
+            userId: user.id,
+            resourceName: agent.agent_name || agentId,
+            severity: 'warning',
+            details: { sessionId, stepId: c.stepId, from: c.from, to: c.to, plugin: c.plugin, action: c.action, locations: c.locations },
+          }).catch((err: unknown) => logger.error({ err, agentId, sessionId }, '[FieldFidelity] audit failed (non-blocking)'));
+        }
+        logger.warn(
+          { sessionId, agentId, correctionCount: corrections.length, corrections: corrections.map((c: any) => `${c.stepId}:${c.from}→${c.to}`) },
+          '[FieldFidelity] Applied + persisted in-place field-fidelity corrections before dry-run'
+        );
+      }
+    } catch (err) {
+      logger.error({ err, sessionId, agentId }, '[FieldFidelity] in-place correction failed (non-blocking)');
+    }
+
+    // Item 5b / calibration-side Item 3 — plugin-truth field-fidelity DETECTION on
+    // the (possibly corrected) steps. Any mismatch that survives the corrector
+    // (e.g. an ambiguous case the corrector deliberately left untouched) is a
+    // BLOCKING-class issue (G1a) merged into the UI issue set below, so it can
+    // never be waved through to a passing verdict. Non-blocking to compute.
+    const pluginFieldFidelityIssues: any[] = [];
+    try {
+      const { PluginFieldFidelityValidator } = await import('@/lib/pilot/shadow/PluginFieldFidelityValidator');
+      const targetSteps = agent.pilot_steps || agent.workflow_steps || [];
+      const issues = new PluginFieldFidelityValidator(pluginTruthResolver).validate(targetSteps);
+      for (const i of issues) {
+        pluginFieldFidelityIssues.push({
+          source: 'plugin_field_fidelity',
+          type: 'plugin_field_fidelity_mismatch',
+          severity: 'critical',
+          blocking: true,
+          description: `Step "${i.stepId}" declares field "${i.declaredField}", but the ${i.plugin}.${i.action} producer emits "${i.realField}". This mismatch empties the downstream data path.`,
+          stepId: i.stepId,
+          details: i,
+          suggested_fix: null,
+        });
+      }
+    } catch (err) {
+      logger.error({ err, sessionId, agentId }, '[PluginFieldFidelity] detection failed (non-blocking)');
+    }
+
     // Phase 4 — monotonic "round" across every workflow execution in this
     // calibration (dry-run + each loop iteration + re-runs), so each outbound
     // message the agent sends is uniquely numbered for the recipient.
@@ -1180,6 +1261,18 @@ export async function POST(req: NextRequest) {
     let autoFixesApplied = 0;
     let currentAgent = agent; // Track agent state across iterations
     let allIssuesForUI: any[] = []; // Collect all issues for final UI display
+
+    // Item 5b / cal-side Item 3 (G1a): surface any surviving plugin-field-fidelity
+    // mismatch as a BLOCKING-class issue. Because it lands in allIssuesForUI, the
+    // run can never take the zero-issue "success" path, and the class-based
+    // verdict below guarantees it prevents a pass.
+    if (pluginFieldFidelityIssues.length > 0) {
+      allIssuesForUI.push(...pluginFieldFidelityIssues);
+      logger.warn(
+        { sessionId, agentId, count: pluginFieldFidelityIssues.length },
+        '[PluginFieldFidelity] Surfaced blocking field-fidelity mismatch(es) to the calibration report'
+      );
+    }
 
     // Phase 6 — Calibration audit fix (G-CAL-1): surface dry-run findings to the UI.
     // Previously dryRunResult.issues was only logged — critical issues silently
@@ -4113,6 +4206,95 @@ export async function POST(req: NextRequest) {
       }, '[G-CAL-3] Auto-calibration did not converge — surfacing non-convergence issue to user');
     }
 
+    // Item 10 (Finding 5): surface an all-failed / all-empty step as a BLOCKING
+    // issue. A step/scatter where 100% of items error or return empty/fallback
+    // data was previously swallowed into valid-looking empty results (14/0/0 with
+    // only a cosmetic issue) — the hidden-failure anti-pattern. Detect it from the
+    // produced per-step data (generic: shared data-quality signal + success:false
+    // marker; no plugin branches) so it can never be silently passed (G1a).
+    const degradedStepIssues: any[] = [];
+    try {
+      const { AllFailedStepDetector } = await import('@/lib/pilot/shadow/AllFailedStepDetector');
+      const stepOutputs = (finalResult as any)?.output || {};
+      const degraded = new AllFailedStepDetector().detect(stepOutputs);
+      for (const d of degraded) {
+        degradedStepIssues.push({
+          source: 'degraded_step',
+          type: d.kind === 'all_failed' ? 'degraded_step_all_failed' : 'degraded_step_all_empty',
+          severity: 'critical',
+          blocking: true,
+          description: d.kind === 'all_failed'
+            ? `Every one of the ${d.itemCount} item(s) at step "${d.stepId}" failed. The step produced no usable output.`
+            : `All ${d.itemCount} item(s) produced by step "${d.stepId}" are empty or placeholder values — the step ran but carried no real data.`,
+          stepId: d.stepId,
+          details: d,
+          suggested_fix: null,
+        });
+      }
+      if (degradedStepIssues.length > 0) {
+        allIssuesForUI.push(...degradedStepIssues);
+        logger.warn({ sessionId, agentId, count: degradedStepIssues.length, steps: degraded.map(d => `${d.stepId}:${d.kind}`) },
+          '[AllFailedStep] Surfaced blocking all-failed/all-empty step(s) to the calibration report');
+      }
+    } catch (err) {
+      logger.error({ err, sessionId, agentId }, '[AllFailedStep] detection failed (non-blocking)');
+    }
+
+    // Phase 1.6 — unified coverage signal (fixes BOTH directions of the floor).
+    // Instead of a delivery/row COUNT, base "real path exercised" on whether the
+    // last PRE-DELIVERY collection carries MEANINGFUL field values (via the shared
+    // dataQuality signal), and treat a terminal send/notify that actually executed
+    // (returned a confirmation, e.g. a message_id) as delivery-exercised. This
+    // stops send/notify-terminating agents from being structurally capped to
+    // `inconclusive` (Re-run #2), while KEEPING the false-green guard: an all-blank
+    // / all-fallback set still fails (Re-run #1). A PARTIALLY-blank report (some
+    // columns populated, others blank in every row) is surfaced as a
+    // `needs_review` data-quality issue naming the blank columns.
+    let exercisedRealPath = true;
+    let deliveredAllBlank = false;
+    let coverageReason: string | undefined;
+    try {
+      const { deriveCoverageSignal } = await import('@/lib/pilot/shadow/dataQuality');
+      const es = finalResult.execution_summary;
+      const coverage = deriveCoverageSignal({
+        stepOutputs: (finalResult as any)?.output || {},
+        finalOutput: (finalResult as any)?.finalOutput ?? dryRunResult.finalOutput,
+        itemsProcessed: es?.items_processed ?? 0,
+        itemsDelivered: es?.items_delivered ?? 0,
+      });
+      exercisedRealPath = coverage.exercisedRealPath;
+      deliveredAllBlank = coverage.deliveredAllBlank;
+      coverageReason = coverage.reason;
+
+      // Per-column check: a partially-blank report (real amount/vendor but blank
+      // source_email/filename columns) → needs_review, not passed. Non-blocking,
+      // non-waveable → the class-based verdict resolves it to needs_review.
+      if (coverage.partialBlankColumns.length > 0) {
+        allIssuesForUI.push({
+          source: 'data_quality',
+          type: 'partial_report_data',
+          severity: 'medium',
+          blocking: false,
+          description: `The report was produced with real data, but these columns are blank in every row: ${coverage.partialBlankColumns.join(', ')}. The step that fills them is likely not receiving the source data.`,
+          details: { blankColumns: coverage.partialBlankColumns },
+          suggested_fix: null,
+        });
+        logger.warn({ sessionId, agentId, blankColumns: coverage.partialBlankColumns },
+          '[Verdict] Partially-blank report — surfacing as needs_review (Phase 1.6)');
+      }
+      if (deliveredAllBlank) {
+        logger.warn({ sessionId, agentId },
+          '[Verdict] Delivered report is all-blank/all-fallback — coverage floor will refuse a pass (false-green guard)');
+      }
+    } catch (err) {
+      logger.error({ err, sessionId, agentId }, '[Verdict] coverage assessment failed — falling back to row-count signal (non-blocking)');
+      const es = finalResult.execution_summary;
+      const processed = es?.items_processed ?? 0;
+      const delivered = es?.items_delivered ?? 0;
+      exercisedRealPath = !(processed > 0 && delivered === 0);
+      if (!exercisedRealPath) coverageReason = `processed ${processed} item(s), delivered 0`;
+    }
+
     // 8. Process remaining issues that require user input
     logger.info({
       sessionId,
@@ -4131,8 +4313,19 @@ export async function POST(req: NextRequest) {
       if (executionSummary && executionSummary.items_processed > 0) {
         const itemsDelivered = executionSummary.items_delivered || 0;
 
-        // If workflow processed items but delivered nothing, flag for review
-        if (itemsDelivered === 0) {
+        // Phase 1.6 fix: this legacy COUNT-based "no output" gate is bypassed unless
+        // the NEW coverage signal AGREES the real path produced no meaningful output.
+        // A clean send/notify-terminating agent shows items_delivered===0 (a scalar
+        // send emits no counted array) yet has meaningful pre-delivery data — it must
+        // NOT be capped here; letting control fall through to the Phase 1.6 coverage
+        // floor / computeVerdict lets a clean populated report reach `passed`. The
+        // `deliveredAllBlank` term keeps the false-green guard (an all-blank set still
+        // fails). Reuses the hoisted deriveCoverageSignal result — no divergent check.
+        const coverageSaysNoOutput = !exercisedRealPath || deliveredAllBlank;
+
+        // If workflow processed items AND the coverage signal confirms no meaningful
+        // output was produced, flag for review.
+        if (itemsDelivered === 0 && coverageSaysNoOutput) {
           const semanticIssue = {
             id: 'semantic_no_output_produced',
             type: 'semantic_failure',
@@ -4206,6 +4399,92 @@ export async function POST(req: NextRequest) {
             },
             status: 'needs_review',
             message: 'Workflow completed but semantic validation requires review'
+          });
+        }
+      }
+
+      // G1c coverage floor + Item 7 corrected-not-verified cap. Even with ZERO
+      // surfaced issues, a run that never exercised the real/failure-prone path
+      // (processed items but delivered none) must NOT be auto-approved for
+      // production. This resolves to an explicit non-success verdict —
+      // `inconclusive` (needs representative data), or `corrected_not_verified`
+      // when Item 7 rewrote a field this run but the re-run still did not reach
+      // the real data — never an unqualified "success".
+      {
+        const { computeVerdict, VERDICT_LABELS } = await import('@/lib/pilot/shadow/CalibrationVerdict');
+        const cleanVerdict = computeVerdict({
+          issues: [],
+          coverage: {
+            exercisedRealPath,
+            deliveredAllBlank,
+            reason: exercisedRealPath ? undefined : coverageReason,
+          },
+          corrected: fieldFidelityCorrected,
+        });
+
+        if (!cleanVerdict.isPassing) {
+          const { extractPluginsFromWorkflow } = await import('@/lib/utils/calibrationMetrics');
+          await sessionRepo.update(sessionId, {
+            status: 'awaiting_fixes',
+            execution_id: finalResult.executionId,
+            completed_steps: finalResult.stepsCompleted,
+            failed_steps: finalResult.stepsFailed,
+            skipped_steps: finalResult.stepsSkipped,
+            execution_summary: finalResult.execution_summary || null,
+          });
+          await calibrationHistoryRepo.create({
+            agent_id: agentId,
+            session_id: sessionId,
+            user_id: user.id,
+            workflow_hash: currentWorkflowHash,
+            workflow_step_count: workflowSteps.length,
+            input_schema_hash: currentInputSchemaHash,
+            status: cleanVerdict.dbStatus,
+            iterations: loopIteration,
+            auto_fixes_applied: autoFixesApplied,
+            first_execution_success: false,
+            issues_found: [],
+            issues_fixed: fieldFidelityCorrections,
+            issues_remaining: [],
+            execution_time_ms: finalResult.executionTimeMs || null,
+            steps_completed: finalResult.stepsCompleted || 0,
+            steps_failed: finalResult.stepsFailed || 0,
+            steps_skipped: finalResult.stepsSkipped || 0,
+            plugins_used: extractPluginsFromWorkflow(workflowSteps),
+            metadata: {
+              ...validationMetadata,
+              verdict: cleanVerdict.verdict,
+              verdictReason: cleanVerdict.reason,
+              fieldFidelityCorrections,
+            },
+            completed_at: new Date().toISOString(),
+          });
+          logger.warn(
+            { sessionId, agentId, verdict: cleanVerdict.verdict, exercisedRealPath, fieldFidelityCorrected },
+            '[Verdict] Coverage floor: run not marked production-ready (G1c / Item 7 cap)'
+          );
+          return NextResponse.json({
+            success: false,
+            status: cleanVerdict.dbStatus,
+            verdict: cleanVerdict.verdict,
+            verdictLabel: VERDICT_LABELS[cleanVerdict.verdict],
+            sessionId,
+            executionId: finalResult.executionId,
+            fieldCorrections: fieldFidelityCorrections,
+            autoCalibration: { iterations: loopIteration, autoFixesApplied, message: cleanVerdict.reason },
+            issues: { critical: [], warnings: [], autoRepairs: [] },
+            summary: {
+              total: 0,
+              critical: 0,
+              warnings: 0,
+              autoRepairs: 0,
+              requiresUserAction: 0,
+              completedSteps: finalResult.stepsCompleted,
+              failedSteps: finalResult.stepsFailed,
+              skippedSteps: finalResult.stepsSkipped,
+              totalSteps: workflowSteps.length,
+            },
+            message: cleanVerdict.reason,
           });
         }
       }
@@ -4440,14 +4719,42 @@ export async function POST(req: NextRequest) {
       execution_summary: finalResult.execution_summary || null
     });
 
-    // Save calibration with issues to calibration_history
-    const hasCriticalIssues = summary.critical > 0;
-    const calibrationStatus = hasCriticalIssues ? 'needs_review' : 'failed';
+    // Save calibration with issues to calibration_history.
+    //
+    // Item 6 — the verdict keys on issue CLASS, not raw count. The old logic
+    // (`hasCriticalIssues ? 'needs_review' : 'failed'`) was doubly wrong: it
+    // marked a run `failed` whenever ANY unresolved issue remained (even a
+    // cosmetic user-confirm-only nag — the exact bug that flipped the RCA agent
+    // to "failed" for the wrong reason), and it never let a blocking issue that
+    // wasn't counted as "critical" hold back a pass. `computeVerdict` fixes both:
+    //   - any BLOCKING-class issue (G1a) always prevents a pass;
+    //   - only non-blocking user-confirm-only suggestions may be waved (G1b);
+    //   - a run that never exercised the real path is `inconclusive` (G1c).
+    const { computeVerdict, VERDICT_LABELS } = await import('@/lib/pilot/shadow/CalibrationVerdict');
+    const verdictResult = computeVerdict({
+      issues: allIssuesForUI.map((i: any) => ({
+        type: i.type,
+        severity: i.severity,
+        blocking: i.blocking ?? i.details?.blocking,
+        requiresUserInput: i.details?.requiresUserInput ?? i.requiresUserInput,
+        autoRepairAvailable: i.details?.autoRepairAvailable ?? i.autoRepairAvailable,
+      })),
+      coverage: {
+        exercisedRealPath,
+        deliveredAllBlank,
+        reason: exercisedRealPath ? undefined : coverageReason,
+      },
+      corrected: fieldFidelityCorrected,
+    });
+    const calibrationStatus = verdictResult.dbStatus;
 
     logger.info({
       agentId,
       sessionId,
       calibrationStatus,
+      verdict: verdictResult.verdict,
+      isPassing: verdictResult.isPassing,
+      blockingIssues: verdictResult.blockingIssues.length,
       criticalIssues: summary.critical,
       totalIssues: allIssuesForUI.length
     }, 'Calibration completed with issues - saving to calibration history');
@@ -4459,6 +4766,84 @@ export async function POST(req: NextRequest) {
     // Extract plugins from workflow
     const { extractPluginsFromWorkflow } = await import('@/lib/utils/calibrationMetrics');
     const pluginsUsed = extractPluginsFromWorkflow(workflowSteps);
+
+    // Item 6a relaxation: if the ONLY remaining issues are waveable (non-blocking,
+    // user-confirm-only) suggestions AND the real path was exercised, this is a
+    // legitimate pass — do not force a hard failure. Mark the agent ready and
+    // surface the suggestions rather than blocking on them.
+    if (verdictResult.isPassing) {
+      await sessionRepo.update(sessionId, {
+        status: 'completed',
+        execution_id: finalResult.executionId,
+        completed_steps: finalResult.stepsCompleted,
+        failed_steps: finalResult.stepsFailed,
+        skipped_steps: finalResult.stepsSkipped,
+        completed_at: new Date().toISOString(),
+        execution_summary: finalResult.execution_summary || null,
+      });
+      const { data: passHistory } = await calibrationHistoryRepo.create({
+        agent_id: agentId,
+        session_id: sessionId,
+        user_id: user.id,
+        workflow_hash: currentWorkflowHash,
+        workflow_step_count: workflowSteps.length,
+        input_schema_hash: currentInputSchemaHash,
+        status: 'success',
+        iterations: loopIteration,
+        auto_fixes_applied: autoFixesApplied,
+        first_execution_success: loopIteration === 1 && autoFixesApplied === 0,
+        issues_found: allIssuesForUI,
+        issues_fixed: issuesFixed,
+        issues_remaining: issuesRemaining,
+        execution_time_ms: finalResult.executionTimeMs || null,
+        steps_completed: finalResult.stepsCompleted || 0,
+        steps_failed: finalResult.stepsFailed || 0,
+        steps_skipped: finalResult.stepsSkipped || 0,
+        plugins_used: pluginsUsed,
+        metadata: {
+          ...validationMetadata,
+          verdict: verdictResult.verdict,
+          verdictReason: verdictResult.reason,
+          fieldFidelityCorrections,
+          issuesSummary: { critical: summary.critical, warnings: summary.warnings, autoRepairs: summary.autoRepairs, requiresUserAction: summary.requiresUserAction },
+        },
+        completed_at: new Date().toISOString(),
+      });
+      // Persist via the repository (owner-scoped write, mandatory repo pattern).
+      const { error: readyWriteError } = await new AgentRepository(supabase)
+        .setProductionReady(agentId, user.id, {
+          workflowHash: currentWorkflowHash,
+          lastSuccessfulCalibrationId: passHistory?.id ?? undefined,
+        });
+      if (readyWriteError) {
+        logger.error({ err: readyWriteError, sessionId, agentId }, '[Verdict] failed to mark agent production-ready (non-blocking)');
+      }
+      const { toUserFacingList: toUserFacingListPass } = await import('@/lib/pilot/shadow/userFacing');
+      logger.info({ sessionId, agentId, verdict: verdictResult.verdict }, '[Verdict] Passable with cosmetic suggestions only (Item 6a relaxation)');
+      return NextResponse.json({
+        success: true,
+        status: 'success',
+        verdict: verdictResult.verdict,
+        verdictLabel: VERDICT_LABELS[verdictResult.verdict],
+        sessionId,
+        executionId: finalResult.executionId,
+        fieldCorrections: fieldFidelityCorrections,
+        autoCalibration: { iterations: loopIteration, autoFixesApplied, message: verdictResult.reason },
+        issues: { critical: [], warnings: toUserFacingListPass(prioritized.warnings || []), autoRepairs: toUserFacingListPass(prioritized.autoRepairs || []) },
+        summary: {
+          total: summary.total,
+          critical: 0,
+          warnings: summary.warnings,
+          autoRepairs: summary.autoRepairs,
+          requiresUserAction: summary.requiresUserAction,
+          completedSteps: finalResult.stepsCompleted,
+          failedSteps: finalResult.stepsFailed,
+          skippedSteps: finalResult.stepsSkipped,
+          totalSteps: workflowSteps.length,
+        },
+        message: verdictResult.reason,
+      });
+    }
 
     await calibrationHistoryRepo.create({
       agent_id: agentId,
@@ -4481,6 +4866,9 @@ export async function POST(req: NextRequest) {
       plugins_used: pluginsUsed,
       metadata: {
         ...validationMetadata,
+        verdict: verdictResult.verdict,
+        verdictReason: verdictResult.reason,
+        fieldFidelityCorrections,
         issuesSummary: {
           critical: summary.critical,
           warnings: summary.warnings,
@@ -4523,6 +4911,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       success: false,
       status: calibrationStatus,
+      // Item 6: surface the plain-language verdict (passed / failed / needs_review
+      // / inconclusive / corrected_not_verified) so "not tested" is never shown as
+      // "working". `status` stays within the DB-allowed set for existing consumers.
+      verdict: verdictResult.verdict,
+      verdictLabel: VERDICT_LABELS[verdictResult.verdict],
+      fieldCorrections: fieldFidelityCorrections,
       sessionId,
       executionId: finalResult.executionId,
       autoCalibration: {
