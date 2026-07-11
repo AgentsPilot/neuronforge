@@ -131,23 +131,22 @@ export class StructuralRepairEngine {
    * Scan workflow for all structural issues (including nested steps)
    */
   async scanWorkflow(agent: Agent): Promise<StructuralIssue[]> {
-    console.log('🔍 [StructuralRepairEngine] scanWorkflow() called');
-    console.log('🔍 [StructuralRepairEngine] agent.pilot_steps type:', typeof agent.pilot_steps);
-    console.log('🔍 [StructuralRepairEngine] agent.pilot_steps length:', Array.isArray(agent.pilot_steps) ? agent.pilot_steps.length : 'N/A');
+    logger.debug({
+      pilotStepsType: typeof agent.pilot_steps,
+      pilotStepsLength: Array.isArray(agent.pilot_steps) ? agent.pilot_steps.length : null,
+    }, '[StructuralRepairEngine] scanWorkflow() called');
 
     // Ensure plugin manager is available for action inference
     await this.initialize();
     const issues: StructuralIssue[] = [];
     const steps: any[] = agent.pilot_steps || [];
 
-    console.log('🔍 [StructuralRepairEngine] steps.length after assignment:', steps.length);
-
     if (steps.length === 0) {
-      console.log('⚠️  [StructuralRepairEngine] No steps found, returning empty issues array');
+      logger.warn('[StructuralRepairEngine] No steps found, returning empty issues array');
       return issues;
     }
 
-    console.log('🔍 [StructuralRepairEngine] Starting to scan', steps.length, 'steps...');
+    logger.debug({ stepCount: steps.length }, '[StructuralRepairEngine] Starting to scan steps');
 
     // Build step ID map for reference checking (including nested steps)
     // CRITICAL: Include BOTH step IDs AND output_variable names as valid variable references
@@ -189,6 +188,19 @@ export class StructuralRepairEngine {
       // Also add outputKey from gather config (for scatter-gather steps)
       if (step.gather?.outputKey && typeof step.gather.outputKey === 'string') {
         stepIds.add(step.gather.outputKey);
+      }
+
+      // Item 5a (WP-56 family): a scatter/loop iteration variable (e.g.
+      // `attachment_item`) is an IN-SCOPE variable inside the loop body, not a
+      // step id. Register it so `{{attachment_item.field}}` refs in sub-steps are
+      // NOT flagged as broken. Before this, a valid loop variable produced a
+      // permanent, unfixable `broken_variable_reference` (RCA §3/§5) that — with
+      // the Item 6 verdict — dragged every run to "failed". Field-level validity
+      // of the loop variable is still checked by ScatterItemFieldValidator; here
+      // we only stop treating the ROOT as a non-existent variable.
+      const itemVar: unknown = step.gather?.itemVariable ?? step.scatter?.itemVariable;
+      if (typeof itemVar === 'string' && itemVar.trim() !== '') {
+        stepIds.add(itemVar);
       }
     }
 

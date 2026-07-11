@@ -350,6 +350,73 @@ export class AgentRepository {
     }
   }
 
+  /**
+   * Replace an agent's compiled workflow steps (`pilot_steps`). User-scoped.
+   *
+   * Used by the calibration in-place field-fidelity corrector (Item 7), which
+   * deterministically rewrites a stored workflow's wrong field name to the
+   * plugin's real one during calibration. Kept on the repository layer so the
+   * service-role write stays owner-scoped (mandatory `.eq('user_id', userId)`).
+   */
+  async updatePilotSteps(
+    id: string,
+    userId: string,
+    pilotSteps: unknown
+  ): Promise<AgentRepositoryResult<Agent>> {
+    try {
+      const { data, error } = await this.supabase
+        .from('agents')
+        .update({ pilot_steps: pilotSteps, updated_at: new Date().toISOString() })
+        .eq('id', id)
+        .eq('user_id', userId)
+        .select()
+        .single();
+
+      if (error) throw error;
+      return { data, error: null };
+    } catch (error) {
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
+   * Mark an agent production-ready after a passing calibration. User-scoped.
+   *
+   * Sets `is_calibrated` + `production_ready` and (optionally) records the
+   * workflow hash and the last successful calibration id. Columns are only
+   * written when supplied, preserving the prior "omit when undefined" behaviour.
+   */
+  async setProductionReady(
+    id: string,
+    userId: string,
+    input: { workflowHash?: string; lastSuccessfulCalibrationId?: string | null }
+  ): Promise<AgentRepositoryResult<Agent>> {
+    try {
+      const update: Record<string, unknown> = {
+        is_calibrated: true,
+        production_ready: true,
+        updated_at: new Date().toISOString(),
+      };
+      if (input.workflowHash !== undefined) update.workflow_hash = input.workflowHash;
+      if (input.lastSuccessfulCalibrationId !== undefined) {
+        update.last_successful_calibration_id = input.lastSuccessfulCalibrationId;
+      }
+
+      const { data, error } = await this.supabase
+        .from('agents')
+        .update(update)
+        .eq('id', id)
+        .eq('user_id', userId)
+        .select()
+        .single();
+
+      if (error) throw error;
+      return { data, error: null };
+    } catch (error) {
+      return { data: null, error: error as Error };
+    }
+  }
+
   // ============ Status Management ============
 
   /**
