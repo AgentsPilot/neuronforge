@@ -110,6 +110,13 @@ export class OpenAIProvider extends BaseAIProvider {
     // Ensure streaming is disabled for token tracking
     const nonStreamParams = { ...params, stream: false as const };
 
+    // Extract an optional AbortSignal from the params and forward it as a
+    // per-request option (NOT in the JSON body). Backward-compatible — undefined
+    // when the caller didn't pass one. Deleting it here prevents an AbortSignal
+    // object from being serialized into the request body.
+    const signal = (nonStreamParams as any).signal as AbortSignal | undefined;
+    delete (nonStreamParams as any).signal;
+
     // Handle max_tokens vs max_completion_tokens for newer models
     if (this.usesMaxCompletionTokens(params.model) && (nonStreamParams as any).max_tokens) {
       (nonStreamParams as any).max_completion_tokens = (nonStreamParams as any).max_tokens;
@@ -122,7 +129,10 @@ export class OpenAIProvider extends BaseAIProvider {
       params.model,
       'chat/completions',
       async () => {
-        const result = await this.openai.chat.completions.create(nonStreamParams);
+        const result = await this.openai.chat.completions.create(
+          nonStreamParams,
+          signal ? { signal } : undefined
+        );
         // Type assertion since we disabled streaming
         return result as OpenAI.Chat.ChatCompletion;
       },

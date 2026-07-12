@@ -54,6 +54,28 @@ export class GmailPluginExecutor extends GoogleBasePluginExecutor {
     // Details live in applyCalibrationModeToEmail; no-op outside calibration.
     const calibration = this.getCalibrationNotice(parameters);
     if (calibration.isCalibration) {
+      // Degraded run (an upstream step failed) → skip the real send entirely.
+      // Prevents the classic "empty digest" side-effect where calibration
+      // re-runs a broken workflow and dispatches a placeholder ("No data
+      // available.") email each time. No API call, no delivery; return a
+      // success-shaped result so the workflow completes and calibration can
+      // still evaluate the rest of the run.
+      if (calibration.suppressSend) {
+        this.logger.info(
+          { recipientCount: this.countRecipients(parameters.recipients) },
+          'Calibration: suppressing outbound email — run had failed steps (empty/degraded output not delivered)'
+        );
+        return {
+          message_id: null,
+          thread_id: null,
+          sent_at: new Date().toISOString(),
+          recipient_count: 0,
+          recipients: parameters.recipients,
+          subject: parameters.content?.subject || '(no subject)',
+          calibration_suppressed: true,
+          note: 'Calibration: send suppressed because the run had failed steps; no email was delivered.',
+        };
+      }
       this.applyCalibrationModeToEmail(parameters, calibration);
     }
 
@@ -557,16 +579,26 @@ export class GmailPluginExecutor extends GoogleBasePluginExecutor {
     let message = '';
 
     // WP-42: tolerate LLM emitting a single-email string for to/cc/bcc instead of
-    // the schema-declared array. Coerce string → [string], pass arrays through,
-    // Also handles comma-separated strings like "a@b.com, c@d.com"
+    // the schema-declared array. Coerce string → [string], pass arrays through, and
+    // handle comma-separated strings like "a@b.com, c@d.com".
+    // Also flattens NESTED arrays (e.g. [["a@b.com"]]) — these arise when an
+    // array-typed input is wrapped in a DSL array literal (`to: ["{{input.X}}"]`
+    // where X is already an array). The old flat `.filter(typeof === 'string')`
+    // silently dropped the inner array → empty `to` → Gmail 400 "Recipient address
+    // required" (agent bb821b6b RCA, 2026-07-05). Recursively collect every string.
     const normalizeRecipients = (field: any): string[] => {
-      if (!field) return [];
-      if (Array.isArray(field)) return field.filter((e) => typeof e === 'string' && e.length > 0);
-      if (typeof field === 'string' && field.length > 0) {
-        // Handle comma-separated strings
-        return field.split(',').map((s: string) => s.trim()).filter(Boolean);
-      }
-      return [];
+      const out: string[] = [];
+      const walk = (v: any): void => {
+        if (Array.isArray(v)) { v.forEach(walk); return; }
+        if (typeof v === 'string') {
+          for (const part of v.split(',')) {
+            const s = part.trim();
+            if (s) out.push(s);
+          }
+        }
+      };
+      walk(field);
+      return out;
     };
 
     const toList = normalizeRecipients(recipients?.to);

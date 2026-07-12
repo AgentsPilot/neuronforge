@@ -43,6 +43,7 @@ Feature flag functions are defined in:
 | Move to Calibration After Creation | `NEXT_PUBLIC_MOVE_TO_CALIBRATION_AFTER_AGENT_CREATION` | Client | `false` | `/v2/agents/new` |
 | Thread-Based Agent Creation | `NEXT_PUBLIC_USE_THREAD_BASED_AGENT_CREATION` | Client | `false` | Legacy: `/agents/new/chat` only |
 | New Agent Creation UI | `NEXT_PUBLIC_USE_NEW_AGENT_CREATION_UI` | Client | `false` | Legacy: `/agents/new/chat` only |
+| Automated Calibration RCA | `CALIBRATION_AUTO_RCA_ENABLED` | **Server** | `false` | `/api/v2/calibrate/batch` (admin alert tail) |
 
 ---
 
@@ -135,6 +136,38 @@ if (useV6) {
 When enabled, the agent-creation flow (`/v2/agents/new`) shows a choice card after a successful create instead of auto-redirecting. The user explicitly **approves** ("Test it now" → `/v2/sandbox/[id]?from=creation`, where calibration auto-starts) or **declines** ("Skip for now" → `/agents/[id]`). The decision is persisted on the agent (`calibration_prompt_decision`). Navigation only happens on a button click — the flow never force-navigates to calibration.
 
 > **Related change (not flag-gated):** the agent-detail "Run Calibration" button (`/v2/agents/[id]`) is no longer gated by a feature flag. It now shows automatically while an agent has **not** passed calibration (`!is_calibrated`) and hides once it has. The former `NEXT_PUBLIC_SHOW_CALIBRATION_BUTTON` flag / `useCalibrationButton()` helper were removed.
+
+---
+
+### 2c. Automated Calibration RCA (server-side)
+
+**Environment Variable**: `CALIBRATION_AUTO_RCA_ENABLED` (server-only — **no** `NEXT_PUBLIC_` prefix)
+
+**Default**: `false` (deterministic-only admin alert, exactly as before — no LLM call, no RCA generation, no `auto_rca` persistence).
+
+**Purpose**: When a background calibration run lands on `failed` / `needs_review`, augments the existing IMP-2 admin failure alert (`lib/calibration/calibrationAdminAlert.ts`) with an LLM-generated, structured root-cause analysis (8 fields + one of the 5 Troubleshooter layers), persists it to `calibration_history.metadata.auto_rca`, and still falls back to today's deterministic email on any failure/timeout/flag-off.
+
+**Read at**: `app/api/v2/calibrate/batch/route.ts` (the `finally` calibration tail, non-dedup branch only).
+
+**Values**:
+- `true` — run the best-effort RCA service (still subject to the `workflow_hash` dedup, the budget-aware timeout, and the graceful-fallback contract).
+- anything else / omit — deterministic-only alert.
+
+**Independent of this flag**: the request `correlationId` is persisted on the failed `calibration_history` row (`metadata.correlation_id`) on **every** non-passing background run — even when this flag is off — as the durable log-join key (FR-23).
+
+**Model / timeout config**: provider, model, temperature, timeout, and max_tokens are resolved from the DB-backed `system_settings_config` accessor (`lib/calibration/calibrationRcaConfig.ts`, ~5-min TTL) with a `DEFAULT_CONFIG` fallback (`anthropic` / `claude-sonnet-4-6` / temp 0 / 25s / 4000 tok). No model literal lives in the service. Seed rows (idempotent, **not** a migration) to tune without a code change:
+
+```sql
+INSERT INTO system_settings_config (key, value) VALUES
+  ('calibration_rca_provider',    '"anthropic"'),
+  ('calibration_rca_model',       '"claude-sonnet-4-6"'),
+  ('calibration_rca_temperature', '0'),
+  ('calibration_rca_timeout_ms',  '25000'),
+  ('calibration_rca_max_tokens',  '4000')
+ON CONFLICT (key) DO NOTHING;
+```
+
+> The RCA timeout is always additionally capped at runtime to the request's remaining wall-clock budget inside `maxDuration = 60`, reserving a floor for the email send + persistence — if too little budget remains, RCA is skipped and the deterministic alert is sent (never risk a mid-send serverless kill).
 
 ---
 

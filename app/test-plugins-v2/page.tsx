@@ -8,6 +8,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { useDebugStream, DebugState, StepStatus } from '@/hooks/useDebugStream';
 import { DebugControls } from '@/components/debug/DebugControls';
 import { StepVisualizer } from '@/components/debug/StepVisualizer';
+import { AdminCalibrationTrigger } from '@/components/admin/AdminCalibrationTrigger';
 import type {
   ClarificationAnswer,
   StructuredSelectAnswer,
@@ -2500,7 +2501,11 @@ export default function TestPluginsPage() {
 
   return (
     <div style={{ maxWidth: '1200px', margin: '0 auto', padding: '20px', fontFamily: 'monospace' }}>
-      <h1>Plugin System Testing Interface</h1>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
+        <h1>Plugin System Testing Interface</h1>
+        {/* Admin-only calibration test trigger (self-hides for non-admins). */}
+        <AdminCalibrationTrigger />
+      </div>
 
       {/* Tab Navigation */}
       <div style={{ marginBottom: '30px', borderBottom: '2px solid #ccc' }}>

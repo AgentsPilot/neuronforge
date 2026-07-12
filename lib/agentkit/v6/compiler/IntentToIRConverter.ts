@@ -42,6 +42,7 @@ import type {
   ComplexCondition,
 } from '../logical-ir/schemas/declarative-ir-types-v4'
 import { createLogger } from '@/lib/logger'
+import { detectReferencedInScopeVariables, extractBaseVarName } from './ai-input-context'
 import type { PluginManagerV2 } from '@/lib/server/plugin-manager-v2'
 import type { ActionDefinition, ActionParameterProperty } from '@/lib/types/plugin-types'
 
@@ -61,6 +62,7 @@ interface ConversionContext {
   config?: Array<{ key: string; type: string; description?: string; default?: any }> // Intent config for field resolution
   dataSchema?: WorkflowDataSchema // data_schema from binding phase for field reference validation
   outputProducerPlugin: Map<string, string> // IR variable name -> plugin_key that produced it (for download auto-insert, WP-57)
+  loopItemVarStack: string[] // Item 11 / WP-58: enclosing scatter loop `item_ref`s, so an AI step in the loop body can detect a referenced loop variable
 }
 
 /**
@@ -105,6 +107,7 @@ export class IntentToIRConverter {
       config: boundIntent.config,
       dataSchema: boundIntent.data_schema,
       outputProducerPlugin: new Map(),
+      loopItemVarStack: [],
     }
 
     try {
@@ -319,6 +322,24 @@ export class IntentToIRConverter {
       if (schema) {
         logger.debug(`[IntentToIRConverter] Using schema for ${step.plugin_key}.${step.action}`)
         finalParams = this.mapParamsToSchema(genericParams, schema, ctx)
+        // P3.2 (EP required-plugin-param cycle): bind a dropped search subject to
+        // the action's single unbound required string param (schema-driven).
+        this.bindSearchSubjectToRequiredParam(finalParams, genericParams, schema, step, ctx)
+
+        // B5: required-param warning for parity with convertDeliver/convertArtifact
+        // (convertDataSource previously had none — the search path emitted params:{}
+        // with not even a warning). Runs AFTER P3.2 so it only fires on genuinely
+        // unbound required params. The compiler's P3.1 pass is the plugin-agnostic
+        // backstop; this catches it one phase earlier for search/data-source steps.
+        if (schema.parameters.required) {
+          for (const requiredParam of schema.parameters.required) {
+            if (!finalParams[requiredParam]) {
+              ctx.warnings.push(
+                `Step ${(step as any).id ?? ''}: Missing required parameter '${requiredParam}' for ${step.plugin_key}.${step.action}`
+              )
+            }
+          }
+        }
       } else {
         logger.debug(`[IntentToIRConverter] No schema found for ${step.plugin_key}.${step.action}, using generic params`)
       }
@@ -720,8 +741,13 @@ export class IntentToIRConverter {
       ctx.outputProducerPlugin.set(itemVar, collectionProducer)
     }
 
+    // Item 11 / WP-58: make the loop item variable discoverable to AI steps in
+    // the loop body, so a `generate`/`ai` step whose instruction references it
+    // can declare it as an additional input (it is otherwise only prose).
+    ctx.loopItemVarStack.push(itemVar)
     // Convert loop body steps
     const bodyNodeIds = this.convertSteps(step.loop.do, ctx)
+    ctx.loopItemVarStack.pop()
 
     // Connect body nodes in sequence
     for (let i = 0; i < bodyNodeIds.length - 1; i++) {
@@ -1292,6 +1318,25 @@ export class IntentToIRConverter {
         output_schema: outputSchema,
       },
       description: step.summary || 'AI content generation'
+    }
+
+    // Item 11 / WP-58: an AI step whose instruction references an in-scope variable
+    // (most importantly the enclosing scatter's loop item variable) must RECEIVE
+    // that variable as data, not just as prose. Detect referenced-but-unbound
+    // in-scope variables deterministically (shared detector; no plugin/field
+    // hardcoding) and declare them as additional_inputs so the resolver injects
+    // each as a labelled block. Root-cause phase: phase4 stores the canonical shape.
+    const additionalInputs = detectReferencedInScopeVariables(
+      step.generate.instruction || '',
+      ctx.loopItemVarStack,
+      inputVar ? [extractBaseVarName(inputVar)] : []
+    )
+    if (additionalInputs.length > 0) {
+      operation.ai!.additional_inputs = additionalInputs
+      logger.debug(
+        { stepId: step.id, additionalInputs },
+        '[Item 11/WP-58] Declared referenced in-scope variables as AI additional_inputs'
+      )
     }
 
     // Add inputs array if step has multiple inputs (for AI processing that needs multiple variables)
@@ -2352,5 +2397,62 @@ export class IntentToIRConverter {
     }
 
     return mappedParams
+  }
+
+  /**
+   * P3.2 (EP required-plugin-param cycle — `df67bf69` topic-drop RCA):
+   * Bind a free-text search SUBJECT to the bound action's required text param when
+   * it would otherwise be dropped. `mapParamsToSchema` only copies a generic param
+   * through if its key exists in the action schema; a search subject arrives as
+   * `query`, but an action may name its required text param differently (e.g.
+   * `research_topic`'s `topic`) and have NO `query` property — so `query` is
+   * silently dropped → `params:{}` → runtime "<param> is required". This binds the
+   * subject to the action's SINGLE unbound required string param.
+   *
+   * Schema-driven and plugin-agnostic (no plugin/action names — Principle 6). When
+   * the target is ambiguous (0 or ≥2 unbound required string params) it does NOT
+   * guess (Principle 2 / Anti-pattern C) — it records a warning and leaves the param
+   * unbound for the compiler's no-empty-required-params guard (P3.1) to surface.
+   */
+  private bindSearchSubjectToRequiredParam(
+    finalParams: Record<string, any>,
+    genericParams: Record<string, any>,
+    schema: ActionDefinition,
+    step: DataSourceStep & BoundStep,
+    ctx: ConversionContext
+  ): void {
+    const subject = genericParams.query
+    const paramSchema = (schema.parameters?.properties || {}) as Record<string, any>
+    // Only act when a subject exists AND the schema has no `query` param (i.e. the
+    // subject was dropped by schema mapping). If `query` is a real param, it was used.
+    if (subject === undefined || paramSchema.query) return
+
+    const required = Array.isArray(schema.parameters?.required) ? schema.parameters.required : []
+    const unboundRequiredStrings = required.filter((r) => {
+      const p = paramSchema[r]
+      return p && p.type === 'string' && finalParams[r] === undefined
+    })
+    if (unboundRequiredStrings.length === 0) return
+
+    const where = `${step.plugin_key}.${step.action}`
+    if (unboundRequiredStrings.length === 1) {
+      const target = unboundRequiredStrings[0]
+      const p = paramSchema[target]
+      // Sanity-gate a LITERAL value against the param's length bounds; skip for {{refs}}
+      // whose length isn't known until runtime.
+      const literal = typeof subject === 'string' && !subject.includes('{{') ? subject : null
+      const withinBounds =
+        literal === null ||
+        ((p.minLength === undefined || literal.length >= p.minLength) &&
+          (p.maxLength === undefined || literal.length <= p.maxLength))
+      if (withinBounds) {
+        finalParams[target] = subject
+        logger.debug(`[IntentToIRConverter] P3.2: bound search subject → required string param '${target}' (single unbound target) for ${where}`)
+      } else {
+        ctx.warnings.push(`[P3.2] Search subject did not satisfy '${target}' length bounds for ${where}; left unbound for the required-param guard.`)
+      }
+    } else if (unboundRequiredStrings.length > 1) {
+      ctx.warnings.push(`[P3.2] Ambiguous search subject for ${where}: ${unboundRequiredStrings.length} unbound required string params (${unboundRequiredStrings.join(', ')}); not guessing — deferring to the required-param guard.`)
+    }
   }
 }

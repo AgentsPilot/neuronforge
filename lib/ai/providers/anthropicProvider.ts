@@ -58,6 +58,13 @@ interface ChatCompletionParams {
   tool_choice?: 'auto' | 'none' | { type: 'function'; function: { name: string } };
   temperature?: number;
   max_tokens?: number;
+  /**
+   * Optional AbortSignal forwarded to the underlying SDK request so a caller
+   * can hard-cancel an in-flight completion (frees the connection / stops token
+   * spend). Optional and defaults to undefined — existing callers are
+   * unaffected (backward-compatible).
+   */
+  signal?: AbortSignal;
 }
 
 /**
@@ -169,8 +176,13 @@ export class AnthropicProvider extends BaseAIProvider {
           requestParams.tools = claudeTools;
         }
 
-        // Make API call to Claude
-        const response = await this.client.messages.create(requestParams);
+        // Make API call to Claude. Forward the optional AbortSignal via the
+        // SDK's RequestOptions so a timed-out/over-budget caller can actively
+        // cancel the request (backward-compatible — undefined when not passed).
+        const response = await this.client.messages.create(
+          requestParams,
+          params.signal ? { signal: params.signal } : undefined
+        );
 
         console.log('✅ Claude API call successful:', {
           model: response.model,

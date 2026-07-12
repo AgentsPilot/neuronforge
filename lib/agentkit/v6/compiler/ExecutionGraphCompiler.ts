@@ -35,6 +35,7 @@ import type {
 import type { SchemaField, WorkflowDataSchema } from '../logical-ir/schemas/workflow-data-schema'
 import type { HardRequirements } from '../requirements/HardRequirementsExtractor'
 import type { WorkflowStep, Condition } from '@/lib/pilot/types/pilot-dsl-types'
+import { detectReferencedInScopeVariables, extractBaseVarName } from './ai-input-context'
 import { validateExecutionGraph, type ValidationResult } from '../logical-ir/validation/ExecutionGraphValidator'
 import { createLogger, Logger } from '@/lib/logger'
 import { analyzeOutputSchema } from '@/lib/pilot/utils/SchemaAwareDataExtractor'
@@ -262,6 +263,12 @@ export class ExecutionGraphCompiler {
       // Warn when extraction step nullable outputs feed into required plugin parameters
       this.log(ctx, 'Phase 3.9: Checking nullable-to-required parameter mappings')
       this.detectNullableToRequiredMappings(workflow, ctx)
+
+      // Phase 3.9b: Empty required-param detection (P3.1)
+      // Make a silently-dropped required plugin param visible — the exact shape that
+      // shipped research_topic with params:{} → runtime "Topic is required" → empty email.
+      this.log(ctx, 'Phase 3.9b: Checking for empty required plugin parameters')
+      this.detectEmptyRequiredParams(workflow, ctx)
 
       // Phase 3.10: Empty results assertions (O18)
       // Add on_empty metadata to transform steps that feed scatter-gather
@@ -926,10 +933,13 @@ export class ExecutionGraphCompiler {
   ): WorkflowStep {
     const ai = operation.ai!
 
-    // Extract input: prioritize explicit ai.input, then build from all node inputs
+    // Extract input: prioritize explicit ai.input, then build from all node inputs.
+    // Track base names already bound so Item 11/WP-58 never re-injects a bound var.
     let input: any
+    const boundVars: string[] = []
     if (ai.input) {
       input = ai.input
+      boundVars.push(extractBaseVarName(ai.input))
     } else if (allInputs.length > 1) {
       // Multiple inputs: create an object with all referenced variables
       input = {}
@@ -938,10 +948,49 @@ export class ExecutionGraphCompiler {
         // Use variable name as key (strip any parent references)
         const keyName = inputBinding.variable.split('.').pop() || inputBinding.variable
         input[keyName] = `{{${varRef}}}`
+        boundVars.push(extractBaseVarName(inputBinding.variable))
       }
     } else if (inputVariable) {
       // Single input: use as string
       input = `{{${inputVariable}}}`
+      boundVars.push(extractBaseVarName(inputVariable))
+    }
+
+    // Item 11 / WP-58: an AI step inside a scatter whose instruction references the
+    // loop variable (or another in-scope variable) must RECEIVE it as data, not just
+    // as prose. Prefer the IR converter's declared `additional_inputs` (root cause);
+    // fall back to the SAME shared detector against the live loop context for IR that
+    // predates the converter fix (Principle 4 — converter normalization + resolver
+    // tolerance). Loop vars are only in scope inside their scatter, so a top-level AI
+    // step yields an empty candidate set and is left byte-for-byte unchanged.
+    const loopItemVars = ctx.loopContextStack.map(l => l.itemVariable).filter(Boolean)
+    let extraVars: string[] =
+      Array.isArray(ai.additional_inputs) && ai.additional_inputs.length > 0
+        ? ai.additional_inputs.map(extractBaseVarName)
+        : detectReferencedInScopeVariables(ai.instruction || '', loopItemVars, boundVars)
+    extraVars = extraVars.filter(v => v && !boundVars.includes(v))
+
+    if (extraVars.length > 0) {
+      // Promote the input to a labelled object so the runtime exposes each variable
+      // as its own block in the prompt's "Data for Analysis" section (mirrors the
+      // existing multi-input branch and the transform loop-var injection). Values
+      // are pre-wrapped in `{{ }}` because O30's bare-input wrapping only fires on
+      // string inputs, not object inputs.
+      const labelled: Record<string, any> = {}
+      if (input && typeof input === 'object') {
+        Object.assign(labelled, input)
+      } else if (typeof input === 'string') {
+        const bare = input.replace(/\{\{|\}\}/g, '').trim()
+        const primaryKey = bare.split('.').pop() || bare
+        labelled[primaryKey] = `{{${bare}}}`
+      }
+      for (const v of extraVars) {
+        if (!(v in labelled)) {
+          labelled[v] = `{{${v}}}`
+          this.log(ctx, `  → Item 11/WP-58: injected referenced in-scope variable '${v}' into AI step input context`)
+        }
+      }
+      input = labelled
     }
 
     // CRITICAL: deterministic_extract → deterministic_extraction step type
@@ -3995,6 +4044,75 @@ export class ExecutionGraphCompiler {
       this.log(ctx, '  → No nullable-to-required parameter issues detected')
     } else {
       this.log(ctx, `  → O16: ${warningCount} nullable-to-required parameter warning(s) emitted`)
+    }
+  }
+
+  /**
+   * P3.1 (EP required-plugin-param cycle — `df67bf69` topic-drop RCA):
+   * Detect action steps whose params OMIT (or leave empty) a plugin-declared REQUIRED
+   * field. This is the plugin-agnostic backstop for the "required input the user
+   * supplied but the pipeline dropped" class — the exact shape that shipped
+   * `research_topic` with `params:{}` → runtime "Topic is required" → an empty digest
+   * emailed. The recoverable common case is bound upstream by P3.2 (the converter's
+   * subject→required-param binding); by the time we compile, a still-empty required
+   * param means no value was available for it.
+   *
+   * Emits a prominent WARNING (Principle 11 — a silent `params:{}` is worse than a
+   * loud one). It NEVER auto-fills the param (Principle 2 / Anti-pattern C — that is
+   * the Sheet1 fabrication sibling). Reuses the same schema-driven machinery as O16 —
+   * no plugin/action names (Principle 6).
+   *
+   * NOTE (Part-3 tracklist): escalating this warning to a compile gate (hard-fail for
+   * a genuine converter bug vs. a `user_inputs_required` marker for a genuinely-absent
+   * value — SA Q1/B4) requires the converter→creation provenance channel + a
+   * regression-suite pass confirming no scenario legitimately ships an empty required
+   * param. Tracked as the completion of P3.1; this pass delivers the visibility half.
+   */
+  private detectEmptyRequiredParams(workflow: WorkflowStep[], ctx: CompilerContext): void {
+    let warningCount = 0
+
+    const isEmpty = (v: unknown): boolean => {
+      if (v === undefined || v === null) return true
+      if (typeof v === 'string') return v.trim().length === 0
+      if (Array.isArray(v)) return v.length === 0
+      if (typeof v === 'object') return Object.keys(v as object).length === 0
+      return false
+    }
+
+    const checkStep = (steps: WorkflowStep[]) => {
+      for (const step of steps) {
+        if (step.type === 'action' && step.plugin && step.operation) {
+          const pluginSchema = this.getActionInputSchema(step.plugin, step.operation)
+          if (pluginSchema) {
+            const requiredParams: string[] = Array.isArray(pluginSchema.required) ? pluginSchema.required : []
+            const params = (step as any).params || step.config || {}
+            for (const req of requiredParams) {
+              if (isEmpty(params[req])) {
+                this.warn(
+                  ctx,
+                  `[P3.1] Required parameter "${req}" is missing/empty on ${step.plugin}.${step.operation} ` +
+                  `(step ${step.step_id}). The step will fail at runtime ("${req} is required"). ` +
+                  `The value was not captured as an input — surface it to the user; do NOT default it.`
+                )
+                warningCount++
+              }
+            }
+          }
+        }
+
+        // Recurse (same shape as O16)
+        if (step.type === 'scatter_gather' && step.scatter?.steps) checkStep(step.scatter.steps)
+        if (step.steps && Array.isArray(step.steps)) checkStep(step.steps)
+        const conditionalStep = step as any
+        if (conditionalStep.else_steps && Array.isArray(conditionalStep.else_steps)) checkStep(conditionalStep.else_steps)
+      }
+    }
+    checkStep(workflow)
+
+    if (warningCount === 0) {
+      this.log(ctx, '  → No empty-required-parameter issues detected')
+    } else {
+      this.log(ctx, `  → P3.1: ${warningCount} empty-required-parameter warning(s) emitted`)
     }
   }
 

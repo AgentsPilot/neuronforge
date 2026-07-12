@@ -6,7 +6,7 @@ import { useState, useRef, useCallback } from 'react';
  * - question: Clarification questions (HelpCircle icon, cyan avatar)
  * - plan-summary: Minimized plan during edit flow (muted, disabled appearance)
  */
-export type AIMessageVariant = 'default' | 'question' | 'plan-summary';
+export type AIMessageVariant = 'default' | 'question' | 'plan-summary' | 'success';
 
 export interface Message {
   id: string;
@@ -77,6 +77,13 @@ export function useAgentBuilderMessages() {
     addMessage(content, 'assistant', undefined, false, 'plan-summary');
   }, [addMessage]);
 
+  // Add an animated "Agent created!" success card as an inline chat message so
+  // it keeps chronological order (any calibration Q&A appended afterwards renders
+  // BELOW it). `content` carries the agent name shown under the title.
+  const addSuccessMessage = useCallback((agentName: string) => {
+    addMessage(agentName, 'assistant', undefined, false, 'success');
+  }, [addMessage]);
+
   // Add a question answer pair
   const addQuestionAnswer = useCallback((questionId: string, answer: string) => {
     // Add user's answer
@@ -137,6 +144,7 @@ export function useAgentBuilderMessages() {
     addAIMessage,
     addAIQuestion,      // V10: Question variant
     addPlanSummary,     // V10: Plan summary variant
+    addSuccessMessage,  // Animated "Agent created!" inline success card
     addSystemMessage,
     addQuestionAnswer,
     clearMessages,

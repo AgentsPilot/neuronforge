@@ -25,6 +25,7 @@ This document is **an index** — every section links out to the authoritative d
   - [Hardcode Sub-system](#hardcode-sub-system)
   - [UX](#ux)
   - [Operations](#operations)
+- [Automated RCA in the Admin Alert](#automated-rca-in-the-admin-alert)
 - [Undocumented Components](#undocumented-components)
 - [Dead Code / Cleanup Backlog](#dead-code--cleanup-backlog)
 - [Archived](#archived)
@@ -170,8 +171,35 @@ The hardcode sub-system runs **inside** calibration but has its own self-contain
 
 | Doc | Summary |
 |---|---|
+| [CALIBRATION_RCA_RUNBOOK.md](/docs/Calibration/CALIBRATION_RCA_RUNBOOK.md) | **Methodical RCA procedure for a failed calibration** (any agent ID): gather evidence → earliest-step/cascade → classify the root-cause layer → conclude. Backs the `calibration-rca` skill; companion script `scripts/dump-calibration.ts`. An **automated** version of this method now also runs at failure time (see [Automated RCA in the Admin Alert](#automated-rca-in-the-admin-alert)) and persists its result to `calibration_history.metadata.auto_rca`. |
 | [CALIBRATION_VALIDATION_MONITORING.md](/docs/Calibration/CALIBRATION_VALIDATION_MONITORING.md) | Expected Layer 1 / Layer 2 log sequences during a calibration run. |
 | [CALIBRATION_LOG_GUIDE.md](/docs/Calibration/CALIBRATION_LOG_GUIDE.md) | Quick reference: `monitor-calibration.sh`, what log lines indicate Multi-Step Detection success/failure. |
+
+---
+
+## Automated RCA in the Admin Alert
+
+When a **background** calibration lands on `failed`/`needs_review`, the batch route tail fires an internal **admin failure alert** (IMP-2). That alert is now **augmented with an automated RCA**: the in-app RCA service ([`lib/calibration/calibrationRcaService.ts`](/lib/calibration/calibrationRcaService.ts)) productionizes the [CALIBRATION_RCA_RUNBOOK.md](/docs/Calibration/CALIBRATION_RCA_RUNBOOK.md) 6-step method — reading the same persisted evidence (calibration outcome **and** the agent's workflow definition, via repositories), running a single provider-factory LLM call, and returning a Zod-validated 8-field conclusion + one of the 5 root-cause layers. On success it renders an additive section in the same email and persists to `calibration_history.metadata.auto_rca`.
+
+It is **best-effort, flag-gated, and never-throws**: gated by the server-only env flag **`CALIBRATION_AUTO_RCA_ENABLED`** ([feature_flags.md](/docs/feature_flags.md)). **Flag OFF ⇒ deterministic email exactly as today — no LLM call, no RCA-metadata write.** Any generation/persist/send failure falls back to the deterministic alert. The **authoritative** description (persisted markers, budget math, dedup) lives in [POST_CREATION_CALIBRATION_FLOW.md § Admin failure alert + automated RCA](/docs/Calibration/POST_CREATION_CALIBRATION_FLOW.md#admin-failure-alert--automated-rca-best-effort-augmentation).
+
+```mermaid
+flowchart TD
+    A[Background calibration tail<br/>failed / needs_review] --> B[Persist correlation_id<br/>flag-independent]
+    B --> D{workflow_hash already alerted?}
+    D -->|yes → dedup skip| Z([tail done · no 2nd email])
+    D -->|no| E{CALIBRATION_AUTO_RCA_ENABLED?}
+    E -->|OFF| G[Deterministic admin alert<br/>exactly as today]
+    E -->|ON| F{budget ≥ floor?}
+    F -->|no| FB[persist status = skipped_budget] --> G
+    F -->|yes| H[generateCalibrationRca<br/>abortable · budget-aware timeout]
+    H -->|ok:true| HS[persist auto_rca + status = success] --> I[Augmented alert<br/>deterministic + RCA section]
+    H -->|ok:false reason| HF[persist auto_rca_status = reason] --> G
+    G --> J{sent?}
+    I --> J
+    J -->|yes| K[markAdminAlerted] --> Z
+    J -->|no| Z
+```
 
 ---
 
@@ -241,6 +269,7 @@ Point-in-time fix notes from the early-2026 calibration push, moved to [docs/arc
 
 | Date | Change | Details |
 |------|--------|---------|
+| 2026-07-05 | Automated RCA in the admin alert | Added the [Automated RCA in the Admin Alert](#automated-rca-in-the-admin-alert) section (with a both-branches Mermaid diagram) and noted on the RCA_RUNBOOK row that an automated version of the method now runs at failure time and persists to `calibration_history.metadata.auto_rca`. Authoritative detail lives in POST_CREATION_CALIBRATION_FLOW.md. |
 | 2026-06-27 | Post-creation flow doc | Added [POST_CREATION_CALIBRATION_FLOW.md](/docs/Calibration/POST_CREATION_CALIBRATION_FLOW.md) under Data Model & Lifecycle — the post-creation prompt, background run + email, `agents.calibration_status` gate, provider-agnostic email transport, and calibration outbound marking + recipient redirect. |
 | 2026-06-02 | Consolidated docs + audit | Moved all live calibration docs from repo root and `docs/` into `docs/Calibration/` (30 docs incl. this index); moved 11 superseded fix-notes to `docs/archive/`. Fixed stale "Planned" headers on the multi-step framework + missing-flatten docs. Added Dead Code / Cleanup Backlog section from the 2026-06-02 audit. Rewrote all index links to new paths. |
 | 2026-05-24 | Created | Initial overview/index covering 22 docs across root + `docs/`. Confirmed Phase 1 of multi-step framework is implemented, hardcode V3 is the live approach, and story-driven UX is shipped. |

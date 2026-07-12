@@ -35,6 +35,7 @@ export const AUDIT_EVENTS = {
   AGENT_SCHEMA_UPDATED: 'AGENT_SCHEMA_UPDATED', // input/output schema changes
   AGENT_CONFIG_SAVED: 'AGENT_CONFIG_SAVED', // input values saved/updated
   EFFORT_ESTIMATE_GENERATED: 'EFFORT_ESTIMATE_GENERATED', // Effort Estimator wrote agent_config.roi_estimate
+  AGENT_CALIBRATION_FIELD_CORRECTED: 'AGENT_CALIBRATION_FIELD_CORRECTED', // Item 7: calibration rewrote a wrong field name to the plugin's real spelling in place
 
   // Agent Generation events
   AGENT_GENERATION_STARTED: 'AGENT_GENERATION_STARTED',
@@ -250,6 +251,11 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
     severity: 'info',
     complianceFlags: ['SOC2'],
     description: 'Effort Estimator generated/overwrote agent_config.roi_estimate',
+  },
+  [AUDIT_EVENTS.AGENT_CALIBRATION_FIELD_CORRECTED]: {
+    severity: 'warning',
+    complianceFlags: ['SOC2'],
+    description: 'Calibration rewrote a stored workflow field name to the plugin\'s real spelling (Item 7 in-place field-fidelity correction)',
   },
   [AUDIT_EVENTS.AGENT_RUN_STARTED]: {
     severity: 'info',

@@ -4,6 +4,7 @@ import { UserPluginConnections } from './user-plugin-connections';
 import { PluginManagerV2 } from './plugin-manager-v2';
 import { ExecutionResult } from '@/lib/types/plugin-types';
 import { createLogger } from '@/lib/logger';
+import { applyParamConstraintGuard } from './param-constraint-guard';
 
 export abstract class BasePluginExecutor {
   protected userConnections: UserPluginConnections;
@@ -16,7 +17,7 @@ export abstract class BasePluginExecutor {
     this.pluginName = pluginName;
     this.userConnections = userConnections;
     this.pluginManager = pluginManager;
-    this.logger = createLogger({ module: 'PluginExecutor', plugin: pluginName });
+    this.logger = createLogger({ module: 'PluginExecutor' }).child({ plugin: pluginName });
   }
 
   // Template method - implements common execution flow
@@ -36,6 +37,22 @@ export abstract class BasePluginExecutor {
             this.logger.debug({ param: key, value: parameters[key] }, 'Normalized string → array for schema compliance');
           }
         }
+      }
+
+      // Step 0b: Runtime param-constraint guard (Item 4).
+      // Right before validation and the external call, clamp out-of-range numerics
+      // and fall back invalid enums to THIS action's own declared bounds — so a bad
+      // generated value (e.g. max_results:500 vs the plugin's maximum:100) self-heals
+      // instead of blocking the run. Generic, schema-driven, never throws, never
+      // blocks; clamping here means both validation and the plugin see the safe value.
+      if (actionDef?.parameters) {
+        const guarded = applyParamConstraintGuard(
+          actionDef.parameters,
+          parameters,
+          { pluginName: this.pluginName, actionName },
+          this.logger,
+        );
+        parameters = guarded.params;
       }
 
       // Step 1: Validate parameters against plugin schema
@@ -194,11 +211,17 @@ export abstract class BasePluginExecutor {
   // character count, inflating `total_recipients` (e.g., "user@x.com" → 10).
   protected countRecipients(recipients: any): number {
     if (!recipients) return 0;
+    // Recursively count actual addresses. Flattens nested arrays (e.g. [["a@b.com"]]
+    // that arise when an array-typed input is wrapped in a DSL array literal) and
+    // splits comma-separated strings — a flat `v.length` undercounts a nested list
+    // (counting the inner array as 1), which both misreports recipient_count AND can
+    // bypass the total_recipients >10/>50 safety guards. See RUNTIME_RCA for the email
+    // recipient-nesting bug (agent bb821b6b, 2026-07-05).
     const countField = (v: unknown): number => {
-      if (Array.isArray(v)) return v.length;
-      if (typeof v === 'string' && v.length > 0) return 1;
+      if (Array.isArray(v)) return v.reduce((n: number, e) => n + countField(e), 0);
+      if (typeof v === 'string') return v.split(',').map((s) => s.trim()).filter(Boolean).length;
       return 0;
-    }
+    };
     return countField(recipients.to) + countField(recipients.cc) + countField(recipients.bcc);
   }
 
@@ -221,10 +244,16 @@ export abstract class BasePluginExecutor {
     htmlBanner: string;
     textBanner: string;
     redirectTo?: string;
+    /**
+     * True when the calibration run is degraded (an earlier step failed). A
+     * messaging executor should SKIP the real send rather than deliver an
+     * empty/placeholder message. Opt-in — same contract as redirectTo.
+     */
+    suppressSend?: boolean;
   } {
     const cal = parameters?._calibration;
     if (!cal?.isCalibration) {
-      return { isCalibration: false, subjectPrefix: '', htmlBanner: '', textBanner: '' };
+      return { isCalibration: false, subjectPrefix: '', htmlBanner: '', textBanner: '', suppressSend: false };
     }
     // Only show a round number from the 2nd send onward. A calibration that
     // produces a single message needs no "round 1" noise; the number appears
@@ -241,6 +270,7 @@ export abstract class BasePluginExecutor {
       htmlBanner: `<div style="background:#fff7ed;border:1px solid #fed7aa;color:#9a3412;padding:10px 14px;border-radius:8px;margin-bottom:14px;font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;font-size:13px;">${sentence}</div>`,
       textBanner: `${sentence}\n\n`,
       redirectTo,
+      suppressSend: cal.suppressSend === true,
     };
   }
 

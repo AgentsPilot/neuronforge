@@ -21,8 +21,13 @@ export interface CalibrationResultEmailInput {
   issuesFound: number;
   issuesFixed: number;
   issuesRemaining: number;
-  /** Titles of issues still needing the user's attention (failed runs). */
-  remainingIssueTitles?: string[];
+  /**
+   * Plain-English notes about parameter values calibration looked up from the
+   * live data source and set for the user (e.g. "The spreadsheet has one tab,
+   * 'Leads', so I set the sheet to it."). Rendered in a "What we changed" block —
+   * shown on BOTH passed and failed runs so the user always sees what was decided.
+   */
+  appliedFixNotes?: string[];
   /** Where the email's primary button points (agent page on pass, sandbox on fail). */
   ctaUrl: string;
   /** Agent owner's userId — enables the google-mail plugin-connection fallback transport. */
@@ -38,7 +43,7 @@ export async function sendCalibrationResultEmail(input: CalibrationResultEmailIn
     const summary = await buildSummary(input);
     const subject = input.passed
       ? `✅ "${input.agentName}" passed calibration and is ready to use`
-      : `⚠️ "${input.agentName}" needs a quick review before it's ready`;
+      : `🔧 We're getting "${input.agentName}" ready for you`;
     const html = renderHtml(input, summary);
 
     const notificationService = new NotificationService();
@@ -66,15 +71,17 @@ async function buildSummary(input: CalibrationResultEmailInput): Promise<string>
       'Do not use markdown, headings, or bullet points — plain prose only.',
       '',
       `Agent name: ${input.agentName}`,
-      `Outcome: ${input.passed ? 'passed cleanly — ready to use' : 'finished but still needs the user to review some issues'}`,
-      `Issues found: ${input.issuesFound}; auto-fixed: ${input.issuesFixed}; still needing attention: ${input.issuesRemaining}`,
-      input.remainingIssueTitles?.length
-        ? `Remaining issues: ${input.remainingIssueTitles.slice(0, 5).join('; ')}`
+      `Outcome: ${input.passed ? 'passed cleanly — ready to use' : 'our team found some setup issues and is resolving them for the user'}`,
+      input.passed
+        ? `Issues found: ${input.issuesFound}; auto-fixed: ${input.issuesFixed}.`
+        : `We found some setup issues while testing (do NOT list, count, or describe them — the user is not expected to act on them).`,
+      input.appliedFixNotes?.length
+        ? `Specific things we adjusted automatically (mention these plainly): ${input.appliedFixNotes.slice(0, 5).join(' ')}`
         : '',
       '',
       input.passed
         ? 'Tone: congratulatory and reassuring.'
-        : 'Tone: helpful and encouraging — make clear a quick review will get it ready.',
+        : 'Tone: reassuring and managed — make clear OUR TEAM is resolving it and will let them know when it is ready; the user does not need to do anything. Do NOT ask the user to review or fix anything, and do NOT mention how many issues there are.',
     ].filter(Boolean).join('\n');
 
     const response = await provider.chatCompletion(
@@ -101,16 +108,30 @@ function fallbackSummary(input: CalibrationResultEmailInput): string {
       input.issuesFixed > 0 ? `, fixing ${input.issuesFixed} thing${input.issuesFixed === 1 ? '' : 's'} automatically along the way` : ''
     }. It's ready to use.`;
   }
-  return `We tested "${input.agentName}" and it needs a quick review: ${input.issuesRemaining} issue${
-    input.issuesRemaining === 1 ? '' : 's'
-  } still need your attention before it's ready. Open it to review and fix what's left.`;
+  return `We tested "${input.agentName}" on a real example and found a few setup issues. Our team is on it and will get your agent ready for you.`;
 }
 
-function renderHtml(input: CalibrationResultEmailInput, summary: string): string {
-  const ctaLabel = input.passed ? 'View your agent' : 'Review & fix';
+// Exported for unit testing the deterministic HTML (the "What we changed" block,
+// escaping); not used elsewhere.
+export function renderHtml(input: CalibrationResultEmailInput, summary: string): string {
+  const ctaLabel = input.passed ? 'View your agent' : 'View your agents';
   const accent = input.passed ? '#16a34a' : '#d97706';
   const esc = (s: string) =>
     s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+  // On a passed run we show the found/fixed/remaining counts. On a failed run
+  // the framing is managed ("our team is on it") — counts imply the user must
+  // act, so we suppress the table and show a deterministic reassurance block
+  // instead (renders regardless of the LLM summary).
+  const statsBlock = input.passed ? `
+          <table style="width:100%;border-collapse:collapse;margin:0 0 20px;font-size:14px;color:#555;">
+            <tr><td style="padding:4px 0;">Issues found</td><td style="padding:4px 0;text-align:right;font-weight:600;">${input.issuesFound}</td></tr>
+            <tr><td style="padding:4px 0;">Fixed automatically</td><td style="padding:4px 0;text-align:right;font-weight:600;">${input.issuesFixed}</td></tr>
+            <tr><td style="padding:4px 0;">Still needs attention</td><td style="padding:4px 0;text-align:right;font-weight:600;">${input.issuesRemaining}</td></tr>
+          </table>` : `
+          <div style="margin:0 0 20px;padding:12px 14px;background:#fffbeb;border:1px solid #fde68a;border-radius:8px;">
+            <p style="margin:0;font-size:14px;color:#92400e;line-height:1.5;">Our team is working to resolve this and will email you as soon as your agent is ready to use — no action needed from you.</p>
+          </div>`;
 
   return `
   <!DOCTYPE html>
@@ -118,15 +139,18 @@ function renderHtml(input: CalibrationResultEmailInput, summary: string): string
     <body style="margin:0;padding:0;background:#f5f5f5;font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;">
       <div style="max-width:560px;margin:24px auto;background:#ffffff;border-radius:12px;overflow:hidden;border:1px solid #e5e5e5;">
         <div style="padding:20px 24px;border-bottom:4px solid ${accent};">
-          <h1 style="margin:0;font-size:18px;color:#111;">${input.passed ? 'Your agent is ready 🎉' : 'Your agent needs a quick review'}</h1>
+          <h1 style="margin:0;font-size:18px;color:#111;">${input.passed ? 'Your agent is ready 🎉' : "We're getting your agent ready 🔧"}</h1>
         </div>
         <div style="padding:24px;color:#333;font-size:15px;line-height:1.55;">
           <p style="margin:0 0 16px;">${esc(summary)}</p>
-          <table style="width:100%;border-collapse:collapse;margin:0 0 20px;font-size:14px;color:#555;">
-            <tr><td style="padding:4px 0;">Issues found</td><td style="padding:4px 0;text-align:right;font-weight:600;">${input.issuesFound}</td></tr>
-            <tr><td style="padding:4px 0;">Fixed automatically</td><td style="padding:4px 0;text-align:right;font-weight:600;">${input.issuesFixed}</td></tr>
-            <tr><td style="padding:4px 0;">Still needs attention</td><td style="padding:4px 0;text-align:right;font-weight:600;">${input.issuesRemaining}</td></tr>
-          </table>
+          ${statsBlock}
+          ${input.appliedFixNotes?.length ? `
+          <div style="margin:0 0 20px;padding:12px 14px;background:#f0f9ff;border:1px solid #bae6fd;border-radius:8px;">
+            <p style="margin:0 0 6px;font-size:13px;font-weight:600;color:#0369a1;">What we changed</p>
+            <ul style="margin:0;padding-left:18px;font-size:13px;color:#334155;line-height:1.5;">
+              ${input.appliedFixNotes.map((n) => `<li style="margin:0 0 4px;">${esc(n)}</li>`).join('')}
+            </ul>
+          </div>` : ''}
           <a href="${input.ctaUrl}" style="display:inline-block;background:${accent};color:#fff;text-decoration:none;padding:12px 22px;border-radius:8px;font-weight:600;font-size:15px;">${ctaLabel}</a>
         </div>
         <div style="padding:16px 24px;background:#fafafa;border-top:1px solid #eee;color:#999;font-size:12px;">

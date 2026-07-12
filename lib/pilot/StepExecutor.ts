@@ -820,13 +820,33 @@ export class StepExecutor {
     // injected in production.
     // See workplan: docs/workplans/v2-post-creation-calibration-prompt-workplan.md (Phase 4)
     if (context.runMode === 'calibration' || context.runMode === 'batch_calibration') {
+      // Suppress outbound delivery when the run is degraded — i.e. an earlier
+      // step genuinely FAILED. A messaging executor that honors this skips the
+      // real send instead of delivering an empty/placeholder message (e.g. a
+      // digest built on a "No data available." fallback after an upstream fetch
+      // failed). Gated on real failures only: a step that legitimately produces
+      // an empty result SUCCEEDS (0 rows ≠ failure), so a working "no results
+      // today" agent still sends its message during calibration. Same opt-in
+      // contract as redirectTo — executors that don't read it are unaffected.
+      // Reads failures recorded so far; a sibling that fails in the SAME
+      // parallel group (recorded on the parent only after the group resolves)
+      // isn't seen — fail-open, fine for the sequential fetch→process→send
+      // topology this targets.
+      const suppressSend = context.failedSteps.length > 0;
       transformedParams._calibration = {
         isCalibration: true,
         round: context.calibrationRound,
         // Redirect target: messaging executors send to the owner instead of the
         // real (possibly third-party) recipients during a calibration test.
         redirectTo: context.calibrationOwnerEmail,
+        suppressSend,
       };
+      if (suppressSend) {
+        logger.info(
+          { stepId: step.id, plugin: step.plugin, action: step.action, failedSteps: context.failedSteps },
+          'Calibration: run has failed steps — flagging outbound delivery for suppression (no empty/degraded send)'
+        );
+      }
     }
 
     // Log transformed params for debugging plugin execution
@@ -953,6 +973,26 @@ export class StepExecutor {
    * - Provides sensible defaults for missing required parameters
    * - Works for ALL plugins, not hardcoded to specific ones
    */
+  /**
+   * True when a plugin param's declared schema says it can accept a whole object
+   * (not just a scalar). Generic, schema-driven signal used by the Item 8 runtime
+   * slice to avoid JSON-stringifying an object that the executor is designed to
+   * read field-by-field. Recognises: an explicit object `type` (or a union type
+   * array including 'object'), or an `x-input-mapping.accepts` entry naming an
+   * object form (e.g. 'file_object'). No plugin-specific branches.
+   */
+  private paramAcceptsObject(def: any): boolean {
+    if (!def || typeof def !== 'object') return false;
+    const t = def.type;
+    if (t === 'object') return true;
+    if (Array.isArray(t) && t.includes('object')) return true;
+    const accepts = def['x-input-mapping']?.accepts;
+    if (Array.isArray(accepts) && accepts.some((a: unknown) => typeof a === 'string' && /(^|_)object$/i.test(a))) {
+      return true;
+    }
+    return false;
+  }
+
   private async transformParametersForPlugin(
     pluginName: string,
     actionName: string,
@@ -1080,17 +1120,32 @@ export class StepExecutor {
 
           // Convert objects to JSON strings
           if (typeof value === 'object' && value !== null) {
-            logger.debug({ paramName, valueType: Array.isArray(value) ? 'array' : 'object' }, 'Converting to string for parameter');
-
-            // Check if parameter has a format hint in schema
-            const formatHint = def.format || def['x-format'];
-
-            if (formatHint === 'structured-message' || paramName.toLowerCase().includes('message')) {
-              // Format as a structured, readable message
-              transformed[paramName] = this.formatObjectAsMessage(value);
+            // Item 8 (Finding 2, runtime slice): if the consumer param DECLARES it
+            // can accept a whole object (schema-driven — an `x-input-mapping.accepts`
+            // entry naming an object form, or an object `type`), pass the raw object
+            // through UN-stringified so the plugin executor's object branch can read
+            // its fields (e.g. .data / .mimeType / .filename). An object only
+            // reaches here from a PURE whole-object placeholder (e.g.
+            // `file_content:"{{attachment_content}}"`) — inline/concatenated
+            // placeholders are already stringified upstream by resolveAllVariables —
+            // so this never changes normal scalar interpolation. Zero plugin-name
+            // branches (driven entirely by the param's declared schema).
+            if (this.paramAcceptsObject(def)) {
+              logger.debug({ paramName, pluginName, actionName, keys: Object.keys(value) },
+                'Param declares object acceptance — passing whole object through un-stringified (Item 8)');
             } else {
-              // Default: JSON with indentation
-              transformed[paramName] = JSON.stringify(value, null, 2);
+              logger.debug({ paramName, valueType: Array.isArray(value) ? 'array' : 'object' }, 'Converting to string for parameter');
+
+              // Check if parameter has a format hint in schema
+              const formatHint = def.format || def['x-format'];
+
+              if (formatHint === 'structured-message' || paramName.toLowerCase().includes('message')) {
+                // Format as a structured, readable message
+                transformed[paramName] = this.formatObjectAsMessage(value);
+              } else {
+                // Default: JSON with indentation
+                transformed[paramName] = JSON.stringify(value, null, 2);
+              }
             }
           }
           // Convert numbers/booleans to strings
@@ -5042,38 +5097,60 @@ Respond ONLY with the JSON array. No markdown, no explanation, no code blocks.`;
     // This is used for patterns like: emails -> extract attachments from each -> flatten into single list
     let dataToFlatten = unwrappedData;
     if (field && !fieldAlreadyExtracted) {
+      // Item 9 (Finding 3, runtime slice): carry the PARENT object's fields
+      // forward onto each flattened child so downstream references to flat names
+      // (e.g. attachment_item.from / .subject / .date) resolve instead of coming
+      // back blank. CHILD-PRECEDENCE: the child's own fields always win; parent
+      // fields are only added where the child does not already define them
+      // (additive, never clobbers a child field). This also carries `date`, which
+      // the old code dropped entirely. Generic — no plugin/field-specific logic;
+      // the extracted array key (`field`) is excluded so we never re-carry the
+      // array we just flattened. `_parentId`/`_parentData` are kept for
+      // backwards-compat (and `_parentData` now includes `date`).
+      const buildParentCarry = (parent: any): Record<string, any> => {
+        const carry: Record<string, any> = {};
+        if (parent && typeof parent === 'object' && !Array.isArray(parent)) {
+          for (const [k, v] of Object.entries(parent)) {
+            if (k === field) continue; // don't re-carry the flattened array
+            carry[k] = v;
+          }
+        }
+        return carry;
+      };
+
       // PER-ITEM EXTRACTION: Extract field from each item in the array
       dataToFlatten = unwrappedData.reduce((acc: any[], item: any) => {
         const fieldValue = item?.[field];
+        const parentCarry = buildParentCarry(item);
+        const parentMeta = {
+          _parentId: item?.id || item?.messageId,
+          _parentData: {
+            id: item?.id,
+            messageId: item?.messageId || item?.message_id,
+            subject: item?.subject,
+            from: item?.from,
+            date: item?.date
+          }
+        };
         if (Array.isArray(fieldValue)) {
           // Preserve parent context on each extracted item for downstream operations
-          // e.g., attachment needs parent email's messageId for content fetching
+          // e.g., attachment needs parent email's from/subject/date for the report.
           const enrichedItems = fieldValue.map((child: any) => ({
-            ...child,
-            _parentId: item.id || item.messageId,
-            _parentData: {
-              id: item.id,
-              messageId: item.messageId || item.message_id,
-              subject: item.subject,
-              from: item.from
-            }
+            ...parentCarry, // parent fields (incl. date) — additive, child wins below
+            ...child,       // CHILD-PRECEDENCE: the child's own fields override parent
+            ...parentMeta
           }));
           acc.push(...enrichedItems);
         } else if (fieldValue !== undefined && fieldValue !== null) {
           acc.push({
+            ...parentCarry,
             ...fieldValue,
-            _parentId: item.id || item.messageId,
-            _parentData: {
-              id: item.id,
-              messageId: item.messageId || item.message_id,
-              subject: item.subject,
-              from: item.from
-            }
+            ...parentMeta
           });
         }
         return acc;
       }, []);
-      logger.debug({ field, originalItems: unwrappedData.length, extractedItems: dataToFlatten.length }, 'Extracted field from each item before flattening');
+      logger.debug({ field, originalItems: unwrappedData.length, extractedItems: dataToFlatten.length }, 'Extracted field from each item before flattening (parent fields carried forward, child-precedence)');
     }
 
     const flattenArray = (arr: any[], currentDepth: number): any[] => {
