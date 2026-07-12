@@ -510,6 +510,58 @@ This decomposes into three testable sub-guarantees:
 
 ---
 
+## SA Batch 3 Design — generation-side fixes
+
+**Reviewed by SA — 2026-07-12** · Design + sequencing pass for the final batch (V6 generation/compiler side). Consulted per V6 Work Protocol: `V6_DESIGN_PRINCIPLES.md` (P1 runtime tolerance, P6 no plugin-hardcoding, P7 fix-at-root-cause, P8 exercise semantics, P11 don't-hide-failure, Anti-pattern D over-correction), `WEAK_POINTS.md` (WP-56 field-fidelity family; **WP-58** multi-input AI wiring — documented + deferred P3, the exact machinery Item 11 needs), and the two live re-run RCAs. Verified the shipped shared core (`lib/schema-reconciliation/` — `normalizeFieldName`, `isSameFieldDifferentSpelling`, `indexProducerFields`, `reconcileAgainstIndex`, `ReconciliationResult`; **no call sites wired yet** — exactly as the "one core, four+ call sites" constraint intends). Advisory/design only.
+
+### 1. Resolved SA Round 3 placement questions (Items 8 / 9 / 11)
+
+- **Item 8 (object handoff):** confirmed split. The **runtime resolver slice already shipped (batch 1)** is the existing-agent fix; the **generation binding slice ships in batch 3** (owner `v6-pipeline`) for new agents. Ruling detail below in 3C — the generation binding must be **annotation/semantic-driven, not a fuzzy name match**, because `file_content ← .data` is a *semantic role* mapping, not a spelling variant.
+- **Item 9 (parent-field carry-forward):** confirmed split. The **runtime `transformFlatten` slice is validated/shipped**; the **generation reference-shape slice ships in batch 3** (reference the actually-carried names so new agents don't reintroduce the mismatch). Low risk, additive.
+- **Item 11 (AI step missing its loop variable):** confirmed **needs both** a durable generation-wiring fix (new agents) **and** a one-shot in-place fix for `0ee53785` (it does **not** self-heal on recalibration). **Ruling on the in-place question (the doc's open Q):** for `0ee53785` now, apply a **targeted, scripted in-place DSL edit that is *derived from the same generation-wiring logic*** (add the referenced scatter loop variable to step7's input context + inject it as a labelled block) — reproducible and testable, **not** a hand-hacked JSON. **Do NOT** generalise this into the always-on calibration corrector in this batch: auto-injecting AI-step inputs into stored agents on every recalibration is a broader, riskier capability that needs its own design — **defer that generalisation to a later cycle.** So: durable generation fix (batch 3) + scripted in-place edit for `0ee53785` (batch 3) + calibration-corrector generalisation (later cycle).
+
+### 2. Recommended implementation sequence (sub-phased; Item 11 first)
+
+**Sub-phase 3A — Item 11 (PRIORITY: the last blocker on `0ee53785`'s green).**
+- **Phase/area:** IR converter (`IntentToIRConverter`) + AI resolver (`compiler/resolvers/AIOperationResolver`) + IR types (`declarative-ir-types-v4` — add `additional_inputs` to the AI config, mirroring the transform config that already has it). This is the **root-cause phase** (P7): the node-level `inputs` already carry the graph deps, but the AI config takes only the *first* as its prompt payload — the loop variable and other referenced vars survive as prose the model can't read as data.
+- **Approach (2-3 sentences):** When building an AI/processing step, determine its input context from the *union* of (a) the primary input and (b) every variable the instruction references — including the enclosing scatter's loop variable and any config/aggregate vars. Populate those into `additional_inputs`; have the resolver inject each as a **labelled `{{var}}` data block** in the prompt (the WP-58 fix shape). This is deterministic wiring, not a prompt nudge (constraint #2).
+- **Risk:** **MEDIUM** — it changes the AI prompt payload, so it changes AI output; the regression suite is content-blind (see §3).
+- **Reuses machinery:** **yes — the deferred WP-58 fix is exactly this mechanism.** Implement it generically and close WP-58 as part of Item 11.
+- **`0ee53785`:** after landing the generation fix, apply the scripted in-place edit (per §1) and recalibrate. Combined with the batch-1 coverage-floor redesign, this yields a fully-populated report + honest pass.
+
+**Sub-phase 3B — Items 1 (Gap A) + 2 (Gap B): the durable field-name reconciliation (the two remaining shared-core call sites).**
+- **Item 1 — phase/area:** Phase-2 `DataSchemaBuilder` (within `CapabilityBinderV2`). **Approach:** add a dedicated post-pass (alongside/after the existing derived-schema fixup, **not** inline in the per-step inference, and **not** overloading the shape-preserving fixup — SA Round-1 D1) that, for each `ai_declared` transform slot, **resolves the producer slot including dotted-path input resolution**, indexes the producer fields via the shared core (`indexProducerFields`), and reconciles the declared names via `reconcileAgainstIndex` — renaming same-field-different-spelling, leaving ambiguous/derived untouched. **The dotted-path resolver is mandatory** (`step.transform.input` is `expense_emails.emails`; a bare slot lookup no-ops exactly like O10a did). **Wire to `lib/schema-reconciliation` — no new copy.** **Risk: MEDIUM-HIGH** (most delicate code; touches the canonical schema; over-correction risk — Anti-pattern D).
+- **Item 2 — phase/area:** Phase-5 `ExecutionGraphCompiler` O10a `buildSchemaMap`/reconciler. **Approach:** fix the dotted-path key miss (resolve a dotted `config.input` to the producer schema so O10a actually runs) and extend the corrector to inspect **bare `condition.field` literals** (not only `{{var.field}}` templates). **Replace O10a's local `normalizeForFuzzy` copies with the shared core's normaliser** (consolidation, P5). **Risk: MEDIUM** (generic compiler-correctness; still a rewrite path — guard against rewriting an intentionally-different field).
+- **Reuses machinery:** both are the **generation + compiler call sites of the Phase-0 core** — confirm both import from `lib/schema-reconciliation` and add zero reconciliation logic of their own.
+
+**Sub-phase 3C — Items 8 & 9 durable generation bindings.**
+- **Item 8 — phase/area:** the field-binding step (IR converter / compiler param wiring). **Approach:** when a plugin-action object feeds another plugin action, bind the consumer's params to the producer's **specific fields** (`.data`/`.mimeType`/`.filename`) instead of the whole object into one scalar. **Critical principle call-out:** the `mime_type ← .mimeType` / `filename ← .filename` legs are fuzzy-matchable (reuse the shared core), but `file_content ← .data` is a **semantic-role mapping**, so drive it from the **plugin's semantic annotations** (the `x-semantic-type: file_attachment` mechanism WP-57 already established) — **never** a `if plugin === gmail` branch (P6 / Anti-pattern F). **Risk: MEDIUM.** **Scope flag:** this is clean only where the file-attachment output is annotated (Gmail/Drive are, per WP-57); generalising object-handoff binding to *un-annotated* plugins needs annotation work first — see §4.
+- **Item 9 — phase/area:** IR converter / `DataSchemaBuilder` reference-shape. **Approach:** generation references the parent-field names the flatten actually carries, so new agents don't reintroduce the blank-column mismatch. **Risk: LOW-MEDIUM** (additive).
+
+**Sub-phase 3D — Item 4 compile-time advisory.**
+- **Phase/area:** generation/compile surface (the runtime clamp already shipped in batch 2). **Approach:** a small **non-blocking** advisory — "value out of range, fix the source" — reading the same plugin-declared constraints the batch-2 guard reads. Deterministic, never gates the build (SA Round-2). **Risk: LOW.** **Reuses:** the batch-2 constraint reader.
+
+### 3. Regression risk on existing passing scenarios (the suite is content-blind)
+
+The RCA is explicit that Phase E "success" means "ran end-to-end," not "produced correct content" (P8/P9). Every content-affecting item below can turn a currently-passing scenario into a **green-but-wrong** regression that the suite won't catch. Required added coverage:
+
+- **Item 11 (highest exposure):** the prompt payload change alters AI output. **Dev must add a content-asserting test** — a scatter + AI-row-builder scenario asserting the referenced loop-var columns are **populated (non-empty)**, not merely that the step ran. (This is the P8/WP-43 lesson: assert semantics, not shape.)
+- **Item 1 (Gap A):** the reconciler could **over-rename a legitimate derived field** (Anti-pattern D / WP-32) and silently corrupt a passing scenario. **Dev must add:** (a) the invariant test (no `ai_declared` transform slot keeps a fuzzy-overlapping-but-differently-spelled field), (b) the negative test (a genuine derived field with no producer counterpart survives untouched), (c) **run every existing regression scenario's phase4 snapshot through the new pass and diff — any field-name change on a currently-passing scenario must be explicitly justified.**
+- **Item 2 (Gap B):** dotted-path + bare-`condition.field` rewriting could rewrite a field that was intentionally different. **Dev must add:** a dotted-path schema-map unit test **and** a "correct condition.field left untouched" test.
+- **Item 8:** the binding change could misroute a param on a plugin whose handoff previously worked (accidentally) via the runtime resolver. **Dev must add** a plugin→plugin object-handoff scenario asserting each bound param receives the correct sub-field.
+- **Item 9:** additive; assert the new-agent DSL references the carried names.
+
+### 4. In-batch vs later cycle
+
+- **In this batch:** Items 11, 1, 2, 8 (annotated-plugin scope), 9, 4-advisory; the scripted in-place edit for `0ee53785`.
+- **Defer to a later cycle:** (a) **generalising Item 11 into the always-on calibration corrector** (auto-injecting AI-step inputs during recalibration — broader/riskier, not needed for `0ee53785`); (b) **Item 8 object-handoff binding for *un-annotated* plugins** — gated on completing `x-semantic-type` file-attachment annotations across the plugin set (doing it without annotations would force a plugin-name branch, which P6 forbids); (c) any residual WP-58 polish beyond the referenced-var wiring (e.g. dead aggregate-step cleanup) if it isn't cheap to fold in.
+
+### 5. Path to a green run on `0ee53785`
+
+The data path is already repaired **in place** by the batch-1 runtime slices (Item 8 resolver, Item 9 flatten) and given a fair verdict by the batch-1 coverage-floor redesign. The **only remaining blocker is Item 11** (blank From/Subject/Filename columns), which does not self-heal. So the path to green is: **land Item 11's generation-wiring fix (3A) → apply the scripted in-place DSL edit derived from it to `0ee53785` → recalibrate.** That produces a fully-populated expense report and an honest passing verdict **without regeneration.** Items 1/2/8/9 generation slices make a *regenerated* `0ee53785` (and all new agents) correct at creation, but they are **not** on this specific agent's critical path to green — Item 11 is.
+
+---
+
 ## Change History
 
 | Date | Change | Details |

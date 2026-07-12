@@ -676,3 +676,74 @@ Yet the execution summary shows `data_written:[]`, `items_processed:14`, **no `i
 | Date | Change | Details |
 |------|--------|---------|
 | 2026-07-11 | Live re-run #2 RCA | Extraction confirmed working (13 rows, real vendor/amount/date). Q1: blank From/Subject/Filename = step7 AI-step input-wiring gap (`step7.input="{{extracted_fields}}"` only; `attachment_item` not in context) — NEW, distinct from the now-fixed Finding 3 (flatten carries parent fields at runtime, `dev.log` L64307–64344). Owner v6-pipeline generation wiring. Q2: `inconclusive` fired on a metrics artifact — a scalar `send_email` never increments `items_delivered`, so send-terminating agents are structurally capped; folds into the CAL-NN coverage-floor redesign (meaningful-pre-delivery-data signal, still rejects all-blank sets). |
+
+---
+
+## Calibration Wizard Stuck-on-Cosmetic RCA (2026-07-12)
+
+> **Added**: 2026-07-12 · **Scope**: agent `0ee53785-…`'s latest calibration is functionally successful (`verdict:needs_review`, `isPassing:false`, blocking 0 / critical 0, `totalIssues:1` = the "Hardcoded Values: 500" parameterization suggestion), but the user cannot proceed — the "Continue" button is greyed and there is no way to resolve the 500 or finalize. DIAGNOSTIC ONLY — root-cause + recommend; no code changed.
+
+### Plain-language top line
+
+The user is genuinely wedged, for two stacked reasons:
+
+1. **The "Continue" button on the hardcode card is greyed until you first click one of the two choice tiles ("Yes, flexible" / "No, keep fixed").** Those tiles DO work — clicking either enables Continue — but nothing tells the user a choice is mandatory, and the other place the 500 shows up (the right-column "Hardcoded Values (500)" card) is **read-only with no button at all**. So it looks permanently stuck.
+2. **Even if they resolve the 500, there is no exit to a "done/passed" screen.** The code that would advance to the success/finalize screen is **commented out**, so after any run or fix the app just returns to the same dashboard. Combined with the coverage-floor issue from Re-run #2 (a send-terminating agent's verdict can't reach `passed`), a cosmetic-only run has **no path to a finalized state today**. It is stuck at `needs_review` by construction.
+
+The auto-parameterization policy is working as designed (the 500 is deliberately NOT auto-rewritten — that would change the agent's input schema without consent, WP-40), and an apply-on-confirm path already exists. The problem is purely the **UI flow + the verdict coverage floor**, not the policy.
+
+### Q1 — why the wizard is stuck / Continue disabled
+
+**Root cause: a calibration-UI dead-end (option c) compounded by a poor-affordance gate (option a) — not a missing control on the interactive card.**
+
+The screen the user is on is `CalibrationSetup` (not the wizard/dashboard/success components). After a run with any issues, the page forces `flowState='dashboard'`, which renders `CalibrationSetup`:
+
+**File:** `app/v2/sandbox/[agentId]/page.tsx` L1224 (`flowState === 'setup' | 'running' | 'dashboard'` → `<CalibrationSetup>`), set at L609 (`setFlowState('dashboard')` when `result.summary.total > 0`).
+
+Inside `CalibrationSetup` the 500 appears on two surfaces:
+
+- **Interactive chat card** `IssueFixingCard` — shows "Issue 1 of 1" (L2425) and a **"Continue"** button gated `disabled={!isComplete}` (L2458), where for a hardcode `isComplete = selectedChoice !== null` (L2411–2414). `selectedChoice` initializes to `null` (L2383), so **Continue is greyed on first render**. It only enables after the user clicks a tile in `HardcodeFixCard`, whose two buttons call `onChange(true)` / `onChange(false)` (L2572–2604). So the control exists and works — but the enablement depends on a selection the UI doesn't signal as required. **(option a — affordance gate.)**
+- **Read-only summary card** in the right column — `improvements.map(...)` renders a passive "Hardcoded Values (500)" card with title + message and NO action control (L2310–2341); it only flips to "Made flexible / Kept fixed" once resolved elsewhere. If the user looks here for a way to act, there is none. **(option b — no control on this surface.)**
+
+Distinguishing the coordinator's options: it is **not** that the wizard expects hidden text input (the `CalibrationWizard.HardcodeWizardCard` and `CalibrationSetup.HardcodeFixCard` are binary choices, no free-text). The literal "Continue disabled" is the affordance gate (a). But the **decisive** stuck state is (c): even after a choice, the flow cannot reach a finished/passed state (see Q3).
+
+### Q2 — auto-parameterization policy (confirmed)
+
+**The 500 is deliberately not auto-applied, and an apply-on-explicit-confirm path exists.**
+
+- `IssueCollector.detectHardcodedValues` builds the issue with `category:'hardcode_detected'`, `suggestedFix.type:'parameterization'` (`IssueCollector.ts` L304–322), **`autoRepairAvailable:false`** (L326), **`requiresUserInput:true`** (L327). So calibration will never silently rewrite it — consistent with the WP-40 "no silent user-contract rewrite" rule: parameterizing adds an input and **changes the agent's `input_schema`**, a user-facing decision.
+- A confirm-then-apply path **does** exist: the wizard's "Yes, flexible" tile (and the "Parameterize All" bulk button, `CalibrationSetup` L2698 / `CalibrationDashboard` L300–326) records `approved:true`, and `handleApplyFixesInChat` (`page.tsx` L620–662) POSTs to **`/api/v2/calibrate/apply-fixes`**, which filters to `approved` parameterizations and calls `detector.applyParameterization(updatedSteps, selections)` to rewrite the DSL (`apply-fixes/route.ts` L168–214). So a "parameterize for me on confirm" capability is already implemented and **satisfies** WP-40 (the user explicitly confirmed) rather than violating it.
+
+So the policy and the apply mechanism are correct. The gap is not "there's no way to apply" — it's "applying (or declining) doesn't lead anywhere that finalizes."
+
+### Q3 — is there ANY path to a finalized/passed state for a cosmetic-only run? (the crux)
+
+**No. The run is genuinely wedged at `needs_review` with no exit — for two independent reasons.**
+
+1. **The success/finalize screen is unreachable (UI).** `CalibrationSuccess` — the screen that carries the finish actions (`onRunAgent`, `onParameterizeWorkflow`, `onDeclineParameterization`) — renders only when `flowState === 'success'` (`page.tsx` L1271). But **both** places that would set it are commented out: L605 `// setFlowState('success')` (after a clean run) and L936 `// setFlowState('success')` (after fixes/test), each replaced by `setFlowState('dashboard')` with the note *"DON'T change flow state - stay on dashboard."* And after applying fixes, `handleApplyFixesInChat` ends with L700 *"DON'T change flow state - stay in chat."* So `flowState` can never become `'success'`; `CalibrationSuccess` is effectively dead code. Even a `passed` verdict would not render a finalize screen.
+2. **The server verdict never returns `passed` for this agent (verdict/coverage).** Per `CalibrationVerdict.computeVerdict`, a lone **waveable** `hardcode_detected` with `exercisedRealPath === true` DOES resolve to `passed` (the Item 6a cosmetic allow-list already exists, `CalibrationVerdict.ts` L52–55, L179–204). But — as established in **Live Re-run #2** — a send-terminating agent yields `items_delivered = 0`, so `exercisedRealPath = false`, capping the verdict to `inconclusive`/`needs_review` regardless of the cosmetic issue. So the verdict model *would* pass a cosmetic-only run, but the coverage floor blocks it.
+
+Consequently, resolving the 500 changes nothing about reachability:
+- "No, keep fixed" → no DSL change → re-calibration re-flags the identical hardcode → back to `needs_review`.
+- "Yes, flexible" → parameterization applied → the hardcode disappears, but the coverage floor still caps the next run to `inconclusive`/`needs_review`.
+Either branch loops back to `needs_review`; and no UI transition ever reaches a finished state.
+
+### Classification, owner, and recommendation
+
+**Root cause = a calibration-UI dead-end (no finalize/accept exit) + a verdict-coverage cap — NOT the auto-parameterization policy (which is correct).** Owner: **calibration UI** (`app/v2/sandbox/[agentId]/page.tsx` flow transitions + `CalibrationSetup` affordance) **and calibration verdict/coverage** (folds with the Re-run #2 coverage-floor item).
+
+Minimal fix options:
+
+| Option | What it does | Unblocks? | False-green risk |
+|---|---|---|---|
+| **(i) Let the user accept/dismiss a cosmetic suggestion and finalize** — re-enable a finalize transition (uncomment/replace the `success` path) and add an explicit "Keep as-is & finish" that marks the calibration complete when only waveable issues remain | Renders a real exit; the user can finish without touching the 500 | **Directly unblocks** | **None** if gated to the waveable allow-list only |
+| **(ii) One-click "parameterize for me" on confirm** — already exists ("Yes, flexible" + `apply-fixes`) | Applies the rewrite, but still loops back to `needs_review` (re-calibration + coverage floor) | Partial — resolves the 500, not the exit | Satisfies WP-40 (user-confirmed); not a violation |
+| **(iii) Treat a cosmetic-only run as `passed`** — the verdict model already waves it (Item 6a); the blocker is the coverage floor. Fix the send-terminating coverage floor (Re-run #2: judge exercised-real-path on meaningful pre-delivery data) so the verdict can legitimately return `passed`, AND re-enable the UI success transition so a `passed`/cosmetic-only verdict actually renders the finish screen | Both the verdict and the UI reach a finished state | **Best** | **None** — the hardcode is provably cosmetic (allow-list) and the Re-run #2 guard still requires genuinely-populated pre-delivery data, so an all-blank run still fails |
+
+**Recommendation:** combine **(i) + (iii)**. The verdict model is already correct (cosmetic allow-list); the two real defects are (1) the **unreachable finalize UI** (both `setFlowState('success')` commented out — re-enable a completion path with an explicit "accept & finish" for waveable-only runs) and (2) the **send-terminating coverage-floor cap** (already owned by the Re-run #2 calibration item — switch to a meaningful-pre-delivery-data signal so a genuinely-good cosmetic-only run can reach `passed`). Together these unblock the user **without** reopening the false-green hole, because both the cosmetic allow-list and the meaningful-data guard remain in force. Option (ii) already exists and does not violate WP-40, but on its own does not finalize. TS recommends; TL routes (calibration UI + verdict/coverage — a full cycle: SA design + QA, folds the coverage half into the existing Re-run #2 item).
+
+### Change History addendum
+
+| Date | Change | Details |
+|------|--------|---------|
+| 2026-07-12 | Wizard stuck-on-cosmetic RCA | Q1: "Continue" greyed = affordance gate (`CalibrationSetup` `IssueFixingCard` L2411–2458, disabled until a `HardcodeFixCard` choice) + read-only right-column card; the deeper block is a flow dead-end. Q2: hardcode is `autoRepairAvailable:false/requiresUserInput:true` by WP-40 (`IssueCollector.ts` L304–327); apply-on-confirm exists (`apply-fixes/route.ts` L168–214). Q3: NO path to finalized/passed — `setFlowState('success')` commented out at `page.tsx` L605 & L936 (CalibrationSuccess is dead code) and the coverage floor caps send-terminating agents to needs_review (Re-run #2). Owner: calibration UI + verdict/coverage. Recommend (i)+(iii); (ii) already exists and is WP-40-compliant. |
