@@ -4,6 +4,7 @@ import { UserPluginConnections } from './user-plugin-connections';
 import { PluginManagerV2 } from './plugin-manager-v2';
 import { ExecutionResult } from '@/lib/types/plugin-types';
 import { createLogger } from '@/lib/logger';
+import { applyParamConstraintGuard } from './param-constraint-guard';
 
 export abstract class BasePluginExecutor {
   protected userConnections: UserPluginConnections;
@@ -16,7 +17,7 @@ export abstract class BasePluginExecutor {
     this.pluginName = pluginName;
     this.userConnections = userConnections;
     this.pluginManager = pluginManager;
-    this.logger = createLogger({ module: 'PluginExecutor', plugin: pluginName });
+    this.logger = createLogger({ module: 'PluginExecutor' }).child({ plugin: pluginName });
   }
 
   // Template method - implements common execution flow
@@ -36,6 +37,22 @@ export abstract class BasePluginExecutor {
             this.logger.debug({ param: key, value: parameters[key] }, 'Normalized string → array for schema compliance');
           }
         }
+      }
+
+      // Step 0b: Runtime param-constraint guard (Item 4).
+      // Right before validation and the external call, clamp out-of-range numerics
+      // and fall back invalid enums to THIS action's own declared bounds — so a bad
+      // generated value (e.g. max_results:500 vs the plugin's maximum:100) self-heals
+      // instead of blocking the run. Generic, schema-driven, never throws, never
+      // blocks; clamping here means both validation and the plugin see the safe value.
+      if (actionDef?.parameters) {
+        const guarded = applyParamConstraintGuard(
+          actionDef.parameters,
+          parameters,
+          { pluginName: this.pluginName, actionName },
+          this.logger,
+        );
+        parameters = guarded.params;
       }
 
       // Step 1: Validate parameters against plugin schema
