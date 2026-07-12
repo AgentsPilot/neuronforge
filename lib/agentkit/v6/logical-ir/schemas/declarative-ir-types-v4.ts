@@ -293,6 +293,17 @@ export interface AIConfig {
   /** Input variable (e.g., "current_email.attachments[0]") */
   input?: string
 
+  /**
+   * Additional input variables the instruction references but that aren't the
+   * primary `input` — e.g. the enclosing scatter's loop `itemVariable`, or other
+   * in-scope variables (Item 11 / WP-58). Mirrors `TransformConfig.additional_inputs`.
+   * The compiler injects each as a labelled `{{var}}` block so the model actually
+   * RECEIVES the value instead of only seeing it named in prose. Populated
+   * deterministically by `IntentToIRConverter` via the shared detector in
+   * `../../compiler/ai-input-context`.
+   */
+  additional_inputs?: string[]
+
   /** Output schema (for extraction operations) */
   output_schema?: {
     fields: Array<{

@@ -42,6 +42,7 @@ import type {
   ComplexCondition,
 } from '../logical-ir/schemas/declarative-ir-types-v4'
 import { createLogger } from '@/lib/logger'
+import { detectReferencedInScopeVariables, extractBaseVarName } from './ai-input-context'
 import type { PluginManagerV2 } from '@/lib/server/plugin-manager-v2'
 import type { ActionDefinition, ActionParameterProperty } from '@/lib/types/plugin-types'
 
@@ -61,6 +62,7 @@ interface ConversionContext {
   config?: Array<{ key: string; type: string; description?: string; default?: any }> // Intent config for field resolution
   dataSchema?: WorkflowDataSchema // data_schema from binding phase for field reference validation
   outputProducerPlugin: Map<string, string> // IR variable name -> plugin_key that produced it (for download auto-insert, WP-57)
+  loopItemVarStack: string[] // Item 11 / WP-58: enclosing scatter loop `item_ref`s, so an AI step in the loop body can detect a referenced loop variable
 }
 
 /**
@@ -105,6 +107,7 @@ export class IntentToIRConverter {
       config: boundIntent.config,
       dataSchema: boundIntent.data_schema,
       outputProducerPlugin: new Map(),
+      loopItemVarStack: [],
     }
 
     try {
@@ -738,8 +741,13 @@ export class IntentToIRConverter {
       ctx.outputProducerPlugin.set(itemVar, collectionProducer)
     }
 
+    // Item 11 / WP-58: make the loop item variable discoverable to AI steps in
+    // the loop body, so a `generate`/`ai` step whose instruction references it
+    // can declare it as an additional input (it is otherwise only prose).
+    ctx.loopItemVarStack.push(itemVar)
     // Convert loop body steps
     const bodyNodeIds = this.convertSteps(step.loop.do, ctx)
+    ctx.loopItemVarStack.pop()
 
     // Connect body nodes in sequence
     for (let i = 0; i < bodyNodeIds.length - 1; i++) {
@@ -1310,6 +1318,25 @@ export class IntentToIRConverter {
         output_schema: outputSchema,
       },
       description: step.summary || 'AI content generation'
+    }
+
+    // Item 11 / WP-58: an AI step whose instruction references an in-scope variable
+    // (most importantly the enclosing scatter's loop item variable) must RECEIVE
+    // that variable as data, not just as prose. Detect referenced-but-unbound
+    // in-scope variables deterministically (shared detector; no plugin/field
+    // hardcoding) and declare them as additional_inputs so the resolver injects
+    // each as a labelled block. Root-cause phase: phase4 stores the canonical shape.
+    const additionalInputs = detectReferencedInScopeVariables(
+      step.generate.instruction || '',
+      ctx.loopItemVarStack,
+      inputVar ? [extractBaseVarName(inputVar)] : []
+    )
+    if (additionalInputs.length > 0) {
+      operation.ai!.additional_inputs = additionalInputs
+      logger.debug(
+        { stepId: step.id, additionalInputs },
+        '[Item 11/WP-58] Declared referenced in-scope variables as AI additional_inputs'
+      )
     }
 
     // Add inputs array if step has multiple inputs (for AI processing that needs multiple variables)

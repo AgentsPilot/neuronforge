@@ -35,6 +35,7 @@ import type {
 import type { SchemaField, WorkflowDataSchema } from '../logical-ir/schemas/workflow-data-schema'
 import type { HardRequirements } from '../requirements/HardRequirementsExtractor'
 import type { WorkflowStep, Condition } from '@/lib/pilot/types/pilot-dsl-types'
+import { detectReferencedInScopeVariables, extractBaseVarName } from './ai-input-context'
 import { validateExecutionGraph, type ValidationResult } from '../logical-ir/validation/ExecutionGraphValidator'
 import { createLogger, Logger } from '@/lib/logger'
 import { analyzeOutputSchema } from '@/lib/pilot/utils/SchemaAwareDataExtractor'
@@ -932,10 +933,13 @@ export class ExecutionGraphCompiler {
   ): WorkflowStep {
     const ai = operation.ai!
 
-    // Extract input: prioritize explicit ai.input, then build from all node inputs
+    // Extract input: prioritize explicit ai.input, then build from all node inputs.
+    // Track base names already bound so Item 11/WP-58 never re-injects a bound var.
     let input: any
+    const boundVars: string[] = []
     if (ai.input) {
       input = ai.input
+      boundVars.push(extractBaseVarName(ai.input))
     } else if (allInputs.length > 1) {
       // Multiple inputs: create an object with all referenced variables
       input = {}
@@ -944,10 +948,49 @@ export class ExecutionGraphCompiler {
         // Use variable name as key (strip any parent references)
         const keyName = inputBinding.variable.split('.').pop() || inputBinding.variable
         input[keyName] = `{{${varRef}}}`
+        boundVars.push(extractBaseVarName(inputBinding.variable))
       }
     } else if (inputVariable) {
       // Single input: use as string
       input = `{{${inputVariable}}}`
+      boundVars.push(extractBaseVarName(inputVariable))
+    }
+
+    // Item 11 / WP-58: an AI step inside a scatter whose instruction references the
+    // loop variable (or another in-scope variable) must RECEIVE it as data, not just
+    // as prose. Prefer the IR converter's declared `additional_inputs` (root cause);
+    // fall back to the SAME shared detector against the live loop context for IR that
+    // predates the converter fix (Principle 4 — converter normalization + resolver
+    // tolerance). Loop vars are only in scope inside their scatter, so a top-level AI
+    // step yields an empty candidate set and is left byte-for-byte unchanged.
+    const loopItemVars = ctx.loopContextStack.map(l => l.itemVariable).filter(Boolean)
+    let extraVars: string[] =
+      Array.isArray(ai.additional_inputs) && ai.additional_inputs.length > 0
+        ? ai.additional_inputs.map(extractBaseVarName)
+        : detectReferencedInScopeVariables(ai.instruction || '', loopItemVars, boundVars)
+    extraVars = extraVars.filter(v => v && !boundVars.includes(v))
+
+    if (extraVars.length > 0) {
+      // Promote the input to a labelled object so the runtime exposes each variable
+      // as its own block in the prompt's "Data for Analysis" section (mirrors the
+      // existing multi-input branch and the transform loop-var injection). Values
+      // are pre-wrapped in `{{ }}` because O30's bare-input wrapping only fires on
+      // string inputs, not object inputs.
+      const labelled: Record<string, any> = {}
+      if (input && typeof input === 'object') {
+        Object.assign(labelled, input)
+      } else if (typeof input === 'string') {
+        const bare = input.replace(/\{\{|\}\}/g, '').trim()
+        const primaryKey = bare.split('.').pop() || bare
+        labelled[primaryKey] = `{{${bare}}}`
+      }
+      for (const v of extraVars) {
+        if (!(v in labelled)) {
+          labelled[v] = `{{${v}}}`
+          this.log(ctx, `  → Item 11/WP-58: injected referenced in-scope variable '${v}' into AI step input context`)
+        }
+      }
+      input = labelled
     }
 
     // CRITICAL: deterministic_extract → deterministic_extraction step type

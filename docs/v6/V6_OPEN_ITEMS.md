@@ -50,7 +50,6 @@ _WP-57 (Google Drive → document-extractor base64 byte source) ✅ Fixed 2026-0
 
 | WP | One-line summary | Status | Notes |
 |---|---|---|---|
-| [WP-58](./V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_WEAK_POINTS.md#wp-58-multi-input-aigenerate-steps-bind-only-one-input) | Multi-input AI/`generate` IR steps bind only one input (`AIConfig` has no `additional_inputs`); Phase-1 IC omits config inputs like `folder_link` | ⬜ Documented — benign | Verified benign Phase E 2026-06-15 (runtime config scope + LLM re-derivation compensate). Cleanup: add `additional_inputs` to `AIConfig` + populate in converter/resolver; declare config inputs in Phase-1 IC. Defer. |
 | [WP-9](./V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_WEAK_POINTS.md#wp-9-phase-ad-mock-gap--llm-output-shape-validation) | Phase A/D mock gap — no LLM output shape validation | ⬜ Deferred | F7, has token cost. |
 | [WP-38](./V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_WEAK_POINTS.md#wp-38-self-referential-gmail-queries-pick-up-the-agents-own-past-confirmation-emails) | Self-referential Gmail queries pick up agent's own past confirmation emails | ⬜ Prompt-level fix deferred | Affects orders-po + po-monitor scenarios. Phase 1 prompt should steer toward `-from:me` exclusions. |
 
