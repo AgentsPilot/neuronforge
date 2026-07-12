@@ -21,7 +21,7 @@ User prompt
 Phase 1 — Diagnostic narrative          (one LLM call)
    ↓
 Phase 2 — Single-question loop          (N LLM calls, one question per turn)
-   ↓                                     up to 10 questions per session, server-side cap
+   ↓                                     up to 20 questions per session (runaway backstop, Part 5)
    ↓                                     mini-cycles allowed (Phase 3 → user_inputs_required → back into Phase 2)
 Phase 3 — Enhanced prompt               (one LLM call, plus optional E2 corrective retry)
    ↓
@@ -103,7 +103,7 @@ Per-turn response shape, server-side `.strict()` Zod:
 
 ### From the FRs
 
-- **FR5.12 — Cap is up to 10 questions inclusive, PER SESSION.** Mini-cycles get their own fresh budget (per-session reset, see F2). The hard cap is NEVER mentioned to the LLM or the user.
+- **FR5.12 — Cap is up to 20 questions inclusive, PER SESSION (Part 5 raised 10 → 20).** It is a **pure runaway backstop, not a functional limit** — the prompt tells the LLM to collect only *material* inputs and never pad, so it self-limits far below this. Mini-cycles get their own fresh budget (per-session reset, see F2). The hard cap is NEVER mentioned to the LLM or the user.
 - **FR7.19a (E4) — Running "Question N" indicator is allowed.** Numerator only. Never "of M". The number is thread-wide and continues across mini-cycles (don't reset).
 - **FR7.20 — No progress bar / no denominator / no cap reference.** Hints stay qualitative ("a few more"), never quantitative ("3 of 10").
 - **FR8 — Telemetry: one Pino termination log per session + per-turn `Phase 2 turn decision` breadcrumb (E6).** `ai_reasoning` is server-side only. Don't return it to the UI.
@@ -111,13 +111,13 @@ Per-turn response shape, server-side `.strict()` Zod:
 - **FR10 — NO new feature flags.** The single-question behaviour is unconditional. Rollback is `git revert`.
 - **FR12 — Live dev-server smoke test is MANDATORY** before declaring any change shipped. Source-inspection review alone has repeatedly missed UX bugs (the lesson from R2/R3 rollback).
 
-### v16 prompt HARD RULES (E5 + OI1)
+### v16 prompt HARD RULES (E5 + Part 5)
 
 Located at the top of Phase 2 `### Behavior rules`. Any change to question-selection logic touches v16, NOT code:
 
-1. **DO NOT RE-ASK A QUESTION ALREADY ANSWERED.** Scan the thread; if the user gave any answer for a topic (text, label/value match, any meaningful content) the topic is RESOLVED. No re-asking under any rewording or different qid.
+1. **DO NOT RE-ASK A QUESTION ALREADY ANSWERED.** Scan the thread; if the user gave any answer for a topic (text, label/value match, any meaningful content) the topic is RESOLVED. No re-asking under any rewording or different qid — **including a reworded "confirm the exact form" of a value already given** (Part 5 reinforcement).
 2. **QUESTION ID UNIQUENESS — ENTIRE THREAD.** `id` must be unique across the whole run. Increment from the highest existing id; reusing one overwrites the prior answer in `clarification_answers` and confuses Phase 3.
-3. **PACING & CONVERGENCE — STOP EARLY WHEN POSSIBLE.** Default bias is STOP. Only ask if the gap is essential AND cannot be sensibly defaulted. Target 3–6 questions for routine flows. Once core inputs are clear, emit `phase2_done: true`.
+3. **QUESTION SELECTION — ASK FOR WHAT DETERMINES WHETHER THE AGENT WORKS (Part 5, 2026-07-07 — retired the old "PACING & CONVERGENCE / STOP-early" rule).** Bias toward collecting every **material** value (a value is material if getting it wrong/missing makes the agent fail, target wrong data, or produce wrong output); **default only non-material** gaps (cosmetic, business-preference with a safe default, cleanly derivable). Required plugin params are always material. **No target question count** — collect what's material (incl. every required plugin param), default the trivia, ask each exactly once, then emit `phase2_done: true`. *(This retired the OI1 "reduce questions" bias, which had caused the Sheet1 tab-skip fabrication; over-asking is now bounded by "material-only + no-padding + no-re-ask," not a numeric target.)*
 
 ### Phase 3 contract (v16 = v15 + justified divergences)
 
@@ -150,9 +150,9 @@ The flow has accumulated a set of invariants through several cycles of work. Eac
 | **E9** | `/api/create-agent` now accepts an optional `input_values` field and inline-saves `agent_configurations` in the same call. Eliminates the prior ~1.5 s sequential round-trip AND the race where the V1 agent edit page would briefly show "not configured." Post-success setTimeout trimmed 1000 → 300 ms. Standalone `/api/agent-configurations/save-inputs` is still wired for post-creation edits. |
 | **F1** | React state-staleness race: the LAST Phase 2 answer was dropped from `clarification_answers` on Phase 3 transition (page closure captured pre-answer `builderState`). Fixed by `clarificationAnswersRef` written synchronously in `submitPhase2Answer`, merged in `processPhase3`. |
 | **F2** | `phase2_loop_state.iteration_count` was thread-global. After a long first session a mini-cycle inherited near-cap count and capped instantly without asking → Phase 3 → mini-cycle → forever. Fixed by per-session reset: when `phase2_user_answer` is null/absent (initial entry OR mini-cycle start), use INITIAL_LOOP_STATE. |
-| **C1** | Cap raised from "< 10" to "≤ 10 inclusive" per user request. Both pre-call (route) and step() (controller) compare `iteration_count >= MAX_ITERATIONS` symmetrically. |
+| **C1** | Cap comparison: both pre-call (route) and step() (controller) compare `iteration_count >= MAX_ITERATIONS` symmetrically. `MAX_ITERATIONS` was "< 10" → "≤ 10 inclusive" (2026-05-29), then **raised to 20 (Part 5, 2026-07-07)** as a pure runaway backstop. |
 | **F3** | Phase 3 retry hardening. (L1) Normalizer absorbs `null` / `boolean` / non-array `object` values on `resolved_user_inputs[*].value` (drop null rows, coerce bool to string, JSON.stringify objects). Each touch logs a debug breadcrumb. (L2) Corrective-nudge text is context-aware: branches on `looksLikePhase2` so non-entrenchment failures get a generic schema-violation nudge that interpolates `validation.errors.join('; ')`. |
-| **OI1** (resolved) | Phase 2 over-asking. Resolved via the PACING & CONVERGENCE hard rule in v16 (§ 4) + the E6 telemetry to calibrate it against real reasoning logs. |
+| **OI1** (superseded by Part 5) | Phase 2 over-asking. Originally "resolved" via the PACING & CONVERGENCE STOP-early rule — but that "reduce questions" bias **caused correctness failures** (the Sheet1 tab-skip fabrication) and was **retired in Part 5 (2026-07-07)** in favor of the QUESTION SELECTION rule (ask for material, default trivia). Over-asking is now bounded by "material-only + no-padding + no-re-ask," not a numeric target; E6 telemetry still calibrates it. |
 | **T2** (resolved) | `conversationalSummary "every phase"` (rule #9) vs Phase 2 strict contract. Resolved via E3's client-side opening message + the rule #9 carve-out. |
 
 ---
@@ -192,7 +192,7 @@ If the user asks for any of these in the agent-creation flow, push back with the
 | "Show how many questions are left / 'Question N of M' / a progress bar" | FR7.20 forbids it. E4's bare "Question N" (numerator only, no total) is the boundary. |
 | "Loosen the Phase 2 strict schema to allow `<extra field>` for convenience" | Either justify it (FR4 amendment + v16 carve-out + workplan entry), or solve the underlying need without contract change. |
 | "Reset the running Question N on a mini-cycle" | No — E4 is explicit: thread-wide running total, continues across sessions. |
-| "Drop the per-turn `ai_reasoning` breadcrumb to save tokens" | E6 is the calibration signal for OI1's pacing rule. If you must trim, gate it behind a config, never silently remove. |
+| "Drop the per-turn `ai_reasoning` breadcrumb to save tokens" | E6 is the calibration signal for the QUESTION SELECTION rule (Part 5) — it's how we spot the model asking non-material questions or skipping material ones. If you must trim, gate it behind a config, never silently remove. |
 | "Make Phase 3 always send `plugin_action_summary` again (E7 broke X)" | First confirm X is real — E7 only omits when signature matches. If a legit mismatch exists, fix the signature path. |
 | "Re-add `console.log` for debugging" | Use the existing `requestLogger` (Pino, has `correlationId` via `.child()`). |
 | "Touch `useConversationalBuilder.ts` / `useConversationalFlow.ts` / `ConversationalAgentBuilder*.tsx`" | Those are @deprecated. Confirm with the user before any changes. |
@@ -208,7 +208,7 @@ If the user asks for any of these in the agent-creation flow, push back with the
 - **FR12 live smoke test at `/v2/agents/new` — mandatory.** Confirm: Q1 has the opening AI message; Q2+ have a hint AI bubble lead-in; "Question N" pill present on each question bubble; no qID reuse; if you triggered a mini-cycle, it asked instead of insta-capping; if Phase 3 retried, the retry succeeded.
 - Document what you changed in the **appropriate cycle workplan** under `docs/workplans/` — either appending an entry to the workplan for the cycle the work belongs to, or creating a new requirement + workplan pair if it's a new cycle of work. Do NOT update the cycle-specific workplans of unrelated past cycles; they're historical snapshots.
 - If your change updates the architectural picture (new state variable, new top-level field, new endpoint, new top-level UI section), also update `docs/V2_Thread-Based-Agent-Creation-Flow.md` — that's the durable architectural doc this skill anchors to.
-- Tail `dev.log` and grep for `Phase 2 turn decision` to spot-check the `ai_reasoning` values against the PACING & CONVERGENCE rule — if the model is justifying questions that could clearly be defaulted, the rule needs tightening.
+- Tail `dev.log` and grep for `Phase 2 turn decision` to spot-check the `ai_reasoning` values against the QUESTION SELECTION rule (Part 5) — if the model is justifying **non-material** questions (trivia that could be defaulted) OR skipping a **material** one, the rule needs tightening.
 
 ---
 

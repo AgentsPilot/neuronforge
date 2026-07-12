@@ -3,7 +3,7 @@
  *
  * Coverage:
  *   - both termination reasons (`phase2_done`, `cap_hit`) reachable
- *   - cap boundary: up to MAX_ITERATIONS (10) questions inclusive; the cap fires
+ *   - cap boundary: up to MAX_ITERATIONS (20) questions inclusive; the cap fires
  *     once iteration_count == MAX_ITERATIONS, regardless of LLM output
  *   - degraded passthrough (Zod failure) returns pass_through_degraded WITHOUT
  *     fabricating a question
@@ -88,8 +88,8 @@ describe('phase2-loop-controller — termination: phase2_done', () => {
 
 describe('phase2-loop-controller — termination: cap_hit', () => {
   it('terminates as cap_hit once MAX_ITERATIONS questions have been asked', () => {
-    // iteration_count == MAX_ITERATIONS (10) means 10 questions were already
-    // asked, so this turn caps before an 11th. Up to 10 questions inclusive.
+    // iteration_count == MAX_ITERATIONS (20) means 20 questions were already
+    // asked, so this turn caps before a 21st. Up to 20 questions inclusive.
     const result = step(
       input({
         state: { iteration_count: MAX_ITERATIONS },
@@ -137,9 +137,9 @@ describe('phase2-loop-controller — termination: cap_hit', () => {
     }
   });
 
-  it('does NOT cap at iteration_count = MAX_ITERATIONS - 1 (asks the 10th question)', () => {
-    // 9 questions asked so far → this turn asks the 10th (next_state = 10) and
-    // does NOT cap. The cap fires on the NEXT turn (iteration_count == 10).
+  it('does NOT cap at iteration_count = MAX_ITERATIONS - 1 (asks the MAX_ITERATIONS-th question)', () => {
+    // MAX_ITERATIONS-1 questions asked so far → this turn asks the last allowed one
+    // (next_state = MAX_ITERATIONS) and does NOT cap. The cap fires on the NEXT turn.
     const result = step(
       input({
         state: { iteration_count: MAX_ITERATIONS - 1 },
@@ -247,8 +247,8 @@ describe('phase2-loop-controller — disclosure banner & constants', () => {
     expect(DISCLOSURE_BANNER.toLowerCase()).not.toContain('iteration');
   });
 
-  it('MAX_ITERATIONS is 10 per FR5.12', () => {
-    expect(MAX_ITERATIONS).toBe(10);
+  it('MAX_ITERATIONS is 20 — a pure runaway backstop (Part 5, raised 10 → 20; supersedes FR5.12)', () => {
+    expect(MAX_ITERATIONS).toBe(20);
   });
 
   it('INITIAL_LOOP_STATE.iteration_count is 0', () => {

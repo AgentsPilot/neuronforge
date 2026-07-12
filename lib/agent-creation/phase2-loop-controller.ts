@@ -16,16 +16,18 @@
  *     surfaced to the user. The cap is NEVER mentioned in the prompt or in
  *     user-facing copy except via this banner.
  *
- * The defensive cap is `MAX_ITERATIONS = 10`. The cap is purely server-side
- * — the LLM is never told about it. The FR5.12 bound is "up to 10 questions
- * (≤ 10 LLM round-trips) per session". That bound is enforced PRE-CALL by the
- * route: once `MAX_ITERATIONS` questions have been asked it terminates as
- * `cap_hit` BEFORE making another completion (worst case = 10 questions / 10
- * round-trips, then the 11th turn caps without a call). `step()`'s own cap below
- * — terminate when `iteration_count >= MAX_ITERATIONS` — uses the SAME condition
- * and is the BACKSTOP: it only fires if some path reaches `step()` without the
- * route's pre-call guard, and is what the controller unit tests exercise in
- * isolation.
+ * The defensive cap is `MAX_ITERATIONS = 20` (raised 10 → 20 in Part 5,
+ * 2026-07-05). It is a PURE RUNAWAY BACKSTOP, not a functional question limit:
+ * the prompt's QUESTION SELECTION rule tells the LLM to ask only what's material
+ * and never pad, so it self-limits well below this — the cap only guards against a
+ * pathological loop (an LLM that never stops asking). It is purely server-side —
+ * the LLM is never told about it. Enforced PRE-CALL by the route: once
+ * `MAX_ITERATIONS` questions have been asked it terminates as `cap_hit` BEFORE
+ * making another completion. `step()`'s own cap below — terminate when
+ * `iteration_count >= MAX_ITERATIONS` — uses the SAME condition and is the
+ * BACKSTOP: it only fires if some path reaches `step()` without the route's
+ * pre-call guard, and is what the controller unit tests exercise in isolation.
+ * (Supersedes FR5.12's "up to 10 questions" numeric bound — see Part 5.)
  *
  * Decision shapes (returned by `step()`):
  *   - `{ decision: 'continue', next_state, response }` — emit the LLM's
@@ -40,10 +42,12 @@
  */
 
 /**
- * Maximum number of questions asked per Phase 2 session (inclusive) — i.e. up to
- * 10 LLM round-trips, then the next turn caps without a call. Defensive only.
+ * Defensive runaway backstop for Phase 2 — the maximum LLM round-trips per session
+ * before the loop force-terminates. NOT a functional question limit (the prompt's
+ * QUESTION SELECTION rule self-limits to material questions); raised 10 → 20 (Part 5,
+ * 2026-07-05) so it never truncates a legitimately material-heavy multi-plugin flow.
  */
-export const MAX_ITERATIONS = 10;
+export const MAX_ITERATIONS = 20;
 
 /**
  * The soft disclosure banner shown when the defensive cap fires.
@@ -163,9 +167,10 @@ export function step(input: Phase2StepInput): Phase2StepDecision {
 
   // CAP CHECK — fires regardless of what the LLM said on this turn. We cap once
   // MAX_ITERATIONS questions have ALREADY been asked (`iteration_count` counts
-  // questions asked so far), so the loop asks up to MAX_ITERATIONS (=10)
+  // questions asked so far), so the loop asks up to MAX_ITERATIONS (=20)
   // questions inclusive, then terminates on the next turn. Same condition the
-  // route's pre-call guard uses, so the two stay consistent.
+  // route's pre-call guard uses, so the two stay consistent. (=20 is a pure
+  // runaway backstop, not a functional limit — see the file header / Part 5.)
   if (input.state.iteration_count >= MAX_ITERATIONS) {
     return {
       decision: 'terminate',

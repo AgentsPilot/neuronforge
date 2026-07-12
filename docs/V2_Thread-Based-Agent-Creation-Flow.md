@@ -136,9 +136,9 @@ This diagram shows the complete user journey through the V2 agent creation page 
 │  │                             reason: "phase2_done"|"cap_hit" }  │ │
 │  └────────────────────────────────────────────────────────────────┘ │
 │                                                                     │
-│  Server-side cap (FR5.12 / C1): up to MAX_ITERATIONS=10 questions   │
+│  Server-side cap (FR5.12 / C1): up to MAX_ITERATIONS=20 questions   │
 │  PER SESSION (mini-cycles get a fresh budget per F2). The cap fires │
-│  PRE-CALL — once 10 questions have been asked, the 11th turn        │
+│  PRE-CALL — once 20 questions have been asked, the 21st turn        │
 │  short-circuits without an LLM call. The cap is NEVER mentioned to  │
 │  the LLM or user; cap_hit surfaces only via the soft disclosure     │
 │  banner.                                                            │
