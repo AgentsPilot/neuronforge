@@ -47,7 +47,7 @@ npx tsx scripts/dump-agent.ts        <agent_id>                    # saved agent
 Passing a `suspect_value` (e.g. `"Sheet1"`) traces its **first appearance** and names the authoring iteration/phase. Writes `c:/tmp/agent-<prefix>-{thread,aictx,creation-metadata}.json`.
 
 ### 2. Establish what the user actually said
-Read `ai_context.original_prompt` and `creation_metadata.clarification_answers` (`q1…qN`) **verbatim**. The user's literal words are the yardstick for "honored the input vs invented something." Identifiers/URLs usually enter as a Phase-2 answer, not the original prompt.
+Read `agents.created_from_prompt` (canonical column — or `getAgentAiContextView(agent).original_prompt`; since the A2 de-dup `ai_context.original_prompt` is not written on new agents) and `creation_metadata.clarification_answers` (`q1…qN`) **verbatim**. The user's literal words are the yardstick for "honored the input vs invented something." Identifiers/URLs usually enter as a Phase-2 answer, not the original prompt.
 
 ### 3. Find the authoring turn (walk `iterations[]`)
 Each iteration = `{phase, request, response}`. The **first `response`** containing the bad value is where it was authored; its `phase` names the responsible prompt logic. Value in a **request** = carried in from a prior turn (not authored here); value in a **response** = authored here.

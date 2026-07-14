@@ -139,7 +139,7 @@ const asStr = (v: unknown) => (typeof v === 'string' ? v : JSON.stringify(v));
 
   console.log('WRITTEN:');
   console.log(`  c:/tmp/agent-${prefix}-thread.json           (metadata.iterations[] — the conversation)`);
-  console.log(`  c:/tmp/agent-${prefix}-aictx.json            (ai_context: original_prompt, enhanced_prompt, confidence)`);
+  console.log(`  c:/tmp/agent-${prefix}-aictx.json            (resolved ai-context view, column-first: original_prompt, enhanced_prompt, confidence, intent_contract, data_schema)`);
   console.log(`  c:/tmp/agent-${prefix}-creation-metadata.json (generated_plan.clarification_answers)`);
 })();
 
