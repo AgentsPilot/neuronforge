@@ -16,6 +16,7 @@ import React, { useState, useEffect, useRef } from 'react'
 import { useRouter, useParams } from 'next/navigation'
 import { useAuth } from '@/components/UserProvider'
 import { supabase } from '@/lib/supabaseClient'
+import { canFinishCalibration, getPassSuggestions, type PassSuggestion } from '@/lib/calibration/finishGate'
 import { V2Logo, V2Controls } from '@/components/v2/V2Header'
 import { HelpBot } from '@/components/v2/HelpBot'
 import { PageLoading } from '@/components/v2/ui/loading'
@@ -74,6 +75,9 @@ export default function BatchCalibrationPage() {
   const [error, setError] = useState<string | null>(null)
   const [fixesSummary, setFixesSummary] = useState<any>(null)
   const [hasHardcodedValues, setHasHardcodedValues] = useState(false)
+  // A3 (UI half): optional cosmetic suggestions to surface on a passed-with-
+  // suggestions finish screen (sourced from the verdict result, never re-derived).
+  const [passSuggestions, setPassSuggestions] = useState<PassSuggestion[]>([])
   const [detectionResult, setDetectionResult] = useState<DetectionResult | null>(null)
   const [showParameterizationWizard, setShowParameterizationWizard] = useState(false)
   const [userDeclinedParameterization, setUserDeclinedParameterization] = useState(false)
@@ -593,17 +597,23 @@ export default function BatchCalibrationPage() {
         console.warn('[Calibration] Failed to refetch agent flags:', agentRefetchError)
       }
 
-      // If no issues found, go straight to success (user will approve for production later)
-      if (result.summary.total === 0) {
-        console.log('[Calibration] No issues found - ready for user approval')
+      // A1 (Group A): gate the finish transition on the VERDICT, not on
+      // summary.total === 0. A cosmetic-only run now returns success:true /
+      // verdict:'passed' with summary.total > 0 (the surfaced suggestions), so it
+      // must still reach the finish screen; a run with any blocking/critical issue
+      // (success:false) must NOT finish. This re-enables the previously
+      // commented-out `setFlowState('success')` so CalibrationSuccess can render.
+      if (canFinishCalibration(result)) {
+        console.log('[Calibration] Passing verdict - showing finish screen', { verdict: result?.verdict })
 
         // Check if workflow has hardcoded values to offer parameterization
         const hasHardcoded = await checkForHardcodedValues()
         setHasHardcodedValues(hasHardcoded)
 
-        // DON'T change flow state - stay on dashboard to show "All Set!" in right column
-        // setFlowState('success')
-        setFlowState('dashboard')
+        // A3: surface any provably-cosmetic suggestions the passing verdict waved.
+        setPassSuggestions(getPassSuggestions(result))
+
+        setFlowState('success') // A1: re-enabled — verdict-gated finish transition
         setFixesSummary({ parameters: 0, parameterizations: 0, autoRepairs: 0 })
       } else {
         setFlowState('dashboard')
@@ -871,13 +881,18 @@ export default function BatchCalibrationPage() {
       // Check if all issues are resolved
       const totalIssues = result.summary.total || 0
 
-      if (totalIssues === 0) {
-        // All issues resolved - ready for user approval
-        console.log('[Calibration] All issues resolved - ready for user approval')
+      // A1 (Group A): finish is gated on the VERDICT (success + no critical), not
+      // on totalIssues === 0 — a cosmetic-only run passes with suggestions surfaced.
+      if (canFinishCalibration(result)) {
+        // Passing verdict - ready for user approval / finish
+        console.log('[Calibration] Passing verdict - showing finish screen', { verdict: result?.verdict })
 
         // Check if workflow has hardcoded values to offer parameterization
         const hasHardcoded = await checkForHardcodedValues()
         setHasHardcodedValues(hasHardcoded)
+
+        // A3: surface any provably-cosmetic suggestions the passing verdict waved.
+        setPassSuggestions(getPassSuggestions(result))
 
         // Load the full session data including execution_summary from database
         const { data: sessionData } = await supabase
@@ -932,9 +947,7 @@ export default function BatchCalibrationPage() {
           console.warn('[Test] Failed to refetch agent flags:', agentRefetchError)
         }
 
-        // DON'T change flow state - stay on dashboard to show "All Set!" in right column
-        // setFlowState('success')
-        setFlowState('dashboard')
+        setFlowState('success') // A1: re-enabled — verdict-gated finish transition
       } else {
         // Load the full session data including execution_summary from database
         const { data: sessionData } = await supabase
@@ -970,9 +983,16 @@ export default function BatchCalibrationPage() {
         setIssues(result.issues)
         setFlowState('dashboard')
 
-        // Clear, helpful message about what to do next
-        const issueWord = totalIssues === 1 ? 'issue' : 'issues'
-        setError(`Test revealed ${totalIssues} ${issueWord}. Some issues may have been hidden by the fixes you just applied. Review and fix the remaining ${issueWord}.`)
+        // Clear, helpful message about what to do next. A non-passing run with
+        // zero surfaced issues is the coverage-floor case (inconclusive / needs
+        // representative data) — surface the verdict's own message instead of a
+        // misleading "revealed 0 issues".
+        if (totalIssues > 0) {
+          const issueWord = totalIssues === 1 ? 'issue' : 'issues'
+          setError(`Test revealed ${totalIssues} ${issueWord}. Some issues may have been hidden by the fixes you just applied. Review and fix the remaining ${issueWord}.`)
+        } else if (result?.message) {
+          setError(result.message)
+        }
       }
 
     } catch (err: any) {
@@ -1281,6 +1301,7 @@ export default function BatchCalibrationPage() {
               hasParameterizedWorkflow={hasParameterizedWorkflow}
               configurationSaved={configurationSaved}
               onSaveConfiguration={handleSaveConfiguration}
+              optionalSuggestions={passSuggestions}
             />
           )}
 
