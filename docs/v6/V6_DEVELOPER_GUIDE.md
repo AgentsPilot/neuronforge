@@ -517,6 +517,13 @@ diagnosis of Phase 1 LLM emission variance a single SQL lookup —
 non-deterministic and can produce a different, correct emission that
 doesn't reproduce the bug).
 
+> **Note (A2 de-dup, 2026-07-14):** `intent_contract` and `data_schema` are now
+> the **only** fields in `ai_context` — the former reasoning/confidence/prompt
+> fields moved to dedicated columns (read via `getAgentAiContextView`). The SQL
+> below is unchanged and still correct. `creation_metadata` additionally carries
+> `models` (which LLM produced the enhanced prompt + the agent) and `v6_metadata`
+> (pipeline run telemetry). See the de-dup workplan.
+
 **Fetch the IntentContract for a given agent:**
 
 ```sql

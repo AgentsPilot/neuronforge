@@ -15,6 +15,7 @@
 import { SupabaseClient } from '@supabase/supabase-js';
 import { createLogger } from '@/lib/logger';
 import { AgentRepository } from '@/lib/repositories/AgentRepository';
+import { getAgentAiContextView } from '@/lib/agents/agentAiContextView';
 import { CalibrationSessionRepository } from '@/lib/repositories/CalibrationSessionRepository';
 import { ExecutionRepository } from '@/lib/repositories/ExecutionRepository';
 import type { CalibrationHistoryRecord } from '@/lib/repositories/CalibrationHistoryRepository';
@@ -116,8 +117,11 @@ export async function generateCalibrationRca(
     }
 
     // ---- 3. Assemble evidence (input values redacted for the prompt — FR-24). ----
-    const aiContext =
-      (agent.agent_config as { ai_context?: unknown } | null | undefined)?.ai_context ?? null;
+    // Read via the canonical accessor: column-first with a JSONB fallback, so RCA
+    // evidence is identical for legacy "fat" rows and future "lean" rows (where the
+    // reasoning/confidence/prompt fields live in columns, not ai_context).
+    // See lib/agents/agentAiContextView.ts + the de-dup workplan.
+    const aiContext = getAgentAiContextView(agent);
 
     const evidence: RcaEvidence = {
       agentId,
@@ -135,7 +139,10 @@ export async function generateCalibrationRca(
       executionErrorMessage,
       pilotSteps: (agent.pilot_steps as unknown[]) ?? [],
       inputSchema: (agent.input_schema as unknown[]) ?? [],
-      enhancedPrompt: agent.enhanced_prompt ?? null,
+      // A2: the `enhanced_prompt` COLUMN is never populated at creation; source
+      // the flat enhanced prompt from the canonical accessor (rendered from
+      // user_prompt when not stored) so RCA evidence is no longer always-null.
+      enhancedPrompt: aiContext.enhanced_prompt || agent.enhanced_prompt || null,
       userPrompt: agent.user_prompt ?? null,
       aiContext,
       inputValues: redactInputValues(params.inputValues),

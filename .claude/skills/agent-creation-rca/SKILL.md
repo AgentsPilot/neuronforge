@@ -101,9 +101,9 @@ State: **authoring phase/turn → prose-vs-structured verdict → why (exact lin
 |---|---|---|
 | **The conversation** | `agent_prompt_threads.metadata.iterations[]` | `{phase, request, response, timestamp}` per turn. **Primary evidence.** |
 | Thread meta | `agent_prompt_threads.metadata.{phase2_loop_state, plugin_context_signature, phase1_*_services}` | Loop/cap state; which turns re-sent `plugin_action_summary`. |
-| Original prompt | `agents.agent_config.ai_context.original_prompt` | What the user first asked. |
-| Enhanced Prompt | `agents.agent_config.ai_context.enhanced_prompt` (== `agents.user_prompt`) | The saved EP: narrative + `resolved_user_inputs`. |
-| Clarification answers | `agents.agent_config.creation_metadata.clarification_answers` | Phase-2 answers `q1…qN` (where identifiers enter). |
+| Original prompt | `agents.created_from_prompt` column (canonical) | What the user first asked. Since the A2 de-dup, `ai_context.original_prompt` is NOT written on new (V6) agents — read the column, or `getAgentAiContextView(agent).original_prompt`. |
+| Enhanced Prompt | `agents.user_prompt` column (canonical, structured) | The saved EP: narrative + `resolved_user_inputs`. `ai_context.enhanced_prompt` is no longer written on new agents; `getAgentAiContextView(agent).enhanced_prompt` renders the flat form on read. |
+| Clarification answers | `agents.agent_config.creation_metadata.clarification_answers` | Phase-2 answers `q1…qN` (where identifiers enter). *(Unchanged — still in creation_metadata.)* |
 
 Phase-3 response shape: `{ enhanced_prompt:{ sections:{data,output,actions,delivery,processing_steps}, specifics:{ services_involved, resolved_user_inputs:[{key,value}], user_inputs_required } }, analysis, conversationalSummary }`. `resolved_user_inputs` keys: `{plugin}__{capability}__{param}` when `plugin_action_summary` present, else plain machine keys; capability namespace can vary between two Phase-3 calls.
 

@@ -563,6 +563,12 @@ threadId: "thread_abc123" (from API)
 }
 ```
 
+> **⚠️ Note (A2 de-dup, 2026-07-14):** The example above is the **legacy/V4** shape. On the current **V6** path the persisted `agent_config` is **lean** — the fields that duplicate dedicated columns are no longer written:
+> - `ai_context` holds only `intent_contract` + `data_schema` (WP-55). `reasoning`/`confidence`/`original_prompt`/`enhanced_prompt`/`generated_plan` moved to the `ai_reasoning`/`ai_confidence`/`created_from_prompt`/`user_prompt`/`generated_plan` **columns** — read them via `getAgentAiContextView(agent)` (`lib/agents/agentAiContextView.ts`).
+> - `creation_metadata` drops `ai_generated_at` (→ `ai_generated_at` column), `agent_id` (→ row `id`), and `enhanced_prompt_data` (→ `user_prompt` column); it adds `models` (provider/model provenance) and `v6_metadata` (pipeline telemetry).
+>
+> See [AGENT_CONFIG_DEDUP_AND_MODEL_PROVENANCE_WORKPLAN.md](/docs/workplans/AGENT_CONFIG_DEDUP_AND_MODEL_PROVENANCE_WORKPLAN.md).
+
 ### 8. **Saved to Database**
 ```sql
 INSERT INTO agents (

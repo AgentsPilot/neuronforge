@@ -133,6 +133,12 @@ export interface ProcessMessageResponse {
   success: boolean;
   phase: ThreadPhase;
 
+  // Generation provenance (Part B): the thread's resolved provider/model that
+  // produced this response. Surfaced so the V2 UI can persist enhanced-prompt
+  // provenance on agent_config.creation_metadata.models.enhanced_prompt.
+  ai_provider?: string;
+  ai_model?: string;
+
   // Phase 1 specific fields (diagnostic narrative)
   workflow_draft?: string[];
   entities_detected?: string[];

@@ -1,28 +1,22 @@
 // app/v2/agents/new/buildV6AiContext.ts
 // Pure builder for the V6 agent's `agent_config.ai_context`.
 //
-// Extracted from the V6 save path in page.tsx so the WP-55 IntentContract /
-// data_schema persistence has a single, unit-testable source of truth. Prior to
-// this extraction the save path built `ai_context` twice (once in
-// mapV6ResponseToAgent, once inline at the save site) and the inline build —
-// which omitted intent_contract/data_schema — clobbered the other, silently
-// dropping WP-55's artifacts on every V6 agent. See
-// docs/investigations/AGENT_RCA_CONCLUSION_gmail-expense-attachment-flatten.md
-// (§ "Addendum — Why intent_contract / data_schema are null").
+// A2 de-dup (SA-approved 2026-07-14): ai_context now stores ONLY the two fields
+// that have no dedicated column — `intent_contract` and `data_schema` (WP-55).
+// The former narrative fields (reasoning/confidence/original_prompt/
+// enhanced_prompt/generated_plan) duplicated top-level columns and are dropped;
+// read them via getAgentAiContextView (column-first). Legacy V4/SmartAgentBuilder
+// paths still emit the fat shape — the accessor covers both.
+//
+// See docs/workplans/AGENT_CONFIG_DEDUP_AND_MODEL_PROVENANCE_WORKPLAN.md (§3 A2).
 
 import type { CreateAgentAIContext } from '@/components/agent-creation/types/generate-agent-v2'
 
 export interface BuildV6AiContextArgs {
-  reasoning: string
-  confidence: number
-  originalPrompt: string
-  enhancedPrompt: string
-  generatedPlan?: string
   /**
    * WP-55: Phase-1 raw IntentContract LLM output (Pipeline A). Persisted so
    * post-hoc diagnosis of this agent's emission is a SQL lookup instead of a
-   * non-deterministic re-run. `undefined`/absent (e.g. Pipeline B) coalesces
-   * to `null`.
+   * non-deterministic re-run. `undefined`/absent coalesces to `null`.
    */
   intentContract?: unknown | null
   /** WP-55: Phase-2 data_schema (slot schemas + semantic types). Same null semantics. */
@@ -30,17 +24,11 @@ export interface BuildV6AiContextArgs {
 }
 
 /**
- * Assemble the `ai_context` persisted on `agents.agent_config`. Always emits the
- * five required narrative fields plus the two WP-55 diagnosis artifacts
- * (coalesced to `null` when absent).
+ * Assemble the lean `ai_context` persisted on `agents.agent_config`: only the
+ * two WP-55 diagnosis artifacts (coalesced to `null` when absent).
  */
 export function buildV6AiContext(args: BuildV6AiContextArgs): CreateAgentAIContext {
   return {
-    reasoning: args.reasoning || '',
-    confidence: args.confidence || 0,
-    original_prompt: args.originalPrompt || '',
-    enhanced_prompt: args.enhancedPrompt || '',
-    generated_plan: args.generatedPlan || '',
     intent_contract: args.intentContract ?? null,
     data_schema: args.dataSchema ?? null,
   }

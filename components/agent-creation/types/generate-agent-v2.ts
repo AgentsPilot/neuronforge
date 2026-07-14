@@ -195,26 +195,77 @@ export type GenerateAgentV2Response =
 // CREATE AGENT TYPES
 // ============================================
 
+/** Provider + model that produced one generation step (Part B provenance). */
+export interface GenerationModelRef {
+  provider: string | null;
+  model: string | null;
+}
+
+/**
+ * Part B: which LLM produced each generation step. Persisted on
+ * `creation_metadata.models` (no column equivalent — legitimately JSONB).
+ * A step is `null` when its provenance is unavailable (e.g. legacy/V4 path).
+ */
+export interface CreationModels {
+  enhanced_prompt: GenerationModelRef | null;
+  agent_generation: GenerationModelRef | null;
+}
+
+/**
+ * V6 pipeline creation telemetry (Option A, SA-approved 2026-07-14). Populated
+ * on the V6 path only, from the V6 response `metadata`, into
+ * `creation_metadata.v6_metadata`. No column equivalent — legitimately JSONB.
+ * `phase_times_ms` is a verbatim passthrough (no hardcoded phase names). Null
+ * sub-fields (e.g. `grounding_confidence` on pipeline A) are omitted, not stored.
+ * See docs/requirements/AGENT_CONFIG_CREATION_TELEMETRY_REQUIREMENT.md.
+ */
+export interface V6CreationMetadata {
+  architecture: string;
+  total_time_ms: number;
+  phase_times_ms: Record<string, number>;
+  steps_generated: number;
+  grounding_confidence?: number;
+  formalization_confidence?: number;
+}
+
 /** Agent config metadata for create-agent API */
 export interface CreateAgentConfigMetadata {
-  ai_generated_at: string;
   session_id: string;
-  agent_id: string;
   thread_id: string;
   prompt_type: 'enhanced' | 'original';
   clarification_answers: Record<string, any>;
   version: string;
   platform_version: string;
-  enhanced_prompt_data: any; // V9 structured data
+  // A2 de-dup (SA-approved): the following mirror dedicated columns and are no
+  // longer written on the lean V6 path — canonical: `ai_generated_at` column,
+  // row `id`, and `user_prompt` column respectively. Kept OPTIONAL because the
+  // legacy V4/SmartAgentBuilder paths still populate them, and for backward-compat.
+  ai_generated_at?: string;
+  agent_id?: string;
+  enhanced_prompt_data?: any; // duplicates `user_prompt`; V4-legacy only going forward
+  /** Part B: generation provenance (provider/model per step). Optional for
+   *  backward-compat with agents created before it landed. */
+  models?: CreationModels;
+  /** A2 Option A: V6 pipeline creation telemetry (V6 path only). */
+  v6_metadata?: V6CreationMetadata;
 }
 
-/** AI context for create-agent API */
+/**
+ * AI context for create-agent API.
+ *
+ * A2 de-dup (SA-approved): the five narrative fields below mirror dedicated
+ * top-level columns (`ai_reasoning`, `ai_confidence`, `created_from_prompt`,
+ * `user_prompt`, `generated_plan`) and are NO LONGER WRITTEN on the lean V6 path
+ * — read them via `getAgentAiContextView` (column-first). They stay OPTIONAL
+ * because the legacy V4/SmartAgentBuilder paths still emit them. Only
+ * `intent_contract`/`data_schema` (no column) are written on the V6 path.
+ */
 export interface CreateAgentAIContext {
-  reasoning: string;
-  confidence: number;
-  original_prompt: string;
-  enhanced_prompt: string;
-  generated_plan: string;
+  reasoning?: string;
+  confidence?: number;
+  original_prompt?: string;
+  enhanced_prompt?: string;
+  generated_plan?: string;
   /**
    * WP-55: Phase 1 raw IntentContract LLM output (Pipeline A only).
    * Persisted so post-hoc diagnosis of LLM emission variance becomes a

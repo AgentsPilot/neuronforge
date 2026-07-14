@@ -979,6 +979,12 @@ export async function POST(request: NextRequest) {
       aiResponse.success = true;
       aiResponse.phase = phase;
 
+      // Part B: surface the thread's resolved provider/model (set at thread
+      // creation, validated at the top of this handler) so the client can persist
+      // enhanced-prompt generation provenance on the agent at save time.
+      aiResponse.ai_provider = aiProvider;
+      aiResponse.ai_model = aiModel;
+
       requestLogger.debug({ phase }, 'AI response parsed successfully');
 
       // Step 12.4: Enrich Phase 1 response with connectedPlugins
