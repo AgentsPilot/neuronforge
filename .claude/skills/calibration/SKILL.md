@@ -119,10 +119,22 @@ Outcome → calibration_history (+ workflow_hash) + agents.*         → CALIBRA
 | `IssueCollector.ts` / `IssueGrouper.ts` | Collect issues during execution; group + prioritize for the wizard. | A |
 | `CheckpointManager.ts` | Saves agent state before each iteration; enables regression rollback. | A |
 | `ExecutionSummaryCollector.ts` | Collects what the workflow actually did (data sources, writes, stats). | A |
+| `CalibrationVerdict.ts` | **The class-based verdict (Item 6 + G1).** `computeVerdict` decides `passed`/`failed`/`needs_review`/`inconclusive`/`corrected_not_verified` keyed on issue CLASS (not raw count) + a coverage floor. G1 anti-false-success: a BLOCKING-class issue can never pass; an unexercised/all-blank run can never pass; only allow-listed cosmetic user-confirm-only issues (`hardcode_detected`/`parameterization`) may be waved (Item 6a "passable with cosmetic suggestions only" relaxation). | A |
+| `dataQuality.ts` | **Shared "does this set carry MEANINGFUL data?" signal** (`isMeaningfulItem`, `deriveCoverageSignal`, `assessColumnFillRates`, `looksLikeExecutedSend`). One definition reused by the coverage floor AND `AllFailedStepDetector`. `deriveCoverageSignal` keys `exercisedRealPath` on meaningful pre-delivery field values (an executed terminal send counts as delivered), NOT a row count — fixing both the too-lenient (row-count) and too-strict (send-terminating delivered=0) directions. | A |
+| `PluginFieldFidelityValidator.ts` | **Item 5b / Item 3 — declared-vs-plugin field-name mismatch → BLOCKING.** Compares a transform's declared item fields against the producing plugin action's real `output_schema` via the shared `lib/schema-reconciliation/` core (a `flatten` declaring `mime_type` while the producer emits `mimeType`). Zero reconciliation logic of its own. | A |
+| `FieldFidelityCorrector.ts` | **Item 7 — deterministic in-place corrector.** Rewrites a stored workflow's wrong field name to the plugin-real spelling during calibration (reuses the same reconciliation core + `PluginFieldFidelityValidator.computeRenames`). Audited (`AGENT_CALIBRATION_FIELD_CORRECTED`) + pre-rewrite snapshot to `backup_pilot_steps` (reversible); caps the verdict at `corrected_not_verified` when the re-run still doesn't exercise the path. | A |
+| `AllFailedStepDetector.ts` | **Item 10 — all-failed/all-empty step/scatter → BLOCKING.** Raises a `degraded_step_all_failed` / `degraded_step_all_empty` issue when 100% of a step/scatter's items error or return empty/fallback (the hidden-failure anti-pattern). Uses the shared `dataQuality` signal. | A |
 | `userFacing.ts` / `friendlyLanguage.ts` | Issue → user-readable copy for the wizard. | A |
 | `types.ts` | Shared shadow types (`CollectedIssue`, `FailureSnapshotInsert`, etc.). | both |
 
 > `ConfidenceCalculator.ts` was an **empty 0-byte orphan and was deleted** (2026-06-02). The live `ConfidenceCalculator` lives in `lib/pilot/insight/`, a different subsystem — do not confuse them.
+
+### Shared reconciliation core (`lib/schema-reconciliation/`) + finish gate (`lib/calibration/`)
+
+| File | What |
+|---|---|
+| `lib/schema-reconciliation/` | **One deterministic reconciliation core, four call sites** (generation, compiler, calibration-detect, calibration-correct). Normaliser + producer-schema field extractor + reconciler (classifies each declared field `rename`/`keep`/`ambiguous`/`derived`; only an unambiguous `rename` is actionable). Both `PluginFieldFidelityValidator` and `FieldFidelityCorrector` funnel through it — no duplicate copy. |
+| `lib/calibration/finishGate.ts` | Pure verdict-gate predicates for the wizard finish screen. `canFinishCalibration(result)` = `success===true && critical===0`; `getPassSuggestions(result)` surfaces the waved cosmetic suggestions on a pass (sourced from the verdict, not re-derived); `isCalibrationHistoryPass(status)` = `status === 'success'` (the Phase-2 `agents.calibration_status` gate). |
 
 ### Repositories, utils, runtime
 
@@ -176,6 +188,7 @@ All live docs are consolidated under `docs/Calibration/`. Read the overview firs
 - **Auto-repair vs surface-to-user**: confident, deterministic fixes are applied silently inside the loop; everything else is collected, grouped (`IssueGrouper`), and shown in the wizard for user decision. New repair logic must be **plugin-agnostic** (see § 7) and prefer a clear surfaced issue over a risky silent rewrite.
 - **CheckpointManager** snapshots agent state before each iteration; if issue count *rises* (regression), the loop rolls back. → `CHECKPOINT_ROLLBACK`.
 - **Convergence detection** tracks which `(stepId, fixType)` pairs have been applied to prevent infinite fix-revert-refix cycles before `MAX_ITERATIONS=10`. Non-convergence at the cap raises the `G-CAL-3` signal. → `CONVERGENCE_DETECTION`.
+- **Verdict + coverage floor (Item 6 / G1 anti-false-success).** The run's outcome is decided by `CalibrationVerdict.computeVerdict` (§ 3), not a raw issue count: a BLOCKING-class issue always fails; an unexercised or all-blank run resolves to `inconclusive` (never a clean pass); only allow-listed cosmetic user-confirm-only issues may be waved (Item 6a). The "exercised real path" signal comes from `dataQuality.deriveCoverageSignal` over the real per-step outputs. Preserve these guards — do not add a code path that lets a blocking/all-blank run reach `passed`.
 - **Hardcode sub-system** runs inside calibration but is self-contained. The **V3 (current/authoritative)** approach reads `enhanced_prompt.specifics.resolved_user_inputs` from the V6 artifacts — it does NOT pattern-match or guess. This is the right model: the V6 pipeline already knows which literals came from user input, so calibration reads that ground truth instead of re-deriving it. → `HARDCODE_REPAIR_SYSTEM`, `HARDCODE_DETECTION_V3_FINAL`, `HARDCODE_REPAIR_FLOW`.
 
 ---
@@ -187,7 +200,13 @@ All live docs are consolidated under `docs/Calibration/`. Read the overview firs
 | `calibration_sessions` | table | Active-run state; one open row per in-flight calibration (guarded by the distributed lock). Repo: `CalibrationSessionRepository`. |
 | `calibration_history` | table | One row per completed calibration. Carries `workflow_hash` (fast-path), `status`, issue counts. Repo: `CalibrationHistoryRepository`. |
 | `calibration_success_metrics` | **view** | Analytics over `calibration_history`. Empty until the migration is applied (gap noted in `CALIBRATION_PRODUCTION_READY_GAP_ANALYSIS`). |
-| `agents.*` | columns | Calibration status / production-ready flag updated at the end of a run. |
+| `agents.*` | columns | Calibration status / production-ready flag updated at the end of a run (see the two status columns below). |
+
+**Verdict states (Item 6, carried in the API response + `calibration_history.metadata.verdict`).** `computeVerdict` returns one of `passed` / `failed` / `needs_review` / `inconclusive` / `corrected_not_verified`. The DB `calibration_history.status` CHECK allows only `success` / `failed` / `needs_review` / `verification_only`, so `inconclusive` + `corrected_not_verified` **map onto `needs_review`** at the DB layer (no migration); only a genuine `passed` writes `status='success'`. The plain-language labels live in `VERDICT_LABELS` (so "not tested" is never shown as "working").
+
+**Two distinct `agents` status columns — don't conflate them:**
+- `agents.last_calibration_status` (`success` / `needs_review` / `failed` / null) — the fast-path identity paired with `workflow_hash` (see `CALIBRATION_STATUS_TRACKING`).
+- `agents.calibration_status` (`running` / `passed` / `failed` / `skipped`) — the wizard/gate column, set at the route tail via `AgentRepository.setCalibrationStatus`. It keys on `isCalibrationHistoryPass(latest.status)` (= history `status === 'success'`), so a **cosmetic-only pass now writes `'passed'`** (Item 6a) — previously it wrongly wrote `'failed'` because it also required zero remaining issues.
 
 Known data gaps (tracked in `CALIBRATION_DATA_COMPLETENESS_ANALYSIS`): `v6_version`, `model_used`, `plugins_used`, `complexity_score` are not yet captured per run.
 
