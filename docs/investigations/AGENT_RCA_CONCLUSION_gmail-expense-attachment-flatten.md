@@ -747,3 +747,74 @@ Minimal fix options:
 | Date | Change | Details |
 |------|--------|---------|
 | 2026-07-12 | Wizard stuck-on-cosmetic RCA | Q1: "Continue" greyed = affordance gate (`CalibrationSetup` `IssueFixingCard` L2411–2458, disabled until a `HardcodeFixCard` choice) + read-only right-column card; the deeper block is a flow dead-end. Q2: hardcode is `autoRepairAvailable:false/requiresUserInput:true` by WP-40 (`IssueCollector.ts` L304–327); apply-on-confirm exists (`apply-fixes/route.ts` L168–214). Q3: NO path to finalized/passed — `setFlowState('success')` commented out at `page.tsx` L605 & L936 (CalibrationSuccess is dead code) and the coverage floor caps send-terminating agents to needs_review (Re-run #2). Owner: calibration UI + verdict/coverage. Recommend (i)+(iii); (ii) already exists and is WP-40-compliant. |
+
+---
+
+## Origin of the 500 — why that value, why hardcoded (2026-07-12)
+
+> **Added**: 2026-07-12 · **Scope**: the UPSTREAM authoring question for agent `0ee53785-…` — why was `step1.params.max_results: 500` generated at all, why that number, and why as a hardcoded literal rather than a parameter. Skills: `v6-pipeline` (the generation that authored it) + `agent-creation-rca` (the creation conversation / enhanced prompt that fed it). DIAGNOSTIC ONLY.
+
+### Plain-language top line
+
+Nobody asked for 500. The user never mentioned a result limit anywhere in the creation chat — they gave a time window ("12 months"), subject keywords, and "PDFs & images only," and were never asked about a count. So the AI **invented** `500` on its own while generating the workflow: it saw the Gmail search had a "max emails to return" knob (shown to it as *default 10*, but **without** the plugin's real ceiling of 100), and free-picked a round, generous number to make sure a year of emails wouldn't get cut off. It then wrote `500` as a fixed value rather than a user-adjustable setting because the prompt's "don't hardcode" rule only bites once the model has *declared* a setting for it — and since the user never surfaced a cap, the model treated it as an internal detail and never declared one. Hardcoding was the compliant, lowest-effort path. The durable fix is a deterministic guard (range-check + auto-parameterize against the plugin's declared min/max), not another prompt plea — the same lesson as WP-61.
+
+### Q1 — Where exactly was `500` authored?
+
+**Evidenced-fact (by elimination): the V6 generation LLM (Phase-1 IntentContract / step-param authoring), not the plugin, compiler, or a prompt example.**
+
+- **Not the plugin default.** The Gmail vocabulary the model was shown presents `max_results: number (default: 10)` (regression snapshot `phase0-vocabulary-for-prompt.txt` L104; plugin def `google-mail-plugin-v2.json` declares `default:10, minimum:1, maximum:100`). `500` is neither the default (10) nor within range (>100).
+- **Not a compiler / step-builder default.** A search of `lib/agentkit/v6/**` finds no code that injects `500` into `max_results`; the only `500`s are unrelated (`max_length` example L1131, HTTP-500 fallback in `ProviderFallback.ts` L69, a `maxLength:500` test). The compiled DSL carries `500` as a bare literal in `step1.params.max_results` (per the earlier §"hardcoded 500" evidence).
+- **Not a prompt example.** The literal `500` appears **nowhere** in `intent-system-prompt-v2.ts` as a `max_results` value — its parameterization examples use `50` and `100` (L139–140, L1258, L2156).
+
+By elimination the value was emitted by the **generative Phase-1 IntentContract step** that authors step params from the enhanced prompt.
+
+**Evidence limit (honesty):** the persisted `intent_contract` for this agent is `null` (the WP-55 persistence-clobber documented in the Addendum), so I cannot show the `500` literal in the IntentContract JSON in situ — the pinpoint to "Phase-1 IntentContract" is by-elimination + provenance, not a direct read of the emitted contract. And Phase-1 is the one non-deterministic phase, so a re-run may not reproduce the exact number.
+
+### Q2 — Why `500` specifically?
+
+**Evidenced-fact: nothing primed `500`. Reasoned-inference: it's a free "be generous" round-number guess.**
+
+Three independent priming sources were checked and all come back negative:
+
+| Candidate primer | Result | Evidence |
+|---|---|---|
+| A prompt example / few-shot | **No** | `500` never appears as a `max_results` value in the generation prompt; examples use `50`/`100` |
+| The plugin schema context | **Partial signal only** | The vocabulary showed `max_results … (default: 10)` but **omitted the `maximum: 100` / `minimum: 1` constraint** (`phase0-vocabulary-for-prompt.txt` L104). The model saw a default of 10 and no ceiling |
+| The user's creation inputs | **No** | Creation thread `67154237-…` (7 iterations): original prompt *"check my gmail for expenses subject, scan expenses attachments and create detailed table…"* — no number. The 4 clarifications were q1 time-window ("12 months ago till today"), q2/q3 subject keywords, q4 attachment types — **none about a result count**. The dump's RCA-HINT confirms: *"'500' never appears in any response."* |
+
+So `500` was **not** the plugin default (10, which the model saw and overrode), **not** user-stated, and **not** an example value. It is a **free LLM choice**. The most plausible reasoning (inference, given non-determinism): the model mapped "search a 12-month window of expense emails" to "there could be a lot — cap generously," and reached for a round 500 — 50× the default it was shown and 5× the true (unshown) maximum. The fact that the value both exceeds the shown default and violates the hidden ceiling is consistent with a free guess made without a visible constraint, not a primed value.
+
+### Q3 — Why did the LLM HARDCODE it instead of parameterizing?
+
+**Evidenced-fact: the parameterize rules are conditional/soft and did not bind here; the value was never user-facing. Reasoned-inference: hardcoding was the compliant path of least resistance.**
+
+The relevant prompt rules, quoted:
+
+- **Anti-hardcode rule is CONDITIONAL on a declared config entry.** `intent-system-prompt-v2.ts` L2153–2158: *"Every config entry you declare MUST be referenced … NEVER hardcode a value in a step **when you have declared a config entry for it**. For example, if you declare `gmail_search_max_results` with default 50, the step MUST use `{ kind: "config", key: … }` — NOT `"max_results": 50`."* (Mirrored at L138–140.) This forbids hardcoding **only once a config entry exists** — it does **not** compel the model to declare one.
+- **Declaring a config entry for a user-unmentioned value is a soft "MAY".** L2147–2151: *"you MUST reuse the exact keys listed above [the user-provided values] … You **MAY** add additional config entries for values NOT listed above (e.g., search queries, time windows)."* Permissive, not mandatory.
+
+The user-provided config keys are only the values the user actually supplied (e.g. `user_email`, `sheet_tab_name`, the keywords, the time window). `max_results` was **not** among them — the user never surfaced a result cap (Q2 evidence). So the model faced a self-invented internal number with (a) no obligation to declare a config entry for it ("MAY"), and (b) an anti-hardcode rule that only triggers *after* such a declaration. It declared none and wrote the literal — fully prompt-compliant. **The hypothesis is confirmed:** the parameterize rule didn't bind precisely because the value wasn't user-facing in the conversation, so the model treated it as an implementation detail.
+
+**What made hardcoding path-of-least-resistance:** parameterizing requires the model to *volunteer* a new config key, a new default, and a reference wiring — extra structure for a value no one asked about — whereas a literal is one token. The only rule that could have stopped it is gated behind the very step (declare a config entry) the model had no incentive to take.
+
+**Deterministic prevention (feasible, recommended).** Do not rely on the LLM to obey a soft prompt rule — that is exactly the WP-56/WP-61-class non-determinism that has failed before (WP-61 commit `487f6ac`: *"prompt-only structuring is non-deterministic … the fix is a deterministic downstream layer, not prompt tuning"*). Two deterministic guards, both keyed off the plugin's **declared** param constraints (the batch-2 param-constraint reader already reads plugin schema min/max):
+1. **Range-validate every plugin-param literal against the plugin's declared min/max.** `500 > maximum:100` → clamp to 100 or raise a blocking compile issue. This alone prevents the out-of-range value regardless of parameterization.
+2. **Auto-parameterize invented, non-user-derived config-like literals.** Any numeric plugin param whose value the user never stated (diff the literal against the creation inputs / provided config keys) is promoted to a config key with the plugin default as its default — deterministically, instead of hoping the LLM declares it. (This is the generative-side complement to the calibration `HardcodeDetector`, which currently only *detects* it post-hoc and asks the user.)
+
+Secondary/cheap supplement: **expose the plugin `maximum`/`minimum` in the vocabulary** (it currently shows only `default`), so the model at least sees the ceiling — but treat this as a non-deterministic supplement, not the fix.
+
+### Answers at a glance
+
+| Q | Answer | Status |
+|---|---|---|
+| Q1 Where authored | V6 Phase-1 IntentContract generation (by elimination: not plugin/compiler/example) | Evidenced-fact (negatives) + reasoned pinpoint (persisted IC null) |
+| Q2 Why 500 | Free LLM round-number guess; nothing primed it (not user, not example, not default) | "Not primed" = evidenced-fact; "generous-cap heuristic" = reasoned-inference |
+| Q3 Why hardcoded | User never surfaced a cap → not a provided config key → anti-hardcode rule (conditional on a declared config) never bound → literal was compliant + lowest-effort | Evidenced-fact (rule wording + inputs) + reasoned-inference (model's non-declaration) |
+
+**Fix-owner:** `v6-pipeline` generation (the IntentContract/step-param authoring phase authored the value; the durable fix is a deterministic post-generation guard reading plugin min/max + auto-parameterization). The `agent-creation` enhanced prompt is **not** the author — `500` is absent from the EP and the conversation; creation simply (correctly) never asked about a count the user didn't raise. **A deterministic guard is feasible** and is the right layer, tying to the batch-2 param-constraint reader and the "enforce deterministically, don't trust the LLM to self-police" principle (WP-61).
+
+### Change History addendum
+
+| Date | Change | Details |
+|------|--------|---------|
+| 2026-07-12 | Origin-of-500 RCA | Q1: authored by V6 Phase-1 IntentContract generation (not plugin default 10 / not compiler / not example) — pinpoint limited by null persisted IC. Q2: free LLM guess; `500` absent from prompts, examples, user inputs (thread `67154237`, clarifications never asked a count); vocabulary showed `default:10` but omitted `maximum:100`. Q3: parameterize rule is conditional ("NEVER hardcode … when you have declared a config entry", L2153–2158) + soft "MAY" for user-unmentioned values (L2150); user never surfaced a cap → rule didn't bind → literal compliant. Fix-owner v6-pipeline generation; deterministic guard (range-check + auto-parameterize via the param-constraint reader) recommended over prompt tuning (WP-61 principle). |

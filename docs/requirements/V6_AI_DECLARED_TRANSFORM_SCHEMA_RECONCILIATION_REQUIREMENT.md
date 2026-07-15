@@ -2,7 +2,7 @@
 
 **Created by:** BA
 **Date:** 2026-07-09
-**Last Updated:** 2026-07-11
+**Last Updated:** 2026-07-13
 **Status:** Draft (pending SA review)
 
 ## Overview
@@ -23,6 +23,91 @@ This is the **single consolidated requirement** covering every failure mode unco
 >
 > `0ee53785` reaches a clean pass only once **BOTH Item 11 (Phase 3) and the Item 6 coverage-floor redesign (now)** land.
 
+## Consolidated Implementation Backlog (2026-07-12)
+
+> **This is the single authoritative, prioritized to-do list going forward.** Every remaining piece of work has a stable backlog ID here. Rows either **map to** a detailed scoped Item (1-11) below — read that Item for full evidence/AC — or are **NEW** items introduced here (marked NEW) with a short testable acceptance line. Groups are ordered by value.
+>
+> **Recommended delivery sequence:** **Group A → Group C → Group B → Group D** (D6 may be pulled forward if existing-agent self-heal is wanted sooner). This supersedes the earlier phase tags where they conflict; the phase tags on Items 1-11 remain valid as per-item context.
+>
+> **Process per group (unchanged):** Dev → SA code review → **USER reviews the code (after SA approves, before QA)** → QA → user approval → RM. Each group is delivered as one coherent workplan through this gate chain.
+
+### Group A — Unblock calibration finish (HIGHEST value; helps all agents, old + new). One coherent workplan.
+
+| ID | What / fix plan | Owner | Risk | Maps to |
+|---|---|---|---|---|
+| **A1** (NEW) | **Wizard dead-end.** Re-enable the commented-out `setFlowState('success')` transitions (sandbox `page.tsx` ~L605 / ~L936) so the finish screen renders; add an explicit "keep as-is & finish" action so a run with only cosmetic issues can complete; gate on verdict so blocking issues cannot finish. | calibration UI | Low-Med | new (UI) |
+| **A2** (NEW) | **Coverage floor still caps send-terminating agents.** FIRST verify whether Phase 1.6's `deriveCoverageSignal` actually receives real pre-delivery data from `execution_summary` (suspected wiring gap — unit tests passed but it still caps live on `0ee53785`). If so, feed the real last-pre-delivery payload in so a genuinely-populated report reaches `exercisedRealPath=true`. Preserve the false-green guard. | calibration verdict/coverage | Med | Item 6 (both-direction floor) |
+| **A3** (NEW) | **Cosmetic-only run → "passed (with suggestions)".** When 0 blocking/critical + only provably-cosmetic user-confirm-only issues remain AND A2 holds, present as `passed` with suggestions surfaced (not `needs_review`). A tight allow-list is the safety requirement. Depends on A2. | calibration verdict | Med | Item 6a / G1b |
+
+**Acceptance criteria (Group A):**
+- **A1:** a run with 0 blocking + only cosmetic issues can reach a completed/finished state via the UI (and a run with any blocking issue cannot finish).
+- **A2:** a populated send-terminating report reaches `passed`; an all-blank one still cannot — **verified on REAL execution data, not just fixtures.**
+- **A3:** a successful run whose only remaining issue is the cosmetic hardcode reads as `passed`; a run with any blocking/actionable issue never does.
+
+### Group B — Generation correctness-at-source (robustness; the runtime/calibration safety nets already cover these).
+
+| ID | What / fix plan | Owner | Risk | Maps to |
+|---|---|---|---|---|
+| **B1** | Durable field-name reconciliation at generation: Phase-2 `DataSchemaBuilder` post-pass snapping `ai_declared` transform field names to the producer's real names (dotted-path resolver), reusing the shared `lib/schema-reconciliation/` core; ambiguous → leave untouched. | v6-pipeline | Med-High | **Item 1 (Gap A)** |
+| **B2** | Compiler O10a dotted-path fix + extend to bare `condition.field` literals; consolidate `normalizeForFuzzy` onto the shared core. | v6-pipeline | Med | **Item 2 (Gap B)** |
+| **B3** | Generation-side extraction binding `.data → file_content` / `.mimeType` / `.filename` via plugin `x-semantic-type` annotations (never plugin-name/fuzzy); un-annotated plugins deferred. | v6-pipeline | Med | **Item 8 (generation slice)** |
+| **B4** | Generation-side flatten parent-field carry: reference the carried `from`/`subject`/`date` names at generation. | v6-pipeline | Low-Med | **Item 9 (generation slice)** |
+
+### Group C — The 500 / param-value correctness at generation.
+
+| ID | What / fix plan | Owner | Risk | Maps to |
+|---|---|---|---|---|
+| **C1** | At generation, validate every generated plugin-param literal against the plugin's declared `min`/`max`/`enum` (`500>100` → clamp or flag), reusing batch-2's constraint reader; **PLUS** fix the schema/vocabulary summary shown to the generation LLM to INCLUDE the declared `maximum` (currently omitted — a root contributor per the RCA "Origin of the 500" section). | v6-pipeline | Low | **Item 4 (compile-time advisory)** + new Guard A |
+| **C2** (NEW) | **Auto-parameterize invented literals.** Detect a param value NOT derivable from the user's creation inputs and deterministically promote it to a config parameter with a sensible default (sidesteps WP-40 because the agent doesn't exist yet). | v6-pipeline | Med | new (Guard B) |
+
+**Acceptance criteria (Group C):**
+- **C1:** a generated out-of-range literal is caught at generation, AND the model's schema summary shows `min` AND `max`.
+- **C2:** a generated literal the user never specified becomes a declared config parameter, not a bare literal.
+
+### Group D — Hardening / debt / follow-ups (LOW urgency).
+
+| ID | What / fix plan | Owner | Risk | Maps to |
+|---|---|---|---|---|
+| **D1** (NEW) | Regression suite: add a content/data-quality bar to the Phase E success criterion + a real-runtime extraction scenario (closes the content-blind coverage gap). | QA | Low | Out-of-Scope note (regression-suite gap) |
+| **D2** (NEW) | `StepExecutor.ts` — 30 pre-existing `console.*` → Pino (dedicated pass, per CLAUDE.md logging standard). | v6-pipeline / owner of file | Low | new (debt) |
+| **D3** (NEW) | `AIOperationResolver.ts` — 3 `console.*` (off-path legacy) → Pino. | v6-pipeline | Low | new (debt) |
+| **D4** (NEW) | Compiler `additional_inputs` re-validation hardening (SA 3A follow-up). | v6-pipeline | Low-Med | new (SA 3A follow-up) |
+| **D5** (NEW) | Coverage-signal un-inspectable-data hardening (SA 1.6 follow-up). | calibration | Low-Med | Item 6 (follow-up) |
+| **D6** (NEW) | Generalize Item 11 into the calibration corrector so existing broken agents self-heal on recalibration instead of needing the one-off script. | calibration | Med | Item 11 / Item 7 |
+| **D7** (NEW) | Script log wording ("Would inject" shows even in apply mode) — trivial cosmetic. | v6-pipeline | Trivial | new (cosmetic) |
+| **D8** (NEW) | **Security sweep — owner-scope all `agents` writes in the calibrate routes.** Multiple owner-UNSCOPED `agents` updates (missing `.eq('user_id', …)`) exist across the calibration API — a recurring violation of the mandatory repository/`user_id`-scoping rule. Over this cycle the pattern surfaced FOUR times: two in the batch route (already fixed — the Item 7 corrector write + the verdict-relaxation write), one in `apply-fixes/route.ts` L1320 (fixed in Group A), and at least one still-open PRE-EXISTING instance at `app/api/v2/calibrate/batch/route.ts` ~L4657 (the zero-issue clean-pass `production_ready` write). Fixing them one-at-a-time as lines are touched isn't working — it needs a dedicated sweep. **Fix plan:** audit EVERY `agents` write (`.from('agents').update/insert/upsert`) under `app/api/v2/calibrate/**` (batch, apply-fixes, and any others) and ensure each is owner-scoped with `.eq('user_id', …)` OR routed through `AgentRepository` (repository pattern); add a regression guard (grep/lint check or code-review checklist note). Relates to the two batch writes + the apply-fixes write already fixed and to the standing repository/`user_id` mandatory rule. | calibration | Low | new (security debt) |
+
+**Acceptance criteria (Group D):**
+- **D1:** a scenario whose extraction path is empty/untested/fabricated is NOT recorded as `phase_e_success: true`; at least one real-runtime extraction scenario exists.
+- **D2:** `StepExecutor.ts` uses `createLogger`/Pino for all logging; no `console.*` remains.
+- **D3:** `AIOperationResolver.ts` uses Pino; no `console.*` remains.
+- **D4:** compiler re-validates `additional_inputs` after injection; a malformed/missing injected input is caught, not silently passed.
+- **D5:** when the coverage signal cannot inspect delivered data, the verdict is a conservative non-pass (never a clean `passed`).
+- **D6:** re-calibrating an existing agent with the Item 11 wiring gap repairs it in place (no one-off script needed).
+- **D7:** the script log reads correctly in both dry-run and apply modes.
+- **D8:** no `agents` write under `app/api/v2/calibrate/**` lacks `user_id` scoping (or repository routing); the known open instance at `batch/route.ts` ~L4657 is fixed; a repeatable check (grep/CI) confirms none remain.
+
+### Backlog → Item ID map (single reference)
+
+| Backlog ID | Existing Item |
+|---|---|
+| A1 | NEW (calibration UI) |
+| A2 | Item 6 (coverage floor — verify/wire real pre-delivery data) |
+| A3 | Item 6a / G1b (cosmetic-only pass) |
+| B1 | Item 1 (Gap A) |
+| B2 | Item 2 (Gap B) |
+| B3 | Item 8 (generation slice) |
+| B4 | Item 9 (generation slice) |
+| C1 | Item 4 (compile-time advisory) + new Guard A |
+| C2 | NEW (Guard B) |
+| D1 | Out-of-Scope regression-suite gap |
+| D2, D3 | NEW (logging debt) |
+| D4 | NEW (SA 3A follow-up) |
+| D5 | Item 6 follow-up (SA 1.6) |
+| D6 | Item 11 / Item 7 (generalize corrector) |
+| D7 | NEW (cosmetic) |
+| D8 | NEW (security debt — `user_id`-scope calibrate-route `agents` writes) |
+
 ## Process / Review Gates
 
 Dev implements this requirement **phase by phase** (see [Implementation Order](#implementation-order-dev-delivery-phases)). After Dev completes a phase, it passes through these gates **before** the next phase starts:
@@ -34,6 +119,7 @@ The key point: after SA approves a phase's code, the **user reviews that code BE
 ## Table of Contents
 
 - [North-Star Success Criterion](#north-star-success-criterion)
+- [Consolidated Implementation Backlog (2026-07-12)](#consolidated-implementation-backlog-2026-07-12)
 - [Process / Review Gates](#process--review-gates)
 - [Problem Statement](#problem-statement)
 - [Concrete Failing Example](#concrete-failing-example)
@@ -82,7 +168,7 @@ Re-run #2 (2026-07-11): extraction works and rows carry real vendor/amount/date,
 
 ## Priority Ordering (SA value/dependency rationale)
 
-> **This section captures SA's value-and-dependency reasoning (which fix matters most and why).** It is NOT the Dev delivery sequence. The authoritative delivery sequence is the user-directed [Implementation Order](#implementation-order-dev-delivery-phases) below; where the two differ, the Implementation Order governs. The Phase 0 shared-core prerequisite makes the user's order safe (no forward dependency is broken).
+> **This section captures SA's value-and-dependency reasoning (which fix matters most and why).** It is NOT the Dev delivery sequence. The authoritative delivery sequence is the user-directed [Implementation Order](#implementation-order-dev-delivery-phases) below and the [Consolidated Implementation Backlog](#consolidated-implementation-backlog-2026-07-12) at the top; where they differ, the backlog/Implementation Order governs. The Phase 0 shared-core prerequisite makes the user's order safe (no forward dependency is broken).
 
 - **PRIMARY — the field-fidelity / wiring chain (Items 1-3, extended by Items 8-9, 11).** These are what make the agent actually work. Item 1 (Gap A) is the root cause and durable fix; Item 2 (Gap B) widens the compiler safety net; Item 3 (Gap C) adds the plugin-schema oracle. Items 8-9 and 11 are the SAME family recurring downstream (object-into-scalar handoff; parent-field carry-forward; an AI step not handed its loop variable) — they must be closed for a fully populated report.
 - **SECONDARY — hardening + detection quality (Items 4-6, extended by Item 10).** Item 4 is a self-healing runtime guard for out-of-range param values. Items 5-6 + Item 10 are calibration detector/verdict/coverage improvements — they make the verdict honest and surface real defects, but they are not the cure.
@@ -90,7 +176,7 @@ Re-run #2 (2026-07-11): extraction works and rows carry real vendor/amount/date,
 
 ## Implementation Order (Dev delivery phases)
 
-> **This is the AUTHORITATIVE Dev delivery sequence, set by the user:** **first the calibration items, then the plugin guard, lastly the agent-creation items.** SA's value-first ordering puts the generation-time root cause first; the user leads with the calibration side. This is safe because the one shared dependency — the reconciliation core (constraint #5) — is pulled out as a **Phase 0 prerequisite** built before anything that consumes it. Each phase is delivered end-to-end through the [review gates](#process--review-gates) before the next begins.
+> **This is the AUTHORITATIVE Dev delivery sequence, set by the user:** **first the calibration items, then the plugin guard, lastly the agent-creation items.** SA's value-first ordering puts the generation-time root cause first; the user leads with the calibration side. This is safe because the one shared dependency — the reconciliation core (constraint #5) — is pulled out as a **Phase 0 prerequisite** built before anything that consumes it. Each phase is delivered end-to-end through the [review gates](#process--review-gates) before the next begins. **See also the top-level [Consolidated Implementation Backlog](#consolidated-implementation-backlog-2026-07-12), which groups the remaining work (A→C→B→D) and is the master to-do list.**
 
 > **Runtime-vs-generation placement (pending SA Round 3).** Several new findings have both a runtime slice (helps agent `0ee53785` immediately, in place) and a generation slice (fixes new agents). SA Round 3 will rule where each lands; the phase tags below reflect the current best split and are marked where the placement is still open.
 
@@ -104,7 +190,7 @@ Build the single deterministic **comparator / normaliser / reconciler** as a sta
 ### Phase 1 — Calibration items (FIRST, per user)
 
 - **Item 5** — loop-variable detector fix + field-mismatch detector (5b) using the Phase 0 core.
-- **Item 6** — verdict model + **both-direction coverage-floor redesign** (one unified meaningful-pre-delivery-data signal that fixes BOTH the too-lenient Re-run #1 case and the too-strict Re-run #2 send-terminating case) + inverted-verdict-logic fix. **This is the "fix now" home of user routing decision Q2.**
+- **Item 6** — verdict model + **both-direction coverage-floor redesign** (one unified meaningful-pre-delivery-data signal that fixes BOTH the too-lenient Re-run #1 case and the too-strict Re-run #2 send-terminating case) + inverted-verdict-logic fix. **This is the "fix now" home of user routing decision Q2 (backlog A2/A3).**
 - **Item 7** — calibration-side in-place corrector, Phase 0 core, three G1 safety conditions.
 - **Item 10 (NEW)** — surface an all-failed / all-empty step (100% of scatter items error or return empty/fallback) as a blocking/visible issue.
 - **Calibration side of Item 3** — plugin-truth detection raising a mismatch as a blocking issue.
@@ -133,7 +219,7 @@ These apply to every item and must be restated in each workplan:
 2. **Deterministic fixes, NOT prompt nudges.** The WP-56 prompt-nudge is precisely what regressed. Prompt guidance may remain as defense-in-depth but does not satisfy any acceptance criterion here.
 3. **Derived-field survival.** Only fields that fuzzy-overlap a producer field get reconciled. Legitimate LLM-introduced derived fields with no producer counterpart must survive unchanged.
 4. **Correct, don't merely warn.** For the field-fidelity/wiring chain (Items 1-3, 8-9, 11), the corrector layers must *rewrite to the producer's real spelling/shape / bind the referenced variable* so the agent actually works end-to-end. A layer that only warns does not satisfy that layer's acceptance criteria (flagging is only acceptable as the last-resort tripwire in Item 3 / Item 10 / G1, and even then it must be blocking).
-5. **One reconciliation core, four+ call sites (SA Round-2 ruling).** The plugin-truth comparator + name-normaliser + reconciler is ONE shared piece of deterministic logic, reused — never re-implemented — at generation (Item 1), the compiler (Item 2), calibration detection (Items 3/5b), calibration correction (Item 7), and — where applicable — the plugin→plugin binding check (Item 8). Built once as **Phase 0**. A separate copy in any call site is rejected.
+5. **One reconciliation core, four+ call sites (SA Round-2 ruling).** The plugin-truth comparator + name-normaliser + reconciler is ONE shared piece of deterministic logic, reused — never re-implemented — at generation (Item 1), the compiler (Item 2), calibration detection (Items 3/5b), calibration correction (Item 7), and — where applicable — the plugin→plugin binding check (Item 8). Built once as **Phase 0** (the shared `lib/schema-reconciliation/` core). A separate copy in any call site is rejected.
 
 ## G1 — Anti-False-Success Guarantee (top-level)
 
@@ -144,7 +230,7 @@ These apply to every item and must be restated in each workplan:
 This decomposes into three testable sub-guarantees:
 
 - **G1a — Blocking severity for plugin-truth violations.** A detected field-name/shape-vs-plugin mismatch (Items 3, 8, 9) that survives the correctors MUST be classified as a **blocking-class** issue — it cannot be recorded as cosmetic/`medium`/user-confirm-only. (An out-of-range *param value* is NOT blocking — it is self-healed by the Item 4 runtime clamp.)
-- **G1b — Verdict relaxation must not leak blocking issues.** The Item 6a relaxation (cosmetic user-confirm-only suggestions no longer force `failed`) MUST NOT allow any blocking-class issue to pass. Relaxation applies *only* to issues that are both non-blocking AND user-confirm-only.
+- **G1b — Verdict relaxation must not leak blocking issues.** The Item 6a relaxation (cosmetic user-confirm-only suggestions no longer force `failed`) MUST NOT allow any blocking-class issue to pass. Relaxation applies *only* to issues that are both non-blocking AND user-confirm-only. (This is the safety boundary backlog A3 must respect via a tight allow-list.)
 - **G1c — Real path must have RUN and carried MEANINGFUL DATA (both directions).** The coverage floor judges "real path exercised" on the **last pre-delivery step's payload carrying meaningful (non-empty / non-fallback) field VALUES**, not on a raw row count and not on a terminal delivery count. This closes both holes with one signal: (i) an all-blank / all-fallback delivered set still FAILS (Re-run #1 — too lenient); (ii) a genuinely-populated report whose terminal send returned only a scalar confirmation is NOT denied a pass (Re-run #2 — too strict). A partially-populated report resolves to `needs_review` with the blank columns named. This coverage floor also caps Item 7's post-correction verdict.
 
 **Acceptance criteria (G1).**
@@ -161,9 +247,11 @@ This decomposes into three testable sub-guarantees:
 
 ### Item 1 — Gap A: Phase-2 field reconciliation (PRIMARY)
 
+**Backlog ID.** B1.
+
 **What it is.** In Phase 2, `DataSchemaBuilder` admits an `ai_declared` transform slot's field names verbatim without reconciling them against the `produced_by` producer slot. `inferSchemaForTransformStep()` applies a "LLM-declared `output_schema` wins for ANY transform op" rule and returns the declared shape as `ai_declared` **before** the flatten-inherit path that would have inherited the producer's real item shape. No later pass repairs it: `fixupDerivedTransformSchemas` is gated to shape-**preserving** ops (so shape-changing `flatten` is skipped) and only fills *empty* (`items.type === 'any'`) shapes. The wrong-cased `mime_type` enters the canonical slots map unchallenged. **This is the true root cause of the original bug — fixed by Phase 0/1.**
 
-**Delivery phase.** Phase 3 (per user order). Reuses the Phase 0 shared core.
+**Delivery phase.** Phase 3 (per user order) / backlog Group B. Reuses the Phase 0 shared core.
 
 **Evidence / location.**
 - `lib/agentkit/v6/capability-binding/DataSchemaBuilder.ts` L282-287 (the "ai_declared wins for ANY transform op" rule), L289-295 (the bypassed flatten-inherit path), L711-739 (`fixupDerivedTransformSchemas` gated to shape-preserving ops; L719 gate; L729-732 only fills `type:'any'`).
@@ -188,9 +276,11 @@ This decomposes into three testable sub-guarantees:
 
 ### Item 2 — Gap B: Phase-5 compiler reconciler dotted-path miss
 
+**Backlog ID.** B2.
+
 **What it is.** The compile-time reconciler `reconcileTransformSchemaWithUpstream` (O10a) is meant to rescue the `mime_type`→`mimeType` mismatch, but it no-ops because the upstream lookup keys `fullSchemaMap` by the bare `output_variable` only, while the transform's `config.input` is a **dotted path** (`expense_emails.emails`). Separately, step3's break is a bare `config.condition.field` literal, outside the corrector's `{{var.field}}` scanner scope.
 
-**Delivery phase.** Phase 3 (per user order). Reuses the Phase 0 shared core.
+**Delivery phase.** Phase 3 (per user order) / backlog Group B. Reuses the Phase 0 shared core.
 
 **Evidence / location.**
 - `lib/agentkit/v6/compiler/ExecutionGraphCompiler.ts` L3233-3240 (dotted-path miss), `reconcileTransformSchemaWithUpstream` L3273 (comment L3266). Scanner-scope limits: L3507, L3532/L3603.
@@ -235,14 +325,16 @@ This decomposes into three testable sub-guarantees:
 
 ### Item 4 — Out-of-range generated param value: runtime clamp-and-warn guard
 
+**Backlog ID.** Runtime guard = this item (Phase 2). The generation-time validation + schema-summary fix = backlog C1.
+
 **What it is.** NEW. The LLM invented `500` for `step1.params.max_results`, exceeding the Gmail plugin's `maximum: 100`. Per **SA Round 2**, an out-of-range value the connector tolerates is not execution-breaking, so this is a **generic, self-healing runtime guard**, not a build-time gate.
 
-**Delivery phase.** Phase 2 (per user order).
+**Delivery phase.** Phase 2 (per user order). The complementary generation-side check is backlog Group C (C1).
 
 **Mechanics (SA Round-2 ruling).**
 - **Authoritative guard = the shared plugin-execution layer, at RUNTIME.** Right before any plugin call, read that plugin's own declared `minimum`/`maximum`/`enum` and validate. **Never stops the flow, never throws.**
 - Numeric over/under → clamp to the plugin's declared bound, warn, continue. Invalid enum → use the plugin's declared default if present, else warn-and-pass-through (never drop the param, never invent a value).
-- Compile/creation-time = non-blocking advisory.
+- Compile/creation-time = non-blocking advisory (see backlog C1 for the generation-time validation + the LLM schema-summary fix that includes `maximum`).
 - Schema-driven / generic, zero plugin-name branches. Structured Pino **warn** with param name, offending value, corrected value, plugin/action context.
 
 **Evidence / location.**
@@ -286,13 +378,15 @@ This decomposes into three testable sub-guarantees:
 
 ### Item 6 — Calibration verdict + coverage floor (both-direction, meaningful-data signal)
 
+**Backlog IDs.** A2 (verify/wire real pre-delivery data into `deriveCoverageSignal`), A3 (cosmetic-only → passed-with-suggestions), D5 (un-inspectable-data hardening).
+
 **What it is.** NEW — verdict/coverage requirements in service of G1, now covering **both directions** of the coverage floor with ONE unified signal (user routing decision **Q2**, fix NOW). (a) A session is marked `failed` whenever ANY unresolved issue remains, so a cosmetic user-confirm-only suggestion flips the verdict. (b) The dry-run ran on a live inbox with no eligible attachments, so the real path was never exercised. **(c) The coverage floor is COUNT-based, and count is wrong in BOTH directions:**
 - **Too LENIENT (Re-run #1):** it was row-count only (`delivered===0`), so 13 all-blank rows would count as "exercised" and could verdict `passed`. It escaped only by luck (the blank send zeroed `items_delivered`).
 - **Too STRICT (Re-run #2):** it is delivery-count based, so a **send/notify-terminating** agent whose report email actually sent (13 rows of real vendor/amount/date) shows `data_written:[]` / `items_delivered=0` — because a scalar `send_email` confirmation isn't a counted item array — and is wrongly capped to `inconclusive`. Send-terminating agents can essentially never reach `passed`.
 
 **Unified design (owner `calibration`).** Replace the count-based delivered/row signals with a **meaningful-pre-delivery-data** signal: base `exercisedRealPath` on the **last pre-delivery producing step's payload carrying ≥1 row with meaningful (non-empty / non-fallback) field VALUES**; treat a terminal send/notify that **executed** (returned a confirmation / `message_id`) as delivery-exercised rather than requiring a positive `items_delivered` count; and add a per-column / fill-rate check so a partially-blank report resolves to `needs_review` (with the blank columns named), not `passed`.
 
-**Delivery phase.** Phase 1 (per user order) — **the "fix now" home of Q2.** Establishes the verdict model + both-direction coverage floor Item 7 depends on. Helps `0ee53785` and ALL send/notify-terminating agents on recalibration.
+**Delivery phase.** Phase 1 (per user order) — **the "fix now" home of Q2 / backlog Group A.** Establishes the verdict model + both-direction coverage floor Item 7 depends on. Helps `0ee53785` and ALL send/notify-terminating agents on recalibration. **NB (backlog A2):** first verify whether Phase 1.6's `deriveCoverageSignal` actually receives real pre-delivery data from `execution_summary` — a suspected wiring gap that passed unit tests but still caps live.
 
 **Evidence / location.**
 - (a) `app/api/v2/calibrate/batch/route.ts` L4444-4445; `IssueCollector.ts` L314-327, L896-906.
@@ -332,17 +426,19 @@ This decomposes into three testable sub-guarantees:
 - [ ] **Reuses the shared core (Phase 0).** A separate calibration copy is rejected.
 - [ ] **Deterministic, provably-correct rename.** Only clearly-same-field spellings rewritten; ambiguous left untouched.
 - [ ] **G1 safety — no false green.** If the re-run after correction still doesn't exercise the real path (or delivers all-blank data), the coverage floor (Item 6) caps the verdict at **"corrected, real path not yet verified"**, NOT a pass. A corrected-then-re-verified pass IS legitimate (defect actually removed).
-- [ ] **Audited, surfaced, reversible.** Every correction recorded in the audit trail, surfaced ("calibration rewrote field X → Y"), reversible.
-- [ ] **Backfill outcome.** Re-calibrating `0ee53785` repairs its field references in place; a subsequent run on representative input produces a populated result (in concert with Items 8-9). **Note:** Item 11 (blank columns) does NOT self-heal here — a clean pass for `0ee53785` also requires the Item 11 DSL/generation fix.
+- [ ] **Audited, surfaced, reversible.** Every correction recorded in the audit trail, surfaced ("calibration rewrote field X → Y"), reversible. **(NB: the write itself must be owner-scoped — see backlog D8.)**
+- [ ] **Backfill outcome.** Re-calibrating `0ee53785` repairs its field references in place; a subsequent run on representative input produces a populated result (in concert with Items 8-9). **Note:** Item 11 (blank columns) does NOT self-heal here — a clean pass for `0ee53785` also requires the Item 11 DSL/generation fix (see backlog D6 to generalise Item 11 into this corrector).
 - [ ] **Sequencing.** After the Phase 0 core and alongside/after Item 6.
 
 ---
 
 ### Item 8 — Plugin→plugin object handoff: bind fields, not whole object (extract input)
 
+**Backlog ID.** B3 (generation slice).
+
 **What it is.** NEW (Finding 2, 2026-07-11 re-run). A NEW instance of the field-fidelity class, one hop downstream of the original. step6 (`document-extractor.extract_structured_data`) is wired **`file_content: "{{attachment_content}}"`** — the whole step5 attachment OBJECT dropped into one scalar string param. The real runtime resolver JSON-stringifies the whole-object placeholder, so the extractor loses `mimeType:"application/pdf"`, magic-byte detection on the JSON text returns `application/octet-stream`, and extraction throws on **every** one of the 13 items → all-blank rows. (The regression suite's identical scenario is green only because the simulator's resolver preserves object type — `variable-store.ts` L119-130 — masking the live break.) Same CLASS as the original, distinct INSTANCE.
 
-**Delivery phase.** Field-fidelity phase (Phase 3) as a NEW case. **Fix placement (generation binding vs runtime resolver hardening) pending SA Round 3 confirmation** — the RCA's regression comparison supports the runtime-resolver slice (preserve object type for whole-placeholder templates, matching the simulator), which repairs `0ee53785` in place; the generation slice fixes new agents.
+**Delivery phase.** Field-fidelity phase (Phase 3) / backlog Group B (B3). **Fix placement (generation binding vs runtime resolver hardening) pending SA Round 3 confirmation** — the RCA's regression comparison supports the runtime-resolver slice (preserve object type for whole-placeholder templates, matching the simulator), which repairs `0ee53785` in place; the generation slice fixes new agents.
 
 **Evidence / location.**
 - DSL step6 `file_content:"{{attachment_content}}"` (`dev.log` L2007). step5 emits `application/pdf` (`dev.log` L6705/6740). step6 received a 68642-char JSON string; magic-byte detect → `application/octet-stream` (`dev.log` L7231-7257). `DeterministicExtractor.ts` L288 throw. Executor object-branch (`document-extractor-plugin-executor.ts` L61-79) skipped because the value arrived as a **string**. Simulator preserves object type (`variable-store.ts` L119-130) — the divergence. Plugin already declares `mime_type`/`filename` params (L48).
@@ -352,7 +448,7 @@ This decomposes into three testable sub-guarantees:
 **Severity.** Was Critical; extraction now works via the resolver slice in Re-run #2 — retain the durable generation-binding rule so new agents are correct at creation.
 
 **Acceptance criteria.**
-- [ ] **Bind specific fields, not the whole object.** Generation binds the consumer's params to the producer's fields — `file_content ← {{attachment_content.data}}`, `mime_type ← {{attachment_content.mimeType}}`, `filename ← {{attachment_content.filename}}` — never a whole object into one scalar string param.
+- [ ] **Bind specific fields, not the whole object.** Generation binds the consumer's params to the producer's fields — `file_content ← {{attachment_content.data}}`, `mime_type ← {{attachment_content.mimeType}}`, `filename ← {{attachment_content.filename}}` — never a whole object into one scalar string param. Per backlog B3, driven by plugin `x-semantic-type` annotations (never plugin-name/fuzzy); un-annotated plugins deferred.
 - [ ] A **generic** field-fidelity rule covers plugin→plugin object handoffs. Schema-driven, no plugin-specific branches.
 - [ ] (Runtime slice, SA-supported) the template resolver returns the raw object when a param value is exactly one whole-object placeholder, matching the simulator — the slice that repairs `0ee53785` in place.
 - [ ] **End-to-end:** on a re-run of `0ee53785`, `extract_structured_data` succeeds and rows carry real `amount` / `vendor` / `date` (confirmed in Re-run #2).
@@ -361,9 +457,11 @@ This decomposes into three testable sub-guarantees:
 
 ### Item 9 — Flatten parent-field carry-forward (From / Subject / Date)
 
+**Backlog ID.** B4 (generation slice).
+
 **What it is.** NEW (Finding 3, 2026-07-11 re-run), independent of Item 8. `transformFlatten` originally nested parent `from`/`subject` under `_parentData` and dropped `date`, so downstream references to flat `attachment_item.from/.subject/.date` were blank. **Confirmed FIXED at runtime in Re-run #2** — the flattened item now carries parent `from`/`subject`/`date` flat at the item root (and under `_parentData`) plus the child `filename` (`dev.log` L64307-64344). The residual blank columns are NOT this item — they are the step7 AI-input-wiring gap (**Item 11**).
 
-**Delivery phase.** Field-fidelity phase (Phase 3). The **runtime `transformFlatten` slice** is validated in Re-run #2; the **generation reference-shape slice** (reference the actually-carried names for new agents) remains. **Final placement pending SA Round 3.**
+**Delivery phase.** Field-fidelity phase (Phase 3) / backlog Group B (B4). The **runtime `transformFlatten` slice** is validated in Re-run #2; the **generation reference-shape slice** (reference the actually-carried names for new agents) remains. **Final placement pending SA Round 3.**
 
 **Evidence / location.**
 - Runtime now carries parent fields flat + child filename: `dev.log` L64307-64344 (item), L64315-64320 (`_parentData`), L64325-64328 (flat `subject/from/date`). Original defect: `transformFlatten` `StepExecutor.ts` L5071-5080.
@@ -402,6 +500,8 @@ This decomposes into three testable sub-guarantees:
 
 ### Item 11 — AI/processing step inside a scatter must receive the loop variable it references
 
+**Backlog IDs.** Generation-wiring fix (Phase 3) is this item; generalising it into the calibration corrector for existing-agent self-heal is backlog D6.
+
 **What it is.** NEW (Re-run #2 Q1, user routing decision: fix LATER, Phase 3 generation). The AI row-builder step (step7, `ai_processing`/`generate`) inside the scatter has its instruction reference the scatter loop variable — "put `attachment_item.subject` into source_email_subject", `.from`, `.filename` — but that `attachment_item` is **NOT placed in the step's input context** (`step7.input` is `{{extracted_fields}}` only). An AI step only sees its declared `input` payload as data; the instruction's prose mention of `attachment_item` is just text to the LLM, so the model has no value to copy and writes `""`. Result: the extraction columns (amount/vendor/date, which ARE in the input) populate, while the From/Subject/Filename columns come out blank. The `attachment_filename` blank is the clincher — it is the child attachment's OWN field, present on the item, yet blank — proving `attachment_item` never reaches step7 at all. This is **distinct from Finding 3 / Item 9** (flatten carry-forward, now confirmed working) and is the same **family as WP-58** (multi-input AI wiring).
 
 **Delivery phase.** Phase 3 (generation), per user routing decision Q1 (fix LATER). **Needs an in-place DSL/generation fix — it does NOT self-heal on recalibration.** `0ee53785` reaches a full clean pass only once BOTH Item 11 (Phase 3) and the Item 6 coverage-floor redesign (now) land.
@@ -428,7 +528,7 @@ This decomposes into three testable sub-guarantees:
 
 - Broader Phase-1 schema-context injection (Direction #1 in `V6_WORKFLOW_DATA_SCHEMA_DESIGN_REBASE.md`) — complements, does not replace, this work.
 - The WP-55 `intent_contract`/`data_schema` persistence clobber — already fixed 2026-07-08 (owner `agent-creation-flow`).
-- The **regression-suite coverage gap** (content-blind Phase E success bar; stub-simulator/runtime divergence that masked Findings 2-3) — owner QA/regression-suite; flagged by the RCA's regression-vs-novel comparison, tracked separately from this requirement.
+- The **regression-suite coverage gap** (content-blind Phase E success bar; stub-simulator/runtime divergence that masked Findings 2-3) — owner QA/regression-suite; flagged by the RCA's regression-vs-novel comparison, tracked as **backlog D1**.
 - Any prompt-nudge-only mitigation as the primary mechanism for the field-fidelity class (constraint #2).
 
 ## Open Questions / Risks
@@ -436,13 +536,15 @@ This decomposes into three testable sub-guarantees:
 > **Note:** The 2026-07-10/11 acceptance-criteria additions capture the *guarantees* the requirement must hold. Some **mechanics** are **pending SA confirmation**, including **SA Round 3** on runtime-vs-generation placement for Items 8-9. Resolved-by-SA questions are checked below.
 
 - [ ] **Items 8-9 runtime-vs-generation placement (raised by: BA · status: pending SA Round 3).** Which slice is a runtime fix (helps `0ee53785` in place — Item 8 resolver + Item 9 flatten both now validated at runtime) and which is a generation fix (new agents)? **Suggested resolution:** keep the validated runtime slices; ship the generation slices (bind specific fields; reference the carried shape) so new agents are correct at creation. SA Round 3 to confirm.
-- [ ] **Item 11 in-place DSL edit vs generation-only (raised by: BA · status: pending SA — NEW).** Item 11 needs both a durable generation-wiring fix and an in-place DSL edit for `0ee53785` (it won't self-heal on recalibration). Is the in-place edit a manual Dev DSL correction, or should the Item 7 in-place corrector be extended to inject a missing scatter loop-variable into an AI step's input? **Suggested resolution:** manual DSL edit for `0ee53785` now (per the RCA's "Dev after SA"), plus the generation fix for new agents; consider generalising into the calibration corrector later. SA to confirm.
-- [ ] **Generic data-quality / meaningful-value signal (raised by: BA · status: pending SA, Finding 4 + Re-run #2).** One shared definition of "meaningful data" powers the Item 6 both-direction coverage floor, the Item 6 per-column fill-rate `needs_review`, and the Item 10 all-empty detector. What is it — all-fields-empty per row, an all-fallback / "Unknown" marker, a fill-rate threshold per column? **Suggested resolution:** a shared generic emptiness/degraded check on delivered/pre-delivery field values (no plugin-specific field names), reused by Items 6 and 10. SA to confirm one definition.
-- [ ] **"Send/notify executed = delivery-exercised" signal (raised by: BA · status: pending SA — NEW, Re-run #2).** How is "the terminal send actually ran" detected generically (a returned confirmation / `message_id` from a delivery-classified action) without special-casing `send_email`? **Suggested resolution:** treat any delivery-`usage_context` action that returned a non-empty confirmation object as delivery-exercised. SA to confirm the generic rule.
+- [ ] **Item 11 in-place DSL edit vs generation-only (raised by: BA · status: pending SA).** Item 11 needs both a durable generation-wiring fix and an in-place DSL edit for `0ee53785` (it won't self-heal on recalibration). Is the in-place edit a manual Dev DSL correction, or should the Item 7 in-place corrector be extended to inject a missing scatter loop-variable into an AI step's input (backlog D6)? **Suggested resolution:** manual DSL edit for `0ee53785` now, plus the generation fix for new agents; generalise into the calibration corrector later (D6). SA to confirm.
+- [ ] **Backlog A2 wiring gap (raised by: BA · status: open — NEW).** Does Phase 1.6's `deriveCoverageSignal` actually receive real pre-delivery data from `execution_summary`, or is it fed a stub (why it passed unit tests but still caps live)? **Suggested resolution:** trace the real execution-summary payload into the signal before adjusting the verdict logic; add a REAL-data test, not just fixtures. SA/calibration to confirm.
+- [ ] **Generic data-quality / meaningful-value signal (raised by: BA · status: pending SA).** One shared definition of "meaningful data" powers the Item 6 both-direction coverage floor, the Item 6 per-column fill-rate `needs_review`, and the Item 10 all-empty detector. **Suggested resolution:** a shared generic emptiness/degraded check on delivered/pre-delivery field values (no plugin-specific field names). SA to confirm one definition.
+- [ ] **"Send/notify executed = delivery-exercised" signal (raised by: BA · status: pending SA).** How is "the terminal send actually ran" detected generically (a returned confirmation / `message_id` from a delivery-classified action) without special-casing `send_email`? **Suggested resolution:** treat any delivery-`usage_context` action that returned a non-empty confirmation object as delivery-exercised. SA to confirm.
 - [ ] **Item 7 audit / reversibility mechanism (raised by: BA · status: open).** Audit-trail entry + pre-rewrite snapshot for revert, surfaced in the calibration result. SA to confirm.
 - [ ] **Gap C placement (raised by: BA · status: pending SA).** Compiler, calibration, or both? User order lands the calibration side in Phase 1 and the compiler side in Phase 3.
 - [ ] **Blocking-class representation (raised by: BA · status: pending SA).** New severity tier, dedicated flag, or reserved issue-type set? SA to define.
-- [ ] **Verdict-state plumbing (raised by: BA · status: pending SA).** How are "inconclusive", "needs_review", and "corrected, real path not yet verified" represented in the calibration status contract + UI without breaking passed/failed consumers? SA + a UI note.
+- [ ] **A3 cosmetic allow-list (raised by: BA · status: open — NEW).** What is the tight allow-list of "provably cosmetic, user-confirm-only" issue types that may pass as `passed (with suggestions)` without reopening the false-green hole? **Suggested resolution:** start with only the `hardcode_detected` parameterization suggestion; anything else stays `needs_review`. SA to ratify the allow-list.
+- [ ] **Verdict-state plumbing (raised by: BA · status: pending SA).** How are "inconclusive", "needs_review", "passed (with suggestions)", and "corrected, real path not yet verified" represented in the calibration status contract + UI without breaking passed/failed consumers? SA + a UI note.
 - [ ] **Derived-field preservation (raised by: BA · status: proposed).** Reconcile only producer-overlapping fields; leave no-match fields untouched. Confirm with SA.
 - [ ] **Ambiguous multi-match (raised by: BA · status: open).** Prefer a single post-normalization exact match; if ambiguous, leave unchanged. SA to confirm.
 - [ ] **Nested/array depth (raised by: BA · status: open).** Reuse the flatten-inherit unwrap logic (`DataSchemaBuilder.ts` L289-295). SA to confirm.
@@ -454,23 +556,26 @@ This decomposes into three testable sub-guarantees:
 
 | System | File / area | Items |
 |---|---|---|
-| **Shared reconciliation core (one core, four+ call sites — Phase 0)** | new/shared module (SA to place) — comparator + name-normaliser + reconciler, built first, reused by generation / compiler / calibration-detect / calibration-correct / object-handoff | 1, 2, 3, 5, 7, 8 |
+| **Shared reconciliation core (one core, four+ call sites — Phase 0)** | `lib/schema-reconciliation/` shared module — comparator + name-normaliser + reconciler, built first, reused by generation / compiler / calibration-detect / calibration-correct / object-handoff | 1, 2, 3, 5, 7, 8 |
 | Phase 2 schema builder (PRIMARY) | `lib/agentkit/v6/capability-binding/DataSchemaBuilder.ts` (L282-295, L711-739) | 1 |
 | Canonical schema construct | `lib/agentkit/v6/logical-ir/schemas/workflow-data-schema.ts` (L56-88) | 1 |
 | Phase 5 compiler | `lib/agentkit/v6/compiler/ExecutionGraphCompiler.ts` (L3220-3240, L3273, L3507, L6173-6197, L6366-6390) | 2, 3 |
-| Phase 1 intent prompt / generation | `lib/agentkit/v6/intent/intent-system-prompt-v2.ts` (L139-140, L2156) | 4 (advisory) |
+| Phase 1 intent prompt / generation | `lib/agentkit/v6/intent/intent-system-prompt-v2.ts` (L139-140, L2156) | 4 (advisory), C1 |
 | **Shared plugin-execution layer (runtime param guard)** | the shared executor call site where any plugin is invoked (SA to identify precise home) | 4 |
 | **Extract input wiring / object handoff** | DSL binding of `extract_structured_data` params; `document-extractor-plugin-executor.ts` (L48, L61-94); template resolver (`variable-store.ts` L119-130 object-preservation slice) | 8 |
 | **Flatten parent-field carry-forward** | `lib/pilot/StepExecutor.ts` `transformFlatten` (L5071-5080 — runtime slice validated) + generation reference shape | 9 |
 | **AI-step scatter loop-variable wiring** | DSL generation of `ai_processing` step `input`/context inside a scatter (inject the referenced `itemVariable`); same family as WP-58 | 11 |
-| Plugin definitions (producer truth) | e.g. `lib/plugins/definitions/google-mail-plugin-v2.json` (L305-310, L408-435; `send_email` scalar output) | 3, 4, 6, 8 |
+| **Calibration wizard UI (finish flow)** | sandbox `page.tsx` (~L605 / ~L936 commented-out `setFlowState('success')`) | A1 |
+| **Calibrate-route `agents` writes (owner-scoping sweep)** | `app/api/v2/calibrate/**` — `batch/route.ts` (~L4657 open instance), `apply-fixes/route.ts` (L1320 fixed), + any others; ensure `.eq('user_id', …)` or `AgentRepository` routing | D8 |
+| Plugin definitions (producer truth) | e.g. `lib/plugins/definitions/google-mail-plugin-v2.json` (L305-310, L408-435; `send_email` scalar output) | 3, 4, 6, 8, C1 |
 | Calibration static validators | `lib/pilot/shadow/StructuralRepairEngine.ts` (L1737-1768, L829-888), `lib/pilot/shadow/ScatterItemFieldValidator.ts` (L164-205) | 3, 5 |
-| Calibration correction / backfill | calibration repair path in `lib/pilot/shadow/` (reuses shared core) + audit trail | 7 |
-| **Calibration verdict + coverage (both-direction meaningful-data floor)** | `app/api/v2/calibrate/batch/route.ts` (L4316/L4636, L4444-4445), `CalibrationVerdict.ts` (L155-204, L168-176), `ExecutionSummaryCollector.ts` (L78-103, L217), `WorkflowPilot.ts` (L1220-1234), `DryRunValidator.ts` (L55-121), `IssueCollector.ts` (L314-327, L896-906) | 6, 7, 10, G1 |
+| Calibration correction / backfill | calibration repair path in `lib/pilot/shadow/` (reuses shared core) + audit trail | 7, D6 |
+| **Calibration verdict + coverage (both-direction meaningful-data floor)** | `app/api/v2/calibrate/batch/route.ts` (L4316/L4636, L4444-4445), `CalibrationVerdict.ts` (L155-204, L168-176), `ExecutionSummaryCollector.ts` (L78-103, L217), `WorkflowPilot.ts` (L1220-1234), `DryRunValidator.ts` (L55-121), `IssueCollector.ts` (L314-327, L896-906) | 6, 7, 10, A2, A3, G1 |
 | **All-failed / all-empty step detector** | extractor swallow path `DeterministicExtractor.ts` (L247-250), `document-extractor-plugin-executor.ts` (L145-151); scatter degraded-output signal (calibration) | 10 |
+| **Logging debt (`console.*` → Pino)** | `StepExecutor.ts` (30 calls), `AIOperationResolver.ts` (3 calls) | D2, D3 |
 | Design intent | `docs/v6/V6_WORKFLOW_DATA_SCHEMA_DESIGN_REBASE.md` (L116, L163-165) | 1, 3 |
 
-**Fix-owners:** `v6-pipeline` (Items 1-3, Item 4 compile-time advisory, Item 8 generation slice, Item 9 reference-shape slice, **Item 11 generation wiring**), **shared plugin-execution layer** (Item 4 runtime guard), **`lib/pilot` StepExecutor** (Item 9 `transformFlatten` runtime slice; Item 8 resolver-hardening slice — placement pending SA Round 3), `calibration` (Items 5-6, 7, 10, G1 verdict plumbing). The Phase 0 shared core's home is SA's call.
+**Fix-owners:** `v6-pipeline` (Items 1-3, Item 4 compile-time advisory + C1, Item 8 generation slice/B3, Item 9 reference-shape slice/B4, **Item 11 generation wiring**, D2-D4, D7), **shared plugin-execution layer** (Item 4 runtime guard), **`lib/pilot` StepExecutor** (Item 9 `transformFlatten` runtime slice; Item 8 resolver-hardening slice — placement pending SA Round 3), `calibration` (Items 5-6, 7, 10, G1 verdict plumbing, A1-A3, D5, D6, **D8**), `QA` (D1). The Phase 0 shared core's home is SA's call.
 
 **Suggested WP linkage for the Dev (do not edit these tracking files as part of this requirement):** Items 1-3, 7, 8, 9 belong to the WP-18 / WP-56 field-fidelity family; **Item 11 is the WP-58 multi-input AI-wiring family**; the RCA proposes new WP entries for the object-handoff (Item 8), flatten carry-forward (Item 9), and coverage-floor (Item 6) cases. Items 6/10 are the calibration false-green family. The Dev should reference (and, when a fix lands, update per the V6 Work Protocol) WEAK_POINTS.md and `V6_OPEN_ITEMS.md` — the BA does not modify those files.
 
@@ -510,58 +615,6 @@ This decomposes into three testable sub-guarantees:
 
 ---
 
-## SA Batch 3 Design — generation-side fixes
-
-**Reviewed by SA — 2026-07-12** · Design + sequencing pass for the final batch (V6 generation/compiler side). Consulted per V6 Work Protocol: `V6_DESIGN_PRINCIPLES.md` (P1 runtime tolerance, P6 no plugin-hardcoding, P7 fix-at-root-cause, P8 exercise semantics, P11 don't-hide-failure, Anti-pattern D over-correction), `WEAK_POINTS.md` (WP-56 field-fidelity family; **WP-58** multi-input AI wiring — documented + deferred P3, the exact machinery Item 11 needs), and the two live re-run RCAs. Verified the shipped shared core (`lib/schema-reconciliation/` — `normalizeFieldName`, `isSameFieldDifferentSpelling`, `indexProducerFields`, `reconcileAgainstIndex`, `ReconciliationResult`; **no call sites wired yet** — exactly as the "one core, four+ call sites" constraint intends). Advisory/design only.
-
-### 1. Resolved SA Round 3 placement questions (Items 8 / 9 / 11)
-
-- **Item 8 (object handoff):** confirmed split. The **runtime resolver slice already shipped (batch 1)** is the existing-agent fix; the **generation binding slice ships in batch 3** (owner `v6-pipeline`) for new agents. Ruling detail below in 3C — the generation binding must be **annotation/semantic-driven, not a fuzzy name match**, because `file_content ← .data` is a *semantic role* mapping, not a spelling variant.
-- **Item 9 (parent-field carry-forward):** confirmed split. The **runtime `transformFlatten` slice is validated/shipped**; the **generation reference-shape slice ships in batch 3** (reference the actually-carried names so new agents don't reintroduce the mismatch). Low risk, additive.
-- **Item 11 (AI step missing its loop variable):** confirmed **needs both** a durable generation-wiring fix (new agents) **and** a one-shot in-place fix for `0ee53785` (it does **not** self-heal on recalibration). **Ruling on the in-place question (the doc's open Q):** for `0ee53785` now, apply a **targeted, scripted in-place DSL edit that is *derived from the same generation-wiring logic*** (add the referenced scatter loop variable to step7's input context + inject it as a labelled block) — reproducible and testable, **not** a hand-hacked JSON. **Do NOT** generalise this into the always-on calibration corrector in this batch: auto-injecting AI-step inputs into stored agents on every recalibration is a broader, riskier capability that needs its own design — **defer that generalisation to a later cycle.** So: durable generation fix (batch 3) + scripted in-place edit for `0ee53785` (batch 3) + calibration-corrector generalisation (later cycle).
-
-### 2. Recommended implementation sequence (sub-phased; Item 11 first)
-
-**Sub-phase 3A — Item 11 (PRIORITY: the last blocker on `0ee53785`'s green).**
-- **Phase/area:** IR converter (`IntentToIRConverter`) + AI resolver (`compiler/resolvers/AIOperationResolver`) + IR types (`declarative-ir-types-v4` — add `additional_inputs` to the AI config, mirroring the transform config that already has it). This is the **root-cause phase** (P7): the node-level `inputs` already carry the graph deps, but the AI config takes only the *first* as its prompt payload — the loop variable and other referenced vars survive as prose the model can't read as data.
-- **Approach (2-3 sentences):** When building an AI/processing step, determine its input context from the *union* of (a) the primary input and (b) every variable the instruction references — including the enclosing scatter's loop variable and any config/aggregate vars. Populate those into `additional_inputs`; have the resolver inject each as a **labelled `{{var}}` data block** in the prompt (the WP-58 fix shape). This is deterministic wiring, not a prompt nudge (constraint #2).
-- **Risk:** **MEDIUM** — it changes the AI prompt payload, so it changes AI output; the regression suite is content-blind (see §3).
-- **Reuses machinery:** **yes — the deferred WP-58 fix is exactly this mechanism.** Implement it generically and close WP-58 as part of Item 11.
-- **`0ee53785`:** after landing the generation fix, apply the scripted in-place edit (per §1) and recalibrate. Combined with the batch-1 coverage-floor redesign, this yields a fully-populated report + honest pass.
-
-**Sub-phase 3B — Items 1 (Gap A) + 2 (Gap B): the durable field-name reconciliation (the two remaining shared-core call sites).**
-- **Item 1 — phase/area:** Phase-2 `DataSchemaBuilder` (within `CapabilityBinderV2`). **Approach:** add a dedicated post-pass (alongside/after the existing derived-schema fixup, **not** inline in the per-step inference, and **not** overloading the shape-preserving fixup — SA Round-1 D1) that, for each `ai_declared` transform slot, **resolves the producer slot including dotted-path input resolution**, indexes the producer fields via the shared core (`indexProducerFields`), and reconciles the declared names via `reconcileAgainstIndex` — renaming same-field-different-spelling, leaving ambiguous/derived untouched. **The dotted-path resolver is mandatory** (`step.transform.input` is `expense_emails.emails`; a bare slot lookup no-ops exactly like O10a did). **Wire to `lib/schema-reconciliation` — no new copy.** **Risk: MEDIUM-HIGH** (most delicate code; touches the canonical schema; over-correction risk — Anti-pattern D).
-- **Item 2 — phase/area:** Phase-5 `ExecutionGraphCompiler` O10a `buildSchemaMap`/reconciler. **Approach:** fix the dotted-path key miss (resolve a dotted `config.input` to the producer schema so O10a actually runs) and extend the corrector to inspect **bare `condition.field` literals** (not only `{{var.field}}` templates). **Replace O10a's local `normalizeForFuzzy` copies with the shared core's normaliser** (consolidation, P5). **Risk: MEDIUM** (generic compiler-correctness; still a rewrite path — guard against rewriting an intentionally-different field).
-- **Reuses machinery:** both are the **generation + compiler call sites of the Phase-0 core** — confirm both import from `lib/schema-reconciliation` and add zero reconciliation logic of their own.
-
-**Sub-phase 3C — Items 8 & 9 durable generation bindings.**
-- **Item 8 — phase/area:** the field-binding step (IR converter / compiler param wiring). **Approach:** when a plugin-action object feeds another plugin action, bind the consumer's params to the producer's **specific fields** (`.data`/`.mimeType`/`.filename`) instead of the whole object into one scalar. **Critical principle call-out:** the `mime_type ← .mimeType` / `filename ← .filename` legs are fuzzy-matchable (reuse the shared core), but `file_content ← .data` is a **semantic-role mapping**, so drive it from the **plugin's semantic annotations** (the `x-semantic-type: file_attachment` mechanism WP-57 already established) — **never** a `if plugin === gmail` branch (P6 / Anti-pattern F). **Risk: MEDIUM.** **Scope flag:** this is clean only where the file-attachment output is annotated (Gmail/Drive are, per WP-57); generalising object-handoff binding to *un-annotated* plugins needs annotation work first — see §4.
-- **Item 9 — phase/area:** IR converter / `DataSchemaBuilder` reference-shape. **Approach:** generation references the parent-field names the flatten actually carries, so new agents don't reintroduce the blank-column mismatch. **Risk: LOW-MEDIUM** (additive).
-
-**Sub-phase 3D — Item 4 compile-time advisory.**
-- **Phase/area:** generation/compile surface (the runtime clamp already shipped in batch 2). **Approach:** a small **non-blocking** advisory — "value out of range, fix the source" — reading the same plugin-declared constraints the batch-2 guard reads. Deterministic, never gates the build (SA Round-2). **Risk: LOW.** **Reuses:** the batch-2 constraint reader.
-
-### 3. Regression risk on existing passing scenarios (the suite is content-blind)
-
-The RCA is explicit that Phase E "success" means "ran end-to-end," not "produced correct content" (P8/P9). Every content-affecting item below can turn a currently-passing scenario into a **green-but-wrong** regression that the suite won't catch. Required added coverage:
-
-- **Item 11 (highest exposure):** the prompt payload change alters AI output. **Dev must add a content-asserting test** — a scatter + AI-row-builder scenario asserting the referenced loop-var columns are **populated (non-empty)**, not merely that the step ran. (This is the P8/WP-43 lesson: assert semantics, not shape.)
-- **Item 1 (Gap A):** the reconciler could **over-rename a legitimate derived field** (Anti-pattern D / WP-32) and silently corrupt a passing scenario. **Dev must add:** (a) the invariant test (no `ai_declared` transform slot keeps a fuzzy-overlapping-but-differently-spelled field), (b) the negative test (a genuine derived field with no producer counterpart survives untouched), (c) **run every existing regression scenario's phase4 snapshot through the new pass and diff — any field-name change on a currently-passing scenario must be explicitly justified.**
-- **Item 2 (Gap B):** dotted-path + bare-`condition.field` rewriting could rewrite a field that was intentionally different. **Dev must add:** a dotted-path schema-map unit test **and** a "correct condition.field left untouched" test.
-- **Item 8:** the binding change could misroute a param on a plugin whose handoff previously worked (accidentally) via the runtime resolver. **Dev must add** a plugin→plugin object-handoff scenario asserting each bound param receives the correct sub-field.
-- **Item 9:** additive; assert the new-agent DSL references the carried names.
-
-### 4. In-batch vs later cycle
-
-- **In this batch:** Items 11, 1, 2, 8 (annotated-plugin scope), 9, 4-advisory; the scripted in-place edit for `0ee53785`.
-- **Defer to a later cycle:** (a) **generalising Item 11 into the always-on calibration corrector** (auto-injecting AI-step inputs during recalibration — broader/riskier, not needed for `0ee53785`); (b) **Item 8 object-handoff binding for *un-annotated* plugins** — gated on completing `x-semantic-type` file-attachment annotations across the plugin set (doing it without annotations would force a plugin-name branch, which P6 forbids); (c) any residual WP-58 polish beyond the referenced-var wiring (e.g. dead aggregate-step cleanup) if it isn't cheap to fold in.
-
-### 5. Path to a green run on `0ee53785`
-
-The data path is already repaired **in place** by the batch-1 runtime slices (Item 8 resolver, Item 9 flatten) and given a fair verdict by the batch-1 coverage-floor redesign. The **only remaining blocker is Item 11** (blank From/Subject/Filename columns), which does not self-heal. So the path to green is: **land Item 11's generation-wiring fix (3A) → apply the scripted in-place DSL edit derived from it to `0ee53785` → recalibrate.** That produces a fully-populated expense report and an honest passing verdict **without regeneration.** Items 1/2/8/9 generation slices make a *regenerated* `0ee53785` (and all new agents) correct at creation, but they are **not** on this specific agent's critical path to green — Item 11 is.
-
----
-
 ## Change History
 
 | Date | Change | Details |
@@ -572,4 +625,6 @@ The data path is already repaired **in place** by the batch-1 runtime slices (It
 | 2026-07-10 | SA Round-2 rulings | Reworked Item 4 into a NON-BLOCKING runtime clamp-and-warn guard; removed out-of-range param from G1a blocking-class. Added Item 7 (in-place corrector) with three G1 safety conditions + "corrected, not yet verified" verdict state. Added constraint #5 (one reconciliation core). |
 | 2026-07-10 | User-directed delivery order | Added "Process / Review Gates" and the authoritative "Implementation Order (Dev delivery phases)": Phase 0 shared core → Phase 1 calibration → Phase 2 plugin guard → Phase 3 agent-creation. Retitled Priority Ordering as SA value/dependency rationale; tagged each item with its delivery phase. |
 | 2026-07-11 | Live re-run RCA fold-in | Added Item 8 (plugin→plugin object handoff), Item 9 (flatten parent-field carry-forward), Item 10 (surface an all-failed/all-empty step); extended Item 6 + tightened G1c with the Finding-4 data-quality coverage floor. Added the North-Star Success Criterion. |
-| 2026-07-11 | Live re-run #2 fold-in | Folded the two Re-run #2 findings. **Q1 → NEW Item 11** (an `ai_processing` step inside a scatter must be handed the loop variable it references; blank From/Subject/Filename columns; distinct from the now-fixed Item 9; WP-58 family) — Phase 3 generation, needs an in-place DSL edit, does NOT self-heal. **Q2 → folded into Item 6**, reframed as a **both-direction** coverage floor with ONE meaningful-pre-delivery-data signal (fixes both the too-lenient Re-run #1 all-blank case and the too-strict Re-run #2 send-terminating case; three ACs: all-blank still fails, uncounted scalar send can pass, partial → needs_review with columns named) — Phase 1, fix now. Updated North-Star (clean pass needs Item 11 + Item 6), Concrete Failing Example, Implementation Order, G1c (both directions), Integration Points, Fix-owners, and Open Questions (meaningful-value signal; send-executed signal; Item 11 in-place vs generation). Noted Item 9's runtime slice is confirmed working in Re-run #2. |
+| 2026-07-11 | Live re-run #2 fold-in | Folded the two Re-run #2 findings. Q1 → NEW Item 11 (an `ai_processing` step inside a scatter must be handed the loop variable it references; WP-58 family) — Phase 3 generation, needs an in-place DSL edit, does NOT self-heal. Q2 → folded into Item 6, reframed as a both-direction coverage floor with ONE meaningful-pre-delivery-data signal (three ACs). Updated North-Star, Concrete Failing Example, Implementation Order, G1c, Integration Points, Fix-owners, Open Questions. |
+| 2026-07-12 | Consolidated backlog | Added the top-level **"Consolidated Implementation Backlog (2026-07-12)"** — the single authoritative prioritized to-do list. Group A (unblock calibration finish: A1 wizard dead-end, A2 coverage-floor real-data wiring, A3 cosmetic-only → passed-with-suggestions), Group B (generation correctness: B1=Item 1, B2=Item 2, B3=Item 8 gen, B4=Item 9 gen), Group C (C1=Item 4 compile-time + schema-summary fix, C2 auto-parameterize invented literals), Group D (D1-D7 hardening/debt). Added AC lines for all NEW items, a backlog→Item map, recommended sequence (A→C→B→D), and the per-group review-gate process. Tagged existing Items with their backlog IDs. |
+| 2026-07-13 | Backlog D8 added | Appended **D8** to Group D — security sweep to owner-scope (`user_id`) every `agents` write under `app/api/v2/calibrate/**` (or route via `AgentRepository`), with a regression guard. Recurring mandatory-rule violation that surfaced four times this cycle (two batch writes + apply-fixes L1320 fixed; batch ~L4657 still open). Added its AC, backlog→Item map row, an Integration-Points row, Fix-owner (calibration), and a cross-note on Item 7's write. |
