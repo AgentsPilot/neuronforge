@@ -93,7 +93,8 @@ export async function POST(req: NextRequest) {
         pilot_steps: session.backup_pilot_steps,
         updated_at: new Date().toISOString()
       })
-      .eq('id', session.agent_id);
+      .eq('id', session.agent_id)
+      .eq('user_id', agent.user_id); // D8: owner-scoped write (agent loaded + validated above)
 
     if (updateError) {
       logger.error({ agentId: agent.id, error: updateError }, 'Failed to restore backup');

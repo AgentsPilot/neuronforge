@@ -45,6 +45,9 @@ interface CalibrationSuccessProps {
   // passed-with-suggestions run. Sourced from the verdict result (never
   // re-derived). Empty for a clean pass → the "Perfect Workflow" badge shows.
   optionalSuggestions?: PassSuggestion[]
+  // D10: set true right after a successful "make it a reusable parameter" repair,
+  // so the screen confirms the change (the suggestion is cleared separately).
+  parameterizationSucceeded?: boolean
 }
 
 export function CalibrationSuccess({
@@ -59,7 +62,8 @@ export function CalibrationSuccess({
   hasParameterizedWorkflow = false,
   configurationSaved = false,
   onSaveConfiguration,
-  optionalSuggestions = []
+  optionalSuggestions = [],
+  parameterizationSucceeded = false
 }: CalibrationSuccessProps) {
   const [isSaving, setIsSaving] = React.useState(false)
   const [suggestionsDismissed, setSuggestionsDismissed] = React.useState(false)
@@ -154,6 +158,27 @@ export function CalibrationSuccess({
           </div>
         )}
       </Card>
+
+      {/* D10: success affordance after "make it a reusable parameter". The repair
+          succeeded server-side; confirm it here so the user isn't left on the same
+          screen with no feedback. Non-blocking, distinct from the amber suggestion. */}
+      {parameterizationSucceeded && (
+        <Card className="border-[var(--v2-success-border)] bg-[var(--v2-success-bg)] !p-4 sm:!p-5">
+          <div className="flex items-start gap-3">
+            <div className="flex-shrink-0 inline-flex items-center justify-center w-9 h-9 rounded-full bg-[var(--v2-success-bg)] border border-[var(--v2-success-border)]">
+              <CheckCircle2 className="w-5 h-5 text-[var(--v2-success-icon)]" />
+            </div>
+            <div>
+              <h3 className="text-base font-semibold text-[var(--v2-success-text)]">
+                Parameter created
+              </h3>
+              <p className="text-xs text-[var(--v2-text-secondary)]">
+                The hardcoded value is now a reusable input parameter — you can change it any time without editing the workflow.
+              </p>
+            </div>
+          </div>
+        </Card>
+      )}
 
       {/* A3: Optional, non-blocking cosmetic suggestions (dismissible). Visually
           distinct from a blocking issue (info/amber, not red), and NEVER gates

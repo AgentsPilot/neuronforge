@@ -21,6 +21,13 @@ export interface SendEmailParams {
   to: string[];
   subject: string;
   html: string;
+  /**
+   * D9: optional plaintext alternative. When omitted, the transport auto-generates
+   * one from `html` so every send is proper `multipart/alternative` (HTML + text)
+   * — never single-part `text/html`, which renders inconsistently across clients.
+   * Callers do NOT need to supply this; the transport degrades gracefully.
+   */
+  text?: string;
   /** Resend honors this (verified domain required); Gmail always sends from GMAIL_USER. */
   from?: string;
   /**
@@ -35,6 +42,48 @@ export interface SendEmailResult {
   sent: boolean;
   provider: 'resend' | 'gmail' | 'gmail-plugin' | 'none';
   error?: string;
+}
+
+/**
+ * D9: derive a readable plaintext alternative from an HTML document. Deliberately
+ * dependency-free (no html-to-text lib): drop non-content elements, turn block-level
+ * boundaries into newlines, strip the remaining tags, decode the common entities,
+ * and collapse whitespace. Good enough for a plaintext MIME part; the HTML part
+ * remains the primary render.
+ */
+export function htmlToText(html: string): string {
+  if (!html) return '';
+  return html
+    // Remove elements whose text content is not human-readable body copy.
+    .replace(/<(style|script|head|title)[^>]*>[\s\S]*?<\/\1>/gi, '')
+    // Line breaks and block boundaries → newlines.
+    .replace(/<br\s*\/?>(?=\s*)/gi, '\n')
+    .replace(/<\/(p|div|tr|li|h[1-6]|table|thead|tbody|section|header|footer|ul|ol)>/gi, '\n')
+    // Strip all remaining tags.
+    .replace(/<[^>]+>/g, '')
+    // Decode the entities our templates actually emit.
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    // Collapse whitespace: trim each line, cap consecutive blank lines.
+    .replace(/[ \t]+/g, ' ')
+    .split('\n')
+    .map(line => line.trim())
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+/**
+ * D9: the plaintext part to send. Prefer a caller-supplied `text`; otherwise
+ * auto-generate from the HTML so the message is always multipart/alternative.
+ */
+function resolveText(p: SendEmailParams): string {
+  const supplied = p.text?.trim();
+  return supplied || htmlToText(p.html);
 }
 
 function resendConfigured(): boolean {
@@ -63,6 +112,7 @@ async function sendViaResend(p: SendEmailParams): Promise<void> {
       to: p.to,
       subject: p.subject,
       html: p.html,
+      text: resolveText(p), // D9: multipart/alternative — plaintext part alongside HTML
     }),
   });
   if (!res.ok) {
@@ -106,6 +156,7 @@ async function sendViaGmail(p: SendEmailParams): Promise<void> {
     to: p.to.join(', '),
     subject: p.subject,
     html: p.html,
+    text: resolveText(p), // D9: multipart/alternative — nodemailer builds both parts
   });
 }
 
@@ -154,14 +205,10 @@ export async function sendEmail(p: SendEmailParams): Promise<SendEmailResult> {
     }
   }
 
-  // 4. Nothing configured / all failed → console preview, report not sent
+  // 4. Nothing configured / all failed → report not sent (structured Pino only)
   logger.warn(
     { to: p.to, subject: p.subject, errors: errors.length ? errors : undefined },
     'No email transport delivered the message (preview only)'
   );
-  console.warn('📧 [EmailTransport] Email NOT sent — no working transport. Preview:', {
-    to: p.to,
-    subject: p.subject,
-  });
   return { sent: false, provider: 'none', error: errors.join('; ') || 'no email transport configured' };
 }

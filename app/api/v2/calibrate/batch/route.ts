@@ -190,6 +190,15 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // D8 (security sweep) — SINGLE owner reference for every `agents` write in this
+    // route. `supabase` may be the service-role client (admin-initiated runs bypass
+    // RLS), so an `.eq('id', agentId)`-only write is NOT owner-scoped. EVERY
+    // `.from('agents').update(...)` below MUST also `.eq('user_id', ownerId)` (or go
+    // through AgentRepository). `ownerId` is the loaded+authorized agent's owner, so
+    // the scope always matches the row we validated. Do not add a new agents write
+    // without this filter.
+    const ownerId = agent.user_id;
+
     // Capture context for the Phase 2 calibration tail (used in `finally`).
     // Captured for ALL runs (not just background) so a manual sandbox pass also
     // clears the gate; the email itself is still background-only.
@@ -651,7 +660,8 @@ export async function POST(req: NextRequest) {
           input_schema: agent.input_schema,
           updated_at: new Date().toISOString()
         })
-        .eq('id', agentId);
+        .eq('id', agentId)
+        .eq('user_id', ownerId); // D8: owner-scoped write
 
       if (updateError) {
         logger.error({ error: updateError, sessionId, agentId }, 'Failed to persist pre-flight fixes');
@@ -1052,7 +1062,8 @@ export async function POST(req: NextRequest) {
           input_schema: agent.input_schema,
           updated_at: new Date().toISOString()
         })
-        .eq('id', agentId);
+        .eq('id', agentId)
+        .eq('user_id', ownerId); // D8: owner-scoped write
 
       if (updateError) {
         logger.error({ error: updateError, sessionId, agentId }, 'Failed to persist Layer 2 fixes');
@@ -1121,7 +1132,8 @@ export async function POST(req: NextRequest) {
         await supabase
           .from('agents')
           .update({ pilot_steps: agent.pilot_steps, updated_at: new Date().toISOString() })
-          .eq('id', agentId);
+          .eq('id', agentId)
+          .eq('user_id', ownerId); // D8: owner-scoped write
         logger.info({ sessionId, agentId, scatterAutoFixCount },
           '[ScatterItemField] Persisted auto-applied field-ref fixes before dry-run');
       }
@@ -1829,7 +1841,8 @@ export async function POST(req: NextRequest) {
               pilot_steps: updatedSteps,
               updated_at: new Date().toISOString()
             })
-            .eq('id', agentId);
+            .eq('id', agentId)
+            .eq('user_id', ownerId); // D8: owner-scoped write
 
           autoFixesApplied += fixesAppliedThisRound;
 
@@ -3281,7 +3294,8 @@ export async function POST(req: NextRequest) {
                 pilot_steps: updatedSteps,
                 updated_at: new Date().toISOString()
               })
-              .eq('id', agentId);
+              .eq('id', agentId)
+              .eq('user_id', ownerId); // D8: owner-scoped write
 
             currentAgent.pilot_steps = updatedSteps;
             autoFixesApplied += finalFixesApplied;
@@ -4129,7 +4143,8 @@ export async function POST(req: NextRequest) {
             pilot_steps: updatedSteps,
             updated_at: new Date().toISOString()
           })
-          .eq('id', agentId);
+          .eq('id', agentId)
+          .eq('user_id', ownerId); // D8: owner-scoped write
 
         autoFixesApplied += fixesAppliedThisRound;
 
@@ -4663,7 +4678,8 @@ export async function POST(req: NextRequest) {
             last_successful_calibration_id: historyRecord.id,
             updated_at: new Date().toISOString()
           })
-          .eq('id', agentId);
+          .eq('id', agentId)
+          .eq('user_id', ownerId); // D8: owner-scoped write (was the known-open unscoped instance)
 
         logger.info({ sessionId, agentId }, 'Agent automatically approved for production after successful calibration');
       }
@@ -4910,7 +4926,8 @@ export async function POST(req: NextRequest) {
         workflow_hash: currentWorkflowHash,
         updated_at: new Date().toISOString()
       })
-      .eq('id', agentId);
+      .eq('id', agentId)
+      .eq('user_id', ownerId); // D8: owner-scoped write
 
     logger.info({ sessionId, agentId }, 'Batch calibration completed successfully');
 

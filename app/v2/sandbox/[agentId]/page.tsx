@@ -17,6 +17,7 @@ import { useRouter, useParams } from 'next/navigation'
 import { useAuth } from '@/components/UserProvider'
 import { supabase } from '@/lib/supabaseClient'
 import { canFinishCalibration, getPassSuggestions, type PassSuggestion } from '@/lib/calibration/finishGate'
+import { deriveHardcodeState } from '@/lib/calibration/hardcodeState'
 import { V2Logo, V2Controls } from '@/components/v2/V2Header'
 import { HelpBot } from '@/components/v2/HelpBot'
 import { PageLoading } from '@/components/v2/ui/loading'
@@ -81,6 +82,9 @@ export default function BatchCalibrationPage() {
   const [detectionResult, setDetectionResult] = useState<DetectionResult | null>(null)
   const [showParameterizationWizard, setShowParameterizationWizard] = useState(false)
   const [userDeclinedParameterization, setUserDeclinedParameterization] = useState(false)
+  // D10: success affordance — set true after a successful repair-hardcode so the
+  // success screen confirms the value became a reusable parameter.
+  const [parameterizationSucceeded, setParameterizationSucceeded] = useState(false)
   const [inputValues, setInputValues] = useState<Record<string, any>>({})
   const [schemaMetadata, setSchemaMetadata] = useState<Record<string, any[]> | null>(null)
   const [configurationSaved, setConfigurationSaved] = useState(false)
@@ -296,13 +300,12 @@ export default function BatchCalibrationPage() {
         }
 
         const detection = detector.detect(data.pilot_steps, resolvedUserInputs)
-        const totalDetected = (detection.resource_ids?.length || 0) +
-                            (detection.business_logic?.length || 0) +
-                            (detection.configuration?.length || 0)
-        if (totalDetected > 0) {
-          setDetectionResult(detection)
-          setHasHardcodedValues(true)
-        }
+        // D10: clear-on-empty. Previously this only set state when hardcodes were
+        // found (no else), so a resolved hardcode (post-parameterization) stayed
+        // stale. deriveHardcodeState clears both fields when nothing is detected.
+        const { hasHardcodedValues: hc, detectionResult: dr } = deriveHardcodeState(detection)
+        setDetectionResult(dr)
+        setHasHardcodedValues(hc)
       }
     } catch (err: any) {
       console.error('Failed to load agent:', err)
@@ -1101,9 +1104,22 @@ export default function BatchCalibrationPage() {
         const result = await response.json()
         console.log('[Calibration] Parameterization successful:', result)
 
+        // D10: reflect the applied change in the UI (the endpoint already succeeded).
+        // 1) Clear the now-resolved cosmetic suggestion from the success screen. On a
+        //    passing run these suggestions are exactly the hardcode/parameterization
+        //    notes (Item 6a tight allow-list), which we just resolved; loadAgent's
+        //    fresh re-detection below re-surfaces any hardcode that genuinely remains.
+        setPassSuggestions([])
+        // 2) Optimistically reset detection state so the stale "hardcoded" affordance
+        //    disappears immediately; loadAgent reconciles it from the new DSL.
+        setDetectionResult(null)
+        setHasHardcodedValues(false)
+        // 3) Show a clear success affordance instead of silently reloading.
+        setParameterizationSucceeded(true)
+
         // After parameterization, mark as declined so we show the approve button
         setUserDeclinedParameterization(true)
-        // Reload agent to get updated workflow
+        // Reload agent to get updated workflow (re-detects against the new DSL)
         await loadAgent()
       } catch (error) {
         console.error('[Calibration] Parameterization error:', error)
@@ -1302,6 +1318,7 @@ export default function BatchCalibrationPage() {
               configurationSaved={configurationSaved}
               onSaveConfiguration={handleSaveConfiguration}
               optionalSuggestions={passSuggestions}
+              parameterizationSucceeded={parameterizationSucceeded}
             />
           )}
 
