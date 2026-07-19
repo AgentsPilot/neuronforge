@@ -876,17 +876,20 @@ If you claim "filtering for X" in the description, you must either:
         "name": "field_a",
         "type": "date",
         "required": true,
+        "source"?: "document",   // where this field's value comes from (see §6.4)
         "description"?: "date field description"
       },
       {
         "name": "field_b",
         "type": "number",
-        "required": true
+        "required": true,
+        "source"?: "document"
       },
       {
         "name": "field_c",
         "type": "string",
-        "required": false
+        "required": false,
+        "source"?: "meta"        // e.g. the file's name — not on the document surface
       }
     ],
     "deterministic"?: boolean,  // true = use deterministic extraction (no AI)
@@ -933,6 +936,40 @@ a chat/Slack message, or a plain-text/markdown file, there are no binary bytes t
 the text and let a \`generate\`/AI step parse it; a \`document\` extractor is unnecessary there.
 (If a source already carries the bytes inline — e.g. an email attachment with base64 content —
 feed that to the \`document\` extractor directly.)
+
+**DECLARE EACH FIELD'S \`source\` (steer for deterministic-vs-AI routing — WP-62).**
+For every field in a \`document\` \`extract\`, add a \`source\` telling the compiler where the
+value comes from. Reliable downstream code makes the *authoritative* deterministic-vs-AI
+decision from these declarations (and the connected plugins) — this is a steer, not the final
+say — so declaring \`source\` accurately lets a genuinely-covered extraction bind the
+deterministic extractor reproducibly:
+- \`"document"\` — a value read directly OFF the document/file surface (an invoice's vendor,
+  amount, date, currency, line item). These are what the OCR extractor produces.
+- \`"meta"\` — provenance about the file/container or the extraction process, NOT on the
+  document surface (e.g. the attachment's \`source_filename\`, extraction \`notes\`).
+- \`"computed"\` — a derived / normalized / categorized / cross-record value that needs
+  reasoning (e.g. an \`expense_category\` label, a normalized amount, a total across files).
+
+**Keep the extract to \`source:"document"\` fields; split \`meta\`/\`computed\` fields into a
+SEPARATE \`generate\` step** that consumes the extract's output. Point the extract's \`input\`
+at the file's **bytes field** (the base64 content), not the whole wrapper object.
+
+✅ **RIGHT — document extract (surface fields) + a separate generate (normalization):**
+\`\`\`json
+{ "id": "extract", "kind": "extract", "uses": [{ "capability": "extract_structured_data", "domain": "document" }],
+  "extract": { "input": "attachment_content",
+               "fields": [ { "name": "vendor", "type": "string", "source": "document" },
+                           { "name": "amount", "type": "currency", "source": "document" },
+                           { "name": "date",   "type": "date",     "source": "document" } ] },
+  "output": "extracted" }
+{ "id": "normalize", "kind": "generate", "uses": [{ "capability": "generate", "domain": "internal" }],
+  "generate": { "input": "extracted", "reason": "categorize + attach file metadata the OCR extractor cannot produce",
+                "instruction": "Add expense_category (computed) and source_filename (meta); copy the extracted fields through unchanged.",
+                "outputs": [ { "name": "expense_category", "type": "string" }, { "name": "source_filename", "type": "string" } ] },
+  "output": "expense_record" }
+\`\`\`
+(If you fold \`meta\`/\`computed\` fields INTO the extract anyway, reliable code will still split
+them out — but declaring \`source\` and splitting yourself keeps the plan clean.)
 
 ### 6.4.1) NESTED FIELD SHAPE (WP-15) — REQUIRED for arrays/objects
 

@@ -26,6 +26,13 @@ import { createLogger } from '@/lib/logger'
 import { SubsetRefResolver, type SubsetResolutionResult } from './SubsetRefResolver'
 import { DataSchemaBuilder } from './DataSchemaBuilder'
 import { InputTypeChecker } from './InputTypeChecker'
+import {
+  evaluateExtractionCoverage,
+  outputSchemaIsFileAttachment,
+  baseVarOfRef,
+  type ExtractCoverageVerdict,
+  type CoverageField,
+} from './ExtractionCoverage'
 
 const logger = createLogger({ module: 'CapabilityBinderV2', service: 'V6' })
 
@@ -42,6 +49,13 @@ export type BoundStep = IntentStep & {
   _ranked_candidates?: ActionCandidate[]
   /** Direction #3: Candidates rejected by input-type check */
   rejected_candidates?: Array<{ plugin_key: string; action_name: string; rejection_reason: string }>
+  /**
+   * WP-62: authoritative deterministic-vs-AI extraction coverage verdict for an
+   * `extract` step, authored by Phase 2c (`routeExtractionCoverage`). The IR
+   * converter HONORS this verdict — it does not recompute coverage (Q1
+   * anti-double-decision guard).
+   */
+  extract_coverage?: ExtractCoverageVerdict
 }
 
 export type BoundIntentContract = IntentContract & {
@@ -200,6 +214,14 @@ export class CapabilityBinderV2 {
     // requirements (from_type) match the source slot's semantic type.
     // If the top candidate fails, try the next-ranked one.
     this.validateInputTypeCompatibility(boundSteps, dataSchema)
+
+    // WP-62 — Phase 2c: Deterministic-vs-AI extraction coverage routing.
+    // The AUTHORITATIVE coverage-then-bind decision. Runs AFTER Phase 2b so it is
+    // the single, final decision-maker for every `extract` step: it either
+    // authors a live deterministic document-extractor binding (covered) or leaves
+    // the step unbound so the converter's AI branch fires (not covered). The IR
+    // converter only HONORS this verdict (Q1 — no double-decision).
+    this.routeExtractionCoverage(boundSteps, connectedPlugins, dataSchema)
 
     // Clean up internal-only fields before returning — _ranked_candidates
     // holds full ActionDefinition/PluginDefinition objects that would bloat
@@ -892,6 +914,179 @@ export class CapabilityBinderV2 {
       'input_type_incompatible',
     ]
     step.rejected_candidates = rejections
+  }
+
+  /**
+   * WP-62 — Phase 2c: deterministic-vs-AI extraction coverage routing.
+   *
+   * For every `extract` step (including loop/decide/parallel-nested), runs the
+   * schema-driven coverage predicate and AUTHORS the verdict:
+   *  - covered  → live binding to the connected deterministic document-extractor
+   *               (surface fields), with the meta/computed split recorded for the
+   *               converter to synthesize a downstream AI step (CC-3a).
+   *  - not covered → leave the step unbound so the converter's AI branch fires
+   *               (the safety net, unchanged).
+   *
+   * Plugin-agnostic: the extractor is discovered from plugin *schema*
+   * (domain+capability), and field producibility is judged from each field's
+   * DECLARED SOURCE — never from field-name or plugin-identity lists.
+   */
+  private routeExtractionCoverage(
+    boundSteps: BoundStep[],
+    connectedPlugins: Record<string, any>,
+    dataSchema: WorkflowDataSchema,
+  ): void {
+    // Build output-ref → producing step map across ALL scopes so a loop-internal
+    // producer (the scatter `get_email_attachment → extract` shape) resolves
+    // correctly — the RCA's gate-1 fix (loop-internal producer was missed).
+    // NOTE: `(s as any).loop?.do` etc. mirror the untyped nested-step traversal used
+    // throughout this file (findUnboundSteps / validateInputTypeCompatibility) — the
+    // BoundStep union doesn't expose the control-flow bodies structurally. (SA Nit #6.)
+    const producerByOutput = new Map<string, BoundStep>()
+    const collectProducers = (steps: BoundStep[]): void => {
+      for (const s of steps) {
+        if (s.output) producerByOutput.set(s.output, s)
+        if ((s as any).loop?.do) collectProducers((s as any).loop.do)
+        if ((s as any).decide?.then) collectProducers((s as any).decide.then)
+        if ((s as any).decide?.else) collectProducers((s as any).decide.else)
+        if ((s as any).parallel?.branches) {
+          for (const b of (s as any).parallel.branches) if (b?.steps) collectProducers(b.steps)
+        }
+      }
+    }
+    collectProducers(boundSteps)
+
+    const walk = (steps: BoundStep[]): void => {
+      for (const step of steps) {
+        if (step.kind === 'extract') {
+          this.applyExtractionCoverageVerdict(step, connectedPlugins, dataSchema, producerByOutput)
+        }
+        if ((step as any).loop?.do) walk((step as any).loop.do)
+        if ((step as any).decide?.then) walk((step as any).decide.then)
+        if ((step as any).decide?.else) walk((step as any).decide.else)
+        if ((step as any).parallel?.branches) {
+          for (const b of (step as any).parallel.branches) if (b?.steps) walk(b.steps)
+        }
+      }
+    }
+    walk(boundSteps)
+  }
+
+  /**
+   * Resolve CC-1 (is the extract input a document/file?) and author the coverage
+   * verdict onto a single extract step.
+   */
+  private applyExtractionCoverageVerdict(
+    step: BoundStep,
+    connectedPlugins: Record<string, any>,
+    dataSchema: WorkflowDataSchema,
+    producerByOutput: Map<string, BoundStep>,
+  ): void {
+    const extract = (step as any).extract
+    if (!extract) return
+
+    const inputRef: string | undefined = typeof extract.input === 'string' ? extract.input : undefined
+    const fields: CoverageField[] = Array.isArray(extract.fields) ? extract.fields : []
+
+    // CC-1 — resolve the input's producer output schema (loop-internal aware),
+    // then fall back to the data_schema slot if the producer can't be located.
+    const inputIsFile = this.extractInputIsFile(inputRef, producerByOutput, dataSchema)
+
+    const verdict = evaluateExtractionCoverage({
+      fields,
+      fileTypes: extract.content_hints?.file_types,
+      inputIsFile,
+      connectedPlugins,
+    })
+
+    step.extract_coverage = verdict
+
+    if (verdict.covered && verdict.deterministicPlugin) {
+      // Author a live deterministic binding (surface subset).
+      step.plugin_key = verdict.deterministicPlugin.pluginKey
+      step.action = verdict.deterministicPlugin.action
+      step.binding_confidence = 1.0
+      step.binding_method = 'exact_match'
+      step.binding_reason = [
+        ...(step.binding_reason || []),
+        `✅ [WP-62] Extraction coverage: ${verdict.reason}`,
+      ]
+      // A live binder-authored binding is not subject to the Phase-2b rejection
+      // reroute in the converter — clear any stale incompatibility reason.
+      step.rejected_candidates = undefined
+      logger.info(
+        {
+          step_id: step.id,
+          plugin: step.plugin_key,
+          action: step.action,
+          surfaceFields: verdict.surfaceFields.map((f) => f.name),
+          residualFields: verdict.residualFields.map((f) => f.name),
+          decidingCriterion: verdict.decidingCriterion,
+        },
+        '[WP-62/Phase2c] Extract covered by deterministic document-extractor — bound',
+      )
+    } else {
+      // Not covered → leave unbound; converter routes to the AI branch (net preserved).
+      step.plugin_key = undefined
+      step.action = undefined
+      step.binding_method = 'unbound'
+      step.binding_reason = [
+        ...(step.binding_reason || []),
+        `[WP-62] extraction_not_covered:${verdict.decidingCriterion}`,
+      ]
+      logger.info(
+        {
+          step_id: step.id,
+          decidingCriterion: verdict.decidingCriterion,
+          reason: verdict.reason,
+        },
+        '[WP-62/Phase2c] Extract not covered by a deterministic extractor — routing to AI (net preserved)',
+      )
+    }
+  }
+
+  /**
+   * CC-1 signal: does the extract's input resolve to a document/file (bytes-bearing
+   * / file_attachment) source? Prefers the producer step's bound action output
+   * schema (robust for loop-internal producers); falls back to the data_schema slot.
+   *
+   * SA Finding #1: the input ref is NORMALIZED to its base variable first (strip
+   * `{{ }}`, drop a dotted field tail) via the SHARED `baseVarOfRef`. Without this,
+   * the WELL-PHRASED plan the B1 steer produces — `extract.input` pointed at the
+   * bytes field, e.g. `{{attachment_content.data}}` — would miss its producer and
+   * be misjudged "not a file" → AI fallback (the exact inversion this WP kills).
+   * Sharing `baseVarOfRef`/`outputSchemaIsFileAttachment` with the converter's
+   * `inputLooksLikeFileAttachment` keeps the two in lockstep (no dead B3 code).
+   */
+  private extractInputIsFile(
+    inputRef: string | undefined,
+    producerByOutput: Map<string, BoundStep>,
+    dataSchema: WorkflowDataSchema,
+  ): boolean {
+    if (!inputRef) return false
+
+    const baseVar = baseVarOfRef(inputRef)
+    // Try both the raw ref and the normalized base variable at each lookup, so a
+    // dotted bytes-field ref (`{{x.data}}`) resolves to its `x` producer.
+    const refKeys = Array.from(new Set([inputRef, baseVar]))
+
+    // Primary: the producing step's bound action output schema (B2 annotation lands here).
+    for (const key of refKeys) {
+      const producer = producerByOutput.get(key)
+      if (producer?.plugin_key && producer?.action) {
+        const def = this.pluginManager.getPluginDefinition(producer.plugin_key)
+        const outputSchema = (def as any)?.actions?.[producer.action]?.output_schema
+        if (outputSchema && outputSchemaIsFileAttachment(outputSchema)) return true
+      }
+    }
+
+    // Fallback: the data_schema slot for this ref (semantic_type / bytes fields).
+    for (const key of refKeys) {
+      const slot = (dataSchema as any)?.slots?.[key]
+      if (slot?.schema && outputSchemaIsFileAttachment(slot.schema)) return true
+    }
+
+    return false
   }
 
   /**

@@ -1,0 +1,31 @@
+{
+  "name": "Gmail Scatter-Attachment Extract — Deterministic-vs-AI Routing (WP-62)",
+  "description": "The proven scatter-attachment shape (search_emails → scatter[get_email_attachment → extract]) that historically routed field-extraction to the AI branch NON-DETERMINISTICALLY (failing agent 95f791ed vs working 0ee53785). WP-62 moves the deterministic-vs-AI decision into reliable code (CapabilityBinderV2 Phase 2c coverage predicate), so a covered case binds document-extractor deterministically (surface fields) with a synthesized downstream generate for meta/computed residual, while an uncovered case still falls back to the AI net. Asserts BOTH AC-1 (covered → deterministic, invariant across repeated runs) and AC-2 (uncovered → AI).",
+  "created": "2026-07-13",
+  "plugins": ["google-mail", "document-extractor"],
+  "wp": "WP-62",
+  "expected": {
+    "min_steps": 3,
+    "step_types": ["action", "scatter_gather", "deliver", "ai_processing"],
+    "coverage_verdict": {
+      "covered": true,
+      "deterministic_plugin": "document-extractor.extract_structured_data",
+      "surface_fields": ["date_time", "vendor", "amount", "expense_type"],
+      "residual_fields": ["notes", "source_filename"]
+    },
+    "compiled_params": {
+      "file_content": "attachment_content.data",
+      "note": "WP-62 hotfix: the fixture's extract.input is a WHOLE-OBJECT ref (the shape live Phase 1 emitted on agent 2ffcd7bf). Reliable code must navigate to the producer's bytes field, so file_content must be the string bytes ref — NOT {{attachment_content}}, which fails at runtime with 'should be string, got object'."
+    },
+    "phase_a_success": null,
+    "phase_d_success": null,
+    "phase_e_success": true,
+    "phase_e_success_timestamp": "2026-07-16",
+    "phase_e_caveat": "LIVE VALIDATION 2026-07-16 (agent 2ffcd7bf-3afc-45f5-8315-5ff00eb0d8a2): (1) FIRST RUN — generation PASSED (all 5 V6 phases green, document-extractor bound, IC persisted, Phase-1 emitted per-field `source`, CC-3a split correct) but calibration correctly BLOCKED step6 on all 3 scatter items: 'Parameter file_content should be string, got object' (whole-object extract.input copied verbatim into the type:string file_content param). (2) After the WP-62 hotfix (bytes-field navigation in convertExtract), RE-VALIDATION PASSED: calibration `passed`, items_processed:1, and at runtime file_content received the real base64 PDF string ({{attachment_content.data}} resolved to bytes). WP-62 is compile + runtime proven. CAVEAT: this scenario dir does NOT yet contain the committed phase2/phase4 snapshot files captured from that live run — a QA follow-up (Dev has no live Gmail/Textract access to regenerate them here). The compile-side proof (file_content resolves to the string bytes ref from a whole-object input) is asserted by coverage-routing.test.ts + ExecutionGraphCompiler.wp62.test.ts. RCA: docs/investigations/AGENT_RCA_CONCLUSION_wp62-live-validation-file-content-object.md"
+  },
+  "assertions": {
+    "AC-1": "coverage-routing.test.ts — the folded extract binds document-extractor.extract_structured_data for [date_time,vendor,amount,expense_type] and synthesizes a downstream generate for [notes,source_filename], identically across 5 runs.",
+    "AC-2": "coverage-routing.test.ts — an unsupported-file-type variant (xlsx) leaves the extract on the AI branch (ai_processing/llm_extract), net preserved.",
+    "WP-62-hotfix": "coverage-routing.test.ts — the compiled deliver config emits file_content: 'attachment_content.data' (string bytes ref) from this fixture's WHOLE-OBJECT extract.input. Regression for the live 2ffcd7bf failure."
+  }
+}

@@ -39,6 +39,8 @@ Sourced from [`V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_WEAK_POINTS.md`](./V6_
 
 _WP-57 (Google Drive → document-extractor base64 byte source) ✅ Fixed 2026-06-16 — Phase E live PASS; removed from backlog. See [WEAK_POINTS § WP-57](./V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_WEAK_POINTS.md#wp-57-google-drive--document-extractor-has-no-base64-byte-source)._
 
+_WP-62 (Gmail-attachment `extract` non-deterministically routed to AI vs document-extractor — coverage decided by Phase-1 phrasing; WP-57 family, proven by `95f791ed` vs `0ee53785`) ✅ Fixed 2026-07-13, **+ live-validation hotfix 2026-07-16** (both uncommitted) — routing AND input-ref granularity now decided in reliable code (schema-driven coverage predicate + binder-authors/converter-honors + auto-split + bytes-field navigation), AI net preserved. Live run `2ffcd7bf` proved routing works; the hotfix closes the `file_content` whole-object gap it exposed. **Open follow-up (needs the user/QA):** live Phase E **re-validation** — re-create the agent, confirm compiled `file_content: {{attachment_content.data}}` + green calibration, then commit the phase2/phase4 scenario snapshots (not runnable in the Dev self-test env). See [WEAK_POINTS § WP-62](./V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_WEAK_POINTS.md#wp-62-gmail-attachment-extract-non-deterministically-routed-to-ai-vs-document-extractor-coverage-decided-by-phase-1-phrasing)._
+
 ### P2 (Phase D / Phase A realism + observability)
 
 | WP | One-line summary | Status | Notes |

@@ -28,6 +28,8 @@ import type {
   Condition,
 } from '../semantic-plan/types/intent-schema-types'
 import type { BoundIntentContract, BoundStep } from '../capability-binding/CapabilityBinderV2'
+import type { ExtractCoverageVerdict, CoverageField } from '../capability-binding/ExtractionCoverage'
+import { baseVarOfRef, classifySchemaFileness, bytesFieldOf, schemaHasBytes } from '../capability-binding/ExtractionCoverage'
 import type { WorkflowDataSchema } from '../logical-ir/schemas/workflow-data-schema'
 import { validateSchemaCompatibility } from '../logical-ir/validation/SchemaCompatibilityValidator'
 import type {
@@ -518,9 +520,21 @@ export class IntentToIRConverter {
     const nodeId = this.generateNodeId(ctx)
     const outputVar = this.getOutputVariable(step, ctx)
 
+    // WP-62: the binder (Phase 2c) may have authored an authoritative
+    // deterministic-vs-AI coverage verdict. When present, the converter HONORS it
+    // (single decision-maker — Q1 anti-double-decision guard) and never recomputes
+    // coverage or re-runs the heuristic rerouters below.
+    const coverage = (step as BoundStep).extract_coverage as ExtractCoverageVerdict | undefined
+    const isCoveredSplit = !!(coverage?.covered && coverage.residualFields.length > 0)
+
+    // Fields the deterministic extractor is asked to produce: the document-surface
+    // subset when the binder authored coverage, else the full declared set.
+    const deterministicFields: CoverageField[] =
+      coverage?.covered ? coverage.surfaceFields : (step.extract.fields as CoverageField[])
+
     const genericConfig: Record<string, any> = {
       input: this.resolveRefName(step.extract.input, ctx),
-      fields: step.extract.fields.map((f: any) => ({
+      fields: deterministicFields.map((f: any) => ({
         name: f.name,
         type: f.type,
         required: f.required,
@@ -531,44 +545,58 @@ export class IntentToIRConverter {
       genericConfig.deterministic = true
     }
 
-    // Direction #3 (Phase 2b): If the binder already rejected this step's binding
-    // due to input-type incompatibility, route to AI extraction immediately.
-    // This is the schema-driven check — it runs before the WP-12 heuristic fallback.
     let effectivePluginKey = step.plugin_key
-    if (
-      step.binding_method === 'unbound' &&
-      step.binding_reason?.includes('input_type_incompatible')
-    ) {
-      logger.info(
-        `[O-Dir3] Extract step '${step.id}' unbound by Phase 2b (input_type_incompatible) — routing to AI extraction. ` +
-        `Rejected: ${(step.rejected_candidates || []).map(r => `${r.plugin_key}.${r.action_name}`).join(', ')}`
-      )
-      ctx.warnings.push(
-        `[O-Dir3] Rerouted extract step '${step.id}' to AI — binder rejected all candidates due to input-type incompatibility.`
-      )
-      effectivePluginKey = undefined
-    }
 
-    // WP-12 heuristic fallback: If the binder didn't catch it (e.g., missing
-    // x-semantic-type annotations), use the tactical heuristic as safety net.
-    // This path will be removed once plugin annotations are complete (see A.7 step 8).
-    if (
-      effectivePluginKey &&
-      effectivePluginKey !== 'chatgpt-research' &&
-      this.pluginManager &&
-      step.action
-    ) {
-      const pluginExpectsFile = this.actionExpectsFileAttachment(effectivePluginKey, step.action)
-      if (pluginExpectsFile) {
-        const sourceIsFile = this.inputLooksLikeFileAttachment(step.extract.input, ctx)
-        if (!sourceIsFile) {
-          logger.info(
-            `[O-WP12] ${effectivePluginKey}.${step.action} expects file_attachment but extract.input resolves to text/object — routing to AI extraction instead (heuristic fallback)`
-          )
-          ctx.warnings.push(
-            `[O-WP12] Rerouted extract step '${step.id}' from ${effectivePluginKey} to AI because source variable is not a file attachment (heuristic fallback).`
-          )
-          effectivePluginKey = undefined
+    if (coverage) {
+      // HONOR the binder's authoritative verdict (Q1). Covered → keep the
+      // binder-authored deterministic binding; not covered → AI branch (net
+      // preserved). The heuristic rerouters below are SKIPPED so nothing can
+      // strip a binder-authored binding (B3 / AC-6).
+      // NOTE: the observability log is emitted AFTER the file-param resolution
+      // block below, so `branch` reflects the FINAL branch — the H1 safe-direction
+      // reroute may still flip a covered verdict to AI when no bytes field resolves
+      // (SA nit N4: don't log "deterministic-bind" before that can happen).
+      effectivePluginKey = coverage.covered ? step.plugin_key : undefined
+    } else {
+      // Legacy path (no coverage verdict authored, e.g. non-document extract or a
+      // cached pre-WP-62 bound contract): the pre-existing heuristic rerouters.
+
+      // Direction #3 (Phase 2b): If the binder already rejected this step's binding
+      // due to input-type incompatibility, route to AI extraction immediately.
+      if (
+        step.binding_method === 'unbound' &&
+        step.binding_reason?.includes('input_type_incompatible')
+      ) {
+        logger.info(
+          `[O-Dir3] Extract step '${step.id}' unbound by Phase 2b (input_type_incompatible) — routing to AI extraction. ` +
+          `Rejected: ${(step.rejected_candidates || []).map(r => `${r.plugin_key}.${r.action_name}`).join(', ')}`
+        )
+        ctx.warnings.push(
+          `[O-Dir3] Rerouted extract step '${step.id}' to AI — binder rejected all candidates due to input-type incompatibility.`
+        )
+        effectivePluginKey = undefined
+      }
+
+      // WP-12 heuristic fallback: If the binder didn't catch it (e.g., missing
+      // x-semantic-type annotations), use the tactical heuristic as safety net.
+      if (
+        effectivePluginKey &&
+        effectivePluginKey !== 'chatgpt-research' &&
+        this.pluginManager &&
+        step.action
+      ) {
+        const pluginExpectsFile = this.actionExpectsFileAttachment(effectivePluginKey, step.action)
+        if (pluginExpectsFile) {
+          const sourceIsFile = this.inputLooksLikeFileAttachment(step.extract.input, ctx)
+          if (!sourceIsFile) {
+            logger.info(
+              `[O-WP12] ${effectivePluginKey}.${step.action} expects file_attachment but extract.input resolves to text/object — routing to AI extraction instead (heuristic fallback)`
+            )
+            ctx.warnings.push(
+              `[O-WP12] Rerouted extract step '${step.id}' from ${effectivePluginKey} to AI because source variable is not a file attachment (heuristic fallback).`
+            )
+            effectivePluginKey = undefined
+          }
         }
       }
     }
@@ -629,6 +657,83 @@ export class IntentToIRConverter {
       }
     }
 
+    // WP-62 hotfix (live-validation gap, agent `2ffcd7bf`): a param that accepts a
+    // file_object declares `type: "string"` (base64 bytes) — it must receive the
+    // producer's BYTES FIELD, not the whole producer object. Phase 1 legitimately
+    // emits either granularity (`attachment_content` OR `attachment_content.data`),
+    // so the ref granularity must be resolved HERE in reliable code — the same
+    // thesis WP-62 applied to the routing decision. Previously the mapping copied
+    // the ref verbatim → `file_content: {{attachment_content}}` → runtime
+    // "should be string, got object" → every scatter item failed.
+    //
+    // Idempotent by construction: the ref is always REBUILT from `baseVarOfRef` +
+    // the schema's bytes field, so an already-`.data` ref resolves to the same
+    // `.data` (never `.data.data`). Schema-driven: the bytes key comes from the
+    // producer slot's schema via the shared `bytesFieldOf` — never a plugin/field
+    // name branch (Principle 6 / Anti-pattern F).
+    let fileParamBinding: { paramName: string; ref: string } | null = null
+    if (
+      effectivePluginKey &&
+      effectivePluginKey !== 'chatgpt-research' &&
+      this.pluginManager &&
+      step.plugin_key &&
+      step.action &&
+      genericConfig.input
+    ) {
+      const schema = this.getPluginActionSchema(step.plugin_key, step.action)
+      const paramProps = (schema?.parameters?.properties || {}) as Record<string, any>
+      // Mirror the mapping loop below: the FIRST x-input-mapping param is the target.
+      const target = Object.entries(paramProps).find(([, pd]) => !!pd?.['x-input-mapping'])
+      if (target && this.paramAcceptsFileObject(target[1])) {
+        const [paramName] = target
+        const slotSchema = this.resolveSlotSchema(genericConfig.input, ctx)
+        // Only navigate when the slot is a known OBJECT. An unknown slot (e.g. the
+        // WP-57 auto-inserted download output) or an already-string slot keeps the
+        // legacy verbatim copy — no behaviour change for those paths.
+        if (slotSchema && slotSchema.type !== 'string') {
+          const bytesField = bytesFieldOf(slotSchema)
+          if (bytesField) {
+            const baseVar = baseVarOfRef(this.resolveRefName(genericConfig.input, ctx))
+            fileParamBinding = { paramName, ref: `${baseVar}.${bytesField}` }
+            logger.info(
+              { stepId: step.id, param: paramName, from: genericConfig.input, to: fileParamBinding.ref, bytesField },
+              '[WP-62] Resolved file-object param to the producer bytes field (reliable-code ref granularity)',
+            )
+          } else {
+            // A bytes-less object would violate the param's declared string type at
+            // runtime. Do NOT emit a broken ref — fall back to the AI net (safe
+            // direction), visibly (Principle 11: no silent default).
+            logger.warn(
+              { stepId: step.id, param: paramName, input: genericConfig.input },
+              '[WP-62] Extract input resolves to an object with no bytes field — cannot bind a file-object param; routing to AI extraction (net preserved)',
+            )
+            ctx.warnings.push(
+              `[WP-62] Rerouted extract step '${step.id}' to AI — input '${genericConfig.input}' is an object with no bytes field for ${effectivePluginKey}.${step.action}'s '${paramName}'.`,
+            )
+            effectivePluginKey = undefined
+          }
+        }
+      }
+    }
+
+    // WP-62 observability (AC-7 / SA nit N4): log the FINAL chosen branch after the
+    // H1 file-param resolution — `deterministic-bind` only when a live binding truly
+    // survives, else `ai-fallback` (including the safe-direction reroute above).
+    if (coverage) {
+      logger.info(
+        {
+          stepId: step.id,
+          branch: effectivePluginKey ? 'deterministic-bind' : 'ai-fallback',
+          decidingCriterion: coverage.decidingCriterion,
+          plugin: effectivePluginKey || undefined,
+          rerouted: coverage.covered && !effectivePluginKey,
+          surfaceFields: coverage.surfaceFields.map((f) => f.name),
+          residualFields: coverage.residualFields.map((f) => f.name),
+        },
+        `[WP-62] convertExtract honoring binder coverage verdict: ${coverage.reason}`,
+      )
+    }
+
     // Extract uses either AI (for LLM extraction) or deliver (for plugin-based extraction like document-extractor)
     const operation: OperationConfig = effectivePluginKey && effectivePluginKey !== 'chatgpt-research'
       ? (() => {
@@ -646,8 +751,14 @@ export class IntentToIRConverter {
                   // Apply input mapping for file URL extraction
                   finalConfig = { ...genericConfig }
                   delete finalConfig.input
-                  finalConfig[paramName] = genericConfig.input
-                  logger.debug(`  → Mapped input → ${paramName}`)
+                  // WP-62 hotfix: a file-object param takes the bytes-navigated ref
+                  // resolved above (e.g. `attachment_content.data`); everything else
+                  // keeps the legacy verbatim copy.
+                  finalConfig[paramName] =
+                    fileParamBinding?.paramName === paramName
+                      ? fileParamBinding.ref
+                      : genericConfig.input
+                  logger.debug(`  → Mapped input → ${paramName} (${finalConfig[paramName]})`)
                   break
                 }
               }
@@ -703,16 +814,113 @@ export class IntentToIRConverter {
           description: step.summary || 'AI-powered data extraction'
         }
 
+    // WP-62 CC-3a auto-split: a covered extraction that folds meta/computed fields
+    // emits the deterministic extractor for the surface subset into an intermediate
+    // variable, and a synthesized downstream `generate` produces the final record.
+    const deterministicOutputVar = isCoveredSplit ? `${outputVar}__extracted` : outputVar
+
     const node: ExecutionNode = {
       id: nodeId,
       type: 'operation',
       operation,
-      outputs: [{ variable: outputVar }],
+      outputs: [{ variable: deterministicOutputVar }],
     }
 
     ctx.nodes.set(nodeId, node)
+
+    if (isCoveredSplit && coverage) {
+      // Synthesize the residual `generate` step (the working-agent 0ee53785 shape).
+      // Guardrails: G1 (zero-surface) never reaches here — the binder left those
+      // unbound; G3 already-split plans have empty residual → no synthesis; G4 the
+      // split keys on the field-source partition only (plugin-agnostic).
+      const splitNodeId = this.synthesizeResidualGenerateNode(
+        step,
+        coverage,
+        deterministicOutputVar,
+        outputVar,
+        ctx,
+      )
+      // convertSteps only wires the FIRST/LAST node of a step's returned array, so
+      // the intermediate extract→generate edge must be set explicitly here.
+      node.next = splitNodeId
+      logger.info(
+        {
+          stepId: step.id,
+          extractNode: nodeId,
+          generateNode: splitNodeId,
+          surfaceFields: coverage.surfaceFields.map((f) => f.name),
+          residualFields: coverage.residualFields.map((f) => f.name),
+        },
+        '[WP-62] Auto-synthesized normalization split: deterministic extract → residual generate',
+      )
+      return [...prependNodeIds, nodeId, splitNodeId]
+    }
+
     // Any WP-57 download step is prepended so convertSteps wires prev → download → extract.
     return [...prependNodeIds, nodeId]
+  }
+
+  /**
+   * WP-62 (CC-3a): synthesize a downstream `generate` (ai_processing) step that
+   * produces the residual meta/computed fields of a split extraction, taking the
+   * deterministic extractor's surface output as input. Mirrors the working agent
+   * `0ee53785` shape (deterministic extract + separate normalize/generate).
+   *
+   * Safety (Principle 2 / Principle 11 / G2): the instruction copies surface fields
+   * through UNCHANGED and sets any residual that cannot be determined to null —
+   * never a human-readable placeholder, never fabricated surface data.
+   */
+  private synthesizeResidualGenerateNode(
+    step: ExtractStep & BoundStep,
+    coverage: ExtractCoverageVerdict,
+    surfaceInputVar: string,
+    outputVar: string,
+    ctx: ConversionContext,
+  ): string {
+    const genNodeId = this.generateNodeId(ctx)
+    const surfaceNames = coverage.surfaceFields.map((f) => f.name)
+    const residualSpec = coverage.residualFields
+      .map(
+        (f: any) =>
+          `${f.name} (${f.type || 'string'}${f.required ? ', required' : ''}${f.description ? ` — ${f.description}` : ''})`,
+      )
+      .join('; ')
+
+    const instruction =
+      `You are given fields already extracted from a document, provided as input: ${surfaceNames.join(', ')}. ` +
+      `Copy those fields through UNCHANGED — do not alter, re-derive, or invent their values. ` +
+      `Then add the following field(s): ${residualSpec}. ` +
+      `Derive each added field only from the provided data and context; if a field cannot be determined, set its value to null (never a placeholder like "Unknown"). ` +
+      `Return a single JSON object containing all of the fields.`
+
+    // Output schema = ALL requested fields (surface passthrough + residual) so
+    // downstream consumers see the same full record the folded extract promised.
+    const outputSchema = this.buildOutputSchemaFromFields(step.extract.fields as any[])
+
+    const operation: OperationConfig = {
+      operation_type: 'ai',
+      ai: {
+        type: 'generate',
+        // `surfaceInputVar` is the intermediate variable name this converter just
+        // minted for the deterministic extract node's output (`<outputVar>__extracted`)
+        // — it is already a resolved IR variable, not an IntentContract RefName, so
+        // it is passed as-is (no resolveRefName needed). (SA Nit #5.)
+        instruction,
+        input: surfaceInputVar,
+        output_schema: outputSchema,
+      },
+      description: `Normalize/derive residual fields for '${step.id}' (WP-62 split)`,
+    }
+
+    const genNode: ExecutionNode = {
+      id: genNodeId,
+      type: 'operation',
+      operation,
+      outputs: [{ variable: outputVar }],
+      inputs: [{ variable: surfaceInputVar }],
+    }
+    ctx.nodes.set(genNodeId, genNode)
+    return genNodeId
   }
 
   /**
@@ -2152,6 +2360,19 @@ export class IntentToIRConverter {
   }
 
   /**
+   * WP-62 hotfix: does this PARAM accept a file object, per its own
+   * `x-input-mapping.accepts` declaration? Schema-driven (the param's declaration is
+   * the contract) — no plugin/param-name branch.
+   */
+  private paramAcceptsFileObject(paramDef: any): boolean {
+    const accepts = paramDef?.['x-input-mapping']?.accepts
+    return (
+      Array.isArray(accepts) &&
+      (accepts.includes('file_object') || accepts.includes('file_attachment'))
+    )
+  }
+
+  /**
    * WP-57: Does the named input slot already carry file BYTES (vs just a metadata
    * reference)? A downloadable-content slot has a content field (file_content / content /
    * data / base64); a storage-listing item (id, name, mimeType, webViewLink) does not.
@@ -2159,14 +2380,28 @@ export class IntentToIRConverter {
    * extractor.
    */
   private slotHasBytes(refName: string, ctx: ConversionContext): boolean {
+    // Bytes vocabulary is owned by ExtractionCoverage (single source of truth) so
+    // this check, the coverage verdict, and the file-param mapping cannot diverge.
+    return schemaHasBytes(this.resolveSlotSchema(refName, ctx))
+  }
+
+  /**
+   * Resolve the data_schema slot schema for a ref, using the SAME normalization the
+   * binder's authoritative CC-1 uses (`baseVarOfRef` — strip `{{}}`, drop the dotted
+   * tail) plus variableMap resolution. Loop/scatter-scoped aware: loop-body outputs
+   * are stored flat in `slots` keyed by step.output. Returns null when unknown.
+   */
+  private resolveSlotSchema(refName: string, ctx: ConversionContext): any | null {
     const slots = ctx.dataSchema?.slots
-    if (!slots) return false
+    if (!slots || !refName) return null
     const resolved = this.resolveRefName(refName, ctx).replace(/\{\{|\}\}/g, '')
-    const schema = slots[refName]?.schema || slots[resolved]?.schema
-    const props = (schema as any)?.properties || (schema as any)?.items?.properties
-    if (!props || typeof props !== 'object') return false
-    const BYTES_FIELDS = new Set(['file_content', 'content', 'data', 'base64'])
-    return Object.keys(props).some(k => BYTES_FIELDS.has(k))
+    const keys = Array.from(
+      new Set([refName, resolved, baseVarOfRef(refName), baseVarOfRef(resolved)]),
+    )
+    for (const k of keys) {
+      if (slots[k]?.schema) return slots[k].schema
+    }
+    return null
   }
 
   /**
@@ -2181,12 +2416,11 @@ export class IntentToIRConverter {
     const def = this.pluginManager.getPluginDefinition(pluginKey)
     const actions = (def as any)?.actions
     if (!actions || typeof actions !== 'object') return null
-    const BYTES_FIELDS = new Set(['file_content', 'content', 'data', 'base64'])
     for (const [actionName, action] of Object.entries(actions)) {
       const out = (action as any).output_schema
       if (out?.['x-semantic-type'] !== 'file_attachment') continue
-      const outProps = out?.properties || {}
-      const returnsBytes = Object.keys(outProps).some(k => BYTES_FIELDS.has(k))
+      // Shared bytes vocabulary (ExtractionCoverage) — no local duplicate set.
+      const returnsBytes = schemaHasBytes(out)
       const params = (action as any).parameters?.properties || {}
       if (returnsBytes && 'file_id' in params) {
         return { pluginKey, action: actionName }
@@ -2209,40 +2443,26 @@ export class IntentToIRConverter {
       return false
     }
 
-    const FILE_MARKERS = new Set(['file_url', 'attachment_id', 'mimeType', 'file_content', 'file_path'])
-    const TEXT_MARKERS = new Set(['body', 'subject', 'snippet', 'message', 'text', 'content'])
+    // B3 (WP-62) / SA Finding #1: file/text classification is delegated to the
+    // SHARED `classifySchemaFileness` (semantic_type → bytes field → field-name
+    // markers, positive-file-wins) so this legacy heuristic and the binder's
+    // authoritative CC-1 (`extractInputIsFile`) can never diverge. Bytes-bearing
+    // and semantic signals are producer-shape signals: they win here BEFORE the
+    // whole-graph text short-circuit below, so they cannot be overridden.
 
-    const inspectObjectSchema = (objSchema: any): 'file' | 'text' | 'unknown' => {
-      const props = objSchema?.properties
-      if (!props || typeof props !== 'object') return 'unknown'
-      const keys = Object.keys(props)
-      const hasFile = keys.some(k => FILE_MARKERS.has(k))
-      const hasText = keys.some(k => TEXT_MARKERS.has(k))
-      if (hasFile && !hasText) return 'file'
-      if (hasText && !hasFile) return 'text'
-      if (hasFile && hasText) return 'text' // email with attachments field is still text-primary
-      return 'unknown'
-    }
-
-    // Authoritative signal, preferred over the field-name heuristic: a slot whose
-    // schema — or its array items — is annotated semantic_type=file_attachment is a
-    // file regardless of field names. A plugin output_schema's `x-semantic-type` is
-    // propagated to schema.semantic_type by workflow-data-schema.ts. This is the
-    // plugin-annotation path the WP-12 field-name heuristic was always meant to defer
-    // to (see the O-WP12 reroute comment). It only ever yields a positive 'file'
-    // signal, so it never reclassifies a text/email slot.
-    const FILE_SEMANTIC_TYPES = new Set(['file_attachment', 'file'])
-    const isFileBySemanticType = (schemaNode: any): boolean =>
-      !!schemaNode && (
-        FILE_SEMANTIC_TYPES.has(schemaNode.semantic_type) ||
-        FILE_SEMANTIC_TYPES.has(schemaNode.items?.semantic_type)
-      )
-
-    // Direct slot match (e.g., variable === a top-level slot name)
-    const directSlot = dataSchema.slots[inputName]
-    if (directSlot?.schema) {
-      if (isFileBySemanticType(directSlot.schema)) return true
-      const verdict = inspectObjectSchema(directSlot.schema)
+    // B3: resolve the input's OWN producer slot, loop-internal aware. Loop-body
+    // step outputs are stored flat in `slots` (keyed by step.output, scope:'loop'),
+    // so a scatter-scoped file variable resolves here. Try the raw ref, the
+    // variableMap-resolved name, and the SHARED base-var normalization of a dotted
+    // ref (e.g. `{{attachment_content.data}}` → `attachment_content`).
+    const resolvedName = this.resolveRefName(inputName, ctx).replace(/\{\{|\}\}/g, '')
+    const candidateSlotKeys = Array.from(
+      new Set([inputName, resolvedName, baseVarOfRef(inputName), baseVarOfRef(resolvedName)]),
+    )
+    for (const key of candidateSlotKeys) {
+      const slot = dataSchema.slots[key]
+      if (!slot?.schema) continue
+      const verdict = classifySchemaFileness(slot.schema)
       if (verdict !== 'unknown') return verdict === 'file'
     }
 
@@ -2258,10 +2478,9 @@ export class IntentToIRConverter {
       if (!slotSchema?.properties) continue
       for (const propDef of Object.values(slotSchema.properties) as any[]) {
         if (propDef?.type === 'array' && propDef.items?.type === 'object') {
-          const verdict = inspectObjectSchema(propDef.items)
+          const verdict = classifySchemaFileness(propDef.items)
           if (verdict === 'text') sawTextItems = true
           if (verdict === 'file') sawFileItems = true
-          if (FILE_SEMANTIC_TYPES.has(propDef.items?.semantic_type)) sawFileItems = true
         }
       }
     }
