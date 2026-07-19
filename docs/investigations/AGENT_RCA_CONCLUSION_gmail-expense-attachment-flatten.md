@@ -818,3 +818,104 @@ Secondary/cheap supplement: **expose the plugin `maximum`/`minimum` in the vocab
 | Date | Change | Details |
 |------|--------|---------|
 | 2026-07-12 | Origin-of-500 RCA | Q1: authored by V6 Phase-1 IntentContract generation (not plugin default 10 / not compiler / not example) — pinpoint limited by null persisted IC. Q2: free LLM guess; `500` absent from prompts, examples, user inputs (thread `67154237`, clarifications never asked a count); vocabulary showed `default:10` but omitted `maximum:100`. Q3: parameterize rule is conditional ("NEVER hardcode … when you have declared a config entry", L2153–2158) + soft "MAY" for user-unmentioned values (L2150); user never surfaced a cap → rule didn't bind → literal compliant. Fix-owner v6-pipeline generation; deterministic guard (range-check + auto-parameterize via the param-constraint reader) recommended over prompt tuning (WP-61 principle). |
+
+---
+
+# Addendum — 2026-07-13 live-test findings (two diagnostic investigations)
+
+> **Added**: 2026-07-13 · **Agent**: `0ee53785-44d0-4b46-85dd-367551a657ba` · **Scope**: two UX/notification defects surfaced during a user's *successful* calibration live-test of this agent. Both are **separate, independently shippable** defects — neither changes the primary flatten-field-shape RCA above. DIAGNOSTIC ONLY — no product code changed. Owner for both: **calibration surface (Dev after SA review)**; **not** `v6-pipeline`.
+
+---
+
+## Investigation 1 — Two calibration emails: one rendered plain TEXT, the next HTML
+
+**Plain-language top-line:** The two emails come from **two different senders** — the internal admin RCA-alert (`🚨 Calibration failed … needs RCA`) and the user-facing result email (`🔧/✅`) — both fired by the same *background* post-creation calibration run, and the user received both because he is simultaneously the agent **owner** (gets the result email) and a platform **admin** (gets the admin alert). **But the tempting "one sets `text`, the other sets `html`" hypothesis is wrong:** both senders build a full HTML document and pass it **only** as the `html` argument; **neither ever sets a plaintext `text` part**, and the shared transport sends single-part `text/html` for both. So the text-vs-HTML split is **not** authored anywhere in the templates or transport — it is a delivery/transport-environment artifact, and the real defect is that these emails have **no plaintext alternative part at all**, leaving their rendering at the mercy of the provider/client.
+
+### 1. Reported symptom
+User received TWO calibration-related emails during the live-test cycle; the FIRST rendered as plain text, the SECOND as HTML. Identifier: agent `0ee53785-44d0-4b46-85dd-367551a657ba`.
+
+### 2. Evidence gathered (file:line)
+
+| Sender / transport | What it sets for the body | Reference |
+|---|---|---|
+| **User-facing result email** `sendCalibrationResultEmail` | builds `html = renderHtml(...)` (full `<!DOCTYPE html>` doc), calls `sendTransactionalEmail([to], subject, html, undefined, ownerUserId)` — **no `text`** | `lib/calibration/calibrationResultEmail.ts` L47-50, renderer L116-162 |
+| **Internal admin RCA-alert** `sendCalibrationAdminAlert` | builds `html = renderAdminAlertHtml(...)` (full HTML doc), calls `sendTransactionalEmail(adminEmails, subject, html, undefined, ownerUserId)` — **no `text`** | `lib/calibration/calibrationAdminAlert.ts` L90-105, renderer L190-256 |
+| **Transport wrapper** `NotificationService.sendTransactionalEmail` → `sendEmailNotification` | forwards to `sendEmail({ to, subject, html: body, from, ownerUserId })` — **`html` only, no `text` field exists in the call** | `lib/pilot/NotificationService.ts` L33-41, L408 |
+| **Resend branch** | POST body `{ from, to, subject, html }` — **no `text`** (single-part `text/html`) | `lib/notifications/emailTransport.ts` L61-66 |
+| **Gmail-app (nodemailer) branch** | `sendMail({ from, to, subject, html })` — **no `text`** | `lib/notifications/emailTransport.ts` L104-109 |
+| **Owner google-mail plugin branch (last resort)** | `content: { subject, html_body: p.html }` — passes HTML as `html_body` | `lib/notifications/emailTransport.ts` L82-85 |
+| **Plugin MIME builder** (the only `text/plain` switch in the whole path) | `if (content?.html_body) → Content-Type: text/html; else → text/plain` | `lib/server/gmail-plugin-executor.ts` L622-637 |
+
+### 3. Why one rendered as text — distinguishing (a)/(b)/(c)
+- **(a) two different senders, one `text` one `html`? — REFUTED at source.** They *are* two different senders (admin alert vs result email), but **both** set `html` and **neither** sets `text`. There is no template that authors a plaintext body.
+- **(b) same sender, `html` unset on one branch? — REFUTED.** Both `renderHtml` and `renderAdminAlertHtml` always return a full, non-empty HTML string; there is no branch that leaves `html` unset.
+- **(c) provider/transport artifact — CONFIRMED as the only remaining mechanism.** The sole code location that can emit `text/plain` for these mails is `gmail-plugin-executor.buildEmailMessage` L624-627, which chooses `text/plain` only when `content.html_body` is falsy. `sendViaOwnerPlugin` **always** populates `html_body` (L85), so even that path sends HTML. Because every send is **single-part `text/html` with no `text/plain` alternative**, the render is entirely provider/client-dependent: a transient transport-branch divergence between the two sends (the transport tries Resend → Gmail-app → owner-plugin in order and can recover on retry, so an earlier send may go via a different provider than the later one) or a client-side plaintext fallback will render one as text and the next as HTML. Nothing in the *senders* distinguishes them.
+
+### 4. Classified root-cause layer
+**runtime / external API** (email transport/provider + delivery), not a workflow, template-authoring, or V6-generation bug. The DSL and the rendered HTML are correct; the fragility is in how the message is packaged for delivery.
+
+### 5. Defensible root cause
+No calibration email is ever sent as a proper **multipart/alternative** message with both an `html` and a generated `text` part. Every send is single-part `text/html` (`emailTransport.ts` L61-66, L104-109; `NotificationService.ts` L408 passes `html` only). The plugin fallback's MIME builder additionally hard-branches `text/html` vs `text/plain` purely on `html_body` presence with no `text` part either (`gmail-plugin-executor.ts` L622-637). A single-part HTML mail with no plaintext alternative is exactly the shape that renders inconsistently across providers/clients, which is what the user observed.
+
+### 6. Named fix-owner
+**Calibration notification surface** — `lib/notifications/emailTransport.ts` + `lib/pilot/NotificationService.ts` (transport), with `lib/calibration/calibrationResultEmail.ts` / `calibrationAdminAlert.ts` as the callers. Dev implements after SA review. Not `v6-pipeline`.
+
+### 7. Suggested solution(s)
+1. **Preferred — unify on multipart/alternative:** thread an optional `text` through `SendEmailParams` / `sendTransactionalEmail`, auto-generate a plaintext alternative from the HTML (strip tags) when a caller doesn't supply one, and send `{ html, text }` on Resend and nodemailer (and add a `body` alongside `html_body` on the owner-plugin path). Both emails then carry a consistent HTML + text pair and render identically everywhere.
+2. **Minimum:** at least always include a generated `text` alternative in the transport so no calibration mail is ever single-part HTML.
+
+### 8. Recommended remediation path
+**Hotfix.** Small, well-scoped change confined to the transport + the two calibration senders; no pipeline/schema surface. Route TL → SA → Dev.
+
+### Pre-existing vs Group A
+**Pre-existing — confirmed.** Both senders and the transport predate the current branch's Group A work (introduced in `6dac707` background-calibration + `f6cc4ce` IMP-1/IMP-2, with the owner-plugin fallback added in `71ced2a`). Group A (recent finish/verdict/coverage/apply-fixes commits, e.g. `15d7146`, `cc8bb59`) only prompted the user to run calibration again and notice the inconsistency. The user's "both pre-existing" read is correct.
+
+---
+
+## Investigation 2 — Parameterize flow: no success indication + suggestion doesn't clear
+
+**Plain-language top-line:** The parameterization **actually succeeds on the server** (the `500` literal is replaced by an `{{input.…}}` param and `input_schema` gains the new field), so this is **succeeded-but-no-UI-refresh**, not a silent failure. The user still sees the old "500 is hardcoded" suggestion because the suggestion shown on the success screen (`passSuggestions`) is derived from the **cached calibration result** in React state and is **never recomputed or cleared** after parameterization — and there is **no success toast/confirmation** at all.
+
+### 1. Reported symptom
+After a passing run the user clicked "make it a reusable parameter", completed the wizard, returned to the sandbox — the SAME "500 is hardcoded" suggestion was still shown, with NO indication the parameterization succeeded. Identifier: agent `0ee53785-44d0-4b46-85dd-367551a657ba`.
+
+### 2. Evidence gathered — did it succeed server-side? YES
+`handleWizardComplete` (`app/v2/sandbox/[agentId]/page.tsx` L1056-1116) posts to **`/api/agents/{id}/repair-hardcode`** (not `apply-fixes`). That endpoint:
+- applies parameterization via `HardcodeDetector.applyParameterization(pilotSteps, selections)` — replaces the `500` literal with `{{input.<param>}}` (`app/api/agents/[id]/repair-hardcode/route.ts` L86-87),
+- writes `agents.pilot_steps` **and** `agents.input_schema` (adds the new `number` param, `default_value: 500`) (L127-135, L92-122),
+- upserts `agent_configurations` with the new input value (L147-206),
+- returns `{ success: true, new_parameters: [...] }` (L211-215).
+
+So the stored DSL and schema are genuinely updated. **This is the better case (no data loss), a pure client-refresh gap.**
+
+### 3. Why the same suggestion still shows — two stale-state defects
+
+**Defect A (primary, the visible one): `passSuggestions` is never recomputed after parameterization.** The success-screen suggestions are rendered from `optionalSuggestions={passSuggestions}` (page L1304). `passSuggestions` is set **only** from `getPassSuggestions(result)` at page L614 and L895 — i.e. only when a **calibration test** completes. `getPassSuggestions` derives the list **directly from the cached verdict `result.issues.warnings`** (`lib/calibration/finishGate.ts` L64-76), which is where the `hardcode_detected "500"` cosmetic suggestion lives. `handleWizardComplete` runs no new calibration and never touches `passSuggestions`, so the stale "500 is hardcoded" warning from the pre-parameterization verdict remains on screen verbatim.
+
+**Defect B (secondary): `loadAgent` re-detects but never clears.** After success, `handleWizardComplete` calls `await loadAgent()` (L1107). `loadAgent` re-fetches the (now parameterized) agent and re-runs `HardcodeDetector.detect(...)` (page L282-306). Because `500` is now `{{input.…}}`, `totalDetected` is `0` — but the block is `if (totalDetected > 0) { setDetectionResult(...); setHasHardcodedValues(true) }` with **no `else`** (L302-305). So `detectionResult` / `hasHardcodedValues` keep their stale pre-repair values; `hasHardcodedValues` stays `true`, which is also what gates the parameterize button (`onParameterizeWorkflow={hasHardcodedValues ? … : undefined}`, L1296). The button and any detection-derived UI therefore also fail to reflect the repair.
+
+**No success indication:** `handleWizardComplete` only does `setShowParameterizationWizard(false)` + `setUserDeclinedParameterization(true)` + `loadAgent()`. There is no toast, no confirmation, no flow-state transition to a "parameterized" screen (the codebase even carries a `// TODO: Add toast notification here` in the sibling save-configuration handler, L1169), so the user lands back on the identical success screen with the identical suggestion and zero feedback.
+
+### 4. Classified root-cause layer
+**calibration-detection** (UI half) — a diagnostic/success surface that misreports state: it keeps showing a resolved suggestion and gives no success feedback. Server-side parameterization is correct; the calibration *sandbox UI* is stale.
+
+### 5. Defensible root cause
+The success screen's suggestion list is a **snapshot of the last calibration verdict** (`passSuggestions` ← `getPassSuggestions(result)`, `finishGate.ts` L64-76), not a live view of the agent's current DSL. Parameterization mutates the DSL server-side but the client never re-derives the verdict or clears the snapshot, and `loadAgent`'s re-detection has no clear-on-empty branch (`page.tsx` L302-305). Combined with the absence of any success affordance in `handleWizardComplete` (L1056-1116), the resolved issue appears unresolved.
+
+### 6. Named fix-owner
+**Calibration sandbox UI** — `app/v2/sandbox/[agentId]/page.tsx` (`handleWizardComplete`, `loadAgent` detection block), Dev after SA review. Server endpoint `repair-hardcode` needs no change.
+
+### 7. Suggested solution(s)
+1. On successful `repair-hardcode`, **optimistically clear the resolved suggestion** — drop the `hardcode_detected`/`500` entry from `passSuggestions` for the parameterized path(s) and reset `detectionResult`/`hasHardcodedValues` from the refreshed detection (add the missing `else { setDetectionResult(null); setHasHardcodedValues(false) }` at page L302-305).
+2. **Show a success affordance** — a toast/inline confirmation ("500 is now a reusable parameter") and/or a brief flow-state transition, instead of silently reloading onto the same screen.
+3. Optional/robust: after parameterization, **re-derive the pass verdict** (or re-run cosmetic detection) so `passSuggestions` reflects the new DSL rather than a stale snapshot.
+
+### 8. Recommended remediation path
+**Hotfix**, but tracked as a **NEW backlog item (calibration UI)** — the parameterization flow (`repair-hardcode`, `handleWizardComplete`, `loadAgent`) is pre-existing; it just wasn't reachable from the success screen before. Small client-only change; route TL → SA → Dev.
+
+### Pre-existing vs Group A
+**Pre-existing behavior, newly exposed by Group A — confirmed.** The `repair-hardcode` endpoint and the wizard/`handleWizardComplete`/`loadAgent` detection logic predate this branch (endpoint from `18340d7`; detection flow from the original calibration commits `7e4cfb0`/`d79018d`). Group A's FIX 2 added/enabled the passed-with-cosmetic-suggestions **success screen** and its parameterize entry point (`onParameterizeWorkflow`, page L1296; `getPassSuggestions` cosmetic-pass path, `15d7146`), which is what first routed users into this stale-suggestion flow. The user's "pre-existing, Group A surfaced it" read is correct.
+
+> **Minor standards note (for the implementing Dev, not this RCA):** `app/v2/sandbox/[agentId]/page.tsx` logs via `console.*` (e.g. L589, L597, L693, L787, L939, L947, and throughout the parameterize handlers). Per CLAUDE.md mandatory rule 3, whoever next edits this file should propose converting those to the Pino standard.
+
+---
