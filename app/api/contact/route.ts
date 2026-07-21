@@ -2,6 +2,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import nodemailer from 'nodemailer';
+import { createLogger } from '@/lib/logger';
+import { htmlToText } from '@/lib/email/htmlToText';
+
+const logger = createLogger({ module: 'ContactAPI' });
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -39,11 +43,11 @@ export async function POST(request: NextRequest) {
       .single();
 
     if (dbError) {
-      console.error('Database error:', dbError);
+      logger.error({ err: dbError }, 'Failed to save contact message to database');
       return NextResponse.json({ error: 'Failed to save message' }, { status: 500 });
     }
 
-    console.log('Message saved to database:', savedMessage.id);
+    logger.info({ messageId: savedMessage.id }, 'Contact message saved to database');
 
     // Send emails using OAuth2
     let emailSent = false;
@@ -130,12 +134,9 @@ agentpilot.ai
       });
 
       // Send notification email to you
-      await transporter.sendMail({
-        from: `"AgentPilot Contact" <${process.env.GMAIL_USER}>`,
-        to: 'hello@agentpilot.ai',
-        subject: `New Contact: ${name}`,
-        replyTo: email,
-        html: `
+      // D12: this send was html-only; derive a plaintext part from the shared
+      // htmlToText util so it is delivered as multipart/alternative too.
+      const notificationHtml = `
           <div style="font-family: Arial, sans-serif; max-width: 600px;">
             <h2>New Contact Form Submission</h2>
             <div style="background: #f8f9fa; padding: 20px; border-radius: 8px;">
@@ -143,20 +144,27 @@ agentpilot.ai
               <p><strong>Name:</strong> ${name}</p>
               <p><strong>Email:</strong> ${email}</p>
               <p><strong>Date:</strong> ${new Date().toLocaleString()}</p>
-              
+
               <h3>Message</h3>
               <div style="background: white; padding: 15px; border-radius: 6px; border: 1px solid #ddd;">
                 ${message.replace(/\n/g, '<br>')}
               </div>
-              
+
               <p><strong>Reply directly to this email to respond to ${name}</strong></p>
             </div>
           </div>
-        `,
+        `;
+      await transporter.sendMail({
+        from: `"AgentPilot Contact" <${process.env.GMAIL_USER}>`,
+        to: 'hello@agentpilot.ai',
+        subject: `New Contact: ${name}`,
+        replyTo: email,
+        html: notificationHtml,
+        text: htmlToText(notificationHtml),
       });
 
       emailSent = true;
-      console.log('Emails sent successfully');
+      logger.info({ messageId: savedMessage.id }, 'Contact emails sent successfully');
 
       await supabase
         .from('contact_messages')
@@ -164,7 +172,7 @@ agentpilot.ai
         .eq('id', savedMessage.id);
 
     } catch (emailError) {
-      console.error('Email sending failed (but message was saved):', emailError);
+      logger.error({ err: emailError, messageId: savedMessage.id }, 'Email sending failed (but message was saved)');
     }
 
     return NextResponse.json({ 
@@ -177,7 +185,7 @@ agentpilot.ai
     });
 
   } catch (error) {
-    console.error('Contact form error:', error);
+    logger.error({ err: error }, 'Contact form request failed');
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

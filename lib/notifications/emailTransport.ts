@@ -12,6 +12,11 @@
 
 import nodemailer from 'nodemailer';
 import { createLogger } from '@/lib/logger';
+// D12: htmlToText now lives in ONE shared util. Re-exported below so existing
+// callers (and the D9 test importing it from here) keep working unchanged.
+import { htmlToText } from '@/lib/email/htmlToText';
+
+export { htmlToText };
 
 const logger = createLogger({ module: 'EmailTransport', service: 'notifications' });
 
@@ -42,39 +47,6 @@ export interface SendEmailResult {
   sent: boolean;
   provider: 'resend' | 'gmail' | 'gmail-plugin' | 'none';
   error?: string;
-}
-
-/**
- * D9: derive a readable plaintext alternative from an HTML document. Deliberately
- * dependency-free (no html-to-text lib): drop non-content elements, turn block-level
- * boundaries into newlines, strip the remaining tags, decode the common entities,
- * and collapse whitespace. Good enough for a plaintext MIME part; the HTML part
- * remains the primary render.
- */
-export function htmlToText(html: string): string {
-  if (!html) return '';
-  return html
-    // Remove elements whose text content is not human-readable body copy.
-    .replace(/<(style|script|head|title)[^>]*>[\s\S]*?<\/\1>/gi, '')
-    // Line breaks and block boundaries → newlines.
-    .replace(/<br\s*\/?>(?=\s*)/gi, '\n')
-    .replace(/<\/(p|div|tr|li|h[1-6]|table|thead|tbody|section|header|footer|ul|ol)>/gi, '\n')
-    // Strip all remaining tags.
-    .replace(/<[^>]+>/g, '')
-    // Decode the entities our templates actually emit.
-    .replace(/&nbsp;/gi, ' ')
-    .replace(/&amp;/gi, '&')
-    .replace(/&lt;/gi, '<')
-    .replace(/&gt;/gi, '>')
-    .replace(/&quot;/gi, '"')
-    .replace(/&#39;/gi, "'")
-    // Collapse whitespace: trim each line, cap consecutive blank lines.
-    .replace(/[ \t]+/g, ' ')
-    .split('\n')
-    .map(line => line.trim())
-    .join('\n')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
 }
 
 /**

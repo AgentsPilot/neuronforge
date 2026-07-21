@@ -3,6 +3,7 @@
 import { UserPluginConnections } from './user-plugin-connections';
 import { PluginManagerV2 } from './plugin-manager-v2';
 import { GoogleBasePluginExecutor } from './google-base-plugin-executor';
+import { htmlToText } from '@/lib/email/htmlToText';
 
 const pluginName = 'google-mail'; // Current plugin key
 
@@ -619,21 +620,49 @@ export class GmailPluginExecutor extends GoogleBasePluginExecutor {
       message += `Subject: ${this.mimeEncodeHeader(content.subject)}\r\n`;
     }
 
-    // MIME headers for content type
+    // MIME headers + body.
     message += `MIME-Version: 1.0\r\n`;
+
+    // D12: when HTML is present, send proper `multipart/alternative` (a text/plain
+    // part AND a text/html part) instead of single-part text/html. Previously the
+    // executor emitted single-part HTML and SILENTLY DISCARDED `content.body` — the
+    // plaintext field exists in the plugin schema but was thrown away whenever HTML
+    // was set. The plaintext part is `content.body` when the caller supplied a
+    // non-empty one, else it is derived from the HTML via the shared htmlToText util
+    // (this fallback is the branch that actually fires today, since V6 generation
+    // only ever wires `html_body`). Parts are ordered least→most preferred per
+    // RFC 2046 (plaintext first, HTML last) so capable clients render the HTML.
     if (content?.html_body) {
-      message += `Content-Type: text/html; charset=utf-8\r\n`;
-    } else {
+      const suppliedPlain = typeof content?.body === 'string' ? content.body.trim() : '';
+      const plainPart = suppliedPlain || htmlToText(content.html_body);
+
+      // Unique boundary that will not collide with body content.
+      const boundary = `=_alt_${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`;
+
+      message += `Content-Type: multipart/alternative; boundary="${boundary}"\r\n`;
+      message += '\r\n'; // Empty line between top-level headers and the first part.
+
+      // text/plain part
+      message += `--${boundary}\r\n`;
       message += `Content-Type: text/plain; charset=utf-8\r\n`;
-    }
+      message += '\r\n';
+      message += `${plainPart}\r\n`;
 
-    message += '\r\n'; // Empty line between headers and body
+      // text/html part
+      message += `--${boundary}\r\n`;
+      message += `Content-Type: text/html; charset=utf-8\r\n`;
+      message += '\r\n';
+      message += `${content.html_body}\r\n`;
 
-    // Body
-    if (content?.html_body) {
-      message += content.html_body;
-    } else if (content?.body) {
-      message += content.body;
+      // Closing boundary.
+      message += `--${boundary}--\r\n`;
+    } else {
+      // Text-only path unchanged: single-part text/plain.
+      message += `Content-Type: text/plain; charset=utf-8\r\n`;
+      message += '\r\n'; // Empty line between headers and body
+      if (content?.body) {
+        message += content.body;
+      }
     }
 
     // Base64url encode the message (Gmail's format)

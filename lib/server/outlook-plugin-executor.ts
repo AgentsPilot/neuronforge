@@ -54,6 +54,14 @@ export class OutlookPluginExecutor extends BasePluginExecutor {
   private async sendEmail(connection: any, params: any): Promise<any> {
     const { to, subject, body, cc, bcc, importance = 'normal' } = params;
 
+    // D12 (deferred, secondary): Graph's simple message model exposes a SINGLE body
+    // with one `contentType` and does not accept a parallel plaintext alternative, so
+    // this send is HTML-only (no true multipart/alternative). The only way to emit a
+    // real multipart/alternative via Graph is to build a full raw-MIME message and POST
+    // it to `/me/sendMail` as base64 with `Content-Type: text/plain` — a materially
+    // different send shape from the JSON message model below. That is a deferred
+    // follow-up: the Gmail plugin (raw-MIME) is the D12 primary fix; Graph HTML renders
+    // acceptably in Outlook/Graph clients. See the D12 workplan for the decision.
     const message = {
       subject,
       body: {
