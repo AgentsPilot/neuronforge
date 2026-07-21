@@ -181,9 +181,23 @@ export class CapabilityBinderV2 {
 
     // Phase 2: Build data_schema from bound steps + plugin output schemas
     const schemaBuilder = new DataSchemaBuilder(this.pluginManager)
-    const { schema: dataSchema, warnings: schemaWarnings } = schemaBuilder.build(boundSteps)
+    const { schema: dataSchema, warnings: schemaWarnings, fieldRenames } = schemaBuilder.build(boundSteps)
 
     boundIntent.data_schema = dataSchema
+
+    // WP-63 A2 (M4): apply the SAME declared→canonical rename map Gap A emitted to
+    // EVERY downstream reference shape — bare `filters[].field`/`key_field` literals,
+    // `{{var.field}}` template strings, and structured `{kind:"ref"}` value refs — so
+    // the filter/scatter references match the reconciled camelCase schema. Literal map
+    // application scoped by data_schema membership: NO second fuzzy match (avoids the
+    // divergence class SA flagged HIGH in WP-62). Runs BEFORE WP-2 reconciliation.
+    if (fieldRenames.size > 0) {
+      const rewritten = this.applyTransformFieldRenames(boundSteps, fieldRenames, dataSchema)
+      logger.info(
+        { renames: Object.fromEntries(fieldRenames), rewritten },
+        '[WP-63/A2] Applied transform field renames to downstream references'
+      )
+    }
 
     if (schemaWarnings.length > 0) {
       logger.warn(
@@ -793,6 +807,128 @@ export class CapabilityBinderV2 {
 
     walkSteps(steps)
     return count
+  }
+
+  /**
+   * WP-63 A2 (M4): apply Gap A's declared→canonical field rename map to EVERY
+   * downstream reference shape, so filter/scatter references match the reconciled
+   * camelCase schema (a schema-only fix would still empty the filter if the bare
+   * `condition.field` literal stayed snake_case). This is a LITERAL map application
+   * scoped by data_schema membership — NOT a second fuzzy match (the divergence
+   * class SA flagged HIGH in WP-62).
+   *
+   * Covers: structured `{kind:"ref", ref, field}` refs, `{{var.field}}` template
+   * strings, and bare field literals (`key_field`/`reference_key_field`) — resolved
+   * against the reconciled data_schema so an unrelated same-named field is not touched.
+   */
+  private applyTransformFieldRenames(
+    steps: BoundStep[],
+    renames: Map<string, string>,
+    dataSchema: any
+  ): number {
+    let count = 0
+
+    // Item fields of a (possibly dotted, possibly loop/scatter-item) variable.
+    const itemFieldsOf = (varName: string): Set<string> | null => {
+      const schema = this.resolveVarSchema(varName, dataSchema)
+      if (!schema) return null
+      const target = schema.type === 'array' ? schema.items : schema
+      const props = target?.properties
+      return props && typeof props === 'object' ? new Set(Object.keys(props)) : null
+    }
+
+    // Return the canonical name to rewrite `field` on `varName` to, or null.
+    // Scoped: only rewrite when the variable's reconciled slot carries the canonical
+    // (and not the old declared name). Unknown variable → best-effort (the field was
+    // reconciled from a real producer, so a stale reference is the expected case).
+    const canonicalFor = (varName: string | undefined, field: string): string | null => {
+      const canonical = renames.get(field)
+      if (!canonical) return null
+      if (!varName) return canonical
+      const fields = itemFieldsOf(varName)
+      if (!fields) return canonical
+      if (fields.has(field)) return null // slot genuinely has the old name — leave it
+      return fields.has(canonical) ? canonical : null
+    }
+
+    // Rewrite `{{var.field...}}` templates inside a string (immediate field only).
+    const rewriteTemplates = (str: string): string =>
+      str.replace(/\{\{\s*([^}]+?)\s*\}\}/g, (whole, inner) => {
+        const parts = String(inner).split('.')
+        if (parts.length < 2) return whole
+        const base = parts[0]
+        const c = canonicalFor(base, parts[1])
+        if (!c) return whole
+        parts[1] = c
+        count++
+        return `{{${parts.join('.')}}}`
+      })
+
+    const BARE_FIELD_KEYS = new Set(['key_field', 'reference_key_field'])
+
+    const rewriteNode = (node: any): void => {
+      if (!node || typeof node !== 'object') return
+      if (Array.isArray(node)) {
+        for (const v of node) rewriteNode(v)
+        return
+      }
+      // Structured value ref.
+      if (node.kind === 'ref' && typeof node.ref === 'string' && typeof node.field === 'string') {
+        const c = canonicalFor(node.ref, node.field)
+        if (c) {
+          node.field = c
+          count++
+        }
+      }
+      for (const [k, v] of Object.entries(node)) {
+        if (typeof v === 'string') {
+          // Bare field literal on a keyed position → best-effort (unknown var).
+          if (BARE_FIELD_KEYS.has(k) && renames.has(v)) {
+            ;(node as any)[k] = renames.get(v)
+            count++
+          } else if (v.includes('{{')) {
+            const nv = rewriteTemplates(v)
+            if (nv !== v) (node as any)[k] = nv
+          }
+        } else {
+          rewriteNode(v)
+        }
+      }
+    }
+
+    const walk = (list: BoundStep[]): void => {
+      for (const step of list) {
+        rewriteNode(step)
+        if ((step as any).loop?.do) walk((step as any).loop.do)
+        if ((step as any).decide?.then) walk((step as any).decide.then)
+        if ((step as any).decide?.else) walk((step as any).decide.else)
+        if ((step as any).parallel?.branches) {
+          for (const b of (step as any).parallel.branches) if (b?.steps) walk(b.steps)
+        }
+      }
+    }
+    walk(steps)
+    return count
+  }
+
+  /**
+   * Resolve a variable RefName (dotted-aware) to its SchemaField in the data_schema.
+   * Mirrors DataSchemaBuilder.resolveInputSlotSchema so A2 and Gap A agree on lookup.
+   */
+  private resolveVarSchema(varName: string, dataSchema: any): any | null {
+    const slots = dataSchema?.slots
+    if (!slots || !varName) return null
+    const clean = String(varName).replace(/\{\{|\}\}/g, '').trim()
+    if (slots[clean]?.schema) return slots[clean].schema
+    const parts = clean.split('.')
+    let cur: any = slots[parts[0]]?.schema
+    if (!cur) return null
+    for (let i = 1; i < parts.length; i++) {
+      if (!cur || typeof cur !== 'object') return null
+      if (cur.type === 'array' && cur.items) cur = cur.items
+      cur = cur.properties?.[parts[i]]
+    }
+    return cur || null
   }
 
   /**

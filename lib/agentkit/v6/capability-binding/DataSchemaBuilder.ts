@@ -34,11 +34,26 @@ import type {
 } from '../logical-ir/schemas/workflow-data-schema'
 import { convertActionOutputSchemaToSchemaField } from '../logical-ir/schemas/workflow-data-schema'
 import { createLogger } from '@/lib/logger'
+import {
+  reconcileFieldNames,
+  directFieldNames,
+  collectRawFieldNames,
+  isFieldPreservingOp,
+  FLATTEN_BUILTINS,
+} from './field-name-reconciliation'
 
 const logger = createLogger({ module: 'DataSchemaBuilder', service: 'V6' })
 
 /** Shape-preserving transform ops — output schema = input schema */
 const SHAPE_PRESERVING_OPS = new Set(['filter', 'sort', 'dedupe'])
+
+/** WP-63 result of build(): the schema plus the declared→canonical field rename map. */
+export interface DataSchemaBuildResult {
+  schema: WorkflowDataSchema
+  warnings: string[]
+  /** WP-63 Gap A: declared field name → producer canonical name (re-cased fields). */
+  fieldRenames: Map<string, string>
+}
 
 /** Shape-changing transform ops — require output_schema from LLM */
 const SHAPE_CHANGING_OPS = new Set(['map', 'group', 'merge', 'reduce', 'select'])
@@ -46,10 +61,16 @@ const SHAPE_CHANGING_OPS = new Set(['map', 'group', 'merge', 'reduce', 'select']
 export class DataSchemaBuilder {
   private pluginManager: PluginManagerV2
   private warnings: string[]
+  /** WP-63 Gap A: accumulated declared→canonical field renames (global, conflict-guarded). */
+  private fieldRenames: Map<string, string>
+  /** WP-63 Gap A: declared names dropped from the global map due to a conflicting rename target. */
+  private renameConflicts: Set<string>
 
   constructor(pluginManager: PluginManagerV2) {
     this.pluginManager = pluginManager
     this.warnings = []
+    this.fieldRenames = new Map()
+    this.renameConflicts = new Set()
   }
 
   /**
@@ -58,8 +79,10 @@ export class DataSchemaBuilder {
    * Pass 1: Create a DataSlot for each step with an output RefName
    * Pass 2: Populate consumed_by from step inputs
    */
-  build(boundSteps: BoundStep[]): { schema: WorkflowDataSchema; warnings: string[] } {
+  build(boundSteps: BoundStep[]): DataSchemaBuildResult {
     this.warnings = []
+    this.fieldRenames = new Map()
+    this.renameConflicts = new Set()
     const slots: Record<string, DataSlot> = {}
 
     // Pass 1: Build slots from all steps (including nested, with depth tracking)
@@ -85,6 +108,13 @@ export class DataSchemaBuilder {
 
       // Pass 2c: Fix shape-preserving transform + loop item schemas
       this.fixupDerivedTransformSchemas(allEntries, slots)
+
+      // Pass 2d (WP-63 Gap A): reconcile AI-declared FIELD-PRESERVING transform item
+      // schemas to their producer's real field names (e.g. declared `mime_type` →
+      // producer `mimeType`) BEFORE they propagate downstream. Runs inside the
+      // convergence loop so a reconciled slot re-propagates through inheritance
+      // (filter/sort/dedupe inherit; scatter/loop item_ref derives).
+      this.reconcileAiDeclaredTransformSchemas(allEntries, slots)
 
       if (JSON.stringify(slots) === slotSnapshot) {
         break // Converged — no more changes
@@ -140,7 +170,7 @@ export class DataSchemaBuilder {
       '[DataSchemaBuilder] data_schema built'
     )
 
-    return { schema: { slots }, warnings: this.warnings }
+    return { schema: { slots }, warnings: this.warnings, fieldRenames: this.fieldRenames }
   }
 
   /**
@@ -767,6 +797,153 @@ export class DataSchemaBuilder {
         }
       }
     }
+  }
+
+  // ============================================================================
+  // WP-63 Gap A — reconcile ai_declared FIELD-PRESERVING transform item schemas
+  // to their producer's real field names (declared `mime_type` → producer `mimeType`)
+  // ============================================================================
+
+  /**
+   * WP-63 Gap A (Pass 2d). For each FIELD-PRESERVING transform (`flatten`, `filter`,
+   * `sort`, `dedupe`, `project_column`, `set_difference` — runtime passes producer
+   * fields through verbatim, so every declared field MUST trace to the producer),
+   * reconcile an `ai_declared` item schema's field names to the producer's real
+   * names via the shared normalized-key matcher. FIELD-SYNTHESIZING ops
+   * (`with_fields`/`map`/`group`/… — Q2) are skipped: their declared fields are
+   * legitimately computed and MUST NOT be reconciled or flagged (AC-5, AC-9).
+   *
+   * Never drops a field (Principle 2/11): re-cased → renamed in place; genuinely
+   * absent → left as-is and recorded as a Gap-C warning candidate.
+   */
+  private reconcileAiDeclaredTransformSchemas(
+    allEntries: Array<{ step: BoundStep; depth: number }>,
+    slots: Record<string, DataSlot>
+  ): void {
+    for (const { step } of allEntries) {
+      // (1) FIELD-PRESERVING transforms — reconcile their item schema to the producer.
+      if (step.kind === 'transform') {
+        const t = (step as BoundStep & TransformStep).transform
+        if (!t || !isFieldPreservingOp(t.op) || !step.output) continue // Q2: preserving ops only
+        this.reconcileSlotAgainstProducer(
+          step.id,
+          t.op,
+          slots[step.output],
+          this.resolveInputSlotSchema(t.input, slots),
+          { emitGapC: true }
+        )
+        continue
+      }
+
+      // (2) Loop/scatter item_ref — mirror the iterated collection's items, so a
+      // reconciled collection propagates to `{{itemVariable.field}}` refs. Not a
+      // transform op, so no Q2 gate / no Gap-C (it inherits, never declares fields).
+      if (step.kind === 'loop') {
+        const loop = (step as BoundStep & LoopStep).loop
+        if (!loop?.item_ref) continue
+        const overSchema = this.resolveInputSlotSchema(loop.over, slots)
+        this.reconcileSlotAgainstProducer(step.id, 'loop_item', slots[loop.item_ref], overSchema, { emitGapC: false })
+      }
+    }
+  }
+
+  /**
+   * WP-63 Gap A core: reconcile a slot's item field names to the producer's real
+   * names via the shared matcher. Rewrites the slot in place, records the global
+   * renames (for A2), surfaces M1 ambiguity, and — when `emitGapC` — surfaces a
+   * genuinely-absent field on a field-preserving op (Gap C, warning). Skips
+   * `source: "plugin"` slots (plugin schema is already ground truth).
+   */
+  private reconcileSlotAgainstProducer(
+    stepId: string,
+    opLabel: string,
+    slot: DataSlot | undefined,
+    producerSchema: SchemaField | null,
+    opts: { emitGapC: boolean }
+  ): void {
+    if (!slot?.schema || slot.schema.source === 'plugin') return
+    if (!producerSchema) return
+
+    const producerUniverse = [...collectRawFieldNames(producerSchema), ...FLATTEN_BUILTINS]
+    if (producerUniverse.length === 0) return
+
+    const declaredNames = directFieldNames(slot.schema)
+    if (declaredNames.length === 0) return
+
+    const { renames, unmatched, ambiguous } = reconcileFieldNames(declaredNames, producerUniverse)
+
+    if (renames.size > 0) {
+      this.renameItemSchemaFields(slot.schema, renames)
+      for (const [declared, canonical] of renames) this.recordFieldRename(declared, canonical)
+      logger.info(
+        { stepId, op: opLabel, renames: Object.fromEntries(renames) },
+        '[WP-63/GapA] Reconciled transform/loop item fields to producer casing'
+      )
+    }
+    for (const a of ambiguous) {
+      this.warn(
+        `[WP-63] Step ${stepId} (${opLabel}): field "${a}" is ambiguous against the producer ` +
+          `(≥2 producer fields normalize alike) — left as-is, not reconciled.`
+      )
+    }
+    if (opts.emitGapC) {
+      for (const u of unmatched) {
+        this.warn(
+          `[WP-63/GapC] Step ${stepId} (${opLabel}): declared field "${u}" has no match in the ` +
+            `producer's real output — the runtime will not populate it (field-preserving op passes ` +
+            `producer fields through verbatim). Kept, not dropped.`
+        )
+      }
+    }
+  }
+
+  /**
+   * WP-63 M3: resolve a transform input RefName to its producer SchemaField, handling
+   * a DOTTED path (`expense_emails.emails`) that is not itself a top-level slot key —
+   * `slots["expense_emails.emails"]` is null, so navigate `slots["expense_emails"]`
+   * into `.emails`. Without this, Gap A can't find the producer at all.
+   */
+  private resolveInputSlotSchema(inputRef: string | undefined, slots: Record<string, DataSlot>): SchemaField | null {
+    if (!inputRef) return null
+    const clean = inputRef.replace(/\{\{|\}\}/g, '').trim()
+    if (slots[clean]?.schema) return slots[clean].schema
+
+    const parts = clean.split('.')
+    const base = parts[0]
+    let cur: any = slots[base]?.schema
+    if (!cur) return null
+    for (let i = 1; i < parts.length; i++) {
+      if (!cur || typeof cur !== 'object') return null
+      // Step into array items before reading a named property.
+      if (cur.type === 'array' && cur.items) cur = cur.items
+      cur = cur.properties?.[parts[i]]
+    }
+    return (cur as SchemaField) || null
+  }
+
+  /** Rewrite an item-schema's property keys per the rename map (declared → canonical). */
+  private renameItemSchemaFields(schema: SchemaField, renames: Map<string, string>): void {
+    const target: any = schema.type === 'array' ? schema.items : schema
+    const props = target?.properties
+    if (!props || typeof props !== 'object') return
+    for (const [declared, canonical] of renames) {
+      if (declared in props && !(canonical in props)) {
+        props[canonical] = props[declared]
+        delete props[declared]
+      }
+    }
+  }
+
+  /** Accumulate a global declared→canonical rename, dropping on conflicting targets. */
+  private recordFieldRename(declared: string, canonical: string): void {
+    if (this.renameConflicts.has(declared)) return
+    const existing = this.fieldRenames.get(declared)
+    if (existing && existing !== canonical) {
+      this.fieldRenames.delete(declared)
+      this.renameConflicts.add(declared)
+      return
+    }
+    this.fieldRenames.set(declared, canonical)
   }
 
   // ============================================================================

@@ -408,6 +408,22 @@ extract: { input: 'attachment_content.data', fields: [...] }   // the ONLY shape
 
 ---
 
+### Anti-pattern J: Reconciling a schema but not the references that read it
+
+```ts
+// ❌ DON'T — fix the declared schema's field names but leave the references stale
+slot.schema.items.properties.mimeType = slot.schema.items.properties.mime_type  // schema fixed
+delete slot.schema.items.properties.mime_type
+// … but the filter still carries condition.field = "mime_type", the scatter still
+//    references {{attachment_item.mime_type}} → filter matches nothing → empty pipeline
+```
+
+**Why it's wrong:** a data-schema is only half the truth; the *references* that read it (filter `condition.field`, scatter `{{item.field}}`, `{kind:"ref"}` value refs, bare `key_field` literals) are authored independently by the LLM against the same (wrong) names. Reconcile the schema to `mimeType` but leave a `field:"mime_type"` filter literal, and the deterministic filter still matches zero rows — the exact WP-63 empty-pipeline symptom, now with a "fixed" schema masking it. A schema fix that doesn't rewrite the references is not a fix.
+
+**Canonical fix:** compute the declared→canonical rename **once** (WP-63 Gap A) and apply that **same map** to **every** downstream reference shape (WP-63 A2 / M4) — `{kind:"ref"}`, `{{var.field}}` templates, and bare `field`/`key_field` literals — scoped by the reconciled schema. **Never run a second independent fuzzy match** to rewrite the references (that reintroduces the WP-62-Round-1 divergence class, where two matchers disagree). One decision, one map, all consumers. And guard the matcher against **normalized-key collisions** (`message_id` vs `messageId`): if two producer fields normalize alike, refuse to rewrite — ambiguity is the only path that can corrupt a correct schema (WP-63 M1).
+
+---
+
 ## Section 3: Decision Checklist
 
 Before merging a change that touches any of these areas, answer the matching questions.
