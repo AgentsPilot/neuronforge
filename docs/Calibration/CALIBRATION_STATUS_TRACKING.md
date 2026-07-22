@@ -1,8 +1,11 @@
 # Calibration Status Tracking System
 
 **Date:** 2026-04-28
+**Last Updated:** 2026-07-13
 **Issue:** Calibration taking 3 iterations even when workflow is already 100% functional
 **Status:** ✅ **IMPLEMENTED**
+
+> **Two different status columns — read this first.** This document primarily describes the fast-path column **`agents.last_calibration_status`** (`success` / `needs_review` / `failed` / null) paired with `workflow_hash`. There is a **separate** wizard/gate column, **`agents.calibration_status`** (`running` / `passed` / `failed` / `skipped`), whose semantics changed in the 2026-07 calibration-hardening batch — see [The `calibration_status` gate column](#the-calibration_status-gate-column) below. Don't conflate them.
 
 ---
 
@@ -91,6 +94,8 @@ A workflow is marked as `status='success'` when **ALL** of these are true:
 4. ✅ **Calibration loop completed:** Exited with "no auto-fixable issues remaining"
 
 This happens at **line 3746-3873** in `batch/route.ts`.
+
+> **Note (2026-07-13):** since the Item 6 class-based verdict, history `status = 'success'` is written on a passing **verdict** — a clean pass (criteria above) OR the Item 6a "passable with cosmetic suggestions only" relaxation (0 blocking/critical, only a waved user-confirm-only cosmetic suggestion remaining, real path exercised). In the cosmetic-only case criterion 1 ("zero remaining issues") no longer strictly holds — a single waved suggestion may remain — yet the run is a genuine pass. See [The `calibration_status` gate column](#the-calibration_status-gate-column).
 
 ---
 
@@ -388,6 +393,29 @@ If `last_calibration_status` is NULL:
 
 ---
 
+## The `calibration_status` gate column
+
+> **Added 2026-07-13** (batch-1 field-fidelity + calibration-hardening; Group A wizard/verdict-unblock).
+
+Separate from the fast-path `last_calibration_status` above, `agents.calibration_status` is the **wizard/production gate** column. Values: `running` / `passed` / `failed` / `skipped` (`CalibrationGateStatus`). It is written at the end of every run via the repository (`AgentRepository.setCalibrationStatus`, owner-scoped) — never with a direct Supabase call.
+
+**What changed:** the gate now keys on the **persisted verdict**, not a residual issue count.
+
+```typescript
+// app/api/v2/calibrate/batch/route.ts (route tail, ~L5030)
+const passed = isCalibrationHistoryPass(latest?.status);   // = (status === 'success')
+await agentRepo.setCalibrationStatus(agentId, userId, passed ? 'passed' : 'failed');
+```
+
+- **Before:** the gate computed `passed = latest?.status === 'success' && issuesRemaining === 0`. A **cosmetic-only pass** legitimately retains one waved, user-confirm-only suggestion (`issuesRemaining === 1`), so the `&& issuesRemaining === 0` clause wrongly flipped it to `calibration_status = 'failed'` even though the Item 6 verdict was `passed` (history `status = 'success'`, `is_calibrated` / `production_ready` true).
+- **After:** `isCalibrationHistoryPass(status)` (in `lib/calibration/finishGate.ts`) = `status === 'success'`. The batch route writes history `status = 'success'` **only** on a passing verdict — a clean pass OR the Item 6a "passable with cosmetic suggestions only" relaxation; every non-passing verdict writes `needs_review` / `failed`. So `status === 'success'` **is** the persisted form of the verdict's `isPassing`, and the gate is consistent with the verdict (no second, divergent "did it pass?" definition). A cosmetic-only pass now correctly reads `calibration_status = 'passed'`.
+
+**Why this matters for the wizard:** the finish screen is gated by `canFinishCalibration(result)` = `success === true && critical === 0` (`finishGate.ts`), so a cosmetic-only pass now reaches the finish/success screen (Group A A1), which surfaces the waved suggestions as a dismissible, non-blocking card (Group A A3-UI). A blocking / `inconclusive` / `corrected_not_verified` run can never pass and so can never finish.
+
+See the `calibration` skill § 6 for the full verdict-state model and the relationship between the two `agents` status columns.
+
+---
+
 ## Summary
 
 This solution prevents redundant calibration iterations by:
@@ -397,3 +425,12 @@ This solution prevents redundant calibration iterations by:
 4. **Resetting** status when workflow changes or verification fails
 
 **Result:** 66% faster calibration for already-working workflows, clearer user feedback, and better resource efficiency.
+
+---
+
+## Change History
+
+| Date | Change | Details |
+|------|--------|---------|
+| 2026-07-13 | `calibration_status` gate semantics + column disambiguation | Documented the separate `agents.calibration_status` wizard/gate column (`running`/`passed`/`failed`/`skipped`) and its changed semantics: the tail gate now keys on the persisted verdict via `isCalibrationHistoryPass(status)` (= history `status === 'success'`) instead of `status === 'success' && issuesRemaining === 0`, so a **cosmetic-only pass now writes `'passed'`** (was wrongly `'failed'`). Added a disambiguation note distinguishing it from the fast-path `last_calibration_status`, and a stale-note on the Success Criteria section (history `success` now also covers the Item 6a cosmetic-only relaxation). Reflects the batch-1 field-fidelity/calibration-hardening + Group A wizard/verdict-unblock changes. |
+| 2026-04-28 | Created | Initial calibration status-tracking design: `last_calibration_status` + `workflow_hash` fast-path (single verification run for an unchanged, previously-successful workflow). |

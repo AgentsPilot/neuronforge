@@ -1,0 +1,53 @@
+{
+  "version": "intent.v1",
+  "goal": "Summarize expense receipts from Gmail PDF/image attachments into a table + total",
+  "_note": "WP-62 regression fixture — the FOLDED 95f791ed shape (extraction + normalization in one extract, whole-object input) that historically fell to the AI branch non-deterministically. With WP-62, reliable code (CapabilityBinderV2 Phase 2c) authors a deterministic document-extractor binding for the source-annotated document-surface fields and synthesizes a downstream generate for the meta/computed residual. Field `source` annotations reflect the B1 Phase-1 steer.",
+  "steps": [
+    {
+      "id": "search",
+      "kind": "data_source",
+      "summary": "Search Gmail for expense emails with attachments",
+      "uses": [{ "capability": "search", "domain": "email" }],
+      "output": "expense_emails",
+      "source": { "domain": "email", "intent": "search" }
+    },
+    {
+      "id": "loop",
+      "kind": "loop",
+      "summary": "Process each attachment",
+      "loop": {
+        "over": "expense_emails",
+        "item_ref": "attachment_item",
+        "do": [
+          {
+            "id": "fetch",
+            "kind": "data_source",
+            "summary": "Download the attachment bytes",
+            "uses": [{ "capability": "download", "domain": "email" }],
+            "output": "attachment_content",
+            "source": { "domain": "email", "intent": "download" }
+          },
+          {
+            "id": "extract",
+            "kind": "extract",
+            "summary": "Extract expense fields from the receipt",
+            "uses": [{ "capability": "extract_structured_data", "domain": "document" }],
+            "output": "extracted_expense",
+            "extract": {
+              "input": "attachment_content",
+              "content_hints": { "file_types": ["pdf", "jpg", "png"] },
+              "fields": [
+                { "name": "date_time", "type": "date", "required": true, "source": "document" },
+                { "name": "vendor", "type": "string", "required": true, "source": "document" },
+                { "name": "amount", "type": "currency", "required": true, "source": "document" },
+                { "name": "expense_type", "type": "string", "required": false, "source": "document" },
+                { "name": "notes", "type": "string", "required": false, "source": "computed" },
+                { "name": "source_filename", "type": "string", "required": false, "source": "meta" }
+              ]
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

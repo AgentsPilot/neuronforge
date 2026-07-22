@@ -39,6 +39,9 @@ import { detectReferencedInScopeVariables, extractBaseVarName } from './ai-input
 import { validateExecutionGraph, type ValidationResult } from '../logical-ir/validation/ExecutionGraphValidator'
 import { createLogger, Logger } from '@/lib/logger'
 import { analyzeOutputSchema } from '@/lib/pilot/utils/SchemaAwareDataExtractor'
+// WP-63 Gap B: the ONE shared field-name reconciliation helper (same module Gap A
+// uses) — single source of truth for the normalizer + collision-safe matching.
+import { normalizeForFuzzy, collectRawFieldNames, buildNormalizedMap, isFieldPreservingOp, FLATTEN_BUILTINS } from '../capability-binding/field-name-reconciliation'
 
 const moduleLogger = createLogger({ module: 'V6', service: 'ExecutionGraphCompiler' })
 
@@ -3275,8 +3278,12 @@ export class ExecutionGraphCompiler {
           // preserves the plugin's original casing (e.g., mimeType).
           if (step.type === 'transform' && step.config?.input) {
             const inputVar = String(step.config.input).replace(/[{}]/g, '')
-            // Use the FULL upstream schema (not flattened) for deep nested field extraction
-            const upstreamFullSchema = fullSchemaMap?.get(inputVar)
+            // WP-63 Gap B (B1): `fullSchemaMap` is keyed by bare `output_variable`, but a
+            // transform's `config.input` may be a DOTTED path (`expense_emails.emails`) —
+            // `get("expense_emails.emails")` misses. Fall back to the base variable so O10a
+            // actually runs for the flatten-fed filter shape.
+            const upstreamFullSchema =
+              fullSchemaMap?.get(inputVar) ?? fullSchemaMap?.get(inputVar.split('.')[0])
             if (upstreamFullSchema) {
               props = this.reconcileTransformSchemaWithUpstream(props, upstreamFullSchema, step, ctx)
             }
@@ -3319,61 +3326,89 @@ export class ExecutionGraphCompiler {
     step: WorkflowStep,
     ctx?: CompilerContext
   ): Record<string, { type: string; description?: string }> {
-    const normalizeForFuzzy = (s: string): string => s.toLowerCase().replace(/[_\-]/g, '')
-
-    // Build a lookup of ALL upstream field names (including deeply nested) by normalized form
-    const upstreamByNormalized = new Map<string, string>()
-
-    // Extract all field names from the full schema tree
-    this.extractAllFieldNames(upstreamFullSchema, upstreamByNormalized)
+    // WP-63 Gap B: use the SHARED helper (single source with Gap A) — deep-collect
+    // upstream field names + a COLLISION-SAFE normalized map (M1): if two upstream
+    // fields normalize alike (e.g. `message_id`/`messageId`), that key is ambiguous
+    // and we refuse to rewrite to it.
+    const { byNormalized, ambiguous } = buildNormalizedMap(collectRawFieldNames(upstreamFullSchema))
 
     const corrected: Record<string, { type: string; description?: string }> = {}
+    const renameMap = new Map<string, string>() // declared → canonical (for condition-literal rewrite)
     let hasCasingFixes = false
+
+    // WP-63 Gap C: only field-PRESERVING ops pass producer fields through verbatim,
+    // so only for them is a no-match a genuine defect (Q2). Field-SYNTHESIZING ops
+    // (map/with_fields/…) legitimately mint new fields — never flag them (AC-9).
+    const op = (step as any).config?.type as string | undefined
+    const preserving = isFieldPreservingOp(op)
+    const builtins = new Set<string>(FLATTEN_BUILTINS.map((b) => normalizeForFuzzy(b)))
 
     for (const [declaredField, info] of Object.entries(transformProps)) {
       const normalized = normalizeForFuzzy(declaredField)
-      const upstreamField = upstreamByNormalized.get(normalized)
+      const upstreamField = ambiguous.has(normalized) ? undefined : byNormalized.get(normalized)
 
       if (upstreamField && upstreamField !== declaredField) {
-        // Casing mismatch — use upstream's canonical name
         corrected[upstreamField] = info
+        renameMap.set(declaredField, upstreamField)
         hasCasingFixes = true
         if (ctx) {
           this.log(ctx, `  → [O10a] Transform ${step.step_id}: "${declaredField}" → "${upstreamField}" (upstream casing)`)
         }
       } else {
         corrected[declaredField] = info
+        // WP-63 Gap C — plugin-truth warning (warning-by-default, not hard-fail):
+        // a preserving-op field with no producer match (and not a builtin/exact) will
+        // not be populated at runtime. Surface it (Principle 11) instead of silently
+        // emptying downstream. Never flags synthesizing ops (false-positive safety).
+        if (
+          preserving &&
+          !upstreamField &&
+          !ambiguous.has(normalized) &&
+          !builtins.has(normalized) &&
+          ctx
+        ) {
+          this.warn(
+            ctx,
+            `[WP-63/GapC] Transform ${step.step_id} (${op}): declared field "${declaredField}" ` +
+              `has no match in the upstream producer's real output — the runtime will not populate it.`
+          )
+        }
       }
+    }
+
+    // WP-63 Gap B (B2): rewrite the transform's OWN bare `condition.field` literals
+    // with the same rename map — a schema-only fix would leave a `field:"mime_type"`
+    // filter matching nothing while the schema says `mimeType`. Same map, no re-match.
+    if (hasCasingFixes && (step as any).config?.condition) {
+      this.rewriteConditionFieldLiterals((step as any).config.condition, renameMap, step, ctx)
     }
 
     return hasCasingFixes ? corrected : transformProps
   }
 
   /**
-   * Extract ALL field names from a full output_schema tree, at every nesting level.
-   * Handles: object.properties, array.items.properties, and arbitrarily deep nesting.
-   * Populates targetMap with normalizedName → canonicalName.
+   * WP-63 Gap B (B2): recursively rewrite bare `field` literals inside a compiled
+   * filter condition (`{field, operator, value}` / nested `and`/`or`/`not`) using a
+   * declared→canonical rename map. Literal map application — no fuzzy re-match.
    */
-  private extractAllFieldNames(
-    schema: any,
-    targetMap: Map<string, string>
-  ) {
-    if (!schema || typeof schema !== 'object') return
-
-    const normalizeForFuzzy = (s: string): string => s.toLowerCase().replace(/[_\-]/g, '')
-
-    // If this schema level has properties, extract all field names
-    if (schema.properties) {
-      for (const [fieldName, fieldValue] of Object.entries(schema.properties)) {
-        targetMap.set(normalizeForFuzzy(fieldName), fieldName)
-        // Recurse into each property's schema
-        this.extractAllFieldNames(fieldValue as any, targetMap)
-      }
+  private rewriteConditionFieldLiterals(
+    condition: any,
+    renameMap: Map<string, string>,
+    step: WorkflowStep,
+    ctx?: CompilerContext
+  ): void {
+    if (!condition || typeof condition !== 'object') return
+    if (Array.isArray(condition)) {
+      for (const c of condition) this.rewriteConditionFieldLiterals(c, renameMap, step, ctx)
+      return
     }
-
-    // If this is an array type, recurse into items
-    if (schema.type === 'array' && schema.items) {
-      this.extractAllFieldNames(schema.items, targetMap)
+    if (typeof condition.field === 'string' && renameMap.has(condition.field)) {
+      const canonical = renameMap.get(condition.field)!
+      if (ctx) this.log(ctx, `  → [O10a] Transform ${step.step_id} condition: "${condition.field}" → "${canonical}"`)
+      condition.field = canonical
+    }
+    for (const v of Object.values(condition)) {
+      if (v && typeof v === 'object') this.rewriteConditionFieldLiterals(v, renameMap, step, ctx)
     }
   }
 
@@ -3715,9 +3750,7 @@ export class ExecutionGraphCompiler {
     location: string,
     variable: string
   ): string | null {
-    // Strategy 1: Fuzzy casing match
-    // Normalize both to lowercase with no separators: mime_type → mimetype, mimeType → mimetype
-    const normalizeForFuzzy = (s: string): string => s.toLowerCase().replace(/[_\-]/g, '')
+    // Strategy 1: Fuzzy casing match — uses the SHARED normalizer (WP-63, single source).
     const normalizedWrong = normalizeForFuzzy(wrongField)
 
     for (const [schemaField] of Object.entries(schemaProps)) {

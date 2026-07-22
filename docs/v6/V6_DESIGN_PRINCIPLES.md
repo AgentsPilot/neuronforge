@@ -88,9 +88,11 @@ This doc is **distilled from concrete failures** — it doesn't add new architec
 - [WP-30](./V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_WEAK_POINTS.md): `case 'config'` runtime called resolveVariable with bare path; required `{{}}`
 - [WP-33](./V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_WEAK_POINTS.md): IR converter passed string `expression` through unchanged; runtime required structured AST
 - [WP-37](./V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_WEAK_POINTS.md): `resolveAllVariables` pre-substituted unresolvable templates to undefined; runtime `transformWithFields` rejected undefined
+- [WP-62 hotfix](./V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_WEAK_POINTS.md#wp-62-gmail-attachment-extract-non-deterministically-routed-to-ai-vs-document-extractor-coverage-decided-by-phase-1-phrasing): `extract.input` is a `RefName` — the grammar accepts BOTH granularities for the same intent (`attachment_content` whole-object OR `attachment_content.data` bytes-field). The converter's param mapping only worked for the already-navigated `.data` shape; the whole-object shape was copied verbatim into a `type:"string"` param → live runtime failure *"file_content should be string, got object"* on every scatter item. **Both shapes are legal emissions, so both must compile to a working DSL** — the fix normalizes at the converter (navigate to the producer's bytes field, idempotently) rather than hoping Phase 1 picks the lucky granularity. Note the failure was invisible for months because the *other* branch (AI reroute) absorbed the whole-object shape; fixing the routing (WP-62) was the first thing to route real traffic through the gap.
 
 **How to apply:**
 - Before adding a new emission shape to the grammar, audit every consumer (IR converter, validators, runtime executors) to verify they all handle it.
+- **A ref-granularity choice IS an emission shape.** If a grammar field is a bare `RefName`, the LLM will emit both the container and the field — normalize to the shape the consumer's schema declares.
 - Prefer **converter normalization** as the structural fix (phase4 stores the canonical shape), **plus** runtime tolerance as defense for legacy/cached phase4 files.
 - Don't say "the LLM should emit form X" — the LLM will drift. Engineer for the drift.
 
@@ -228,6 +230,7 @@ This doc is **distilled from concrete failures** — it doesn't add new architec
 - [WP-40](./V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_WEAK_POINTS.md): IRFormalizer's `validateIRStructure` "auto-corrected" filter inputs by blindly appending field names from a hardcoded list `['attachments', 'items', ...]` without any schema check — always picked the first one. Emitted `WARN: Auto-corrected filter input` as if the fix was real; actually corrupted the path (`{{wrapper.rows}}` → `{{wrapper.rows.attachments}}`). The reader sees a "warn-but-fixed" log line and trusts it; the data is silently broken. The validator scaled to one scenario class (Gmail attachments) by coincidence — the heuristic's correctness was always plugin-specific luck, not design.
 - [WP-41](./V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_WEAK_POINTS.md): D-B18 `select` → `map` alias is a label rename, not a semantic translation. The two operations have different semantics — `select` builds one wrapper object from source-level refs; `map` iterates an input array and produces one element per item. The alias makes the compiler accept legacy IRs that emit `select`, but the runtime then executes them as `map`, producing 57 copies of the literal config object instead of one wrapper. There's no log warning at all — the alias logs success and the runtime logs success on each step. The user sees `step4: no input data` several steps later, with no signal pointing back to D-B18 as the root. **New anti-pattern to surface:** "backwards-compat aliases must be semantic, not syntactic" — a rename is only safe when the old and new labels refer to the same underlying operation. The same alias mechanism works correctly for `deduplicate → dedupe` (those ARE the same op) but fails silently for `select` → `map` (those are different).
 - [WP-43](./V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_WEAK_POINTS.md): `ai_processing.instruction` referenced column letters ("column A as task_name") + temporal terms ("next 3 days relative to now"), but neither anchor was made concrete at runtime. The model received the data via the prompt's "Data for Analysis" section (named-key objects), saw contradicting framing in the instruction (2D array, columns by letter), and had no reference for "now" — so it returned `{tasks: []}` despite real matching data. Pipeline ran 7/7 steps, sent a "no tasks" email, NO error signal. **New anti-pattern to surface:** "prompt-context completeness is a platform responsibility" — LLMs cannot be expected to compute `today`'s date, infer that "column A" should mean "the 1st named key", or otherwise bridge gaps that the runtime has all the information to fill. Defense-in-depth runtime preambles (data shape + current date + locale hints) are cheap (~150 tokens) and turn silent wrong outputs into correct outputs. Same family as WP-29/30/31 (W2 expression-evaluator runtime resolves `today`/`config`/`date_diff` because the LLM can't) — except for free-form natural-language instructions, the resolution layer is a *prepended anchor* rather than a structured replacement.
+- [WP-62](./V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_WEAK_POINTS.md#wp-62-gmail-attachment-extract-non-deterministically-routed-to-ai-vs-document-extractor-coverage-decided-by-phase-1-phrasing): the deterministic-vs-AI extraction choice was left to Phase-1 phrasing, so a genuinely-covered attachment extraction silently landed on the AI branch (base64-as-text → fabrication for images) on one agent while an identical sibling bound the deterministic OCR extractor. Two lessons codified here: (1) a routing decision whose *wrong* outcome is **silent** (a PDF dry-run "passes" on `extracted_text`) must be made by **reliable code** (the `CapabilityBinderV2` coverage predicate), not by non-deterministic LLM phrasing — and (2) the AI-fallback must remain a **visible, logged, deliberate** choice (Phase 2c logs the chosen branch + deciding CC-criterion), never a silent default. The fix preserves the AI net as the intentional destination for genuinely-uncovered cases (Non-goal: never force-bind whenever a file is present). See also Principle 6 — the predicate classifies producible fields by **declared source**, never a field-name/plugin-identity list.
 - [WP-58](./V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION_WEAK_POINTS.md#wp-58-multi-input-aigenerate-steps-bind-only-one-input) (requirement Item 11): an `ai_processing` step inside a scatter had its instruction reference the loop variable (`attachment_item.subject/.from/.filename`) but its declared `input` was `{{extracted_fields}}` only. An AI step only receives its declared `input` as DATA — a prose mention of a variable it was never handed is unreadable, so the model wrote `""` and the From/Subject/Filename columns shipped blank while the pipeline "succeeded" 14/0/0. **Same lesson as WP-43:** an instruction that references a variable is a platform obligation to place that variable in the step's data context — deterministically, driven by the referenced-but-unbound in-scope variable, never a prompt nudge and never plugin-specific. Fix: `AIConfig.additional_inputs` + a shared structural detector (`ai-input-context.ts`) populated at the IR converter (root cause) and injected as labelled `{{var}}` blocks by the compiler.
 
 **How to apply:**
@@ -371,6 +374,53 @@ send_email({ subject: "Orders PO Extraction – Processing Complete", ... })
 **Why it's wrong:** The prior run's confirmation email matches the query (WP-38). Phase E "succeeds" with the confirmation as the only matching email.
 
 **Canonical fix:** Either (a) the query excludes self-sent emails via `-from:me`, or (b) the confirmation email's subject doesn't contain the search keyword.
+
+---
+
+### Anti-pattern H: Assigning a generic ref verbatim into a typed plugin param
+
+```ts
+// ❌ DON'T — copies whatever granularity Phase 1 happened to emit into a typed param
+for (const [paramName, paramDef] of Object.entries(paramSchema)) {
+  if (paramDef['x-input-mapping'] && genericConfig.input) {
+    finalConfig[paramName] = genericConfig.input   // ← {{attachment_content}} into a type:"string" param
+    break
+  }
+}
+```
+
+**Why it's wrong:** the param declares a *shape* (`type: "string"`, `accepts: ["file_object"]`) but the assignment never navigates to it. Phase 1 legitimately emits either the container (`attachment_content`) or the field (`attachment_content.data`) — the container lands an **object** in a **string** param and the runtime rejects it per-item: *"Parameter file_content should be string, got object"* (WP-62 hotfix, live agent `2ffcd7bf`). A plugin's declared param type is a contract the compiler must satisfy, not a hint.
+
+**Canonical fix:** resolve the ref against the **producer's schema** and emit the navigated ref (`{{<baseVar>.<bytesField>}}`), rebuilding from the base var so it's **idempotent** (an already-navigated ref stays put, never `.data.data`). Discover the target field from the schema (shared `bytesFieldOf`), never a plugin/field-name branch. If the shape can't be satisfied, take the safe direction and say so — don't emit a param that violates its own declared type.
+
+---
+
+### Anti-pattern I: Fixtures that encode the same assumption as the code under test
+
+```ts
+// ❌ DON'T — every fixture pre-navigates the ref the code is supposed to navigate
+extract: { input: 'attachment_content.data', fields: [...] }   // the ONLY shape tested
+```
+
+**Why it's wrong:** the tests and the code share a blind spot, so the suite is green **and** the feature is broken in production. WP-62 shipped 42 passing tests; every fixture pointed `extract.input` at the already-`.data` shape, so the verbatim-copy gap was never exercised with the whole-object ref that live Phase 1 actually produced. The suite proved the routing decision and silently assumed away the param granularity. Passing tests measured the author's mental model, not reality.
+
+**Canonical fix:** for any field the LLM emits freely, fixture **every legal shape** (here: whole-object AND dotted-bytes, braced AND bare), not just the one you had in mind when writing the code. When a live run finds a bug your suite missed, the first question is "what did my fixtures assume?" — then add that shape. Cross-check fixtures against a **real** persisted IntentContract (`agent_config.ai_context.intent_contract`, WP-55) rather than a hand-written ideal.
+
+---
+
+### Anti-pattern J: Reconciling a schema but not the references that read it
+
+```ts
+// ❌ DON'T — fix the declared schema's field names but leave the references stale
+slot.schema.items.properties.mimeType = slot.schema.items.properties.mime_type  // schema fixed
+delete slot.schema.items.properties.mime_type
+// … but the filter still carries condition.field = "mime_type", the scatter still
+//    references {{attachment_item.mime_type}} → filter matches nothing → empty pipeline
+```
+
+**Why it's wrong:** a data-schema is only half the truth; the *references* that read it (filter `condition.field`, scatter `{{item.field}}`, `{kind:"ref"}` value refs, bare `key_field` literals) are authored independently by the LLM against the same (wrong) names. Reconcile the schema to `mimeType` but leave a `field:"mime_type"` filter literal, and the deterministic filter still matches zero rows — the exact WP-63 empty-pipeline symptom, now with a "fixed" schema masking it. A schema fix that doesn't rewrite the references is not a fix.
+
+**Canonical fix:** compute the declared→canonical rename **once** (WP-63 Gap A) and apply that **same map** to **every** downstream reference shape (WP-63 A2 / M4) — `{kind:"ref"}`, `{{var.field}}` templates, and bare `field`/`key_field` literals — scoped by the reconciled schema. **Never run a second independent fuzzy match** to rewrite the references (that reintroduces the WP-62-Round-1 divergence class, where two matchers disagree). One decision, one map, all consumers. And guard the matcher against **normalized-key collisions** (`message_id` vs `messageId`): if two producer fields normalize alike, refuse to rewrite — ambiguity is the only path that can corrupt a correct schema (WP-63 M1).
 
 ---
 

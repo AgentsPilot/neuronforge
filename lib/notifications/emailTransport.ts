@@ -12,6 +12,11 @@
 
 import nodemailer from 'nodemailer';
 import { createLogger } from '@/lib/logger';
+// D12: htmlToText now lives in ONE shared util. Re-exported below so existing
+// callers (and the D9 test importing it from here) keep working unchanged.
+import { htmlToText } from '@/lib/email/htmlToText';
+
+export { htmlToText };
 
 const logger = createLogger({ module: 'EmailTransport', service: 'notifications' });
 
@@ -21,6 +26,13 @@ export interface SendEmailParams {
   to: string[];
   subject: string;
   html: string;
+  /**
+   * D9: optional plaintext alternative. When omitted, the transport auto-generates
+   * one from `html` so every send is proper `multipart/alternative` (HTML + text)
+   * — never single-part `text/html`, which renders inconsistently across clients.
+   * Callers do NOT need to supply this; the transport degrades gracefully.
+   */
+  text?: string;
   /** Resend honors this (verified domain required); Gmail always sends from GMAIL_USER. */
   from?: string;
   /**
@@ -35,6 +47,15 @@ export interface SendEmailResult {
   sent: boolean;
   provider: 'resend' | 'gmail' | 'gmail-plugin' | 'none';
   error?: string;
+}
+
+/**
+ * D9: the plaintext part to send. Prefer a caller-supplied `text`; otherwise
+ * auto-generate from the HTML so the message is always multipart/alternative.
+ */
+function resolveText(p: SendEmailParams): string {
+  const supplied = p.text?.trim();
+  return supplied || htmlToText(p.html);
 }
 
 function resendConfigured(): boolean {
@@ -63,6 +84,7 @@ async function sendViaResend(p: SendEmailParams): Promise<void> {
       to: p.to,
       subject: p.subject,
       html: p.html,
+      text: resolveText(p), // D9: multipart/alternative — plaintext part alongside HTML
     }),
   });
   if (!res.ok) {
@@ -106,6 +128,7 @@ async function sendViaGmail(p: SendEmailParams): Promise<void> {
     to: p.to.join(', '),
     subject: p.subject,
     html: p.html,
+    text: resolveText(p), // D9: multipart/alternative — nodemailer builds both parts
   });
 }
 
@@ -154,14 +177,10 @@ export async function sendEmail(p: SendEmailParams): Promise<SendEmailResult> {
     }
   }
 
-  // 4. Nothing configured / all failed → console preview, report not sent
+  // 4. Nothing configured / all failed → report not sent (structured Pino only)
   logger.warn(
     { to: p.to, subject: p.subject, errors: errors.length ? errors : undefined },
     'No email transport delivered the message (preview only)'
   );
-  console.warn('📧 [EmailTransport] Email NOT sent — no working transport. Preview:', {
-    to: p.to,
-    subject: p.subject,
-  });
   return { sent: false, provider: 'none', error: errors.join('; ') || 'no email transport configured' };
 }

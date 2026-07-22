@@ -747,3 +747,175 @@ Minimal fix options:
 | Date | Change | Details |
 |------|--------|---------|
 | 2026-07-12 | Wizard stuck-on-cosmetic RCA | Q1: "Continue" greyed = affordance gate (`CalibrationSetup` `IssueFixingCard` L2411–2458, disabled until a `HardcodeFixCard` choice) + read-only right-column card; the deeper block is a flow dead-end. Q2: hardcode is `autoRepairAvailable:false/requiresUserInput:true` by WP-40 (`IssueCollector.ts` L304–327); apply-on-confirm exists (`apply-fixes/route.ts` L168–214). Q3: NO path to finalized/passed — `setFlowState('success')` commented out at `page.tsx` L605 & L936 (CalibrationSuccess is dead code) and the coverage floor caps send-terminating agents to needs_review (Re-run #2). Owner: calibration UI + verdict/coverage. Recommend (i)+(iii); (ii) already exists and is WP-40-compliant. |
+
+---
+
+## Origin of the 500 — why that value, why hardcoded (2026-07-12)
+
+> **Added**: 2026-07-12 · **Scope**: the UPSTREAM authoring question for agent `0ee53785-…` — why was `step1.params.max_results: 500` generated at all, why that number, and why as a hardcoded literal rather than a parameter. Skills: `v6-pipeline` (the generation that authored it) + `agent-creation-rca` (the creation conversation / enhanced prompt that fed it). DIAGNOSTIC ONLY.
+
+### Plain-language top line
+
+Nobody asked for 500. The user never mentioned a result limit anywhere in the creation chat — they gave a time window ("12 months"), subject keywords, and "PDFs & images only," and were never asked about a count. So the AI **invented** `500` on its own while generating the workflow: it saw the Gmail search had a "max emails to return" knob (shown to it as *default 10*, but **without** the plugin's real ceiling of 100), and free-picked a round, generous number to make sure a year of emails wouldn't get cut off. It then wrote `500` as a fixed value rather than a user-adjustable setting because the prompt's "don't hardcode" rule only bites once the model has *declared* a setting for it — and since the user never surfaced a cap, the model treated it as an internal detail and never declared one. Hardcoding was the compliant, lowest-effort path. The durable fix is a deterministic guard (range-check + auto-parameterize against the plugin's declared min/max), not another prompt plea — the same lesson as WP-61.
+
+### Q1 — Where exactly was `500` authored?
+
+**Evidenced-fact (by elimination): the V6 generation LLM (Phase-1 IntentContract / step-param authoring), not the plugin, compiler, or a prompt example.**
+
+- **Not the plugin default.** The Gmail vocabulary the model was shown presents `max_results: number (default: 10)` (regression snapshot `phase0-vocabulary-for-prompt.txt` L104; plugin def `google-mail-plugin-v2.json` declares `default:10, minimum:1, maximum:100`). `500` is neither the default (10) nor within range (>100).
+- **Not a compiler / step-builder default.** A search of `lib/agentkit/v6/**` finds no code that injects `500` into `max_results`; the only `500`s are unrelated (`max_length` example L1131, HTTP-500 fallback in `ProviderFallback.ts` L69, a `maxLength:500` test). The compiled DSL carries `500` as a bare literal in `step1.params.max_results` (per the earlier §"hardcoded 500" evidence).
+- **Not a prompt example.** The literal `500` appears **nowhere** in `intent-system-prompt-v2.ts` as a `max_results` value — its parameterization examples use `50` and `100` (L139–140, L1258, L2156).
+
+By elimination the value was emitted by the **generative Phase-1 IntentContract step** that authors step params from the enhanced prompt.
+
+**Evidence limit (honesty):** the persisted `intent_contract` for this agent is `null` (the WP-55 persistence-clobber documented in the Addendum), so I cannot show the `500` literal in the IntentContract JSON in situ — the pinpoint to "Phase-1 IntentContract" is by-elimination + provenance, not a direct read of the emitted contract. And Phase-1 is the one non-deterministic phase, so a re-run may not reproduce the exact number.
+
+### Q2 — Why `500` specifically?
+
+**Evidenced-fact: nothing primed `500`. Reasoned-inference: it's a free "be generous" round-number guess.**
+
+Three independent priming sources were checked and all come back negative:
+
+| Candidate primer | Result | Evidence |
+|---|---|---|
+| A prompt example / few-shot | **No** | `500` never appears as a `max_results` value in the generation prompt; examples use `50`/`100` |
+| The plugin schema context | **Partial signal only** | The vocabulary showed `max_results … (default: 10)` but **omitted the `maximum: 100` / `minimum: 1` constraint** (`phase0-vocabulary-for-prompt.txt` L104). The model saw a default of 10 and no ceiling |
+| The user's creation inputs | **No** | Creation thread `67154237-…` (7 iterations): original prompt *"check my gmail for expenses subject, scan expenses attachments and create detailed table…"* — no number. The 4 clarifications were q1 time-window ("12 months ago till today"), q2/q3 subject keywords, q4 attachment types — **none about a result count**. The dump's RCA-HINT confirms: *"'500' never appears in any response."* |
+
+So `500` was **not** the plugin default (10, which the model saw and overrode), **not** user-stated, and **not** an example value. It is a **free LLM choice**. The most plausible reasoning (inference, given non-determinism): the model mapped "search a 12-month window of expense emails" to "there could be a lot — cap generously," and reached for a round 500 — 50× the default it was shown and 5× the true (unshown) maximum. The fact that the value both exceeds the shown default and violates the hidden ceiling is consistent with a free guess made without a visible constraint, not a primed value.
+
+### Q3 — Why did the LLM HARDCODE it instead of parameterizing?
+
+**Evidenced-fact: the parameterize rules are conditional/soft and did not bind here; the value was never user-facing. Reasoned-inference: hardcoding was the compliant path of least resistance.**
+
+The relevant prompt rules, quoted:
+
+- **Anti-hardcode rule is CONDITIONAL on a declared config entry.** `intent-system-prompt-v2.ts` L2153–2158: *"Every config entry you declare MUST be referenced … NEVER hardcode a value in a step **when you have declared a config entry for it**. For example, if you declare `gmail_search_max_results` with default 50, the step MUST use `{ kind: "config", key: … }` — NOT `"max_results": 50`."* (Mirrored at L138–140.) This forbids hardcoding **only once a config entry exists** — it does **not** compel the model to declare one.
+- **Declaring a config entry for a user-unmentioned value is a soft "MAY".** L2147–2151: *"you MUST reuse the exact keys listed above [the user-provided values] … You **MAY** add additional config entries for values NOT listed above (e.g., search queries, time windows)."* Permissive, not mandatory.
+
+The user-provided config keys are only the values the user actually supplied (e.g. `user_email`, `sheet_tab_name`, the keywords, the time window). `max_results` was **not** among them — the user never surfaced a result cap (Q2 evidence). So the model faced a self-invented internal number with (a) no obligation to declare a config entry for it ("MAY"), and (b) an anti-hardcode rule that only triggers *after* such a declaration. It declared none and wrote the literal — fully prompt-compliant. **The hypothesis is confirmed:** the parameterize rule didn't bind precisely because the value wasn't user-facing in the conversation, so the model treated it as an implementation detail.
+
+**What made hardcoding path-of-least-resistance:** parameterizing requires the model to *volunteer* a new config key, a new default, and a reference wiring — extra structure for a value no one asked about — whereas a literal is one token. The only rule that could have stopped it is gated behind the very step (declare a config entry) the model had no incentive to take.
+
+**Deterministic prevention (feasible, recommended).** Do not rely on the LLM to obey a soft prompt rule — that is exactly the WP-56/WP-61-class non-determinism that has failed before (WP-61 commit `487f6ac`: *"prompt-only structuring is non-deterministic … the fix is a deterministic downstream layer, not prompt tuning"*). Two deterministic guards, both keyed off the plugin's **declared** param constraints (the batch-2 param-constraint reader already reads plugin schema min/max):
+1. **Range-validate every plugin-param literal against the plugin's declared min/max.** `500 > maximum:100` → clamp to 100 or raise a blocking compile issue. This alone prevents the out-of-range value regardless of parameterization.
+2. **Auto-parameterize invented, non-user-derived config-like literals.** Any numeric plugin param whose value the user never stated (diff the literal against the creation inputs / provided config keys) is promoted to a config key with the plugin default as its default — deterministically, instead of hoping the LLM declares it. (This is the generative-side complement to the calibration `HardcodeDetector`, which currently only *detects* it post-hoc and asks the user.)
+
+Secondary/cheap supplement: **expose the plugin `maximum`/`minimum` in the vocabulary** (it currently shows only `default`), so the model at least sees the ceiling — but treat this as a non-deterministic supplement, not the fix.
+
+### Answers at a glance
+
+| Q | Answer | Status |
+|---|---|---|
+| Q1 Where authored | V6 Phase-1 IntentContract generation (by elimination: not plugin/compiler/example) | Evidenced-fact (negatives) + reasoned pinpoint (persisted IC null) |
+| Q2 Why 500 | Free LLM round-number guess; nothing primed it (not user, not example, not default) | "Not primed" = evidenced-fact; "generous-cap heuristic" = reasoned-inference |
+| Q3 Why hardcoded | User never surfaced a cap → not a provided config key → anti-hardcode rule (conditional on a declared config) never bound → literal was compliant + lowest-effort | Evidenced-fact (rule wording + inputs) + reasoned-inference (model's non-declaration) |
+
+**Fix-owner:** `v6-pipeline` generation (the IntentContract/step-param authoring phase authored the value; the durable fix is a deterministic post-generation guard reading plugin min/max + auto-parameterization). The `agent-creation` enhanced prompt is **not** the author — `500` is absent from the EP and the conversation; creation simply (correctly) never asked about a count the user didn't raise. **A deterministic guard is feasible** and is the right layer, tying to the batch-2 param-constraint reader and the "enforce deterministically, don't trust the LLM to self-police" principle (WP-61).
+
+### Change History addendum
+
+| Date | Change | Details |
+|------|--------|---------|
+| 2026-07-12 | Origin-of-500 RCA | Q1: authored by V6 Phase-1 IntentContract generation (not plugin default 10 / not compiler / not example) — pinpoint limited by null persisted IC. Q2: free LLM guess; `500` absent from prompts, examples, user inputs (thread `67154237`, clarifications never asked a count); vocabulary showed `default:10` but omitted `maximum:100`. Q3: parameterize rule is conditional ("NEVER hardcode … when you have declared a config entry", L2153–2158) + soft "MAY" for user-unmentioned values (L2150); user never surfaced a cap → rule didn't bind → literal compliant. Fix-owner v6-pipeline generation; deterministic guard (range-check + auto-parameterize via the param-constraint reader) recommended over prompt tuning (WP-61 principle). |
+
+---
+
+# Addendum — 2026-07-13 live-test findings (two diagnostic investigations)
+
+> **Added**: 2026-07-13 · **Agent**: `0ee53785-44d0-4b46-85dd-367551a657ba` · **Scope**: two UX/notification defects surfaced during a user's *successful* calibration live-test of this agent. Both are **separate, independently shippable** defects — neither changes the primary flatten-field-shape RCA above. DIAGNOSTIC ONLY — no product code changed. Owner for both: **calibration surface (Dev after SA review)**; **not** `v6-pipeline`.
+
+---
+
+## Investigation 1 — Two calibration emails: one rendered plain TEXT, the next HTML
+
+**Plain-language top-line:** The two emails come from **two different senders** — the internal admin RCA-alert (`🚨 Calibration failed … needs RCA`) and the user-facing result email (`🔧/✅`) — both fired by the same *background* post-creation calibration run, and the user received both because he is simultaneously the agent **owner** (gets the result email) and a platform **admin** (gets the admin alert). **But the tempting "one sets `text`, the other sets `html`" hypothesis is wrong:** both senders build a full HTML document and pass it **only** as the `html` argument; **neither ever sets a plaintext `text` part**, and the shared transport sends single-part `text/html` for both. So the text-vs-HTML split is **not** authored anywhere in the templates or transport — it is a delivery/transport-environment artifact, and the real defect is that these emails have **no plaintext alternative part at all**, leaving their rendering at the mercy of the provider/client.
+
+### 1. Reported symptom
+User received TWO calibration-related emails during the live-test cycle; the FIRST rendered as plain text, the SECOND as HTML. Identifier: agent `0ee53785-44d0-4b46-85dd-367551a657ba`.
+
+### 2. Evidence gathered (file:line)
+
+| Sender / transport | What it sets for the body | Reference |
+|---|---|---|
+| **User-facing result email** `sendCalibrationResultEmail` | builds `html = renderHtml(...)` (full `<!DOCTYPE html>` doc), calls `sendTransactionalEmail([to], subject, html, undefined, ownerUserId)` — **no `text`** | `lib/calibration/calibrationResultEmail.ts` L47-50, renderer L116-162 |
+| **Internal admin RCA-alert** `sendCalibrationAdminAlert` | builds `html = renderAdminAlertHtml(...)` (full HTML doc), calls `sendTransactionalEmail(adminEmails, subject, html, undefined, ownerUserId)` — **no `text`** | `lib/calibration/calibrationAdminAlert.ts` L90-105, renderer L190-256 |
+| **Transport wrapper** `NotificationService.sendTransactionalEmail` → `sendEmailNotification` | forwards to `sendEmail({ to, subject, html: body, from, ownerUserId })` — **`html` only, no `text` field exists in the call** | `lib/pilot/NotificationService.ts` L33-41, L408 |
+| **Resend branch** | POST body `{ from, to, subject, html }` — **no `text`** (single-part `text/html`) | `lib/notifications/emailTransport.ts` L61-66 |
+| **Gmail-app (nodemailer) branch** | `sendMail({ from, to, subject, html })` — **no `text`** | `lib/notifications/emailTransport.ts` L104-109 |
+| **Owner google-mail plugin branch (last resort)** | `content: { subject, html_body: p.html }` — passes HTML as `html_body` | `lib/notifications/emailTransport.ts` L82-85 |
+| **Plugin MIME builder** (the only `text/plain` switch in the whole path) | `if (content?.html_body) → Content-Type: text/html; else → text/plain` | `lib/server/gmail-plugin-executor.ts` L622-637 |
+
+### 3. Why one rendered as text — distinguishing (a)/(b)/(c)
+- **(a) two different senders, one `text` one `html`? — REFUTED at source.** They *are* two different senders (admin alert vs result email), but **both** set `html` and **neither** sets `text`. There is no template that authors a plaintext body.
+- **(b) same sender, `html` unset on one branch? — REFUTED.** Both `renderHtml` and `renderAdminAlertHtml` always return a full, non-empty HTML string; there is no branch that leaves `html` unset.
+- **(c) provider/transport artifact — CONFIRMED as the only remaining mechanism.** The sole code location that can emit `text/plain` for these mails is `gmail-plugin-executor.buildEmailMessage` L624-627, which chooses `text/plain` only when `content.html_body` is falsy. `sendViaOwnerPlugin` **always** populates `html_body` (L85), so even that path sends HTML. Because every send is **single-part `text/html` with no `text/plain` alternative**, the render is entirely provider/client-dependent: a transient transport-branch divergence between the two sends (the transport tries Resend → Gmail-app → owner-plugin in order and can recover on retry, so an earlier send may go via a different provider than the later one) or a client-side plaintext fallback will render one as text and the next as HTML. Nothing in the *senders* distinguishes them.
+
+### 4. Classified root-cause layer
+**runtime / external API** (email transport/provider + delivery), not a workflow, template-authoring, or V6-generation bug. The DSL and the rendered HTML are correct; the fragility is in how the message is packaged for delivery.
+
+### 5. Defensible root cause
+No calibration email is ever sent as a proper **multipart/alternative** message with both an `html` and a generated `text` part. Every send is single-part `text/html` (`emailTransport.ts` L61-66, L104-109; `NotificationService.ts` L408 passes `html` only). The plugin fallback's MIME builder additionally hard-branches `text/html` vs `text/plain` purely on `html_body` presence with no `text` part either (`gmail-plugin-executor.ts` L622-637). A single-part HTML mail with no plaintext alternative is exactly the shape that renders inconsistently across providers/clients, which is what the user observed.
+
+### 6. Named fix-owner
+**Calibration notification surface** — `lib/notifications/emailTransport.ts` + `lib/pilot/NotificationService.ts` (transport), with `lib/calibration/calibrationResultEmail.ts` / `calibrationAdminAlert.ts` as the callers. Dev implements after SA review. Not `v6-pipeline`.
+
+### 7. Suggested solution(s)
+1. **Preferred — unify on multipart/alternative:** thread an optional `text` through `SendEmailParams` / `sendTransactionalEmail`, auto-generate a plaintext alternative from the HTML (strip tags) when a caller doesn't supply one, and send `{ html, text }` on Resend and nodemailer (and add a `body` alongside `html_body` on the owner-plugin path). Both emails then carry a consistent HTML + text pair and render identically everywhere.
+2. **Minimum:** at least always include a generated `text` alternative in the transport so no calibration mail is ever single-part HTML.
+
+### 8. Recommended remediation path
+**Hotfix.** Small, well-scoped change confined to the transport + the two calibration senders; no pipeline/schema surface. Route TL → SA → Dev.
+
+### Pre-existing vs Group A
+**Pre-existing — confirmed.** Both senders and the transport predate the current branch's Group A work (introduced in `6dac707` background-calibration + `f6cc4ce` IMP-1/IMP-2, with the owner-plugin fallback added in `71ced2a`). Group A (recent finish/verdict/coverage/apply-fixes commits, e.g. `15d7146`, `cc8bb59`) only prompted the user to run calibration again and notice the inconsistency. The user's "both pre-existing" read is correct.
+
+---
+
+## Investigation 2 — Parameterize flow: no success indication + suggestion doesn't clear
+
+**Plain-language top-line:** The parameterization **actually succeeds on the server** (the `500` literal is replaced by an `{{input.…}}` param and `input_schema` gains the new field), so this is **succeeded-but-no-UI-refresh**, not a silent failure. The user still sees the old "500 is hardcoded" suggestion because the suggestion shown on the success screen (`passSuggestions`) is derived from the **cached calibration result** in React state and is **never recomputed or cleared** after parameterization — and there is **no success toast/confirmation** at all.
+
+### 1. Reported symptom
+After a passing run the user clicked "make it a reusable parameter", completed the wizard, returned to the sandbox — the SAME "500 is hardcoded" suggestion was still shown, with NO indication the parameterization succeeded. Identifier: agent `0ee53785-44d0-4b46-85dd-367551a657ba`.
+
+### 2. Evidence gathered — did it succeed server-side? YES
+`handleWizardComplete` (`app/v2/sandbox/[agentId]/page.tsx` L1056-1116) posts to **`/api/agents/{id}/repair-hardcode`** (not `apply-fixes`). That endpoint:
+- applies parameterization via `HardcodeDetector.applyParameterization(pilotSteps, selections)` — replaces the `500` literal with `{{input.<param>}}` (`app/api/agents/[id]/repair-hardcode/route.ts` L86-87),
+- writes `agents.pilot_steps` **and** `agents.input_schema` (adds the new `number` param, `default_value: 500`) (L127-135, L92-122),
+- upserts `agent_configurations` with the new input value (L147-206),
+- returns `{ success: true, new_parameters: [...] }` (L211-215).
+
+So the stored DSL and schema are genuinely updated. **This is the better case (no data loss), a pure client-refresh gap.**
+
+### 3. Why the same suggestion still shows — two stale-state defects
+
+**Defect A (primary, the visible one): `passSuggestions` is never recomputed after parameterization.** The success-screen suggestions are rendered from `optionalSuggestions={passSuggestions}` (page L1304). `passSuggestions` is set **only** from `getPassSuggestions(result)` at page L614 and L895 — i.e. only when a **calibration test** completes. `getPassSuggestions` derives the list **directly from the cached verdict `result.issues.warnings`** (`lib/calibration/finishGate.ts` L64-76), which is where the `hardcode_detected "500"` cosmetic suggestion lives. `handleWizardComplete` runs no new calibration and never touches `passSuggestions`, so the stale "500 is hardcoded" warning from the pre-parameterization verdict remains on screen verbatim.
+
+**Defect B (secondary): `loadAgent` re-detects but never clears.** After success, `handleWizardComplete` calls `await loadAgent()` (L1107). `loadAgent` re-fetches the (now parameterized) agent and re-runs `HardcodeDetector.detect(...)` (page L282-306). Because `500` is now `{{input.…}}`, `totalDetected` is `0` — but the block is `if (totalDetected > 0) { setDetectionResult(...); setHasHardcodedValues(true) }` with **no `else`** (L302-305). So `detectionResult` / `hasHardcodedValues` keep their stale pre-repair values; `hasHardcodedValues` stays `true`, which is also what gates the parameterize button (`onParameterizeWorkflow={hasHardcodedValues ? … : undefined}`, L1296). The button and any detection-derived UI therefore also fail to reflect the repair.
+
+**No success indication:** `handleWizardComplete` only does `setShowParameterizationWizard(false)` + `setUserDeclinedParameterization(true)` + `loadAgent()`. There is no toast, no confirmation, no flow-state transition to a "parameterized" screen (the codebase even carries a `// TODO: Add toast notification here` in the sibling save-configuration handler, L1169), so the user lands back on the identical success screen with the identical suggestion and zero feedback.
+
+### 4. Classified root-cause layer
+**calibration-detection** (UI half) — a diagnostic/success surface that misreports state: it keeps showing a resolved suggestion and gives no success feedback. Server-side parameterization is correct; the calibration *sandbox UI* is stale.
+
+### 5. Defensible root cause
+The success screen's suggestion list is a **snapshot of the last calibration verdict** (`passSuggestions` ← `getPassSuggestions(result)`, `finishGate.ts` L64-76), not a live view of the agent's current DSL. Parameterization mutates the DSL server-side but the client never re-derives the verdict or clears the snapshot, and `loadAgent`'s re-detection has no clear-on-empty branch (`page.tsx` L302-305). Combined with the absence of any success affordance in `handleWizardComplete` (L1056-1116), the resolved issue appears unresolved.
+
+### 6. Named fix-owner
+**Calibration sandbox UI** — `app/v2/sandbox/[agentId]/page.tsx` (`handleWizardComplete`, `loadAgent` detection block), Dev after SA review. Server endpoint `repair-hardcode` needs no change.
+
+### 7. Suggested solution(s)
+1. On successful `repair-hardcode`, **optimistically clear the resolved suggestion** — drop the `hardcode_detected`/`500` entry from `passSuggestions` for the parameterized path(s) and reset `detectionResult`/`hasHardcodedValues` from the refreshed detection (add the missing `else { setDetectionResult(null); setHasHardcodedValues(false) }` at page L302-305).
+2. **Show a success affordance** — a toast/inline confirmation ("500 is now a reusable parameter") and/or a brief flow-state transition, instead of silently reloading onto the same screen.
+3. Optional/robust: after parameterization, **re-derive the pass verdict** (or re-run cosmetic detection) so `passSuggestions` reflects the new DSL rather than a stale snapshot.
+
+### 8. Recommended remediation path
+**Hotfix**, but tracked as a **NEW backlog item (calibration UI)** — the parameterization flow (`repair-hardcode`, `handleWizardComplete`, `loadAgent`) is pre-existing; it just wasn't reachable from the success screen before. Small client-only change; route TL → SA → Dev.
+
+### Pre-existing vs Group A
+**Pre-existing behavior, newly exposed by Group A — confirmed.** The `repair-hardcode` endpoint and the wizard/`handleWizardComplete`/`loadAgent` detection logic predate this branch (endpoint from `18340d7`; detection flow from the original calibration commits `7e4cfb0`/`d79018d`). Group A's FIX 2 added/enabled the passed-with-cosmetic-suggestions **success screen** and its parameterize entry point (`onParameterizeWorkflow`, page L1296; `getPassSuggestions` cosmetic-pass path, `15d7146`), which is what first routed users into this stale-suggestion flow. The user's "pre-existing, Group A surfaced it" read is correct.
+
+> **Minor standards note (for the implementing Dev, not this RCA):** `app/v2/sandbox/[agentId]/page.tsx` logs via `console.*` (e.g. L589, L597, L693, L787, L939, L947, and throughout the parameterize handlers). Per CLAUDE.md mandatory rule 3, whoever next edits this file should propose converting those to the Pino standard.
+
+---

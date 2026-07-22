@@ -37,6 +37,8 @@ npx tsx scripts/dump-agent.ts       <agent_id>   # pilot_steps + WP-55 intent_co
 ### 2. Read the issues array
 Separate the **summary** issue (`type:"steps_failed"` — an aggregate, set aside) from the **specific** per-step issues. Each specific issue's `category` is your first signal: `parameter_error` (bad value, often with a high-confidence `suggestedFix`), `execution_error` (often "…has no input data" = **cascade**), `scatter_item_field` (WP-56), `data_shape_mismatch`, `hardcode_detected` (warning), `execution_failed`/`steps_failed` (aggregates).
 
+**BLOCKING-class detector issues (2026-07 field-fidelity batch — these can never be waved to a pass):** `plugin_field_fidelity_mismatch` (a transform declares a field name the producing plugin action doesn't emit — e.g. `mime_type` vs the real `mimeType`; the calibration twin of the compiler Gap C gate), `degraded_step_all_failed` / `degraded_step_all_empty` (a step/scatter where 100% of items errored or returned empty/fallback — the hidden-failure anti-pattern, previously invisible). Plus the non-blocking `partial_report_data` (`needs_review`: the report was produced but some columns are blank in every row). These carry an explicit top-level `type` and `blocking:true` (except `partial_report_data`).
+
 ### 3. Find the EARLIEST failing step + trace the cascade
 The single most important move. Take the **lowest-numbered** step in `failedStepIds`. Confirm downstream issues say *"…has no input data. Available variables: …"* — that's fallout, **not** an independent bug. **Only the earliest step is the real failure** (unless two genuinely-independent steps fail with different errors).
 
@@ -75,11 +77,14 @@ State: **failing step** → **why** (precise error + cause) → **cascade** (+ s
 | Object | Use |
 |---|---|
 | `calibration_sessions` (latest) | Live run state: `status`, `completed_steps`/`failed_steps`, **`issues[]`**, `issue_summary`, `execution_summary` (side-effects). |
-| `calibration_history` (latest) | Recorded outcome: `status`, `iterations`, `auto_fixes_applied`, **`issues_remaining[]`**, `steps_failed`, `plugins_used`. |
+| `calibration_history` (latest) | Recorded outcome: `status`, `iterations`, `auto_fixes_applied`, **`issues_remaining[]`**, `steps_failed`, `plugins_used`. Precise verdict lives in `metadata.verdict` (see below). |
 | `agent_executions` | The runs incl. the dry-run (`run_mode` = `calibration`/`batch_calibration`), `error_message`. |
 | `agents.agent_config.ai_context.intent_contract` / `.data_schema` | WP-55 generation fingerprint (null pre-WP-55) — needed for *generation*-layer RCA. |
+| `agents.calibration_status` | Wizard/gate column: `running`/`passed`/`failed`/`skipped`. Keys on history `status === 'success'` — a **cosmetic-only pass now reads `passed`** (was wrongly `failed`). Distinct from the fast-path `agents.last_calibration_status` (`success`/`needs_review`/`failed`). |
 
-Issue shape: `{ id, category, severity, message, technicalDetails, affectedSteps:[{stepId,…}], suggestedFix?:{action:{parameterName, problematicValue}, confidence}, requiresUserInput }`. The `dry_run` summary issue: `{ type:'steps_failed', details:{failedStepIds, stepsFailed, stepsCompleted} }`.
+Issue shape: `{ id, category, severity, message, technicalDetails, affectedSteps:[{stepId,…}], suggestedFix?:{action:{parameterName, problematicValue}, confidence}, requiresUserInput }`. The `dry_run` summary issue: `{ type:'steps_failed', details:{failedStepIds, stepsFailed, stepsCompleted} }`. The 2026-07 detector issues additionally carry a top-level `type` (`plugin_field_fidelity_mismatch`, `degraded_step_all_failed`, `degraded_step_all_empty`, `partial_report_data`) and `blocking`.
+
+**Verdict states (Item 6, in `calibration_history.metadata.verdict` + the API response):** `passed` / `failed` / `needs_review` / `inconclusive` (real path never exercised / delivered all-blank — never a clean pass) / `corrected_not_verified` (an in-place field-fidelity correction was applied but the re-run still didn't exercise the path). `inconclusive` + `corrected_not_verified` both persist as DB `status='needs_review'`; only a genuine `passed` writes `status='success'`. **RCA relevance:** an `inconclusive`/`corrected_not_verified` verdict means calibration behaved correctly by refusing a false-green — treat it as "honestly not verified," not a calibration bug.
 
 ---
 

@@ -25,7 +25,7 @@ async function callLLMJson(args: {
   user: string;
   provider?: string;
   model?: string;
-}): Promise<string> {
+}): Promise<{ content: string; provider: string; model: string }> {
   // Resolve provider and model
   let providerName = args.provider;
   let modelName = args.model;
@@ -85,7 +85,9 @@ async function callLLMJson(args: {
     throw new Error('No content in LLM response');
   }
 
-  return content;
+  // Return the RESOLVED provider/model (post-priority-resolution + defaults) so
+  // callers can persist generation provenance. Never the request's 'auto'.
+  return { content, provider: providerName, model: modelName };
 }
 
 /**
@@ -200,7 +202,7 @@ export async function generateIntentContract(args: {
   enhancedPrompt: EnhancedPrompt;
   pluginRegistry?: PluginRegistry; // Optional - will load from database if not provided
   specLoader?: (pluginKey: string) => Promise<any>; // Optional - legacy OpenAPI loader
-}): Promise<{ intent: IntentContractV1; rawText: string }> {
+}): Promise<{ intent: IntentContractV1; rawText: string; provider: string; model: string }> {
   const { enhancedPrompt } = args;
   let { pluginRegistry } = args;
   const { specLoader } = args;
@@ -253,7 +255,7 @@ export async function generateIntentContract(args: {
   logger.info('[IntentGen] User prompt built');
 
   // 5. Call LLM
-  const rawText = await callLLMJson({ system, user });
+  const { content: rawText, provider, model } = await callLLMJson({ system, user });
   logger.info('[IntentGen] Received LLM response, parsing JSON');
 
   // 6. Parse JSON
@@ -295,7 +297,7 @@ export async function generateIntentContract(args: {
   logger.info('[IntentGen] Validation passed!');
   logger.info({ intent: v.value }, '[IntentGen] ✅ Intent Contract generated successfully');
 
-  return { intent: v.value, rawText };
+  return { intent: v.value, rawText, provider, model };
 }
 
 /**
@@ -313,7 +315,7 @@ export async function generateIntentContract(args: {
 export async function generateGenericIntentContractV1(args: {
   enhancedPrompt: EnhancedPrompt;
   vocabulary?: any; // PluginVocabulary type (avoiding circular import)
-}): Promise<{ intent: any; rawText: string }> {
+}): Promise<{ intent: any; rawText: string; provider: string; model: string }> {
   const { enhancedPrompt, vocabulary } = args;
 
   logger.info('[IntentGenV2] Starting Generic Intent V1 generation');
@@ -337,7 +339,7 @@ export async function generateGenericIntentContractV1(args: {
   logger.info('[IntentGenV2] User prompt built');
 
   // 3. Call LLM
-  const rawText = await callLLMJson({ system, user });
+  const { content: rawText, provider, model } = await callLLMJson({ system, user });
   logger.info('[IntentGenV2] Received LLM response, parsing JSON');
 
   // 4. Parse JSON
@@ -379,5 +381,5 @@ export async function generateGenericIntentContractV1(args: {
   logger.info('[IntentGenV2] Validation passed!');
   logger.info({ intent: v.value }, '[IntentGenV2] ✅ Generic Intent V1 Contract generated successfully');
 
-  return { intent: v.value, rawText };
+  return { intent: v.value, rawText, provider, model };
 }

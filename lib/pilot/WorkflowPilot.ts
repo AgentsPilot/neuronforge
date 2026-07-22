@@ -957,6 +957,37 @@ export class WorkflowPilot {
         console.log(`📊 [WorkflowPilot] No execution summary collected (collector: ${!!executionSummaryCollector})`);
       }
 
+      // A2 (Group A) — compute the calibration coverage + degraded-step signals
+      // HERE, where the REAL per-step outputs are available. The route only
+      // receives buildFinalOutput + aggregated counts, so a genuinely-populated
+      // pre-delivery collection never reached deriveCoverageSignal (the wiring
+      // gap). Gated to batch_calibration (coverage is only consumed by
+      // calibration) and reuses the shared dataQuality signal (single source of
+      // truth). Only the DERIVED signal is surfaced — booleans, counts, blank
+      // column names, degraded step ids — never raw rows / PII. Non-blocking.
+      if (isBatchCalibration && executionSummary) {
+        try {
+          const [{ deriveCoverageSignal }, { AllFailedStepDetector }] = await Promise.all([
+            import('@/lib/pilot/shadow/dataQuality'),
+            import('@/lib/pilot/shadow/AllFailedStepDetector'),
+          ]);
+          const stepOutputs: Record<string, unknown> = {};
+          context.getAllStepOutputs().forEach((out: any, stepId: string) => {
+            stepOutputs[stepId] = out && typeof out === 'object' && 'data' in out ? out.data : out;
+          });
+          executionSummary.coverage = deriveCoverageSignal({
+            stepOutputs,
+            finalOutput,
+            itemsProcessed: executionSummary.items_processed,
+            itemsDelivered: executionSummary.items_delivered,
+          });
+          executionSummary.degraded_steps = new AllFailedStepDetector().detect(stepOutputs);
+        } catch (covErr) {
+          createLogger({ module: 'WorkflowPilot', service: 'calibration-coverage' })
+            .error({ err: covErr, executionId }, 'Coverage signal computation failed (non-blocking; route falls back)');
+        }
+      }
+
       return {
         success: true,
         executionId,

@@ -56,7 +56,7 @@ npx tsx scripts/dump-agent.ts        <agent_id>                    # the saved a
 
 ### 2. Establish the ground truth of what the user actually said
 Before blaming a phase, know the inputs:
-- `ai_context.original_prompt` — the raw prompt (often missing the identifier in question).
+- `agents.created_from_prompt` column — the raw prompt (often missing the identifier in question). *(Canonical since the A2 de-dup; `ai_context.original_prompt` is no longer written on new agents. `getAgentAiContextView` reads column-first.)*
 - `creation_metadata.clarification_answers` — the Phase 2 answers keyed `q1…qN` (this is where a URL/identifier usually enters).
 - Read the answer that carried the disputed value **verbatim**. A `gid=0` URL, a "me", an "all" — the user's literal words are the yardstick for "did the flow honor the input or invent something."
 
@@ -92,10 +92,10 @@ State: **authoring phase/turn** → **prose-vs-structured verdict** → **why** 
 |---|---|---|
 | **The conversation** | `agent_prompt_threads.metadata.iterations[]` | The turn-by-turn `{phase, request, response}` log. **Primary evidence.** |
 | Thread meta | `agent_prompt_threads.metadata.{phase2_loop_state, plugin_context_signature, phase1_*_services}` | Loop state (cap/iteration), which turns re-sent `plugin_action_summary`. |
-| Original prompt | `agents.agent_config.ai_context.original_prompt` | What the user first asked (often lacks the identifier). |
-| Enhanced Prompt | `agents.agent_config.ai_context.enhanced_prompt` (== `agents.user_prompt`) | The saved EP — narrative + `resolved_user_inputs`. |
-| Clarification answers | `agents.agent_config.creation_metadata.clarification_answers` | The Phase 2 answers `q1…qN` (where identifiers/URLs enter). |
-| Confidence | `agent_config.ai_context.confidence` | Phase-3 self-confidence (0.8 default). |
+| Original prompt | `agents.created_from_prompt` column (canonical) | What the user first asked (often lacks the identifier). `ai_context.original_prompt` no longer written on new agents — use the column or `getAgentAiContextView`. |
+| Enhanced Prompt | `agents.user_prompt` column (canonical, structured) | The saved EP — narrative + `resolved_user_inputs`. `ai_context.enhanced_prompt` no longer written; `getAgentAiContextView(agent).enhanced_prompt` renders the flat form. |
+| Clarification answers | `agents.agent_config.creation_metadata.clarification_answers` | The Phase 2 answers `q1…qN` (where identifiers/URLs enter). *(Unchanged.)* |
+| Confidence | `agents.ai_confidence` column (canonical) | Phase-3 self-confidence (0.8 default). `ai_context.confidence` no longer written on new agents. |
 
 **Iteration shape (Phase 3 response):** `{ phase:3, enhanced_prompt:{ sections:{data,output,actions,delivery,processing_steps}, specifics:{ services_involved, resolved_user_inputs:[{key,value}], user_inputs_required } }, analysis, conversationalSummary, … }`.
 **Iteration shape (Phase 2 response):** `{ phase:2, question:{id,type,question,options?,allowCustom?,theme?}|null, phase2_done, ai_reasoning? }`.

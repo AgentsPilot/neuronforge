@@ -1652,6 +1652,14 @@ export interface CalibrationExecutionSummary {
   items_processed: number;    // Total items that went through the workflow
   items_filtered?: number;    // Items that didn't match filters
   items_delivered?: number;   // Items that made it to the final output
+  // A2 (Group A): the meaningful-data coverage signal, computed WHERE THE REAL
+  // per-step outputs live (WorkflowPilot, calibration-only) and surfaced here so
+  // the verdict is based on real pre-delivery rows rather than a delivery count.
+  // Derived flags/counts + blank column NAMES only — no raw rows / PII.
+  coverage?: import('./shadow/dataQuality').CoverageDerivation;
+  // A2: all-failed/all-empty step signals (Item 10) computed on the real step
+  // outputs (stepId + kind + count only — no raw data).
+  degraded_steps?: import('./shadow/AllFailedStepDetector').DegradedStepIssue[];
 }
 
 export interface DataSourceAccess {

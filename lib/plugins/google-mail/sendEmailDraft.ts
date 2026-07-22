@@ -1,11 +1,18 @@
 import { getPluginConnection } from '@/lib/plugins/helpers/getPluginConnection'
-import { generatePDF } from '@/lib/pdf/generatePDF'
 
 type SendEmailOptions = {
   userId: string
   to: string
   subject: string
   body: string
+  /**
+   * D12 follow-up: accepted for backward compatibility with existing callers
+   * (e.g. EmailHandler forwards `outputSchema.includePdf`) but NO LONGER honored.
+   * The former PDF-attachment path relied on `generatePDF`, which is a void stub
+   * that never produced a PDF — it built a `multipart/mixed` message with an
+   * empty/garbage attachment. That dead branch was removed; every send now goes
+   * through the working `multipart/alternative` (HTML + plaintext) path below.
+   */
   includePdf?: boolean
 }
 
@@ -35,7 +42,6 @@ export async function sendEmailDraft({
   to,
   subject,
   body,
-  includePdf = false,
 }: SendEmailOptions) {
   const pluginKey = 'google-mail'
 
@@ -44,62 +50,30 @@ export async function sendEmailDraft({
   const access_token = connection.access_token
   const htmlBody = wrapInHtml(body)
 
-  if (!includePdf) {
-    const rawEmail = [
-      `To: ${to}`,
-      'Content-Type: text/html; charset=utf-8',
-      `Subject: ${subject}`,
-      '',
-      htmlBody,
-    ].join('\n')
-
-    const encodedEmail = encodeBase64(rawEmail)
-
-    const response = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${access_token}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ raw: encodedEmail }),
-    })
-
-    if (!response.ok) {
-      const errorText = await response.text()
-      throw new Error(`Failed to send email: ${errorText}`)
-    }
-
-    return await response.json()
-  }
-
-  // ✅ Generate PDF and encode as base64 correctly
-  const pdfData = generatePDF(subject, { content: body }) // should return Uint8Array or ArrayBuffer
-  const uint8Array = new Uint8Array(pdfData)
-  const pdfBase64 = Buffer.from(uint8Array).toString('base64')
-
-  const boundary = '__boundary__'
-  const mimeMessage = [
+  // D12: send multipart/alternative (text/plain + text/html) instead of single-part
+  // text/html. The plaintext part is the original `body` (this sender receives
+  // plaintext and wraps it into HTML via wrapInHtml), so no discarded plaintext.
+  const altBoundary = '__np_alt_boundary__'
+  const rawEmail = [
     `To: ${to}`,
     `Subject: ${subject}`,
     'MIME-Version: 1.0',
-    `Content-Type: multipart/mixed; boundary="${boundary}"`,
+    `Content-Type: multipart/alternative; boundary="${altBoundary}"`,
     '',
-    `--${boundary}`,
+    `--${altBoundary}`,
+    'Content-Type: text/plain; charset="UTF-8"',
+    '',
+    body,
+    '',
+    `--${altBoundary}`,
     'Content-Type: text/html; charset="UTF-8"',
     '',
     htmlBody,
     '',
-    `--${boundary}`,
-    'Content-Type: application/pdf; name="output.pdf"',
-    'Content-Transfer-Encoding: base64',
-    'Content-Disposition: attachment; filename="output.pdf"',
-    '',
-    pdfBase64,
-    '',
-    `--${boundary}--`,
+    `--${altBoundary}--`,
   ].join('\n')
 
-  const encodedMime = encodeBase64(mimeMessage)
+  const encodedEmail = encodeBase64(rawEmail)
 
   const response = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', {
     method: 'POST',
@@ -107,12 +81,12 @@ export async function sendEmailDraft({
       Authorization: `Bearer ${access_token}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ raw: encodedMime }),
+    body: JSON.stringify({ raw: encodedEmail }),
   })
 
   if (!response.ok) {
     const errorText = await response.text()
-    throw new Error(`Failed to send email with PDF: ${errorText}`)
+    throw new Error(`Failed to send email: ${errorText}`)
   }
 
   return await response.json()

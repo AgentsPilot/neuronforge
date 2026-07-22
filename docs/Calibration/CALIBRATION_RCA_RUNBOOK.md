@@ -1,6 +1,6 @@
 # Calibration RCA Runbook
 
-> **Last Updated**: 2026-06-30
+> **Last Updated**: 2026-07-13
 
 ## Overview
 
@@ -84,6 +84,15 @@ Read each specific issue's `category` — it's your first classification signal:
 | `scatter_item_field` | A scatter/loop item-ref names a field the iterated items don't have (WP-56 family). |
 | `execution_failed` / `steps_failed` | Aggregate/whole-run failure markers. |
 
+**BLOCKING-class detector issues (2026-07 field-fidelity batch).** These carry an explicit top-level `type` + `blocking:true` and can NEVER be waved to a passing verdict:
+
+| `type` | Means |
+|---|---|
+| `plugin_field_fidelity_mismatch` | A transform declares an item field the producing plugin action doesn't emit — a clearly-same-field spelling divergence (e.g. `mime_type` while the producer emits `mimeType`). Detected against the plugin's real `output_schema`. The calibration twin of the compiler-side Gap C gate. |
+| `degraded_step_all_failed` | A step/scatter where 100% of items carry an error / `success:false` marker (the hidden-failure anti-pattern — previously swallowed into valid-looking empty results). |
+| `degraded_step_all_empty` | A step/scatter where 100% of items return empty / fallback data (no meaningful values). |
+| `partial_report_data` (non-blocking, `needs_review`) | The report was produced with real data, but some columns are blank in every row (the step that fills them isn't receiving the source data). |
+
 ### Step 3 — Find the earliest failing step + trace the cascade
 
 **The single most important move.** Calibration failures almost always cascade: one step fails, and every downstream step then fails with **"has no input data."**
@@ -140,11 +149,24 @@ State the RCA in this shape, then stop (don't jump to fixing unless asked):
 (See the `calibration` skill § 6 and the repos for the authoritative schema.)
 
 - **`calibration_sessions`** — active-run state, one open row per in-flight run. Key fields: `status`, `completed_steps`/`failed_steps`/`skipped_steps`/`total_steps`, **`issues`** (the live array), `issue_summary` (`{critical, warnings, autoRepairs}`), `execution_summary`, `execution_id`. Repo: `CalibrationSessionRepository`.
-- **`calibration_history`** — one row per completed run. Key fields: `status` (`success`/`needs_review`/`failed`), `iterations`, `auto_fixes_applied`, `first_execution_success`, `marked_production_ready`, **`issues_remaining`**, `steps_failed`, `plugins_used`, `workflow_hash`. Repo: `CalibrationHistoryRepository`.
+- **`calibration_history`** — one row per completed run. Key fields: `status` (`success`/`needs_review`/`failed`/`verification_only`), `iterations`, `auto_fixes_applied`, `first_execution_success`, `marked_production_ready`, **`issues_remaining`**, `steps_failed`, `plugins_used`, `workflow_hash`, `metadata.verdict` (the precise verdict — see below). Repo: `CalibrationHistoryRepository`.
 - **`agent_executions`** — the runs (the dry-run shows `run_mode = 'calibration'` / `'batch_calibration'`). Fields: `status`, `error_message`, `run_mode`.
 - **`agents.agent_config.ai_context.intent_contract` / `.data_schema`** — WP-55 generation fingerprint (null pre-WP-55).
+- **`agents.calibration_status`** — the wizard/gate column: `running`/`passed`/`failed`/`skipped`, set at the route tail via `AgentRepository.setCalibrationStatus`. It keys on the persisted verdict (`calibration_history.status === 'success'`), so a **cosmetic-only pass now reads `passed`** (previously it wrongly read `failed` because it also required zero remaining issues). Distinct from the fast-path `agents.last_calibration_status` (`success`/`needs_review`/`failed`) documented in `CALIBRATION_STATUS_TRACKING.md`.
 
-**Issue object shape (inside `issues[]`):** `{ id, category, severity, title, message, technicalDetails, affectedSteps:[{stepId, stepName, friendlyName}], suggestedFix?:{action:{parameterName, problematicValue, …}, confidence}, requiresUserInput, autoRepairAvailable }`. The `dry_run` summary issue is shaped differently: `{ type:'steps_failed', details:{failedStepIds, stepsFailed, stepsCompleted} }`.
+**Issue object shape (inside `issues[]`):** `{ id, category, severity, title, message, technicalDetails, affectedSteps:[{stepId, stepName, friendlyName}], suggestedFix?:{action:{parameterName, problematicValue, …}, confidence}, requiresUserInput, autoRepairAvailable }`. The `dry_run` summary issue is shaped differently: `{ type:'steps_failed', details:{failedStepIds, stepsFailed, stepsCompleted} }`. The 2026-07 detector issues additionally carry a top-level `type` (`plugin_field_fidelity_mismatch`, `degraded_step_all_failed`, `degraded_step_all_empty`, `partial_report_data`) and `blocking`.
+
+**Verdict states (Item 6 — `CalibrationVerdict.computeVerdict`, carried in `calibration_history.metadata.verdict` + the API response).** The verdict keys on issue CLASS, not a raw count:
+
+| Verdict | Meaning | DB `status` |
+|---|---|---|
+| `passed` | No blocking issues, real path exercised with meaningful data; at most waved cosmetic suggestions. | `success` |
+| `failed` | Hard failure. | `failed` |
+| `needs_review` | A blocking-class or non-cosmetic issue remains. | `needs_review` |
+| `inconclusive` | The real/failure-prone path was never exercised, OR the delivered set was all-blank/all-fallback (false-green guard). **Never a clean pass.** | `needs_review` |
+| `corrected_not_verified` | An in-place field-fidelity correction (Item 7) was applied but the re-run still didn't exercise the real path. | `needs_review` |
+
+**RCA relevance:** an `inconclusive` / `corrected_not_verified` verdict means calibration behaved *correctly* by refusing a false-green — that is "honestly not verified," NOT a calibration-detection bug. A BLOCKING-class detector issue (`plugin_field_fidelity_mismatch`, `degraded_step_all_*`) forcing `needs_review` is likewise calibration doing its job.
 
 ---
 
@@ -179,5 +201,6 @@ State the RCA in this shape, then stop (don't jump to fixing unless asked):
 
 | Date | Change | Details |
 |------|--------|---------|
+| 2026-07-13 | Field-fidelity + calibration-hardening data-model refresh | Documented the class-based verdict states (`passed`/`failed`/`needs_review`/`inconclusive`/`corrected_not_verified`) and their DB `status` mapping; added the 2026-07 BLOCKING detector issue `type`s (`plugin_field_fidelity_mismatch`, `degraded_step_all_failed`, `degraded_step_all_empty`) + non-blocking `partial_report_data` to Step 2 and the data-model reference; added the `agents.calibration_status` gate column (cosmetic-only pass now `passed`). Reflects the batch-1 field-fidelity/calibration-hardening + Group A wizard/verdict-unblock changes. |
 | 2026-07-05 | Automated RCA note | Added a "start from the automated RCA if one exists" note under [When to use](#when-to-use): a background calibration failure now runs this method automatically (flag `CALIBRATION_AUTO_RCA_ENABLED`) and persists the result to `calibration_history.metadata.auto_rca` (+ `auto_rca_status`, `correlation_id`), so a human doing the manual RCA can start from it. |
 | 2026-06-30 | Created | Initial RCA runbook: 6-step method (gather → read issues → earliest-step/cascade → classify layer → calibration-correctness → conclude), data-model reference, traps, and two worked examples (`3fc703fd` Sheets range, `8c7caa01` scatter item-ref). Backs the `calibration-rca` skill; companion script `scripts/dump-calibration.ts`. |

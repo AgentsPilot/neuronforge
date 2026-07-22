@@ -66,7 +66,8 @@
                 "file_object"
               ],
               "from_file_object": "content",
-              "description": "Can extract base64 content directly from file object"
+              "from_base64_content": "data",
+              "description": "Extracts the base64 bytes from a file object. Producers disagree on the bytes key, so BOTH hints are declared and matched against the producing slot's actual fields: google-drive.download_file exposes 'content', google-mail.get_email_attachment exposes 'data' (WP-62). The IR converter normally resolves the bytes field up-front from the producer schema and emits an already-navigated ref; these hints are the compiler-side fallback for refs it did not navigate (e.g. legacy/cached IR, or an auto-inserted download output with no data_schema slot)."
             }
           },
           "file_url": {

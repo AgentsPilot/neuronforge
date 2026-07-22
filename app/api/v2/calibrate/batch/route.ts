@@ -27,6 +27,7 @@ import { generateCalibrationRca, buildRcaAttemptMetadata, type CalibrationRcaRes
 import { isCalibrationAutoRcaEnabled } from '@/lib/calibration/calibrationRcaConfig';
 import { resolveCalibrationIdentity } from '@/lib/calibration/adminCalibrationIdentity';
 import { AdminAccessService } from '@/lib/services/AdminAccessService';
+import { isCalibrationHistoryPass } from '@/lib/calibration/finishGate';
 import { createLogger } from '@/lib/logger';
 import type { CollectedIssue } from '@/lib/pilot/types';
 // NOTE: this route historically imported `Agent` from `@/types/agent`, a module
@@ -188,6 +189,15 @@ export async function POST(req: NextRequest) {
         'Admin-initiated calibration — running on behalf of the owner (service-role client, owner identity)'
       );
     }
+
+    // D8 (security sweep) — SINGLE owner reference for every `agents` write in this
+    // route. `supabase` may be the service-role client (admin-initiated runs bypass
+    // RLS), so an `.eq('id', agentId)`-only write is NOT owner-scoped. EVERY
+    // `.from('agents').update(...)` below MUST also `.eq('user_id', ownerId)` (or go
+    // through AgentRepository). `ownerId` is the loaded+authorized agent's owner, so
+    // the scope always matches the row we validated. Do not add a new agents write
+    // without this filter.
+    const ownerId = agent.user_id;
 
     // Capture context for the Phase 2 calibration tail (used in `finally`).
     // Captured for ALL runs (not just background) so a manual sandbox pass also
@@ -650,7 +660,8 @@ export async function POST(req: NextRequest) {
           input_schema: agent.input_schema,
           updated_at: new Date().toISOString()
         })
-        .eq('id', agentId);
+        .eq('id', agentId)
+        .eq('user_id', ownerId); // D8: owner-scoped write
 
       if (updateError) {
         logger.error({ error: updateError, sessionId, agentId }, 'Failed to persist pre-flight fixes');
@@ -1051,7 +1062,8 @@ export async function POST(req: NextRequest) {
           input_schema: agent.input_schema,
           updated_at: new Date().toISOString()
         })
-        .eq('id', agentId);
+        .eq('id', agentId)
+        .eq('user_id', ownerId); // D8: owner-scoped write
 
       if (updateError) {
         logger.error({ error: updateError, sessionId, agentId }, 'Failed to persist Layer 2 fixes');
@@ -1120,7 +1132,8 @@ export async function POST(req: NextRequest) {
         await supabase
           .from('agents')
           .update({ pilot_steps: agent.pilot_steps, updated_at: new Date().toISOString() })
-          .eq('id', agentId);
+          .eq('id', agentId)
+          .eq('user_id', ownerId); // D8: owner-scoped write
         logger.info({ sessionId, agentId, scatterAutoFixCount },
           '[ScatterItemField] Persisted auto-applied field-ref fixes before dry-run');
       }
@@ -1828,7 +1841,8 @@ export async function POST(req: NextRequest) {
               pilot_steps: updatedSteps,
               updated_at: new Date().toISOString()
             })
-            .eq('id', agentId);
+            .eq('id', agentId)
+            .eq('user_id', ownerId); // D8: owner-scoped write
 
           autoFixesApplied += fixesAppliedThisRound;
 
@@ -3280,7 +3294,8 @@ export async function POST(req: NextRequest) {
                 pilot_steps: updatedSteps,
                 updated_at: new Date().toISOString()
               })
-              .eq('id', agentId);
+              .eq('id', agentId)
+              .eq('user_id', ownerId); // D8: owner-scoped write
 
             currentAgent.pilot_steps = updatedSteps;
             autoFixesApplied += finalFixesApplied;
@@ -4128,7 +4143,8 @@ export async function POST(req: NextRequest) {
             pilot_steps: updatedSteps,
             updated_at: new Date().toISOString()
           })
-          .eq('id', agentId);
+          .eq('id', agentId)
+          .eq('user_id', ownerId); // D8: owner-scoped write
 
         autoFixesApplied += fixesAppliedThisRound;
 
@@ -4214,9 +4230,16 @@ export async function POST(req: NextRequest) {
     // marker; no plugin branches) so it can never be silently passed (G1a).
     const degradedStepIssues: any[] = [];
     try {
-      const { AllFailedStepDetector } = await import('@/lib/pilot/shadow/AllFailedStepDetector');
-      const stepOutputs = (finalResult as any)?.output || {};
-      const degraded = new AllFailedStepDetector().detect(stepOutputs);
+      // A2 wiring fix: prefer the degraded-step signal computed in WorkflowPilot
+      // on the REAL per-step outputs (surfaced on execution_summary). Fall back to
+      // detecting on finalResult.output only when the precomputed signal is absent
+      // (e.g. no collector) — that payload is the final shaped output, not a step
+      // map, so it is best-effort.
+      let degraded = finalResult.execution_summary?.degraded_steps;
+      if (!degraded) {
+        const { AllFailedStepDetector } = await import('@/lib/pilot/shadow/AllFailedStepDetector');
+        degraded = new AllFailedStepDetector().detect((finalResult as any)?.output || {});
+      }
       for (const d of degraded) {
         degradedStepIssues.push({
           source: 'degraded_step',
@@ -4233,7 +4256,7 @@ export async function POST(req: NextRequest) {
       }
       if (degradedStepIssues.length > 0) {
         allIssuesForUI.push(...degradedStepIssues);
-        logger.warn({ sessionId, agentId, count: degradedStepIssues.length, steps: degraded.map(d => `${d.stepId}:${d.kind}`) },
+        logger.warn({ sessionId, agentId, count: degradedStepIssues.length, steps: degraded.map((d: any) => `${d.stepId}:${d.kind}`) },
           '[AllFailedStep] Surfaced blocking all-failed/all-empty step(s) to the calibration report');
       }
     } catch (err) {
@@ -4254,14 +4277,24 @@ export async function POST(req: NextRequest) {
     let deliveredAllBlank = false;
     let coverageReason: string | undefined;
     try {
-      const { deriveCoverageSignal } = await import('@/lib/pilot/shadow/dataQuality');
       const es = finalResult.execution_summary;
-      const coverage = deriveCoverageSignal({
-        stepOutputs: (finalResult as any)?.output || {},
-        finalOutput: (finalResult as any)?.finalOutput ?? dryRunResult.finalOutput,
-        itemsProcessed: es?.items_processed ?? 0,
-        itemsDelivered: es?.items_delivered ?? 0,
-      });
+      // A2 wiring fix: prefer the coverage signal computed in WorkflowPilot on the
+      // REAL per-step outputs (surfaced on execution_summary.coverage). Only fall
+      // back to a route-side best-effort computation when it is absent — the
+      // route's `finalResult.output` is the final shaped output, NOT a step map,
+      // so a populated pre-delivery collection is not reliably present there.
+      let coverage = es?.coverage;
+      if (!coverage) {
+        const { deriveCoverageSignal } = await import('@/lib/pilot/shadow/dataQuality');
+        coverage = deriveCoverageSignal({
+          stepOutputs: ((finalResult as any)?.output && typeof (finalResult as any).output === 'object')
+            ? (finalResult as any).output
+            : {},
+          finalOutput: (finalResult as any)?.output ?? dryRunResult.finalOutput,
+          itemsProcessed: es?.items_processed ?? 0,
+          itemsDelivered: es?.items_delivered ?? 0,
+        });
+      }
       exercisedRealPath = coverage.exercisedRealPath;
       deliveredAllBlank = coverage.deliveredAllBlank;
       coverageReason = coverage.reason;
@@ -4645,7 +4678,8 @@ export async function POST(req: NextRequest) {
             last_successful_calibration_id: historyRecord.id,
             updated_at: new Date().toISOString()
           })
-          .eq('id', agentId);
+          .eq('id', agentId)
+          .eq('user_id', ownerId); // D8: owner-scoped write (was the known-open unscoped instance)
 
         logger.info({ sessionId, agentId }, 'Agent automatically approved for production after successful calibration');
       }
@@ -4733,7 +4767,13 @@ export async function POST(req: NextRequest) {
     const { computeVerdict, VERDICT_LABELS } = await import('@/lib/pilot/shadow/CalibrationVerdict');
     const verdictResult = computeVerdict({
       issues: allIssuesForUI.map((i: any) => ({
-        type: i.type,
+        // A3: cosmetic issues from IssueCollector carry their kind on `category`
+        // (e.g. 'hardcode_detected'), not `type`. Fall back to `category` so the
+        // TIGHT waveable allow-list recognises a provably-cosmetic, user-confirm-
+        // only suggestion and a cosmetic-only run can read as `passed`. Blocking/
+        // degraded/partial issues set `type` explicitly, so this never widens the
+        // allow-list (isWaveable still requires membership + non-blocking + severity).
+        type: i.type ?? i.category,
         severity: i.severity,
         blocking: i.blocking ?? i.details?.blocking,
         requiresUserInput: i.details?.requiresUserInput ?? i.requiresUserInput,
@@ -4886,7 +4926,8 @@ export async function POST(req: NextRequest) {
         workflow_hash: currentWorkflowHash,
         updated_at: new Date().toISOString()
       })
-      .eq('id', agentId);
+      .eq('id', agentId)
+      .eq('user_id', ownerId); // D8: owner-scoped write
 
     logger.info({ sessionId, agentId }, 'Batch calibration completed successfully');
 
@@ -4990,11 +5031,20 @@ export async function POST(req: NextRequest) {
         const { data: rows } = await histRepo.getByAgent(runCtx.agentId, runCtx.userId, 1);
         const latest = rows?.[0];
 
-        // Clean pass = the run wrote a 'success' history row with 0 remaining issues.
         const issuesFound = (latest?.issues_found || []).length;
         const issuesFixed = (latest?.issues_fixed || []).length;
         const issuesRemaining = (latest?.issues_remaining || []).length;
-        const passed = latest?.status === 'success' && issuesRemaining === 0;
+        // A run "passed" iff the route wrote a 'success' history row. The route
+        // writes history status 'success' ONLY when the Item 6 verdict is passing
+        // (a clean pass OR the Item 6a "passable with cosmetic suggestions only"
+        // relaxation); non-passing verdicts write 'needs_review' / 'failed'. So
+        // `status === 'success'` IS the persisted form of the verdict's isPassing.
+        // The old `&& issuesRemaining === 0` clause was a SECOND, divergent
+        // "did it pass?" computation that flipped a cosmetic-only pass (which
+        // legitimately retains a waveable suggestion) to 'failed' — the same
+        // stale-passed-gate class as the Phase-1.6 semantic gate. `isCalibration
+        // HistoryPass` is the single shared predicate, consistent with the verdict.
+        const passed = isCalibrationHistoryPass(latest?.status);
 
         // Update the gate for every run (foreground manual pass must unlock too).
         const agentRepo = new AgentRepository(runCtx.supabase);

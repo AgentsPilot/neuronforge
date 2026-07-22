@@ -42,6 +42,8 @@ import type {
 } from '@/components/agent-creation/types/generate-agent-v2'
 import { isGenerateAgentV2Success } from '@/components/agent-creation/types/generate-agent-v2'
 import { buildV6AiContext } from './buildV6AiContext'
+import { buildCreationModels } from './buildCreationModels'
+import { buildV6Metadata } from './buildV6Metadata'
 import { formatScheduleDisplay } from '@/lib/utils/scheduleFormatter'
 import { useV6AgentGeneration, useMoveToCalibrationAfterCreation } from '@/lib/utils/featureFlags'
 import { createTimedThinkingWordCycler, getWordsForCategories } from '@/lib/ui/thinking-words'
@@ -80,6 +82,9 @@ interface V6GenerateResponse {
     plugins_used: string[]
     grounding_confidence?: number
     formalization_confidence?: number
+    // Part B: resolved provider/model the IntentContract LLM ran with.
+    provider?: string
+    model?: string
   }
   intermediate_results?: {
     semantic_plan?: {
@@ -358,6 +363,10 @@ function V2AgentBuilderContent() {
   // toggle independently. Default COLLAPSED.
   const [isAgentDraftStepsExpanded, setIsAgentDraftStepsExpanded] = useState(false)
   const [enhancedPromptData, setEnhancedPromptData] = useState<any>(null)
+  // Part B: provenance of the LLM that produced the enhanced prompt (Phase 3).
+  // A ref (not state) — read only at save time, never rendered, and must not be
+  // stale from a batched update. Populated from the Phase 3 response.
+  const enhancedPromptModelRef = useRef<{ provider?: string; model?: string }>({})
 
   // Service status tracking
   const [connectedPlugins, setConnectedPlugins] = useState<string[]>([])
@@ -1034,6 +1043,10 @@ function V2AgentBuilderContent() {
       // Store enhanced prompt data for rich display
       setEnhancedPromptData(data.enhanced_prompt)
 
+      // Part B: capture the enhanced-prompt generation provenance (provider/model)
+      // for persistence in creation_metadata.models at save time.
+      enhancedPromptModelRef.current = { provider: data.ai_provider, model: data.ai_model }
+
       // Store required services from Phase 3 for service status checking
       if (data.enhanced_prompt?.specifics?.services_involved) {
         setRequiredServices(data.enhanced_prompt.specifics.services_involved)
@@ -1351,29 +1364,32 @@ function V2AgentBuilderContent() {
           latencyMs: v6LatencyMs
         })
 
-        // Build agent config for V6
+        // Build agent config for V6 (lean — A2 de-dup). Fields that mirror
+        // dedicated columns are NOT written here: `ai_generated_at` (column),
+        // `agent_id` (row id), `enhanced_prompt_data` (duplicates `user_prompt`).
+        // The reasoning/confidence/prompt narrative lives in columns; read it via
+        // getAgentAiContextView. See the de-dup workplan.
         const agentConfig: CreateAgentConfig = {
           creation_metadata: {
-            ai_generated_at: new Date().toISOString(),
             session_id: sessionId.current,
-            agent_id: agentId.current,
             thread_id: threadId || '',
             prompt_type: 'enhanced',
             clarification_answers: builderState.clarificationAnswers,
             version: '6.0',
             platform_version: 'v6.0',
-            enhanced_prompt_data: enhancedPromptData
+            // Part B: which LLM produced the enhanced prompt (Phase 3 thread) and
+            // the agent (V6 IntentContract pipeline — resolved provider/model).
+            models: buildCreationModels({
+              enhancedPrompt: enhancedPromptModelRef.current,
+              agentGeneration: { provider: v6Data.metadata?.provider, model: v6Data.metadata?.model }
+            }),
+            // A2 Option A: V6 pipeline creation telemetry (replaces the duplicated
+            // enhanced_prompt_data payload — enhanced prompt lives in user_prompt).
+            v6_metadata: buildV6Metadata(v6Data.metadata) ?? undefined
           },
-          // WP-55: buildV6AiContext is the single source of truth for ai_context.
-          // It persists the Phase-1 IntentContract + Phase-2 data_schema so
-          // post-hoc diagnosis of this agent's LLM emission is a SQL lookup, not
-          // a non-deterministic re-run. (mapV6ResponseToAgent no longer builds a
-          // divergent copy — see its NOTE.)
+          // A2 de-dup: ai_context now holds ONLY intent_contract + data_schema
+          // (WP-55, no column). buildV6AiContext is the single source of truth.
           ai_context: buildV6AiContext({
-            reasoning: v6Agent.ai_reasoning || '',
-            confidence: v6Agent.ai_confidence || 0,
-            originalPrompt: initialPrompt || '',
-            enhancedPrompt: builderState.enhancedPrompt || '',
             intentContract: v6Data.intent_contract,
             dataSchema: v6Data.data_schema
           })
@@ -1443,7 +1459,13 @@ function V2AgentBuilderContent() {
             clarification_answers: builderState.clarificationAnswers,
             version: '2.0',
             platform_version: 'v2.0',
-            enhanced_prompt_data: enhancedPromptData // Structured v9 data
+            enhanced_prompt_data: enhancedPromptData, // Structured v9 data
+            // Part B: enhanced-prompt provenance (Phase 3 thread). The V4 generator
+            // does not expose its resolved model, so agent_generation stays null.
+            models: buildCreationModels({
+              enhancedPrompt: enhancedPromptModelRef.current,
+              agentGeneration: null
+            })
           },
           ai_context: {
             reasoning: generatedAgent.agent.ai_reasoning || '',

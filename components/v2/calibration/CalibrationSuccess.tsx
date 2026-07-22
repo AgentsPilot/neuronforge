@@ -15,8 +15,11 @@ import { Card } from '@/components/v2/ui/card'
 import {
   CheckCircle2,
   Sparkles,
-  Loader2
+  Loader2,
+  Lightbulb,
+  X
 } from 'lucide-react'
+import type { PassSuggestion } from '@/lib/calibration/finishGate'
 
 interface CalibrationSuccessProps {
   agent: {
@@ -38,6 +41,13 @@ interface CalibrationSuccessProps {
   hasParameterizedWorkflow?: boolean // Whether workflow now has parameters after fixes
   configurationSaved?: boolean // Whether configuration has been saved
   onSaveConfiguration?: () => Promise<void> // Callback to save configuration
+  // A3 (UI half): optional, non-blocking cosmetic suggestions surfaced on a
+  // passed-with-suggestions run. Sourced from the verdict result (never
+  // re-derived). Empty for a clean pass → the "Perfect Workflow" badge shows.
+  optionalSuggestions?: PassSuggestion[]
+  // D10: set true right after a successful "make it a reusable parameter" repair,
+  // so the screen confirms the change (the suggestion is cleared separately).
+  parameterizationSucceeded?: boolean
 }
 
 export function CalibrationSuccess({
@@ -51,13 +61,21 @@ export function CalibrationSuccess({
   calibrationInputValues = {},
   hasParameterizedWorkflow = false,
   configurationSaved = false,
-  onSaveConfiguration
+  onSaveConfiguration,
+  optionalSuggestions = [],
+  parameterizationSucceeded = false
 }: CalibrationSuccessProps) {
   const [isSaving, setIsSaving] = React.useState(false)
+  const [suggestionsDismissed, setSuggestionsDismissed] = React.useState(false)
 
   const totalFixes = (fixesSummary.parameters || 0) +
                      (fixesSummary.parameterizations || 0) +
                      (fixesSummary.autoRepairs || 0)
+
+  // A3: a passing run may still carry provably-cosmetic, OPTIONAL suggestions
+  // (e.g. "the value 500 could be a reusable parameter"). Surface them as
+  // non-blocking notes — the run is passed, so the user can finish regardless.
+  const hasSuggestions = optionalSuggestions.length > 0
 
   const hasInputValues = Object.keys(calibrationInputValues).length > 0
 
@@ -120,8 +138,8 @@ export function CalibrationSuccess({
           </div>
         )}
 
-        {/* No Issues Badge */}
-        {totalFixes === 0 && (
+        {/* No Issues Badge — only a genuinely clean pass (no optional suggestions) */}
+        {totalFixes === 0 && !hasSuggestions && (
           <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-[var(--v2-success-bg)] border border-[var(--v2-success-border)] rounded-full">
             <Sparkles className="w-4 h-4 text-[var(--v2-success-icon)]" />
             <span className="text-xs font-semibold text-[var(--v2-success-text)]">
@@ -129,7 +147,102 @@ export function CalibrationSuccess({
             </span>
           </div>
         )}
+
+        {/* Passed-with-suggestions badge — the run passed AND has optional notes */}
+        {hasSuggestions && (
+          <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-[var(--v2-success-bg)] border border-[var(--v2-success-border)] rounded-full">
+            <CheckCircle2 className="w-4 h-4 text-[var(--v2-success-icon)]" />
+            <span className="text-xs font-semibold text-[var(--v2-success-text)]">
+              Passed — {optionalSuggestions.length} optional suggestion{optionalSuggestions.length === 1 ? '' : 's'}
+            </span>
+          </div>
+        )}
       </Card>
+
+      {/* D10: success affordance after "make it a reusable parameter". The repair
+          succeeded server-side; confirm it here so the user isn't left on the same
+          screen with no feedback. Non-blocking, distinct from the amber suggestion. */}
+      {parameterizationSucceeded && (
+        <Card className="border-[var(--v2-success-border)] bg-[var(--v2-success-bg)] !p-4 sm:!p-5">
+          <div className="flex items-start gap-3">
+            <div className="flex-shrink-0 inline-flex items-center justify-center w-9 h-9 rounded-full bg-[var(--v2-success-bg)] border border-[var(--v2-success-border)]">
+              <CheckCircle2 className="w-5 h-5 text-[var(--v2-success-icon)]" />
+            </div>
+            <div>
+              <h3 className="text-base font-semibold text-[var(--v2-success-text)]">
+                Parameter created
+              </h3>
+              <p className="text-xs text-[var(--v2-text-secondary)]">
+                The hardcoded value is now a reusable input parameter — you can change it any time without editing the workflow.
+              </p>
+            </div>
+          </div>
+        </Card>
+      )}
+
+      {/* A3: Optional, non-blocking cosmetic suggestions (dismissible). Visually
+          distinct from a blocking issue (info/amber, not red), and NEVER gates
+          the finish — the run is passed. */}
+      {hasSuggestions && !suggestionsDismissed && (
+        <Card className="border-amber-500/30 bg-amber-500/5 !p-4 sm:!p-5">
+          <div className="flex items-start justify-between gap-3 mb-3">
+            <div className="flex items-start gap-3">
+              <div className="flex-shrink-0 inline-flex items-center justify-center w-9 h-9 rounded-full bg-amber-500/10">
+                <Lightbulb className="w-5 h-5 text-amber-600 dark:text-amber-400" />
+              </div>
+              <div>
+                <h3 className="text-base font-semibold text-[var(--v2-text-primary)]">
+                  Optional suggestion{optionalSuggestions.length === 1 ? '' : 's'}
+                </h3>
+                <p className="text-xs text-[var(--v2-text-secondary)]">
+                  These are optional — your agent passed and is ready to run. You can act on them now or ignore them.
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setSuggestionsDismissed(true)}
+              aria-label="Dismiss suggestions"
+              className="flex-shrink-0 p-1 text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] transition-colors"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+
+          <ul className="space-y-2">
+            {optionalSuggestions.map((s, i) => (
+              <li key={i} className="flex items-start gap-2 bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg p-3">
+                <div className="mt-1 w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ backgroundColor: '#F59E0B' }} />
+                <div>
+                  <p className="text-sm font-medium text-[var(--v2-text-primary)]">{s.title}</p>
+                  {s.message && <p className="text-xs text-[var(--v2-text-secondary)] mt-0.5">{s.message}</p>}
+                </div>
+              </li>
+            ))}
+          </ul>
+
+          {/* FIX 2: the card's copy offers "act on them now or ignore" — so it must
+              render the ACT affordance, not just the dismiss (×). Reuse the EXISTING
+              wired parameterization handler (opens AgentSetupWizard); no new flow.
+              Shown whenever the action is available (a hardcode/parameterization
+              suggestion → `onParameterizeWorkflow` provided). NOT gated on
+              `production_ready`: a passing run sets production_ready=true, but the
+              user may still choose to turn the value into a reusable parameter. A
+              suggestion with no supported action simply has no `onParameterizeWorkflow`
+              → the card stays informational (dismiss-only). Non-blocking. */}
+          {onParameterizeWorkflow && (
+            <button
+              type="button"
+              onClick={onParameterizeWorkflow}
+              className="mt-3 inline-flex items-center gap-2 px-4 py-2 bg-[var(--v2-surface)] text-[var(--v2-text-primary)] border border-[var(--v2-border)] hover:bg-[var(--v2-surface-hover)] transition-colors font-medium text-sm"
+              style={{ borderRadius: 'var(--v2-radius-button)' }}
+            >
+              <Sparkles className="w-4 h-4" />
+              Make it a reusable parameter
+            </button>
+          )}
+        </Card>
+      )}
 
       {/* Step 0: Save Configuration (required if workflow has parameters and config not saved) */}
       {hasInputValues && hasParameterizedWorkflow && !configurationSaved && onSaveConfiguration && (

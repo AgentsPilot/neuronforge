@@ -18,6 +18,7 @@ import { config } from 'dotenv';
 import { resolve } from 'path';
 import { createClient } from '@supabase/supabase-js';
 import { writeFileSync } from 'fs';
+import { getAgentAiContextView } from '../lib/agents/agentAiContextView';
 
 config({ path: resolve(__dirname, '../.env.local') });
 
@@ -40,7 +41,12 @@ const asStr = (v: unknown) => (typeof v === 'string' ? v : JSON.stringify(v));
   // 1) Agent row — creation context (original prompt, EP, clarification answers).
   const { data: agent, error: aErr } = await supabase
     .from('agents')
-    .select('id, agent_name, agent_config, user_prompt, input_schema, pilot_steps')
+    // Widened for getAgentAiContextView: the reasoning/confidence/original_prompt/
+    // generated_plan CANONICAL COLUMNS must be selected, else a lean row falls back
+    // to empty JSONB. (user_prompt + agent_config were already selected.)
+    .select(
+      'id, agent_name, agent_config, user_prompt, input_schema, pilot_steps, ai_reasoning, ai_confidence, created_from_prompt, generated_plan'
+    )
     .eq('id', agentId)
     .single();
   if (aErr || !agent) {
@@ -48,12 +54,14 @@ const asStr = (v: unknown) => (typeof v === 'string' ? v : JSON.stringify(v));
     process.exit(1);
   }
 
-  const aiCtx = agent.agent_config?.ai_context ?? {};
+  // Canonical resolved view (column-first, JSONB-fallback) — what the dump should show.
+  const aiCtx = getAgentAiContextView(agent);
+  const aiCtxRaw = agent.agent_config?.ai_context ?? {}; // legacy fallback source below
   const creationMeta = agent.agent_config?.creation_metadata ?? {};
   const clarAnswers =
     creationMeta?.clarification_answers ??
     creationMeta?.generated_plan?.clarification_answers ??
-    aiCtx?.generated_plan?.clarification_answers ??
+    aiCtxRaw?.generated_plan?.clarification_answers ??
     null;
 
   writeFileSync(`c:/tmp/agent-${prefix}-aictx.json`, JSON.stringify(aiCtx, null, 2));
@@ -131,7 +139,7 @@ const asStr = (v: unknown) => (typeof v === 'string' ? v : JSON.stringify(v));
 
   console.log('WRITTEN:');
   console.log(`  c:/tmp/agent-${prefix}-thread.json           (metadata.iterations[] — the conversation)`);
-  console.log(`  c:/tmp/agent-${prefix}-aictx.json            (ai_context: original_prompt, enhanced_prompt, confidence)`);
+  console.log(`  c:/tmp/agent-${prefix}-aictx.json            (resolved ai-context view, column-first: original_prompt, enhanced_prompt, confidence, intent_contract, data_schema)`);
   console.log(`  c:/tmp/agent-${prefix}-creation-metadata.json (generated_plan.clarification_answers)`);
 })();
 

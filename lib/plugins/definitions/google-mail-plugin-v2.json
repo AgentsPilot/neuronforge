@@ -780,6 +780,7 @@
       "output_schema": {
         "type": "object",
         "description": "Attachment content with metadata",
+        "x-semantic-type": "file_attachment",
         "properties": {
           "filename": {
             "type": "string",

@@ -451,6 +451,26 @@ export interface TransformStep extends BaseStep {
 }
 
 // 4) Extract: pull structured fields from unstructured content (documents, messages, web)
+/**
+ * WP-62 (deterministic-vs-AI extraction routing): declared value-SOURCE of an
+ * extract field, used by the coverage predicate to decide which fields a
+ * deterministic OCR/parse capability can genuinely produce — WITHOUT any
+ * field-name allow/deny list (Principle 6 / Anti-pattern F / CLAUDE.md "No
+ * Hardcoding").
+ *
+ * - "document": a direct surface read of the extract's own document/file input
+ *   (e.g. an invoice's vendor, amount, date). Deterministically producible by OCR.
+ * - "meta": provenance about the file container or the extraction *process*
+ *   (e.g. source_filename, extraction notes) — NOT on the document surface.
+ * - "computed": derived / normalized / categorized / cross-record — requires
+ *   reasoning the deterministic capability does not perform.
+ *
+ * Only "document" fields are deterministically-producible. "meta"/"computed"
+ * (and, conservatively, absent) fields are split to a downstream AI step or
+ * fall back to AI whole. See `ExtractionCoverage.ts`.
+ */
+export type ExtractFieldSource = "document" | "meta" | "computed";
+
 export interface ExtractStep extends BaseStep {
   kind: "extract";
 
@@ -461,7 +481,12 @@ export interface ExtractStep extends BaseStep {
     // a field has `type: "array"` it MUST declare `items` (element shape);
     // when `type: "object"` it MUST declare `properties` (per-key shape).
     // Recursive depth is bounded only by the schema author's discipline.
-    fields: Array<{ name: string } & NestedFieldSpec>;
+    //
+    // WP-62: each field MAY declare `source` (document | meta | computed) so the
+    // deterministic-vs-AI coverage predicate can partition producible surface
+    // fields from meta/computed residuals without any field-name list. Optional
+    // and backward-compatible: absent → treated conservatively as non-surface.
+    fields: Array<{ name: string; source?: ExtractFieldSource } & NestedFieldSpec>;
 
     // "deterministic" indicates you expect a stable schema output (e.g., deterministic_extract)
     deterministic?: boolean;

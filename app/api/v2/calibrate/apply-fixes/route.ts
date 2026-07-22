@@ -1317,7 +1317,8 @@ export async function POST(req: NextRequest) {
         is_calibrated: true,
         updated_at: new Date().toISOString()
       })
-      .eq('id', agent.id);
+      .eq('id', agent.id)
+      .eq('user_id', user.id); // owner filter (mandatory user_id scoping)
 
     if (updateError) {
       logger.error({ agentId: agent.id, error: updateError }, 'Failed to update agent workflow');

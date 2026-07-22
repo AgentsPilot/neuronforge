@@ -139,6 +139,16 @@ export interface VariableMapping {
 export interface InputMapping {
   accepts: string[]; // Accepted input types (e.g., ["file_object", "url_string"])
   from_file_object?: string; // Field path if input is file object
+  /**
+   * WP-62: field path when the input object carries raw base64 bytes under a
+   * different key than `from_file_object`. Producers disagree on the bytes key
+   * (Drive `download_file` → `content`; Gmail `get_email_attachment` → `data`), so a
+   * single hint cannot serve both. ExecutionGraphCompiler's schema-aware
+   * x-input-mapping pass tries `from_file_object` first, then this — matching each
+   * hint against the PRODUCING slot's actual fields. Was already consumed by the
+   * compiler (ExecutionGraphCompiler.ts) but never declared here.
+   */
+  from_base64_content?: string;
   from_url?: string; // Field path if input is URL
   description: string; // Description of accepted inputs
 }

@@ -16,6 +16,8 @@ import React, { useState, useEffect, useRef } from 'react'
 import { useRouter, useParams } from 'next/navigation'
 import { useAuth } from '@/components/UserProvider'
 import { supabase } from '@/lib/supabaseClient'
+import { canFinishCalibration, getPassSuggestions, type PassSuggestion } from '@/lib/calibration/finishGate'
+import { deriveHardcodeState } from '@/lib/calibration/hardcodeState'
 import { V2Logo, V2Controls } from '@/components/v2/V2Header'
 import { HelpBot } from '@/components/v2/HelpBot'
 import { PageLoading } from '@/components/v2/ui/loading'
@@ -74,9 +76,15 @@ export default function BatchCalibrationPage() {
   const [error, setError] = useState<string | null>(null)
   const [fixesSummary, setFixesSummary] = useState<any>(null)
   const [hasHardcodedValues, setHasHardcodedValues] = useState(false)
+  // A3 (UI half): optional cosmetic suggestions to surface on a passed-with-
+  // suggestions finish screen (sourced from the verdict result, never re-derived).
+  const [passSuggestions, setPassSuggestions] = useState<PassSuggestion[]>([])
   const [detectionResult, setDetectionResult] = useState<DetectionResult | null>(null)
   const [showParameterizationWizard, setShowParameterizationWizard] = useState(false)
   const [userDeclinedParameterization, setUserDeclinedParameterization] = useState(false)
+  // D10: success affordance — set true after a successful repair-hardcode so the
+  // success screen confirms the value became a reusable parameter.
+  const [parameterizationSucceeded, setParameterizationSucceeded] = useState(false)
   const [inputValues, setInputValues] = useState<Record<string, any>>({})
   const [schemaMetadata, setSchemaMetadata] = useState<Record<string, any[]> | null>(null)
   const [configurationSaved, setConfigurationSaved] = useState(false)
@@ -292,13 +300,12 @@ export default function BatchCalibrationPage() {
         }
 
         const detection = detector.detect(data.pilot_steps, resolvedUserInputs)
-        const totalDetected = (detection.resource_ids?.length || 0) +
-                            (detection.business_logic?.length || 0) +
-                            (detection.configuration?.length || 0)
-        if (totalDetected > 0) {
-          setDetectionResult(detection)
-          setHasHardcodedValues(true)
-        }
+        // D10: clear-on-empty. Previously this only set state when hardcodes were
+        // found (no else), so a resolved hardcode (post-parameterization) stayed
+        // stale. deriveHardcodeState clears both fields when nothing is detected.
+        const { hasHardcodedValues: hc, detectionResult: dr } = deriveHardcodeState(detection)
+        setDetectionResult(dr)
+        setHasHardcodedValues(hc)
       }
     } catch (err: any) {
       console.error('Failed to load agent:', err)
@@ -593,17 +600,23 @@ export default function BatchCalibrationPage() {
         console.warn('[Calibration] Failed to refetch agent flags:', agentRefetchError)
       }
 
-      // If no issues found, go straight to success (user will approve for production later)
-      if (result.summary.total === 0) {
-        console.log('[Calibration] No issues found - ready for user approval')
+      // A1 (Group A): gate the finish transition on the VERDICT, not on
+      // summary.total === 0. A cosmetic-only run now returns success:true /
+      // verdict:'passed' with summary.total > 0 (the surfaced suggestions), so it
+      // must still reach the finish screen; a run with any blocking/critical issue
+      // (success:false) must NOT finish. This re-enables the previously
+      // commented-out `setFlowState('success')` so CalibrationSuccess can render.
+      if (canFinishCalibration(result)) {
+        console.log('[Calibration] Passing verdict - showing finish screen', { verdict: result?.verdict })
 
         // Check if workflow has hardcoded values to offer parameterization
         const hasHardcoded = await checkForHardcodedValues()
         setHasHardcodedValues(hasHardcoded)
 
-        // DON'T change flow state - stay on dashboard to show "All Set!" in right column
-        // setFlowState('success')
-        setFlowState('dashboard')
+        // A3: surface any provably-cosmetic suggestions the passing verdict waved.
+        setPassSuggestions(getPassSuggestions(result))
+
+        setFlowState('success') // A1: re-enabled — verdict-gated finish transition
         setFixesSummary({ parameters: 0, parameterizations: 0, autoRepairs: 0 })
       } else {
         setFlowState('dashboard')
@@ -871,13 +884,18 @@ export default function BatchCalibrationPage() {
       // Check if all issues are resolved
       const totalIssues = result.summary.total || 0
 
-      if (totalIssues === 0) {
-        // All issues resolved - ready for user approval
-        console.log('[Calibration] All issues resolved - ready for user approval')
+      // A1 (Group A): finish is gated on the VERDICT (success + no critical), not
+      // on totalIssues === 0 — a cosmetic-only run passes with suggestions surfaced.
+      if (canFinishCalibration(result)) {
+        // Passing verdict - ready for user approval / finish
+        console.log('[Calibration] Passing verdict - showing finish screen', { verdict: result?.verdict })
 
         // Check if workflow has hardcoded values to offer parameterization
         const hasHardcoded = await checkForHardcodedValues()
         setHasHardcodedValues(hasHardcoded)
+
+        // A3: surface any provably-cosmetic suggestions the passing verdict waved.
+        setPassSuggestions(getPassSuggestions(result))
 
         // Load the full session data including execution_summary from database
         const { data: sessionData } = await supabase
@@ -932,9 +950,7 @@ export default function BatchCalibrationPage() {
           console.warn('[Test] Failed to refetch agent flags:', agentRefetchError)
         }
 
-        // DON'T change flow state - stay on dashboard to show "All Set!" in right column
-        // setFlowState('success')
-        setFlowState('dashboard')
+        setFlowState('success') // A1: re-enabled — verdict-gated finish transition
       } else {
         // Load the full session data including execution_summary from database
         const { data: sessionData } = await supabase
@@ -970,9 +986,16 @@ export default function BatchCalibrationPage() {
         setIssues(result.issues)
         setFlowState('dashboard')
 
-        // Clear, helpful message about what to do next
-        const issueWord = totalIssues === 1 ? 'issue' : 'issues'
-        setError(`Test revealed ${totalIssues} ${issueWord}. Some issues may have been hidden by the fixes you just applied. Review and fix the remaining ${issueWord}.`)
+        // Clear, helpful message about what to do next. A non-passing run with
+        // zero surfaced issues is the coverage-floor case (inconclusive / needs
+        // representative data) — surface the verdict's own message instead of a
+        // misleading "revealed 0 issues".
+        if (totalIssues > 0) {
+          const issueWord = totalIssues === 1 ? 'issue' : 'issues'
+          setError(`Test revealed ${totalIssues} ${issueWord}. Some issues may have been hidden by the fixes you just applied. Review and fix the remaining ${issueWord}.`)
+        } else if (result?.message) {
+          setError(result.message)
+        }
       }
 
     } catch (err: any) {
@@ -1081,9 +1104,22 @@ export default function BatchCalibrationPage() {
         const result = await response.json()
         console.log('[Calibration] Parameterization successful:', result)
 
+        // D10: reflect the applied change in the UI (the endpoint already succeeded).
+        // 1) Clear the now-resolved cosmetic suggestion from the success screen. On a
+        //    passing run these suggestions are exactly the hardcode/parameterization
+        //    notes (Item 6a tight allow-list), which we just resolved; loadAgent's
+        //    fresh re-detection below re-surfaces any hardcode that genuinely remains.
+        setPassSuggestions([])
+        // 2) Optimistically reset detection state so the stale "hardcoded" affordance
+        //    disappears immediately; loadAgent reconciles it from the new DSL.
+        setDetectionResult(null)
+        setHasHardcodedValues(false)
+        // 3) Show a clear success affordance instead of silently reloading.
+        setParameterizationSucceeded(true)
+
         // After parameterization, mark as declined so we show the approve button
         setUserDeclinedParameterization(true)
-        // Reload agent to get updated workflow
+        // Reload agent to get updated workflow (re-detects against the new DSL)
         await loadAgent()
       } catch (error) {
         console.error('[Calibration] Parameterization error:', error)
@@ -1281,6 +1317,8 @@ export default function BatchCalibrationPage() {
               hasParameterizedWorkflow={hasParameterizedWorkflow}
               configurationSaved={configurationSaved}
               onSaveConfiguration={handleSaveConfiguration}
+              optionalSuggestions={passSuggestions}
+              parameterizationSucceeded={parameterizationSucceeded}
             />
           )}
 

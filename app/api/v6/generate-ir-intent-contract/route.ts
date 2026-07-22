@@ -212,8 +212,11 @@ export async function POST(request: NextRequest) {
       validation: { valid: true, issues: [], autoFixed: false, issueCount: 0 },
       metadata: {
         architecture: 'intent_contract_pipeline_a',
-        provider: config.provider || 'auto',
-        model: 'auto', // generateGenericIntentContractV1 resolves model internally; not exposed
+        // Resolved (post-priority) provider/model the IC LLM actually ran with —
+        // threaded out of callLLMJson so the V2 UI can persist generation
+        // provenance on agent_config.creation_metadata.models.agent_generation.
+        provider: icResult.provider,
+        model: icResult.model,
         total_time_ms: totalTime,
         phase_times_ms: {
           vocabulary: phase0Time,
