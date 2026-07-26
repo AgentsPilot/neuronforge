@@ -1595,6 +1595,545 @@
           "api_rate_limit": "Too many requests. Please wait a moment and try again."
         }
       }
+    },
+    "move_file": {
+      "description": "Move a file to a different folder in Google Drive",
+      "usage_context": "When user wants to move a file into another folder or reorganize their Drive. By default the file leaves its current folder(s) (a true move); set remove_from_current_parents=false to add the file to the target folder while keeping it in its existing folders.",
+      "idempotent": true,
+      "domain": "storage",
+      "capability": "update",
+      "input_entity": "file",
+      "output_entity": "file",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "output_fields": [
+        "file_id",
+        "file_name",
+        "parents",
+        "previous_parents",
+        "moved",
+        "webViewLink"
+      ],
+      "required_params": [
+        "file_id",
+        "target_folder_id"
+      ],
+      "optional_params": [
+        "remove_from_current_parents"
+      ],
+      "parameters": {
+        "type": "object",
+        "required": [
+          "file_id",
+          "target_folder_id"
+        ],
+        "properties": {
+          "file_id": {
+            "type": "string",
+            "description": "ID of the file to move",
+            "x-dynamic-options": {
+              "source": "list_files",
+              "description": "Fetches available files dynamically"
+            }
+          },
+          "target_folder_id": {
+            "type": "string",
+            "description": "ID of the destination folder to move the file into",
+            "x-dynamic-options": {
+              "source": "list_folders",
+              "description": "Fetches available folders dynamically"
+            }
+          },
+          "remove_from_current_parents": {
+            "type": "boolean",
+            "default": true,
+            "description": "When true (default), the file is removed from its current folder(s) — a true move. When false, the file is added to the target folder while remaining in its existing folders."
+          }
+        }
+      },
+      "rules": {
+        "limits": {},
+        "confirmations": {}
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "file_id": {
+            "type": "string",
+            "description": "ID of the moved file",
+            "x-guaranteed": true
+          },
+          "file_name": {
+            "type": "string",
+            "description": "Name of the moved file"
+          },
+          "parents": {
+            "type": "array",
+            "description": "Current parent folder IDs after the move",
+            "items": {
+              "type": "string"
+            }
+          },
+          "previous_parents": {
+            "type": "array",
+            "description": "Parent folder IDs the file had before the move",
+            "items": {
+              "type": "string"
+            }
+          },
+          "moved": {
+            "type": "boolean",
+            "description": "True if the file was moved; false if it was already in the target folder (idempotent no-op)"
+          },
+          "web_view_link": {
+            "type": "string",
+            "description": "URL to view the file"
+          },
+          "moved_at": {
+            "type": "string",
+            "description": "Timestamp when the file was moved (ISO 8601)",
+            "x-guaranteed": true
+          }
+        },
+        "required": [
+          "file_id"
+        ]
+      },
+      "output_guidance": {
+        "success_description": "Moved file",
+        "sample_output": {
+          "file_id": "1abc123xyz",
+          "file_name": "Q4 Budget.xlsx",
+          "parents": [
+            "1targetfolder789"
+          ],
+          "previous_parents": [
+            "1oldfolder456"
+          ],
+          "moved": true,
+          "web_view_link": "https://drive.google.com/file/d/1abc123xyz/view",
+          "moved_at": "2024-01-15T14:00:00Z"
+        },
+        "common_errors": {
+          "auth_failed": "Your Google Drive connection has expired. Please reconnect in Settings → Connected Apps.",
+          "file_not_found": "The specified file was not found. Please check the file ID.",
+          "folder_not_found": "The destination folder was not found. Please check the folder ID.",
+          "permission_denied": "You don't have permission to move this file. Please request access from the owner.",
+          "api_rate_limit": "Too many requests. Please wait a moment and try again.",
+          "insufficient_permissions": "Google Drive permissions are insufficient. Please reconnect with full access."
+        }
+      }
+    },
+    "rename_file": {
+      "description": "Rename a file in Google Drive",
+      "usage_context": "When user wants to change the name of an existing file. Setting the name to its current value is a safe no-op.",
+      "idempotent": true,
+      "domain": "storage",
+      "capability": "update",
+      "input_entity": "file",
+      "output_entity": "file",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "output_fields": [
+        "file_id",
+        "file_name",
+        "previous_name",
+        "webViewLink"
+      ],
+      "required_params": [
+        "file_id",
+        "new_name"
+      ],
+      "optional_params": [],
+      "parameters": {
+        "type": "object",
+        "required": [
+          "file_id",
+          "new_name"
+        ],
+        "properties": {
+          "file_id": {
+            "type": "string",
+            "description": "ID of the file to rename",
+            "x-dynamic-options": {
+              "source": "list_files",
+              "description": "Fetches available files dynamically"
+            }
+          },
+          "new_name": {
+            "type": "string",
+            "description": "New name for the file"
+          }
+        }
+      },
+      "rules": {
+        "limits": {},
+        "confirmations": {}
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "file_id": {
+            "type": "string",
+            "description": "ID of the renamed file",
+            "x-guaranteed": true
+          },
+          "file_name": {
+            "type": "string",
+            "description": "New name of the file"
+          },
+          "previous_name": {
+            "type": "string",
+            "description": "Name the file had before renaming"
+          },
+          "web_view_link": {
+            "type": "string",
+            "description": "URL to view the file"
+          },
+          "renamed_at": {
+            "type": "string",
+            "description": "Timestamp when the file was renamed (ISO 8601)",
+            "x-guaranteed": true
+          }
+        },
+        "required": [
+          "file_id"
+        ]
+      },
+      "output_guidance": {
+        "success_description": "Renamed file",
+        "sample_output": {
+          "file_id": "1abc123xyz",
+          "file_name": "Q4 Budget Final.xlsx",
+          "previous_name": "Q4 Budget.xlsx",
+          "web_view_link": "https://drive.google.com/file/d/1abc123xyz/view",
+          "renamed_at": "2024-01-15T14:15:00Z"
+        },
+        "common_errors": {
+          "auth_failed": "Your Google Drive connection has expired. Please reconnect in Settings → Connected Apps.",
+          "file_not_found": "The specified file was not found. Please check the file ID.",
+          "permission_denied": "You don't have permission to rename this file. Please request access from the owner.",
+          "api_rate_limit": "Too many requests. Please wait a moment and try again.",
+          "insufficient_permissions": "Google Drive permissions are insufficient. Please reconnect with full access."
+        }
+      }
+    },
+    "copy_file": {
+      "description": "Create a duplicate of a file in Google Drive",
+      "usage_context": "When user wants to duplicate a file, optionally with a new name or into a different folder. NOT idempotent — each run creates a new copy, so recurring workflows will produce duplicates by design.",
+      "idempotent": false,
+      "domain": "storage",
+      "capability": "create",
+      "input_entity": "file",
+      "output_entity": "file",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "output_fields": [
+        "file_id",
+        "file_name",
+        "source_file_id",
+        "mimeType",
+        "parents",
+        "webViewLink"
+      ],
+      "required_params": [
+        "file_id"
+      ],
+      "optional_params": [
+        "new_name",
+        "target_folder_id"
+      ],
+      "parameters": {
+        "type": "object",
+        "required": [
+          "file_id"
+        ],
+        "properties": {
+          "file_id": {
+            "type": "string",
+            "description": "ID of the source file to copy",
+            "x-dynamic-options": {
+              "source": "list_files",
+              "description": "Fetches available files dynamically"
+            }
+          },
+          "new_name": {
+            "type": "string",
+            "description": "Name for the copy. If omitted, Google names it 'Copy of <original>'."
+          },
+          "target_folder_id": {
+            "type": "string",
+            "description": "ID of the folder to place the copy in. If omitted, the copy is placed alongside the source.",
+            "x-dynamic-options": {
+              "source": "list_folders",
+              "description": "Fetches available folders dynamically"
+            }
+          }
+        }
+      },
+      "rules": {
+        "limits": {},
+        "confirmations": {}
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "file_id": {
+            "type": "string",
+            "description": "ID of the new copy",
+            "x-guaranteed": true
+          },
+          "file_name": {
+            "type": "string",
+            "description": "Name of the new copy"
+          },
+          "source_file_id": {
+            "type": "string",
+            "description": "ID of the original file that was copied"
+          },
+          "mime_type": {
+            "type": "string",
+            "description": "MIME type of the copy"
+          },
+          "parents": {
+            "type": "array",
+            "description": "Parent folder IDs of the copy",
+            "items": {
+              "type": "string"
+            }
+          },
+          "web_view_link": {
+            "type": "string",
+            "description": "URL to view the copy"
+          },
+          "copied_at": {
+            "type": "string",
+            "description": "Timestamp when the file was copied (ISO 8601)",
+            "x-guaranteed": true
+          }
+        },
+        "required": [
+          "file_id"
+        ]
+      },
+      "output_guidance": {
+        "success_description": "Copied file",
+        "sample_output": {
+          "file_id": "1newcopy456xyz",
+          "file_name": "Q4 Budget (Copy).xlsx",
+          "source_file_id": "1abc123xyz",
+          "mime_type": "application/vnd.google-apps.spreadsheet",
+          "parents": [
+            "1targetfolder789"
+          ],
+          "web_view_link": "https://drive.google.com/file/d/1newcopy456xyz/view",
+          "copied_at": "2024-01-15T14:30:00Z"
+        },
+        "common_errors": {
+          "auth_failed": "Your Google Drive connection has expired. Please reconnect in Settings → Connected Apps.",
+          "file_not_found": "The source file was not found. Please check the file ID.",
+          "folder_not_found": "The destination folder was not found. Please check the folder ID.",
+          "permission_denied": "You don't have permission to copy this file. Please request access from the owner.",
+          "api_rate_limit": "Too many requests. Please wait a moment and try again.",
+          "insufficient_permissions": "Google Drive permissions are insufficient. Please reconnect with full access."
+        }
+      }
+    },
+    "delete_file": {
+      "description": "Move a file to Google Drive Trash (soft delete — restorable for 30 days)",
+      "usage_context": "When user wants to delete or remove a file. This trashes the file (recoverable from Google Drive Trash for 30 days) rather than permanently deleting it. Trashing an already-trashed file is a safe no-op.",
+      "idempotent": true,
+      "domain": "storage",
+      "capability": "delete",
+      "input_entity": "file",
+      "output_entity": "file",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "output_fields": [
+        "file_id",
+        "file_name",
+        "trashed",
+        "restorable"
+      ],
+      "required_params": [
+        "file_id"
+      ],
+      "optional_params": [],
+      "parameters": {
+        "type": "object",
+        "required": [
+          "file_id"
+        ],
+        "properties": {
+          "file_id": {
+            "type": "string",
+            "description": "ID of the file to move to Trash",
+            "x-dynamic-options": {
+              "source": "list_files",
+              "description": "Fetches available files dynamically"
+            }
+          }
+        }
+      },
+      "rules": {
+        "limits": {},
+        "confirmations": {
+          "confirm_trash": {
+            "condition": "file_id != null",
+            "action": "confirm",
+            "message": "Move this file to Trash? It can be restored from Google Drive Trash within 30 days."
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "file_id": {
+            "type": "string",
+            "description": "ID of the trashed file",
+            "x-guaranteed": true
+          },
+          "file_name": {
+            "type": "string",
+            "description": "Name of the trashed file"
+          },
+          "trashed": {
+            "type": "boolean",
+            "description": "Always true on success — the file was moved to Trash"
+          },
+          "restorable": {
+            "type": "boolean",
+            "description": "Always true — the file went to Trash (not permanently deleted) and can be restored"
+          },
+          "trashed_at": {
+            "type": "string",
+            "description": "Timestamp when the file was trashed (ISO 8601)",
+            "x-guaranteed": true
+          }
+        },
+        "required": [
+          "file_id"
+        ]
+      },
+      "output_guidance": {
+        "success_description": "Moved file to Trash",
+        "sample_output": {
+          "file_id": "1abc123xyz",
+          "file_name": "Old Draft.docx",
+          "trashed": true,
+          "restorable": true,
+          "trashed_at": "2024-01-15T14:45:00Z"
+        },
+        "common_errors": {
+          "auth_failed": "Your Google Drive connection has expired. Please reconnect in Settings → Connected Apps.",
+          "file_not_found": "The specified file was not found. It may already have been deleted.",
+          "permission_denied": "You don't have permission to delete this file. Only the owner can trash it.",
+          "api_rate_limit": "Too many requests. Please wait a moment and try again.",
+          "insufficient_permissions": "Google Drive permissions are insufficient. Please reconnect with full access."
+        }
+      }
+    },
+    "revoke_access": {
+      "description": "Remove a single sharing permission from a file (the inverse of share_file)",
+      "usage_context": "When user wants to stop sharing a file with a specific person or link. Requires the permission_id (from share_file's output or get_file_metadata with include_permissions). Revoking an already-removed permission is treated as success (already absent).",
+      "idempotent": true,
+      "domain": "storage",
+      "capability": "update",
+      "input_entity": "file",
+      "output_entity": "file",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "output_fields": [
+        "file_id",
+        "permission_id",
+        "revoked",
+        "already_absent"
+      ],
+      "required_params": [
+        "file_id",
+        "permission_id"
+      ],
+      "optional_params": [],
+      "parameters": {
+        "type": "object",
+        "required": [
+          "file_id",
+          "permission_id"
+        ],
+        "properties": {
+          "file_id": {
+            "type": "string",
+            "description": "ID of the file to revoke access from",
+            "x-dynamic-options": {
+              "source": "list_files",
+              "description": "Fetches available files dynamically"
+            }
+          },
+          "permission_id": {
+            "type": "string",
+            "description": "ID of the permission to remove (from share_file output 'permission_id', or get_file_metadata with include_permissions)"
+          }
+        }
+      },
+      "rules": {
+        "limits": {},
+        "confirmations": {
+          "confirm_revoke": {
+            "condition": "file_id != null",
+            "action": "confirm",
+            "message": "Remove this person's access to the file? They will no longer be able to open it."
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "file_id": {
+            "type": "string",
+            "description": "ID of the file access was revoked from",
+            "x-guaranteed": true
+          },
+          "permission_id": {
+            "type": "string",
+            "description": "ID of the permission that was removed",
+            "x-guaranteed": true
+          },
+          "revoked": {
+            "type": "boolean",
+            "description": "Always true on success — the permission is no longer present"
+          },
+          "already_absent": {
+            "type": "boolean",
+            "description": "True if the permission was already gone (404) — treated as success, not an error"
+          },
+          "revoked_at": {
+            "type": "string",
+            "description": "Timestamp when access was revoked (ISO 8601)",
+            "x-guaranteed": true
+          }
+        },
+        "required": [
+          "file_id",
+          "permission_id"
+        ]
+      },
+      "output_guidance": {
+        "success_description": "Revoked file access",
+        "sample_output": {
+          "file_id": "1abc123xyz",
+          "permission_id": "perm123xyz",
+          "revoked": true,
+          "already_absent": false,
+          "revoked_at": "2024-01-15T15:00:00Z"
+        },
+        "common_errors": {
+          "auth_failed": "Your Google Drive connection has expired. Please reconnect in Settings → Connected Apps.",
+          "file_not_found": "The specified file was not found. Please check the file ID.",
+          "permission_denied": "You don't have permission to change sharing on this file. Only the owner can revoke access.",
+          "api_rate_limit": "Too many requests. Please wait a moment and try again.",
+          "insufficient_permissions": "Google Drive permissions are insufficient. Please reconnect with full access."
+        }
+      }
     }
   }
 }

@@ -170,6 +170,27 @@ const PARAMETER_TEMPLATES = {
       max_results: 50,
       recursive: false,
       order_by: "name"
+    },
+    move_file: {
+      file_id: "1a2b3c4d5e6f7g8h9i0j",
+      target_folder_id: "1z9y8x7w6v5u4t3s2r1q",
+      remove_from_current_parents: true
+    },
+    rename_file: {
+      file_id: "1a2b3c4d5e6f7g8h9i0j",
+      new_name: "Renamed Document.docx"
+    },
+    copy_file: {
+      file_id: "1a2b3c4d5e6f7g8h9i0j",
+      new_name: "Copy of Document.docx",
+      target_folder_id: "1z9y8x7w6v5u4t3s2r1q"
+    },
+    delete_file: {
+      file_id: "1a2b3c4d5e6f7g8h9i0j"
+    },
+    revoke_access: {
+      file_id: "1a2b3c4d5e6f7g8h9i0j",
+      permission_id: "perm123xyz"
     }
   },
   "google-sheets": {

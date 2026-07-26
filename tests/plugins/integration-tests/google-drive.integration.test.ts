@@ -140,5 +140,113 @@ conditionalDescribe('GoogleDrivePluginExecutor [integration]', () => {
       expect(result.success).toBe(true);
       expect(result.data).toBeDefined();
     });
+
+    // ---- Phase 1 file-management lifecycle: upload → rename → copy → move → trash ----
+    it('should upload, rename, copy, move, then trash files (Phase 1)', async () => {
+      const creds = getCredentials(PLUGIN_KEY);
+      const folderId = creds?.extras.folderId;
+      const testId = generateTestId();
+
+      // Upload a temp text file.
+      const uploadResult = await executor.executeAction(USER_ID, 'upload_file', {
+        file_name: `agentpilot-phase1-${testId}.txt`,
+        file_content: Buffer.from('phase1 test content').toString('base64'),
+        mime_type: 'text/plain',
+        ...(folderId ? { folder_id: folderId } : {}),
+      });
+      expect(uploadResult.success).toBe(true);
+      const uploadedId = uploadResult.data?.file_id;
+      expect(uploadedId).toBeDefined();
+      cleanupFileIds.push(uploadedId);
+
+      // Rename it.
+      const renameResult = await executor.executeAction(USER_ID, 'rename_file', {
+        file_id: uploadedId,
+        new_name: `agentpilot-phase1-renamed-${testId}.txt`,
+      });
+      expect(renameResult.success).toBe(true);
+      expect(renameResult.data?.file_name).toContain('renamed');
+      expect(renameResult.data?.previous_name).toBeDefined();
+
+      // Copy it.
+      const copyResult = await executor.executeAction(USER_ID, 'copy_file', {
+        file_id: uploadedId,
+        new_name: `agentpilot-phase1-copy-${testId}.txt`,
+        ...(folderId ? { target_folder_id: folderId } : {}),
+      });
+      expect(copyResult.success).toBe(true);
+      const copyId = copyResult.data?.file_id;
+      expect(copyId).toBeDefined();
+      expect(copyId).not.toBe(uploadedId);
+      cleanupFileIds.push(copyId);
+
+      // Create a destination folder and move the copy into it.
+      const destFolder = await executor.executeAction(USER_ID, 'create_folder', {
+        folder_name: `agentpilot-phase1-dest-${testId}`,
+        ...(folderId ? { parent_folder_id: folderId } : {}),
+      });
+      expect(destFolder.success).toBe(true);
+      const destFolderId = destFolder.data?.folder_id;
+      cleanupFileIds.push(destFolderId);
+
+      const moveResult = await executor.executeAction(USER_ID, 'move_file', {
+        file_id: copyId,
+        target_folder_id: destFolderId,
+      });
+      expect(moveResult.success).toBe(true);
+      expect(moveResult.data?.moved).toBe(true);
+      expect(moveResult.data?.parents).toContain(destFolderId);
+
+      // Trash both files.
+      for (const id of [uploadedId, copyId]) {
+        const del = await executor.executeAction(USER_ID, 'delete_file', { file_id: id });
+        expect(del.success).toBe(true);
+        expect(del.data?.trashed).toBe(true);
+        expect(del.data?.restorable).toBe(true);
+      }
+    });
+
+    // ---- share_file → revoke_access (Phase 1) ----
+    it('should share a file then revoke the permission (Phase 1)', async () => {
+      const creds = getCredentials(PLUGIN_KEY);
+      const folderId = creds?.extras.folderId;
+      const testId = generateTestId();
+
+      const uploadResult = await executor.executeAction(USER_ID, 'upload_file', {
+        file_name: `agentpilot-phase1-share-${testId}.txt`,
+        file_content: Buffer.from('shareable content').toString('base64'),
+        mime_type: 'text/plain',
+        ...(folderId ? { folder_id: folderId } : {}),
+      });
+      expect(uploadResult.success).toBe(true);
+      const uploadedId = uploadResult.data?.file_id;
+      cleanupFileIds.push(uploadedId);
+
+      // Share with anyone-with-link (no external recipient needed).
+      const shareResult = await executor.executeAction(USER_ID, 'share_file', {
+        file_id: uploadedId,
+        permission_type: 'anyone',
+        role: 'reader',
+      });
+      expect(shareResult.success).toBe(true);
+      const permissionId = shareResult.data?.permission_id;
+      expect(permissionId).toBeDefined();
+
+      // Revoke it.
+      const revokeResult = await executor.executeAction(USER_ID, 'revoke_access', {
+        file_id: uploadedId,
+        permission_id: permissionId,
+      });
+      expect(revokeResult.success).toBe(true);
+      expect(revokeResult.data?.revoked).toBe(true);
+
+      // Revoking again is idempotent: already_absent.
+      const revokeAgain = await executor.executeAction(USER_ID, 'revoke_access', {
+        file_id: uploadedId,
+        permission_id: permissionId,
+      });
+      expect(revokeAgain.success).toBe(true);
+      expect(revokeAgain.data?.already_absent).toBe(true);
+    });
   });
 });
