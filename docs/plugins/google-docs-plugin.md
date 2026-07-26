@@ -1,8 +1,8 @@
 # Google Docs Plugin Documentation
 
-**Plugin Version**: 1.0.0
+**Plugin Version**: 1.1.0
 **Category**: Productivity
-**Last Updated**: 2025-11-30
+**Last Updated**: 2026-07-26
 
 ---
 
@@ -171,6 +171,48 @@ Read, write, and manage content in Google Docs documents. Use for reading docume
 
 ---
 
+### 6. replace_text
+**Description**: Find and replace all occurrences of a text string throughout a document
+
+| Property | Value |
+|----------|-------|
+| HTTP Method | POST |
+| Endpoint | `/v1/documents/{document_id}:batchUpdate` (single `replaceAllText` request) |
+
+**Parameters**:
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| document_id | string | Yes | The ID of the document to run find-and-replace on |
+| text_to_find | string | Yes | The text to search for (non-empty). All occurrences are replaced. Maps to `replaceAllText.containsText.text` |
+| replace_text | string | Yes | The replacement text. An empty string deletes all occurrences of the search text. Maps to `replaceAllText.replaceText` |
+| match_case | boolean | No | Case-sensitive matching. Default: false. Maps to `replaceAllText.containsText.matchCase` |
+
+**Response Structure**:
+| Field | Type | Description |
+|-------|------|-------------|
+| document_id | string | ID of the document that was modified |
+| occurrences_changed | integer | Number of occurrences replaced (0 when no match was found — Google omits the field on zero matches and the executor defaults it to 0) |
+| text_to_find | string | The search text that was used (echoed for downstream traceability) |
+| replaced_at | string | Timestamp when the replacement ran (ISO 8601) |
+
+**Google API mapping** — request body:
+```json
+{
+  "requests": [
+    {
+      "replaceAllText": {
+        "containsText": { "text": "<text_to_find>", "matchCase": false },
+        "replaceText": "<replace_text>"
+      }
+    }
+  ]
+}
+```
+
+**Idempotency**: `false`. Conditionally convergent — when the replacement string does **not** contain the search text, re-running finds 0 matches and yields no further change. It is **not** universally idempotent: a self-referential replacement (find `cat` → replace `cats`) matches again on every re-run and keeps growing the text. Unlike the index-based write actions, `replace_text` requires no index math — Google resolves and replaces all matches server-side.
+
+---
+
 ## Generated Files
 
 | File Path | Description |
@@ -200,4 +242,5 @@ To obtain credentials:
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.1.0 | 2026-07-26 | Added `replace_text` action (find-and-replace all occurrences via `documents.batchUpdate` + `replaceAllText`). No new OAuth scope (fits granted `documents`). |
 | 1.0.0 | 2025-11-30 | Initial plugin with 5 actions: read_document, insert_text, append_text, create_document, get_document_info |

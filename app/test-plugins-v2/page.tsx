@@ -281,6 +281,12 @@ const PARAMETER_TEMPLATES = {
     get_document_info: {
       document_id: "1a2b3c4d5e6f7g8h9i0j",
       include_content_summary: true
+    },
+    replace_text: {
+      document_id: "1a2b3c4d5e6f7g8h9i0j",
+      text_to_find: "{name}",
+      replace_text: "Alice",
+      match_case: false
     }
   },
   "google-calendar": {

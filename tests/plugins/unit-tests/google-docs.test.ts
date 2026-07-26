@@ -4,7 +4,7 @@
 
 import { GoogleDocsPluginExecutor } from '@/lib/server/google-docs-plugin-executor';
 import { createTestExecutor, expectSuccessResult, expectErrorResult, expectFetchCalledWith } from '../common/test-helpers';
-import { mockFetchSuccess, mockFetchError, mockFetchSequence, restoreFetch } from '../common/mock-fetch';
+import { mockFetchSuccess, mockFetchError, mockFetchSequence, restoreFetch, getLastFetchCall } from '../common/mock-fetch';
 import { runStandardErrorScenarios } from '../common/error-scenarios';
 
 const PLUGIN_KEY = 'google-docs';
@@ -137,6 +137,31 @@ describe('GoogleDocsPluginExecutor', () => {
         expect(result.data.end_index).toBe(50);
       });
     });
+
+    // ---- replace_text ----
+    describe('replace_text', () => {
+      it('should call batchUpdate with a replaceAllText request and parse occurrences_changed', async () => {
+        mockFetchSuccess({
+          documentId: 'doc-1',
+          replies: [{ replaceAllText: { occurrencesChanged: 3 } }],
+        });
+
+        const result = await executor.executeAction(USER_ID, 'replace_text', {
+          document_id: 'doc-1',
+          text_to_find: '{name}',
+          replace_text: 'Alice',
+        });
+
+        expectSuccessResult(result);
+        expect(result.data.occurrences_changed).toBe(3);
+        expectFetchCalledWith('docs.googleapis.com/v1/documents/doc-1:batchUpdate', 'POST');
+
+        // Request body must carry a replaceAllText request with the search string.
+        const body = JSON.parse((getLastFetchCall()!.options!.body as string));
+        expect(body.requests[0].replaceAllText.containsText.text).toBe('{name}');
+        expect(body.requests[0].replaceAllText.replaceText).toBe('Alice');
+      });
+    });
   });
 
   describe('[full]', () => {
@@ -165,6 +190,33 @@ describe('GoogleDocsPluginExecutor', () => {
         });
 
         expectErrorResult(result);
+      });
+    });
+
+    // ---- replace_text errors ----
+    describe('replace_text', () => {
+      it('should handle 401 auth failure', async () => {
+        mockFetchError(401, { error: { code: 401, message: 'Invalid credentials' } });
+
+        const result = await executor.executeAction(USER_ID, 'replace_text', {
+          document_id: 'doc-1',
+          text_to_find: 'foo',
+          replace_text: 'bar',
+        });
+
+        expectErrorResult(result);
+      });
+
+      it('should reject empty text_to_find without issuing a fetch', async () => {
+        // No fetch mock installed — the pre-fetch guard must reject before any network call.
+        const result = await executor.executeAction(USER_ID, 'replace_text', {
+          document_id: 'doc-1',
+          text_to_find: '',
+          replace_text: 'bar',
+        });
+
+        expectErrorResult(result);
+        expect(getLastFetchCall()).toBeUndefined();
       });
     });
 

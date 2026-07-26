@@ -40,6 +40,9 @@ export class GoogleDocsPluginExecutor extends GoogleBasePluginExecutor {
       case 'get_document_info':
         result = await this.getDocumentInfo(connection, parameters);
         break;
+      case 'replace_text':
+        result = await this.replaceText(connection, parameters);
+        break;
       default:
         return {
           success: false,
@@ -392,6 +395,69 @@ export class GoogleDocsPluginExecutor extends GoogleBasePluginExecutor {
     }
 
     return result;
+  }
+
+  // Find-and-replace all occurrences of a string via documents.batchUpdate + replaceAllText.
+  // Content-anchored (no index math) — Google resolves and replaces all matches server-side.
+  private async replaceText(connection: any, parameters: any): Promise<any> {
+    this.logger.debug('DEBUG: Replacing text in Google Docs');
+
+    const { document_id, text_to_find, replace_text, match_case } = parameters;
+
+    // Guard before the network call: an empty/whitespace-only search string is meaningless
+    // (Google rejects an empty containsText.text). Belt-and-suspenders on top of Zod minLength.
+    if (typeof text_to_find !== 'string' || text_to_find.trim().length === 0) {
+      throw new Error('invalid_input: text_to_find must be a non-empty string');
+    }
+
+    // Single replaceAllText request. Empty replace_text is a valid "delete all occurrences" op.
+    const requests = [
+      {
+        replaceAllText: {
+          containsText: {
+            text: text_to_find,
+            matchCase: match_case ?? false
+          },
+          replaceText: replace_text ?? ''
+        }
+      }
+    ];
+
+    const url = `${this.docsApisUrl}/${document_id}:batchUpdate`;
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${connection.access_token}`,
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
+      body: JSON.stringify({ requests })
+    });
+
+    if (!response.ok) {
+      const errorData = await response.text();
+      this.logger.error({ err: errorData, status: response.status }, 'Docs replace_text failed');
+      throw new Error(`Docs API error: ${response.status} - ${errorData}`);
+    }
+
+    const data = await response.json();
+
+    // Google omits occurrencesChanged from the reply when zero matches are found — default to 0.
+    const occurrencesChanged = data.replies?.[0]?.replaceAllText?.occurrencesChanged ?? 0;
+    const replacedAt = new Date().toISOString();
+
+    return {
+      // Primary format (snake_case to match schema)
+      document_id: data.documentId ?? document_id,
+      occurrences_changed: occurrencesChanged,
+      text_to_find: text_to_find,
+      replaced_at: replacedAt,
+      // Legacy format (camelCase for backward compatibility)
+      documentId: data.documentId ?? document_id,
+      occurrencesChanged: occurrencesChanged,
+      replacedAt: replacedAt
+    };
   }
 
   // Override to handle Docs-specific errors
