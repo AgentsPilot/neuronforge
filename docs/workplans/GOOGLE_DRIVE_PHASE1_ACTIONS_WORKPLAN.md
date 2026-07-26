@@ -370,7 +370,15 @@ After QA additions:
 
 ## Commit Info
 
-_(RM to populate at merge.)_
+| Field | Value |
+|-------|-------|
+| Branch | `feature/google-drive-phase1-actions` |
+| Commit | `bc2ea49` — `feat(plugins): add Phase 1 Google Drive file-management actions` |
+| Date | 2026-07-26 |
+| Files | 7 (definition JSON, executor, unit + integration tests, test-page, requirement + workplan docs) |
+| Tests | 51/51 unit tests passing |
+| Pushed | No — local commit only, pending PR |
+| Gates | SA req-review ✅ · SA workplan-review ✅ · SA code-review ✅ · QA PASS ✅ · user-approved ✅ |
 
 ---
 

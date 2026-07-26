@@ -1,8 +1,8 @@
 # Google Sheets Plugin Documentation
 
-**Plugin Version**: 1.0.0
+**Plugin Version**: 1.1.0
 **Category**: Productivity
-**Last Updated**: 2025-11-30
+**Last Updated**: 2026-07-26
 
 ---
 
@@ -196,6 +196,151 @@ Read, write, and manage data in Google Sheets spreadsheets. Use for reading data
 
 ---
 
+### 6. get_or_create_spreadsheet
+**Description**: Get an existing spreadsheet by title or create it if it doesn't exist (idempotent — prevents duplicates)
+
+| Property | Value |
+|----------|-------|
+| HTTP Method | GET (Drive search) + POST (create if missing) |
+| Endpoint | `drive/v3/files` (search) → `/v4/spreadsheets` (create) |
+
+**Parameters**:
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| title | string | Yes | Title of the spreadsheet to find or create (max 255 chars) |
+| sheet_names | array | No | Names of sheets to create (only used when creating new) |
+| initial_data | object | No | Optional initial data (only used when creating new) |
+
+**Response Structure**:
+| Field | Type | Description |
+|-------|------|-------------|
+| spreadsheet_id | string | Unique identifier (existing or newly created) |
+| spreadsheet_url | string | URL to open the spreadsheet |
+| title | string | Title of the spreadsheet |
+| created | boolean | True if newly created, false if it already existed |
+| sheet_count | integer | Number of sheets |
+| sheets | array | List of sheets with sheet_id, title, index |
+| created_at | string | Timestamp when created or found |
+
+---
+
+### 7. get_or_create_sheet_tab
+**Description**: Get an existing sheet tab or create it if it doesn't exist within a spreadsheet (idempotent)
+
+| Property | Value |
+|----------|-------|
+| HTTP Method | GET (list tabs) + POST (batchUpdate addSheet if missing) |
+| Endpoint | `/v4/spreadsheets/{spreadsheet_id}` → `/v4/spreadsheets/{spreadsheet_id}:batchUpdate` |
+
+**Parameters**:
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| spreadsheet_id | string | Yes | The ID of the spreadsheet containing the tab |
+| tab_name | string | Yes | Name of the sheet tab to find or create |
+
+**Response Structure**:
+| Field | Type | Description |
+|-------|------|-------------|
+| spreadsheet_id | string | ID of the spreadsheet |
+| sheet_id | integer | Unique numeric ID of the sheet tab |
+| sheet_name | string | Name of the sheet tab |
+| tab_name | string | Name of the sheet tab (alias for sheet_name) |
+| existed | boolean | True if the tab already existed, false if newly created |
+
+---
+
+### 8. format_cells
+**Description**: Apply formatting to a range of cells — bold text, a background color, and/or a frozen header row
+
+| Property | Value |
+|----------|-------|
+| HTTP Method | POST |
+| Endpoint | `/v4/spreadsheets/{spreadsheet_id}:batchUpdate` (`repeatCell` + `updateSheetProperties`) |
+| Idempotent | Yes |
+
+**Parameters**:
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| spreadsheet_id | string | Yes | The ID of the spreadsheet to format |
+| range | string | Yes | A1 range to format (e.g., 'Sheet1!A1:D1'). No sheet-name prefix → the first tab is used. |
+| bold | boolean | No | Set the text in the range to bold (true) or non-bold (false) |
+| background_color | string | No | Background color as a hex string (e.g., '#FDE68A') |
+| freeze_rows | integer | No | Freeze the first N rows of the sheet (header freeze). 0 unfreezes. Sheet-level — independent of the `range` row bounds. |
+
+If no formatting field is provided the action is a no-op success.
+
+**Response Structure**:
+| Field | Type | Description |
+|-------|------|-------------|
+| spreadsheet_id | string | ID of the formatted spreadsheet |
+| sheet_id | integer | Numeric ID of the formatted tab |
+| sheet_name | string | Name of the formatted tab |
+| range | string | The A1 range that was formatted |
+| format_summary | object | `{ bold_applied, background_applied, frozen_rows }` — what was applied |
+| formatted_at | string | Timestamp when formatting was applied |
+
+**Notes**: Only the supplied format subfields are written (the `repeatCell` `fields` mask is scoped to exactly `userEnteredFormat.textFormat.bold` and/or `userEnteredFormat.backgroundColor`), so unrelated existing cell formatting is preserved. Phase 1 scope is bold + background + frozen rows; font/size/alignment/conditional formatting are deferred to a later phase and will extend this same action.
+
+---
+
+### 9. clear_range
+**Description**: Clear the values in an A1 range (formatting and notes are preserved). Destructive — declares a confirmation rule.
+
+| Property | Value |
+|----------|-------|
+| HTTP Method | POST |
+| Endpoint | `/v4/spreadsheets/{spreadsheet_id}/values/{range}:clear` |
+| Idempotent | Yes (clearing an empty range is a safe no-op) |
+
+**Parameters**:
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| spreadsheet_id | string | Yes | The ID of the spreadsheet to clear values in |
+| range | string | Yes | A1 range to clear (e.g., 'Sheet1!A2:D100'). Only values are cleared; formatting is preserved. |
+
+**Response Structure**:
+| Field | Type | Description |
+|-------|------|-------------|
+| spreadsheet_id | string | ID of the spreadsheet |
+| cleared_range | string | The A1 range whose values were cleared |
+| cleared_at | string | Timestamp when the range was cleared |
+
+**Notes**: Clears exactly the requested A1 range — never the whole sheet.
+
+---
+
+### 10. delete_rows
+**Description**: Delete a range of rows from a sheet tab (shifts the rows below up). Destructive + structural — declares a confirmation rule. **NOT idempotent.**
+
+| Property | Value |
+|----------|-------|
+| HTTP Method | POST |
+| Endpoint | `/v4/spreadsheets/{spreadsheet_id}:batchUpdate` (`deleteDimension`) |
+| Idempotent | No — `deleteDimension` shifts subsequent row indices, so re-running the same range deletes a different set of rows |
+
+**Parameters**:
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| spreadsheet_id | string | Yes | The ID of the spreadsheet to delete rows from |
+| sheet_name | string | No | Sheet tab whose rows are deleted. Defaults to the first tab if omitted. |
+| start_row | integer | Yes | First row to delete — **1-based, inclusive** (matches the row number shown in the Sheets UI) |
+| end_row | integer | Yes | Last row to delete — **1-based, inclusive**. Must be >= start_row. |
+
+**Response Structure**:
+| Field | Type | Description |
+|-------|------|-------------|
+| spreadsheet_id | string | ID of the spreadsheet |
+| sheet_id | integer | Numeric ID of the tab rows were deleted from |
+| sheet_name | string | Name of the tab rows were deleted from |
+| deleted_row_count | integer | Number of rows deleted (`end_row - start_row + 1`) |
+| start_row | integer | First row deleted (1-based, inclusive) |
+| end_row | integer | Last row deleted (1-based, inclusive) |
+| deleted_at | string | Timestamp when the rows were deleted |
+
+**Notes**: The 1-based inclusive inputs are converted internally to Google's 0-based half-open range (rows 2–5 → `startIndex:1, endIndex:5`). A bounds guard (`start_row >= 1`, `end_row >= start_row`) runs before any API call, and the emitted `deleteDimension` range always carries a finite `endIndex` so a malformed range can never widen into a whole-sheet delete.
+
+---
+
 ## Generated Files
 
 | File Path | Description |
@@ -226,3 +371,4 @@ To obtain credentials:
 | Version | Date | Changes |
 |---------|------|---------|
 | 1.0.0 | 2025-11-30 | Initial plugin with 5 actions: read_range, write_range, append_rows, create_spreadsheet, get_spreadsheet_info |
+| 1.1.0 | 2026-07-26 | Phase 1 formatting/structural actions added: format_cells (bold + background + frozen header), clear_range (values-only clear), delete_rows (1-based inclusive, bounded delete). Back-filled docs for the two previously-undocumented existing actions: get_or_create_spreadsheet and get_or_create_sheet_tab. Doc now covers all 10 actions. |

@@ -239,6 +239,23 @@ const PARAMETER_TEMPLATES = {
       spreadsheet_id: "1a2b3c4d5e6f7g8h9i0j",
       include_sheet_data: true,
       include_data_ranges: false
+    },
+    format_cells: {
+      spreadsheet_id: "1a2b3c4d5e6f7g8h9i0j",
+      range: "Sheet1!A1:D1",
+      bold: true,
+      background_color: "#FDE68A",
+      freeze_rows: 1
+    },
+    clear_range: {
+      spreadsheet_id: "1a2b3c4d5e6f7g8h9i0j",
+      range: "Sheet1!A2:D100"
+    },
+    delete_rows: {
+      spreadsheet_id: "1a2b3c4d5e6f7g8h9i0j",
+      sheet_name: "Sheet1",
+      start_row: 2,
+      end_row: 5
     }
   },
   "google-docs": {
