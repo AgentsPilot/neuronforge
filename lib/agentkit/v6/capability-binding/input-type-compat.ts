@@ -73,8 +73,17 @@ export type FromType = (typeof FROM_TYPE_VALUES)[number]
  * (delete_label.label_id, batch_modify_emails.add_labels) — never as a bindable
  * input entity. So it lives here (ToType only) with NO TYPE_COMPAT edges,
  * keeping the validator happy without adding input-binding surface. (OQ7)
+ *
+ * `time_slot` is an output-leaf type (same shape as `gmail_label`): Google
+ * Calendar's list_available_slots emits `{ start, end }` slot objects, but a
+ * chosen slot is consumed downstream only as plain RFC3339 start/end strings
+ * (e.g. create_event.start_time/end_time — plain strings with no from_type
+ * constraint) — never as a bindable input entity. So it lives here (ToType only)
+ * with NO FROM_TYPE_VALUES entry and NO TYPE_COMPAT edges. If a future Phase-3
+ * booking action declares a `time_slot` input from_type, add the edges then,
+ * driven by that real consumer. (Calendar list_available_slots slice)
  */
-export const TO_TYPE_EXTRAS = ['string', 'object', 'array', 'unknown', 'gmail_label'] as const
+export const TO_TYPE_EXTRAS = ['string', 'object', 'array', 'unknown', 'gmail_label', 'time_slot'] as const
 
 export type ToType = FromType | (typeof TO_TYPE_EXTRAS)[number]
 

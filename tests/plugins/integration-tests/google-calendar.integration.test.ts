@@ -1,9 +1,10 @@
 /**
  * Integration tests for GoogleCalendarPluginExecutor — Phase 1 availability actions.
  *
- * Exercises the two new read-only actions against the live Google Calendar API:
- * - list_calendars (calendarList.list)
- * - get_free_busy  (freebusy.query)
+ * Exercises the read-only availability actions against the live Google Calendar API:
+ * - list_calendars       (calendarList.list)
+ * - get_free_busy        (freebusy.query)
+ * - list_available_slots (freebusy.query + in-executor slot computation)
  *
  * Skips gracefully when GOOGLE_CALENDAR_TEST_TOKEN is not set.
  *
@@ -110,6 +111,68 @@ conditionalDescribe('GoogleCalendarPluginExecutor [integration]', () => {
       });
 
       expect(result.success).toBe(false);
+    });
+  });
+
+  describe('[smoke] list_available_slots', () => {
+    it('returns UTC slots inside the working-hours windows that avoid busy blocks', async () => {
+      // Search the coming week during weekday working hours in a fixed zone.
+      const now = new Date();
+      const rangeStart = now.toISOString();
+      const rangeEnd = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString();
+      const timeZone = 'America/New_York';
+
+      const result = await executor.executeAction(USER_ID, 'list_available_slots', {
+        range_start: rangeStart,
+        range_end: rangeEnd,
+        slot_duration_minutes: 30,
+        working_hours: {
+          time_zone: timeZone,
+          windows: [
+            {
+              days: ['monday', 'tuesday', 'wednesday', 'thursday', 'friday'],
+              start: '09:00',
+              end: '17:00',
+            },
+          ],
+        },
+        calendar_ids: [targetCalendarId],
+        buffer_minutes: 0,
+        min_notice_minutes: 0,
+      });
+
+      expect(result.success).toBe(true);
+      expect(Array.isArray(result.data.slots)).toBe(true);
+      expect(result.data.slot_count).toBe(result.data.slots.length);
+      expect(result.data.time_zone).toBe(timeZone);
+
+      // Cross-check every slot against the calendar's real busy intervals.
+      const fb = await executor.executeAction(USER_ID, 'get_free_busy', {
+        calendar_ids: [targetCalendarId],
+        time_min: rangeStart,
+        time_max: rangeEnd,
+        time_zone: 'UTC',
+      });
+      const busy: Array<{ start: number; end: number }> = [];
+      for (const cal of fb.data.calendars) {
+        for (const b of cal.busy) {
+          busy.push({ start: Date.parse(b.start), end: Date.parse(b.end) });
+        }
+      }
+
+      for (const slot of result.data.slots) {
+        // UTC 'Z' instants, start/end only.
+        expect(Object.keys(slot).sort()).toEqual(['end', 'start']);
+        expect(slot.start.endsWith('Z')).toBe(true);
+        const s = Date.parse(slot.start);
+        const e = Date.parse(slot.end);
+        // 30-minute slot length.
+        expect(e - s).toBe(30 * 60 * 1000);
+        // No overlap with any busy block.
+        for (const b of busy) {
+          expect(s < b.end && e > b.start).toBe(false);
+        }
+      }
     });
   });
 });

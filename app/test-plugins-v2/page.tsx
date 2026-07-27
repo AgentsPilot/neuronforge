@@ -368,6 +368,21 @@ const PARAMETER_TEMPLATES = {
       time_max: "2025-01-16T00:00:00Z",
       time_zone: "UTC"
     },
+    list_available_slots: {
+      range_start: "2026-08-03T00:00:00Z",
+      range_end: "2026-08-08T00:00:00Z",
+      slot_duration_minutes: 30,
+      working_hours: {
+        time_zone: "America/New_York",
+        windows: [
+          { days: ["monday", "tuesday", "wednesday", "thursday", "friday"], start: "09:00", end: "17:00" }
+        ]
+      },
+      calendar_ids: ["primary"],
+      buffer_minutes: 15,
+      min_notice_minutes: 120,
+      max_slots: 100
+    },
     list_calendars: {
       min_access_role: "reader"
     }

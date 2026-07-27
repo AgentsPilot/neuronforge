@@ -4,6 +4,25 @@ import { UserPluginConnections } from './user-plugin-connections';
 import { PluginManagerV2 } from './plugin-manager-v2';
 import { ExecutionResult } from '@/lib/types/plugin-types';
 import { GoogleBasePluginExecutor } from './google-base-plugin-executor';
+import {
+  computeAvailableSlots,
+  parseHhMm,
+  WEEKDAY_NAMES,
+  type Interval,
+  type WorkingWindow,
+} from './calendar-slot-math';
+
+/** Per-calendar busy structure returned by the shared freebusy helper. */
+interface PerCalendarBusy {
+  calendar_id: string;
+  busy: Array<{ start: string; end: string }>;
+  errors?: any[];
+}
+
+const VALID_WEEKDAYS: ReadonlySet<string> = new Set(WEEKDAY_NAMES);
+
+/** Maximum search window for list_available_slots (SA OQ9 — a quarter). */
+const MAX_SLOT_RANGE_MS = 92 * 24 * 60 * 60 * 1000;
 
 const pluginName = 'google-calendar';
 
@@ -38,6 +57,9 @@ export class GoogleCalendarPluginExecutor extends GoogleBasePluginExecutor {
         break;
       case 'get_free_busy':
         result = await this.getFreeBusy(connection, parameters);
+        break;
+      case 'list_available_slots':
+        result = await this.listAvailableSlots(connection, parameters);
         break;
       case 'list_calendars':
         // NOTE: dispatches to the private listAllCalendars ACTION method — NOT the
@@ -497,51 +519,13 @@ export class GoogleCalendarPluginExecutor extends GoogleBasePluginExecutor {
       throw new Error(`invalid_input: get_free_busy supports at most 50 calendars per query (received ${calendarIds.length}).`);
     }
 
-    const response = await fetch(`${this.googleApisUrl}/calendar/v3/freeBusy`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${connection.access_token}`,
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-      },
-      body: JSON.stringify({
-        timeMin: time_min,
-        timeMax: time_max,
-        timeZone: time_zone,
-        items: calendarIds.map((id: string) => ({ id })),
-      }),
-    });
-
-    // Only a top-level HTTP failure throws. Per-calendar errors inside a 200 are a
-    // PARTIAL SUCCESS and are surfaced below, not thrown (CR-1).
-    if (!response.ok) {
-      const errorData = await response.text();
-      this.logger.error({ err: errorData, status: response.status }, 'Free/busy query failed');
-      throw new Error(`Calendar API error: ${response.status} - ${errorData}`);
-    }
-
-    const data = await response.json();
-    const calendarsMap = (data && data.calendars) || {};
-
-    // Map the freebusy response `calendars{}` map into an array. Copy ONLY start/end
-    // from each busy block (privacy invariant) and surface any per-calendar `errors`
-    // Google returns (e.g. { reason: 'notFound' }) without throwing.
-    const calendars = Object.keys(calendarsMap).map((calendarId: string) => {
-      const entry = calendarsMap[calendarId] || {};
-      const busy = Array.isArray(entry.busy)
-        ? entry.busy.map((b: any) => ({ start: b.start, end: b.end }))
-        : [];
-
-      const mapped: { calendar_id: string; busy: Array<{ start: string; end: string }>; errors?: any[] } = {
-        calendar_id: calendarId,
-        busy,
-      };
-
-      if (Array.isArray(entry.errors) && entry.errors.length > 0) {
-        mapped.errors = entry.errors;
-      }
-
-      return mapped;
+    // Shared freebusy fetch + privacy map (single enforcement point). Returns the
+    // per-calendar structure this action shapes its response from (CR-4).
+    const calendars = await this.fetchBusyIntervals(connection, {
+      calendarIds,
+      timeMin: time_min,
+      timeMax: time_max,
+      timeZone: time_zone,
     });
 
     return {
@@ -556,6 +540,216 @@ export class GoogleCalendarPluginExecutor extends GoogleBasePluginExecutor {
       timeMax: time_max,
       timeZone: time_zone,
       queriedAt: new Date().toISOString()
+    };
+  }
+
+  // Shared freebusy fetch + privacy map used by BOTH get_free_busy and
+  // list_available_slots (CR-4). POSTs to freebusy.query and maps the response
+  // `calendars{}` map into an array, copying ONLY start/end from each busy block
+  // (privacy invariant — never event detail) and surfacing any per-calendar
+  // `errors` Google returns (e.g. { reason: 'notFound' }) as partial success.
+  // Only a top-level HTTP failure throws; per-calendar errors do not.
+  private async fetchBusyIntervals(
+    connection: any,
+    opts: { calendarIds: string[]; timeMin: string; timeMax: string; timeZone: string }
+  ): Promise<PerCalendarBusy[]> {
+    const { calendarIds, timeMin, timeMax, timeZone } = opts;
+
+    const response = await fetch(`${this.googleApisUrl}/calendar/v3/freeBusy`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${connection.access_token}`,
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
+      body: JSON.stringify({
+        timeMin,
+        timeMax,
+        timeZone,
+        items: calendarIds.map((id: string) => ({ id })),
+      }),
+    });
+
+    // Only a top-level HTTP failure throws. Per-calendar errors inside a 200 are
+    // a PARTIAL SUCCESS and are surfaced by the caller, not thrown.
+    if (!response.ok) {
+      const errorData = await response.text();
+      this.logger.error({ err: errorData, status: response.status }, 'Free/busy query failed');
+      throw new Error(`Calendar API error: ${response.status} - ${errorData}`);
+    }
+
+    const data = await response.json();
+    const calendarsMap = (data && data.calendars) || {};
+
+    return Object.keys(calendarsMap).map((calendarId: string): PerCalendarBusy => {
+      const entry = calendarsMap[calendarId] || {};
+      const busy = Array.isArray(entry.busy)
+        ? entry.busy.map((b: any) => ({ start: b.start, end: b.end }))
+        : [];
+
+      const mapped: PerCalendarBusy = { calendar_id: calendarId, busy };
+
+      if (Array.isArray(entry.errors) && entry.errors.length > 0) {
+        mapped.errors = entry.errors;
+      }
+
+      return mapped;
+    });
+  }
+
+  // Compute bookable/open time slots by subtracting busy intervals (+ buffer and
+  // a minimum-notice floor) from user-defined working-hours windows, then slicing
+  // the remaining free time into fixed-length slots. Read-only + idempotent — it
+  // reports availability and reserves nothing (double-booking is out of scope).
+  //
+  // The tz-aware slot arithmetic lives in the pure, network-free
+  // `calendar-slot-math.ts` module. This method does only the impure edges:
+  // validate inputs → fetch busy (shared helper) → compute the min-notice floor
+  // from the wall clock → call the pure fn → shape the response.
+  private async listAvailableSlots(connection: any, parameters: any): Promise<any> {
+    this.logger.debug('DEBUG: Computing available slots from Google Calendar');
+
+    const {
+      range_start,
+      range_end,
+      slot_duration_minutes,
+      working_hours,
+      calendar_ids = ['primary'],
+      buffer_minutes = 0,
+      min_notice_minutes = 0,
+      max_slots = 500,
+    } = parameters;
+
+    // --- Pre-fetch guards (fail fast before any network call) ---
+
+    // Range bounds present + valid RFC3339, strictly ordered.
+    const rangeStartMs = Date.parse(range_start);
+    const rangeEndMs = Date.parse(range_end);
+    if (!range_start || !range_end || Number.isNaN(rangeStartMs) || Number.isNaN(rangeEndMs)) {
+      throw new Error('invalid_time_range: range_start and range_end must be present RFC3339 timestamps (e.g. "2026-08-01T00:00:00Z").');
+    }
+    if (rangeEndMs <= rangeStartMs) {
+      throw new Error('invalid_time_range: range_end must be strictly after range_start.');
+    }
+
+    // Bound the search window (SA OQ9) to prevent pathological date-walk expansion.
+    if (rangeEndMs - rangeStartMs > MAX_SLOT_RANGE_MS) {
+      throw new Error('invalid_input: the search window must not exceed 92 days.');
+    }
+
+    // Slot length must be a positive integer.
+    if (!Number.isInteger(slot_duration_minutes) || slot_duration_minutes <= 0) {
+      throw new Error('invalid_input: slot_duration_minutes must be a positive integer.');
+    }
+
+    // working_hours + time_zone required (no silent UTC default — fail loud).
+    if (!working_hours || typeof working_hours !== 'object' || Array.isArray(working_hours)) {
+      throw new Error('invalid_working_hours: working_hours is required.');
+    }
+    const timeZone = working_hours.time_zone;
+    if (!timeZone || typeof timeZone !== 'string') {
+      throw new Error('invalid_working_hours: working_hours.time_zone is required (IANA zone, e.g. "America/New_York").');
+    }
+    // Resolvable IANA zone? Intl throws a RangeError for unknown zones.
+    try {
+      new Intl.DateTimeFormat('en-US', { timeZone });
+    } catch {
+      throw new Error(`invalid_working_hours: "${timeZone}" is not a valid IANA time zone.`);
+    }
+
+    const windows: any[] = Array.isArray(working_hours.windows) ? working_hours.windows : [];
+    if (windows.length === 0) {
+      throw new Error('invalid_working_hours: working_hours.windows must contain at least one window.');
+    }
+    const normalizedWindows: WorkingWindow[] = [];
+    for (const w of windows) {
+      if (!w || !Array.isArray(w.days) || w.days.length === 0) {
+        throw new Error('invalid_working_hours: each window must have a non-empty "days" array.');
+      }
+      const days: string[] = [];
+      for (const day of w.days) {
+        const normalized = String(day).toLowerCase();
+        if (!VALID_WEEKDAYS.has(normalized)) {
+          throw new Error(`invalid_working_hours: "${day}" is not a valid weekday name.`);
+        }
+        days.push(normalized);
+      }
+      const startHm = parseHhMm(w.start);
+      const endHm = parseHhMm(w.end);
+      if (!startHm || !endHm) {
+        throw new Error('invalid_working_hours: window start/end must be "HH:MM" 24-hour times.');
+      }
+      if (startHm.hours * 60 + startHm.minutes >= endHm.hours * 60 + endHm.minutes) {
+        throw new Error('invalid_working_hours: window start must be strictly before window end.');
+      }
+      normalizedWindows.push({ days, start: w.start, end: w.end });
+    }
+
+    // Calendar cap (Google's calendarExpansionMax).
+    const calendarIds: string[] = Array.isArray(calendar_ids) ? calendar_ids : [calendar_ids];
+    if (calendarIds.length > 50) {
+      throw new Error(`invalid_input: list_available_slots supports at most 50 calendars per query (received ${calendarIds.length}).`);
+    }
+
+    // Non-negative numeric knobs.
+    if (buffer_minutes < 0 || min_notice_minutes < 0 || max_slots < 0) {
+      throw new Error('invalid_input: buffer_minutes, min_notice_minutes and max_slots must be >= 0.');
+    }
+
+    // --- Fetch busy intervals (shared helper) ---
+    const perCalendar = await this.fetchBusyIntervals(connection, {
+      calendarIds,
+      timeMin: range_start,
+      timeMax: range_end,
+      timeZone,
+    });
+
+    // Flatten busy across all calendars onto the absolute timeline. The pure fn
+    // merges/pads/subtracts — we only need valid {startMs,endMs} pairs here.
+    const busyIntervals: Interval[] = [];
+    for (const cal of perCalendar) {
+      for (const b of cal.busy) {
+        const s = Date.parse(b.start);
+        const e = Date.parse(b.end);
+        if (!Number.isNaN(s) && !Number.isNaN(e) && e > s) {
+          busyIntervals.push({ startMs: s, endMs: e });
+        }
+      }
+    }
+
+    // Minimum-notice floor is computed HERE (impure edge), then passed into the
+    // deterministic pure fn — the pure module never reads the clock (CR-5).
+    const earliestBookableMs = Date.now() + min_notice_minutes * 60000;
+
+    const slots = computeAvailableSlots({
+      rangeStartMs,
+      rangeEndMs,
+      busyIntervals,
+      workingHours: { timeZone, windows: normalizedWindows },
+      slotDurationMs: slot_duration_minutes * 60000,
+      bufferMs: buffer_minutes * 60000,
+      earliestBookableMs,
+      maxSlots: max_slots,
+    });
+
+    const computedAt = new Date().toISOString();
+
+    return {
+      // Primary format (snake_case to match schema)
+      slots,
+      slot_count: slots.length,
+      range_start,
+      range_end,
+      time_zone: timeZone,
+      slot_duration_minutes,
+      computed_at: computedAt,
+      // Legacy format (camelCase for backward compatibility)
+      slotCount: slots.length,
+      rangeStart: range_start,
+      rangeEnd: range_end,
+      timeZone,
+      slotDurationMinutes: slot_duration_minutes,
+      computedAt,
     };
   }
 

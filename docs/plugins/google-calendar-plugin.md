@@ -1,6 +1,6 @@
 # Google Calendar Plugin Documentation
 
-**Plugin Version**: 1.1.0
+**Plugin Version**: 1.2.0
 **Category**: Communication
 **Last Updated**: 2026-07-27
 
@@ -286,6 +286,63 @@ Manage events, meetings, and schedules in Google Calendar. Use for fetching cale
 
 ---
 
+### 8. list_available_slots
+**Description**: Compute open, bookable time slots by subtracting busy intervals (plus optional buffer and a minimum-notice floor) from working-hours windows, then slicing the free time into fixed-length slots.
+
+| Property | Value |
+|----------|-------|
+| HTTP Method | POST |
+| Endpoint | `/calendar/v3/freeBusy` (the slot arithmetic runs in the executor, not via the API) |
+| Idempotent | Yes (read-only computation) |
+
+**Parameters**:
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| range_start | string | Yes | Start of the overall search window (RFC3339/ISO 8601, e.g. `2026-08-01T00:00:00Z`) |
+| range_end | string | Yes | End of the search window (RFC3339/ISO 8601); must be strictly after `range_start`, and the window must not exceed 92 days |
+| slot_duration_minutes | number | Yes | Length of each bookable slot in minutes (positive integer, e.g. 30) |
+| working_hours | object | Yes | Availability windows + IANA `time_zone` (see shape below). `time_zone` is required — there is no silent UTC default |
+| calendar_ids | array\<string\> | No | Calendars whose busy blocks make a slot unavailable (default: `["primary"]`; at most 50 per query) |
+| buffer_minutes | number | No | Padding (minutes) around **each busy block on both sides** before subtracting — a gap required before/after existing meetings (default: 0) |
+| min_notice_minutes | number | No | Earliest bookable time relative to now, in minutes (e.g. 120 = no slots within the next 2 hours; default: 0) |
+| max_slots | number | No | Maximum slots to return, chronological/earliest-first (default: 500) |
+
+**`working_hours` shape**:
+```json
+{
+  "time_zone": "America/New_York",
+  "windows": [
+    { "days": ["monday", "tuesday", "wednesday", "thursday", "friday"], "start": "09:00", "end": "17:00" }
+  ]
+}
+```
+- `time_zone` — IANA zone that interprets every window `start`/`end` (wall-clock `HH:MM`, 24-hour) and the day boundaries. Required.
+- `windows[]` — each rule lists lowercase weekday `days` + a `start`/`end` wall-clock window. A weekday not covered by any window is unavailable. Multiple windows may share a day to express intra-day breaks (e.g. a lunch break = one `09:00–12:00` + one `13:00–17:00` window on the same day); same-day windows are unioned before slicing.
+
+**Behavior & semantics**:
+- **In-executor slot math (deterministic)**: the action queries busy intervals (`freebusy.query`) and computes availability in TypeScript — it is one self-contained, unit-tested capability, not a freebusy call plus a natural-language transform.
+- **`buffer_minutes` semantic**: padding is applied around busy blocks on **both** sides (before/after meetings). It does **not** insert gaps between adjacent free slots — slots within a free window remain back-to-back.
+- **Output time zone**: slots are emitted as **UTC `Z`** RFC3339 instants (unambiguous across boundaries); the working-hours `time_zone` is echoed so a caller can render locally. DST is handled per-instant (wall-clock→UTC conversion resolves the offset at each date, so spring-forward/fall-back days are correct).
+- **Boundary-safe slicing**: a slot is emitted only when it fully fits the free run (`slotStart + duration ≤ runEnd`) — no partial slot at a window/busy boundary.
+- **Reports availability, does not reserve**: this action books nothing and holds nothing. A returned slot is **not** reserved and could be taken before an event is created (authoritative double-booking prevention is out of scope for this action).
+- **Privacy-safe**: the busy intervals used internally are `start`/`end` only (via the shared freebusy fetch) and are never surfaced — the output is only computed free `{ start, end }` slots.
+- **Pre-fetch guards** (reject before any network call): missing/invalid RFC3339 range; `range_end ≤ range_start`; window span > 92 days; `slot_duration_minutes` not a positive integer; missing/invalid `working_hours.time_zone`; empty/invalid windows; > 50 calendars; negative `buffer_minutes`/`min_notice_minutes`/`max_slots`.
+
+**Response Structure**:
+| Field | Type | Description |
+|-------|------|-------------|
+| slots | array | Open bookable slots (chronological, earliest first). Each item is `{ start, end }` as UTC `Z` instants — annotated `x-semantic-type: "time_slot"` |
+| slots[].start | string | Slot start (RFC3339 UTC `Z` instant) |
+| slots[].end | string | Slot end (RFC3339 UTC `Z` instant) |
+| slot_count | integer | Number of slots returned (`slots.length`) |
+| range_start | string | Start of the search window (echoed) |
+| range_end | string | End of the search window (echoed) |
+| time_zone | string | IANA time zone from `working_hours` (echoed) |
+| slot_duration_minutes | integer | Slot length in minutes (echoed) |
+| computed_at | string | Timestamp when availability was computed (ISO 8601) |
+
+---
+
 ## Generated Files
 
 | File Path | Description |
@@ -315,5 +372,6 @@ To obtain credentials:
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.2.0 | 2026-07-27 | Added `list_available_slots` (Phase 2): one self-contained, read-only, in-executor slot-computation action over `freebusy.query`. Computes bookable slots by subtracting busy intervals (+ `buffer_minutes` padding around busy blocks and a `min_notice_minutes` floor) from timezone-aware `working_hours` windows, then slicing into fixed-length slots. Emits UTC `Z` slots annotated with the new `time_slot` V6 semantic type. DST-correct wall-clock→UTC conversion via built-in `Intl` (no new dependency). The slot math lives in a pure, unit-tested `lib/server/calendar-slot-math.ts` module; the shared `fetchBusyIntervals` freebusy helper is reused by both `get_free_busy` and `list_available_slots`. |
 | 1.1.0 | 2026-07-27 | Added 2 read-only availability actions: `get_free_busy` (freebusy.query — per-calendar busy intervals, privacy-safe start/end only, partial-success on per-calendar errors) and `list_calendars` (calendarList.list). Corrected the `update_event` HTTP-method row (GET + PUT, not PATCH). |
 | 1.0.0 | 2025-11-30 | Initial plugin with 5 actions: list_events, create_event, update_event, delete_event, get_event_details |
