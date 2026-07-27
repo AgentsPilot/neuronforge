@@ -439,7 +439,15 @@ Tests:       36 passed, 36 total
 
 ## Commit Info
 
-_(RM to populate at commit.)_
+| Field | Value |
+|-------|-------|
+| Branch | `feature/google-suite-phase1-actions` |
+| Commit | `88fa2e8` — `feat(plugins): add Phase 1 Google Sheets formatting & structural actions` |
+| Date | 2026-07-26 |
+| Files | 8 (definition JSON, executor, unit + integration tests, plugin doc, test-page, this workplan, Drive-workplan Commit-Info backfill) |
+| Tests | 36/36 unit tests passing |
+| Pushed | No — local commit only, pending PR |
+| Gates | SA workplan-review ✅ · SA code-review ✅ · QA PASS ✅ · user-approved ✅ |
 
 ---
 

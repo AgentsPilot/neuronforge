@@ -414,7 +414,16 @@ Time:        3.167 s
 
 ## Commit Info
 
-_(RM to populate at commit time.)_
+| Field | Value |
+|-------|-------|
+| Branch | `feature/google-suite-phase1-actions` |
+| Commit | `af22a53` — `feat(plugins): add Phase 1 Google Docs replace_text action` |
+| Date | 2026-07-26 |
+| Files | 8 (definition JSON, executor, unit + integration tests, integration-config, plugin doc, test-page, this workplan) |
+| Tests | 22/22 unit tests passing |
+| Pushed | No — local commit only, pending PR |
+| Gates | SA workplan-review ✅ · SA code-review ✅ (must-fix resolved via Option B) · QA PASS ✅ · user-approved ✅ |
+| Follow-up | Inert `${param}_length` rule derivation — platform gap, tracked (task_2ea2e007) |
 
 ---
 

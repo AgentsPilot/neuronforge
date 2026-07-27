@@ -135,6 +135,32 @@ const PARAMETER_TEMPLATES = {
         html_body: "<p>This is a <strong>draft</strong> email body.</p>"
       },
       save_location: "drafts"
+    },
+    get_or_create_label: {
+      label_name: "Invoices"
+    },
+    list_labels: {
+      label_type: "all"
+    },
+    delete_label: {
+      label_id: "Label_123"
+    },
+    reply_to_email: {
+      message_id: "18abc123def",
+      content: {
+        body: "Thanks — replying in this thread.",
+        html_body: "<p>Thanks — replying in this thread.</p>"
+      },
+      reply_all: false
+    },
+    send_draft: {
+      draft_id: "r123456789"
+    },
+    batch_modify_emails: {
+      message_ids: ["18abc123def", "18abc456ghi"],
+      add_labels: ["Invoices"],
+      remove_labels: [],
+      archive: true
     }
   },
   "google-drive": {

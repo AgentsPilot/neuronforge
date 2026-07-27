@@ -108,5 +108,102 @@ conditionalDescribe('GmailPluginExecutor [integration]', () => {
       expect(result.success).toBe(true);
       expect(result.data).toBeDefined();
     });
+
+    // ─── Phase 1 label lifecycle: get_or_create → list → delete ────────────
+    // Self-cleaning: the label created here is deleted at the end of the test.
+    it('should get_or_create a label, list it, then delete it (idempotent)', async () => {
+      const labelName = `AP Test ${generateTestId()}`;
+
+      // 1. Create the label.
+      const createRes = await executor.executeAction(USER_ID, 'get_or_create_label', {
+        label_name: labelName,
+      });
+      expect(createRes.success).toBe(true);
+      expect(createRes.data.created).toBe(true);
+      const labelId: string = createRes.data.label_id;
+      expect(labelId).toBeDefined();
+
+      // 2. Idempotency: a second call must NOT create a duplicate.
+      const secondRes = await executor.executeAction(USER_ID, 'get_or_create_label', {
+        label_name: labelName,
+      });
+      expect(secondRes.success).toBe(true);
+      expect(secondRes.data.created).toBe(false);
+      expect(secondRes.data.label_id).toBe(labelId);
+
+      // 3. list_labels includes the new label.
+      const listRes = await executor.executeAction(USER_ID, 'list_labels', { label_type: 'user' });
+      expect(listRes.success).toBe(true);
+      const found = (listRes.data.labels as Array<{ id: string }>).some((l) => l.id === labelId);
+      expect(found).toBe(true);
+
+      // 4. delete_label removes it.
+      const deleteRes = await executor.executeAction(USER_ID, 'delete_label', {
+        label_id: labelId,
+      });
+      expect(deleteRes.success).toBe(true);
+      expect(deleteRes.data.deleted).toBe(true);
+
+      // 5. Deleting again → already-absent success (idempotent-ish).
+      const deleteAgain = await executor.executeAction(USER_ID, 'delete_label', {
+        label_id: labelId,
+      });
+      expect(deleteAgain.success).toBe(true);
+      expect(deleteAgain.data.already_absent).toBe(true);
+    });
+
+    // ─── send_draft: create a draft then send it ───────────────────────────
+    it('should create a draft and send it via send_draft', async () => {
+      const testId = generateTestId();
+      const createResult = await executor.executeAction(USER_ID, 'create_draft', {
+        recipients: { to: ['agentpilot-integration-test@example.com'] },
+        content: {
+          subject: `Integration send_draft ${testId}`,
+          body: `Automated integration test. ID: ${testId}. Safe to ignore.`,
+        },
+      });
+      expect(createResult.success).toBe(true);
+      const draftId = createResult.data?.draft_id;
+      expect(draftId).toBeDefined();
+
+      const sendResult = await executor.executeAction(USER_ID, 'send_draft', {
+        draft_id: draftId,
+      });
+      expect(sendResult.success).toBe(true);
+      expect(sendResult.data.message_id).toBeDefined();
+    });
+
+    // ─── batch_modify_emails: archive then restore a message ───────────────
+    // Uses whatever the search returns; skips gracefully if the inbox is empty.
+    it('should batch_modify_emails (archive) on a found message', async () => {
+      const searchRes = await executor.executeAction(USER_ID, 'search_emails', {
+        query: 'in:inbox',
+        max_results: 1,
+      });
+      expect(searchRes.success).toBe(true);
+      const emails = (searchRes.data.emails as Array<{ id: string }>) || [];
+      if (emails.length === 0) {
+        // Nothing to modify in an empty inbox — nothing to assert beyond the guard.
+        return;
+      }
+      const messageId = emails[0].id;
+
+      const archiveRes = await executor.executeAction(USER_ID, 'batch_modify_emails', {
+        message_ids: [messageId],
+        archive: true,
+      });
+      expect(archiveRes.success).toBe(true);
+      expect(archiveRes.data.modified_count).toBe(1);
+
+      // Restore INBOX so the test leaves no side effect.
+      await executor.executeAction(USER_ID, 'batch_modify_emails', {
+        message_ids: [messageId],
+        add_labels: ['INBOX'],
+      });
+    });
+
+    // NOTE: reply_to_email is exercised in the unit suite (thread continuation +
+    // In-Reply-To). A live reply is intentionally omitted here to avoid sending
+    // real mail into a shared test mailbox thread.
   });
 });

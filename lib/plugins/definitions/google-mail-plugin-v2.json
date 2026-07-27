@@ -1,7 +1,7 @@
 {
   "plugin": {
     "name": "google-mail",
-    "version": "1.0.0",
+    "version": "1.2.0",
     "description": "Send, read, and manage Gmail emails",
     "context": "Use for all Gmail email-related tasks including sending messages, searching conversations, and managing drafts",
     "icon": "<Calendar className='w-5 h-5 text-red-600'/>",
@@ -940,6 +940,655 @@
           "label_not_found": "The specified label does not exist and could not be created.",
           "insufficient_permissions": "Gmail modify permissions are insufficient. Please reconnect with full email access.",
           "api_rate_limit": "Too many requests in a short time. Please wait a moment and try again."
+        }
+      }
+    },
+    "get_or_create_label": {
+      "description": "Find a Gmail label by name, or create it if it does not exist",
+      "usage_context": "When you need a label to apply to messages and want to reuse it if present or create it once if absent. Idempotent — re-running returns the same label without creating a duplicate.",
+      "idempotent": true,
+      "domain": "email",
+      "capability": "create",
+      "input_entity": null,
+      "output_entity": "label",
+      "input_cardinality": null,
+      "output_cardinality": "single",
+      "output_fields": [
+        "label_id",
+        "label_name",
+        "created",
+        "created_at"
+      ],
+      "required_params": [
+        "label_name"
+      ],
+      "optional_params": [],
+      "must_support": [
+        "idempotent_create",
+        "case_insensitive_match"
+      ],
+      "parameters": {
+        "type": "object",
+        "required": [
+          "label_name"
+        ],
+        "properties": {
+          "label_name": {
+            "type": "string",
+            "description": "Name of the label to find or create. Matched case-insensitively against existing labels."
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "description": "The resolved label with a flag indicating whether it was newly created",
+        "properties": {
+          "label_id": {
+            "type": "string",
+            "description": "Gmail label ID",
+            "x-guaranteed": true
+          },
+          "label_name": {
+            "type": "string",
+            "description": "Resolved label name",
+            "x-guaranteed": true
+          },
+          "created": {
+            "type": "boolean",
+            "description": "True if the label was created by this call, false if it already existed",
+            "x-guaranteed": true
+          },
+          "created_at": {
+            "type": "string",
+            "description": "ISO 8601 timestamp when the action completed",
+            "x-guaranteed": true
+          }
+        },
+        "required": [
+          "label_id",
+          "label_name",
+          "created"
+        ]
+      },
+      "output_guidance": {
+        "success_description": "Resolved label '{label_name}'",
+        "sample_output": {
+          "label_id": "Label_123",
+          "label_name": "Invoices",
+          "created": true,
+          "created_at": "2026-07-26T00:00:00.000Z"
+        },
+        "common_errors": {
+          "auth_failed": "Your Gmail connection has expired. Please reconnect in Settings → Connected Apps.",
+          "label_conflict": "The label name conflicts with an existing label and could not be resolved. Please try a different name.",
+          "api_rate_limit": "Too many requests in a short time. Please wait a moment and try again.",
+          "insufficient_permissions": "Gmail modify permissions are insufficient. Please reconnect with full email access."
+        }
+      }
+    },
+    "list_labels": {
+      "description": "List all Gmail labels in the user's account",
+      "usage_context": "When you need to enumerate available labels (system and/or custom) — for example to pick a label to apply or delete.",
+      "idempotent": true,
+      "domain": "email",
+      "capability": "list",
+      "input_entity": null,
+      "output_entity": "label",
+      "input_cardinality": null,
+      "output_cardinality": "collection",
+      "output_fields": [
+        "labels",
+        "total_found",
+        "listed_at"
+      ],
+      "required_params": [],
+      "optional_params": [
+        "label_type"
+      ],
+      "must_support": [
+        "system_labels",
+        "custom_labels"
+      ],
+      "parameters": {
+        "type": "object",
+        "required": [],
+        "properties": {
+          "label_type": {
+            "type": "string",
+            "enum": [
+              "system",
+              "user",
+              "all"
+            ],
+            "default": "all",
+            "description": "Optional filter: 'system' (built-in labels), 'user' (custom labels), or 'all' (default)"
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "description": "The list of Gmail labels",
+        "properties": {
+          "labels": {
+            "type": "array",
+            "description": "Array of Gmail labels",
+            "items": {
+              "type": "object",
+              "x-semantic-type": "gmail_label",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "description": "Gmail label ID"
+                },
+                "name": {
+                  "type": "string",
+                  "description": "Label display name"
+                },
+                "type": {
+                  "type": "string",
+                  "description": "Label type ('system' or 'user')"
+                }
+              }
+            }
+          },
+          "total_found": {
+            "type": "integer",
+            "description": "Number of labels returned"
+          },
+          "listed_at": {
+            "type": "string",
+            "description": "ISO 8601 timestamp of the listing",
+            "x-guaranteed": true
+          }
+        },
+        "required": [
+          "labels",
+          "total_found"
+        ]
+      },
+      "output_guidance": {
+        "success_description": "Listed Gmail labels",
+        "sample_output": {
+          "labels": [
+            { "id": "INBOX", "name": "INBOX", "type": "system" },
+            { "id": "Label_123", "name": "Invoices", "type": "user" }
+          ],
+          "total_found": 2,
+          "listed_at": "2026-07-26T00:00:00.000Z"
+        },
+        "common_errors": {
+          "auth_failed": "Your Gmail connection has expired. Please reconnect in Settings → Connected Apps.",
+          "api_rate_limit": "Too many requests in a short time. Please wait a moment and try again.",
+          "insufficient_permissions": "Gmail read permissions are insufficient. Please reconnect with full email access."
+        }
+      }
+    },
+    "delete_label": {
+      "description": "Delete a Gmail label by ID",
+      "usage_context": "When you need to permanently remove a custom label. Messages keep their content but lose this label. Built-in system labels cannot be deleted. Re-running on an already-deleted label succeeds (already absent).",
+      "idempotent": true,
+      "domain": "email",
+      "capability": "delete",
+      "input_entity": "label",
+      "output_entity": "label",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "output_fields": [
+        "label_id",
+        "deleted",
+        "already_absent",
+        "deleted_at"
+      ],
+      "required_params": [
+        "label_id"
+      ],
+      "optional_params": [],
+      "must_support": [
+        "system_label_guard",
+        "idempotent_delete"
+      ],
+      "parameters": {
+        "type": "object",
+        "required": [
+          "label_id"
+        ],
+        "properties": {
+          "label_id": {
+            "type": "string",
+            "description": "Gmail label ID to delete (custom labels only — system labels cannot be deleted)",
+            "x-dynamic-options": {
+              "source": "list_labels",
+              "description": "Fetches available Gmail labels dynamically"
+            }
+          }
+        }
+      },
+      "rules": {
+        "confirmations": {
+          "confirm_delete_label": {
+            "condition": "label_id != null",
+            "action": "confirm",
+            "message": "Delete the label '{label_id}'? Messages keep their content but lose this label."
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "description": "Confirmation of the deleted label",
+        "properties": {
+          "label_id": {
+            "type": "string",
+            "description": "The deleted label ID",
+            "x-guaranteed": true
+          },
+          "deleted": {
+            "type": "boolean",
+            "description": "True when the label no longer exists after this call",
+            "x-guaranteed": true
+          },
+          "already_absent": {
+            "type": "boolean",
+            "description": "True when the label was already gone (404) — deletion was a no-op"
+          },
+          "deleted_at": {
+            "type": "string",
+            "description": "ISO 8601 timestamp when the action completed",
+            "x-guaranteed": true
+          }
+        },
+        "required": [
+          "label_id",
+          "deleted"
+        ]
+      },
+      "output_guidance": {
+        "success_description": "Deleted label '{label_id}'",
+        "sample_output": {
+          "label_id": "Label_123",
+          "deleted": true,
+          "already_absent": false,
+          "deleted_at": "2026-07-26T00:00:00.000Z"
+        },
+        "common_errors": {
+          "auth_failed": "Your Gmail connection has expired. Please reconnect in Settings → Connected Apps.",
+          "label_not_found": "The specified label does not exist.",
+          "cannot_delete_system_label": "Built-in Gmail labels (INBOX, SENT, etc.) cannot be deleted.",
+          "insufficient_permissions": "Gmail modify permissions are insufficient. Please reconnect with full email access."
+        }
+      }
+    },
+    "reply_to_email": {
+      "description": "Reply within an existing email thread",
+      "usage_context": "When you need to respond to a specific message and keep the reply in the same conversation. Sets threading headers (In-Reply-To/References) and the thread ID so the reply continues the thread rather than starting a new one. NOT idempotent — each call sends a new message (re-running double-sends).",
+      "idempotent": false,
+      "domain": "email",
+      "capability": "send_message",
+      "input_entity": "email",
+      "output_entity": "email",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "output_fields": [
+        "message_id",
+        "thread_id",
+        "in_reply_to",
+        "recipient_count",
+        "subject",
+        "sent_at"
+      ],
+      "required_params": [
+        "message_id",
+        "content"
+      ],
+      "optional_params": [
+        "recipients",
+        "reply_all"
+      ],
+      "must_support": [
+        "thread_continuation",
+        "html_email",
+        "reply_all"
+      ],
+      "parameters": {
+        "type": "object",
+        "required": [
+          "message_id",
+          "content"
+        ],
+        "properties": {
+          "message_id": {
+            "type": "string",
+            "description": "The message being replied to. Used to resolve the thread, the original Message-ID (for In-Reply-To/References) and the subject (Re: …).",
+            "x-variable-mapping": {
+              "field_path": "id",
+              "description": "Extract the message id from an upstream email entity"
+            }
+          },
+          "content": {
+            "type": "object",
+            "properties": {
+              "body": {
+                "type": "string",
+                "description": "Plain text reply body"
+              },
+              "html_body": {
+                "type": "string",
+                "description": "HTML formatted reply body"
+              }
+            },
+            "description": "Reply content — at least one of body or html_body is required"
+          },
+          "recipients": {
+            "type": "object",
+            "properties": {
+              "to": {
+                "type": "array",
+                "items": { "type": "string", "format": "email" },
+                "description": "Override the reply recipients (defaults to the original sender)"
+              },
+              "cc": {
+                "type": "array",
+                "items": { "type": "string", "format": "email" },
+                "description": "Carbon copy recipients"
+              },
+              "bcc": {
+                "type": "array",
+                "items": { "type": "string", "format": "email" },
+                "description": "Blind carbon copy recipients"
+              }
+            },
+            "description": "Optional recipient override. When omitted, replies to the original sender (Reply-To ?? From)."
+          },
+          "reply_all": {
+            "type": "boolean",
+            "default": false,
+            "description": "When true and no explicit recipients are given, include the original To/Cc set (self-exclusion is not performed)."
+          }
+        }
+      },
+      "rules": {
+        "limits": {
+          "max_recipients": {
+            "condition": "total_recipients > 50",
+            "action": "block",
+            "message": "Cannot reply to more than 50 recipients at once. Please reduce the recipient list."
+          }
+        },
+        "confirmations": {
+          "external_domains": {
+            "condition": "has_external_recipients == true",
+            "action": "confirm",
+            "message": "This reply includes recipients outside your organization. Continue?"
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "description": "Confirmation of the sent reply",
+        "properties": {
+          "message_id": {
+            "type": "string",
+            "description": "Gmail message ID of the sent reply",
+            "x-guaranteed": true
+          },
+          "thread_id": {
+            "type": "string",
+            "description": "Gmail thread ID the reply was sent into",
+            "x-guaranteed": true
+          },
+          "in_reply_to": {
+            "type": "string",
+            "description": "The original Message-ID this reply references"
+          },
+          "recipient_count": {
+            "type": "integer",
+            "description": "Total number of recipients (to + cc + bcc)"
+          },
+          "subject": {
+            "type": "string",
+            "description": "The reply subject line (Re: …)"
+          },
+          "sent_at": {
+            "type": "string",
+            "description": "ISO 8601 timestamp when the reply was sent",
+            "x-guaranteed": true
+          }
+        },
+        "required": [
+          "message_id",
+          "thread_id",
+          "sent_at"
+        ]
+      },
+      "output_guidance": {
+        "success_description": "Sent reply in thread",
+        "sample_output": {
+          "message_id": "18abc999",
+          "thread_id": "18abc123def",
+          "in_reply_to": "<CAF=abc@mail.gmail.com>",
+          "recipient_count": 1,
+          "subject": "Re: Project Update",
+          "sent_at": "2026-07-26T00:00:00.000Z"
+        },
+        "common_errors": {
+          "auth_failed": "Your Gmail connection has expired. Please reconnect in Settings → Connected Apps.",
+          "message_not_found": "The message you are replying to does not exist or has been deleted.",
+          "invalid_recipient": "One or more recipient addresses are invalid. Please verify and try again.",
+          "api_rate_limit": "Too many requests in a short time. Please wait a moment and try again.",
+          "insufficient_permissions": "Gmail send permissions are insufficient. Please reconnect with full email access."
+        }
+      }
+    },
+    "send_draft": {
+      "description": "Send an existing Gmail draft",
+      "usage_context": "When a draft has been prepared (e.g. via create_draft) and you now want to send it. NOT idempotent — sending consumes the draft; a re-run will fail because the draft no longer exists.",
+      "idempotent": false,
+      "domain": "email",
+      "capability": "send_message",
+      "input_entity": "draft",
+      "output_entity": "email",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "output_fields": [
+        "message_id",
+        "thread_id",
+        "draft_id",
+        "sent_at"
+      ],
+      "required_params": [
+        "draft_id"
+      ],
+      "optional_params": [],
+      "must_support": [
+        "draft_management"
+      ],
+      "parameters": {
+        "type": "object",
+        "required": [
+          "draft_id"
+        ],
+        "properties": {
+          "draft_id": {
+            "type": "string",
+            "description": "Gmail draft ID to send (as returned by create_draft)",
+            "x-variable-mapping": {
+              "field_path": "draft_id",
+              "description": "Extract the draft id from an upstream create_draft result"
+            }
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "description": "Confirmation of the sent draft",
+        "properties": {
+          "message_id": {
+            "type": "string",
+            "description": "Gmail message ID of the sent message",
+            "x-guaranteed": true
+          },
+          "thread_id": {
+            "type": "string",
+            "description": "Gmail thread ID of the sent message",
+            "x-guaranteed": true
+          },
+          "draft_id": {
+            "type": "string",
+            "description": "The draft ID that was sent (now consumed)",
+            "x-guaranteed": true
+          },
+          "sent_at": {
+            "type": "string",
+            "description": "ISO 8601 timestamp when the draft was sent",
+            "x-guaranteed": true
+          }
+        },
+        "required": [
+          "message_id",
+          "thread_id",
+          "draft_id"
+        ]
+      },
+      "output_guidance": {
+        "success_description": "Sent draft",
+        "sample_output": {
+          "message_id": "18abc123def",
+          "thread_id": "18abc123def",
+          "draft_id": "r123456789",
+          "sent_at": "2026-07-26T00:00:00.000Z"
+        },
+        "common_errors": {
+          "auth_failed": "Your Gmail connection has expired. Please reconnect in Settings → Connected Apps.",
+          "draft_not_found": "The specified draft does not exist or has already been sent.",
+          "api_rate_limit": "Too many requests in a short time. Please wait a moment and try again.",
+          "insufficient_permissions": "Gmail send permissions are insufficient. Please reconnect with full email access."
+        }
+      }
+    },
+    "batch_modify_emails": {
+      "description": "Add/remove labels or archive across many messages in one call",
+      "usage_context": "When you need to apply the same label change (add, remove, or archive) to a set of messages at once — for example labeling or archiving a backlog. Bounded to 1000 message IDs per call (Gmail's maximum). Idempotent — re-applying a label or removing an absent one is a no-op.",
+      "idempotent": true,
+      "domain": "email",
+      "capability": "modify",
+      "input_entity": "email",
+      "output_entity": "email",
+      "input_cardinality": "collection",
+      "output_cardinality": "collection",
+      "output_fields": [
+        "modified_count",
+        "message_ids",
+        "labels_added",
+        "labels_removed",
+        "modified_at"
+      ],
+      "required_params": [
+        "message_ids"
+      ],
+      "optional_params": [
+        "add_labels",
+        "remove_labels",
+        "archive"
+      ],
+      "must_support": [
+        "system_labels",
+        "custom_labels",
+        "archive",
+        "bounded_batch"
+      ],
+      "parameters": {
+        "type": "object",
+        "required": [
+          "message_ids"
+        ],
+        "properties": {
+          "message_ids": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "The message IDs to modify (1..1000). Empty arrays are rejected."
+          },
+          "add_labels": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Label names (system or custom) to add to every message. Custom names are resolved/created."
+          },
+          "remove_labels": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Label names to remove from every message."
+          },
+          "archive": {
+            "type": "boolean",
+            "default": false,
+            "description": "Shorthand: archive the messages by removing the INBOX label."
+          }
+        }
+      },
+      "rules": {
+        "limits": {
+          "max_ids": {
+            "condition": "message_ids_count > 1000",
+            "action": "block",
+            "message": "Cannot modify more than 1000 messages in a single batch. Please split into smaller batches."
+          }
+        },
+        "confirmations": {
+          "large_batch": {
+            "condition": "message_ids_count > 50",
+            "action": "confirm",
+            "message": "Apply this label change to {message_ids_count} messages?"
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "description": "Summary of the batch modification",
+        "properties": {
+          "modified_count": {
+            "type": "integer",
+            "description": "Number of messages the modification was applied to",
+            "x-guaranteed": true
+          },
+          "message_ids": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "The message IDs that were modified"
+          },
+          "labels_added": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Resolved label IDs that were added"
+          },
+          "labels_removed": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Resolved label IDs that were removed (includes INBOX when archive=true)"
+          },
+          "modified_at": {
+            "type": "string",
+            "description": "ISO 8601 timestamp when the batch completed",
+            "x-guaranteed": true
+          }
+        },
+        "required": [
+          "modified_count",
+          "modified_at"
+        ]
+      },
+      "output_guidance": {
+        "success_description": "Modified {message_count} messages",
+        "sample_output": {
+          "modified_count": 3,
+          "message_ids": ["msg-1", "msg-2", "msg-3"],
+          "labels_added": ["Label_123"],
+          "labels_removed": ["INBOX"],
+          "modified_at": "2026-07-26T00:00:00.000Z"
+        },
+        "common_errors": {
+          "auth_failed": "Your Gmail connection has expired. Please reconnect in Settings → Connected Apps.",
+          "too_many_ids": "Too many message IDs in one batch. The maximum is 1000 per call.",
+          "label_not_found": "One of the specified labels does not exist and could not be created.",
+          "api_rate_limit": "Too many requests in a short time. Please wait a moment and try again.",
+          "insufficient_permissions": "Gmail modify permissions are insufficient. Please reconnect with full email access."
         }
       }
     }

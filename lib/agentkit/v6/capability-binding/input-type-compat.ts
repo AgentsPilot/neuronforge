@@ -67,8 +67,14 @@ export type FromType = (typeof FROM_TYPE_VALUES)[number]
 
 /**
  * Additional semantic types that only appear on producer (output) side.
+ *
+ * `gmail_label` is an output-leaf type: Gmail's list_labels emits label objects,
+ * but a label is consumed downstream only as a plain string id/name param
+ * (delete_label.label_id, batch_modify_emails.add_labels) — never as a bindable
+ * input entity. So it lives here (ToType only) with NO TYPE_COMPAT edges,
+ * keeping the validator happy without adding input-binding surface. (OQ7)
  */
-export const TO_TYPE_EXTRAS = ['string', 'object', 'array', 'unknown'] as const
+export const TO_TYPE_EXTRAS = ['string', 'object', 'array', 'unknown', 'gmail_label'] as const
 
 export type ToType = FromType | (typeof TO_TYPE_EXTRAS)[number]
 
