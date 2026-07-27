@@ -361,6 +361,15 @@ const PARAMETER_TEMPLATES = {
     get_event_details: {
       calendar_id: "primary",
       event_id: "abc123xyz456"
+    },
+    get_free_busy: {
+      calendar_ids: ["primary"],
+      time_min: "2025-01-15T00:00:00Z",
+      time_max: "2025-01-16T00:00:00Z",
+      time_zone: "UTC"
+    },
+    list_calendars: {
+      min_access_role: "reader"
     }
   },
   "slack": {

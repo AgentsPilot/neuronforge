@@ -1,7 +1,7 @@
 {
   "plugin": {
     "name": "google-calendar",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "description": "Manage events, meetings, and schedules in Google Calendar",
     "context": "Use for fetching calendar events, creating meetings, scheduling appointments, setting reminders, managing attendees, and organizing time-based activities for agents",
     "icon": "<Calendar className='w-5 h-5 text-blue-500'/>",
@@ -939,6 +939,310 @@
           "permission_denied": "You don't have permission to access this event.",
           "api_rate_limit": "Too many requests. Please wait a moment and try again.",
           "insufficient_permissions": "Google Calendar read permissions are insufficient. Please reconnect with full access."
+        }
+      }
+    },
+    "get_free_busy": {
+      "description": "Query busy/free intervals across one or more calendars over a time window",
+      "usage_context": "When user wants to check availability, find when someone (or a set of calendars) is busy or free over a period, or lay the groundwork for scheduling. Returns raw busy intervals only (no slot computation). Privacy-safe: surfaces only busy start/end times, never event titles, attendees, or descriptions.",
+      "idempotent": true,
+      "domain": "calendar",
+      "capability": "get",
+      "input_entity": null,
+      "output_entity": "free_busy",
+      "input_cardinality": null,
+      "output_cardinality": "collection",
+      "output_fields": [
+        "calendars",
+        "time_min",
+        "time_max"
+      ],
+      "required_params": [
+        "time_min",
+        "time_max"
+      ],
+      "optional_params": [
+        "calendar_ids",
+        "time_zone"
+      ],
+      "must_support": [
+        "multi_calendar",
+        "timezone_aware"
+      ],
+      "parameters": {
+        "type": "object",
+        "required": [
+          "time_min",
+          "time_max"
+        ],
+        "properties": {
+          "calendar_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": [
+              "primary"
+            ],
+            "description": "Calendar identifier(s) to query for availability (use 'primary' for the user's primary calendar, or specific calendar IDs/emails). At most 50 calendars per query.",
+            "x-dynamic-options": {
+              "source": "list_calendars",
+              "description": "Fetches available calendars dynamically"
+            }
+          },
+          "time_min": {
+            "type": "string",
+            "description": "Start of the availability window (RFC3339/ISO 8601 format, e.g., '2026-03-27T00:00:00Z'). Required."
+          },
+          "time_max": {
+            "type": "string",
+            "description": "End of the availability window (RFC3339/ISO 8601 format). Required, and must be strictly after time_min."
+          },
+          "time_zone": {
+            "type": "string",
+            "default": "UTC",
+            "description": "IANA time zone used to interpret the response (e.g., 'UTC', 'America/New_York')."
+          }
+        }
+      },
+      "rules": {
+        "limits": {
+          "max_calendars": {
+            "condition": "calendar_ids_count > 50",
+            "action": "block",
+            "message": "Cannot query more than 50 calendars in a single free/busy request. Please reduce the number of calendars."
+          }
+        },
+        "confirmations": {}
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "calendars": {
+            "type": "array",
+            "description": "Per-calendar busy intervals. A calendar may carry an 'errors' array (partial success) when it could not be queried (e.g. not found); other calendars still return their busy intervals.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "calendar_id": {
+                  "type": "string",
+                  "description": "The calendar identifier these intervals belong to"
+                },
+                "busy": {
+                  "type": "array",
+                  "description": "Busy intervals within the queried window (start/end only — no event details)",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "start": {
+                        "type": "string",
+                        "description": "Busy interval start (RFC3339/ISO 8601)"
+                      },
+                      "end": {
+                        "type": "string",
+                        "description": "Busy interval end (RFC3339/ISO 8601)"
+                      }
+                    }
+                  }
+                },
+                "errors": {
+                  "type": "array",
+                  "description": "Per-calendar errors returned by Google for this calendar (e.g. notFound), if any. Present only on partial failure.",
+                  "items": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          },
+          "time_min": {
+            "type": "string",
+            "description": "Start of the queried window (echoed)",
+            "x-guaranteed": true
+          },
+          "time_max": {
+            "type": "string",
+            "description": "End of the queried window (echoed)",
+            "x-guaranteed": true
+          },
+          "time_zone": {
+            "type": "string",
+            "description": "Time zone used to interpret the response (echoed)"
+          },
+          "queried_at": {
+            "type": "string",
+            "description": "Timestamp when the free/busy query ran (ISO 8601)",
+            "x-guaranteed": true
+          }
+        },
+        "required": [
+          "calendars",
+          "time_min",
+          "time_max"
+        ]
+      },
+      "output_guidance": {
+        "success_description": "Retrieved free/busy availability",
+        "sample_output": {
+          "calendars": [
+            {
+              "calendar_id": "primary",
+              "busy": [
+                {
+                  "start": "2026-03-27T10:00:00Z",
+                  "end": "2026-03-27T11:00:00Z"
+                }
+              ]
+            },
+            {
+              "calendar_id": "team@example.com",
+              "busy": [],
+              "errors": [
+                {
+                  "domain": "global",
+                  "reason": "notFound"
+                }
+              ]
+            }
+          ],
+          "time_min": "2026-03-27T00:00:00Z",
+          "time_max": "2026-03-28T00:00:00Z",
+          "time_zone": "UTC",
+          "queried_at": "2026-03-26T08:30:00Z"
+        },
+        "common_errors": {
+          "auth_failed": "Your Google Calendar connection has expired. Please go to Settings → Connected Apps to reconnect Google Calendar.",
+          "calendar_not_found": "One or more calendars were not found. Check the calendar IDs and ensure you have access.",
+          "invalid_time_format": "The time format is invalid. Use RFC3339/ISO 8601 format like '2026-03-27T00:00:00Z'.",
+          "invalid_time_range": "The time window is invalid. time_min must be strictly before time_max.",
+          "permission_denied": "You don't have permission to query availability for one or more of these calendars.",
+          "api_rate_limit": "Too many requests in a short time. Please wait a moment and try again.",
+          "insufficient_permissions": "Google Calendar permissions are insufficient. Please reconnect with full calendar access."
+        }
+      }
+    },
+    "list_calendars": {
+      "description": "List the user's calendars (calendar list)",
+      "usage_context": "When user wants to see which calendars they have access to, discover calendar IDs to target with other actions, or pick the right calendar for a multi-calendar account.",
+      "idempotent": true,
+      "domain": "calendar",
+      "capability": "list",
+      "input_entity": null,
+      "output_entity": "calendar",
+      "input_cardinality": null,
+      "output_cardinality": "collection",
+      "output_fields": [
+        "id",
+        "summary",
+        "time_zone",
+        "primary",
+        "access_role"
+      ],
+      "required_params": [],
+      "optional_params": [
+        "min_access_role"
+      ],
+      "must_support": [
+        "access_role_filter"
+      ],
+      "parameters": {
+        "type": "object",
+        "required": [],
+        "properties": {
+          "min_access_role": {
+            "type": "string",
+            "enum": [
+              "freeBusyReader",
+              "reader",
+              "writer",
+              "owner"
+            ],
+            "description": "Only return calendars where the user has at least this access role. Omit to return all calendars."
+          }
+        }
+      },
+      "rules": {
+        "limits": {},
+        "confirmations": {}
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "calendars": {
+            "type": "array",
+            "description": "The user's calendars",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "description": "Calendar identifier (use as calendar_id in other actions)"
+                },
+                "summary": {
+                  "type": "string",
+                  "description": "Calendar name/title"
+                },
+                "description": {
+                  "type": "string",
+                  "description": "Calendar description"
+                },
+                "time_zone": {
+                  "type": "string",
+                  "description": "Calendar time zone (IANA)"
+                },
+                "primary": {
+                  "type": "boolean",
+                  "description": "Whether this is the user's primary calendar"
+                },
+                "access_role": {
+                  "type": "string",
+                  "description": "The user's access role on this calendar (freeBusyReader, reader, writer, owner)"
+                }
+              }
+            }
+          },
+          "total_found": {
+            "type": "integer",
+            "description": "Number of calendars returned"
+          },
+          "listed_at": {
+            "type": "string",
+            "description": "Timestamp when calendars were listed (ISO 8601)",
+            "x-guaranteed": true
+          }
+        },
+        "required": [
+          "calendars",
+          "total_found"
+        ]
+      },
+      "output_guidance": {
+        "success_description": "Listed calendars",
+        "sample_output": {
+          "calendars": [
+            {
+              "id": "primary",
+              "summary": "John Doe",
+              "description": "",
+              "time_zone": "America/New_York",
+              "primary": true,
+              "access_role": "owner"
+            },
+            {
+              "id": "team@example.com",
+              "summary": "Team Calendar",
+              "time_zone": "UTC",
+              "primary": false,
+              "access_role": "reader"
+            }
+          ],
+          "total_found": 2,
+          "listed_at": "2026-03-26T08:30:00Z"
+        },
+        "common_errors": {
+          "auth_failed": "Your Google Calendar connection has expired. Please go to Settings → Connected Apps to reconnect Google Calendar.",
+          "api_rate_limit": "Too many requests in a short time. Please wait a moment and try again.",
+          "insufficient_permissions": "Google Calendar permissions are insufficient. Please reconnect with full calendar access."
         }
       }
     }

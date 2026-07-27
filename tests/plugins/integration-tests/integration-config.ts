@@ -71,6 +71,15 @@ const CREDENTIAL_MAP: Record<string, {
       fileId: 'GOOGLE_DRIVE_TEST_FILE_ID',
     },
   },
+  'google-calendar': {
+    tokenEnv: 'GOOGLE_CALENDAR_TEST_TOKEN',
+    refreshEnv: 'GOOGLE_CALENDAR_TEST_REFRESH_TOKEN',
+    extras: {
+      // Optional: a specific calendar to query in the free/busy lifecycle test.
+      // When absent, the test falls back to 'primary'.
+      calendarId: 'GOOGLE_CALENDAR_TEST_CALENDAR_ID',
+    },
+  },
 };
 
 /**
