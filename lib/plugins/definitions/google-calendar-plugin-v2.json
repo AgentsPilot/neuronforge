@@ -1,7 +1,7 @@
 {
   "plugin": {
     "name": "google-calendar",
-    "version": "1.1.0",
+    "version": "1.2.0",
     "description": "Manage events, meetings, and schedules in Google Calendar",
     "context": "Use for fetching calendar events, creating meetings, scheduling appointments, setting reminders, managing attendees, and organizing time-based activities for agents",
     "icon": "<Calendar className='w-5 h-5 text-blue-500'/>",
@@ -1115,6 +1115,229 @@
           "calendar_not_found": "One or more calendars were not found. Check the calendar IDs and ensure you have access.",
           "invalid_time_format": "The time format is invalid. Use RFC3339/ISO 8601 format like '2026-03-27T00:00:00Z'.",
           "invalid_time_range": "The time window is invalid. time_min must be strictly before time_max.",
+          "permission_denied": "You don't have permission to query availability for one or more of these calendars.",
+          "api_rate_limit": "Too many requests in a short time. Please wait a moment and try again.",
+          "insufficient_permissions": "Google Calendar permissions are insufficient. Please reconnect with full calendar access."
+        }
+      }
+    },
+    "list_available_slots": {
+      "description": "Compute open, bookable time slots by subtracting busy intervals from working-hours windows",
+      "usage_context": "When user wants to find open times to book/schedule a meeting (a Calendly-style 'here are the times you can book'), given working hours and a slot length. Computes availability deterministically in the executor: queries busy intervals (freebusy) and subtracts them — plus optional buffer padding around meetings and a minimum-notice floor — from the user's working-hours windows, then slices the free time into fixed-length slots. IMPORTANT SEMANTICS: (1) buffer_minutes pads busy blocks on BOTH sides (before/after meetings) — it does NOT add gaps between adjacent free slots, which remain back-to-back. (2) Output slots are UTC 'Z' RFC3339 instants; the working-hours time_zone is echoed for local rendering. (3) This action REPORTS availability only — it books nothing and holds nothing, so a returned slot is not reserved and could be taken by the time an event is created. The search window must not exceed 92 days.",
+      "idempotent": true,
+      "domain": "calendar",
+      "capability": "list",
+      "input_entity": null,
+      "output_entity": "time_slot",
+      "input_cardinality": null,
+      "output_cardinality": "collection",
+      "output_fields": [
+        "slots",
+        "slot_count",
+        "time_zone"
+      ],
+      "required_params": [
+        "range_start",
+        "range_end",
+        "slot_duration_minutes",
+        "working_hours"
+      ],
+      "optional_params": [
+        "calendar_ids",
+        "buffer_minutes",
+        "min_notice_minutes",
+        "max_slots"
+      ],
+      "must_support": [
+        "timezone_aware",
+        "multi_calendar"
+      ],
+      "parameters": {
+        "type": "object",
+        "required": [
+          "range_start",
+          "range_end",
+          "slot_duration_minutes",
+          "working_hours"
+        ],
+        "properties": {
+          "range_start": {
+            "type": "string",
+            "description": "Start of the overall search window (RFC3339/ISO 8601, e.g. '2026-08-01T00:00:00Z'). Required."
+          },
+          "range_end": {
+            "type": "string",
+            "description": "End of the overall search window (RFC3339/ISO 8601). Required, must be strictly after range_start, and the window must not exceed 92 days."
+          },
+          "slot_duration_minutes": {
+            "type": "number",
+            "description": "Length of each bookable slot in minutes (positive integer, e.g. 30). Required."
+          },
+          "working_hours": {
+            "type": "object",
+            "description": "Availability windows plus the IANA time zone that interprets them. time_zone is required (no silent UTC default). Each window lists weekdays + a wall-clock HH:MM start/end in that zone. Multiple windows may share a day to express intra-day breaks (e.g. a lunch break). A weekday not covered by any window is unavailable.",
+            "properties": {
+              "time_zone": {
+                "type": "string",
+                "description": "IANA time zone that interprets every window start/end and day boundary (e.g. 'America/New_York', 'Europe/London'). Required."
+              },
+              "windows": {
+                "type": "array",
+                "description": "One or more availability rules. Same-day overlapping windows are unioned before slicing.",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "days": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "Lowercase weekday names this window applies to (e.g. ['monday','tuesday','wednesday','thursday','friday'])."
+                    },
+                    "start": {
+                      "type": "string",
+                      "description": "Wall-clock start time 'HH:MM' (24-hour) in time_zone (e.g. '09:00'). Must be strictly before end."
+                    },
+                    "end": {
+                      "type": "string",
+                      "description": "Wall-clock end time 'HH:MM' (24-hour) in time_zone (e.g. '17:00')."
+                    }
+                  },
+                  "required": [
+                    "days",
+                    "start",
+                    "end"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "time_zone",
+              "windows"
+            ]
+          },
+          "calendar_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": [
+              "primary"
+            ],
+            "description": "Calendars whose busy blocks make a slot unavailable (use 'primary' for the user's primary calendar, or specific calendar IDs/emails). At most 50 per query.",
+            "x-dynamic-options": {
+              "source": "list_calendars",
+              "description": "Fetches available calendars dynamically"
+            }
+          },
+          "buffer_minutes": {
+            "type": "number",
+            "default": 0,
+            "description": "Padding (minutes) applied around EACH busy block on both sides before subtracting — a gap required before and after existing meetings. Does NOT add gaps between adjacent free slots. Must be >= 0."
+          },
+          "min_notice_minutes": {
+            "type": "number",
+            "default": 0,
+            "description": "Earliest bookable time relative to now, in minutes (e.g. 120 = no slots within the next 2 hours). Must be >= 0."
+          },
+          "max_slots": {
+            "type": "number",
+            "default": 500,
+            "description": "Maximum number of slots to return (chronological, earliest first). Guards against pathological output. Must be >= 0."
+          }
+        }
+      },
+      "rules": {
+        "limits": {
+          "max_calendars": {
+            "condition": "calendar_ids_count > 50",
+            "action": "block",
+            "message": "Cannot query more than 50 calendars in a single availability request. Please reduce the number of calendars."
+          }
+        },
+        "confirmations": {}
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "slots": {
+            "type": "array",
+            "description": "Open, bookable time slots (chronological, earliest first). Each slot is a UTC 'Z' RFC3339 instant pair.",
+            "items": {
+              "type": "object",
+              "x-semantic-type": "time_slot",
+              "properties": {
+                "start": {
+                  "type": "string",
+                  "description": "Slot start (RFC3339 UTC 'Z' instant)"
+                },
+                "end": {
+                  "type": "string",
+                  "description": "Slot end (RFC3339 UTC 'Z' instant)"
+                }
+              }
+            }
+          },
+          "slot_count": {
+            "type": "integer",
+            "description": "Number of slots returned (slots.length)"
+          },
+          "range_start": {
+            "type": "string",
+            "description": "Start of the search window (echoed)",
+            "x-guaranteed": true
+          },
+          "range_end": {
+            "type": "string",
+            "description": "End of the search window (echoed)",
+            "x-guaranteed": true
+          },
+          "time_zone": {
+            "type": "string",
+            "description": "IANA time zone from working_hours (echoed, for local rendering of the UTC slots)"
+          },
+          "slot_duration_minutes": {
+            "type": "integer",
+            "description": "Slot length in minutes (echoed)"
+          },
+          "computed_at": {
+            "type": "string",
+            "description": "Timestamp when the availability was computed (ISO 8601)",
+            "x-guaranteed": true
+          }
+        },
+        "required": [
+          "slots",
+          "slot_count",
+          "time_zone"
+        ]
+      },
+      "output_guidance": {
+        "success_description": "Computed available booking slots",
+        "sample_output": {
+          "slots": [
+            {
+              "start": "2026-08-03T13:00:00.000Z",
+              "end": "2026-08-03T13:30:00.000Z"
+            },
+            {
+              "start": "2026-08-03T13:30:00.000Z",
+              "end": "2026-08-03T14:00:00.000Z"
+            }
+          ],
+          "slot_count": 2,
+          "range_start": "2026-08-03T00:00:00Z",
+          "range_end": "2026-08-05T00:00:00Z",
+          "time_zone": "America/New_York",
+          "slot_duration_minutes": 30,
+          "computed_at": "2026-07-27T08:30:00.000Z"
+        },
+        "common_errors": {
+          "auth_failed": "Your Google Calendar connection has expired. Please go to Settings → Connected Apps to reconnect Google Calendar.",
+          "calendar_not_found": "One or more calendars were not found. Check the calendar IDs and ensure you have access.",
+          "invalid_time_range": "The search window is invalid. Provide RFC3339 range_start and range_end, with range_end strictly after range_start.",
+          "invalid_working_hours": "The working_hours are invalid. Provide an IANA time_zone and at least one window with weekday names and 'HH:MM' start/end (start before end).",
+          "invalid_input": "One or more inputs are invalid (e.g. slot_duration_minutes must be a positive integer, the window must not exceed 92 days, or at most 50 calendars).",
           "permission_denied": "You don't have permission to query availability for one or more of these calendars.",
           "api_rate_limit": "Too many requests in a short time. Please wait a moment and try again.",
           "insufficient_permissions": "Google Calendar permissions are insufficient. Please reconnect with full calendar access."

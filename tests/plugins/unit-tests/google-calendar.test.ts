@@ -1,5 +1,5 @@
 /**
- * Unit tests for GoogleCalendarPluginExecutor — 5 actions
+ * Unit tests for GoogleCalendarPluginExecutor — 8 actions
  */
 
 import { GoogleCalendarPluginExecutor } from '@/lib/server/google-calendar-plugin-executor';
@@ -194,6 +194,42 @@ describe('GoogleCalendarPluginExecutor', () => {
       });
     });
 
+    // ---- list_available_slots (happy path) ----
+    describe('list_available_slots', () => {
+      it('should POST to /freeBusy and return computed slots', async () => {
+        // Busy block on the primary calendar; the pure slot-math subtracts it.
+        mockFetchSuccess({
+          calendars: {
+            primary: {
+              busy: [{ start: '2026-08-03T14:00:00Z', end: '2026-08-03T14:30:00Z' }],
+            },
+          },
+        });
+
+        const result = await executor.executeAction(USER_ID, 'list_available_slots', {
+          range_start: '2026-08-03T00:00:00Z',
+          range_end: '2026-08-05T00:00:00Z',
+          slot_duration_minutes: 30,
+          working_hours: {
+            time_zone: 'America/New_York',
+            windows: [{ days: ['monday'], start: '09:00', end: '12:00' }],
+          },
+          calendar_ids: ['primary'],
+        });
+
+        expectSuccessResult(result);
+        expect(Array.isArray(result.data.slots)).toBe(true);
+        expect(result.data.slot_count).toBe(result.data.slots.length);
+        expect(result.data.time_zone).toBe('America/New_York');
+        // Every emitted slot is a UTC 'Z' instant with start/end only.
+        for (const slot of result.data.slots) {
+          expect(Object.keys(slot).sort()).toEqual(['end', 'start']);
+          expect(slot.start.endsWith('Z')).toBe(true);
+        }
+        expectFetchCalledWith('/calendar/v3/freeBusy', 'POST');
+      });
+    });
+
     // ---- list_calendars ----
     describe('list_calendars', () => {
       it('should GET calendarList and map items + total_found', async () => {
@@ -324,6 +360,81 @@ describe('GoogleCalendarPluginExecutor', () => {
 
         expect(good.busy).toEqual([{ start: '2026-03-27T10:00:00Z', end: '2026-03-27T11:00:00Z' }]);
         expect(bad.errors).toEqual([{ domain: 'global', reason: 'notFound' }]);
+      });
+
+      // CR-4 regression: after extracting the shared fetchBusyIntervals helper,
+      // get_free_busy's mapped output contract must be UNCHANGED — privacy map
+      // (start/end only), per-calendar errors passthrough, and the echoed
+      // window/time_zone/queried_at wrapper.
+      it('CR-4 regression: get_free_busy output contract is unchanged after helper extraction', async () => {
+        mockFetchSuccess({
+          calendars: {
+            primary: {
+              busy: [
+                { start: '2026-03-27T10:00:00Z', end: '2026-03-27T11:00:00Z', summary: 'LEAK' },
+              ],
+            },
+            'missing@example.com': {
+              errors: [{ domain: 'global', reason: 'notFound' }],
+            },
+          },
+        });
+
+        const result = await executor.executeAction(USER_ID, 'get_free_busy', {
+          calendar_ids: ['primary', 'missing@example.com'],
+          time_min: '2026-03-27T00:00:00Z',
+          time_max: '2026-03-28T00:00:00Z',
+          time_zone: 'UTC',
+        });
+
+        expectSuccessResult(result);
+
+        const good = result.data.calendars.find((c: any) => c.calendar_id === 'primary');
+        const bad = result.data.calendars.find((c: any) => c.calendar_id === 'missing@example.com');
+
+        // Privacy invariant preserved: start/end only, no leaked detail.
+        expect(good.busy).toEqual([{ start: '2026-03-27T10:00:00Z', end: '2026-03-27T11:00:00Z' }]);
+        expect(Object.keys(good.busy[0])).toEqual(['start', 'end']);
+        // Per-calendar errors still surfaced.
+        expect(bad.errors).toEqual([{ domain: 'global', reason: 'notFound' }]);
+        // Echoed wrapper + guaranteed timestamp unchanged.
+        expect(result.data.time_min).toBe('2026-03-27T00:00:00Z');
+        expect(result.data.time_max).toBe('2026-03-28T00:00:00Z');
+        expect(result.data.time_zone).toBe('UTC');
+        expect(typeof result.data.queried_at).toBe('string');
+      });
+    });
+
+    // ---- list_available_slots: auth failure + invalid input ----
+    describe('list_available_slots', () => {
+      const validSlotParams = {
+        range_start: '2026-08-03T00:00:00Z',
+        range_end: '2026-08-05T00:00:00Z',
+        slot_duration_minutes: 30,
+        working_hours: {
+          time_zone: 'America/New_York',
+          windows: [{ days: ['monday'], start: '09:00', end: '17:00' }],
+        },
+        calendar_ids: ['primary'],
+      };
+
+      it('should return an error on 401 (auth failure)', async () => {
+        mockFetchError(401, { error: { code: 401, message: 'Invalid Credentials' } });
+
+        const result = await executor.executeAction(USER_ID, 'list_available_slots', validSlotParams);
+
+        expectErrorResult(result);
+      });
+
+      it('should reject a request missing range_end (invalid input) with no network call', async () => {
+        mockFetchSuccess({ calendars: {} });
+
+        const { range_end, ...missingEnd } = validSlotParams;
+        const result = await executor.executeAction(USER_ID, 'list_available_slots', missingEnd);
+
+        expectErrorResult(result);
+        // Pre-fetch validation blocks before any freebusy call.
+        expect(getAllFetchCalls()).toHaveLength(0);
       });
     });
 
