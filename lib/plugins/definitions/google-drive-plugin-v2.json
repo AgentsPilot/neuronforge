@@ -1,7 +1,7 @@
 {
   "plugin": {
     "name": "google-drive",
-    "version": "1.0.0",
+    "version": "1.3.0",
     "description": "Access, search, read, upload, and manage files and folders in Google Drive",
     "context": "Use for accessing Google Drive files, searching documents, reading file contents, uploading files, creating folders, and managing folder structures",
     "icon": "<Calendar className='w-5 h-5 text-blue-600'/>",

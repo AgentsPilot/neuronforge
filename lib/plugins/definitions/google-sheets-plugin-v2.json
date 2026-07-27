@@ -1,7 +1,7 @@
 {
   "plugin": {
     "name": "google-sheets",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "description": "Read, write, and manage data in Google Sheets spreadsheets",
     "context": "Use for reading data from spreadsheets, writing structured output, appending rows, creating new spreadsheets, and managing spreadsheet data as structured input/output for agents",
     "icon": "<Calendar className='w-5 h-5 text-green-600'/>",

@@ -527,7 +527,16 @@ No tests added beyond policy. Coverage is exactly 18 LEAN (3/action) + 4 safety 
 
 ## Commit Info
 
-_(RM to populate at commit.)_
+| Field | Value |
+|-------|-------|
+| Branch | `feature/google-suite-phase1-actions` |
+| Commit | `50cb848` — `feat(plugins): add Phase 1 Gmail label & messaging actions` |
+| Date | 2026-07-27 |
+| Files | 10 (definition JSON, executor, V6 input-type-compat, unit + integration tests, plugin doc, test-page, this workplan, + Sheets/Docs workplan Commit-Info bookkeeping) |
+| Tests | 48/48 unit tests passing |
+| Pushed | No — local commit only, pending PR |
+| Gates | SA workplan-review ✅ · SA code-review ✅ · QA PASS ✅ · user-approved ✅ |
+| Follow-up | batch/confirm rules advisory (inert `extractRuleContext` gap, task_2ea2e007); enforcement is in-executor |
 
 ---
 
