@@ -416,7 +416,16 @@ list_calendars
 
 ## Commit Info
 
-_(RM to populate at commit time.)_
+| Field | Value |
+|-------|-------|
+| Branch | `feature/google-suite-phase1-actions` |
+| Commit | `16e9a40` — `feat(plugins): add Phase 1 Google Calendar availability actions` |
+| Date | 2026-07-27 |
+| Files | 8 (definition JSON, executor, unit + integration tests, integration-config, plugin doc, test-page, this workplan) |
+| Tests | 27/27 unit tests passing |
+| Pushed | No — local commit only, pending PR |
+| Gates | SA workplan-review ✅ · SA code-review ✅ · QA PASS ✅ · user-approved ✅ |
+| Notes | Version reconciled JSON+doc → 1.1.0; fixed pre-existing update_event PATCH→PUT doc row; availability foundation for Phase 2 list_available_slots |
 
 ---
 
