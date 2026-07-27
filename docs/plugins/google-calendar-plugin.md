@@ -1,8 +1,8 @@
 # Google Calendar Plugin Documentation
 
-**Plugin Version**: 1.0.0
+**Plugin Version**: 1.1.0
 **Category**: Communication
-**Last Updated**: 2025-11-30
+**Last Updated**: 2026-07-27
 
 ---
 
@@ -124,7 +124,7 @@ Manage events, meetings, and schedules in Google Calendar. Use for fetching cale
 
 | Property | Value |
 |----------|-------|
-| HTTP Method | PATCH |
+| HTTP Method | GET (fetch existing) + PUT (write merged event) |
 | Endpoint | `/calendar/v3/calendars/{calendar_id}/events/{event_id}` |
 
 **Parameters**:
@@ -217,6 +217,75 @@ Manage events, meetings, and schedules in Google Calendar. Use for fetching cale
 
 ---
 
+### 6. get_free_busy
+**Description**: Query busy/free intervals across one or more calendars over a time window (availability primitive)
+
+| Property | Value |
+|----------|-------|
+| HTTP Method | POST |
+| Endpoint | `/calendar/v3/freeBusy` |
+| Idempotent | Yes (read-only) |
+
+**Parameters**:
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| calendar_ids | array\<string\> | No | Calendar identifier(s) to query (default: `["primary"]`; at most 50 per query) |
+| time_min | string | Yes | Start of the availability window (RFC3339/ISO 8601, e.g. `2026-03-27T00:00:00Z`) |
+| time_max | string | Yes | End of the availability window (RFC3339/ISO 8601); must be strictly after `time_min` |
+| time_zone | string | No | IANA time zone used to interpret the response (default: `UTC`) |
+
+**Behavior & guarantees**:
+- **Privacy-safe**: returns only busy `start`/`end` intervals — never event titles, attendees, descriptions, or any other event detail. The executor copies solely `start`/`end` and never enriches a busy block with a secondary lookup.
+- **Partial success**: the `freebusy.query` response may carry per-calendar `errors` (e.g. `notFound`) inside an HTTP 200. Those are surfaced per calendar (in `calendars[].errors`) and do **not** fail the action — other calendars still return their busy intervals. Only a top-level HTTP failure fails the action.
+- **Pre-fetch guards**: rejects a request where `time_min`/`time_max` are missing or not valid RFC3339, or where the window is inverted/degenerate (`time_min >= time_max`), before any network call. Requests over 50 calendars are rejected before the call (Google's `calendarExpansionMax`).
+
+**Response Structure**:
+| Field | Type | Description |
+|-------|------|-------------|
+| calendars | array | Per-calendar availability |
+| calendars[].calendar_id | string | Calendar these intervals belong to |
+| calendars[].busy | array | Busy intervals (`{ start, end }` only) within the window |
+| calendars[].busy[].start | string | Busy interval start (RFC3339/ISO 8601) |
+| calendars[].busy[].end | string | Busy interval end (RFC3339/ISO 8601) |
+| calendars[].errors | array | Per-calendar errors (present only on partial failure, e.g. `notFound`) |
+| time_min | string | Start of the queried window (echoed) |
+| time_max | string | End of the queried window (echoed) |
+| time_zone | string | Time zone used to interpret the response (echoed) |
+| queried_at | string | Timestamp when the free/busy query ran (ISO 8601) |
+
+---
+
+### 7. list_calendars
+**Description**: List the user's calendars (calendar list)
+
+| Property | Value |
+|----------|-------|
+| HTTP Method | GET |
+| Endpoint | `/calendar/v3/users/me/calendarList` |
+| Idempotent | Yes (read-only) |
+
+**Parameters**:
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| min_access_role | string | No | Only return calendars where the user has at least this access role. One of `freeBusyReader`, `reader`, `writer`, `owner`. Omit to return all calendars. |
+
+**Response Structure**:
+| Field | Type | Description |
+|-------|------|-------------|
+| calendars | array | The user's calendars |
+| calendars[].id | string | Calendar identifier (use as `calendar_id` in other actions) |
+| calendars[].summary | string | Calendar name/title |
+| calendars[].description | string | Calendar description |
+| calendars[].time_zone | string | Calendar time zone (IANA) |
+| calendars[].primary | boolean | Whether this is the user's primary calendar |
+| calendars[].access_role | string | The user's access role (freeBusyReader, reader, writer, owner) |
+| total_found | integer | Number of calendars returned |
+| listed_at | string | Timestamp when calendars were listed (ISO 8601) |
+
+> **Note**: this is the `list_calendars` **action** (returns the schema-shaped payload above). It is distinct from the internal `list_calendars` dropdown-options fetcher used to populate `calendar_id`/`calendar_ids` dropdowns, which returns `{ value, label, ... }` option objects and is not an agent-invokable action.
+
+---
+
 ## Generated Files
 
 | File Path | Description |
@@ -246,4 +315,5 @@ To obtain credentials:
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.1.0 | 2026-07-27 | Added 2 read-only availability actions: `get_free_busy` (freebusy.query — per-calendar busy intervals, privacy-safe start/end only, partial-success on per-calendar errors) and `list_calendars` (calendarList.list). Corrected the `update_event` HTTP-method row (GET + PUT, not PATCH). |
 | 1.0.0 | 2025-11-30 | Initial plugin with 5 actions: list_events, create_event, update_event, delete_event, get_event_details |

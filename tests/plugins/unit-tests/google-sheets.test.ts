@@ -332,4 +332,212 @@ describe('GoogleSheetsPluginExecutor', () => {
       });
     });
   });
+
+  // ==========================================================================
+  // Phase 1 formatting / structural actions: format_cells, clear_range,
+  // delete_rows. LEAN policy — exactly 3 tests per action (happy + 401 auth +
+  // invalid-input) + one safety-critical delete_rows bounded-range assertion +
+  // a couple of pure a1RangeToGridRange checks.
+  // ==========================================================================
+  describe('Phase 1 formatting / structural actions', () => {
+    // A spreadsheet-info body with one tab named 'Sheet1' (sheetId 0), used to
+    // resolve the numeric sheetId for the batchUpdate-based actions.
+    const infoBody = {
+      spreadsheetId: 'ss-fmt',
+      spreadsheetUrl: 'https://link',
+      properties: { title: 'Fmt Sheet', locale: 'en', timeZone: 'UTC' },
+      sheets: [{ properties: { sheetId: 0, title: 'Sheet1', index: 0, sheetType: 'GRID' } }],
+    };
+
+    // ---- format_cells ----
+    describe('format_cells', () => {
+      it('applies bold + background + freeze via a single batchUpdate', async () => {
+        mockFetchSequence([
+          { body: infoBody }, // resolveSheetId → getSpreadsheetInfo
+          { body: { replies: [{}, {}] } }, // batchUpdate
+        ]);
+
+        const result = await executor.executeAction(USER_ID, 'format_cells', {
+          spreadsheet_id: 'ss-fmt',
+          range: 'Sheet1!A1:D1',
+          bold: true,
+          background_color: '#FDE68A',
+          freeze_rows: 1,
+        });
+
+        expectSuccessResult(result);
+        expect(result.data.format_summary).toEqual({
+          bold_applied: true,
+          background_applied: true,
+          frozen_rows: 1,
+        });
+        expectFetchCalledWith(':batchUpdate', 'POST');
+
+        // The batchUpdate carries BOTH a repeatCell and an updateSheetProperties.
+        const batchCall = getAllFetchCalls().find(c => c.url.includes(':batchUpdate'));
+        const body = JSON.parse((batchCall!.options as any).body);
+        const kinds = body.requests.map((r: any) => Object.keys(r)[0]);
+        expect(kinds).toContain('repeatCell');
+        expect(kinds).toContain('updateSheetProperties');
+
+        // CR-C: the repeatCell fields mask is scoped to ONLY the supplied subfields —
+        // never a broad `userEnteredFormat` that would clobber unrelated formatting.
+        const repeatCell = body.requests.find((r: any) => r.repeatCell).repeatCell;
+        const maskFields = repeatCell.fields.split(',');
+        expect(maskFields).toContain('userEnteredFormat.textFormat.bold');
+        expect(maskFields).toContain('userEnteredFormat.backgroundColor');
+        expect(maskFields).not.toContain('userEnteredFormat');
+      });
+
+      it('returns an error on 401 auth failure', async () => {
+        mockFetchError(401, { error: { code: 401, message: 'Invalid credentials' } });
+
+        const result = await executor.executeAction(USER_ID, 'format_cells', {
+          spreadsheet_id: 'ss-fmt',
+          range: 'Sheet1!A1:D1',
+          bold: true,
+        });
+
+        expectErrorResult(result);
+      });
+
+      it('rejects missing range (invalid input)', async () => {
+        const result = await executor.executeAction(USER_ID, 'format_cells', {
+          spreadsheet_id: 'ss-fmt',
+          bold: true,
+        });
+
+        expectErrorResult(result);
+      });
+    });
+
+    // ---- clear_range ----
+    describe('clear_range', () => {
+      it('clears a range via the values :clear endpoint', async () => {
+        mockFetchSuccess({ spreadsheetId: 'ss-clr', clearedRange: 'Sheet1!A2:D100' });
+
+        const result = await executor.executeAction(USER_ID, 'clear_range', {
+          spreadsheet_id: 'ss-clr',
+          range: 'Sheet1!A2:D100',
+        });
+
+        expectSuccessResult(result);
+        expect(result.data.cleared_range).toBe('Sheet1!A2:D100');
+        expectFetchCalledWith(':clear', 'POST');
+      });
+
+      it('returns an error on 401 auth failure', async () => {
+        mockFetchError(401, { error: { code: 401, message: 'Invalid credentials' } });
+
+        const result = await executor.executeAction(USER_ID, 'clear_range', {
+          spreadsheet_id: 'ss-clr',
+          range: 'Sheet1!A2:D100',
+        });
+
+        expectErrorResult(result);
+      });
+
+      it('rejects missing range (invalid input)', async () => {
+        const result = await executor.executeAction(USER_ID, 'clear_range', {
+          spreadsheet_id: 'ss-clr',
+        });
+
+        expectErrorResult(result);
+      });
+    });
+
+    // ---- delete_rows ----
+    describe('delete_rows', () => {
+      it('deletes a bounded row range via batchUpdate deleteDimension', async () => {
+        mockFetchSequence([
+          { body: infoBody }, // resolveSheetId
+          { body: { replies: [{}] } }, // batchUpdate
+        ]);
+
+        const result = await executor.executeAction(USER_ID, 'delete_rows', {
+          spreadsheet_id: 'ss-del',
+          sheet_name: 'Sheet1',
+          start_row: 2,
+          end_row: 5,
+        });
+
+        expectSuccessResult(result);
+        expect(result.data.deleted_row_count).toBe(4);
+        expectFetchCalledWith(':batchUpdate', 'POST');
+      });
+
+      it('returns an error on 401 auth failure', async () => {
+        mockFetchError(401, { error: { code: 401, message: 'Invalid credentials' } });
+
+        const result = await executor.executeAction(USER_ID, 'delete_rows', {
+          spreadsheet_id: 'ss-del',
+          sheet_name: 'Sheet1',
+          start_row: 2,
+          end_row: 5,
+        });
+
+        expectErrorResult(result);
+      });
+
+      it('rejects end_row < start_row and issues NO fetch (invalid input)', async () => {
+        // No mock installed — if a fetch were issued it would throw, surfacing the
+        // guard-before-network contract.
+        const result = await executor.executeAction(USER_ID, 'delete_rows', {
+          spreadsheet_id: 'ss-del',
+          sheet_name: 'Sheet1',
+          start_row: 5,
+          end_row: 2,
+        });
+
+        expectErrorResult(result);
+        expect(getAllFetchCalls()).toHaveLength(0);
+      });
+
+      // ---- Safety-critical: DELETE-INTENDED-RANGE-ONLY ----
+      it('SAFETY: sends a bounded deleteDimension range with a finite endIndex (never whole-sheet)', async () => {
+        mockFetchSequence([
+          { body: infoBody },
+          { body: { replies: [{}] } },
+        ]);
+
+        await executor.executeAction(USER_ID, 'delete_rows', {
+          spreadsheet_id: 'ss-del',
+          sheet_name: 'Sheet1',
+          start_row: 2,
+          end_row: 5,
+        });
+
+        const batchCall = getAllFetchCalls().find(c => c.url.includes(':batchUpdate'));
+        expect(batchCall).toBeDefined();
+        const body = JSON.parse((batchCall!.options as any).body);
+        const range = body.requests[0].deleteDimension.range;
+
+        // rows 2–5 (1-based inclusive) → 0-based half-open [1, 5).
+        expect(range).toEqual({ sheetId: 0, dimension: 'ROWS', startIndex: 1, endIndex: 5 });
+        // CR-D: both bounds are finite — an omitted/undefined endIndex would let
+        // Google delete to the end of the sheet.
+        expect(Number.isFinite(range.startIndex)).toBe(true);
+        expect(Number.isFinite(range.endIndex)).toBe(true);
+      });
+    });
+
+    // ---- Pure a1RangeToGridRange (deterministic, no network) ----
+    describe('a1RangeToGridRange (pure)', () => {
+      it('parses a header range into a 0-based half-open GridRange', () => {
+        const gr = (executor as any).a1RangeToGridRange('Sheet1!A1:D1', 7);
+        expect(gr).toEqual({
+          sheetId: 7,
+          startRowIndex: 0,
+          endRowIndex: 1,
+          startColumnIndex: 0,
+          endColumnIndex: 4,
+        });
+      });
+
+      it('omits row bounds for a whole-column range (A:D)', () => {
+        const gr = (executor as any).a1RangeToGridRange('A:D', 0);
+        expect(gr).toEqual({ sheetId: 0, startColumnIndex: 0, endColumnIndex: 4 });
+      });
+    });
+  });
 });

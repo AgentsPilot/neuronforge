@@ -1,9 +1,14 @@
 /**
- * Unit tests for GmailPluginExecutor — 5 actions
+ * Unit tests for GmailPluginExecutor — 5 original + 6 Phase 1 actions
  *
  * Tests call executeAction() on the executor (full flow through base class)
  * to validate parameter validation, connection retrieval, action dispatch,
  * response parsing, and error mapping.
+ *
+ * Phase 1 (get_or_create_label, list_labels, delete_label, reply_to_email,
+ * send_draft, batch_modify_emails) follows a LEAN policy: exactly 3 unit tests
+ * per action (happy + 401 + invalid-input) + 4 safety assertions (S1–S4) + one
+ * CR-3 regression assertion protecting the buildEmailMessage extraHeaders change.
  */
 
 import { GmailPluginExecutor } from '@/lib/server/gmail-plugin-executor';
@@ -376,6 +381,384 @@ describe('GmailPluginExecutor', () => {
         });
         expectErrorResult(result);
       });
+    });
+  });
+});
+
+/**
+ * Decode a Gmail base64url raw message back to its RFC822 string.
+ * Used to assert MIME header content (In-Reply-To, References, etc.).
+ */
+function decodeRawMessage(raw: string): string {
+  const base64 = raw.replace(/-/g, '+').replace(/_/g, '/');
+  return Buffer.from(base64, 'base64').toString('utf-8');
+}
+
+/** Parse the JSON body of a recorded fetch call. */
+function bodyOf(call: { options?: any } | undefined): any {
+  return call?.options?.body ? JSON.parse(call.options.body as string) : undefined;
+}
+
+describe('GmailPluginExecutor — Phase 1 actions', () => {
+  let executor: any;
+
+  beforeAll(async () => {
+    const ctx = await createTestExecutor(GmailPluginExecutor, PLUGIN_KEY);
+    executor = ctx.executor;
+  });
+
+  afterEach(() => {
+    restoreFetch();
+  });
+
+  // ─── get_or_create_label (3 + S1) ───────────────────────────────────────
+  describe('get_or_create_label', () => {
+    it('[happy] creates the label on a miss and returns created:true', async () => {
+      mockFetchSequence([
+        // GET /labels — "Invoices" absent
+        { body: { labels: [{ id: 'INBOX', name: 'INBOX', type: 'system' }] } },
+        // POST /labels — create "Invoices"
+        { body: { id: 'Label_1', name: 'Invoices', type: 'user' } },
+      ]);
+
+      const result = await executor.executeAction(USER_ID, 'get_or_create_label', {
+        label_name: 'Invoices',
+      });
+
+      expectSuccessResult(result);
+      expect(result.data.label_id).toBe('Label_1');
+      expect(result.data.created).toBe(true);
+      expectFetchCalledWith('gmail.googleapis.com/gmail/v1/users/me/labels', 'POST');
+    });
+
+    it('[401] returns error result on auth failure', async () => {
+      mockFetchError(401, 'Unauthorized');
+      const result = await executor.executeAction(USER_ID, 'get_or_create_label', {
+        label_name: 'Invoices',
+      });
+      expectErrorResult(result);
+    });
+
+    it('[invalid] empty label_name is rejected before any fetch', async () => {
+      mockFetchSuccess({ labels: [] });
+      const result = await executor.executeAction(USER_ID, 'get_or_create_label', {
+        label_name: '   ',
+      });
+      expectErrorResult(result);
+      expect(getAllFetchCalls()).toHaveLength(0);
+    });
+
+    it('[S1] does NOT POST create when the label already exists (find path)', async () => {
+      // Case-insensitive match against an existing label → GET only, no POST.
+      mockFetchSuccess({ labels: [{ id: 'Label_1', name: 'Invoices', type: 'user' }] });
+
+      const result = await executor.executeAction(USER_ID, 'get_or_create_label', {
+        label_name: 'invoices',
+      });
+
+      expectSuccessResult(result);
+      expect(result.data.created).toBe(false);
+      expect(result.data.label_id).toBe('Label_1');
+      const calls = getAllFetchCalls();
+      expect(calls).toHaveLength(1);
+      expect((calls[0].options?.method || 'GET').toUpperCase()).toBe('GET');
+    });
+  });
+
+  // ─── list_labels (3) ─────────────────────────────────────────────────────
+  describe('list_labels', () => {
+    it('[happy] returns labels[] + total_found', async () => {
+      mockFetchSuccess({
+        labels: [
+          { id: 'INBOX', name: 'INBOX', type: 'system' },
+          { id: 'Label_1', name: 'Invoices', type: 'user' },
+        ],
+      });
+
+      const result = await executor.executeAction(USER_ID, 'list_labels', {});
+
+      expectSuccessResult(result);
+      expect(result.data.labels).toHaveLength(2);
+      expect(result.data.total_found).toBe(2);
+      expectFetchCalledWith('gmail.googleapis.com/gmail/v1/users/me/labels');
+    });
+
+    it('[401] returns error result on auth failure', async () => {
+      mockFetchError(401, 'Unauthorized');
+      const result = await executor.executeAction(USER_ID, 'list_labels', {});
+      expectErrorResult(result);
+    });
+
+    it('[invalid] out-of-enum label_type is clamped to default and still succeeds', async () => {
+      // The param-constraint guard clamps an invalid enum back to the declared
+      // default ('all'), so the run self-heals rather than failing.
+      mockFetchSuccess({
+        labels: [
+          { id: 'INBOX', name: 'INBOX', type: 'system' },
+          { id: 'Label_1', name: 'Invoices', type: 'user' },
+        ],
+      });
+
+      const result = await executor.executeAction(USER_ID, 'list_labels', {
+        label_type: 'bogus',
+      });
+
+      expectSuccessResult(result);
+      expect(result.data.total_found).toBe(2);
+    });
+  });
+
+  // ─── delete_label (3 + S3) ───────────────────────────────────────────────
+  describe('delete_label', () => {
+    it('[happy] issues DELETE and returns deleted:true (204, no .json())', async () => {
+      mockFetchSuccess({}, 204);
+
+      const result = await executor.executeAction(USER_ID, 'delete_label', {
+        label_id: 'Label_1',
+      });
+
+      expectSuccessResult(result);
+      expect(result.data.deleted).toBe(true);
+      expect(result.data.already_absent).toBe(false);
+      expectFetchCalledWith('/labels/Label_1', 'DELETE');
+    });
+
+    it('[401] returns error result on auth failure', async () => {
+      mockFetchError(401, 'Unauthorized');
+      const result = await executor.executeAction(USER_ID, 'delete_label', {
+        label_id: 'Label_1',
+      });
+      expectErrorResult(result);
+    });
+
+    it('[invalid] a system label id is rejected before any DELETE', async () => {
+      mockFetchSuccess({}, 204);
+      const result = await executor.executeAction(USER_ID, 'delete_label', {
+        label_id: 'INBOX',
+      });
+      expectErrorResult(result);
+      expect(getAllFetchCalls()).toHaveLength(0);
+    });
+
+    it('[S3] 404 resolves to already-absent success; system label rejected pre-fetch', async () => {
+      // (a) 404 → already-absent success, not a thrown error.
+      mockFetchError(404, 'Not Found');
+      const absentResult = await executor.executeAction(USER_ID, 'delete_label', {
+        label_id: 'Label_gone',
+      });
+      expectSuccessResult(absentResult);
+      expect(absentResult.data.already_absent).toBe(true);
+      expect(absentResult.data.deleted).toBe(true);
+
+      restoreFetch();
+
+      // (b) system label rejected before any network call.
+      mockFetchSuccess({}, 204);
+      const systemResult = await executor.executeAction(USER_ID, 'delete_label', {
+        label_id: 'SENT',
+      });
+      expectErrorResult(systemResult);
+      expect(getAllFetchCalls()).toHaveLength(0);
+    });
+  });
+
+  // ─── reply_to_email (3 + S2) ─────────────────────────────────────────────
+  describe('reply_to_email', () => {
+    it('[happy] fetches original metadata then sends into the same thread', async () => {
+      mockFetchSequence([
+        // GET original message metadata
+        {
+          body: {
+            threadId: 'thread-1',
+            payload: {
+              headers: [
+                { name: 'Message-ID', value: '<orig@mail.gmail.com>' },
+                { name: 'Subject', value: 'Project Update' },
+                { name: 'From', value: 'sender@example.com' },
+              ],
+            },
+          },
+        },
+        // POST send
+        { body: { id: 'msg-reply', threadId: 'thread-1' } },
+      ]);
+
+      const result = await executor.executeAction(USER_ID, 'reply_to_email', {
+        message_id: 'msg-orig',
+        content: { body: 'Thanks, got it.' },
+      });
+
+      expectSuccessResult(result);
+      expect(result.data.message_id).toBe('msg-reply');
+      expect(result.data.thread_id).toBe('thread-1');
+      expect(result.data.subject).toBe('Re: Project Update');
+      expectFetchCalledWith('gmail.googleapis.com/gmail/v1/users/me/messages/send', 'POST');
+    });
+
+    it('[401] returns error result when the metadata fetch is unauthorized', async () => {
+      mockFetchError(401, 'Unauthorized');
+      const result = await executor.executeAction(USER_ID, 'reply_to_email', {
+        message_id: 'msg-orig',
+        content: { body: 'Reply' },
+      });
+      expectErrorResult(result);
+    });
+
+    it('[invalid] content without body/html_body is rejected before any fetch', async () => {
+      mockFetchSuccess({});
+      const result = await executor.executeAction(USER_ID, 'reply_to_email', {
+        message_id: 'msg-orig',
+        content: {},
+      });
+      expectErrorResult(result);
+      expect(getAllFetchCalls()).toHaveLength(0);
+    });
+
+    it('[S2] send body carries threadId AND raw MIME has In-Reply-To to the original', async () => {
+      mockFetchSequence([
+        {
+          body: {
+            threadId: 'thread-1',
+            payload: {
+              headers: [
+                { name: 'Message-ID', value: '<orig@mail.gmail.com>' },
+                { name: 'Subject', value: 'Project Update' },
+                { name: 'From', value: 'sender@example.com' },
+              ],
+            },
+          },
+        },
+        { body: { id: 'msg-reply', threadId: 'thread-1' } },
+      ]);
+
+      await executor.executeAction(USER_ID, 'reply_to_email', {
+        message_id: 'msg-orig',
+        content: { body: 'Thanks, got it.' },
+      });
+
+      const sendCall = getAllFetchCalls().find((c) => c.url.includes('/messages/send'));
+      expect(sendCall).toBeDefined();
+      const body = bodyOf(sendCall);
+      // Continues the thread, not a new one.
+      expect(body.threadId).toBe('thread-1');
+      const mime = decodeRawMessage(body.raw);
+      expect(mime).toContain('In-Reply-To: <orig@mail.gmail.com>');
+      expect(mime).toContain('References: <orig@mail.gmail.com>');
+    });
+  });
+
+  // ─── send_draft (3) ──────────────────────────────────────────────────────
+  describe('send_draft', () => {
+    it('[happy] posts drafts/send and returns message + thread ids', async () => {
+      mockFetchSuccess({ id: 'msg-sent', threadId: 'thread-9' });
+
+      const result = await executor.executeAction(USER_ID, 'send_draft', {
+        draft_id: 'r123',
+      });
+
+      expectSuccessResult(result);
+      expect(result.data.message_id).toBe('msg-sent');
+      expect(result.data.thread_id).toBe('thread-9');
+      expect(result.data.draft_id).toBe('r123');
+      expectFetchCalledWith('gmail.googleapis.com/gmail/v1/users/me/drafts/send', 'POST');
+    });
+
+    it('[401] returns error result on auth failure', async () => {
+      mockFetchError(401, 'Unauthorized');
+      const result = await executor.executeAction(USER_ID, 'send_draft', {
+        draft_id: 'r123',
+      });
+      expectErrorResult(result);
+    });
+
+    it('[invalid] missing draft_id is rejected before any fetch', async () => {
+      mockFetchSuccess({ id: 'msg-sent' });
+      const result = await executor.executeAction(USER_ID, 'send_draft', {});
+      expectErrorResult(result);
+      expect(getAllFetchCalls()).toHaveLength(0);
+    });
+  });
+
+  // ─── batch_modify_emails (3 + S4) ────────────────────────────────────────
+  describe('batch_modify_emails', () => {
+    it('[happy] archives a set of messages (204, no .json())', async () => {
+      // archive uses only the system INBOX label → no GET /labels needed.
+      mockFetchSuccess({}, 204);
+
+      const result = await executor.executeAction(USER_ID, 'batch_modify_emails', {
+        message_ids: ['m1', 'm2'],
+        archive: true,
+      });
+
+      expectSuccessResult(result);
+      expect(result.data.modified_count).toBe(2);
+      expect(result.data.labels_removed).toContain('INBOX');
+      expectFetchCalledWith('gmail.googleapis.com/gmail/v1/users/me/messages/batchModify', 'POST');
+    });
+
+    it('[401] returns error result on auth failure', async () => {
+      mockFetchError(401, 'Unauthorized');
+      const result = await executor.executeAction(USER_ID, 'batch_modify_emails', {
+        message_ids: ['m1'],
+        archive: true,
+      });
+      expectErrorResult(result);
+    });
+
+    it('[invalid] empty message_ids is rejected before any fetch', async () => {
+      mockFetchSuccess({}, 204);
+      const result = await executor.executeAction(USER_ID, 'batch_modify_emails', {
+        message_ids: [],
+        archive: true,
+      });
+      expectErrorResult(result);
+      expect(getAllFetchCalls()).toHaveLength(0);
+    });
+
+    it('[S4] sends exactly the bounded id set; rejects > 1000 before fetch', async () => {
+      // (a) exact bounded id set forwarded, never widened.
+      mockFetchSuccess({}, 204);
+      await executor.executeAction(USER_ID, 'batch_modify_emails', {
+        message_ids: ['m1', 'm2', 'm3'],
+        add_labels: ['IMPORTANT'], // system label → no GET /labels
+      });
+      const batchCall = getAllFetchCalls().find((c) => c.url.includes('/messages/batchModify'));
+      expect(batchCall).toBeDefined();
+      expect(bodyOf(batchCall).ids).toEqual(['m1', 'm2', 'm3']);
+
+      restoreFetch();
+
+      // (b) > 1000 ids hard-rejected before any network call.
+      mockFetchSuccess({}, 204);
+      const tooMany = Array.from({ length: 1001 }, (_, i) => `m${i}`);
+      const result = await executor.executeAction(USER_ID, 'batch_modify_emails', {
+        message_ids: tooMany,
+        archive: true,
+      });
+      expectErrorResult(result);
+      expect(getAllFetchCalls()).toHaveLength(0);
+    });
+  });
+
+  // ─── CR-3 regression: buildEmailMessage extraHeaders must not leak ───────
+  describe('buildEmailMessage regression (CR-3)', () => {
+    it('send_email raw is unaffected by the reply extraHeaders change', async () => {
+      mockFetchSuccess({ id: 'msg-1', threadId: 'thread-1' });
+
+      await executor.executeAction(USER_ID, 'send_email', {
+        recipients: { to: ['user@example.com'] },
+        content: { subject: 'Plain Send', body: 'No threading headers here.' },
+      });
+
+      const sendCall = getAllFetchCalls().find((c) => c.url.includes('/messages/send'));
+      expect(sendCall).toBeDefined();
+      const mime = decodeRawMessage(bodyOf(sendCall).raw);
+      // The non-reply send path must never emit threading headers.
+      expect(mime).not.toContain('In-Reply-To');
+      expect(mime).not.toContain('References');
+      // Sanity: the normal headers are still present.
+      expect(mime).toContain('To: user@example.com');
+      expect(mime).toContain('Subject: Plain Send');
     });
   });
 });

@@ -1,14 +1,14 @@
 # Google Mail (Gmail) Plugin Documentation
 
-**Plugin Version**: 1.1.0
+**Plugin Version**: 1.2.0
 **Category**: Communication
-**Last Updated**: 2026-03-29
+**Last Updated**: 2026-07-26
 
 ---
 
 ## Overview
 
-Send, read, and manage Gmail emails. Use for all Gmail email-related tasks including sending messages, searching conversations, managing drafts, downloading attachments, and modifying email labels.
+Send, read, and manage Gmail emails. Use for all Gmail email-related tasks including sending messages, searching conversations, managing drafts, downloading attachments, modifying email labels, managing labels (find-or-create / list / delete), replying within a thread, sending drafts, and batch-modifying many messages at once.
 
 ---
 
@@ -205,6 +205,175 @@ Send, read, and manage Gmail emails. Use for all Gmail email-related tasks inclu
 
 ---
 
+### 6. get_or_create_label
+**Description**: Find a Gmail label by name, or create it if it does not exist (idempotent)
+
+| Property | Value |
+|----------|-------|
+| HTTP Method | GET then POST (on miss) |
+| Endpoint | `/gmail/v1/users/me/labels` |
+| Idempotent | Yes — re-running returns the same label without creating a duplicate |
+
+**Parameters**:
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| label_name | string | Yes | Name of the label to find or create (matched case-insensitively) |
+
+**Response Structure**:
+| Field | Type | Description |
+|-------|------|-------------|
+| label_id | string | Gmail label ID |
+| label_name | string | Resolved label name |
+| created | boolean | True if created by this call, false if it already existed |
+| created_at | string | ISO 8601 timestamp when the action completed |
+
+> Label visibility (`labelListVisibility` / `messageListVisibility`) is fixed to Gmail's defaults (`labelShow` / `show`) by the shared `createLabel` helper — this action takes no visibility parameters.
+
+---
+
+### 7. list_labels
+**Description**: List all Gmail labels in the user's account
+
+| Property | Value |
+|----------|-------|
+| HTTP Method | GET |
+| Endpoint | `/gmail/v1/users/me/labels` |
+| Idempotent | Yes (read-only) |
+
+**Parameters**:
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| label_type | string | No | Filter: `system`, `user`, or `all` (default: `all`) |
+
+**Response Structure**:
+| Field | Type | Description |
+|-------|------|-------------|
+| labels | array | Array of `{ id, name, type }` label objects (`x-semantic-type: gmail_label`) |
+| total_found | integer | Number of labels returned |
+| listed_at | string | ISO 8601 timestamp of the listing |
+
+> This is the `list_labels` **action**. It is distinct from the executor's public `list_labels(connection, options)` **dropdown fetcher**, which powers the `x-dynamic-options` source used by `delete_label.label_id`.
+
+---
+
+### 8. delete_label
+**Description**: Delete a Gmail label by ID (destructive)
+
+| Property | Value |
+|----------|-------|
+| HTTP Method | DELETE (returns 204 No Content) |
+| Endpoint | `/gmail/v1/users/me/labels/{label_id}` |
+| Idempotent | Yes (idempotent-ish — a 404 on a re-run is treated as already-absent success) |
+
+**Parameters**:
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| label_id | string | Yes | Gmail label ID to delete (custom labels only; wired to the `list_labels` dropdown via `x-dynamic-options`) |
+
+**Safety**:
+- Built-in **system labels** (`INBOX`, `SENT`, `SPAM`, `TRASH`, `DRAFT`, `IMPORTANT`, `STARRED`, `UNREAD`, `CATEGORY_*`) are **hard-rejected in the executor before any request** with `cannot_delete_system_label`.
+- A declarative `confirmations` rule (`label_id != null`) is present for catalog uniformity but is advisory only — the executor guard is the real enforcement.
+
+**Response Structure**:
+| Field | Type | Description |
+|-------|------|-------------|
+| label_id | string | The deleted label ID |
+| deleted | boolean | True when the label no longer exists after this call |
+| already_absent | boolean | True when the label was already gone (404) — deletion was a no-op |
+| deleted_at | string | ISO 8601 timestamp when the action completed |
+
+---
+
+### 9. reply_to_email
+**Description**: Reply within an existing email thread (send-class, NOT idempotent)
+
+| Property | Value |
+|----------|-------|
+| HTTP Method | GET (original metadata) then POST send |
+| Endpoint | `/gmail/v1/users/me/messages/{message_id}?format=metadata` → `/gmail/v1/users/me/messages/send` |
+| Idempotent | No — each call sends a new message into the thread (re-running double-sends) |
+
+**Parameters**:
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| message_id | string | Yes | The message being replied to (resolves thread, Message-ID, and subject) |
+| content.body | string | No\* | Plain text reply body |
+| content.html_body | string | No\* | HTML reply body |
+| recipients | object | No | Override recipients (`to`/`cc`/`bcc`). Defaults to the original sender (`Reply-To` ?? `From`) |
+| reply_all | boolean | No | When true and no explicit recipients, include the original `To`/`Cc` set (default: false) |
+
+\* At least one of `content.body` / `content.html_body` is required (enforced in-executor).
+
+**Thread continuation**: the send request sets `threadId` and the MIME carries `In-Reply-To` / `References` headers referencing the original `Message-ID`, so the reply continues the thread rather than starting a new one. The subject is prefixed with `Re:` (no double-`Re:`).
+
+> **Confirmations are advisory.** `external_domains` / `max_recipients` rules are declared, but when recipients are *derived* (no explicit override), they are not visible to the rule engine pre-execution — do not treat them as a hard gate. Self-exclusion on `reply_all` is not performed in v1.
+
+**Response Structure**:
+| Field | Type | Description |
+|-------|------|-------------|
+| message_id | string | Gmail message ID of the sent reply |
+| thread_id | string | Gmail thread ID the reply was sent into |
+| in_reply_to | string | The original Message-ID this reply references |
+| recipient_count | integer | Total number of recipients |
+| subject | string | The reply subject line (`Re: …`) |
+| sent_at | string | ISO 8601 timestamp when the reply was sent |
+
+---
+
+### 10. send_draft
+**Description**: Send an existing Gmail draft (send-class, NOT idempotent)
+
+| Property | Value |
+|----------|-------|
+| HTTP Method | POST |
+| Endpoint | `/gmail/v1/users/me/drafts/send` |
+| Idempotent | No — sending consumes the draft; a re-run 404s |
+
+**Parameters**:
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| draft_id | string | Yes | Gmail draft ID to send (as returned by `create_draft`) |
+
+**Response Structure**:
+| Field | Type | Description |
+|-------|------|-------------|
+| message_id | string | Gmail message ID of the sent message |
+| thread_id | string | Gmail thread ID of the sent message |
+| draft_id | string | The draft ID that was sent (now consumed) |
+| sent_at | string | ISO 8601 timestamp when the draft was sent |
+
+---
+
+### 11. batch_modify_emails
+**Description**: Add/remove labels or archive across many messages in one call
+
+| Property | Value |
+|----------|-------|
+| HTTP Method | POST (returns 204 No Content) |
+| Endpoint | `/gmail/v1/users/me/messages/batchModify` |
+| Idempotent | Yes — re-applying a label / removing an absent one is a Gmail no-op |
+
+**Parameters**:
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| message_ids | array | Yes | The message IDs to modify (1–1000; empty arrays are rejected) |
+| add_labels | array | No | Label names (system or custom) to add — resolved to IDs (created if custom & missing) |
+| remove_labels | array | No | Label names to remove — resolved to IDs |
+| archive | boolean | No | Shorthand: archive by removing the `INBOX` label (default: false) |
+
+**Bounds**: the `message_ids` count is **hard-capped at 1000 in the executor** (Gmail's per-call maximum) and empty arrays are rejected — both **before** any request. At least one of `add_labels` / `remove_labels` / `archive` is required. The declarative `rules.limits` / `rules.confirmations` (`message_ids_count > 1000` / `> 50`) are present for catalog uniformity but are advisory only (the rule engine does not currently derive `message_ids_count`); the executor guard is the real enforcement.
+
+**Response Structure**:
+| Field | Type | Description |
+|-------|------|-------------|
+| modified_count | integer | Number of messages the modification was applied to |
+| message_ids | array | The message IDs that were modified |
+| labels_added | array | Resolved label IDs that were added |
+| labels_removed | array | Resolved label IDs that were removed (includes `INBOX` when `archive=true`) |
+| modified_at | string | ISO 8601 timestamp when the batch completed |
+
+---
+
 ## Generated Files
 
 | File Path | Description |
@@ -234,5 +403,6 @@ To obtain credentials:
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.2.0 | 2026-07-26 | Added 6 Phase 1 actions: `get_or_create_label`, `list_labels`, `delete_label`, `reply_to_email`, `send_draft`, `batch_modify_emails`. All fit the already-granted scopes (no new OAuth scope). Reconciled the doc/definition version drift (definition was `1.0.0`, doc `1.1.0`) to `1.2.0`. Registered the `gmail_label` output-leaf semantic type. |
 | 1.1.0 | 2026-03-29 | Added `modify_email` action (Gmail Urgency Flagging Agent - Phase E blocker). Added `get_email_attachment` to docs (was missing). Added label resolution documentation. |
 | 1.0.0 | 2025-11-30 | Initial plugin with 3 actions: send_email, search_emails, create_draft |

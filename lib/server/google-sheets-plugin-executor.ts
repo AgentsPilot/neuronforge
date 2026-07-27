@@ -46,6 +46,15 @@ export class GoogleSheetsPluginExecutor extends GoogleBasePluginExecutor {
       case 'get_or_create_sheet_tab':
         result = await this.getOrCreateSheetTab(connection, parameters);
         break;
+      case 'format_cells':
+        result = await this.formatCells(connection, parameters);
+        break;
+      case 'clear_range':
+        result = await this.clearRange(connection, parameters);
+        break;
+      case 'delete_rows':
+        result = await this.deleteRows(connection, parameters);
+        break;
       default:
         return {
           success: false,
@@ -244,13 +253,10 @@ export class GoogleSheetsPluginExecutor extends GoogleBasePluginExecutor {
 
     if (!response.ok) {
       const errorData = await response.text();
-      console.error('❌ Google Sheets append_rows failed:', {
-        status: response.status,
-        statusText: response.statusText,
-        spreadsheet_id,
-        range,
-        error: errorData
-      });
+      this.logger.error(
+        { status: response.status, statusText: response.statusText, spreadsheet_id, range, err: errorData },
+        'Google Sheets append_rows failed'
+      );
 
       // Parse error for better messaging
       let errorMessage = `Google Sheets API error (${response.status})`;
@@ -595,6 +601,339 @@ export class GoogleSheetsPluginExecutor extends GoogleBasePluginExecutor {
       timeZone: data.properties.timeZone,
       sheetCount: sheets.length,
       retrievedAt: new Date().toISOString()
+    };
+  }
+
+  // ==========================================================================
+  // Shared helpers for the batchUpdate-based structural/formatting actions.
+  // These are executor-internal Google-Sheets-API adapters — no plugin-specific
+  // rules leak into any prompt or the compiler.
+  // ==========================================================================
+
+  /**
+   * Thin POST wrapper over `…/{spreadsheetId}:batchUpdate`, mirroring the existing
+   * getOrCreateSheetTab precedent (raw fetch + manual error throw). Returns the
+   * `replies` array. Used by format_cells and delete_rows.
+   */
+  private async sheetsBatchUpdate(connection: any, spreadsheetId: string, requests: any[]): Promise<any[]> {
+    const url = `${this.sheetsApisUrl}/${spreadsheetId}:batchUpdate`;
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${connection.access_token}`,
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
+      body: JSON.stringify({ requests }),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.text();
+      this.logger.error({ errorData, status: response.status, spreadsheet_id: spreadsheetId }, 'Sheets batchUpdate failed');
+      throw new Error(`Sheets API error: ${response.status} - ${errorData}`);
+    }
+
+    const data = await response.json();
+    return data.replies || [];
+  }
+
+  /**
+   * Resolve a tab name (or, if omitted, the first tab) to its numeric sheetId via
+   * the existing getSpreadsheetInfo. batchUpdate requests (repeatCell,
+   * updateSheetProperties, deleteDimension) operate on a numeric sheetId — not the
+   * A1 sheet-*name* the value-level actions use. Case-insensitive title match,
+   * mirroring getOrCreateSheetTab. Throws a clean sheet_not_found when the named
+   * tab does not exist.
+   */
+  private async resolveSheetId(
+    connection: any,
+    spreadsheetId: string,
+    sheetName?: string
+  ): Promise<{ sheetId: number; title: string }> {
+    const info = await this.getSpreadsheetInfo(connection, {
+      spreadsheet_id: spreadsheetId,
+      include_sheet_data: false,
+    });
+
+    const sheets: any[] = info.sheets || [];
+    if (sheets.length === 0) {
+      throw new Error(`No sheets found in spreadsheet "${spreadsheetId}"`);
+    }
+
+    // No tab specified → default to the first tab (index 0). Documented behaviour.
+    if (!sheetName) {
+      const first = sheets[0];
+      return { sheetId: first.sheet_id ?? first.sheetId, title: first.title || first.sheet_name };
+    }
+
+    const match = sheets.find(
+      (s) => (s.title || s.sheet_name || '').toLowerCase() === sheetName.toLowerCase()
+    );
+    if (!match) {
+      throw new Error(`sheet_not_found: Sheet tab "${sheetName}" was not found in the spreadsheet.`);
+    }
+
+    return { sheetId: match.sheet_id ?? match.sheetId, title: match.title || match.sheet_name };
+  }
+
+  /**
+   * Convert A1 column letters (e.g. 'A', 'D', 'AA') to a 0-based column index.
+   */
+  private columnLettersToIndex(letters: string): number {
+    let index = 0;
+    const upper = letters.toUpperCase();
+    for (let i = 0; i < upper.length; i++) {
+      index = index * 26 + (upper.charCodeAt(i) - 64); // 'A' → 1
+    }
+    return index - 1; // 0-based
+  }
+
+  /**
+   * Pure, deterministic parse of an A1 range into a GridRange (0-based half-open).
+   * Handles 'A1:D1', "Sheet1!A1:D1", "'My Sheet'!A2:D100", 'A:D' (whole columns),
+   * '2:5' (whole rows), and single cells ('B2'). The sheet-name prefix (if present)
+   * is stripped here — sheetId is supplied by the caller (resolveSheetId). Open-ended
+   * bounds omit the corresponding index (whole-column / whole-row semantics).
+   * Unit-testable; issues no network calls.
+   */
+  private a1RangeToGridRange(
+    range: string,
+    sheetId: number
+  ): { sheetId: number; startRowIndex?: number; endRowIndex?: number; startColumnIndex?: number; endColumnIndex?: number } {
+    // Strip the sheet-name prefix (handled separately by resolveSheetId).
+    const bang = range.lastIndexOf('!');
+    const a1 = bang >= 0 ? range.slice(bang + 1) : range;
+
+    const [startPart, endPart] = a1.includes(':') ? a1.split(':') : [a1, a1];
+
+    const parseCell = (cell: string): { col?: number; row?: number } => {
+      const m = cell.trim().match(/^([A-Za-z]*)(\d*)$/);
+      if (!m || (!m[1] && !m[2])) {
+        throw new Error(`invalid_range: "${cell}" is not a valid A1 cell reference.`);
+      }
+      const [, letters, digits] = m;
+      return {
+        col: letters ? this.columnLettersToIndex(letters) : undefined,
+        row: digits ? parseInt(digits, 10) - 1 : undefined, // 0-based
+      };
+    };
+
+    const start = parseCell(startPart);
+    const end = parseCell(endPart);
+
+    const gridRange: {
+      sheetId: number;
+      startRowIndex?: number;
+      endRowIndex?: number;
+      startColumnIndex?: number;
+      endColumnIndex?: number;
+    } = { sheetId };
+
+    // 1-based inclusive A1 rows → 0-based half-open [start, end).
+    if (start.row !== undefined) gridRange.startRowIndex = start.row;
+    if (end.row !== undefined) gridRange.endRowIndex = end.row + 1;
+    if (start.col !== undefined) gridRange.startColumnIndex = start.col;
+    if (end.col !== undefined) gridRange.endColumnIndex = end.col + 1;
+
+    return gridRange;
+  }
+
+  /**
+   * Normalize a hex color (e.g. '#FDE68A' or 'FDE68A' or '#fff') to a Google Sheets
+   * Color object with 0–1 red/green/blue components.
+   */
+  private hexToColor(hex: string): { red: number; green: number; blue: number } {
+    const clean = hex.replace(/^#/, '').trim();
+    const full = clean.length === 3 ? clean.split('').map((c) => c + c).join('') : clean;
+    if (!/^[0-9a-fA-F]{6}$/.test(full)) {
+      throw new Error(`invalid_color: "${hex}" is not a valid hex color (expected #RRGGBB).`);
+    }
+    return {
+      red: parseInt(full.slice(0, 2), 16) / 255,
+      green: parseInt(full.slice(2, 4), 16) / 255,
+      blue: parseInt(full.slice(4, 6), 16) / 255,
+    };
+  }
+
+  // ==========================================================================
+  // Phase 1 formatting / structural actions: format_cells, clear_range,
+  // delete_rows.
+  // ==========================================================================
+
+  /**
+   * Apply cell formatting (bold and/or background color via repeatCell) and/or a
+   * frozen header row (via updateSheetProperties) in a single batchUpdate.
+   * Non-destructive and idempotent. If no format field is supplied it is a no-op
+   * success.
+   */
+  private async formatCells(connection: any, parameters: any): Promise<any> {
+    const { spreadsheet_id, range, bold, background_color, freeze_rows } = parameters;
+
+    if (!spreadsheet_id) throw new Error('spreadsheet_id is required');
+    if (!range) throw new Error('range is required');
+
+    // The A1 sheet-name prefix (if any) resolves the numeric sheetId; no prefix
+    // ⇒ default to the first tab (documented in usage_context).
+    const bang = range.lastIndexOf('!');
+    const sheetName = bang >= 0 ? range.slice(0, bang).replace(/^'(.*)'$/, '$1') : undefined;
+    const { sheetId, title } = await this.resolveSheetId(connection, spreadsheet_id, sheetName);
+
+    const gridRange = this.a1RangeToGridRange(range, sheetId);
+
+    const requests: any[] = [];
+
+    const hasBold = typeof bold === 'boolean';
+    const hasBackground = typeof background_color === 'string' && background_color.length > 0;
+
+    // repeatCell: build the `fields` mask from ONLY the supplied subfields (CR-C).
+    // A broad `userEnteredFormat` mask would clobber the user's unrelated existing
+    // cell formatting — a silent data-loss bug — so we never emit it.
+    if (hasBold || hasBackground) {
+      const userEnteredFormat: any = {};
+      const fieldMasks: string[] = [];
+      if (hasBold) {
+        userEnteredFormat.textFormat = { bold };
+        fieldMasks.push('userEnteredFormat.textFormat.bold');
+      }
+      if (hasBackground) {
+        userEnteredFormat.backgroundColor = this.hexToColor(background_color);
+        fieldMasks.push('userEnteredFormat.backgroundColor');
+      }
+      requests.push({
+        repeatCell: {
+          range: gridRange,
+          cell: { userEnteredFormat },
+          fields: fieldMasks.join(','),
+        },
+      });
+    }
+
+    // updateSheetProperties: frozen rows are sheet-level and independent of the
+    // row bounds in `range` (documented in usage_context). 0 unfreezes.
+    const hasFreeze = typeof freeze_rows === 'number' && Number.isInteger(freeze_rows) && freeze_rows >= 0;
+    if (hasFreeze) {
+      requests.push({
+        updateSheetProperties: {
+          properties: { sheetId, gridProperties: { frozenRowCount: freeze_rows } },
+          fields: 'gridProperties.frozenRowCount',
+        },
+      });
+    }
+
+    const formatSummary = {
+      bold_applied: hasBold ? bold === true : false,
+      background_applied: hasBackground,
+      frozen_rows: hasFreeze ? freeze_rows : 0,
+    };
+
+    // Nothing to format → no-op success (no batchUpdate issued).
+    if (requests.length > 0) {
+      await this.sheetsBatchUpdate(connection, spreadsheet_id, requests);
+    }
+
+    return {
+      spreadsheet_id,
+      sheet_id: sheetId,
+      sheet_name: title,
+      range,
+      format_summary: formatSummary,
+      formatted_at: new Date().toISOString(),
+    };
+  }
+
+  /**
+   * Clear the VALUES in an A1 range (formatting/notes preserved) via the value-level
+   * `values/{range}:clear` endpoint. Destructive but narrowly scoped to the exact
+   * A1 range requested — never the whole sheet. Idempotent (clearing an empty range
+   * still succeeds).
+   */
+  private async clearRange(connection: any, parameters: any): Promise<any> {
+    const { spreadsheet_id, range } = parameters;
+
+    if (!spreadsheet_id) throw new Error('spreadsheet_id is required');
+    if (!range) throw new Error('range is required');
+
+    const url = `${this.sheetsApisUrl}/${spreadsheet_id}/values/${encodeURIComponent(range)}:clear`;
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${connection.access_token}`,
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
+      body: JSON.stringify({}),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.text();
+      this.logger.error({ errorData, status: response.status, spreadsheet_id, range }, 'Sheets clear_range failed');
+      throw new Error(`Sheets API error: ${response.status} - ${errorData}`);
+    }
+
+    const data = await response.json();
+
+    return {
+      spreadsheet_id: data.spreadsheetId || spreadsheet_id,
+      cleared_range: data.clearedRange || range,
+      cleared_at: new Date().toISOString(),
+    };
+  }
+
+  /**
+   * Delete a row-index range via batchUpdate `deleteDimension`. Inputs are 1-based
+   * inclusive (matching the row numbers a user sees in the Sheets UI) and converted
+   * internally to Google's 0-based half-open [startIndex, endIndex).
+   *
+   * NOT idempotent — deleteDimension shifts subsequent row indices up, so re-running
+   * the same start_row/end_row deletes a different set of rows.
+   *
+   * Safety-critical (CR-D): the bounds guard runs BEFORE any network call, and the
+   * emitted deleteDimension.range ALWAYS carries a finite endIndex. An omitted
+   * endIndex would be interpreted by Google as "delete to the end of the sheet" — the
+   * exact whole-sheet wipe this action must never produce.
+   */
+  private async deleteRows(connection: any, parameters: any): Promise<any> {
+    const { spreadsheet_id, sheet_name, start_row, end_row } = parameters;
+
+    if (!spreadsheet_id) throw new Error('spreadsheet_id is required');
+
+    // Bounds guard — runs before any fetch so a malformed range can never widen
+    // into a full-sheet delete.
+    if (
+      typeof start_row !== 'number' || typeof end_row !== 'number' ||
+      !Number.isInteger(start_row) || !Number.isInteger(end_row)
+    ) {
+      throw new Error('invalid_range: start_row and end_row must be integers.');
+    }
+    if (start_row < 1) {
+      throw new Error('invalid_range: start_row must be >= 1 (rows are 1-based).');
+    }
+    if (end_row < start_row) {
+      throw new Error(`invalid_range: end_row (${end_row}) must be >= start_row (${start_row}).`);
+    }
+
+    const { sheetId, title } = await this.resolveSheetId(connection, spreadsheet_id, sheet_name);
+
+    // 1-based inclusive → 0-based half-open. endIndex is ALWAYS finite (CR-D).
+    const startIndex = start_row - 1;
+    const endIndex = end_row;
+
+    await this.sheetsBatchUpdate(connection, spreadsheet_id, [
+      {
+        deleteDimension: {
+          range: { sheetId, dimension: 'ROWS', startIndex, endIndex },
+        },
+      },
+    ]);
+
+    return {
+      spreadsheet_id,
+      sheet_id: sheetId,
+      sheet_name: title,
+      deleted_row_count: end_row - start_row + 1,
+      start_row,
+      end_row,
+      deleted_at: new Date().toISOString(),
     };
   }
 

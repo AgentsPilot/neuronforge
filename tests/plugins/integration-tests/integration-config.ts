@@ -53,6 +53,15 @@ const CREDENTIAL_MAP: Record<string, {
       parentPageId: 'NOTION_TEST_PARENT_PAGE_ID',
     },
   },
+  'google-docs': {
+    tokenEnv: 'GOOGLE_DOCS_TEST_TOKEN',
+    refreshEnv: 'GOOGLE_DOCS_TEST_REFRESH_TOKEN',
+    extras: {
+      // Optional: an existing document to run read-only checks against. When absent,
+      // the lifecycle test creates its own throwaway document.
+      documentId: 'GOOGLE_DOCS_TEST_DOCUMENT_ID',
+    },
+  },
   'google-drive': {
     tokenEnv: 'GOOGLE_DRIVE_TEST_TOKEN',
     refreshEnv: 'GOOGLE_DRIVE_TEST_REFRESH_TOKEN',
@@ -60,6 +69,15 @@ const CREDENTIAL_MAP: Record<string, {
       folderId: 'GOOGLE_DRIVE_TEST_FOLDER_ID',
       // Optional: a binary file (e.g. a PDF invoice) to exercise download_file → base64.
       fileId: 'GOOGLE_DRIVE_TEST_FILE_ID',
+    },
+  },
+  'google-calendar': {
+    tokenEnv: 'GOOGLE_CALENDAR_TEST_TOKEN',
+    refreshEnv: 'GOOGLE_CALENDAR_TEST_REFRESH_TOKEN',
+    extras: {
+      // Optional: a specific calendar to query in the free/busy lifecycle test.
+      // When absent, the test falls back to 'primary'.
+      calendarId: 'GOOGLE_CALENDAR_TEST_CALENDAR_ID',
     },
   },
 };

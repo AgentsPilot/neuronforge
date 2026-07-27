@@ -1,7 +1,7 @@
 {
   "plugin": {
     "name": "google-sheets",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "description": "Read, write, and manage data in Google Sheets spreadsheets",
     "context": "Use for reading data from spreadsheets, writing structured output, appending rows, creating new spreadsheets, and managing spreadsheet data as structured input/output for agents",
     "icon": "<Calendar className='w-5 h-5 text-green-600'/>",
@@ -1173,6 +1173,407 @@
           "permission_denied": "You don't have permission to edit this spreadsheet. Please request edit access.",
           "api_rate_limit": "Too many Google Sheets requests. Please wait a moment and try again.",
           "invalid_spreadsheet_id": "Invalid spreadsheet ID format. Please verify the ID."
+        }
+      }
+    },
+    "format_cells": {
+      "description": "Apply formatting to a range of cells: bold text, a background color, and/or a frozen header row",
+      "usage_context": "Use to style a range — for example, make a header row bold, highlight cells with a background color, or freeze the top rows so headers stay visible while scrolling. If the range has no sheet-name prefix (e.g. 'A1:D1' rather than 'Sheet1!A1:D1'), the first tab is used. freeze_rows is a sheet-level setting and freezes the first N rows regardless of the row bounds in range. If no formatting field is provided the action is a no-op success.",
+      "idempotent": true,
+      "domain": "table",
+      "capability": "update",
+      "input_entity": "row",
+      "output_entity": "row",
+      "input_cardinality": "collection",
+      "output_cardinality": "collection",
+      "output_fields": [
+        "spreadsheet_id",
+        "sheet_id",
+        "range",
+        "format_summary"
+      ],
+      "required_params": [
+        "spreadsheet_id",
+        "range"
+      ],
+      "optional_params": [
+        "bold",
+        "background_color",
+        "freeze_rows"
+      ],
+      "parameters": {
+        "type": "object",
+        "required": [
+          "spreadsheet_id",
+          "range"
+        ],
+        "properties": {
+          "spreadsheet_id": {
+            "type": "string",
+            "description": "The ID of the spreadsheet to format",
+            "x-from-artifact": true,
+            "x-dynamic-options": {
+              "source": "list_spreadsheets",
+              "description": "Fetches available spreadsheets dynamically"
+            },
+            "x-context-binding": {
+              "source": "workflow_config",
+              "key": "spreadsheet_id",
+              "required": false,
+              "description": "Spreadsheet ID from workflow configuration"
+            }
+          },
+          "range": {
+            "type": "string",
+            "description": "The A1 notation range to format (e.g., 'Sheet1!A1:D1'). If no sheet-name prefix is given, the first tab is used.",
+            "x-from-artifact": true,
+            "x-artifact-field": "tab_name",
+            "x-dynamic-options": {
+              "source": "list_sheet_names",
+              "description": "Fetches available sheet names from the selected spreadsheet",
+              "depends_on": [
+                "spreadsheet_id"
+              ]
+            }
+          },
+          "bold": {
+            "type": "boolean",
+            "description": "Set the text in the range to bold (true) or non-bold (false)"
+          },
+          "background_color": {
+            "type": "string",
+            "description": "Background color as a hex string (e.g., '#FDE68A'). Applied to the range."
+          },
+          "freeze_rows": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Freeze the first N rows of the sheet (header freeze). 0 unfreezes. Sheet-level — independent of the range row bounds."
+          }
+        }
+      },
+      "rules": {
+        "limits": {},
+        "confirmations": {}
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "spreadsheet_id": {
+            "type": "string",
+            "description": "ID of the formatted spreadsheet",
+            "x-guaranteed": true
+          },
+          "sheet_id": {
+            "type": "integer",
+            "description": "Numeric ID of the sheet tab that was formatted"
+          },
+          "sheet_name": {
+            "type": "string",
+            "description": "Name of the sheet tab that was formatted"
+          },
+          "range": {
+            "type": "string",
+            "description": "The A1 range that was formatted"
+          },
+          "format_summary": {
+            "type": "object",
+            "description": "Summary of the formatting that was applied",
+            "properties": {
+              "bold_applied": {
+                "type": "boolean",
+                "description": "True if bold was set to true on the range"
+              },
+              "background_applied": {
+                "type": "boolean",
+                "description": "True if a background color was applied to the range"
+              },
+              "frozen_rows": {
+                "type": "integer",
+                "description": "Number of rows frozen (0 if none)"
+              }
+            }
+          },
+          "formatted_at": {
+            "type": "string",
+            "description": "Timestamp when the formatting was applied (ISO 8601)",
+            "x-guaranteed": true
+          }
+        },
+        "required": [
+          "spreadsheet_id",
+          "range",
+          "format_summary"
+        ]
+      },
+      "output_guidance": {
+        "success_description": "Formatted spreadsheet cells",
+        "sample_output": {
+          "spreadsheet_id": "1abc123xyz789",
+          "sheet_id": 0,
+          "sheet_name": "Sheet1",
+          "range": "Sheet1!A1:D1",
+          "format_summary": {
+            "bold_applied": true,
+            "background_applied": true,
+            "frozen_rows": 1
+          },
+          "formatted_at": "2024-01-15T10:00:00Z"
+        },
+        "common_errors": {
+          "auth_failed": "Your Google Sheets connection has expired. Please go to Settings → Connected Apps to reconnect Google Sheets.",
+          "spreadsheet_not_found": "The spreadsheet was not found. Please check the spreadsheet ID and ensure you have access.",
+          "sheet_not_found": "The named sheet tab was not found in the spreadsheet. Please check the tab name.",
+          "invalid_range": "The range format is invalid. Use A1 notation like 'Sheet1!A1:D1'.",
+          "permission_denied": "You don't have permission to edit this spreadsheet. Please request edit access.",
+          "api_rate_limit": "Too many requests in a short time. Please wait a moment and try again.",
+          "insufficient_permissions": "Google Sheets permissions are insufficient. Please reconnect with full spreadsheet access."
+        }
+      }
+    },
+    "clear_range": {
+      "description": "Clear the values in an A1 range (formatting and notes are preserved)",
+      "usage_context": "Use to remove cell contents from a specific range while keeping the cell formatting intact — the natural inverse of write_range. Clears exactly the requested A1 range, never the whole sheet. Clearing an already-empty range is a safe no-op.",
+      "idempotent": true,
+      "domain": "table",
+      "capability": "delete",
+      "input_entity": "row",
+      "output_entity": "row",
+      "input_cardinality": "collection",
+      "output_cardinality": "collection",
+      "output_fields": [
+        "spreadsheet_id",
+        "cleared_range"
+      ],
+      "required_params": [
+        "spreadsheet_id",
+        "range"
+      ],
+      "optional_params": [],
+      "parameters": {
+        "type": "object",
+        "required": [
+          "spreadsheet_id",
+          "range"
+        ],
+        "properties": {
+          "spreadsheet_id": {
+            "type": "string",
+            "description": "The ID of the spreadsheet to clear values in",
+            "x-from-artifact": true,
+            "x-dynamic-options": {
+              "source": "list_spreadsheets",
+              "description": "Fetches available spreadsheets dynamically"
+            },
+            "x-context-binding": {
+              "source": "workflow_config",
+              "key": "spreadsheet_id",
+              "required": false,
+              "description": "Spreadsheet ID from workflow configuration"
+            }
+          },
+          "range": {
+            "type": "string",
+            "description": "The A1 notation range to clear (e.g., 'Sheet1!A2:D100'). Only the values are cleared; formatting is preserved.",
+            "x-from-artifact": true,
+            "x-artifact-field": "tab_name",
+            "x-dynamic-options": {
+              "source": "list_sheet_names",
+              "description": "Fetches available sheet names from the selected spreadsheet",
+              "depends_on": [
+                "spreadsheet_id"
+              ]
+            }
+          }
+        }
+      },
+      "rules": {
+        "limits": {},
+        "confirmations": {
+          "confirm_clear": {
+            "condition": "spreadsheet_id != null",
+            "action": "confirm",
+            "message": "Clear all values in '{range}'? This removes the cell contents (formatting is kept)."
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "spreadsheet_id": {
+            "type": "string",
+            "description": "ID of the spreadsheet",
+            "x-guaranteed": true
+          },
+          "cleared_range": {
+            "type": "string",
+            "description": "The A1 range whose values were cleared",
+            "x-guaranteed": true
+          },
+          "cleared_at": {
+            "type": "string",
+            "description": "Timestamp when the range was cleared (ISO 8601)",
+            "x-guaranteed": true
+          }
+        },
+        "required": [
+          "spreadsheet_id",
+          "cleared_range"
+        ]
+      },
+      "output_guidance": {
+        "success_description": "Cleared values in spreadsheet range",
+        "sample_output": {
+          "spreadsheet_id": "1abc123xyz789",
+          "cleared_range": "Sheet1!A2:D100",
+          "cleared_at": "2024-01-15T10:00:00Z"
+        },
+        "common_errors": {
+          "auth_failed": "Your Google Sheets connection has expired. Please go to Settings → Connected Apps to reconnect Google Sheets.",
+          "spreadsheet_not_found": "The spreadsheet was not found. Please check the spreadsheet ID and ensure you have access.",
+          "invalid_range": "The range format is invalid. Use A1 notation like 'Sheet1!A2:D100'.",
+          "permission_denied": "You don't have permission to edit this spreadsheet. Please request edit access.",
+          "api_rate_limit": "Too many requests in a short time. Please wait a moment and try again.",
+          "insufficient_permissions": "Google Sheets permissions are insufficient. Please reconnect with full spreadsheet access."
+        }
+      }
+    },
+    "delete_rows": {
+      "description": "Delete a range of rows from a sheet tab (shifts the rows below up)",
+      "usage_context": "Use to remove entire rows by their row numbers (as seen in the Sheets UI). start_row and end_row are 1-based and inclusive, so deleting rows 2–5 removes four rows. NOT idempotent: deleteDimension shifts all subsequent row indices up, so re-running with the same start_row/end_row deletes a different set of rows — recurring workflows must recompute the range each run. If sheet_name is omitted, the first tab is used.",
+      "idempotent": false,
+      "domain": "table",
+      "capability": "delete",
+      "input_entity": "row",
+      "output_entity": "row",
+      "input_cardinality": "collection",
+      "output_cardinality": "collection",
+      "output_fields": [
+        "spreadsheet_id",
+        "sheet_id",
+        "deleted_row_count",
+        "start_row",
+        "end_row"
+      ],
+      "required_params": [
+        "spreadsheet_id",
+        "start_row",
+        "end_row"
+      ],
+      "optional_params": [
+        "sheet_name"
+      ],
+      "parameters": {
+        "type": "object",
+        "required": [
+          "spreadsheet_id",
+          "start_row",
+          "end_row"
+        ],
+        "properties": {
+          "spreadsheet_id": {
+            "type": "string",
+            "description": "The ID of the spreadsheet to delete rows from",
+            "x-from-artifact": true,
+            "x-dynamic-options": {
+              "source": "list_spreadsheets",
+              "description": "Fetches available spreadsheets dynamically"
+            },
+            "x-context-binding": {
+              "source": "workflow_config",
+              "key": "spreadsheet_id",
+              "required": false,
+              "description": "Spreadsheet ID from workflow configuration"
+            }
+          },
+          "sheet_name": {
+            "type": "string",
+            "description": "Name of the sheet tab whose rows are deleted. Defaults to the first tab if omitted.",
+            "x-dynamic-options": {
+              "source": "list_sheet_names",
+              "description": "Fetches available sheet names from the selected spreadsheet",
+              "depends_on": [
+                "spreadsheet_id"
+              ]
+            }
+          },
+          "start_row": {
+            "type": "integer",
+            "description": "First row to delete (1-based, inclusive — matches the row number shown in the Sheets UI)"
+          },
+          "end_row": {
+            "type": "integer",
+            "description": "Last row to delete (1-based, inclusive). Must be >= start_row."
+          }
+        }
+      },
+      "rules": {
+        "limits": {},
+        "confirmations": {
+          "confirm_delete_rows": {
+            "condition": "spreadsheet_id != null",
+            "action": "confirm",
+            "message": "Delete rows {start_row}–{end_row} from '{sheet_name}'? This shifts the rows below up and cannot be undone by re-running."
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "spreadsheet_id": {
+            "type": "string",
+            "description": "ID of the spreadsheet",
+            "x-guaranteed": true
+          },
+          "sheet_id": {
+            "type": "integer",
+            "description": "Numeric ID of the sheet tab the rows were deleted from"
+          },
+          "sheet_name": {
+            "type": "string",
+            "description": "Name of the sheet tab the rows were deleted from"
+          },
+          "deleted_row_count": {
+            "type": "integer",
+            "description": "Number of rows deleted (end_row - start_row + 1)"
+          },
+          "start_row": {
+            "type": "integer",
+            "description": "First row that was deleted (1-based, inclusive)"
+          },
+          "end_row": {
+            "type": "integer",
+            "description": "Last row that was deleted (1-based, inclusive)"
+          },
+          "deleted_at": {
+            "type": "string",
+            "description": "Timestamp when the rows were deleted (ISO 8601)",
+            "x-guaranteed": true
+          }
+        },
+        "required": [
+          "spreadsheet_id",
+          "deleted_row_count"
+        ]
+      },
+      "output_guidance": {
+        "success_description": "Deleted rows from spreadsheet",
+        "sample_output": {
+          "spreadsheet_id": "1abc123xyz789",
+          "sheet_id": 0,
+          "sheet_name": "Sheet1",
+          "deleted_row_count": 4,
+          "start_row": 2,
+          "end_row": 5,
+          "deleted_at": "2024-01-15T10:00:00Z"
+        },
+        "common_errors": {
+          "auth_failed": "Your Google Sheets connection has expired. Please go to Settings → Connected Apps to reconnect Google Sheets.",
+          "spreadsheet_not_found": "The spreadsheet was not found. Please check the spreadsheet ID and ensure you have access.",
+          "sheet_not_found": "The named sheet tab was not found in the spreadsheet. Please check the tab name.",
+          "invalid_range": "The row range is invalid. start_row must be >= 1 and end_row must be >= start_row.",
+          "permission_denied": "You don't have permission to edit this spreadsheet. Please request edit access.",
+          "api_rate_limit": "Too many requests in a short time. Please wait a moment and try again.",
+          "insufficient_permissions": "Google Sheets permissions are insufficient. Please reconnect with full spreadsheet access."
         }
       }
     }

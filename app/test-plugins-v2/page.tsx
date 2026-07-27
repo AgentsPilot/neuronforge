@@ -135,6 +135,32 @@ const PARAMETER_TEMPLATES = {
         html_body: "<p>This is a <strong>draft</strong> email body.</p>"
       },
       save_location: "drafts"
+    },
+    get_or_create_label: {
+      label_name: "Invoices"
+    },
+    list_labels: {
+      label_type: "all"
+    },
+    delete_label: {
+      label_id: "Label_123"
+    },
+    reply_to_email: {
+      message_id: "18abc123def",
+      content: {
+        body: "Thanks — replying in this thread.",
+        html_body: "<p>Thanks — replying in this thread.</p>"
+      },
+      reply_all: false
+    },
+    send_draft: {
+      draft_id: "r123456789"
+    },
+    batch_modify_emails: {
+      message_ids: ["18abc123def", "18abc456ghi"],
+      add_labels: ["Invoices"],
+      remove_labels: [],
+      archive: true
     }
   },
   "google-drive": {
@@ -170,6 +196,27 @@ const PARAMETER_TEMPLATES = {
       max_results: 50,
       recursive: false,
       order_by: "name"
+    },
+    move_file: {
+      file_id: "1a2b3c4d5e6f7g8h9i0j",
+      target_folder_id: "1z9y8x7w6v5u4t3s2r1q",
+      remove_from_current_parents: true
+    },
+    rename_file: {
+      file_id: "1a2b3c4d5e6f7g8h9i0j",
+      new_name: "Renamed Document.docx"
+    },
+    copy_file: {
+      file_id: "1a2b3c4d5e6f7g8h9i0j",
+      new_name: "Copy of Document.docx",
+      target_folder_id: "1z9y8x7w6v5u4t3s2r1q"
+    },
+    delete_file: {
+      file_id: "1a2b3c4d5e6f7g8h9i0j"
+    },
+    revoke_access: {
+      file_id: "1a2b3c4d5e6f7g8h9i0j",
+      permission_id: "perm123xyz"
     }
   },
   "google-sheets": {
@@ -218,6 +265,23 @@ const PARAMETER_TEMPLATES = {
       spreadsheet_id: "1a2b3c4d5e6f7g8h9i0j",
       include_sheet_data: true,
       include_data_ranges: false
+    },
+    format_cells: {
+      spreadsheet_id: "1a2b3c4d5e6f7g8h9i0j",
+      range: "Sheet1!A1:D1",
+      bold: true,
+      background_color: "#FDE68A",
+      freeze_rows: 1
+    },
+    clear_range: {
+      spreadsheet_id: "1a2b3c4d5e6f7g8h9i0j",
+      range: "Sheet1!A2:D100"
+    },
+    delete_rows: {
+      spreadsheet_id: "1a2b3c4d5e6f7g8h9i0j",
+      sheet_name: "Sheet1",
+      start_row: 2,
+      end_row: 5
     }
   },
   "google-docs": {
@@ -243,6 +307,12 @@ const PARAMETER_TEMPLATES = {
     get_document_info: {
       document_id: "1a2b3c4d5e6f7g8h9i0j",
       include_content_summary: true
+    },
+    replace_text: {
+      document_id: "1a2b3c4d5e6f7g8h9i0j",
+      text_to_find: "{name}",
+      replace_text: "Alice",
+      match_case: false
     }
   },
   "google-calendar": {
@@ -291,6 +361,15 @@ const PARAMETER_TEMPLATES = {
     get_event_details: {
       calendar_id: "primary",
       event_id: "abc123xyz456"
+    },
+    get_free_busy: {
+      calendar_ids: ["primary"],
+      time_min: "2025-01-15T00:00:00Z",
+      time_max: "2025-01-16T00:00:00Z",
+      time_zone: "UTC"
+    },
+    list_calendars: {
+      min_access_role: "reader"
     }
   },
   "slack": {

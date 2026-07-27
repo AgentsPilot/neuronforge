@@ -56,6 +56,21 @@ export class GoogleDrivePluginExecutor extends GoogleBasePluginExecutor {
         case 'share_file':
           result = await this.shareFile(connection, parameters);
           break;
+        case 'move_file':
+          result = await this.moveFile(connection, parameters);
+          break;
+        case 'rename_file':
+          result = await this.renameFile(connection, parameters);
+          break;
+        case 'copy_file':
+          result = await this.copyFile(connection, parameters);
+          break;
+        case 'delete_file':
+          result = await this.deleteFile(connection, parameters);
+          break;
+        case 'revoke_access':
+          result = await this.revokeAccess(connection, parameters);
+          break;
         default:
           return {
             success: false,
@@ -87,7 +102,7 @@ export class GoogleDrivePluginExecutor extends GoogleBasePluginExecutor {
   /** Normalise URL-shaped id params (folder_id / file_id / parent_folder_id) to bare IDs, in place. */
   private normalizeDriveIdParams(parameters: any): void {
     if (!parameters || typeof parameters !== 'object') return;
-    for (const key of ['folder_id', 'file_id', 'parent_folder_id']) {
+    for (const key of ['folder_id', 'file_id', 'parent_folder_id', 'target_folder_id']) {
       if (parameters[key] != null) parameters[key] = this.extractDriveId(parameters[key]);
     }
   }
@@ -947,6 +962,343 @@ export class GoogleDrivePluginExecutor extends GoogleBasePluginExecutor {
       webViewLink: fileMetadata.web_view_link,
       permissionType: permissionType,
       sharedAt: new Date().toISOString()
+    };
+  }
+
+  // Move a file to a different folder.
+  // True move by default: computes removeParents from the file's LIVE current parents
+  // (fetched at run time), never assuming a single parent. remove_from_current_parents=false
+  // is the add-to-folder escape hatch. If the file is already solely in the target, this is
+  // an idempotent no-op (moved: false) and no PATCH is issued.
+  private async moveFile(connection: any, parameters: any): Promise<any> {
+    this.logger.debug('DEBUG: Moving file via Google Drive API');
+
+    const fileId = parameters.file_id;
+    const targetFolderId = parameters.target_folder_id;
+    if (!fileId) {
+      throw new Error('file_id is required');
+    }
+    if (!targetFolderId) {
+      throw new Error('target_folder_id is required');
+    }
+
+    // Default to a true move (leave the current folder). Only an explicit `false` opts into
+    // add-to-folder (keep existing parents) behaviour.
+    const removeFromCurrent = parameters.remove_from_current_parents !== false;
+
+    // Fetch the file's LIVE current parents so removeParents is computed from reality, not
+    // an assumption of a single parent.
+    const getUrl = new URL(`${this.googleApisUrl}/drive/v3/files/${fileId}`);
+    getUrl.searchParams.set('fields', 'id, name, parents, webViewLink');
+
+    const getResponse = await fetch(getUrl.toString(), {
+      headers: {
+        'Authorization': `Bearer ${connection.access_token}`,
+        'Accept': 'application/json',
+      },
+    });
+
+    if (!getResponse.ok) {
+      const errorData = await getResponse.text();
+      this.logger.error({ err: errorData, status: getResponse.status }, 'Move file: failed to fetch current parents');
+      throw new Error(`Failed to move file: ${getResponse.status} - ${errorData}`);
+    }
+
+    const currentFile = await getResponse.json();
+    const currentParents: string[] = Array.isArray(currentFile.parents) ? currentFile.parents : [];
+    const alreadyInTarget = currentParents.includes(targetFolderId);
+
+    // Parents to strip: everything except the target, but only when doing a true move.
+    const removeParents = removeFromCurrent ? currentParents.filter((p: string) => p !== targetFolderId) : [];
+
+    // Idempotent no-op: file already sits in the target and there's nothing to remove.
+    if (alreadyInTarget && removeParents.length === 0) {
+      this.logger.debug({ fileId, targetFolderId }, 'Move file: already in target folder — no-op');
+      const noopLink = currentFile.webViewLink || `https://drive.google.com/file/d/${fileId}/view`;
+      return {
+        // Primary format (snake_case to match schema)
+        file_id: fileId,
+        file_name: currentFile.name,
+        parents: currentParents,
+        previous_parents: currentParents,
+        moved: false,
+        web_view_link: noopLink,
+        moved_at: new Date().toISOString(),
+        // Legacy format (camelCase for backward compatibility)
+        fileId: fileId,
+        fileName: currentFile.name,
+        previousParents: currentParents,
+        webViewLink: noopLink,
+        movedAt: new Date().toISOString(),
+      };
+    }
+
+    const patchUrl = new URL(`${this.googleApisUrl}/drive/v3/files/${fileId}`);
+    patchUrl.searchParams.set('addParents', targetFolderId);
+    if (removeParents.length > 0) {
+      patchUrl.searchParams.set('removeParents', removeParents.join(','));
+    }
+    patchUrl.searchParams.set('fields', 'id, name, parents, webViewLink');
+
+    const patchResponse = await fetch(patchUrl.toString(), {
+      method: 'PATCH',
+      headers: {
+        'Authorization': `Bearer ${connection.access_token}`,
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
+      body: JSON.stringify({}),
+    });
+
+    if (!patchResponse.ok) {
+      const errorData = await patchResponse.text();
+      this.logger.error({ err: errorData, status: patchResponse.status }, 'Move file failed');
+      throw new Error(`Failed to move file: ${patchResponse.status} - ${errorData}`);
+    }
+
+    const moved = await patchResponse.json();
+
+    return {
+      // Primary format (snake_case to match schema)
+      file_id: moved.id,
+      file_name: moved.name,
+      parents: Array.isArray(moved.parents) ? moved.parents : [targetFolderId],
+      previous_parents: currentParents,
+      moved: true,
+      web_view_link: moved.webViewLink || `https://drive.google.com/file/d/${moved.id}/view`,
+      moved_at: new Date().toISOString(),
+      // Legacy format (camelCase for backward compatibility)
+      fileId: moved.id,
+      fileName: moved.name,
+      previousParents: currentParents,
+      webViewLink: moved.webViewLink || `https://drive.google.com/file/d/${moved.id}/view`,
+      movedAt: new Date().toISOString(),
+    };
+  }
+
+  // Rename a file. Fetches the current name first so previous_name can be reported,
+  // then PATCHes the new name. Setting the name to its current value is a safe no-op to Google.
+  private async renameFile(connection: any, parameters: any): Promise<any> {
+    this.logger.debug('DEBUG: Renaming file via Google Drive API');
+
+    const fileId = parameters.file_id;
+    const newName = parameters.new_name;
+    if (!fileId) {
+      throw new Error('file_id is required');
+    }
+    if (!newName) {
+      throw new Error('new_name is required');
+    }
+
+    // Fetch the current name so we can report previous_name.
+    const getUrl = new URL(`${this.googleApisUrl}/drive/v3/files/${fileId}`);
+    getUrl.searchParams.set('fields', 'id, name');
+
+    const getResponse = await fetch(getUrl.toString(), {
+      headers: {
+        'Authorization': `Bearer ${connection.access_token}`,
+        'Accept': 'application/json',
+      },
+    });
+
+    if (!getResponse.ok) {
+      const errorData = await getResponse.text();
+      this.logger.error({ err: errorData, status: getResponse.status }, 'Rename file: failed to fetch current name');
+      throw new Error(`Failed to rename file: ${getResponse.status} - ${errorData}`);
+    }
+
+    const currentFile = await getResponse.json();
+    const previousName = currentFile.name;
+
+    const patchUrl = new URL(`${this.googleApisUrl}/drive/v3/files/${fileId}`);
+    patchUrl.searchParams.set('fields', 'id, name, webViewLink');
+
+    const patchResponse = await fetch(patchUrl.toString(), {
+      method: 'PATCH',
+      headers: {
+        'Authorization': `Bearer ${connection.access_token}`,
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
+      body: JSON.stringify({ name: newName }),
+    });
+
+    if (!patchResponse.ok) {
+      const errorData = await patchResponse.text();
+      this.logger.error({ err: errorData, status: patchResponse.status }, 'Rename file failed');
+      throw new Error(`Failed to rename file: ${patchResponse.status} - ${errorData}`);
+    }
+
+    const renamed = await patchResponse.json();
+
+    return {
+      // Primary format (snake_case to match schema)
+      file_id: renamed.id,
+      file_name: renamed.name,
+      previous_name: previousName,
+      web_view_link: renamed.webViewLink || `https://drive.google.com/file/d/${renamed.id}/view`,
+      renamed_at: new Date().toISOString(),
+      // Legacy format (camelCase for backward compatibility)
+      fileId: renamed.id,
+      fileName: renamed.name,
+      previousName: previousName,
+      webViewLink: renamed.webViewLink || `https://drive.google.com/file/d/${renamed.id}/view`,
+      renamedAt: new Date().toISOString(),
+    };
+  }
+
+  // Copy a file (always creates a NEW file — NOT idempotent). Optional new_name and
+  // target_folder_id. Recurring runs produce duplicates by design.
+  private async copyFile(connection: any, parameters: any): Promise<any> {
+    this.logger.debug('DEBUG: Copying file via Google Drive API');
+
+    const fileId = parameters.file_id;
+    if (!fileId) {
+      throw new Error('file_id is required');
+    }
+
+    const requestBody: any = {};
+    if (parameters.new_name) {
+      requestBody.name = parameters.new_name;
+    }
+    if (parameters.target_folder_id) {
+      requestBody.parents = [parameters.target_folder_id];
+    }
+
+    const url = new URL(`${this.googleApisUrl}/drive/v3/files/${fileId}/copy`);
+    url.searchParams.set('fields', 'id, name, parents, webViewLink, mimeType');
+
+    const response = await fetch(url.toString(), {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${connection.access_token}`,
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
+      body: JSON.stringify(requestBody),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.text();
+      this.logger.error({ err: errorData, status: response.status }, 'Copy file failed');
+      throw new Error(`Failed to copy file: ${response.status} - ${errorData}`);
+    }
+
+    const copy = await response.json();
+
+    return {
+      // Primary format (snake_case to match schema)
+      file_id: copy.id,
+      file_name: copy.name,
+      source_file_id: fileId,
+      mime_type: copy.mimeType,
+      parents: Array.isArray(copy.parents) ? copy.parents : [],
+      web_view_link: copy.webViewLink || `https://drive.google.com/file/d/${copy.id}/view`,
+      copied_at: new Date().toISOString(),
+      // Legacy format (camelCase for backward compatibility)
+      fileId: copy.id,
+      fileName: copy.name,
+      sourceFileId: fileId,
+      mimeType: copy.mimeType,
+      webViewLink: copy.webViewLink || `https://drive.google.com/file/d/${copy.id}/view`,
+      copiedAt: new Date().toISOString(),
+    };
+  }
+
+  // Delete a file — TRASH-BY-DEFAULT. Implemented as files.update { trashed: true }, NEVER a
+  // hard DELETE. Confirmations are advisory in the executor (base only logs "would be handled
+  // via UI"), so non-destructive behaviour is enforced here in code: this method always trashes.
+  private async deleteFile(connection: any, parameters: any): Promise<any> {
+    this.logger.debug('DEBUG: Trashing file via Google Drive API');
+
+    const fileId = parameters.file_id;
+    if (!fileId) {
+      throw new Error('file_id is required');
+    }
+
+    // Soft delete only: PATCH trashed:true. A hard `DELETE /files/{id}` is intentionally never
+    // issued — trashed files are restorable from Google Drive Trash for 30 days.
+    const url = new URL(`${this.googleApisUrl}/drive/v3/files/${fileId}`);
+    url.searchParams.set('fields', 'id, name, trashed');
+
+    const response = await fetch(url.toString(), {
+      method: 'PATCH',
+      headers: {
+        'Authorization': `Bearer ${connection.access_token}`,
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
+      body: JSON.stringify({ trashed: true }),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.text();
+      this.logger.error({ err: errorData, status: response.status }, 'Delete (trash) file failed');
+      throw new Error(`Failed to delete file: ${response.status} - ${errorData}`);
+    }
+
+    const trashedFile = await response.json();
+
+    return {
+      // Primary format (snake_case to match schema)
+      file_id: trashedFile.id || fileId,
+      file_name: trashedFile.name,
+      trashed: true,
+      restorable: true,
+      trashed_at: new Date().toISOString(),
+      // Legacy format (camelCase for backward compatibility)
+      fileId: trashedFile.id || fileId,
+      fileName: trashedFile.name,
+      trashedAt: new Date().toISOString(),
+    };
+  }
+
+  // Revoke a single sharing permission (inverse of share_file). DELETE permissions/{id} returns
+  // 204 on success. A 404 (permission already gone) is treated as success with already_absent:true
+  // to preserve idempotency — never thrown. Uses raw fetch, so 204/404 are detected here directly.
+  private async revokeAccess(connection: any, parameters: any): Promise<any> {
+    this.logger.debug('DEBUG: Revoking file access via Google Drive API');
+
+    const fileId = parameters.file_id;
+    const permissionId = parameters.permission_id;
+    if (!fileId) {
+      throw new Error('file_id is required');
+    }
+    if (!permissionId) {
+      throw new Error('permission_id is required');
+    }
+
+    const url = `${this.googleApisUrl}/drive/v3/files/${fileId}/permissions/${permissionId}`;
+
+    const response = await fetch(url, {
+      method: 'DELETE',
+      headers: {
+        'Authorization': `Bearer ${connection.access_token}`,
+        'Accept': 'application/json',
+      },
+    });
+
+    // 404 → the permission is already gone. Idempotent success, not a hard error.
+    const alreadyAbsent = response.status === 404;
+
+    if (!response.ok && !alreadyAbsent) {
+      const errorData = await response.text();
+      this.logger.error({ err: errorData, status: response.status }, 'Revoke access failed');
+      throw new Error(`Failed to revoke access: ${response.status} - ${errorData}`);
+    }
+
+    return {
+      // Primary format (snake_case to match schema)
+      file_id: fileId,
+      permission_id: permissionId,
+      revoked: true,
+      already_absent: alreadyAbsent,
+      revoked_at: new Date().toISOString(),
+      // Legacy format (camelCase for backward compatibility)
+      fileId: fileId,
+      permissionId: permissionId,
+      alreadyAbsent: alreadyAbsent,
+      revokedAt: new Date().toISOString(),
     };
   }
 

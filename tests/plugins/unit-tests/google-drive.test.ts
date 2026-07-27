@@ -399,4 +399,306 @@ describe('GoogleDrivePluginExecutor', () => {
       expect(decoded).toContain("'1TAUlds9R8r2lznDszbOwovpdM0cN7aFK' in parents");
     });
   });
+
+  // ==========================================================================
+  // Phase 1 file-management actions: move_file, rename_file, copy_file,
+  // delete_file (trash-by-default), revoke_access.
+  // ==========================================================================
+  describe('Phase 1 file-management actions', () => {
+    // ---- move_file ----
+    describe('[smoke] move_file', () => {
+      it('moves a file: GET live parents then PATCH addParents/removeParents', async () => {
+        mockFetchSequence([
+          // GET current parents
+          { body: { id: 'file-1', name: 'Report.docx', parents: ['old-folder'] } },
+          // PATCH move result
+          { body: { id: 'file-1', name: 'Report.docx', parents: ['target-folder'], webViewLink: 'https://drive.google.com/file/d/file-1/view' } },
+        ]);
+
+        const result = await executor.executeAction(USER_ID, 'move_file', {
+          file_id: 'file-1',
+          target_folder_id: 'target-folder',
+        });
+
+        expectSuccessResult(result);
+        expect(result.data.moved).toBe(true);
+        expect(result.data.previous_parents).toEqual(['old-folder']);
+        expect(result.data.parents).toEqual(['target-folder']);
+
+        // The PATCH carries the computed add/remove parents.
+        const patchCall = getAllFetchCalls().find(c => (c.options?.method || 'GET').toUpperCase() === 'PATCH');
+        expect(patchCall).toBeDefined();
+        const decoded = decodeURIComponent(patchCall!.url);
+        expect(decoded).toContain('addParents=target-folder');
+        expect(decoded).toContain('removeParents=old-folder');
+      });
+    });
+
+    describe('[full] move_file', () => {
+      it('is an idempotent no-op when the file is already solely in the target (moved:false, no PATCH)', async () => {
+        // Only the GET-parents call happens; the file is already in the target.
+        mockFetchSuccess({ id: 'file-1', name: 'Report.docx', parents: ['target-folder'] });
+
+        const result = await executor.executeAction(USER_ID, 'move_file', {
+          file_id: 'file-1',
+          target_folder_id: 'target-folder',
+        });
+
+        expectSuccessResult(result);
+        expect(result.data.moved).toBe(false);
+
+        const calls = getAllFetchCalls();
+        expect(calls).toHaveLength(1); // GET only — no PATCH churn
+        expect(calls.every(c => (c.options?.method || 'GET').toUpperCase() !== 'PATCH')).toBe(true);
+      });
+
+      it('handles 404 file-not-found', async () => {
+        mockFetchError(404, { error: { code: 404, message: 'File not found' } });
+
+        const result = await executor.executeAction(USER_ID, 'move_file', {
+          file_id: 'missing',
+          target_folder_id: 'target-folder',
+        });
+
+        expectErrorResult(result);
+      });
+
+      it('handles 401 auth_failed (on the live-parents fetch)', async () => {
+        mockFetchError(401, { error: { code: 401, message: 'Invalid credentials' } });
+
+        const result = await executor.executeAction(USER_ID, 'move_file', {
+          file_id: 'file-1',
+          target_folder_id: 'target-folder',
+        });
+
+        expectErrorResult(result);
+      });
+
+      it('rejects missing target_folder_id (invalid input)', async () => {
+        const result = await executor.executeAction(USER_ID, 'move_file', {
+          file_id: 'file-1',
+        });
+
+        expectErrorResult(result);
+      });
+    });
+
+    // ---- rename_file ----
+    describe('[smoke] rename_file', () => {
+      it('renames a file and reports previous_name', async () => {
+        mockFetchSequence([
+          // GET current name
+          { body: { id: 'file-2', name: 'Old Name.docx' } },
+          // PATCH rename result
+          { body: { id: 'file-2', name: 'New Name.docx', webViewLink: 'https://drive.google.com/file/d/file-2/view' } },
+        ]);
+
+        const result = await executor.executeAction(USER_ID, 'rename_file', {
+          file_id: 'file-2',
+          new_name: 'New Name.docx',
+        });
+
+        expectSuccessResult(result);
+        expect(result.data.file_name).toBe('New Name.docx');
+        expect(result.data.previous_name).toBe('Old Name.docx');
+
+        const patchCall = getAllFetchCalls().find(c => (c.options?.method || 'GET').toUpperCase() === 'PATCH');
+        expect(patchCall).toBeDefined();
+        expect(patchCall!.options?.body).toContain('New Name.docx');
+      });
+    });
+
+    describe('[full] rename_file', () => {
+      it('handles 403 permission_denied', async () => {
+        mockFetchError(403, { error: { code: 403, message: 'The user does not have sufficient permissions' } });
+
+        const result = await executor.executeAction(USER_ID, 'rename_file', {
+          file_id: 'file-2',
+          new_name: 'New Name.docx',
+        });
+
+        expectErrorResult(result);
+      });
+
+      it('handles 401 auth_failed', async () => {
+        mockFetchError(401, { error: { code: 401, message: 'Invalid credentials' } });
+
+        const result = await executor.executeAction(USER_ID, 'rename_file', {
+          file_id: 'file-2',
+          new_name: 'New Name.docx',
+        });
+
+        expectErrorResult(result);
+      });
+
+      it('rejects missing new_name (invalid input)', async () => {
+        const result = await executor.executeAction(USER_ID, 'rename_file', {
+          file_id: 'file-2',
+        });
+
+        expectErrorResult(result);
+      });
+    });
+
+    // ---- copy_file ----
+    describe('[smoke] copy_file', () => {
+      it('copies a file and returns a NEW id distinct from the source', async () => {
+        mockFetchSuccess({
+          id: 'new-copy-id',
+          name: 'Copy of Report.docx',
+          mimeType: 'application/vnd.google-apps.document',
+          parents: ['target-folder'],
+          webViewLink: 'https://drive.google.com/file/d/new-copy-id/view',
+        });
+
+        const result = await executor.executeAction(USER_ID, 'copy_file', {
+          file_id: 'source-id',
+          new_name: 'Copy of Report.docx',
+          target_folder_id: 'target-folder',
+        });
+
+        expectSuccessResult(result);
+        expect(result.data.file_id).toBe('new-copy-id');
+        expect(result.data.source_file_id).toBe('source-id');
+        expect(result.data.file_id).not.toBe(result.data.source_file_id);
+        expectFetchCalledWith('files/source-id/copy', 'POST');
+      });
+    });
+
+    describe('[full] copy_file', () => {
+      it('handles 404 source-not-found', async () => {
+        mockFetchError(404, { error: { code: 404, message: 'File not found' } });
+
+        const result = await executor.executeAction(USER_ID, 'copy_file', {
+          file_id: 'missing',
+        });
+
+        expectErrorResult(result);
+      });
+
+      it('handles 401 auth_failed', async () => {
+        mockFetchError(401, { error: { code: 401, message: 'Invalid credentials' } });
+
+        const result = await executor.executeAction(USER_ID, 'copy_file', {
+          file_id: 'source-id',
+        });
+
+        expectErrorResult(result);
+      });
+
+      it('rejects missing file_id (invalid input)', async () => {
+        const result = await executor.executeAction(USER_ID, 'copy_file', {
+          new_name: 'Copy of Report.docx',
+        });
+
+        expectErrorResult(result);
+      });
+    });
+
+    // ---- delete_file (trash-by-default) ----
+    describe('[smoke] delete_file', () => {
+      it('trashes a file: returns trashed:true + restorable:true', async () => {
+        mockFetchSuccess({ id: 'trash-me', name: 'Old Draft.docx', trashed: true });
+
+        const result = await executor.executeAction(USER_ID, 'delete_file', {
+          file_id: 'trash-me',
+        });
+
+        expectSuccessResult(result);
+        expect(result.data.trashed).toBe(true);
+        expect(result.data.restorable).toBe(true);
+      });
+
+      it('TRASH-NOT-DELETE: issues a PATCH {trashed:true} and NEVER a hard DELETE', async () => {
+        mockFetchSuccess({ id: 'trash-me', name: 'Old Draft.docx', trashed: true });
+
+        await executor.executeAction(USER_ID, 'delete_file', {
+          file_id: 'trash-me',
+        });
+
+        const calls = getAllFetchCalls();
+        const fileCall = calls.find(c => c.url.includes('drive/v3/files/trash-me'));
+        expect(fileCall).toBeDefined();
+        // The mutation is a trash update...
+        expect((fileCall!.options?.method || 'GET').toUpperCase()).toBe('PATCH');
+        expect(fileCall!.options?.body).toContain('"trashed":true');
+        // ...and no hard DELETE is ever issued.
+        const hardDelete = calls.find(c => (c.options?.method || 'GET').toUpperCase() === 'DELETE');
+        expect(hardDelete).toBeUndefined();
+      });
+    });
+
+    describe('[full] delete_file', () => {
+      it('handles 404 file-not-found', async () => {
+        mockFetchError(404, { error: { code: 404, message: 'File not found' } });
+
+        const result = await executor.executeAction(USER_ID, 'delete_file', {
+          file_id: 'missing',
+        });
+
+        expectErrorResult(result);
+      });
+
+      it('handles 401 auth_failed', async () => {
+        mockFetchError(401, { error: { code: 401, message: 'Invalid credentials' } });
+
+        const result = await executor.executeAction(USER_ID, 'delete_file', {
+          file_id: 'trash-me',
+        });
+
+        expectErrorResult(result);
+      });
+    });
+
+    // ---- revoke_access ----
+    describe('[smoke] revoke_access', () => {
+      it('revokes a permission (204 No Content) → revoked:true, already_absent:false', async () => {
+        mockFetchSuccess({}, 204);
+
+        const result = await executor.executeAction(USER_ID, 'revoke_access', {
+          file_id: 'file-3',
+          permission_id: 'perm-1',
+        });
+
+        expectSuccessResult(result);
+        expect(result.data.revoked).toBe(true);
+        expect(result.data.already_absent).toBe(false);
+        expectFetchCalledWith('files/file-3/permissions/perm-1', 'DELETE');
+      });
+    });
+
+    describe('[full] revoke_access', () => {
+      it('idempotency: 404 (permission already gone) → revoked:true, already_absent:true (not thrown)', async () => {
+        mockFetchError(404, { error: { code: 404, message: 'Permission not found' } });
+
+        const result = await executor.executeAction(USER_ID, 'revoke_access', {
+          file_id: 'file-3',
+          permission_id: 'perm-gone',
+        });
+
+        expectSuccessResult(result);
+        expect(result.data.revoked).toBe(true);
+        expect(result.data.already_absent).toBe(true);
+      });
+
+      it('handles 401 auth_failed', async () => {
+        mockFetchError(401, { error: { code: 401, message: 'Invalid credentials' } });
+
+        const result = await executor.executeAction(USER_ID, 'revoke_access', {
+          file_id: 'file-3',
+          permission_id: 'perm-1',
+        });
+
+        expectErrorResult(result);
+      });
+
+      it('rejects missing permission_id (invalid input)', async () => {
+        const result = await executor.executeAction(USER_ID, 'revoke_access', {
+          file_id: 'file-3',
+        });
+
+        expectErrorResult(result);
+      });
+    });
+  });
 });

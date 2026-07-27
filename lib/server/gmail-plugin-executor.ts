@@ -42,6 +42,21 @@ export class GmailPluginExecutor extends GoogleBasePluginExecutor {
         return await this.getEmailAttachment(connection, parameters);
       case 'modify_email':
         return await this.modifyEmail(connection, parameters);
+      case 'get_or_create_label':
+        return await this.getOrCreateLabel(connection, parameters);
+      // NOTE: dispatches to the private listAllLabels ACTION method — NOT the
+      // public `list_labels(connection, options)` dropdown fetcher (~line 884),
+      // which is the x-dynamic-options source and has a different signature/shape.
+      case 'list_labels':
+        return await this.listAllLabels(connection, parameters);
+      case 'delete_label':
+        return await this.deleteLabel(connection, parameters);
+      case 'reply_to_email':
+        return await this.replyToThread(connection, parameters);
+      case 'send_draft':
+        return await this.sendDraft(connection, parameters);
+      case 'batch_modify_emails':
+        return await this.batchModifyMessages(connection, parameters);
       default:
         throw new Error(`Action ${actionName} not supported`);
     }
@@ -548,6 +563,365 @@ export class GmailPluginExecutor extends GoogleBasePluginExecutor {
     return { id: label.id, name: label.name };
   }
 
+  // ─── Phase 1 actions: labels + reply/draft/batch ──────────────────────────
+
+  /**
+   * Fetch all Gmail labels once. Shared by the new label actions.
+   * Returns the raw label objects ({ id, name, type }).
+   */
+  private async fetchLabels(connection: any): Promise<Array<{ id: string; name: string; type?: string }>> {
+    const response = await fetch(`${this.gmailApisUrl}/users/me/labels`, {
+      headers: {
+        'Authorization': `Bearer ${connection.access_token}`,
+        'Accept': 'application/json',
+      },
+    });
+
+    if (!response.ok) {
+      const errorData = await response.text();
+      this.logger.error({ status: response.status, errorData }, 'Gmail labels fetch failed');
+      throw new Error(`Failed to fetch labels: ${response.status} - ${errorData}`);
+    }
+
+    const data = await response.json();
+    return Array.isArray(data.labels) ? data.labels : [];
+  }
+
+  /**
+   * Idempotent find-or-create for a Gmail label.
+   * Lists labels, case-insensitive match by name → returns it (created:false);
+   * on miss, reuses the 409-safe createLabel (created:true).
+   */
+  private async getOrCreateLabel(connection: any, parameters: any): Promise<any> {
+    const labelName: string = typeof parameters.label_name === 'string' ? parameters.label_name.trim() : '';
+    if (!labelName) {
+      throw new Error('label_name is a required parameter');
+    }
+
+    this.logger.debug({ labelName }, 'get_or_create_label: resolving label');
+
+    const labels = await this.fetchLabels(connection);
+    const existing = labels.find((l) => l.name?.toLowerCase() === labelName.toLowerCase());
+
+    if (existing) {
+      this.logger.debug({ labelName, labelId: existing.id }, 'get_or_create_label: found existing');
+      return {
+        label_id: existing.id,
+        label_name: existing.name,
+        created: false,
+        created_at: new Date().toISOString(),
+      };
+    }
+
+    // createLabel is 409-safe (re-fetches on conflict). Visibility is hardcoded
+    // inside createLabel by design — no visibility params on this action (CR-1).
+    const created = await this.createLabel(connection, labelName);
+    return {
+      label_id: created.id,
+      label_name: created.name,
+      created: true,
+      created_at: new Date().toISOString(),
+    };
+  }
+
+  /**
+   * List all Gmail labels (action). Distinct from the public `list_labels`
+   * dropdown fetcher — this returns the schema-shaped action payload.
+   * Optional `label_type` filter: 'system' | 'user' | 'all' (default all).
+   */
+  private async listAllLabels(connection: any, parameters: any): Promise<any> {
+    const labelType: string = typeof parameters.label_type === 'string' ? parameters.label_type : 'all';
+
+    const labels = await this.fetchLabels(connection);
+
+    const filtered = labelType === 'all'
+      ? labels
+      : labels.filter((l) => l.type === labelType);
+
+    const mapped = filtered.map((l) => ({
+      id: l.id,
+      name: l.name,
+      type: l.type || 'user',
+    }));
+
+    return {
+      labels: mapped,
+      total_found: mapped.length,
+      listed_at: new Date().toISOString(),
+    };
+  }
+
+  /**
+   * Delete a Gmail label by id.
+   * - Hard-rejects Gmail SYSTEM_LABELS BEFORE the DELETE (CR-4).
+   * - DELETE returns 204 No Content → does NOT call .json().
+   * - 404 → treated as already-absent success (idempotent-ish).
+   */
+  private async deleteLabel(connection: any, parameters: any): Promise<any> {
+    const labelId: string = typeof parameters.label_id === 'string' ? parameters.label_id.trim() : '';
+    if (!labelId) {
+      throw new Error('label_id is a required parameter');
+    }
+
+    // In-executor hard guard — refuse to delete a built-in Gmail system label
+    // (Gmail would reject it anyway; fail fast before any network call).
+    if (SYSTEM_LABELS.has(labelId.toUpperCase())) {
+      throw new Error(`cannot_delete_system_label: "${labelId}" is a built-in Gmail label and cannot be deleted.`);
+    }
+
+    this.logger.debug({ labelId }, 'delete_label: deleting label');
+
+    const response = await fetch(`${this.gmailApisUrl}/users/me/labels/${encodeURIComponent(labelId)}`, {
+      method: 'DELETE',
+      headers: {
+        'Authorization': `Bearer ${connection.access_token}`,
+        'Accept': 'application/json',
+      },
+    });
+
+    // 404 → the label is already gone; net effect is the desired state.
+    if (response.status === 404) {
+      this.logger.info({ labelId }, 'delete_label: label already absent (404) — treating as success');
+      return {
+        label_id: labelId,
+        deleted: true,
+        already_absent: true,
+        deleted_at: new Date().toISOString(),
+      };
+    }
+
+    if (!response.ok) {
+      const errorData = await response.text();
+      this.logger.error({ status: response.status, errorData, labelId }, 'Gmail label delete failed');
+      throw new Error(`Gmail label delete failed: ${response.status} - ${errorData}`);
+    }
+
+    // Success is 204 No Content — do NOT call response.json() (empty body).
+    return {
+      label_id: labelId,
+      deleted: true,
+      already_absent: false,
+      deleted_at: new Date().toISOString(),
+    };
+  }
+
+  /**
+   * Reply within an existing thread.
+   * Fetches the target message metadata (threadId + Message-ID/References/Subject/From),
+   * builds a reply MIME with In-Reply-To/References so it CONTINUES the thread (never
+   * starts a new one), and sends via messages.send with the threadId.
+   * NOT idempotent — each call sends a new message (double-send on re-run).
+   */
+  private async replyToThread(connection: any, parameters: any): Promise<any> {
+    const messageId: string = typeof parameters.message_id === 'string' ? parameters.message_id.trim() : '';
+    if (!messageId) {
+      throw new Error('message_id is a required parameter');
+    }
+
+    const content = parameters.content || {};
+    const hasBody = (typeof content.body === 'string' && content.body.length > 0)
+      || (typeof content.html_body === 'string' && content.html_body.length > 0);
+    if (!hasBody) {
+      throw new Error('content must include at least one of body or html_body');
+    }
+
+    // (1) Fetch original message metadata to resolve threading headers.
+    const metaResponse = await fetch(
+      `${this.gmailApisUrl}/users/me/messages/${encodeURIComponent(messageId)}?format=metadata`,
+      {
+        headers: {
+          'Authorization': `Bearer ${connection.access_token}`,
+          'Accept': 'application/json',
+        },
+      }
+    );
+
+    if (!metaResponse.ok) {
+      const errorData = await metaResponse.text();
+      this.logger.error({ status: metaResponse.status, errorData, messageId }, 'reply_to_email: failed to fetch original message');
+      throw new Error(`Failed to fetch original message: ${metaResponse.status} - ${errorData}`);
+    }
+
+    const original = await metaResponse.json();
+    const headers: Array<{ name: string; value: string }> = original.payload?.headers || [];
+    const getHeader = (name: string): string =>
+      headers.find((h) => h.name?.toLowerCase() === name.toLowerCase())?.value || '';
+
+    const threadId: string = original.threadId;
+    const originalMessageIdHeader = getHeader('Message-ID') || getHeader('Message-Id');
+    const originalReferences = getHeader('References');
+    const originalSubject = getHeader('Subject');
+    const originalFrom = getHeader('From');
+    const originalReplyTo = getHeader('Reply-To');
+    const originalTo = getHeader('To');
+    const originalCc = getHeader('Cc');
+
+    // (2) Compute recipients: explicit override → else reply to sender (Reply-To ?? From).
+    // reply_all (when no explicit override) widens Cc to the original To + Cc set.
+    // Note: self-exclusion is not performed (no profile lookup here) — documented v1 limitation.
+    let recipients = parameters.recipients;
+    if (!recipients || (!recipients.to && !recipients.cc && !recipients.bcc)) {
+      const sender = originalReplyTo || originalFrom;
+      recipients = { to: sender ? [sender] : [] };
+      if (parameters.reply_all === true) {
+        const cc = [originalTo, originalCc].filter((v) => v && v.length > 0);
+        if (cc.length > 0) recipients.cc = cc;
+      }
+    }
+
+    // (3) Build subject: Re: <original>, avoiding a double "Re:".
+    const subject = /^re:/i.test(originalSubject.trim())
+      ? originalSubject
+      : `Re: ${originalSubject}`;
+
+    // (4) Build the reply MIME with threading headers.
+    const references = originalReferences
+      ? `${originalReferences} ${originalMessageIdHeader}`.trim()
+      : originalMessageIdHeader;
+
+    const raw = this.buildEmailMessage(
+      { recipients, content: { ...content, subject } },
+      {
+        'In-Reply-To': originalMessageIdHeader,
+        'References': references,
+      }
+    );
+
+    // (5) Send within the thread. threadId keeps the reply in the same conversation.
+    const sendResponse = await fetch(`${this.gmailApisUrl}/users/me/messages/send`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${connection.access_token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ raw, threadId }),
+    });
+
+    if (!sendResponse.ok) {
+      const errorData = await sendResponse.text();
+      this.logger.error({ status: sendResponse.status, errorData }, 'reply_to_email: send failed');
+      throw new Error(`Gmail reply send failed: ${sendResponse.status} - ${errorData}`);
+    }
+
+    const result = await sendResponse.json();
+
+    return {
+      message_id: result.id,
+      thread_id: result.threadId,
+      in_reply_to: originalMessageIdHeader,
+      recipient_count: this.countRecipients(recipients),
+      subject,
+      sent_at: new Date().toISOString(),
+    };
+  }
+
+  /**
+   * Send an existing Gmail draft (drafts.send { id }).
+   * NOT idempotent — consumes the draft; a re-run 404s.
+   */
+  private async sendDraft(connection: any, parameters: any): Promise<any> {
+    const draftId: string = typeof parameters.draft_id === 'string' ? parameters.draft_id.trim() : '';
+    if (!draftId) {
+      throw new Error('draft_id is a required parameter');
+    }
+
+    this.logger.debug({ draftId }, 'send_draft: sending draft');
+
+    const response = await fetch(`${this.gmailApisUrl}/users/me/drafts/send`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${connection.access_token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ id: draftId }),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.text();
+      this.logger.error({ status: response.status, errorData, draftId }, 'send_draft failed');
+      throw new Error(`Gmail draft send failed: ${response.status} - ${errorData}`);
+    }
+
+    const result = await response.json();
+
+    return {
+      message_id: result.id,
+      thread_id: result.threadId,
+      draft_id: draftId,
+      sent_at: new Date().toISOString(),
+    };
+  }
+
+  /**
+   * Batch add/remove labels across many messages (messages.batchModify).
+   * - Hard-rejects empty and > 1000 ids BEFORE the fetch (CR-4; 1000 = Gmail max).
+   * - Requires at least one of add_labels / remove_labels / archive.
+   * - archive shorthand → removes the INBOX label (parity with modify_email).
+   * - batchModify returns 204 No Content → does NOT call .json().
+   * Idempotent (re-applying a label / removing an absent one is a Gmail no-op).
+   */
+  private async batchModifyMessages(connection: any, parameters: any): Promise<any> {
+    const messageIds: unknown = parameters.message_ids;
+
+    // In-executor hard guards (the real enforcement — rules.limits is inert).
+    if (!Array.isArray(messageIds) || messageIds.length === 0) {
+      throw new Error('message_ids must be a non-empty array');
+    }
+    if (messageIds.length > 1000) {
+      throw new Error(`too_many_ids: message_ids has ${messageIds.length} entries; the maximum per batch is 1000.`);
+    }
+
+    const addLabelNames: string[] = Array.isArray(parameters.add_labels) ? parameters.add_labels : [];
+    const removeLabelNames: string[] = Array.isArray(parameters.remove_labels) ? parameters.remove_labels : [];
+    const archive: boolean = parameters.archive === true;
+
+    if (addLabelNames.length === 0 && removeLabelNames.length === 0 && !archive) {
+      throw new Error('At least one of add_labels, remove_labels, or archive is required');
+    }
+
+    this.logger.debug(
+      { count: messageIds.length, addLabelNames, removeLabelNames, archive },
+      'batch_modify_emails: modifying messages'
+    );
+
+    // Resolve label names → ids (system labels pass through; custom resolved/created).
+    const addLabelIds = await this.resolveLabelNames(connection, addLabelNames);
+    const removeLabelIds = await this.resolveLabelNames(connection, removeLabelNames);
+
+    // archive = remove the INBOX label (consistent with modify_email).
+    if (archive && !removeLabelIds.includes('INBOX')) {
+      removeLabelIds.push('INBOX');
+    }
+
+    const response = await fetch(`${this.gmailApisUrl}/users/me/messages/batchModify`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${connection.access_token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        ids: messageIds,
+        addLabelIds,
+        removeLabelIds,
+      }),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.text();
+      this.logger.error({ status: response.status, errorData }, 'batch_modify_emails failed');
+      throw new Error(`Gmail batch modify failed: ${response.status} - ${errorData}`);
+    }
+
+    // Success is 204 No Content — do NOT call response.json() (empty body).
+    return {
+      modified_count: messageIds.length,
+      message_ids: messageIds,
+      labels_added: addLabelIds,
+      labels_removed: removeLabelIds,
+      modified_at: new Date().toISOString(),
+    };
+  }
+
   // Private helper methods
 
   // Build RFC 2822 email message
@@ -574,7 +948,17 @@ export class GmailPluginExecutor extends GoogleBasePluginExecutor {
     return `=?UTF-8?B?${encoded}?=`;
   }
 
-  private buildEmailMessage(parameters: any): string {
+  /**
+   * Build an RFC 2822 message and base64url-encode it (Gmail's format).
+   *
+   * @param parameters   { recipients, content } — same shape send_email/create_draft use.
+   * @param extraHeaders Optional additive RFC822 headers (e.g. In-Reply-To / References
+   *                     for reply_to_email) injected BEFORE the MIME-Version line. Defaults
+   *                     to none so the existing sendEmail/createDraft call sites are
+   *                     byte-for-byte unchanged (no reply headers leak into the send path).
+   *                     Values run through mimeEncodeHeader to keep the single header code path.
+   */
+  private buildEmailMessage(parameters: any, extraHeaders?: Record<string, string>): string {
     const { recipients, content } = parameters;
 
     let message = '';
@@ -618,6 +1002,17 @@ export class GmailPluginExecutor extends GoogleBasePluginExecutor {
     }
     if (content?.subject) {
       message += `Subject: ${this.mimeEncodeHeader(content.subject)}\r\n`;
+    }
+
+    // Additive threading/custom headers (In-Reply-To, References for reply_to_email).
+    // Injected before MIME-Version so they sit with the other top-level headers.
+    // Empty/undefined values are skipped; no callers pass this except replyToThread.
+    if (extraHeaders) {
+      for (const [name, value] of Object.entries(extraHeaders)) {
+        if (typeof value === 'string' && value.length > 0) {
+          message += `${name}: ${this.mimeEncodeHeader(value)}\r\n`;
+        }
+      }
     }
 
     // MIME headers + body.

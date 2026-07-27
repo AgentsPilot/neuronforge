@@ -36,6 +36,15 @@ export class GoogleCalendarPluginExecutor extends GoogleBasePluginExecutor {
       case 'get_event_details':
         result = await this.getEventDetails(connection, parameters);
         break;
+      case 'get_free_busy':
+        result = await this.getFreeBusy(connection, parameters);
+        break;
+      case 'list_calendars':
+        // NOTE: dispatches to the private listAllCalendars ACTION method — NOT the
+        // public `list_calendars(connection, options)` dropdown fetcher (~line 514),
+        // which stays the x-dynamic-options source for calendar_id/calendar_ids params.
+        result = await this.listAllCalendars(connection, parameters);
+        break;
       default:
         return {
           success: false,
@@ -451,6 +460,155 @@ export class GoogleCalendarPluginExecutor extends GoogleBasePluginExecutor {
       hangoutLink: data.hangoutLink,
       meetLink: data.conferenceData?.entryPoints?.find((ep: any) => ep.entryPointType === 'video')?.uri,
       retrievedAt: new Date().toISOString()
+    };
+  }
+
+  // Query busy/free intervals over a time window via Calendar freebusy.query.
+  // Read-only availability primitive. Returns ONLY busy start/end per calendar —
+  // never event summaries/attendees/details (privacy invariant; freebusy itself
+  // never returns detail, and this method must not enrich it with a secondary call).
+  private async getFreeBusy(connection: any, parameters: any): Promise<any> {
+    this.logger.debug('DEBUG: Querying free/busy from Google Calendar');
+
+    const {
+      calendar_ids = ['primary'],
+      time_min,
+      time_max,
+      time_zone = 'UTC'
+    } = parameters;
+
+    // --- Pre-fetch guards (fail fast before any network call) ---
+
+    // Both bounds must be present RFC3339 timestamps.
+    const minMs = Date.parse(time_min);
+    const maxMs = Date.parse(time_max);
+    if (!time_min || !time_max || Number.isNaN(minMs) || Number.isNaN(maxMs)) {
+      throw new Error('invalid_time_format: time_min and time_max must be present RFC3339 timestamps (e.g. "2026-03-27T00:00:00Z").');
+    }
+
+    // Reject inverted/degenerate windows (time_min must be strictly before time_max).
+    if (minMs >= maxMs) {
+      throw new Error('invalid_time_range: time_min must be strictly before time_max.');
+    }
+
+    // Google enforces a 50-calendar cap (calendarExpansionMax) server-side; fail fast.
+    const calendarIds: string[] = Array.isArray(calendar_ids) ? calendar_ids : [calendar_ids];
+    if (calendarIds.length > 50) {
+      throw new Error(`invalid_input: get_free_busy supports at most 50 calendars per query (received ${calendarIds.length}).`);
+    }
+
+    const response = await fetch(`${this.googleApisUrl}/calendar/v3/freeBusy`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${connection.access_token}`,
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
+      body: JSON.stringify({
+        timeMin: time_min,
+        timeMax: time_max,
+        timeZone: time_zone,
+        items: calendarIds.map((id: string) => ({ id })),
+      }),
+    });
+
+    // Only a top-level HTTP failure throws. Per-calendar errors inside a 200 are a
+    // PARTIAL SUCCESS and are surfaced below, not thrown (CR-1).
+    if (!response.ok) {
+      const errorData = await response.text();
+      this.logger.error({ err: errorData, status: response.status }, 'Free/busy query failed');
+      throw new Error(`Calendar API error: ${response.status} - ${errorData}`);
+    }
+
+    const data = await response.json();
+    const calendarsMap = (data && data.calendars) || {};
+
+    // Map the freebusy response `calendars{}` map into an array. Copy ONLY start/end
+    // from each busy block (privacy invariant) and surface any per-calendar `errors`
+    // Google returns (e.g. { reason: 'notFound' }) without throwing.
+    const calendars = Object.keys(calendarsMap).map((calendarId: string) => {
+      const entry = calendarsMap[calendarId] || {};
+      const busy = Array.isArray(entry.busy)
+        ? entry.busy.map((b: any) => ({ start: b.start, end: b.end }))
+        : [];
+
+      const mapped: { calendar_id: string; busy: Array<{ start: string; end: string }>; errors?: any[] } = {
+        calendar_id: calendarId,
+        busy,
+      };
+
+      if (Array.isArray(entry.errors) && entry.errors.length > 0) {
+        mapped.errors = entry.errors;
+      }
+
+      return mapped;
+    });
+
+    return {
+      // Primary format (snake_case to match schema)
+      calendars,
+      time_min,
+      time_max,
+      time_zone,
+      queried_at: new Date().toISOString(),
+      // Legacy format (camelCase for backward compatibility)
+      timeMin: time_min,
+      timeMax: time_max,
+      timeZone: time_zone,
+      queriedAt: new Date().toISOString()
+    };
+  }
+
+  // List the user's calendars via calendarList.list (read-only).
+  // ⚠️ Distinct method name from the public `list_calendars(connection, options)`
+  // dropdown fetcher (~line 514) — this is the ACTION path (switch-dispatched),
+  // returning the schema-shaped payload rather than {value,label,...} options.
+  private async listAllCalendars(connection: any, parameters: any): Promise<any> {
+    this.logger.debug('DEBUG: Listing all calendars from Google Calendar');
+
+    const { min_access_role } = parameters;
+
+    const url = new URL(`${this.googleApisUrl}/calendar/v3/users/me/calendarList`);
+    if (min_access_role) {
+      url.searchParams.set('minAccessRole', min_access_role);
+    }
+
+    const response = await fetch(url.toString(), {
+      headers: {
+        'Authorization': `Bearer ${connection.access_token}`,
+        'Accept': 'application/json',
+      },
+    });
+
+    if (!response.ok) {
+      const errorData = await response.text();
+      this.logger.error({ err: errorData, status: response.status }, 'List calendars failed');
+      throw new Error(`Calendar API error: ${response.status} - ${errorData}`);
+    }
+
+    const data = await response.json();
+    const items = (data && Array.isArray(data.items)) ? data.items : [];
+
+    const calendars = items.map((cal: any) => ({
+      id: cal.id,
+      summary: cal.summary,
+      description: cal.description,
+      time_zone: cal.timeZone,
+      primary: cal.primary || false,
+      access_role: cal.accessRole,
+      // Legacy format (camelCase for backward compatibility)
+      timeZone: cal.timeZone,
+      accessRole: cal.accessRole
+    }));
+
+    return {
+      // Primary format (snake_case to match schema)
+      calendars,
+      total_found: calendars.length,
+      listed_at: new Date().toISOString(),
+      // Legacy format (camelCase for backward compatibility)
+      totalFound: calendars.length,
+      listedAt: new Date().toISOString()
     };
   }
 
