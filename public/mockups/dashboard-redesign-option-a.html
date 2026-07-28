@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dashboard Redesign - Option A: Daily Snapshot</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-primary: #fafafa;
+      --bg-surface: #ffffff;
+      --bg-elevated: #f5f5f5;
+      --border: #e5e5e5;
+      --text-primary: #171717;
+      --text-secondary: #525252;
+      --text-muted: #a3a3a3;
+      --accent-green: #22c55e;
+      --accent-blue: #3b82f6;
+      --accent-purple: #8b5cf6;
+      --accent-amber: #f59e0b;
+    }
+
+    body {
+      font-family: 'Inter', sans-serif;
+      background: var(--bg-primary);
+      color: var(--text-primary);
+    }
+
+    .card {
+      background: var(--bg-surface);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+    }
+
+    .hero-card {
+      background: linear-gradient(135deg, #f0fdf4 0%, #ecfeff 50%, #f5f3ff 100%);
+      border: 1px solid #d1fae5;
+    }
+
+    .pulse-ring {
+      animation: pulse-ring 2s ease-out infinite;
+    }
+
+    @keyframes pulse-ring {
+      0% { transform: scale(1); opacity: 1; }
+      100% { transform: scale(1.5); opacity: 0; }
+    }
+
+    .float-in {
+      animation: float-in 0.6s ease-out;
+    }
+
+    @keyframes float-in {
+      from { opacity: 0; transform: translateY(20px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+  </style>
+</head>
+<body class="min-h-screen p-4 md:p-8">
+  <div class="max-w-4xl mx-auto">
+
+    <!-- Simple Header -->
+    <header class="mb-8 flex items-center justify-between">
+      <div>
+        <p class="text-sm text-[var(--text-muted)]">Thursday, June 26</p>
+        <h1 class="text-2xl font-semibold text-[var(--text-primary)] mt-1">Good morning, Sarah</h1>
+      </div>
+      <div class="flex items-center gap-3">
+        <button class="w-10 h-10 rounded-full bg-[var(--bg-elevated)] flex items-center justify-center text-[var(--text-secondary)] hover:bg-[var(--border)] transition">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+          </svg>
+        </button>
+        <div class="w-10 h-10 rounded-full bg-gradient-to-br from-purple-400 to-blue-400"></div>
+      </div>
+    </header>
+
+    <!-- THE ONE THING: Today's Win -->
+    <div class="hero-card card p-8 mb-6 float-in">
+      <div class="flex items-start justify-between">
+        <div>
+          <p class="text-sm font-medium text-emerald-600 mb-2">Today so far</p>
+          <h2 class="text-4xl font-bold text-[var(--text-primary)] mb-2">
+            You saved 2.5 hours
+          </h2>
+          <p class="text-lg text-[var(--text-secondary)]">
+            That's <span class="font-semibold text-emerald-600">$125</span> worth of your time
+          </p>
+        </div>
+        <div class="relative">
+          <div class="w-20 h-20 rounded-full bg-emerald-100 flex items-center justify-center">
+            <svg class="w-10 h-10 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+            </svg>
+          </div>
+          <div class="absolute inset-0 rounded-full border-2 border-emerald-300 pulse-ring"></div>
+        </div>
+      </div>
+
+      <!-- What happened breakdown -->
+      <div class="mt-8 pt-6 border-t border-emerald-200/50">
+        <p class="text-sm font-medium text-[var(--text-muted)] mb-4">What your automations did today:</p>
+        <div class="grid grid-cols-3 gap-4">
+          <div class="bg-white/60 rounded-xl p-4">
+            <p class="text-2xl font-bold text-[var(--text-primary)]">47</p>
+            <p class="text-sm text-[var(--text-secondary)]">emails processed</p>
+          </div>
+          <div class="bg-white/60 rounded-xl p-4">
+            <p class="text-2xl font-bold text-[var(--text-primary)]">12</p>
+            <p class="text-sm text-[var(--text-secondary)]">leads captured</p>
+          </div>
+          <div class="bg-white/60 rounded-xl p-4">
+            <p class="text-2xl font-bold text-[var(--text-primary)]">5</p>
+            <p class="text-sm text-[var(--text-secondary)]">invoices sent</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Status: Everything OK or Needs Attention -->
+    <div class="card p-6 mb-6 float-in" style="animation-delay: 0.1s">
+      <div class="flex items-center gap-4">
+        <div class="w-12 h-12 rounded-full bg-emerald-100 flex items-center justify-center">
+          <svg class="w-6 h-6 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+        </div>
+        <div class="flex-1">
+          <h3 class="font-semibold text-[var(--text-primary)]">Everything's running smoothly</h3>
+          <p class="text-sm text-[var(--text-secondary)]">All 8 of your automations are working perfectly</p>
+        </div>
+        <button class="text-sm text-[var(--accent-blue)] font-medium hover:underline">
+          View details
+        </button>
+      </div>
+    </div>
+
+    <!-- Quick Actions -->
+    <div class="grid grid-cols-2 gap-4 mb-6">
+      <!-- Create New -->
+      <div class="card p-6 hover:shadow-lg transition cursor-pointer group float-in" style="animation-delay: 0.2s">
+        <div class="w-12 h-12 rounded-2xl bg-gradient-to-br from-blue-500 to-purple-500 flex items-center justify-center mb-4 group-hover:scale-110 transition">
+          <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+          </svg>
+        </div>
+        <h3 class="font-semibold text-[var(--text-primary)] mb-1">Create automation</h3>
+        <p class="text-sm text-[var(--text-secondary)]">Describe what you want to automate</p>
+      </div>
+
+      <!-- View All -->
+      <div class="card p-6 hover:shadow-lg transition cursor-pointer group float-in" style="animation-delay: 0.25s">
+        <div class="w-12 h-12 rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-500 flex items-center justify-center mb-4 group-hover:scale-110 transition">
+          <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 10h16M4 14h16M4 18h16" />
+          </svg>
+        </div>
+        <h3 class="font-semibold text-[var(--text-primary)] mb-1">My automations</h3>
+        <p class="text-sm text-[var(--text-secondary)]">8 automations running</p>
+      </div>
+    </div>
+
+    <!-- Recent Activity - Simple List -->
+    <div class="card p-6 float-in" style="animation-delay: 0.3s">
+      <div class="flex items-center justify-between mb-5">
+        <h3 class="font-semibold text-[var(--text-primary)]">Just happened</h3>
+        <span class="flex items-center gap-1.5 text-xs text-emerald-500">
+          <span class="w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></span>
+          Live
+        </span>
+      </div>
+
+      <div class="space-y-4">
+        <div class="flex items-center gap-4">
+          <div class="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0">
+            <svg class="w-5 h-5 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+            </svg>
+          </div>
+          <div class="flex-1 min-w-0">
+            <p class="text-sm text-[var(--text-primary)]"><span class="font-medium">Email Digest</span> summarized 12 emails</p>
+            <p class="text-xs text-[var(--text-muted)]">5 minutes ago</p>
+          </div>
+          <span class="text-xs font-medium text-emerald-500 bg-emerald-50 px-2 py-1 rounded-full">Done</span>
+        </div>
+
+        <div class="flex items-center gap-4">
+          <div class="w-10 h-10 rounded-full bg-purple-100 flex items-center justify-center flex-shrink-0">
+            <svg class="w-5 h-5 text-purple-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+            </svg>
+          </div>
+          <div class="flex-1 min-w-0">
+            <p class="text-sm text-[var(--text-primary)]"><span class="font-medium">Lead Capture</span> added 3 new contacts</p>
+            <p class="text-xs text-[var(--text-muted)]">23 minutes ago</p>
+          </div>
+          <span class="text-xs font-medium text-emerald-500 bg-emerald-50 px-2 py-1 rounded-full">Done</span>
+        </div>
+
+        <div class="flex items-center gap-4">
+          <div class="w-10 h-10 rounded-full bg-amber-100 flex items-center justify-center flex-shrink-0">
+            <svg class="w-5 h-5 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+            </svg>
+          </div>
+          <div class="flex-1 min-w-0">
+            <p class="text-sm text-[var(--text-primary)]"><span class="font-medium">Invoice Processor</span> sent 2 invoices</p>
+            <p class="text-xs text-[var(--text-muted)]">1 hour ago</p>
+          </div>
+          <span class="text-xs font-medium text-emerald-500 bg-emerald-50 px-2 py-1 rounded-full">Done</span>
+        </div>
+      </div>
+
+      <button class="w-full mt-5 py-2.5 text-sm text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition font-medium">
+        See all activity
+      </button>
+    </div>
+
+    <!-- Design Notes -->
+    <div class="mt-12 p-6 bg-amber-50 border border-amber-200 rounded-2xl">
+      <h3 class="font-semibold text-amber-800 mb-3">Design Notes - Option A: Daily Snapshot</h3>
+      <ul class="text-sm text-amber-700 space-y-2">
+        <li><strong>Focus:</strong> What happened TODAY - immediate, tangible value</li>
+        <li><strong>Hero metric:</strong> Time saved (translated to money for context)</li>
+        <li><strong>Status:</strong> Binary - everything OK or needs attention (no percentages)</li>
+        <li><strong>Actions:</strong> Only 2 clear choices - create or view</li>
+        <li><strong>Activity:</strong> Human-readable events, not technical logs</li>
+        <li><strong>Removed:</strong> Credit gauges, success rate charts, token counts</li>
+      </ul>
+    </div>
+
+  </div>
+</body>
+</html>

@@ -1,0 +1,80 @@
+{
+  "onboarding": {
+    "welcome": {
+      "title": "¡Bienvenido! Construyamos tu Sistema Operativo de Negocio con IA.",
+      "subtitle": "Cuéntame sobre tu negocio para empezar",
+      "typeBio": "Escribe tu biografía",
+      "uploadFile": "Subir archivo",
+      "guidedQuestions": "Responder preguntas guiadas"
+    },
+    "bioUpload": {
+      "processing": "Leyendo tu biografía...",
+      "profileExtracted": "Esto es lo que encontré:",
+      "vertical": "Vertical",
+      "services": "Servicios",
+      "clients": "Clientes",
+      "tools": "Herramientas",
+      "website": "Sitio web"
+    },
+    "preview": {
+      "title": "Basado en esto, construiré:",
+      "website": "Sitio web profesional",
+      "crm": "Gestión de clientes",
+      "booking": "Sistema de reservas",
+      "payments": "Procesamiento de pagos",
+      "email": "Automatización de correo",
+      "aiEmployees": "Empleados IA",
+      "clientIntake": "Asistente de Admisión de Clientes",
+      "sessionPrep": "Asistente de Preparación de Sesiones",
+      "followUp": "Programador de Seguimiento"
+    },
+    "actions": {
+      "editProfile": "Editar Perfil",
+      "buildEverything": "¡Sí, Construir Todo!",
+      "building": "Construyendo tu sistema operativo de negocio...",
+      "creatingWebsite": "Creando sitio web...",
+      "settingUpCRM": "Configurando CRM...",
+      "connectingCalendar": "Conectando calendario...",
+      "activatingAI": "Activando Empleados IA...",
+      "success": "¡Tu práctica está EN VIVO!",
+      "goToDashboard": "Ir al Panel"
+    }
+  },
+  "common": {
+    "loading": "Cargando...",
+    "error": "Algo salió mal",
+    "retry": "Intentar de nuevo"
+  },
+  "scheduling": {
+    "frequency_short": {
+      "weekly": "/sem",
+      "biweekly": "/2sem",
+      "monthly": "/mes",
+      "quarterly": "/trim"
+    },
+    "availability": {
+      "working_days": "Días laborales:"
+    }
+  },
+  "config": {
+    "title": "Configuración",
+    "subtitle": "Administra tus servicios, disponibilidad y pagos",
+    "tab": {
+      "services": "Servicios",
+      "availability": "Disponibilidad",
+      "payments": "Pagos"
+    },
+    "stripe": {
+      "title": "Pagos con Stripe",
+      "connected": "Conectado",
+      "connected_desc": "Tu cuenta de Stripe está conectada. Puedes aceptar pagos por tus servicios.",
+      "not_connected_desc": "Conecta tu cuenta de Stripe para aceptar pagos por reservas y servicios.",
+      "connect": "Conectar Stripe",
+      "manage": "Administrar cuenta"
+    },
+    "payments": {
+      "settings_title": "Configuración de Pagos",
+      "settings_desc": "Las opciones de pago se configuran por servicio. Edita un servicio para establecer su precio y opciones de plan de pago."
+    }
+  }
+}

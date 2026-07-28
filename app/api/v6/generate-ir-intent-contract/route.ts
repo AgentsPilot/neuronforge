@@ -25,6 +25,11 @@ import { generateGenericIntentContractV1 } from '@/lib/agentkit/v6/intent/genera
 import { CapabilityBinderV2 } from '@/lib/agentkit/v6/capability-binding/CapabilityBinderV2'
 import { IntentToIRConverter } from '@/lib/agentkit/v6/compiler/IntentToIRConverter'
 import { ExecutionGraphCompiler } from '@/lib/agentkit/v6/compiler/ExecutionGraphCompiler'
+import { getUserMemoryContextBuilder } from '@/lib/memory/UserMemoryContextBuilder'
+import { getPatternExtractor } from '@/lib/services/PatternExtractor'
+import { getGlobalFailureMonitor } from '@/lib/services/GlobalFailureMonitor'
+import { getIntentExampleRepository } from '@/lib/repositories/IntentExampleRepository'
+import { supabaseServer } from '@/lib/supabaseServer'
 
 const logger = createLogger({ module: 'V6PipelineA' })
 
@@ -69,11 +74,118 @@ export async function POST(request: NextRequest) {
     const pluginManager = await PluginManagerV2.getInstance()
     const vocabularyExtractor = new PluginVocabularyExtractor(pluginManager)
     const vocabulary = await vocabularyExtractor.extract(userId, { servicesInvolved })
+
     // Inject resolved_user_inputs as user context so the IC prompt sees the
     // user's pre-supplied config values (spreadsheet_id, recipients, etc.)
     if (enhancedPrompt?.specifics?.resolved_user_inputs?.length) {
       vocabulary.userContext = enhancedPrompt.specifics.resolved_user_inputs
     }
+
+    // ============================================================
+    // Phase 0b — User Memory Context (Memory System Enhancement)
+    // Inject user preferences, patterns, and insights to personalize generation
+    // ============================================================
+    try {
+      const memoryContextBuilder = getUserMemoryContextBuilder(supabaseServer)
+      const userMemoryContext = await memoryContextBuilder.build(userId, {
+        maxMemories: 10,
+        includeWorkflowPatterns: true,
+        includeExecutionInsights: true,
+        includeAgentContext: false, // Skip agent context for speed
+      })
+
+      // Add user memory hints to vocabulary for IC generation
+      if (userMemoryContext.meta.memories_used > 0) {
+        const memoryHints = memoryContextBuilder.formatForV6Prompt(userMemoryContext)
+        if (memoryHints) {
+          vocabulary.userMemoryContext = memoryHints
+        }
+
+        // Add preferred plugins to bias plugin selection
+        if (userMemoryContext.preferences.preferred_plugins?.length) {
+          vocabulary.preferredPlugins = userMemoryContext.preferences.preferred_plugins
+        }
+
+        requestLogger.debug(
+          {
+            memoriesUsed: userMemoryContext.meta.memories_used,
+            hasPreferences: Object.keys(userMemoryContext.preferences).length > 0,
+            hasPatterns: userMemoryContext.workflow_patterns.most_used_plugins.length > 0,
+          },
+          '[API] User memory context injected'
+        )
+      }
+    } catch (memoryError) {
+      // Non-blocking - don't fail generation due to memory lookup
+      requestLogger.debug({ err: memoryError }, '[API] User memory context failed (non-blocking)')
+    }
+
+    // ============================================================
+    // Phase 0c — Platform Learning (Pattern suggestions + failure alerts)
+    // ============================================================
+    try {
+      const patternExtractor = getPatternExtractor(supabaseServer)
+      const failureMonitor = getGlobalFailureMonitor(supabaseServer)
+
+      // Get similar successful patterns for the plugins being used
+      const pluginKeys = servicesInvolved.map((s: string) => s.toLowerCase().replace(/\s+/g, '-'))
+      if (pluginKeys.length > 0) {
+        const [similarPatterns, failureAlerts] = await Promise.all([
+          patternExtractor.getSimilarPatterns(pluginKeys, 3),
+          failureMonitor.checkForAlerts(pluginKeys),
+        ])
+
+        // Add pattern suggestions to vocabulary
+        if (similarPatterns.length > 0) {
+          vocabulary.patternSuggestions = patternExtractor.formatForV6Prompt(similarPatterns)
+          requestLogger.debug(
+            { patternCount: similarPatterns.length },
+            '[API] Similar patterns found for V6 suggestions'
+          )
+        }
+
+        // Add failure alerts to vocabulary (so V6 can warn about known issues)
+        if (failureAlerts.length > 0) {
+          vocabulary.platformAlerts = failureMonitor.formatAlertsForUser(failureAlerts)
+          requestLogger.info(
+            { alertCount: failureAlerts.length, critical: failureAlerts.filter(a => a.severity === 'critical').length },
+            '[API] Platform failure alerts detected'
+          )
+        }
+      }
+    } catch (platformError) {
+      // Non-blocking
+      requestLogger.debug({ err: platformError }, '[API] Platform learning lookup failed (non-blocking)')
+    }
+
+    // ============================================================
+    // Phase 0d — Intent Examples (Few-Shot Learning)
+    // Find similar successful examples to guide generation
+    // ============================================================
+    let usedExampleIds: string[] = []
+    try {
+      const intentExampleRepo = getIntentExampleRepository(supabaseServer)
+      const pluginKeys = servicesInvolved.map((s: string) => s.toLowerCase().replace(/\s+/g, '-'))
+
+      if (pluginKeys.length > 0) {
+        const { data: examples } = await intentExampleRepo.findSimilar(pluginKeys, { limit: 2 })
+
+        if (examples && examples.length > 0) {
+          // Format examples for prompt injection
+          vocabulary.intentExamples = intentExampleRepo.formatForPrompt(examples)
+          usedExampleIds = examples.map((e) => e.id)
+
+          requestLogger.debug(
+            { exampleCount: examples.length, similarity: examples[0]?.similarity },
+            '[API] Intent examples found for few-shot learning'
+          )
+        }
+      }
+    } catch (exampleError) {
+      // Non-blocking
+      requestLogger.debug({ err: exampleError }, '[API] Intent examples lookup failed (non-blocking)')
+    }
+
     const phase0Time = Date.now() - phase0Start
     requestLogger.info(
       {

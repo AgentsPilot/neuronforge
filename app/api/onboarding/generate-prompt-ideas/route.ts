@@ -3,12 +3,11 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createAuthenticatedServerClient } from '@/lib/supabaseServerAuth'
-import OpenAI from 'openai'
-import { AIAnalyticsService } from '@/lib/analytics/aiAnalytics'
+import { ProviderFactory, PROVIDERS } from '@/lib/ai/providerFactory'
+import { OPENAI_MODELS } from '@/lib/ai/providers/openaiProvider'
+import type { CallContext } from '@/lib/ai/providers/baseProvider'
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY
-})
+// ProviderFactory handles LLM client initialization and token tracking - no direct SDK instantiation needed
 
 interface PromptIdea {
   title: string
@@ -124,8 +123,19 @@ Categories:
 
     const startTime = Date.now()
 
-    const completion = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
+    // Get provider from factory for centralized token tracking
+    const provider = ProviderFactory.getProvider(PROVIDERS.OPENAI)
+    const llmContext: CallContext = {
+      userId: user.id,
+      feature: 'onboarding',
+      component: 'generate-prompt-ideas',
+      category: 'onboarding',
+      activity_type: 'prompt_idea_generation',
+      activity_name: 'generate_prompt_ideas',
+    }
+
+    const completion = await provider.chatCompletion({
+      model: OPENAI_MODELS.GPT_4O_MINI,
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: `Generate 5-7 diverse agent ideas for my goal: "${goal}"` }
@@ -133,11 +143,12 @@ Categories:
       response_format: { type: 'json_object' },
       temperature: 0.8, // Higher creativity for diverse ideas
       max_tokens: 2500
-    })
+    }, llmContext)
 
     const executionTimeMs = Date.now() - startTime
 
-    const responseContent = completion.choices[0].message.content || '{}'
+    // ProviderFactory returns OpenAI-compatible format
+    const responseContent = completion.choices?.[0]?.message?.content || '{}'
     let ideas: PromptIdea[]
 
     try {
@@ -156,37 +167,12 @@ Categories:
       )
     }
 
-    // Track token usage in ai_analytics
-    const aiAnalytics = new AIAnalyticsService(supabaseAdmin)
+    // Token tracking is now handled automatically by ProviderFactory
     const inputTokens = completion.usage?.prompt_tokens || 0
     const outputTokens = completion.usage?.completion_tokens || 0
 
     // GPT-4o-mini pricing: $0.150 per 1M input tokens, $0.600 per 1M output tokens
     const costUsd = (inputTokens * 0.00015 / 1000) + (outputTokens * 0.0006 / 1000)
-
-    await aiAnalytics.trackAICall({
-      call_id: `prompt_ideas_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-      user_id: user.id,
-      session_id: `onboarding_${user.id}_${Date.now()}`,
-      provider: 'openai',
-      model_name: 'gpt-4o-mini',
-      feature: 'onboarding',
-      component: 'generate-prompt-ideas',
-      workflow_step: 'idea_generation',
-      input_tokens: inputTokens,
-      output_tokens: outputTokens,
-      cost_usd: costUsd,
-      activity_type: 'onboarding_prompt_ideas',
-      activity_name: 'Generate Prompt Ideas',
-      activity_step: 'generation',
-      metadata: {
-        user_goal: goal,
-        user_mode: mode,
-        user_role: role,
-        ideas_generated: ideas.length,
-        execution_time_ms: executionTimeMs
-      }
-    })
 
     // Store generated ideas in database to prevent regeneration
     // Map 'on_demand' to 'scheduled' due to DB constraint (both are user-triggered modes)

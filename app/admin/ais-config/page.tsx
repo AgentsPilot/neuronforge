@@ -583,53 +583,56 @@ export default function AISConfigPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 p-8">
-        <div className="max-w-7xl mx-auto">
-          <div className="flex items-center justify-center h-64">
-            <RefreshCw className="w-8 h-8 text-blue-500 animate-spin" />
-          </div>
-        </div>
+      <div className="flex items-center justify-center py-12">
+        <RefreshCw className="w-8 h-8 text-purple-500 animate-spin" />
       </div>
     );
   }
 
   if (!config) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 p-8">
-        <div className="max-w-7xl mx-auto">
-          <div className="bg-red-500/10 border border-red-500/50 rounded-lg p-6">
-            <p className="text-red-400">{error || 'Failed to load configuration'}</p>
-          </div>
-        </div>
+      <div className="bg-red-500/10 border border-red-500/50 rounded-lg p-6">
+        <p className="text-red-400">{error || 'Failed to load configuration'}</p>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 p-8">
-      <div className="max-w-7xl mx-auto space-y-8">
+    <div className="space-y-6">
         {/* Header */}
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-4xl font-black text-white flex items-center gap-3">
-              <Settings className="w-10 h-10" />
-              AIS Configuration
-            </h1>
-            <p className="text-slate-400 mt-2">
-              Manage Agent Intensity System normalization ranges and learning mode
-            </p>
+        <header className="border-b border-slate-700">
+          <div className="flex items-center justify-between pb-4">
+            <div className="flex items-center gap-4">
+              <div className="flex flex-col">
+                <div className="flex items-center gap-4 mb-1">
+                  <h1 className="text-xl font-semibold text-white">AIS Configuration</h1>
+                  <span className="text-xs px-2 py-1 rounded bg-purple-500/20 text-purple-400">System Config</span>
+                </div>
+                <p className="text-sm text-slate-400">Manage Agent Intensity System normalization ranges and learning mode</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-4">
+              {config?.mode === 'dynamic' && config.canSwitchToDynamic && (
+                <button
+                  onClick={handleRefreshRanges}
+                  disabled={switching}
+                  className="px-3 py-1.5 text-sm bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors flex items-center gap-2 disabled:opacity-50"
+                >
+                  <RefreshCw className={`w-4 h-4 ${switching ? 'animate-spin' : ''}`} />
+                  Refresh Ranges
+                </button>
+              )}
+              <button
+                onClick={fetchConfig}
+                disabled={loading}
+                className="p-2 rounded-lg border border-slate-700 hover:bg-slate-800 transition-colors"
+                title="Refresh Config"
+              >
+                <RefreshCw className={`w-5 h-5 text-slate-400 ${loading ? 'animate-spin' : ''}`} />
+              </button>
+            </div>
           </div>
-          {config?.mode === 'dynamic' && config.canSwitchToDynamic && (
-            <button
-              onClick={handleRefreshRanges}
-              disabled={switching}
-              className="px-4 py-2 bg-gradient-to-r from-green-500 to-emerald-600 rounded-lg hover:from-green-600 hover:to-emerald-700 transition-all duration-200 flex items-center gap-2 disabled:opacity-50"
-            >
-              <RefreshCw className={`w-5 h-5 ${switching ? 'animate-spin' : ''}`} />
-              Refresh Dynamic Ranges
-            </button>
-          )}
-        </div>
+        </header>
 
         {/* Error Display */}
         {error && (
@@ -825,7 +828,7 @@ export default function AISConfigPage() {
               </div>
               <button
                 onClick={() => setLimitsExpanded(!limitsExpanded)}
-                className="p-2 bg-slate-700/50 hover:bg-slate-600/50 rounded-lg transition-colors"
+                className="p-2 bg-slate-900/50 hover:bg-slate-600/50 rounded-lg transition-colors"
               >
                 {limitsExpanded ? (
                   <ChevronUp className="w-4 h-4 text-slate-400" />
@@ -910,7 +913,7 @@ export default function AISConfigPage() {
                     min="0"
                     max="10"
                     step="0.1"
-                    className="w-full px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
+                    className="w-full px-4 py-2 bg-slate-900/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
                   />
                   <p className="text-xs text-slate-500 leading-relaxed">
                     <strong className="text-slate-300">Scoring floor (0-10 scale).</strong> Any agent scoring below this value will be capped at this minimum.
@@ -930,7 +933,7 @@ export default function AISConfigPage() {
                     min="0"
                     max="100"
                     step="0.1"
-                    className="w-full px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
+                    className="w-full px-4 py-2 bg-slate-900/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
                   />
                   <p className="text-xs text-slate-500 leading-relaxed">
                     <strong className="text-slate-300">Scoring ceiling (0-10 scale).</strong> Any agent scoring above this value will be capped at this maximum.
@@ -950,7 +953,7 @@ export default function AISConfigPage() {
                     min="1"
                     max="100"
                     step="1"
-                    className="w-full px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
+                    className="w-full px-4 py-2 bg-slate-900/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
                   />
                   <p className="text-xs text-slate-500 leading-relaxed">
                     <strong className="text-slate-300">Number of executions required before score becomes "trusted."</strong> This single value controls BOTH score calculation formula AND when model routing activates.
@@ -1012,7 +1015,7 @@ export default function AISConfigPage() {
               </div>
               <button
                 onClick={() => setCreationWeightsExpanded(!creationWeightsExpanded)}
-                className="p-2 bg-slate-700/50 hover:bg-slate-600/50 rounded-lg transition-colors"
+                className="p-2 bg-slate-900/50 hover:bg-slate-600/50 rounded-lg transition-colors"
               >
                 {creationWeightsExpanded ? (
                   <ChevronUp className="w-4 h-4 text-slate-400" />
@@ -1094,7 +1097,7 @@ export default function AISConfigPage() {
                       min="0"
                       max="1"
                       step="0.05"
-                      className="w-full px-3 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
+                      className="w-full px-3 py-2 bg-slate-900/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
                     />
                     <div className="text-xs text-slate-400 leading-relaxed">
                       <p className="text-blue-300 font-medium mb-1">Agent Architecture (default: 0.5)</p>
@@ -1113,7 +1116,7 @@ export default function AISConfigPage() {
                       min="0"
                       max="1"
                       step="0.05"
-                      className="w-full px-3 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-green-500"
+                      className="w-full px-3 py-2 bg-slate-900/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-green-500"
                     />
                     <div className="text-xs text-slate-400 leading-relaxed">
                       <p className="text-green-300 font-medium mb-1">Integration Breadth (default: 0.3)</p>
@@ -1132,7 +1135,7 @@ export default function AISConfigPage() {
                       min="0"
                       max="1"
                       step="0.05"
-                      className="w-full px-3 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-purple-500"
+                      className="w-full px-3 py-2 bg-slate-900/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-purple-500"
                     />
                     <div className="text-xs text-slate-400 leading-relaxed">
                       <p className="text-purple-300 font-medium mb-1">Data Complexity (default: 0.2)</p>
@@ -1181,7 +1184,7 @@ export default function AISConfigPage() {
               </div>
               <button
                 onClick={() => setWeightsExpanded(!weightsExpanded)}
-                className="p-2 bg-slate-700/50 hover:bg-slate-600/50 rounded-lg transition-colors"
+                className="p-2 bg-slate-900/50 hover:bg-slate-600/50 rounded-lg transition-colors"
               >
                 {weightsExpanded ? (
                   <ChevronUp className="w-4 h-4 text-slate-400" />
@@ -1285,7 +1288,7 @@ export default function AISConfigPage() {
                       min="0"
                       max="1"
                       step="0.05"
-                      className="w-full px-3 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
+                      className="w-full px-3 py-2 bg-slate-900/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
                     />
                     <div className="text-xs text-slate-400 leading-relaxed">
                       <p className="text-blue-300 font-medium mb-1">AI Model Usage (default: 0.30)</p>
@@ -1304,7 +1307,7 @@ export default function AISConfigPage() {
                       min="0"
                       max="1"
                       step="0.05"
-                      className="w-full px-3 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
+                      className="w-full px-3 py-2 bg-slate-900/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
                     />
                     <div className="text-xs text-slate-400 leading-relaxed">
                       <p className="text-purple-300 font-medium mb-1">Runtime Performance (default: 0.25)</p>
@@ -1323,7 +1326,7 @@ export default function AISConfigPage() {
                       min="0"
                       max="1"
                       step="0.05"
-                      className="w-full px-3 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
+                      className="w-full px-3 py-2 bg-slate-900/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
                     />
                     <div className="text-xs text-slate-400 leading-relaxed">
                       <p className="text-green-300 font-medium mb-1">External Integrations (default: 0.20)</p>
@@ -1342,7 +1345,7 @@ export default function AISConfigPage() {
                       min="0"
                       max="1"
                       step="0.05"
-                      className="w-full px-3 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
+                      className="w-full px-3 py-2 bg-slate-900/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
                     />
                     <div className="text-xs text-slate-400 leading-relaxed">
                       <p className="text-orange-300 font-medium mb-1">Logic Flow Patterns (default: 0.15)</p>
@@ -1362,7 +1365,7 @@ export default function AISConfigPage() {
                       min="0"
                       max="1"
                       step="0.05"
-                      className="w-full px-3 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-pink-500"
+                      className="w-full px-3 py-2 bg-slate-900/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-pink-500"
                     />
                     <div className="text-xs text-slate-400 leading-relaxed">
                       <p className="text-pink-300 font-medium mb-1">Context Usage (default: 0.10)</p>
@@ -1463,7 +1466,7 @@ export default function AISConfigPage() {
                       min="0"
                       max="1"
                       step="0.05"
-                      className="w-full px-3 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
+                      className="w-full px-3 py-2 bg-slate-900/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
                     />
                     <p className="text-xs text-slate-500">How many loops/cycles the agent runs.</p>
                   </div>
@@ -1476,7 +1479,7 @@ export default function AISConfigPage() {
                       min="0"
                       max="1"
                       step="0.05"
-                      className="w-full px-3 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
+                      className="w-full px-3 py-2 bg-slate-900/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
                     />
                     <p className="text-xs text-slate-500">Total runtime in milliseconds.</p>
                   </div>
@@ -1489,7 +1492,7 @@ export default function AISConfigPage() {
                       min="0"
                       max="1"
                       step="0.05"
-                      className="w-full px-3 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
+                      className="w-full px-3 py-2 bg-slate-900/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
                     />
                     <p className="text-xs text-slate-500">Percentage of runs that fail.</p>
                   </div>
@@ -1502,7 +1505,7 @@ export default function AISConfigPage() {
                       min="0"
                       max="1"
                       step="0.05"
-                      className="w-full px-3 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
+                      className="w-full px-3 py-2 bg-slate-900/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
                     />
                     <p className="text-xs text-slate-500">How often retries are needed.</p>
                   </div>
@@ -1591,7 +1594,7 @@ export default function AISConfigPage() {
                       min="0"
                       max="1"
                       step="0.05"
-                      className="w-full px-3 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
+                      className="w-full px-3 py-2 bg-slate-900/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
                     />
                     <p className="text-xs text-slate-500">Number of unique plugins connected.</p>
                   </div>
@@ -1604,7 +1607,7 @@ export default function AISConfigPage() {
                       min="0"
                       max="1"
                       step="0.05"
-                      className="w-full px-3 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
+                      className="w-full px-3 py-2 bg-slate-900/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
                     />
                     <p className="text-xs text-slate-500">How actively plugins are called.</p>
                   </div>
@@ -1617,7 +1620,7 @@ export default function AISConfigPage() {
                       min="0"
                       max="1"
                       step="0.05"
-                      className="w-full px-3 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
+                      className="w-full px-3 py-2 bg-slate-900/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
                     />
                     <p className="text-xs text-slate-500">Coordination time between plugins.</p>
                   </div>
@@ -1716,7 +1719,7 @@ export default function AISConfigPage() {
                       min="0"
                       max="1"
                       step="0.05"
-                      className="w-full px-3 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
+                      className="w-full px-3 py-2 bg-slate-900/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
                     />
                     <p className="text-xs text-slate-500">Total sequential actions in workflow.</p>
                   </div>
@@ -1729,7 +1732,7 @@ export default function AISConfigPage() {
                       min="0"
                       max="1"
                       step="0.05"
-                      className="w-full px-3 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
+                      className="w-full px-3 py-2 bg-slate-900/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
                     />
                     <p className="text-xs text-slate-500">If/else conditional decision points.</p>
                   </div>
@@ -1742,7 +1745,7 @@ export default function AISConfigPage() {
                       min="0"
                       max="1"
                       step="0.05"
-                      className="w-full px-3 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
+                      className="w-full px-3 py-2 bg-slate-900/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
                     />
                     <p className="text-xs text-slate-500">Repeated cycles within workflow.</p>
                   </div>
@@ -1755,7 +1758,7 @@ export default function AISConfigPage() {
                       min="0"
                       max="1"
                       step="0.05"
-                      className="w-full px-3 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
+                      className="w-full px-3 py-2 bg-slate-900/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
                     />
                     <p className="text-xs text-slate-500">Concurrent actions running simultaneously.</p>
                   </div>
@@ -1857,7 +1860,7 @@ export default function AISConfigPage() {
                       min="0"
                       max="1"
                       step="0.05"
-                      className="w-full px-3 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-pink-500"
+                      className="w-full px-3 py-2 bg-slate-900/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-pink-500"
                     />
                     <p className="text-xs text-slate-500">Memory tokens / total input tokens (0-90%). Higher = more memory-dependent.</p>
                   </div>
@@ -1870,7 +1873,7 @@ export default function AISConfigPage() {
                       min="0"
                       max="1"
                       step="0.05"
-                      className="w-full px-3 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-pink-500"
+                      className="w-full px-3 py-2 bg-slate-900/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-pink-500"
                     />
                     <p className="text-xs text-slate-500">Number of memory types used (summaries, user_context, patterns). More types = sophisticated.</p>
                   </div>
@@ -1883,7 +1886,7 @@ export default function AISConfigPage() {
                       min="0"
                       max="1"
                       step="0.05"
-                      className="w-full px-3 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-pink-500"
+                      className="w-full px-3 py-2 bg-slate-900/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-pink-500"
                     />
                     <p className="text-xs text-slate-500">Total memory entries loaded. More entries = larger context window.</p>
                   </div>
@@ -1929,7 +1932,7 @@ export default function AISConfigPage() {
               </div>
               <button
                 onClick={() => setCombinedWeightsExpanded(!combinedWeightsExpanded)}
-                className="p-2 bg-slate-700/50 hover:bg-slate-600/50 rounded-lg transition-colors"
+                className="p-2 bg-slate-900/50 hover:bg-slate-600/50 rounded-lg transition-colors"
               >
                 {combinedWeightsExpanded ? (
                   <ChevronUp className="w-4 h-4 text-slate-400" />
@@ -2020,7 +2023,7 @@ export default function AISConfigPage() {
                       min="0"
                       max="1"
                       step="0.05"
-                      className="w-full px-3 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
+                      className="w-full px-3 py-2 bg-slate-900/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
                     />
                     <div className="text-xs text-slate-400 leading-relaxed">
                       <p className="text-blue-300 font-medium mb-1">Agent Design Complexity (default: 0.3)</p>
@@ -2039,7 +2042,7 @@ export default function AISConfigPage() {
                       min="0"
                       max="1"
                       step="0.05"
-                      className="w-full px-3 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-purple-500"
+                      className="w-full px-3 py-2 bg-slate-900/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-purple-500"
                     />
                     <div className="text-xs text-slate-400 leading-relaxed">
                       <p className="text-purple-300 font-medium mb-1">Runtime Performance Blend (default: 0.7)</p>
@@ -2093,7 +2096,7 @@ export default function AISConfigPage() {
               </div>
               <button
                 onClick={() => setCreationRangesExpanded(!creationRangesExpanded)}
-                className="p-2 bg-slate-700/50 hover:bg-slate-600/50 rounded-lg transition-colors"
+                className="p-2 bg-slate-900/50 hover:bg-slate-600/50 rounded-lg transition-colors"
               >
                 {creationRangesExpanded ? (
                   <ChevronUp className="w-5 h-5 text-slate-400" />
@@ -2232,7 +2235,7 @@ export default function AISConfigPage() {
               </div>
               <button
                 onClick={() => setExecutionRangesExpanded(!executionRangesExpanded)}
-                className="p-2 bg-slate-700/50 hover:bg-slate-600/50 rounded-lg transition-colors"
+                className="p-2 bg-slate-900/50 hover:bg-slate-600/50 rounded-lg transition-colors"
               >
                 {executionRangesExpanded ? (
                   <ChevronUp className="w-5 h-5 text-slate-400" />
@@ -2698,7 +2701,6 @@ export default function AISConfigPage() {
             </div>
           </div>
         ))}
-      </div>
     </div>
   );
 }

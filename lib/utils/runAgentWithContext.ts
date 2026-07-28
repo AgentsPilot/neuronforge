@@ -16,10 +16,11 @@ import { RecoverySystem } from '../intelligence/execution/RecoverySystem'
 
 // Utility imports
 import { EmailHandler } from '../intelligence/utils/EmailHandler'
-import OpenAI from 'openai'
+import { ProviderFactory, PROVIDERS } from '@/lib/ai/providerFactory'
+import { OPENAI_MODELS } from '@/lib/ai/providers/openaiProvider'
+import type { CallContext } from '@/lib/ai/providers/baseProvider'
 
-// FIXED: Proper OpenAI client initialization with null check
-const openai = process.env.OPENAI_API_KEY ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY }) : null
+// ProviderFactory handles LLM client initialization - no direct SDK instantiation needed
 
 // Initialize core components
 const intentAnalyzer = new IntentAnalyzer()
@@ -519,7 +520,7 @@ function describeAvailableData(pluginContext: any): string {
   return descriptions.join(', ') || 'No processable data found'
 }
 
-// FIXED: Enhanced LLM execution with proper OpenAI null checking
+// Enhanced LLM execution with ProviderFactory for centralized token tracking
 async function executeWithDataAwareIntelligence(
   systemPrompt: string,
   userPrompt: string,
@@ -528,15 +529,9 @@ async function executeWithDataAwareIntelligence(
   pluginContext?: any,
   isRetry: boolean = false
 ): Promise<string> {
-  
-  // CRITICAL FIX: Check if OpenAI client is available
-  if (!openai) {
-    console.warn('⚠️ OpenAI client not available, returning fallback response')
-    return 'Analysis completed using fallback processing. OpenAI API key is required for enhanced responses.'
-  }
-  
+
   let enhancedSystemPrompt = systemPrompt
-  
+
   // Add data context awareness
   if (pluginContext && hasProcessableData(pluginContext)) {
     const dataOverride = `\n\nDATA PROCESSING OVERRIDE:
@@ -544,10 +539,10 @@ async function executeWithDataAwareIntelligence(
 - This data should be processed according to the user's request
 - Do not claim you cannot access the data - it is provided in the user message
 - Give specific results based on the actual data, not generic advice`
-    
+
     enhancedSystemPrompt += dataOverride
   }
-  
+
   // Make retry attempts more aggressive
   if (isRetry) {
     enhancedSystemPrompt += `\n\nRETRY MODE: Previous response was not helpful. Process the data directly and give specific results.`
@@ -555,39 +550,58 @@ async function executeWithDataAwareIntelligence(
 
   try {
     console.log('🚀 Executing with GPT-4o and data-aware intelligence')
-    
-    const modelParams = {
-      model: 'gpt-4o',
+
+    // Get provider from factory for centralized token tracking
+    const provider = ProviderFactory.getProvider(PROVIDERS.OPENAI)
+    const context: CallContext = {
+      userId: 'system',
+      feature: 'agent_execution',
+      component: 'runAgentWithContext',
+      category: 'agent_execution',
+      activity_type: isRetry ? 'execution_retry' : 'data_aware_execution',
+      activity_name: 'execute_with_data_awareness',
+    }
+
+    const completion = await provider.chatCompletion({
+      model: OPENAI_MODELS.GPT_4O,
       messages: [
         { role: 'system', content: enhancedSystemPrompt },
         { role: 'user', content: userPrompt },
       ],
-      temperature: isRetry ? 0.1 : (intent.complexity === 'simple' ? 0.1 : 
+      temperature: isRetry ? 0.1 : (intent.complexity === 'simple' ? 0.1 :
                   intent.complexity === 'moderate' ? 0.2 : 0.3),
       max_tokens: intent.urgency === 'critical' ? 3000 : 4000,
-      top_p: 0.9,
-      frequency_penalty: 0.1,
-      presence_penalty: 0.1
-    }
+    }, context)
 
-    const completion = await openai.chat.completions.create(modelParams)
-    return completion.choices[0]?.message?.content || 'Advanced AI response generation failed.'
+    // ProviderFactory returns OpenAI-compatible format
+    return completion.choices?.[0]?.message?.content || 'Advanced AI response generation failed.'
 
   } catch (error: any) {
     if (error?.status === 429) {
-      console.warn('⚠️ GPT-4o rate limit. Intelligent fallback to GPT-3.5-turbo.')
-      
-      const fallback = await openai.chat.completions.create({
-        model: 'gpt-4o',
+      console.warn('⚠️ GPT-4o rate limit. Intelligent fallback with truncated context.')
+
+      // Get provider again for fallback call
+      const provider = ProviderFactory.getProvider(PROVIDERS.OPENAI)
+      const fallbackContext: CallContext = {
+        userId: 'system',
+        feature: 'agent_execution',
+        component: 'runAgentWithContext',
+        category: 'agent_execution',
+        activity_type: 'execution_fallback',
+        activity_name: 'execute_rate_limit_fallback',
+      }
+
+      const fallback = await provider.chatCompletion({
+        model: OPENAI_MODELS.GPT_4O,
         messages: [
           { role: 'system', content: enhancedSystemPrompt.slice(0, 8000) },
           { role: 'user', content: userPrompt.slice(0, 8000) },
         ],
         temperature: 0.1,
         max_tokens: 3000,
-      })
+      }, fallbackContext)
 
-      return fallback.choices[0]?.message?.content || 'Fallback response generated.'
+      return fallback.choices?.[0]?.message?.content || 'Fallback response generated.'
     }
 
     throw error

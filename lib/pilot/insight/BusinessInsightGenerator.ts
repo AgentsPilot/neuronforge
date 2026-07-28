@@ -57,7 +57,9 @@ import type { ExecutionMetrics } from '../MetricsCollector';
 import type { TrendMetrics, ExecutionMetricsRecord } from './TrendAnalyzer';
 import type { ProgressionContext } from './PatternDetector';
 import { InsightRepository } from '@/lib/repositories/InsightRepository';
-import Anthropic from '@anthropic-ai/sdk';
+import { ProviderFactory, PROVIDERS } from '@/lib/ai/providerFactory';
+import { ANTHROPIC_MODELS } from '@/lib/ai/providers/anthropicProvider';
+import type { CallContext } from '@/lib/ai/providers/baseProvider';
 
 const logger = createLogger({ module: 'BusinessInsightGenerator', service: 'business-intelligence' });
 
@@ -85,16 +87,10 @@ export interface BusinessInsightResult {
 export class BusinessInsightGenerator {
   private supabase: SupabaseClient;
   private insightRepository: InsightRepository;
-  private anthropic: Anthropic;
 
   constructor(supabase: SupabaseClient) {
     this.supabase = supabase;
     this.insightRepository = new InsightRepository(supabase);
-
-    // Initialize Anthropic client
-    this.anthropic = new Anthropic({
-      apiKey: process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_API_KEY,
-    });
   }
 
   /**
@@ -192,8 +188,8 @@ export class BusinessInsightGenerator {
       detectedPatterns
     );
 
-    // Call Claude API
-    const response = await this.callClaudeAPI(prompt);
+    // Call Claude API (via ProviderFactory - tracked for cost visibility)
+    const response = await this.callClaudeAPI(prompt, agent.id, agent.user_id);
 
     logger.debug({
       agentId: agent.id,
@@ -558,31 +554,43 @@ Look for other notable patterns: performance changes, failures, data quality iss
   }
 
   /**
-   * Call Claude API for insight generation
+   * Call Claude API for insight generation via ProviderFactory (tracked)
    */
-  private async callClaudeAPI(prompt: string): Promise<string> {
+  private async callClaudeAPI(prompt: string, agentId: string, userId: string): Promise<string> {
     try {
-      const response = await this.anthropic.messages.create({
-        model: 'claude-sonnet-4-20250514',  // Using Claude 4 Sonnet (fast and capable for insights)
+      const provider = ProviderFactory.getProvider(PROVIDERS.ANTHROPIC);
+
+      const context: CallContext = {
+        userId,
+        feature: 'business_insights',
+        component: 'BusinessInsightGenerator',
+        category: 'insights',
+        agent_id: agentId,
+        activity_type: 'insight_generation',
+        activity_name: 'generate_business_insights',
+      };
+
+      const response = await provider.chatCompletion({
+        model: ANTHROPIC_MODELS.CLAUDE_4_SONNET,  // Using Claude 4 Sonnet (fast and capable for insights)
         max_tokens: 1000,
         temperature: 0.3,  // Low temperature for consistency
         messages: [{
           role: 'user',
           content: prompt,
         }],
-      });
+      }, context);
 
-      const content = response.content[0];
-      if (content.type !== 'text') {
-        throw new Error('Unexpected response type from Claude API');
+      const content = response.choices[0]?.message?.content;
+      if (!content) {
+        throw new Error('No content in Claude API response');
       }
 
       logger.debug({
         usage: response.usage,
-        stopReason: response.stop_reason,
-      }, 'Claude API response received');
+        finishReason: response.choices[0]?.finish_reason,
+      }, 'Claude API response received (via ProviderFactory - tracked)');
 
-      return content.text;
+      return content;
     } catch (error) {
       logger.error({ err: error }, 'Failed to call Claude API');
       throw error;
@@ -829,8 +837,8 @@ Look for other notable patterns: performance changes, failures, data quality iss
       execution_count
     );
 
-    // Call Claude API
-    const response = await this.callClaudeAPI(prompt);
+    // Call Claude API (via ProviderFactory - tracked for cost visibility)
+    const response = await this.callClaudeAPI(prompt, agent.id, agent.user_id);
 
     // Parse insights
     const insights = this.parseInsights(response);

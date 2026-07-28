@@ -432,15 +432,9 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
     return null
   }
 
-  // Check onboarding status - redirect to onboarding if not completed
-  // Skip this check if already on onboarding page to avoid redirect loop
-  const isOnOnboardingPage = pathname === '/onboarding'
-  const onboardingCompleted = user.user_metadata?.onboarding_completed
-
-  if (!isOnOnboardingPage && (onboardingCompleted === false || onboardingCompleted === undefined)) {
-    redirect('/onboarding')
-    return null
-  }
+  // Onboarding check is handled by middleware
+  // Middleware checks business_profiles table and redirects to /onboarding-v2 if needed
+  // No client-side check here to avoid race conditions and ensure consistency
 
   const sidebarContent = (
     <>
@@ -569,9 +563,17 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
       <nav className="flex-1 overflow-y-auto space-y-6 pr-2">
         <SidebarSection title="Main" isCollapsed={isCollapsed}>
           <SidebarLink
-            href="/dashboard"
-            label="Dashboard"
+            href="/business-os"
+            label="Business OS"
             icon={LayoutDashboard}
+            isActive={pathname === '/business-os'}
+            onClick={() => setIsMobileOpen(false)}
+            isCollapsed={isCollapsed}
+          />
+          <SidebarLink
+            href="/dashboard"
+            label="Agent Dashboard"
+            icon={Bot}
             isActive={pathname === '/dashboard'}
             onClick={() => setIsMobileOpen(false)}
             isCollapsed={isCollapsed}

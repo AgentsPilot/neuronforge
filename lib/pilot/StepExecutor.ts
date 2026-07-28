@@ -62,6 +62,7 @@ import { FailureClassifier } from './shadow/FailureClassifier';
 import { ExecutionSummaryCollector } from './shadow/ExecutionSummaryCollector';
 import { systemConfigRepository } from '@/lib/repositories/SystemConfigRepository';
 import { DataPreprocessor } from '@/lib/orchestration/preprocessing/DataPreprocessor';
+import { getErrorPatternService } from '@/lib/services/ErrorPatternService';
 
 // Create module-level logger for structured logging to dev.log
 const logger = createLogger({ module: 'StepExecutor', service: 'workflow-pilot' });
@@ -615,6 +616,25 @@ export class StepExecutor {
       const executionTime = Date.now() - startTime;
 
       logger.error({ err: error, stepId: step.id, executionTimeMs: executionTime }, 'Step execution failed');
+
+      // === ERROR PATTERN CAPTURE (Memory System Phase 1) ===
+      // Fire-and-forget: Capture error pattern for learning without blocking execution
+      const stepPlugin = (step as any).plugin;
+      if (stepPlugin) {
+        const errorPatternService = getErrorPatternService(this.supabase);
+        errorPatternService.captureError({
+          userId: context.userId,
+          agentId: context.agent?.id,
+          executionId: context.executionId,
+          plugin: stepPlugin,
+          action: (step as any).action,
+          stepType: step.type,
+          errorCode: error.code || error.status || 'UNKNOWN',
+          errorMessage: error.message,
+        }).catch((captureErr) => {
+          logger.debug({ err: captureErr }, 'Error pattern capture failed (non-blocking)');
+        });
+      }
 
       // === BATCH CALIBRATION: COLLECT ISSUE AND DECIDE CONTINUATION ===
       if (context.batchCalibrationMode) {
@@ -1716,7 +1736,8 @@ export class StepExecutor {
         agentForExecution,
         promptString,
         {},
-        context.sessionId
+        context.sessionId,
+        context.executionId  // Pass execution_id for BI token tracking
       );
 
       if (!result.success) {
@@ -5865,7 +5886,8 @@ Please analyze the above and provide your decision/response.
         },
         prompt,
         {},
-        context.sessionId
+        context.sessionId,
+        context.executionId  // Pass execution_id for BI token tracking
       );
 
       if (result.success && result.response) {

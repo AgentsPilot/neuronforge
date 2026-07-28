@@ -1,10 +1,10 @@
 // /lib/intelligence/analysis/IntentAnalyzer.ts
 import { SmartIntentAnalysis, ContextualMemory } from '../core/types'
-import OpenAI from 'openai'
+import { ProviderFactory, PROVIDERS } from '@/lib/ai/providerFactory'
+import { OPENAI_MODELS } from '@/lib/ai/providers/openaiProvider'
+import type { CallContext } from '@/lib/ai/providers/baseProvider'
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY
-})
+// ProviderFactory handles LLM client initialization - no direct SDK instantiation needed
 
 export class IntentAnalyzer {
   async analyzeIntent(
@@ -40,14 +40,26 @@ Analyze and return a JSON object with:
 Be specific and avoid generic classifications. Extract the actual intent from the user's words.`
 
     try {
-      const response = await openai.chat.completions.create({
-        model: 'gpt-4',
+      // Get provider from factory for centralized token tracking
+      const provider = ProviderFactory.getProvider(PROVIDERS.OPENAI)
+      const context: CallContext = {
+        userId: 'system',
+        feature: 'intelligence',
+        component: 'IntentAnalyzer',
+        category: 'intent_analysis',
+        activity_type: 'intent_extraction',
+        activity_name: 'analyze_intent',
+      }
+
+      const response = await provider.chatCompletion({
+        model: OPENAI_MODELS.GPT_4O,
         messages: [{ role: 'user', content: analysisPrompt }],
         temperature: 0.1,
         max_tokens: 1000
-      })
+      }, context)
 
-      const content = response.choices[0]?.message?.content || '{}'
+      // ProviderFactory returns OpenAI-compatible format
+      const content = response.choices?.[0]?.message?.content || '{}'
       const llmAnalysis = this.parseJSONSafely(content)
       
       return this.buildSmartIntentAnalysis(llmAnalysis, query, inputVariables)

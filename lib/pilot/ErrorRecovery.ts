@@ -18,6 +18,29 @@ import type {
 } from './types';
 import { ExecutionError } from './types';
 import { PluginExecuterV2 } from '@/lib/server/plugin-executer-v2';
+import { SupabaseClient } from '@supabase/supabase-js';
+import { getErrorPatternService, type AutoFixMethod, type AutoFixConfig } from '@/lib/services/ErrorPatternService';
+
+/**
+ * Context for auto-fix pattern matching
+ */
+export interface AutoFixContext {
+  supabase: SupabaseClient;
+  userId: string;
+  agentId: string | null;
+  plugin: string;
+  action?: string;
+}
+
+/**
+ * Result of auto-fix attempt
+ */
+export interface AutoFixResult {
+  applied: boolean;
+  method?: AutoFixMethod;
+  patternId?: string;
+  success?: boolean;
+}
 
 export class ErrorRecovery {
   /**
@@ -292,6 +315,101 @@ export class ErrorRecovery {
 
     // Default: retry
     return 'retry';
+  }
+
+  /**
+   * Check and apply auto-fix from learned error patterns
+   *
+   * Call this before standard retry to use learned recovery strategies.
+   */
+  async checkAutoFix(
+    error: any,
+    autoFixContext: AutoFixContext
+  ): Promise<{ hasAutoFix: boolean; method?: AutoFixMethod; config?: AutoFixConfig; patternId?: string }> {
+    try {
+      const errorPatternService = getErrorPatternService(autoFixContext.supabase);
+      const errorCode = error.code || error.status || 'UNKNOWN';
+
+      const result = await errorPatternService.checkAutoFix(
+        autoFixContext.userId,
+        autoFixContext.agentId,
+        String(errorCode),
+        autoFixContext.plugin,
+        autoFixContext.action
+      );
+
+      if (result.hasAutoFix) {
+        console.log(`[ErrorRecovery] Auto-fix available: ${result.method} for pattern ${result.pattern?.id}`);
+      }
+
+      return {
+        hasAutoFix: result.hasAutoFix,
+        method: result.method,
+        config: result.config,
+        patternId: result.pattern?.id,
+      };
+    } catch (err) {
+      // Non-blocking - don't fail recovery due to pattern lookup
+      console.debug('[ErrorRecovery] Auto-fix check failed (non-blocking):', err);
+      return { hasAutoFix: false };
+    }
+  }
+
+  /**
+   * Record the result of an auto-fix attempt
+   */
+  async recordAutoFixResult(
+    patternId: string,
+    success: boolean,
+    supabase: SupabaseClient
+  ): Promise<void> {
+    try {
+      const errorPatternService = getErrorPatternService(supabase);
+      await errorPatternService.recordAutoFixResult(patternId, success);
+    } catch (err) {
+      console.debug('[ErrorRecovery] Failed to record auto-fix result (non-blocking):', err);
+    }
+  }
+
+  /**
+   * Apply auto-fix method and return modified retry policy
+   */
+  applyAutoFixToRetryPolicy(
+    method: AutoFixMethod,
+    config: AutoFixConfig,
+    basePolicy?: Partial<RetryPolicy>
+  ): RetryPolicy {
+    const finalPolicy: RetryPolicy = {
+      ...ErrorRecovery.DEFAULT_RETRY_POLICY,
+      ...basePolicy,
+    };
+
+    switch (method) {
+      case 'retry_with_backoff':
+        return {
+          ...finalPolicy,
+          maxRetries: config.max_retries ?? 3,
+          backoffMs: config.backoff_ms ?? 1000,
+          backoffMultiplier: 2,
+        };
+
+      case 'wait_and_retry':
+        return {
+          ...finalPolicy,
+          maxRetries: config.max_retries ?? 2,
+          backoffMs: config.wait_ms ?? 5000,
+          backoffMultiplier: 1,
+        };
+
+      case 'skip':
+        return { ...finalPolicy, maxRetries: 0 };
+
+      case 'fallback':
+        return { ...finalPolicy, maxRetries: 0 };
+
+      default:
+        return finalPolicy;
+    }
   }
 
   /**

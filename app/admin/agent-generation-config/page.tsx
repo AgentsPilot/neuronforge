@@ -226,30 +226,39 @@ export default function AgentGenerationConfigPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900 p-8">
-        <div className="max-w-5xl mx-auto">
-          <div className="flex items-center justify-center py-12">
-            <RefreshCw className="w-8 h-8 text-purple-500 animate-spin" />
-            <span className="ml-3 text-gray-300">Loading configuration...</span>
-          </div>
-        </div>
+      <div className="flex items-center justify-center py-12">
+        <RefreshCw className="w-8 h-8 text-purple-500 animate-spin" />
+        <span className="ml-3 text-gray-300">Loading configuration...</span>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900 p-8">
-      <div className="max-w-5xl mx-auto">
+    <div className="space-y-6">
         {/* Header */}
-        <div className="mb-8">
-          <div className="flex items-center gap-3 mb-2">
-            <Sparkles className="w-8 h-8 text-purple-500" />
-            <h1 className="text-3xl font-bold text-white">Agent Generation Configuration</h1>
+        <header className="border-b border-slate-700">
+          <div className="flex items-center justify-between pb-4">
+            <div className="flex items-center gap-4">
+              <div className="flex flex-col">
+                <div className="flex items-center gap-4 mb-1">
+                  <h1 className="text-xl font-semibold text-white">Agent Generation Configuration</h1>
+                  <span className="text-xs px-2 py-1 rounded bg-purple-500/20 text-purple-400">System Config</span>
+                </div>
+                <p className="text-sm text-slate-400">Configure LLM models and parameters for each phase of the agent generation pipeline</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-4">
+              <button
+                onClick={fetchConfig}
+                disabled={loading}
+                className="p-2 rounded-lg border border-slate-700 hover:bg-slate-800 transition-colors"
+                title="Refresh Config"
+              >
+                <RefreshCw className={`w-5 h-5 text-slate-400 ${loading ? 'animate-spin' : ''}`} />
+              </button>
+            </div>
           </div>
-          <p className="text-gray-400">
-            Configure LLM models and parameters for each phase of the agent generation pipeline
-          </p>
-        </div>
+        </header>
 
         {/* Error/Success Messages */}
         {error && (
@@ -377,7 +386,7 @@ export default function AgentGenerationConfigPage() {
         </div>
 
         {/* Action Buttons */}
-        <div className="mt-8 flex gap-4">
+        <div className="mt-8 flex flex-col sm:flex-row gap-4">
           <button
             onClick={handleSave}
             disabled={saving}
@@ -405,7 +414,6 @@ export default function AgentGenerationConfigPage() {
             Reset to Defaults
           </button>
         </div>
-      </div>
     </div>
   );
 }

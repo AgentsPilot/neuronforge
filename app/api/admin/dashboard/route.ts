@@ -1,21 +1,29 @@
 // app/api/admin/dashboard/route.ts
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { createLogger } from '@/lib/logger';
 
+const logger = createLogger({ module: 'AdminDashboardAPI' });
+
+// Service role client for admin-wide data aggregation (intentionally bypasses RLS)
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY! // Use service role for admin access
+  process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
-    console.log('Dashboard API called');
+    // Parse period from query params (default: 30 days)
+    const { searchParams } = new URL(request.url);
+    const periodDays = Math.min(Math.max(parseInt(searchParams.get('period') || '30', 10), 1), 365);
 
-    // Calculate date ranges
+    logger.info({ periodDays }, 'Dashboard API called');
+
+    // Calculate date ranges based on period
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    const thirtyDaysAgo = new Date();
-    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    const periodStart = new Date();
+    periodStart.setDate(periodStart.getDate() - periodDays);
     const oneWeekAgo = new Date();
     oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
     const twoWeeksAgo = new Date();
@@ -40,8 +48,10 @@ export async function GET() {
       // Agents stats
       supabase.from('agents').select('id, status, created_at'),
 
-      // Token usage stats
-      supabase.from('token_usage').select('total_tokens, cost_usd, success, created_at, activity_type, agent_id'),
+      // Token usage stats (based on selected period)
+      supabase.from('token_usage')
+        .select('total_tokens, cost_usd, success, created_at, activity_type, agent_id')
+        .gte('created_at', periodStart.toISOString()),
 
       // Memory system stats - total
       supabase.from('run_memories').select('id', { count: 'exact', head: true }),
@@ -62,12 +72,14 @@ export async function GET() {
         .select('cost_usd')
         .eq('activity_type', 'memory_creation'),
 
-      // Queue execution stats
-      supabase.from('agent_executions').select('status, started_at, completed_at'),
+      // Queue execution stats (based on selected period)
+      supabase.from('agent_executions')
+        .select('status, started_at, completed_at')
+        .gte('created_at', periodStart.toISOString()),
 
-      // AIS normalization ranges
+      // AIS normalization ranges (only select columns that exist)
       supabase.from('ais_normalization_ranges')
-        .select('active_mode, min_executions_threshold, data_points_analyzed')
+        .select('active_mode, min_executions_threshold')
         .limit(1)
         .single(),
 
@@ -79,7 +91,7 @@ export async function GET() {
     const users = usersResult.data || [];
     const authUsers = authUsersResult.data;
     const activeUsers = authUsers?.users.filter(u =>
-      u.last_sign_in_at && new Date(u.last_sign_in_at) > thirtyDaysAgo
+      u.last_sign_in_at && new Date(u.last_sign_in_at) > periodStart
     ).length || 0;
 
     // Process Agents
@@ -105,7 +117,9 @@ export async function GET() {
 
     const memoryCosts = memoryCostResult.data || [];
     const memoryCost = memoryCosts.reduce((sum, m) => sum + (m.cost_usd || 0), 0);
-    const estimatedSavings = memoryCost * 15; // 15x ROI multiplier
+    // ROI calculation: estimate savings based on memory reuse avoiding repeat LLM calls
+    // Conservative multiplier: each memory saves ~3 future LLM calls on average
+    const estimatedSavings = memoryCost * 3;
 
     // Process Queue Stats
     const executions = queueStatsResult.data || [];
@@ -136,7 +150,8 @@ export async function GET() {
     // Process AIS Data
     const aisRange = aisRangesResult.data;
     const aisMode = aisRange?.active_mode === 1 ? 'dynamic' : 'best_practice';
-    const dataPointsAnalyzed = aisRange?.data_points_analyzed || 0;
+    // Data points = total executions analyzed for AIS scoring
+    const dataPointsAnalyzed = executions.length;
 
     // Calculate AIS-related stats from token usage
     const agentIds = new Set(agents.map(a => a.id));
@@ -165,7 +180,7 @@ export async function GET() {
       .gte('output_token_growth_rate', 50); // 50%+ growth (rescore or upgrade level)
 
     if (growthAlertsError) {
-      console.error('Error fetching growth alerts:', growthAlertsError);
+      logger.error({ err: growthAlertsError }, 'Error fetching growth alerts');
     }
 
     const growthAlertsData = growthAlerts || [];
@@ -210,17 +225,20 @@ export async function GET() {
         dataPoints: dataPointsAnalyzed,
         creationTokens: Math.round(creationTokens / 1000), // in K
         executionTokens: Math.round(executionTokens / 1000), // in K
-        totalTokens: creationTokens + executionTokens, // raw tokens for better display
+        totalTokens: creationTokens + executionTokens, // raw tokens (not K) for display formatting in UI
         totalCost: aisCost,
-        growthAlerts: growthAlertsData.length, // NEW: Number of agents with high growth
-        avgGrowthRate // NEW: Average growth rate for alerted agents
+        growthAlerts: growthAlertsData.length,
+        avgGrowthRate
       },
       overview: {
-        lastUpdated: new Date().toISOString()
+        lastUpdated: new Date().toISOString(),
+        periodDays, // All metrics are based on selected period
+        periodStart: periodStart.toISOString(),
+        periodEnd: new Date().toISOString()
       }
     };
 
-    console.log('Dashboard data processed successfully');
+    logger.info('Dashboard data processed successfully');
 
     return NextResponse.json({
       success: true,
@@ -228,10 +246,11 @@ export async function GET() {
     });
 
   } catch (error) {
-    console.error('Dashboard API error:', error);
+    logger.error({ err: error }, 'Dashboard API error');
     return NextResponse.json({
+      success: false,
       error: 'Internal server error',
-      message: error instanceof Error ? error.message : 'Unknown error'
+      message: process.env.NODE_ENV === 'development' && error instanceof Error ? error.message : undefined
     }, { status: 500 });
   }
 }

@@ -210,57 +210,52 @@ export default function ExchangeRatesPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 p-6 flex items-center justify-center">
-        <div className="text-center">
-          <RefreshCw className="w-12 h-12 text-blue-600 animate-spin mx-auto mb-4" />
-          <p className="text-slate-600">Loading exchange rates...</p>
-        </div>
+      <div className="flex items-center justify-center py-12">
+        <RefreshCw className="w-8 h-8 text-purple-500 animate-spin" />
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 p-6">
-      <div className="max-w-7xl mx-auto space-y-6">
-        {/* Header */}
-        <motion.div
-          initial={{ opacity: 0, y: -20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="bg-white rounded-2xl shadow-xl p-6 border border-slate-200"
-        >
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              <div className="w-14 h-14 bg-gradient-to-br from-blue-500 to-purple-600 rounded-2xl flex items-center justify-center shadow-lg">
-                <DollarSign className="h-7 w-7 text-white" />
+    <div className="space-y-6">
+      {/* Header */}
+      <header className="border-b border-slate-700">
+        <div className="flex items-center justify-between pb-4">
+          <div className="flex items-center gap-4">
+            <div className="flex flex-col">
+              <div className="flex items-center gap-4 mb-1">
+                <h1 className="text-xl font-semibold text-white">Exchange Rates</h1>
+                <span className="text-xs px-2 py-1 rounded bg-purple-500/20 text-purple-400">System Config</span>
               </div>
-              <div>
-                <h1 className="text-3xl font-bold text-slate-900">Exchange Rates</h1>
-                <p className="text-slate-600 mt-1">Manage currency exchange rates for international billing</p>
-              </div>
+              <p className="text-sm text-slate-400">Manage currency exchange rates for international billing</p>
             </div>
+          </div>
+          <div className="flex items-center gap-4">
             <button
               onClick={loadExchangeRates}
-              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors flex items-center gap-2"
+              disabled={loading}
+              className="p-2 rounded-lg border border-slate-700 hover:bg-slate-800 transition-colors"
+              title="Refresh"
             >
-              <RefreshCw className="w-4 h-4" />
-              Refresh
+              <RefreshCw className={`w-5 h-5 text-slate-400 ${loading ? 'animate-spin' : ''}`} />
             </button>
           </div>
-        </motion.div>
+        </div>
+      </header>
 
         {/* Alerts */}
         {error && (
           <motion.div
             initial={{ opacity: 0, y: -10 }}
             animate={{ opacity: 1, y: 0 }}
-            className="bg-red-50 border border-red-200 rounded-xl p-4 flex items-start gap-3"
+            className="bg-red-500/10 border border-red-500/50 rounded-lg p-4 flex items-start gap-3"
           >
-            <AlertCircle className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />
+            <AlertCircle className="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" />
             <div className="flex-1">
-              <p className="text-red-900 font-medium">Error</p>
-              <p className="text-red-700 text-sm mt-1">{error}</p>
+              <p className="text-red-400 font-medium">Error</p>
+              <p className="text-red-300 text-sm mt-1">{error}</p>
             </div>
-            <button onClick={() => setError(null)} className="text-red-600 hover:text-red-800">
+            <button onClick={() => setError(null)} className="text-red-400 hover:text-red-300">
               <X className="w-4 h-4" />
             </button>
           </motion.div>
@@ -270,14 +265,14 @@ export default function ExchangeRatesPage() {
           <motion.div
             initial={{ opacity: 0, y: -10 }}
             animate={{ opacity: 1, y: 0 }}
-            className="bg-green-50 border border-green-200 rounded-xl p-4 flex items-start gap-3"
+            className="bg-green-500/10 border border-green-500/50 rounded-lg p-4 flex items-start gap-3"
           >
-            <CheckCircle className="w-5 h-5 text-green-600 flex-shrink-0 mt-0.5" />
+            <CheckCircle className="w-5 h-5 text-green-400 flex-shrink-0 mt-0.5" />
             <div className="flex-1">
-              <p className="text-green-900 font-medium">Success</p>
-              <p className="text-green-700 text-sm mt-1">{success}</p>
+              <p className="text-green-400 font-medium">Success</p>
+              <p className="text-green-300 text-sm mt-1">{success}</p>
             </div>
-            <button onClick={() => setSuccess(null)} className="text-green-600 hover:text-green-800">
+            <button onClick={() => setSuccess(null)} className="text-green-400 hover:text-green-300">
               <X className="w-4 h-4" />
             </button>
           </motion.div>
@@ -287,61 +282,61 @@ export default function ExchangeRatesPage() {
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          className="bg-white rounded-2xl shadow-xl border border-slate-200 overflow-hidden"
+          className="bg-slate-800 border border-slate-700 rounded-xl overflow-hidden"
         >
-          <div className="p-6 border-b border-slate-200">
-            <h2 className="text-xl font-bold text-slate-900 flex items-center gap-2">
+          <div className="p-6 border-b border-white/10">
+            <h2 className="text-xl font-bold text-white flex items-center gap-2">
               <Globe className="w-5 h-5" />
               Currency Exchange Rates
             </h2>
-            <p className="text-slate-600 text-sm mt-1">
+            <p className="text-slate-400 text-sm mt-1">
               All rates are relative to 1 USD. Update rates manually or connect to an API provider.
             </p>
           </div>
 
           <div className="overflow-x-auto">
             <table className="w-full">
-              <thead className="bg-slate-50">
+              <thead className="bg-slate-900/50">
                 <tr>
-                  <th className="text-left py-4 px-6 text-xs font-semibold text-slate-600 uppercase">
+                  <th className="text-left py-4 px-6 text-xs font-semibold text-slate-400 uppercase">
                     Currency
                   </th>
-                  <th className="text-left py-4 px-6 text-xs font-semibold text-slate-600 uppercase">
+                  <th className="text-left py-4 px-6 text-xs font-semibold text-slate-400 uppercase">
                     Symbol
                   </th>
-                  <th className="text-right py-4 px-6 text-xs font-semibold text-slate-600 uppercase">
+                  <th className="text-right py-4 px-6 text-xs font-semibold text-slate-400 uppercase">
                     Rate to USD
                   </th>
-                  <th className="text-center py-4 px-6 text-xs font-semibold text-slate-600 uppercase">
+                  <th className="text-center py-4 px-6 text-xs font-semibold text-slate-400 uppercase">
                     Decimals
                   </th>
-                  <th className="text-center py-4 px-6 text-xs font-semibold text-slate-600 uppercase">
+                  <th className="text-center py-4 px-6 text-xs font-semibold text-slate-400 uppercase">
                     Status
                   </th>
-                  <th className="text-left py-4 px-6 text-xs font-semibold text-slate-600 uppercase">
+                  <th className="text-left py-4 px-6 text-xs font-semibold text-slate-400 uppercase">
                     Last Updated
                   </th>
-                  <th className="text-right py-4 px-6 text-xs font-semibold text-slate-600 uppercase">
+                  <th className="text-right py-4 px-6 text-xs font-semibold text-slate-400 uppercase">
                     Actions
                   </th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-200">
+              <tbody className="divide-y divide-slate-700/50">
                 {rates.map((rate) => (
-                  <tr key={rate.id} className="hover:bg-slate-50 transition-colors">
+                  <tr key={rate.id} className="hover:bg-slate-700/30 transition-colors">
                     <td className="py-4 px-6">
                       <div className="flex items-center gap-3">
-                        <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg flex items-center justify-center text-white font-bold text-sm">
+                        <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg flex items-center justify-center text-white font-bold text-xs">
                           {rate.currency_code}
                         </div>
                         <div>
-                          <div className="font-semibold text-slate-900">{rate.currency_code}</div>
-                          <div className="text-xs text-slate-500">{rate.currency_name}</div>
+                          <div className="font-semibold text-white">{rate.currency_code}</div>
+                          <div className="text-xs text-slate-400">{rate.currency_name}</div>
                         </div>
                       </div>
                     </td>
                     <td className="py-4 px-6">
-                      <span className="font-mono text-lg text-slate-700">{rate.currency_symbol}</span>
+                      <span className="font-mono text-lg text-slate-300">{rate.currency_symbol}</span>
                     </td>
                     <td className="py-4 px-6 text-right">
                       {editingRate === rate.id ? (
@@ -350,17 +345,17 @@ export default function ExchangeRatesPage() {
                           step="0.000001"
                           value={editedValue}
                           onChange={(e) => setEditedValue(parseFloat(e.target.value))}
-                          className="w-32 px-3 py-1.5 border border-blue-300 rounded-lg text-right font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          className="w-32 px-3 py-1.5 bg-slate-900 border border-blue-500/50 rounded-lg text-right font-mono text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                           autoFocus
                         />
                       ) : (
-                        <span className="font-mono font-semibold text-slate-900">
+                        <span className="font-mono font-semibold text-white">
                           {rate.rate_to_usd.toFixed(6)}
                         </span>
                       )}
                     </td>
                     <td className="py-4 px-6 text-center">
-                      <span className="px-2 py-1 bg-slate-100 rounded text-sm font-medium text-slate-700">
+                      <span className="px-2 py-1 bg-slate-900/50 rounded text-sm font-medium text-slate-300">
                         {rate.decimal_places}
                       </span>
                     </td>
@@ -370,15 +365,15 @@ export default function ExchangeRatesPage() {
                         disabled={saving || rate.currency_code === 'USD'}
                         className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
                           rate.is_enabled
-                            ? 'bg-green-100 text-green-700 hover:bg-green-200'
-                            : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                            ? 'bg-green-500/20 text-green-400 hover:bg-green-500/30'
+                            : 'bg-slate-900/50 text-slate-400 hover:bg-slate-700'
                         } ${rate.currency_code === 'USD' || saving ? 'opacity-50 cursor-not-allowed' : ''}`}
                       >
                         {rate.is_enabled ? 'Enabled' : 'Disabled'}
                       </button>
                     </td>
                     <td className="py-4 px-6">
-                      <div className="flex items-center gap-2 text-sm text-slate-600">
+                      <div className="flex items-center gap-2 text-sm text-slate-400">
                         <Clock className="w-4 h-4" />
                         {new Date(rate.last_updated_at).toLocaleDateString('en-US', {
                           month: 'short',
@@ -396,14 +391,14 @@ export default function ExchangeRatesPage() {
                             <button
                               onClick={() => handleEditSave(rate)}
                               disabled={saving}
-                              className="p-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50"
+                              className="p-2 bg-green-500/20 text-green-400 rounded-lg hover:bg-green-500/30 transition-colors disabled:opacity-50"
                             >
                               <Check className="w-4 h-4" />
                             </button>
                             <button
                               onClick={handleEditCancel}
                               disabled={saving}
-                              className="p-2 bg-slate-600 text-white rounded-lg hover:bg-slate-700 transition-colors disabled:opacity-50"
+                              className="p-2 bg-slate-600 text-white rounded-lg hover:bg-slate-500 transition-colors disabled:opacity-50"
                             >
                               <X className="w-4 h-4" />
                             </button>
@@ -413,13 +408,13 @@ export default function ExchangeRatesPage() {
                             <button
                               onClick={() => handleEditStart(rate)}
                               disabled={saving || rate.currency_code === 'USD'}
-                              className="p-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50"
+                              className="p-2 bg-blue-500/20 text-blue-400 rounded-lg hover:bg-blue-500/30 transition-colors disabled:opacity-50"
                             >
                               <Edit className="w-4 h-4" />
                             </button>
                             <button
                               onClick={() => setShowHistory(showHistory === rate.currency_code ? null : rate.currency_code)}
-                              className="p-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors"
+                              className="p-2 bg-purple-500/20 text-purple-400 rounded-lg hover:bg-purple-500/30 transition-colors"
                             >
                               <History className="w-4 h-4" />
                             </button>
@@ -438,46 +433,46 @@ export default function ExchangeRatesPage() {
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          className="bg-white rounded-2xl shadow-xl border border-slate-200 overflow-hidden"
+          className="bg-slate-800 border border-slate-700 rounded-xl overflow-hidden"
         >
-          <div className="p-6 border-b border-slate-200">
-            <h2 className="text-xl font-bold text-slate-900 flex items-center gap-2">
+          <div className="p-6 border-b border-white/10">
+            <h2 className="text-xl font-bold text-white flex items-center gap-2">
               <History className="w-5 h-5" />
               Recent Changes
             </h2>
-            <p className="text-slate-600 text-sm mt-1">
+            <p className="text-slate-400 text-sm mt-1">
               History of exchange rate updates
             </p>
           </div>
 
           <div className="overflow-x-auto">
             <table className="w-full">
-              <thead className="bg-slate-50">
+              <thead className="bg-slate-900/50">
                 <tr>
-                  <th className="text-left py-4 px-6 text-xs font-semibold text-slate-600 uppercase">
+                  <th className="text-left py-4 px-6 text-xs font-semibold text-slate-400 uppercase">
                     Currency
                   </th>
-                  <th className="text-right py-4 px-6 text-xs font-semibold text-slate-600 uppercase">
+                  <th className="text-right py-4 px-6 text-xs font-semibold text-slate-400 uppercase">
                     Old Rate
                   </th>
-                  <th className="text-right py-4 px-6 text-xs font-semibold text-slate-600 uppercase">
+                  <th className="text-right py-4 px-6 text-xs font-semibold text-slate-400 uppercase">
                     New Rate
                   </th>
-                  <th className="text-right py-4 px-6 text-xs font-semibold text-slate-600 uppercase">
+                  <th className="text-right py-4 px-6 text-xs font-semibold text-slate-400 uppercase">
                     Change
                   </th>
-                  <th className="text-left py-4 px-6 text-xs font-semibold text-slate-600 uppercase">
+                  <th className="text-left py-4 px-6 text-xs font-semibold text-slate-400 uppercase">
                     Date
                   </th>
-                  <th className="text-left py-4 px-6 text-xs font-semibold text-slate-600 uppercase">
+                  <th className="text-left py-4 px-6 text-xs font-semibold text-slate-400 uppercase">
                     Reason
                   </th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-200">
+              <tbody className="divide-y divide-slate-700/50">
                 {history.length === 0 ? (
                   <tr>
-                    <td colSpan={6} className="py-8 text-center text-slate-500">
+                    <td colSpan={6} className="py-8 text-center text-slate-400">
                       No history available
                     </td>
                   </tr>
@@ -485,22 +480,22 @@ export default function ExchangeRatesPage() {
                   history
                     .filter(h => !showHistory || h.currency_code === showHistory)
                     .map((h) => (
-                      <tr key={h.id} className="hover:bg-slate-50 transition-colors">
+                      <tr key={h.id} className="hover:bg-slate-700/30 transition-colors">
                         <td className="py-4 px-6">
-                          <span className="font-mono font-semibold text-slate-900">{h.currency_code}</span>
+                          <span className="font-mono font-semibold text-white">{h.currency_code}</span>
                         </td>
                         <td className="py-4 px-6 text-right">
-                          <span className="font-mono text-slate-600">{h.old_rate?.toFixed(6) || 'N/A'}</span>
+                          <span className="font-mono text-slate-400">{h.old_rate?.toFixed(6) || 'N/A'}</span>
                         </td>
                         <td className="py-4 px-6 text-right">
-                          <span className="font-mono font-semibold text-slate-900">{h.new_rate.toFixed(6)}</span>
+                          <span className="font-mono font-semibold text-white">{h.new_rate.toFixed(6)}</span>
                         </td>
                         <td className="py-4 px-6 text-right">
                           {h.old_rate && (
                             <span className={`flex items-center gap-1 justify-end font-semibold ${
                               parseFloat(calculateChangePercent(h.old_rate, h.new_rate)) > 0
-                                ? 'text-green-600'
-                                : 'text-red-600'
+                                ? 'text-green-400'
+                                : 'text-red-400'
                             }`}>
                               <TrendingUp className={`w-4 h-4 ${
                                 parseFloat(calculateChangePercent(h.old_rate, h.new_rate)) < 0 ? 'rotate-180' : ''
@@ -510,7 +505,7 @@ export default function ExchangeRatesPage() {
                           )}
                         </td>
                         <td className="py-4 px-6">
-                          <div className="flex items-center gap-2 text-sm text-slate-600">
+                          <div className="flex items-center gap-2 text-sm text-slate-400">
                             <Calendar className="w-4 h-4" />
                             {new Date(h.changed_at).toLocaleDateString('en-US', {
                               month: 'short',
@@ -522,7 +517,7 @@ export default function ExchangeRatesPage() {
                           </div>
                         </td>
                         <td className="py-4 px-6">
-                          <span className="text-sm text-slate-600">{h.change_reason || 'No reason provided'}</span>
+                          <span className="text-sm text-slate-400">{h.change_reason || 'No reason provided'}</span>
                         </td>
                       </tr>
                     ))
@@ -531,7 +526,6 @@ export default function ExchangeRatesPage() {
             </table>
           </div>
         </motion.div>
-      </div>
     </div>
   );
 }

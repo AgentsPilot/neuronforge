@@ -126,6 +126,26 @@ export function useMoveToCalibrationAfterCreation(): boolean {
 // is now the unconditional V6 path. See docs/v6/V6_PIPELINE_A_MIGRATION.md § P6.
 
 /**
+ * Check if AI Data Layer is enabled for Business OS Chat
+ *
+ * When enabled, the Business OS chat uses the new AI Data Layer with
+ * autonomous tool calling instead of the hardcoded capability system.
+ *
+ * Features:
+ * - LLM can directly query any entity (contacts, services, bookings, etc.)
+ * - LLM can perform mutations with user confirmation
+ * - No hardcoded capabilities or switch statements
+ * - Multi-language support through natural LLM generation
+ *
+ * @returns {boolean} True if AI Data Layer is enabled, false for legacy system
+ */
+export function useAIDataLayer(): boolean {
+  const flag = process.env.NEXT_PUBLIC_USE_AI_DATA_LAYER;
+  clientLogger.debug({ flag: 'NEXT_PUBLIC_USE_AI_DATA_LAYER', value: flag ?? null, default: false }, 'Feature flag evaluated');
+  return parseBooleanFlag(flag, false);
+}
+
+/**
  * Get all feature flags status
  * Useful for debugging and admin dashboards
  *
@@ -138,5 +158,6 @@ export function getFeatureFlags() {
     useV6AgentGeneration: useV6AgentGeneration(),
     useV6ReviewMode: useV6ReviewMode(),
     useMoveToCalibrationAfterCreation: useMoveToCalibrationAfterCreation(),
+    useAIDataLayer: useAIDataLayer(),
   };
 }

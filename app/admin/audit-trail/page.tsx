@@ -5,7 +5,8 @@ import { useAuth } from '@/components/UserProvider';
 import {
   Search, Filter, Calendar, User, Activity, AlertCircle,
   CheckCircle, Info, AlertTriangle, ChevronDown, ChevronUp,
-  Download, RefreshCw, FileText, Database, TrendingUp
+  Download, RefreshCw, FileText, Database, TrendingUp,
+  LogIn, LogOut, UserPlus, UserCog, Bot, Play, Trash2, Settings
 } from 'lucide-react';
 
 interface AuditLogEntry {
@@ -120,9 +121,58 @@ export default function AuditTrailPage() {
   };
 
   const getActionIcon = (action: string) => {
-    if (action.includes('NORMALIZATION_REFRESH')) return <Database className="w-5 h-5" />;
-    if (action.includes('SCORE')) return <TrendingUp className="w-5 h-5" />;
-    return <Activity className="w-5 h-5" />;
+    const actionUpper = action.toUpperCase();
+
+    // Orchestration & Workflow
+    if (actionUpper.includes('ORCHESTRATION')) {
+      return <Settings className="w-5 h-5 text-blue-400" />;
+    }
+
+    // Memory & Learning
+    if (actionUpper.includes('MEMORY')) {
+      return <Database className="w-5 h-5 text-purple-400" />;
+    }
+
+    // User actions
+    if (actionUpper.includes('USER_LOGIN') || actionUpper.includes('LOGIN')) {
+      return <LogIn className="w-5 h-5 text-green-400" />;
+    }
+    if (actionUpper.includes('USER_LOGOUT') || actionUpper.includes('LOGOUT')) {
+      return <LogOut className="w-5 h-5 text-slate-400" />;
+    }
+    if (actionUpper.includes('USER_CREATED') || actionUpper.includes('USER_CREATE')) {
+      return <UserPlus className="w-5 h-5 text-blue-400" />;
+    }
+    if (actionUpper.includes('USER_UPDATED') || actionUpper.includes('USER_UPDATE')) {
+      return <UserCog className="w-5 h-5 text-purple-400" />;
+    }
+
+    // Agent actions
+    if (actionUpper.includes('AGENT_CREATED') || actionUpper.includes('AGENT_CREATE')) {
+      return <Bot className="w-5 h-5 text-green-400" />;
+    }
+    if (actionUpper.includes('AGENT_UPDATED') || actionUpper.includes('AGENT_UPDATE')) {
+      return <Settings className="w-5 h-5 text-blue-400" />;
+    }
+    if (actionUpper.includes('AGENT_DELETED') || actionUpper.includes('AGENT_DELETE')) {
+      return <Trash2 className="w-5 h-5 text-red-400" />;
+    }
+    if (actionUpper.includes('AGENT_EXECUTED') || actionUpper.includes('AGENT_EXECUTE')) {
+      return <Play className="w-5 h-5 text-purple-400" />;
+    }
+
+    // AIS actions - Database operations
+    if (actionUpper.includes('NORMALIZATION') || actionUpper.includes('REFRESH')) {
+      return <Database className="w-5 h-5 text-cyan-400" />;
+    }
+
+    // AIS actions - Score operations
+    if (actionUpper.includes('SCORE') || actionUpper.includes('AIS_')) {
+      return <TrendingUp className="w-5 h-5 text-yellow-400" />;
+    }
+
+    // Default
+    return <Activity className="w-5 h-5 text-slate-400" />;
   };
 
   const getActionLabel = (action: string) => {
@@ -165,41 +215,48 @@ export default function AuditTrailPage() {
 
   if (loading && logs.length === 0) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 p-8">
-        <div className="max-w-7xl mx-auto">
-          <div className="flex items-center justify-center h-64">
-            <RefreshCw className="w-8 h-8 text-blue-500 animate-spin" />
-          </div>
-        </div>
+      <div className="flex items-center justify-center py-12">
+        <RefreshCw className="w-8 h-8 text-purple-500 animate-spin" />
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 p-8">
-      <div className="max-w-7xl mx-auto space-y-6">
-        {/* Header */}
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-4xl font-black text-white flex items-center gap-3">
-              <FileText className="w-10 h-10" />
-              Audit Trail
-            </h1>
-            <p className="text-slate-400 mt-2">
-              Track all system events, user actions, and AIS changes across the platform
-            </p>
+    <div className="space-y-6">
+      {/* Header */}
+      <header className="border-b border-slate-700">
+        <div className="flex items-center justify-between pb-4">
+          <div className="flex items-center gap-4">
+            <div className="flex flex-col">
+              <div className="flex items-center gap-4 mb-1">
+                <h1 className="text-xl font-semibold text-white">Audit Trail</h1>
+                <span className="text-xs px-2 py-1 rounded bg-purple-500/20 text-purple-400">System Config</span>
+              </div>
+              <p className="text-sm text-slate-400">Track all system events, user actions, and AIS changes across the platform</p>
+            </div>
           </div>
-          <button
-            onClick={exportLogs}
-            className="px-4 py-2 bg-gradient-to-r from-blue-500 to-indigo-600 rounded-lg hover:from-blue-600 hover:to-indigo-700 transition-all duration-200 flex items-center gap-2"
-          >
-            <Download className="w-5 h-5" />
-            Export CSV
-          </button>
+          <div className="flex items-center gap-4">
+            <button
+              onClick={exportLogs}
+              className="px-4 py-2 bg-violet-600 hover:bg-violet-700 rounded-lg transition-colors flex items-center gap-2"
+            >
+              <Download className="w-5 h-5" />
+              Export CSV
+            </button>
+            <button
+              onClick={fetchLogs}
+              disabled={loading}
+              className="p-2 rounded-lg border border-slate-700 hover:bg-slate-800 transition-colors"
+              title="Refresh"
+            >
+              <RefreshCw className={`w-5 h-5 text-slate-400 ${loading ? 'animate-spin' : ''}`} />
+            </button>
+          </div>
         </div>
+      </header>
 
         {/* Filters */}
-        <div className="bg-gradient-to-br from-slate-800/90 to-slate-900/90 backdrop-blur-xl rounded-2xl border border-white/10 p-6">
+        <div className="bg-slate-800 border border-slate-700 rounded-xl p-6">
           <div className="flex items-center gap-3 mb-4">
             <Filter className="w-5 h-5 text-blue-400" />
             <h2 className="text-xl font-bold text-white">Filters</h2>
@@ -216,7 +273,7 @@ export default function AuditTrailPage() {
                   placeholder="Search by agent, user email, or name..."
                   value={filters.searchTerm}
                   onChange={(e) => setFilters({ ...filters, searchTerm: e.target.value })}
-                  className="w-full pl-10 pr-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full pl-10 pr-4 py-2 bg-slate-900/50 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
               </div>
             </div>
@@ -227,7 +284,7 @@ export default function AuditTrailPage() {
               <select
                 value={filters.action}
                 onChange={(e) => setFilters({ ...filters, action: e.target.value })}
-                className="w-full px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full px-4 py-2 bg-slate-900/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
                 <option value="all">All Actions</option>
                 <optgroup label="AIS Events">
@@ -259,7 +316,7 @@ export default function AuditTrailPage() {
               <select
                 value={filters.severity}
                 onChange={(e) => setFilters({ ...filters, severity: e.target.value })}
-                className="w-full px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full px-4 py-2 bg-slate-900/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
                 <option value="all">All Severities</option>
                 <option value="info">Info</option>
@@ -275,7 +332,7 @@ export default function AuditTrailPage() {
                 type="datetime-local"
                 value={filters.dateFrom}
                 onChange={(e) => setFilters({ ...filters, dateFrom: e.target.value })}
-                className="w-full px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full px-4 py-2 bg-slate-900/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
             </div>
 
@@ -286,7 +343,7 @@ export default function AuditTrailPage() {
                 type="datetime-local"
                 value={filters.dateTo}
                 onChange={(e) => setFilters({ ...filters, dateTo: e.target.value })}
-                className="w-full px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full px-4 py-2 bg-slate-900/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
             </div>
 
@@ -296,7 +353,7 @@ export default function AuditTrailPage() {
               <select
                 value={filters.entityType}
                 onChange={(e) => setFilters({ ...filters, entityType: e.target.value })}
-                className="w-full px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full px-4 py-2 bg-slate-900/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
                 <option value="all">All Entities</option>
                 <option value="agent">Agent</option>
@@ -333,7 +390,7 @@ export default function AuditTrailPage() {
         )}
 
         {/* Results Count & Pagination */}
-        <div className="bg-gradient-to-br from-slate-800/90 to-slate-900/90 backdrop-blur-xl rounded-2xl border border-white/10 p-4">
+        <div className="bg-slate-800 border border-slate-700 rounded-xl p-4">
           <div className="flex items-center justify-between">
             {/* Left: Results Count */}
             <div className="text-sm text-slate-400">
@@ -410,62 +467,73 @@ export default function AuditTrailPage() {
             logs.map((log) => (
               <div
                 key={log.id}
-                className="bg-gradient-to-br from-slate-800/90 to-slate-900/90 backdrop-blur-xl rounded-xl border border-white/10 overflow-hidden"
+                className="bg-slate-800 border border-slate-700 rounded-xl overflow-hidden"
               >
                 {/* Header */}
                 <div
                   className="p-4 cursor-pointer hover:bg-white/5 transition-colors"
                   onClick={() => setExpandedLog(expandedLog === log.id ? null : log.id)}
                 >
-                  <div className="flex items-start gap-4">
-                    {/* Icon */}
-                    <div className={`p-2 rounded-lg ${getSeverityColor(log.severity)}`}>
-                      {getActionIcon(log.action)}
-                    </div>
+                  {/* Row 1: Icon + Title + Badge + Controls */}
+                  <div className="flex items-center justify-between gap-4 w-full mb-3">
+                    {/* Left Side: Icon + Title + Badge */}
+                    <div className="flex items-center gap-3 flex-shrink-0">
+                      {/* Icon - Based on Action Type */}
+                      <div className="flex-shrink-0">
+                        {getActionIcon(log.action)}
+                      </div>
 
-                    {/* Main Content */}
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-start justify-between gap-4">
-                        <div>
-                          <h3 className="text-lg font-semibold text-white">
-                            {getActionLabel(log.action)}
-                          </h3>
-                          <p className="text-slate-400 text-sm mt-1">
-                            {log.resource_name || log.entity_id}
-                          </p>
-                        </div>
-                        <div className="flex items-center gap-3">
+                      {/* Title and Badge */}
+                      <div className="flex items-center gap-2">
+                        <h3 className="text-lg font-semibold text-white whitespace-nowrap">
+                          {getActionLabel(log.action)}
+                        </h3>
+                        {/* Severity Badge inline with title */}
+                        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium ${
+                          log.severity === 'critical' ? 'bg-red-500/20 text-red-400 border border-red-500/30' :
+                          log.severity === 'warning' ? 'bg-yellow-500/20 text-yellow-400 border border-yellow-500/30' :
+                          log.severity === 'info' ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30' :
+                          'bg-slate-500/20 text-slate-400 border border-slate-500/30'
+                        }`}>
                           {getSeverityIcon(log.severity)}
-                          <span className="text-xs text-slate-500">
-                            {formatDate(log.created_at)}
-                          </span>
-                          {expandedLog === log.id ? (
-                            <ChevronUp className="w-5 h-5 text-slate-400" />
-                          ) : (
-                            <ChevronDown className="w-5 h-5 text-slate-400" />
-                          )}
-                        </div>
-                      </div>
-
-                      {/* Quick Info */}
-                      <div className="flex items-center gap-4 mt-3 text-sm">
-                        <span className="text-slate-500">
-                          Entity: <span className="text-slate-300">{log.entity_type}</span>
+                          <span className="capitalize">{log.severity}</span>
                         </span>
-                        {log.user_id && (
-                          <span className="text-slate-500">
-                            User: <span className="text-slate-300">
-                              {log.users?.email || log.users?.full_name || log.user_id}
-                            </span>
-                          </span>
-                        )}
-                        {log.compliance_flags && log.compliance_flags.length > 0 && (
-                          <span className="text-slate-500">
-                            Compliance: <span className="text-blue-300">{log.compliance_flags.join(', ')}</span>
-                          </span>
-                        )}
                       </div>
                     </div>
+
+                    {/* Right Controls */}
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      {log.compliance_flags && log.compliance_flags.length > 0 && (
+                        <div className="inline-flex items-center gap-1 px-2 py-1 bg-blue-500/20 border border-blue-500/30 rounded text-xs text-blue-300">
+                          {log.compliance_flags.join(', ')}
+                        </div>
+                      )}
+                      <span className="text-xs text-slate-500 whitespace-nowrap">
+                        {formatDate(log.created_at)}
+                      </span>
+                      {expandedLog === log.id ? (
+                        <ChevronUp className="w-5 h-5 text-slate-400" />
+                      ) : (
+                        <ChevronDown className="w-5 h-5 text-slate-400" />
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Row 2: Metadata - Entity, Resource, User */}
+                  <div className="flex items-center gap-4 text-sm pl-14">
+                    <span className="text-slate-500">
+                      Entity: <span className="text-slate-300">{log.entity_type}</span>
+                    </span>
+                    <span className="text-slate-500">
+                      Resource: <span className="text-slate-300">{log.resource_name || log.entity_id}</span>
+                    </span>
+                    {log.user_id && (
+                      <span className="text-slate-500">
+                        User: <span className="text-slate-300">
+                          {log.users?.email || log.users?.full_name || log.user_id}
+                        </span>
+                      </span>
+                    )}
                   </div>
                 </div>
 
@@ -763,7 +831,6 @@ export default function AuditTrailPage() {
             ))
           )}
         </div>
-      </div>
     </div>
   );
 }

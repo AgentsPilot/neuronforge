@@ -15,7 +15,7 @@
 import React, { useState, useCallback } from 'react'
 import type { GroupMetrics } from '@/components/v2/analytics/ByCategory'
 import { useRouter } from 'next/navigation'
-import { ArrowLeft, RefreshCw } from 'lucide-react'
+import { ArrowLeft, RefreshCw, ChevronDown } from 'lucide-react'
 import { V2Logo, V2Controls } from '@/components/v2/V2Header'
 import { ModernHelpDialog } from '@/components/v2/ModernHelpDialog'
 
@@ -41,6 +41,7 @@ export default function AnalyticsDashboard() {
   const [selectedCategory, setSelectedCategory] = useState<GroupMetrics | null>(null)
   const [manageCategoriesOpen, setManageCategoriesOpen] = useState(false)
   const [manageGoalsOpen, setManageGoalsOpen] = useState(false)
+  const [showTimeRangeDropdown, setShowTimeRangeDropdown] = useState(false)
 
 
   const handleRefresh = useCallback(() => {
@@ -92,20 +93,61 @@ export default function AnalyticsDashboard() {
 
         {/* Time Range + Refresh Controls (after AI Advisor) */}
         <div className="col-span-12 flex items-center justify-end gap-4">
-          <select
-            value={timeRange}
-            onChange={(e) => setTimeRange(e.target.value as TimeRange)}
-            className="bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg px-3 py-2 text-sm text-[var(--v2-text-secondary)] focus:outline-none focus:border-[var(--v2-primary)] shadow-[var(--v2-shadow-card)]"
-          >
-            <option value="30d">Last 30 days</option>
-            <option value="7d">Last 7 days</option>
-            <option value="90d">Last 90 days</option>
-            <option value="all">All time</option>
-          </select>
+          {/* Time Range Dropdown */}
+          <div className="relative">
+            <button
+              onClick={() => setShowTimeRangeDropdown(!showTimeRangeDropdown)}
+              className="flex items-center gap-2 px-4 py-2.5 text-sm font-medium whitespace-nowrap bg-[var(--v2-surface)] text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] border border-[var(--v2-border)] transition-all"
+              style={{ borderRadius: 'var(--v2-radius-button)' }}
+            >
+              {timeRange === '7d' && 'Last 7 days'}
+              {timeRange === '30d' && 'Last 30 days'}
+              {timeRange === '90d' && 'Last 90 days'}
+              {timeRange === 'all' && 'All time'}
+              <ChevronDown className={`w-3.5 h-3.5 transition-transform ${showTimeRangeDropdown ? 'rotate-180' : ''}`} />
+            </button>
+
+            {showTimeRangeDropdown && (
+              <>
+                <div
+                  className="fixed inset-0 z-[100]"
+                  onClick={() => setShowTimeRangeDropdown(false)}
+                />
+                <div
+                  className="absolute right-0 mt-2 w-40 bg-[var(--v2-surface)] border border-[var(--v2-border)] shadow-xl z-[101]"
+                  style={{ borderRadius: 'var(--v2-radius-button)' }}
+                >
+                  {[
+                    { value: '7d', label: 'Last 7 days' },
+                    { value: '30d', label: 'Last 30 days' },
+                    { value: '90d', label: 'Last 90 days' },
+                    { value: 'all', label: 'All time' }
+                  ].map((option) => (
+                    <button
+                      key={option.value}
+                      onClick={() => {
+                        setTimeRange(option.value as TimeRange)
+                        setShowTimeRangeDropdown(false)
+                      }}
+                      className={`w-full text-left px-4 py-2.5 text-sm transition-colors ${
+                        timeRange === option.value
+                          ? 'bg-[var(--v2-primary)] text-white'
+                          : 'text-[var(--v2-text-secondary)] hover:bg-[var(--v2-hover)]'
+                      }`}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+
           <button
             onClick={handleRefresh}
             disabled={isRefreshing}
-            className="flex items-center gap-2 px-4 py-2 bg-[var(--v2-primary)] text-white rounded-lg text-sm font-medium hover:opacity-90 transition disabled:opacity-50"
+            className="flex items-center gap-2 px-4 py-2.5 bg-[var(--v2-primary)] text-white text-sm font-medium hover:opacity-90 transition disabled:opacity-50"
+            style={{ borderRadius: 'var(--v2-radius-button)' }}
           >
             <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
             Refresh

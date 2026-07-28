@@ -5,6 +5,8 @@ import { SupabaseClient } from '@supabase/supabase-js';
 import { MemoryConfigService } from './MemoryConfigService';
 import { AuditTrailService } from '@/lib/services/AuditTrailService';
 import { AUDIT_EVENTS } from '@/lib/audit/events';
+import { ProviderFactory, PROVIDERS } from '@/lib/ai/providerFactory';
+import type { CallContext } from '@/lib/ai/providers/baseProvider';
 
 export interface MemoryContext {
   // Recent chronological runs
@@ -14,6 +16,11 @@ export interface MemoryContext {
     sentiment?: 'positive' | 'neutral' | 'negative' | 'mixed';
     key_outcomes: any;
     patterns_detected: any;
+    suggestions?: {
+      improve_prompt?: string | null;
+      adjust_schedule?: string | null;
+      optimize_config?: string | null;
+    };
     run_timestamp: string;
     ais_score?: number;
     execution_time_ms?: number;
@@ -192,11 +199,24 @@ export class MemoryInjector {
         prompt += `  ${icon} Run #${run.run_number}${aisInfo}${timeInfo}: ${run.summary}\n`;
 
         // Highlight patterns
-        if (run.patterns_detected.recurring_error) {
+        if (run.patterns_detected?.recurring_error) {
           prompt += `      ⚠️ Pattern: ${run.patterns_detected.recurring_error}\n`;
         }
-        if (run.patterns_detected.success_pattern) {
+        if (run.patterns_detected?.success_pattern) {
           prompt += `      ✨ Success: ${run.patterns_detected.success_pattern}\n`;
+        }
+
+        // Include suggestions from past runs (learning from history)
+        if (run.suggestions) {
+          if (run.suggestions.improve_prompt) {
+            prompt += `      💡 Suggestion: ${run.suggestions.improve_prompt}\n`;
+          }
+          if (run.suggestions.adjust_schedule) {
+            prompt += `      🕐 Schedule tip: ${run.suggestions.adjust_schedule}\n`;
+          }
+          if (run.suggestions.optimize_config) {
+            prompt += `      ⚙️ Optimization: ${run.suggestions.optimize_config}\n`;
+          }
         }
       }
       prompt += '\n';
@@ -228,7 +248,7 @@ export class MemoryInjector {
   ): Promise<Array<any>> {
     const { data, error } = await this.supabase
       .from('run_memories')
-      .select('run_number, summary, sentiment, key_outcomes, patterns_detected, run_timestamp, ais_score, execution_time_ms')
+      .select('run_number, summary, sentiment, key_outcomes, patterns_detected, suggestions, run_timestamp, ais_score, execution_time_ms')
       .eq('agent_id', agentId)
       .order('run_timestamp', { ascending: false })
       .limit(limit);
@@ -273,9 +293,16 @@ export class MemoryInjector {
     limit: number,
     threshold: number
   ): Promise<Array<any>> {
-    // Import OpenAI for embedding generation
-    const OpenAI = (await import('openai')).default;
-    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    // Get provider from factory for centralized token tracking
+    const provider = ProviderFactory.getProvider(PROVIDERS.OPENAI);
+    const context: CallContext = {
+      userId: 'system',
+      feature: 'memory_system',
+      component: 'MemoryInjector',
+      category: 'memory_search',
+      activity_type: 'semantic_memory_search',
+      activity_name: 'generate_query_embedding',
+    };
 
     // Load embedding config
     const { MemoryConfigService } = await import('./MemoryConfigService');
@@ -286,11 +313,11 @@ export class MemoryInjector {
       ? query
       : JSON.stringify(query).substring(0, 1000);
 
-    // Generate embedding for query
-    const embeddingResponse = await openai.embeddings.create({
+    // Generate embedding for query using ProviderFactory
+    const embeddingResponse = await provider.createEmbedding({
       model: embeddingConfig.model,
       input: queryString
-    });
+    }, context);
     const queryEmbedding = embeddingResponse.data[0].embedding;
 
     // Search using pgvector cosine similarity

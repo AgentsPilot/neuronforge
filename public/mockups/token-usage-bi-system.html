@@ -1,0 +1,783 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Token Usage BI System - AgentPilot</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        'ap-dark': '#0a0a0f',
+                        'ap-card': '#12121a',
+                        'ap-border': '#1e1e2e',
+                        'ap-purple': '#8b5cf6',
+                        'ap-green': '#10b981',
+                        'ap-blue': '#3b82f6',
+                        'ap-orange': '#f59e0b',
+                        'ap-red': '#ef4444',
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body { font-family: 'Inter', system-ui, sans-serif; }
+        .glass { background: rgba(18, 18, 26, 0.8); backdrop-filter: blur(10px); }
+        .hierarchy-line { border-left: 2px solid #3b82f6; }
+        .clickable-row:hover { background: rgba(59, 130, 246, 0.1); }
+        .active-filter { background: rgba(139, 92, 246, 0.2); border-color: #8b5cf6; }
+        .dimension-chip { transition: all 0.2s; }
+        .dimension-chip:hover { transform: scale(1.02); }
+        .tooltip { position: relative; }
+        .tooltip-content {
+            visibility: hidden; opacity: 0; position: absolute;
+            bottom: 100%; left: 50%; transform: translateX(-50%);
+            transition: all 0.2s;
+        }
+        .tooltip:hover .tooltip-content { visibility: visible; opacity: 1; }
+    </style>
+</head>
+<body class="bg-ap-dark text-white min-h-screen">
+    <!-- Header -->
+    <header class="border-b border-ap-border px-6 py-4">
+        <div class="flex items-center justify-between max-w-[1600px] mx-auto">
+            <div class="flex items-center gap-4">
+                <h1 class="text-xl font-semibold">Token Usage Analytics</h1>
+                <span class="text-xs px-2 py-1 rounded bg-ap-purple/20 text-ap-purple">BI System</span>
+            </div>
+            <div class="flex items-center gap-4">
+                <!-- Period Selector -->
+                <div class="flex items-center gap-2 bg-ap-card border border-ap-border rounded-lg p-1">
+                    <button class="px-3 py-1.5 text-sm rounded text-gray-400 hover:text-white">24h</button>
+                    <button class="px-3 py-1.5 text-sm rounded text-gray-400 hover:text-white">7d</button>
+                    <button class="px-3 py-1.5 text-sm rounded bg-ap-purple text-white">30d</button>
+                    <button class="px-3 py-1.5 text-sm rounded text-gray-400 hover:text-white">90d</button>
+                    <button class="px-3 py-1.5 text-sm rounded text-gray-400 hover:text-white flex items-center gap-1">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+                        </svg>
+                        Custom
+                    </button>
+                </div>
+                <!-- Refresh -->
+                <button class="p-2 rounded-lg border border-ap-border hover:bg-ap-card">
+                    <svg class="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                    </svg>
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <main class="max-w-[1600px] mx-auto p-6 space-y-6">
+
+        <!-- TOP SECTION: Category Summary Cards -->
+        <section class="grid grid-cols-5 gap-4">
+            <!-- Total -->
+            <div class="bg-ap-card border border-ap-border rounded-xl p-5">
+                <div class="flex items-center justify-between mb-3">
+                    <span class="text-sm text-gray-400">Total Spend</span>
+                    <span class="text-xs px-2 py-0.5 rounded bg-gray-500/20 text-gray-400">All</span>
+                </div>
+                <div class="text-2xl font-bold mb-1">$1,247.83</div>
+                <div class="text-sm text-gray-400">18.4M tokens</div>
+                <div class="flex items-center gap-1 mt-2 text-xs">
+                    <span class="text-ap-red">+12.3%</span>
+                    <span class="text-gray-500">vs prev period</span>
+                </div>
+            </div>
+
+            <!-- Creation -->
+            <div class="bg-ap-card border border-ap-purple/30 rounded-xl p-5 cursor-pointer hover:border-ap-purple/60 dimension-chip">
+                <div class="flex items-center justify-between mb-3">
+                    <span class="text-sm text-gray-400">Creation</span>
+                    <span class="text-xs px-2 py-0.5 rounded bg-ap-purple/20 text-ap-purple">34%</span>
+                </div>
+                <div class="text-2xl font-bold text-ap-purple mb-1">$424.26</div>
+                <div class="text-sm text-gray-400">6.2M tokens</div>
+                <div class="text-xs text-gray-500 mt-2">Intent, Semantic Plan, IR</div>
+            </div>
+
+            <!-- Execution -->
+            <div class="bg-ap-card border border-ap-green/30 rounded-xl p-5 cursor-pointer hover:border-ap-green/60 dimension-chip">
+                <div class="flex items-center justify-between mb-3">
+                    <span class="text-sm text-gray-400">Execution</span>
+                    <span class="text-xs px-2 py-0.5 rounded bg-ap-green/20 text-ap-green">52%</span>
+                </div>
+                <div class="text-2xl font-bold text-ap-green mb-1">$648.87</div>
+                <div class="text-sm text-gray-400">9.8M tokens</div>
+                <div class="text-xs text-gray-500 mt-2">Agent runs, LLM decisions</div>
+            </div>
+
+            <!-- Memory -->
+            <div class="bg-ap-card border border-ap-blue/30 rounded-xl p-5 cursor-pointer hover:border-ap-blue/60 dimension-chip">
+                <div class="flex items-center justify-between mb-3">
+                    <span class="text-sm text-gray-400">Memory</span>
+                    <span class="text-xs px-2 py-0.5 rounded bg-ap-blue/20 text-ap-blue">8%</span>
+                </div>
+                <div class="text-2xl font-bold text-ap-blue mb-1">$99.83</div>
+                <div class="text-sm text-gray-400">1.5M tokens</div>
+                <div class="text-xs text-gray-500 mt-2">Embeddings, summarization</div>
+            </div>
+
+            <!-- System -->
+            <div class="bg-ap-card border border-ap-orange/30 rounded-xl p-5 cursor-pointer hover:border-ap-orange/60 dimension-chip">
+                <div class="flex items-center justify-between mb-3">
+                    <span class="text-sm text-gray-400">System</span>
+                    <span class="text-xs px-2 py-0.5 rounded bg-ap-orange/20 text-ap-orange">6%</span>
+                </div>
+                <div class="text-2xl font-bold text-ap-orange mb-1">$74.87</div>
+                <div class="text-sm text-gray-400">0.9M tokens</div>
+                <div class="text-xs text-gray-500 mt-2">Platform, calibration</div>
+            </div>
+        </section>
+
+        <!-- MAIN CONTENT: Two Panels -->
+        <div class="grid grid-cols-12 gap-6">
+
+            <!-- LEFT PANEL: Filters & Dimensions (3 cols) -->
+            <aside class="col-span-3 space-y-4">
+
+                <!-- Active Filters -->
+                <div class="bg-ap-card border border-ap-border rounded-xl p-4">
+                    <div class="flex items-center justify-between mb-3">
+                        <h3 class="text-sm font-medium">Active Filters</h3>
+                        <button class="text-xs text-ap-purple hover:underline">Clear all</button>
+                    </div>
+                    <div class="space-y-2">
+                        <div class="flex items-center justify-between bg-ap-purple/10 border border-ap-purple/30 rounded-lg px-3 py-2">
+                            <span class="text-sm">Provider: OpenAI</span>
+                            <button class="text-gray-400 hover:text-white">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                                </svg>
+                            </button>
+                        </div>
+                        <div class="text-xs text-gray-500 text-center py-2">Click any dimension to filter</div>
+                    </div>
+                </div>
+
+                <!-- Dimension Selector -->
+                <div class="bg-ap-card border border-ap-border rounded-xl p-4">
+                    <h3 class="text-sm font-medium mb-3">Group By</h3>
+                    <div class="space-y-2">
+                        <button class="w-full text-left px-3 py-2 rounded-lg bg-ap-purple/20 border border-ap-purple text-white text-sm flex items-center justify-between">
+                            <span>Provider</span>
+                            <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                                <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/>
+                            </svg>
+                        </button>
+                        <button class="w-full text-left px-3 py-2 rounded-lg border border-ap-border hover:border-gray-600 text-gray-400 text-sm">Model</button>
+                        <button class="w-full text-left px-3 py-2 rounded-lg border border-ap-border hover:border-gray-600 text-gray-400 text-sm">User</button>
+                        <button class="w-full text-left px-3 py-2 rounded-lg border border-ap-border hover:border-gray-600 text-gray-400 text-sm">Agent</button>
+                        <button class="w-full text-left px-3 py-2 rounded-lg border border-ap-border hover:border-gray-600 text-gray-400 text-sm">Activity Type</button>
+                        <button class="w-full text-left px-3 py-2 rounded-lg border border-ap-border hover:border-gray-600 text-gray-400 text-sm">Execution</button>
+                    </div>
+                </div>
+
+                <!-- Quick Stats -->
+                <div class="bg-ap-card border border-ap-border rounded-xl p-4">
+                    <h3 class="text-sm font-medium mb-3">Quick Stats</h3>
+                    <div class="space-y-3 text-sm">
+                        <div class="flex justify-between">
+                            <span class="text-gray-400">Total Calls</span>
+                            <span class="font-medium">12,847</span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span class="text-gray-400">Avg Cost/Call</span>
+                            <span class="font-medium">$0.097</span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span class="text-gray-400">Avg Tokens/Call</span>
+                            <span class="font-medium">1,432</span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span class="text-gray-400">Error Rate</span>
+                            <span class="font-medium text-ap-green">0.8%</span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span class="text-gray-400">Avg Latency</span>
+                            <span class="font-medium">847ms</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Top Consumers -->
+                <div class="bg-ap-card border border-ap-border rounded-xl p-4">
+                    <h3 class="text-sm font-medium mb-3">Top Token Consumers</h3>
+                    <div class="space-y-2">
+                        <div class="flex items-center gap-2">
+                            <div class="w-8 h-8 rounded-full bg-gradient-to-br from-ap-purple to-ap-blue flex items-center justify-center text-xs font-bold">SE</div>
+                            <div class="flex-1 min-w-0">
+                                <div class="text-sm truncate">Sales Email Bot</div>
+                                <div class="text-xs text-gray-500">$312.45</div>
+                            </div>
+                            <div class="text-sm text-ap-purple">25%</div>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <div class="w-8 h-8 rounded-full bg-gradient-to-br from-ap-green to-ap-blue flex items-center justify-center text-xs font-bold">IP</div>
+                            <div class="flex-1 min-w-0">
+                                <div class="text-sm truncate">Invoice Processor</div>
+                                <div class="text-xs text-gray-500">$198.20</div>
+                            </div>
+                            <div class="text-sm text-ap-green">16%</div>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <div class="w-8 h-8 rounded-full bg-gradient-to-br from-ap-orange to-ap-red flex items-center justify-center text-xs font-bold">SC</div>
+                            <div class="flex-1 min-w-0">
+                                <div class="text-sm truncate">Support Chatbot</div>
+                                <div class="text-xs text-gray-500">$156.80</div>
+                            </div>
+                            <div class="text-sm text-ap-orange">13%</div>
+                        </div>
+                    </div>
+                </div>
+            </aside>
+
+            <!-- RIGHT PANEL: Data Table (9 cols) -->
+            <section class="col-span-9 space-y-4">
+
+                <!-- Breadcrumb Trail -->
+                <div class="flex items-center gap-2 text-sm">
+                    <button class="text-ap-purple hover:underline">All Data</button>
+                    <svg class="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+                    </svg>
+                    <span class="text-white">Provider: OpenAI</span>
+                    <span class="text-gray-500 ml-4">| Showing 4 models</span>
+                </div>
+
+                <!-- Data Table -->
+                <div class="bg-ap-card border border-ap-border rounded-xl overflow-hidden">
+                    <table class="w-full">
+                        <thead class="bg-ap-dark/50">
+                            <tr class="text-left text-xs text-gray-400 uppercase tracking-wider">
+                                <th class="px-4 py-3 font-medium">Model</th>
+                                <th class="px-4 py-3 font-medium text-right">Total Cost</th>
+                                <th class="px-4 py-3 font-medium text-right">Tokens</th>
+                                <th class="px-4 py-3 font-medium text-right">Calls</th>
+                                <th class="px-4 py-3 font-medium text-right text-ap-purple">Creation</th>
+                                <th class="px-4 py-3 font-medium text-right text-ap-green">Execution</th>
+                                <th class="px-4 py-3 font-medium text-right text-ap-blue">Memory</th>
+                                <th class="px-4 py-3 font-medium text-right">Trend</th>
+                                <th class="px-4 py-3 font-medium"></th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-ap-border">
+                            <!-- GPT-4o Row -->
+                            <tr class="clickable-row cursor-pointer hover:bg-ap-blue/5">
+                                <td class="px-4 py-4">
+                                    <div class="flex items-center gap-3">
+                                        <div class="w-10 h-10 rounded-lg bg-gradient-to-br from-green-500 to-green-700 flex items-center justify-center">
+                                            <span class="text-sm font-bold">4o</span>
+                                        </div>
+                                        <div>
+                                            <div class="font-medium">gpt-4o</div>
+                                            <div class="text-xs text-gray-500">Primary model</div>
+                                        </div>
+                                    </div>
+                                </td>
+                                <td class="px-4 py-4 text-right font-semibold">$687.42</td>
+                                <td class="px-4 py-4 text-right text-gray-400">8.2M</td>
+                                <td class="px-4 py-4 text-right text-gray-400">5,847</td>
+                                <td class="px-4 py-4 text-right text-ap-purple">$298.50</td>
+                                <td class="px-4 py-4 text-right text-ap-green">$342.12</td>
+                                <td class="px-4 py-4 text-right text-ap-blue">$46.80</td>
+                                <td class="px-4 py-4 text-right">
+                                    <span class="text-ap-red text-sm">+8.2%</span>
+                                </td>
+                                <td class="px-4 py-4">
+                                    <svg class="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+                                    </svg>
+                                </td>
+                            </tr>
+
+                            <!-- GPT-4o-mini Row -->
+                            <tr class="clickable-row cursor-pointer hover:bg-ap-blue/5">
+                                <td class="px-4 py-4">
+                                    <div class="flex items-center gap-3">
+                                        <div class="w-10 h-10 rounded-lg bg-gradient-to-br from-green-400 to-green-600 flex items-center justify-center">
+                                            <span class="text-xs font-bold">4oM</span>
+                                        </div>
+                                        <div>
+                                            <div class="font-medium">gpt-4o-mini</div>
+                                            <div class="text-xs text-gray-500">Fast & cheap</div>
+                                        </div>
+                                    </div>
+                                </td>
+                                <td class="px-4 py-4 text-right font-semibold">$89.23</td>
+                                <td class="px-4 py-4 text-right text-gray-400">5.4M</td>
+                                <td class="px-4 py-4 text-right text-gray-400">4,123</td>
+                                <td class="px-4 py-4 text-right text-ap-purple">$12.40</td>
+                                <td class="px-4 py-4 text-right text-ap-green">$68.33</td>
+                                <td class="px-4 py-4 text-right text-ap-blue">$8.50</td>
+                                <td class="px-4 py-4 text-right">
+                                    <span class="text-ap-green text-sm">-3.1%</span>
+                                </td>
+                                <td class="px-4 py-4">
+                                    <svg class="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+                                    </svg>
+                                </td>
+                            </tr>
+
+                            <!-- o1 Row -->
+                            <tr class="clickable-row cursor-pointer hover:bg-ap-blue/5">
+                                <td class="px-4 py-4">
+                                    <div class="flex items-center gap-3">
+                                        <div class="w-10 h-10 rounded-lg bg-gradient-to-br from-purple-500 to-purple-700 flex items-center justify-center">
+                                            <span class="text-sm font-bold">o1</span>
+                                        </div>
+                                        <div>
+                                            <div class="font-medium">o1</div>
+                                            <div class="text-xs text-gray-500">Reasoning model</div>
+                                        </div>
+                                    </div>
+                                </td>
+                                <td class="px-4 py-4 text-right font-semibold">$156.78</td>
+                                <td class="px-4 py-4 text-right text-gray-400">0.8M</td>
+                                <td class="px-4 py-4 text-right text-gray-400">234</td>
+                                <td class="px-4 py-4 text-right text-ap-purple">$112.30</td>
+                                <td class="px-4 py-4 text-right text-ap-green">$44.48</td>
+                                <td class="px-4 py-4 text-right text-ap-blue">$0.00</td>
+                                <td class="px-4 py-4 text-right">
+                                    <span class="text-ap-red text-sm">+45.2%</span>
+                                </td>
+                                <td class="px-4 py-4">
+                                    <svg class="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+                                    </svg>
+                                </td>
+                            </tr>
+
+                            <!-- text-embedding-3-small Row -->
+                            <tr class="clickable-row cursor-pointer hover:bg-ap-blue/5">
+                                <td class="px-4 py-4">
+                                    <div class="flex items-center gap-3">
+                                        <div class="w-10 h-10 rounded-lg bg-gradient-to-br from-blue-500 to-blue-700 flex items-center justify-center">
+                                            <span class="text-xs font-bold">TE3</span>
+                                        </div>
+                                        <div>
+                                            <div class="font-medium">text-embedding-3-small</div>
+                                            <div class="text-xs text-gray-500">Embeddings</div>
+                                        </div>
+                                    </div>
+                                </td>
+                                <td class="px-4 py-4 text-right font-semibold">$12.45</td>
+                                <td class="px-4 py-4 text-right text-gray-400">3.8M</td>
+                                <td class="px-4 py-4 text-right text-gray-400">2,643</td>
+                                <td class="px-4 py-4 text-right text-ap-purple">$0.00</td>
+                                <td class="px-4 py-4 text-right text-ap-green">$0.00</td>
+                                <td class="px-4 py-4 text-right text-ap-blue">$12.45</td>
+                                <td class="px-4 py-4 text-right">
+                                    <span class="text-gray-400 text-sm">0.0%</span>
+                                </td>
+                                <td class="px-4 py-4">
+                                    <svg class="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+                                    </svg>
+                                </td>
+                            </tr>
+                        </tbody>
+                        <tfoot class="bg-ap-dark/30 border-t border-ap-border">
+                            <tr class="text-sm">
+                                <td class="px-4 py-3 font-medium">OpenAI Total</td>
+                                <td class="px-4 py-3 text-right font-bold">$945.88</td>
+                                <td class="px-4 py-3 text-right text-gray-400">18.2M</td>
+                                <td class="px-4 py-3 text-right text-gray-400">12,847</td>
+                                <td class="px-4 py-3 text-right text-ap-purple font-medium">$423.20</td>
+                                <td class="px-4 py-3 text-right text-ap-green font-medium">$454.93</td>
+                                <td class="px-4 py-3 text-right text-ap-blue font-medium">$67.75</td>
+                                <td colspan="2"></td>
+                            </tr>
+                        </tfoot>
+                    </table>
+                </div>
+
+                <!-- Drill-Down Example: Activity Type Level -->
+                <div class="mt-8">
+                    <h3 class="text-lg font-medium mb-4 flex items-center gap-2">
+                        <span class="text-gray-400">Example:</span>
+                        Drill into Activity Type
+                    </h3>
+
+                    <!-- Breadcrumb for deeper drill -->
+                    <div class="flex items-center gap-2 text-sm mb-4">
+                        <button class="text-ap-purple hover:underline">All Data</button>
+                        <svg class="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+                        </svg>
+                        <button class="text-ap-purple hover:underline">Provider: OpenAI</button>
+                        <svg class="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+                        </svg>
+                        <button class="text-ap-purple hover:underline">Model: gpt-4o</button>
+                        <svg class="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+                        </svg>
+                        <span class="text-white">Activity Type</span>
+                    </div>
+
+                    <div class="bg-ap-card border border-ap-border rounded-xl overflow-hidden">
+                        <table class="w-full">
+                            <thead class="bg-ap-dark/50">
+                                <tr class="text-left text-xs text-gray-400 uppercase tracking-wider">
+                                    <th class="px-4 py-3 font-medium">Activity Type</th>
+                                    <th class="px-4 py-3 font-medium">Category</th>
+                                    <th class="px-4 py-3 font-medium text-right">Cost</th>
+                                    <th class="px-4 py-3 font-medium text-right">Tokens</th>
+                                    <th class="px-4 py-3 font-medium text-right">Calls</th>
+                                    <th class="px-4 py-3 font-medium text-right">Avg/Call</th>
+                                    <th class="px-4 py-3 font-medium">Context</th>
+                                    <th class="px-4 py-3 font-medium"></th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-ap-border">
+                                <tr class="clickable-row cursor-pointer hover:bg-ap-blue/5">
+                                    <td class="px-4 py-4">
+                                        <div class="font-medium">intent_contract_generation</div>
+                                        <div class="text-xs text-gray-500">V6 Pipeline Phase 1</div>
+                                    </td>
+                                    <td class="px-4 py-4">
+                                        <span class="px-2 py-1 rounded text-xs bg-ap-purple/20 text-ap-purple">Creation</span>
+                                    </td>
+                                    <td class="px-4 py-4 text-right font-semibold">$156.30</td>
+                                    <td class="px-4 py-4 text-right text-gray-400">1.8M</td>
+                                    <td class="px-4 py-4 text-right text-gray-400">423</td>
+                                    <td class="px-4 py-4 text-right text-gray-400">4,255</td>
+                                    <td class="px-4 py-4">
+                                        <div class="flex gap-1 flex-wrap">
+                                            <span class="text-xs px-1.5 py-0.5 rounded bg-ap-border text-gray-400">12 users</span>
+                                            <span class="text-xs px-1.5 py-0.5 rounded bg-ap-border text-gray-400">89 agents</span>
+                                        </div>
+                                    </td>
+                                    <td class="px-4 py-4">
+                                        <svg class="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+                                        </svg>
+                                    </td>
+                                </tr>
+                                <tr class="clickable-row cursor-pointer hover:bg-ap-blue/5">
+                                    <td class="px-4 py-4">
+                                        <div class="font-medium">semantic_plan_generation</div>
+                                        <div class="text-xs text-gray-500">V6 Pipeline Phase 2</div>
+                                    </td>
+                                    <td class="px-4 py-4">
+                                        <span class="px-2 py-1 rounded text-xs bg-ap-purple/20 text-ap-purple">Creation</span>
+                                    </td>
+                                    <td class="px-4 py-4 text-right font-semibold">$89.45</td>
+                                    <td class="px-4 py-4 text-right text-gray-400">1.1M</td>
+                                    <td class="px-4 py-4 text-right text-gray-400">412</td>
+                                    <td class="px-4 py-4 text-right text-gray-400">2,670</td>
+                                    <td class="px-4 py-4">
+                                        <div class="flex gap-1 flex-wrap">
+                                            <span class="text-xs px-1.5 py-0.5 rounded bg-ap-border text-gray-400">12 users</span>
+                                            <span class="text-xs px-1.5 py-0.5 rounded bg-ap-border text-gray-400">87 agents</span>
+                                        </div>
+                                    </td>
+                                    <td class="px-4 py-4">
+                                        <svg class="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+                                        </svg>
+                                    </td>
+                                </tr>
+                                <tr class="clickable-row cursor-pointer hover:bg-ap-blue/5">
+                                    <td class="px-4 py-4">
+                                        <div class="font-medium">llm_decision</div>
+                                        <div class="text-xs text-gray-500">Runtime decisions</div>
+                                    </td>
+                                    <td class="px-4 py-4">
+                                        <span class="px-2 py-1 rounded text-xs bg-ap-green/20 text-ap-green">Execution</span>
+                                    </td>
+                                    <td class="px-4 py-4 text-right font-semibold">$234.67</td>
+                                    <td class="px-4 py-4 text-right text-gray-400">2.8M</td>
+                                    <td class="px-4 py-4 text-right text-gray-400">3,245</td>
+                                    <td class="px-4 py-4 text-right text-gray-400">863</td>
+                                    <td class="px-4 py-4">
+                                        <div class="flex gap-1 flex-wrap">
+                                            <span class="text-xs px-1.5 py-0.5 rounded bg-ap-border text-gray-400">8 users</span>
+                                            <span class="text-xs px-1.5 py-0.5 rounded bg-ap-border text-gray-400">45 agents</span>
+                                            <span class="text-xs px-1.5 py-0.5 rounded bg-ap-border text-gray-400">892 executions</span>
+                                        </div>
+                                    </td>
+                                    <td class="px-4 py-4">
+                                        <svg class="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+                                        </svg>
+                                    </td>
+                                </tr>
+                                <tr class="clickable-row cursor-pointer hover:bg-ap-blue/5">
+                                    <td class="px-4 py-4">
+                                        <div class="font-medium">step_repair</div>
+                                        <div class="text-xs text-gray-500">Self-healing repairs</div>
+                                    </td>
+                                    <td class="px-4 py-4">
+                                        <span class="px-2 py-1 rounded text-xs bg-ap-green/20 text-ap-green">Execution</span>
+                                    </td>
+                                    <td class="px-4 py-4 text-right font-semibold">$67.80</td>
+                                    <td class="px-4 py-4 text-right text-gray-400">0.6M</td>
+                                    <td class="px-4 py-4 text-right text-gray-400">156</td>
+                                    <td class="px-4 py-4 text-right text-gray-400">3,846</td>
+                                    <td class="px-4 py-4">
+                                        <div class="flex gap-1 flex-wrap">
+                                            <span class="text-xs px-1.5 py-0.5 rounded bg-ap-border text-gray-400">5 users</span>
+                                            <span class="text-xs px-1.5 py-0.5 rounded bg-ap-border text-gray-400">23 agents</span>
+                                        </div>
+                                    </td>
+                                    <td class="px-4 py-4">
+                                        <svg class="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+                                        </svg>
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Execution-Level Detail -->
+                <div class="mt-8">
+                    <h3 class="text-lg font-medium mb-4 flex items-center gap-2">
+                        <span class="text-gray-400">Deepest Level:</span>
+                        Individual Execution
+                    </h3>
+
+                    <!-- Breadcrumb for execution level -->
+                    <div class="flex items-center gap-2 text-sm mb-4 flex-wrap">
+                        <button class="text-ap-purple hover:underline">All</button>
+                        <svg class="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+                        </svg>
+                        <button class="text-ap-purple hover:underline">OpenAI</button>
+                        <svg class="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+                        </svg>
+                        <button class="text-ap-purple hover:underline">gpt-4o</button>
+                        <svg class="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+                        </svg>
+                        <button class="text-ap-purple hover:underline">llm_decision</button>
+                        <svg class="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+                        </svg>
+                        <button class="text-ap-purple hover:underline">Sales Email Bot</button>
+                        <svg class="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+                        </svg>
+                        <span class="text-white">Execution #exec_a1b2c3</span>
+                    </div>
+
+                    <div class="bg-ap-card border border-ap-border rounded-xl p-6">
+                        <!-- Execution Header -->
+                        <div class="flex items-start justify-between mb-6">
+                            <div>
+                                <h4 class="text-xl font-semibold">Sales Email Bot</h4>
+                                <p class="text-gray-400 text-sm mt-1">Execution #exec_a1b2c3d4-e5f6-7890-abcd-ef1234567890</p>
+                            </div>
+                            <div class="text-right">
+                                <div class="text-2xl font-bold text-ap-green">$0.47</div>
+                                <div class="text-sm text-gray-400">12,450 tokens</div>
+                            </div>
+                        </div>
+
+                        <!-- Execution Metadata -->
+                        <div class="grid grid-cols-4 gap-4 mb-6">
+                            <div class="bg-ap-dark/50 rounded-lg p-3">
+                                <div class="text-xs text-gray-500 mb-1">User</div>
+                                <div class="text-sm font-medium">john@acme.com</div>
+                            </div>
+                            <div class="bg-ap-dark/50 rounded-lg p-3">
+                                <div class="text-xs text-gray-500 mb-1">Started</div>
+                                <div class="text-sm font-medium">Jun 30, 2026 14:32:15</div>
+                            </div>
+                            <div class="bg-ap-dark/50 rounded-lg p-3">
+                                <div class="text-xs text-gray-500 mb-1">Duration</div>
+                                <div class="text-sm font-medium">8.4 seconds</div>
+                            </div>
+                            <div class="bg-ap-dark/50 rounded-lg p-3">
+                                <div class="text-xs text-gray-500 mb-1">Status</div>
+                                <div class="text-sm font-medium text-ap-green">Completed</div>
+                            </div>
+                        </div>
+
+                        <!-- LLM Calls within Execution -->
+                        <h5 class="text-sm font-medium text-gray-400 mb-3">LLM Calls in this Execution</h5>
+                        <div class="space-y-2">
+                            <div class="bg-ap-dark/50 rounded-lg p-4 flex items-center justify-between">
+                                <div class="flex items-center gap-4">
+                                    <div class="w-8 h-8 rounded bg-ap-green/20 flex items-center justify-center text-ap-green text-sm">1</div>
+                                    <div>
+                                        <div class="font-medium">llm_decision</div>
+                                        <div class="text-xs text-gray-500">Step: Analyze Email Content</div>
+                                    </div>
+                                </div>
+                                <div class="flex items-center gap-8">
+                                    <div class="text-right">
+                                        <div class="text-sm font-medium">3,245 tokens</div>
+                                        <div class="text-xs text-gray-500">$0.16</div>
+                                    </div>
+                                    <div class="text-right">
+                                        <div class="text-sm text-gray-400">847ms</div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="bg-ap-dark/50 rounded-lg p-4 flex items-center justify-between">
+                                <div class="flex items-center gap-4">
+                                    <div class="w-8 h-8 rounded bg-ap-green/20 flex items-center justify-center text-ap-green text-sm">2</div>
+                                    <div>
+                                        <div class="font-medium">llm_decision</div>
+                                        <div class="text-xs text-gray-500">Step: Generate Response Draft</div>
+                                    </div>
+                                </div>
+                                <div class="flex items-center gap-8">
+                                    <div class="text-right">
+                                        <div class="text-sm font-medium">5,890 tokens</div>
+                                        <div class="text-xs text-gray-500">$0.24</div>
+                                    </div>
+                                    <div class="text-right">
+                                        <div class="text-sm text-gray-400">1,234ms</div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="bg-ap-dark/50 rounded-lg p-4 flex items-center justify-between">
+                                <div class="flex items-center gap-4">
+                                    <div class="w-8 h-8 rounded bg-ap-green/20 flex items-center justify-center text-ap-green text-sm">3</div>
+                                    <div>
+                                        <div class="font-medium">llm_decision</div>
+                                        <div class="text-xs text-gray-500">Step: Final Review</div>
+                                    </div>
+                                </div>
+                                <div class="flex items-center gap-8">
+                                    <div class="text-right">
+                                        <div class="text-sm font-medium">3,315 tokens</div>
+                                        <div class="text-xs text-gray-500">$0.07</div>
+                                    </div>
+                                    <div class="text-right">
+                                        <div class="text-sm text-gray-400">523ms</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </div>
+
+        <!-- BOTTOM SECTION: Trends & Comparisons -->
+        <section class="grid grid-cols-2 gap-6 mt-8">
+            <!-- Daily Trend Chart Placeholder -->
+            <div class="bg-ap-card border border-ap-border rounded-xl p-6">
+                <div class="flex items-center justify-between mb-4">
+                    <h3 class="font-medium">Daily Cost Trend</h3>
+                    <select class="bg-ap-dark border border-ap-border rounded px-2 py-1 text-sm">
+                        <option>By Category</option>
+                        <option>By Provider</option>
+                        <option>By Model</option>
+                    </select>
+                </div>
+                <div class="h-48 bg-ap-dark/50 rounded-lg flex items-center justify-center">
+                    <div class="text-center text-gray-500">
+                        <svg class="w-12 h-12 mx-auto mb-2 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>
+                        </svg>
+                        <p class="text-sm">Stacked area chart showing daily costs</p>
+                        <p class="text-xs mt-1">Purple=Creation, Green=Execution, Blue=Memory</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Period Comparison -->
+            <div class="bg-ap-card border border-ap-border rounded-xl p-6">
+                <div class="flex items-center justify-between mb-4">
+                    <h3 class="font-medium">Period Comparison</h3>
+                    <span class="text-sm text-gray-400">vs Previous 30 days</span>
+                </div>
+                <div class="space-y-4">
+                    <div>
+                        <div class="flex justify-between text-sm mb-1">
+                            <span class="text-gray-400">Total Cost</span>
+                            <span class="text-ap-red">+12.3% ($137.20 more)</span>
+                        </div>
+                        <div class="h-2 bg-ap-dark rounded-full overflow-hidden">
+                            <div class="h-full bg-gradient-to-r from-ap-purple to-ap-red" style="width: 62%"></div>
+                        </div>
+                    </div>
+                    <div>
+                        <div class="flex justify-between text-sm mb-1">
+                            <span class="text-gray-400">Creation Cost</span>
+                            <span class="text-ap-red">+28.5%</span>
+                        </div>
+                        <div class="h-2 bg-ap-dark rounded-full overflow-hidden">
+                            <div class="h-full bg-ap-purple" style="width: 78%"></div>
+                        </div>
+                    </div>
+                    <div>
+                        <div class="flex justify-between text-sm mb-1">
+                            <span class="text-gray-400">Execution Cost</span>
+                            <span class="text-ap-green">-3.2%</span>
+                        </div>
+                        <div class="h-2 bg-ap-dark rounded-full overflow-hidden">
+                            <div class="h-full bg-ap-green" style="width: 47%"></div>
+                        </div>
+                    </div>
+                    <div>
+                        <div class="flex justify-between text-sm mb-1">
+                            <span class="text-gray-400">Total Calls</span>
+                            <span class="text-ap-red">+8.7%</span>
+                        </div>
+                        <div class="h-2 bg-ap-dark rounded-full overflow-hidden">
+                            <div class="h-full bg-ap-orange" style="width: 58%"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Analysis Notes -->
+        <section class="bg-ap-card border border-ap-border rounded-xl p-6 mt-6">
+            <h3 class="font-medium mb-4 flex items-center gap-2">
+                <svg class="w-5 h-5 text-ap-purple" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                </svg>
+                BI System Design Notes
+            </h3>
+            <div class="grid grid-cols-2 gap-6 text-sm">
+                <div>
+                    <h4 class="font-medium text-ap-purple mb-2">Key Design Principles</h4>
+                    <ul class="space-y-1 text-gray-400">
+                        <li>• <strong>Flexible Grouping:</strong> Users choose any primary dimension (Provider, Model, User, Agent, Activity, Execution)</li>
+                        <li>• <strong>Category Columns:</strong> Every row shows breakdown by Creation/Execution/Memory/System</li>
+                        <li>• <strong>Infinite Drill-Down:</strong> Click any row to drill deeper while maintaining context</li>
+                        <li>• <strong>Context Chips:</strong> Show related dimensions at each level (how many users, agents, executions)</li>
+                        <li>• <strong>Breadcrumb Trail:</strong> Always know where you are and navigate back easily</li>
+                    </ul>
+                </div>
+                <div>
+                    <h4 class="font-medium text-ap-green mb-2">Data Requirements</h4>
+                    <ul class="space-y-1 text-gray-400">
+                        <li>• <strong>execution_id:</strong> Must be passed in ALL workflow LLM calls</li>
+                        <li>• <strong>activity_type:</strong> Consistent classification (intent_contract, semantic_plan, llm_decision, etc.)</li>
+                        <li>• <strong>agent_id:</strong> Link every call to its agent</li>
+                        <li>• <strong>user_id:</strong> Always present (use SYSTEM_USER for platform calls)</li>
+                        <li>• <strong>workflow_step:</strong> Track which step in the workflow made the call</li>
+                    </ul>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <script>
+        // Interactive demo - clicking rows could show drill-down behavior
+        document.querySelectorAll('.clickable-row').forEach(row => {
+            row.addEventListener('click', () => {
+                // In real implementation, this would trigger drill-down
+                console.log('Drill down into:', row.querySelector('td').textContent);
+            });
+        });
+    </script>
+</body>
+</html>

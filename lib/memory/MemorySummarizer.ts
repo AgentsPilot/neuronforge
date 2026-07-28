@@ -2,11 +2,12 @@
 // Async LLM-based memory summarization service
 
 import { createClient } from '@supabase/supabase-js';
-import OpenAI from 'openai';
+import { ProviderFactory, PROVIDERS } from '@/lib/ai/providerFactory';
+import { OPENAI_MODELS } from '@/lib/ai/providers/openaiProvider';
+import type { CallContext } from '@/lib/ai/providers/baseProvider';
 import { MemoryConfigService } from './MemoryConfigService';
 import { AuditTrailService } from '@/lib/services/AuditTrailService';
 import { AUDIT_EVENTS } from '@/lib/audit/events';
-import { AIAnalyticsService } from '@/lib/analytics/aiAnalytics';
 
 export interface SummarizationInput {
   execution_id: string;
@@ -69,11 +70,9 @@ export interface RunMemory {
  */
 export class MemorySummarizer {
   private supabase: any;
-  private openai: OpenAI;
   private auditTrail: AuditTrailService;
-  private analytics: AIAnalyticsService;
 
-  constructor(openaiApiKey?: string) {
+  constructor(_openaiApiKey?: string) { // Deprecated: ProviderFactory handles API keys
     // Use service role client to bypass RLS policies for memory storage
     this.supabase = createClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -86,11 +85,8 @@ export class MemorySummarizer {
       }
     );
 
-    this.openai = new OpenAI({
-      apiKey: openaiApiKey || process.env.OPENAI_API_KEY
-    });
+    // ProviderFactory handles LLM client initialization and token tracking - no direct SDK instantiation needed
     this.auditTrail = AuditTrailService.getInstance();
-    this.analytics = new AIAnalyticsService(this.supabase);
   }
 
   /**
@@ -130,56 +126,45 @@ export class MemorySummarizer {
       // 2. Build summarization prompt with dynamic truncation
       const prompt = this.buildSummarizationPrompt(input, config);
 
-      // 3. Call LLM to generate memory
+      // 3. Call LLM to generate memory via ProviderFactory (handles token tracking)
       console.log(`🤖 [MemorySummarizer] Calling ${config.model} for summarization...`);
       const startTime = Date.now();
 
-      const completion = await this.openai.chat.completions.create({
+      // Get provider from factory for centralized token tracking
+      const provider = ProviderFactory.getProvider(PROVIDERS.OPENAI);
+      const llmContext: CallContext = {
+        userId: input.user_id,
+        feature: 'memory_system',
+        component: 'MemorySummarizer',
+        category: 'memory_creation',
+        activity_type: 'memory_summarization',
+        activity_name: 'summarize_execution',
+      };
+
+      const completion = await provider.chatCompletion({
         model: config.model,
         messages: [{ role: 'user', content: prompt }],
         temperature: config.temperature,
         max_tokens: config.max_tokens,
         response_format: { type: 'json_object' }
-      });
+      }, llmContext);
 
       const latency = Date.now() - startTime;
 
-      // Track LLM call analytics and capture token usage
+      // Token tracking is now handled automatically by ProviderFactory
+      // Just extract usage for local logging
       const usage = completion.usage;
       if (usage) {
         tokensUsed = {
-          prompt: usage.prompt_tokens,
-          completion: usage.completion_tokens,
-          total: usage.total_tokens
+          prompt: usage.prompt_tokens || 0,
+          completion: usage.completion_tokens || 0,
+          total: (usage.prompt_tokens || 0) + (usage.completion_tokens || 0)
         };
-        console.log(`📊 [MemorySummarizer] Token usage:`, tokensUsed);
-        const cost = await this.calculateCost(config.model, usage.prompt_tokens, usage.completion_tokens);
-        await this.analytics.trackAICall({
-          user_id: input.user_id,
-          provider: 'openai',
-          model_name: config.model,
-          input_tokens: usage.prompt_tokens,
-          output_tokens: usage.completion_tokens,
-          cost_usd: cost,
-          latency_ms: latency,
-          success: true,
-          feature: 'memory_system',
-          component: 'memory_summarizer',
-          activity_type: 'memory_creation',
-          activity_name: 'summarize_execution',
-          agent_id: input.agent_id,
-          session_id: input.execution_id,
-          metadata: {
-            run_number: input.run_number,
-            agent_name: input.agent_name,
-            execution_status: input.status,
-            temperature: config.temperature,
-            max_tokens: config.max_tokens
-          }
-        });
+        console.log(`📊 [MemorySummarizer] Token usage:`, tokensUsed, `latency: ${latency}ms`);
       }
 
-      const memoryJson = completion.choices[0].message.content;
+      // ProviderFactory returns OpenAI-compatible format
+      const memoryJson = completion.choices?.[0]?.message?.content;
       if (!memoryJson) {
         throw new Error('Empty response from LLM');
       }
@@ -594,6 +579,17 @@ Response (JSON only):`;
           `${m.summary} ${JSON.stringify(m.key_outcomes)} ${JSON.stringify(m.patterns_detected)}`
         );
 
+        // Get provider from factory for centralized token tracking
+        const provider = ProviderFactory.getProvider(PROVIDERS.OPENAI);
+        const embeddingContext: CallContext = {
+          userId: 'system',
+          feature: 'memory_system',
+          component: 'MemorySummarizer',
+          category: 'embedding_generation',
+          activity_type: 'batch_embedding',
+          activity_name: 'generate_embeddings_batch',
+        };
+
         // Generate embeddings in batch with retry logic
         let response;
         const maxRetries = 3;
@@ -601,10 +597,10 @@ Response (JSON only):`;
 
         for (let attempt = 1; attempt <= maxRetries; attempt++) {
           try {
-            response = await this.openai.embeddings.create({
+            response = await provider.createEmbedding({
               model: config.model,
               input: texts
-            });
+            }, embeddingContext);
             break; // Success - exit retry loop
           } catch (error: any) {
             lastError = error;
@@ -685,6 +681,17 @@ Response (JSON only):`;
       // Load config
       const config = await MemoryConfigService.getEmbeddingConfig(this.supabase);
 
+      // Get provider from factory for centralized token tracking
+      const provider = ProviderFactory.getProvider(PROVIDERS.OPENAI);
+      const embeddingContext: CallContext = {
+        userId: 'system',
+        feature: 'memory_system',
+        component: 'MemorySummarizer',
+        category: 'embedding_generation',
+        activity_type: 'single_embedding',
+        activity_name: 'generate_embedding',
+      };
+
       // Generate embedding with retry logic
       let response;
       const maxRetries = 3;
@@ -692,10 +699,10 @@ Response (JSON only):`;
 
       for (let attempt = 1; attempt <= maxRetries; attempt++) {
         try {
-          response = await this.openai.embeddings.create({
+          response = await provider.createEmbedding({
             model: config.model,
             input: embeddingText
-          });
+          }, embeddingContext);
           break; // Success - exit retry loop
         } catch (error: any) {
           lastError = error;
@@ -758,6 +765,17 @@ Response (JSON only):`;
       // Load config
       const config = await MemoryConfigService.getEmbeddingConfig(this.supabase);
 
+      // Get provider from factory for centralized token tracking
+      const provider = ProviderFactory.getProvider(PROVIDERS.OPENAI);
+      const embeddingContext: CallContext = {
+        userId: 'system',
+        feature: 'memory_system',
+        component: 'MemorySummarizer',
+        category: 'embedding_generation',
+        activity_type: 'async_embedding',
+        activity_name: 'generate_embedding_async',
+      };
+
       // Generate embedding with retry logic
       let response;
       const maxRetries = 3;
@@ -765,10 +783,10 @@ Response (JSON only):`;
 
       for (let attempt = 1; attempt <= maxRetries; attempt++) {
         try {
-          response = await this.openai.embeddings.create({
+          response = await provider.createEmbedding({
             model: config.model,
             input: embeddingText
-          });
+          }, embeddingContext);
           break; // Success - exit retry loop
         } catch (error: any) {
           lastError = error;

@@ -4,14 +4,13 @@
 import { NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
 import { createServerClient } from '@supabase/ssr'
-import OpenAI from 'openai'
+import { ProviderFactory, PROVIDERS } from '@/lib/ai/providerFactory'
+import { OPENAI_MODELS } from '@/lib/ai/providers/openaiProvider'
+import type { CallContext } from '@/lib/ai/providers/baseProvider'
 
 export const runtime = 'nodejs'
 
-// Initialize OpenAI with your existing configuration
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-})
+// ProviderFactory handles LLM client initialization - no direct SDK instantiation needed
 
 interface OrchestrationStepRequest {
   stepId: string
@@ -74,18 +73,28 @@ export async function POST(req: Request) {
     // Build user prompt with workflow context
     const userPrompt = buildOrchestrationUserPrompt(inputs, previousResults, expectedOutputs)
 
-    // Call OpenAI directly for orchestration
+    // Get provider from factory for centralized token tracking
+    const provider = ProviderFactory.getProvider(PROVIDERS.OPENAI)
+    const llmContext: CallContext = {
+      userId: user.id,
+      feature: 'orchestration',
+      component: 'run-step',
+      category: 'workflow_execution',
+      activity_type: 'step_execution',
+      activity_name: `execute_step_${stepName}`,
+    }
+
     const startTime = Date.now()
-    
-    const completion = await openai.chat.completions.create({
-      model: process.env.OPENAI_MODEL || 'gpt-4o',
+
+    const completion = await provider.chatCompletion({
+      model: (process.env.OPENAI_MODEL as string) || OPENAI_MODELS.GPT_4O,
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userPrompt }
       ],
       temperature: 0.1,
       max_tokens: 2000,
-    })
+    }, llmContext)
 
     const executionTime = Date.now() - startTime
     const aiResponse = completion.choices[0]?.message?.content || ''

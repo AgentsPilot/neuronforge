@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dashboard V2 - Minimal Focus Design</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: #ffffff;
+      min-height: 100vh;
+    }
+
+    .main-input {
+      font-size: 24px;
+      line-height: 1.4;
+    }
+
+    .main-input::placeholder {
+      color: #d1d5db;
+    }
+
+    .floating-panel {
+      position: fixed;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: white;
+      border-radius: 20px;
+      box-shadow: 0 4px 30px rgba(0,0,0,0.1);
+      border: 1px solid #e5e7eb;
+    }
+
+    .tab-active {
+      background: #f3f4f6;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Top Bar - Minimal -->
+  <header class="fixed top-0 left-0 right-0 bg-white/80 backdrop-blur-lg border-b border-gray-100 z-50">
+    <div class="max-w-4xl mx-auto px-6 py-4 flex items-center justify-between">
+      <div class="flex items-center gap-2">
+        <div class="w-8 h-8 rounded-lg bg-black flex items-center justify-center">
+          <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+          </svg>
+        </div>
+        <span class="font-semibold text-gray-900">AgentPilot</span>
+      </div>
+      <div class="flex items-center gap-4">
+        <span class="text-sm text-gray-500">8.5K credits</span>
+        <div class="w-8 h-8 rounded-full bg-gradient-to-br from-violet-400 to-purple-500"></div>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Content - Full Screen Focus -->
+  <main class="min-h-screen flex items-center justify-center px-6 pt-20 pb-32">
+    <div class="w-full max-w-2xl">
+
+      <!-- The One Input -->
+      <div class="text-center mb-12">
+        <h1 class="text-4xl font-bold text-gray-900 mb-3">What can I automate for you?</h1>
+        <p class="text-gray-500">Describe any repetitive task. I'll build the automation.</p>
+      </div>
+
+      <div class="relative">
+        <textarea
+          rows="4"
+          placeholder="e.g. Every morning, check my Gmail for important emails and send me a summary on Slack..."
+          class="main-input w-full p-6 border-2 border-gray-200 rounded-2xl outline-none focus:border-black transition resize-none text-gray-900"
+        ></textarea>
+
+        <div class="absolute bottom-4 left-4 right-4 flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <button class="p-2 rounded-lg hover:bg-gray-100 transition text-gray-400 hover:text-gray-600">
+              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+              </svg>
+            </button>
+            <span class="text-xs text-gray-400">Voice input</span>
+          </div>
+          <button class="px-6 py-2.5 bg-black text-white font-medium rounded-xl hover:bg-gray-800 transition">
+            Create Automation →
+          </button>
+        </div>
+      </div>
+
+      <!-- Suggestions -->
+      <div class="mt-8 flex flex-wrap gap-2 justify-center">
+        <button class="px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-full text-sm text-gray-700 transition">
+          Summarize emails
+        </button>
+        <button class="px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-full text-sm text-gray-700 transition">
+          Track leads
+        </button>
+        <button class="px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-full text-sm text-gray-700 transition">
+          Send invoices
+        </button>
+        <button class="px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-full text-sm text-gray-700 transition">
+          Social media posts
+        </button>
+        <button class="px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-full text-sm text-gray-700 transition">
+          Data backup
+        </button>
+      </div>
+
+    </div>
+  </main>
+
+  <!-- Floating Bottom Panel -->
+  <div class="floating-panel">
+    <div class="flex items-center gap-1 p-2">
+      <button class="tab-active px-4 py-2 rounded-xl text-sm font-medium text-gray-900 flex items-center gap-2">
+        <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
+        8 Running
+      </button>
+      <button class="px-4 py-2 rounded-xl text-sm text-gray-500 hover:text-gray-900 hover:bg-gray-50 transition">
+        127h Saved
+      </button>
+      <button class="px-4 py-2 rounded-xl text-sm text-gray-500 hover:text-gray-900 hover:bg-gray-50 transition">
+        $6.3K Value
+      </button>
+      <button class="px-4 py-2 rounded-xl text-sm text-gray-500 hover:text-gray-900 hover:bg-gray-50 transition flex items-center gap-2">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+        </svg>
+        Analytics
+      </button>
+    </div>
+  </div>
+
+  <!-- Design Notes -->
+  <div class="fixed bottom-32 left-1/2 transform -translate-x-1/2 w-full max-w-2xl px-6">
+    <div class="p-5 bg-amber-50 border border-amber-200 rounded-2xl">
+      <h3 class="font-semibold text-amber-800 mb-3">Design: Minimal Focus</h3>
+      <ul class="text-sm text-amber-700 space-y-1">
+        <li>• <strong>Google-style simplicity</strong> - one input, maximum focus</li>
+        <li>• <strong>Full-screen centered</strong> - nothing competes for attention</li>
+        <li>• <strong>Floating bottom bar</strong> - stats accessible but not distracting</li>
+        <li>• <strong>Clean typography</strong> - large, readable, inviting</li>
+        <li>• <strong>Black & white base</strong> - timeless, professional</li>
+        <li>• <strong>Expandable</strong> - click "8 Running" to see automations</li>
+      </ul>
+    </div>
+  </div>
+
+</body>
+</html>

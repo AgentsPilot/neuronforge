@@ -904,6 +904,22 @@ export class WorkflowPilot {
         console.log(`💡 [WorkflowPilot] Insights NOT collected. Reasons: production_ready=${!agent.production_ready ? 'false' : 'true'}, insights_enabled=${!agent.insights_enabled ? 'false/undefined' : 'true'}`);
       }
 
+      // 16. Update execution baseline and detect anomalies (async, fire-and-forget)
+      // Part of Memory System Phase 6: Execution Optimization
+      this.updateBaselineAndDetectAnomalies(
+        agent.id,
+        executionId,
+        userId,
+        context.totalExecutionTime,
+        totalTokensWithMemory,
+        context.completedSteps.length,
+        context.failedSteps.length,
+        context.failedSteps.length === 0
+      ).catch(err => {
+        // Non-blocking - don't fail execution
+        console.debug('[WorkflowPilot] Baseline/anomaly update failed (non-critical):', err);
+      });
+
       console.log(`✅ [WorkflowPilot] Execution completed successfully: ${executionId}`);
 
       // NOTE: We do NOT automatically mark agent as production_ready here
@@ -2460,6 +2476,59 @@ export class WorkflowPilot {
     await updateAgentIntensityMetrics(this.supabase, executionData);
 
     console.log(`✅ [WorkflowPilot] AIS metrics updated`);
+  }
+
+  /**
+   * Update execution baseline and detect anomalies
+   * Part of Memory System Phase 6: Execution Optimization
+   */
+  private async updateBaselineAndDetectAnomalies(
+    agentId: string,
+    executionId: string,
+    userId: string,
+    durationMs: number,
+    tokenUsage: number,
+    stepCount: number,
+    retryCount: number,
+    success: boolean
+  ): Promise<void> {
+    try {
+      // Dynamic import to avoid circular dependencies
+      const { getBaselineService } = await import('@/lib/services/BaselineService');
+      const { getAnomalyDetector } = await import('@/lib/services/AnomalyDetector');
+
+      // Update baseline
+      const baselineService = getBaselineService(this.supabase);
+      await baselineService.updateBaseline({
+        agentId,
+        userId,
+        durationMs,
+        tokenUsage,
+        stepCount,
+        retryCount,
+        success,
+      });
+
+      // Detect and record anomalies
+      const anomalyDetector = getAnomalyDetector(this.supabase);
+      const anomalies = await anomalyDetector.detectAndRecord({
+        agentId,
+        executionId,
+        userId,
+        durationMs,
+        tokenUsage,
+        stepCount,
+        retryCount,
+        success,
+      });
+
+      if (anomalies.length > 0) {
+        console.log(`⚠️ [WorkflowPilot] Detected ${anomalies.length} execution anomalies`);
+      }
+    } catch (err) {
+      // Non-blocking - just log
+      console.debug('[WorkflowPilot] Baseline/anomaly update failed:', err);
+    }
   }
 
   /**

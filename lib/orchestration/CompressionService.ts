@@ -9,10 +9,13 @@
  *
  * Integrates with Memory system for context compression
  * Configurable via system_settings_config table
+ * Token tracking via ProviderFactory
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';
-import Anthropic from '@anthropic-ai/sdk';
+import { ProviderFactory, PROVIDERS } from '@/lib/ai/providerFactory';
+import { ANTHROPIC_MODELS } from '@/lib/ai/providers/anthropicProvider';
+import type { CallContext } from '@/lib/ai/providers/baseProvider';
 import type {
   CompressionPolicy,
   CompressionResult,
@@ -28,15 +31,12 @@ const estimateTokens = (text: string): number => {
 
 export class CompressionService implements ICompressionService {
   private supabase: SupabaseClient;
-  private anthropic: Anthropic;
   private policyCache: Map<IntentType, CompressionPolicy> = new Map();
   private configCache: Map<string, any> = new Map();
 
   constructor(supabaseClient: SupabaseClient) {
     this.supabase = supabaseClient;
-    this.anthropic = new Anthropic({
-      apiKey: process.env.ANTHROPIC_API_KEY,
-    });
+    // ProviderFactory handles LLM client initialization and token tracking - no direct SDK instantiation needed
   }
 
   /**
@@ -223,21 +223,30 @@ export class CompressionService implements ICompressionService {
       // Build compression prompt based on intent and aggressiveness
       const systemPrompt = this.buildSemanticPrompt(intent, policy.aggressiveness, targetTokens);
 
+      // Get provider from factory for centralized token tracking
+      const provider = ProviderFactory.getProvider(PROVIDERS.ANTHROPIC);
+      const llmContext: CallContext = {
+        userId: 'system',
+        feature: 'orchestration',
+        component: 'CompressionService',
+        category: 'content_compression',
+        activity_type: 'semantic_compression',
+        activity_name: `compress_${intent}`,
+      };
+
       // Use Haiku for fast, cost-effective compression
-      const response = await this.anthropic.messages.create({
-        model: 'claude-3-haiku-20240307',
+      const response = await provider.chatCompletion({
+        model: ANTHROPIC_MODELS.HAIKU_35,
         max_tokens: targetTokens + 100, // Allow some buffer
         temperature: 0.3, // Lower temperature for more consistent compression
-        system: systemPrompt,
         messages: [
-          {
-            role: 'user',
-            content: content,
-          },
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: content },
         ],
-      });
+      }, llmContext);
 
-      const compressed = response.content[0].type === 'text' ? response.content[0].text : content;
+      // ProviderFactory returns OpenAI-compatible format
+      const compressed = response.choices?.[0]?.message?.content || content;
       const compressedTokens = estimateTokens(compressed);
       const actualRatio = 1 - (compressedTokens / originalTokens);
 
@@ -259,7 +268,7 @@ export class CompressionService implements ICompressionService {
         qualityScore,
         strategy: 'semantic',
         metadata: {
-          model: 'claude-3-haiku-20240307',
+          model: ANTHROPIC_MODELS.HAIKU_35,
           targetTokens,
           intent,
           aggressiveness: policy.aggressiveness,

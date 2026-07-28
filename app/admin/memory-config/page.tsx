@@ -14,13 +14,17 @@ import {
   Clock,
   Target,
   ChevronUp,
-  ChevronDown
+  ChevronDown,
+  AlertTriangle,
+  TrendingUp,
+  Puzzle,
+  MessageSquare,
+  User
 } from 'lucide-react';
 
 interface MemoryConfig {
   global: {
     enabled: boolean;
-    debug_mode: boolean;
   };
   injection: {
     max_tokens: number;
@@ -33,7 +37,6 @@ interface MemoryConfig {
     model: string;
     temperature: number;
     max_tokens: number;
-    async: boolean;
     input_truncate_chars: number;
     output_truncate_chars: number;
     recent_history_count: number;
@@ -58,25 +61,74 @@ interface MemoryConfig {
     consolidation_threshold: number;
     consolidation_frequency_days: number;
   };
+  user_extraction: {
+    model: string;
+    temperature: number;
+    max_tokens: number;
+    confidence_threshold: number;
+  };
+  // Insights/Learning Configuration
+  baseline: {
+    enabled: boolean;
+    min_samples: number;
+    zscore_threshold: number;
+    zscore_warning: number;
+    zscore_critical: number;
+    step_deviation_threshold: number;
+    retry_deviation_threshold: number;
+    duration_spike_factor: number;
+  };
+  error_learning: {
+    enabled: boolean;
+    min_occurrences: number;
+    min_success_rate: number;
+    min_attempts_for_evaluation: number;
+  };
+  plugin_performance: {
+    enabled: boolean;
+    min_executions_agent: number;
+    min_executions_userwide: number;
+    success_drop_factor: number;
+    duration_spike_factor: number;
+    duration_critical_factor: number;
+    error_rate_threshold: number;
+  };
+  pattern_learning: {
+    enabled: boolean;
+    min_executions: number;
+    min_success_rate: number;
+  };
+  intent_examples: {
+    enabled: boolean;
+    default_limit: number;
+    max_limit: number;
+  };
 }
 
 export default function MemoryConfigPage() {
+  const [activeTab, setActiveTab] = useState<'memory' | 'insights'>('memory');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
-  // Section collapse states
+  // Section collapse states - Memory
   const [injectionExpanded, setInjectionExpanded] = useState(true);
   const [summarizationExpanded, setSummarizationExpanded] = useState(false);
   const [embeddingExpanded, setEmbeddingExpanded] = useState(false);
   const [importanceExpanded, setImportanceExpanded] = useState(false);
   const [retentionExpanded, setRetentionExpanded] = useState(false);
+  const [userExtractionExpanded, setUserExtractionExpanded] = useState(false);
+  // Section collapse states - Insights
+  const [baselineExpanded, setBaselineExpanded] = useState(false);
+  const [errorLearningExpanded, setErrorLearningExpanded] = useState(false);
+  const [pluginPerformanceExpanded, setPluginPerformanceExpanded] = useState(false);
+  const [patternLearningExpanded, setPatternLearningExpanded] = useState(false);
+  const [intentExamplesExpanded, setIntentExamplesExpanded] = useState(false);
 
   const [config, setConfig] = useState<MemoryConfig>({
     global: {
-      enabled: true,
-      debug_mode: false
+      enabled: true
     },
     injection: {
       max_tokens: 4000,
@@ -89,7 +141,6 @@ export default function MemoryConfigPage() {
       model: 'gpt-4o-mini',
       temperature: 0.3,
       max_tokens: 1000,
-      async: true,
       input_truncate_chars: 300,
       output_truncate_chars: 400,
       recent_history_count: 2,
@@ -113,6 +164,48 @@ export default function MemoryConfigPage() {
       low_importance_days: 30,
       consolidation_threshold: 100,
       consolidation_frequency_days: 7
+    },
+    user_extraction: {
+      model: 'gpt-4o-mini',
+      temperature: 0.3,
+      max_tokens: 1000,
+      confidence_threshold: 0.7
+    },
+    // Insights defaults
+    baseline: {
+      enabled: true,
+      min_samples: 5,
+      zscore_threshold: 2.0,
+      zscore_warning: 2.5,
+      zscore_critical: 4.0,
+      step_deviation_threshold: 50,
+      retry_deviation_threshold: 100,
+      duration_spike_factor: 2.0
+    },
+    error_learning: {
+      enabled: true,
+      min_occurrences: 3,
+      min_success_rate: 0.5,
+      min_attempts_for_evaluation: 5
+    },
+    plugin_performance: {
+      enabled: true,
+      min_executions_agent: 10,
+      min_executions_userwide: 20,
+      success_drop_factor: 0.7,
+      duration_spike_factor: 2.0,
+      duration_critical_factor: 3.0,
+      error_rate_threshold: 0.1
+    },
+    pattern_learning: {
+      enabled: true,
+      min_executions: 10,
+      min_success_rate: 0.7
+    },
+    intent_examples: {
+      enabled: true,
+      default_limit: 3,
+      max_limit: 10
     }
   });
 
@@ -173,9 +266,9 @@ export default function MemoryConfigPage() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-screen bg-gradient-to-br from-slate-950 via-blue-950 to-slate-950">
+      <div className="flex items-center justify-center py-12">
         <div className="text-center">
-          <RefreshCw className="w-8 h-8 text-blue-400 animate-spin mx-auto mb-4" />
+          <RefreshCw className="w-12 h-12 text-purple-400 animate-spin mx-auto mb-4" />
           <p className="text-slate-300">Loading memory configuration...</p>
         </div>
       </div>
@@ -183,74 +276,107 @@ export default function MemoryConfigPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-950 via-blue-950 to-slate-950 p-8">
-      <div className="max-w-7xl mx-auto">
-        {/* Header */}
-        <div className="mb-8">
-          <div className="flex items-center gap-3 mb-2">
-            <div className="w-12 h-12 bg-gradient-to-br from-purple-500 to-blue-600 rounded-xl flex items-center justify-center">
-              <Database className="w-6 h-6 text-white" />
-            </div>
-            <div>
-              <h1 className="text-3xl font-bold text-white">Memory Configuration</h1>
-              <p className="text-slate-400">Configure memory system settings and policies</p>
-            </div>
+    <div className="space-y-6">
+      {/* Header */}
+      <header className="border-b border-slate-700">
+        <div className="flex items-center justify-between pb-4">
+          <div className="flex items-center gap-4">
+            <h1 className="text-xl font-semibold text-white">Memory Configuration</h1>
+            <span className="text-xs px-2 py-1 rounded bg-purple-500/20 text-purple-400">System Config</span>
+          </div>
+          <div className="flex items-center gap-4">
+            <button
+              onClick={fetchConfig}
+              disabled={loading}
+              className="p-2 rounded-lg border border-slate-700 hover:bg-slate-800 transition-colors"
+            >
+              <RefreshCw className={`w-5 h-5 text-slate-400 ${loading ? 'animate-spin' : ''}`} />
+            </button>
+            <button
+              onClick={handleSave}
+              disabled={saving}
+              className="px-4 py-2 bg-purple-500 hover:bg-purple-600 text-white rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+            >
+              {saving ? (
+                <>
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                  Saving...
+                </>
+              ) : (
+                <>
+                  <Save className="w-4 h-4" />
+                  Save Changes
+                </>
+              )}
+            </button>
           </div>
         </div>
 
-        {/* Alert Messages */}
-        {error && (
-          <motion.div
-            initial={{ opacity: 0, y: -10 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="mb-6 bg-red-500/10 border border-red-500/50 rounded-xl p-4 flex items-start gap-3"
-          >
-            <AlertCircle className="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" />
-            <div>
-              <p className="text-red-400 font-medium">Error</p>
-              <p className="text-red-300 text-sm">{error}</p>
-            </div>
-          </motion.div>
-        )}
-
-        {success && (
-          <motion.div
-            initial={{ opacity: 0, y: -10 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="mb-6 bg-green-500/10 border border-green-500/50 rounded-xl p-4 flex items-start gap-3"
-          >
-            <CheckCircle className="w-5 h-5 text-green-400 flex-shrink-0 mt-0.5" />
-            <div>
-              <p className="text-green-400 font-medium">Success</p>
-              <p className="text-green-300 text-sm">{success}</p>
-            </div>
-          </motion.div>
-        )}
-
-        {/* Save Button (Top) */}
-        <div className="mb-6 flex justify-end">
+        {/* Tabs */}
+        <div className="flex gap-1 -mb-px">
           <button
-            onClick={handleSave}
-            disabled={saving}
-            className="px-6 py-3 bg-gradient-to-r from-purple-500 to-blue-600 text-white rounded-xl font-medium hover:shadow-lg hover:shadow-purple-500/50 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+            onClick={() => setActiveTab('memory')}
+            className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 ${
+              activeTab === 'memory'
+                ? 'text-purple-400 border-purple-500'
+                : 'text-slate-400 border-transparent hover:text-white'
+            }`}
           >
-            {saving ? (
-              <>
-                <RefreshCw className="w-5 h-5 animate-spin" />
-                Saving...
-              </>
-            ) : (
-              <>
-                <Save className="w-5 h-5" />
-                Save Configuration
-              </>
-            )}
+            <div className="flex items-center gap-2">
+              <Brain className="w-4 h-4" />
+              Memory
+            </div>
+          </button>
+          <button
+            onClick={() => setActiveTab('insights')}
+            className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 ${
+              activeTab === 'insights'
+                ? 'text-purple-400 border-purple-500'
+                : 'text-slate-400 border-transparent hover:text-white'
+            }`}
+          >
+            <div className="flex items-center gap-2">
+              <BarChart3 className="w-4 h-4" />
+              Insights
+            </div>
           </button>
         </div>
+      </header>
 
-        {/* Configuration Sections */}
-        <div className="space-y-6">
-          {/* Global Memory Controls */}
+      {/* Alert Messages */}
+      {error && (
+        <motion.div
+          initial={{ opacity: 0, y: -10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="bg-red-500/10 border border-red-500/30 rounded-xl p-4 flex items-start gap-3"
+        >
+          <AlertCircle className="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" />
+          <div>
+            <p className="text-red-400 font-medium">Error</p>
+            <p className="text-red-300 text-sm">{error}</p>
+          </div>
+        </motion.div>
+      )}
+
+      {success && (
+        <motion.div
+          initial={{ opacity: 0, y: -10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="bg-green-500/10 border border-green-500/30 rounded-xl p-4 flex items-start gap-3"
+        >
+          <CheckCircle className="w-5 h-5 text-green-400 flex-shrink-0 mt-0.5" />
+          <div>
+            <p className="text-green-400 font-medium">Success</p>
+            <p className="text-green-300 text-sm">{success}</p>
+          </div>
+        </motion.div>
+      )}
+
+      {/* Configuration Sections */}
+      <div className="space-y-6">
+        {activeTab === 'memory' && (
+          <>
+            {/* Global Memory Controls */}
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
@@ -945,28 +1071,613 @@ export default function MemoryConfigPage() {
               </div>
             )}
           </motion.div>
-        </div>
 
-        {/* Save Button (Bottom) */}
-        <div className="mt-8 flex justify-end">
-          <button
-            onClick={handleSave}
-            disabled={saving}
-            className="px-6 py-3 bg-gradient-to-r from-purple-500 to-blue-600 text-white rounded-xl font-medium hover:shadow-lg hover:shadow-purple-500/50 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+          {/* Section 6: User Memory Extraction */}
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.5 }}
+            className="bg-slate-900/50 backdrop-blur-xl border border-white/10 rounded-2xl overflow-hidden"
           >
-            {saving ? (
-              <>
-                <RefreshCw className="w-5 h-5 animate-spin" />
-                Saving...
-              </>
-            ) : (
-              <>
-                <Save className="w-5 h-5" />
-                Save Configuration
-              </>
+            <button
+              onClick={() => setUserExtractionExpanded(!userExtractionExpanded)}
+              className="w-full p-6 flex items-center justify-between hover:bg-white/5 transition-colors"
+            >
+              <div className="flex items-center gap-3">
+                <User className="w-6 h-6 text-cyan-400" />
+                <div className="text-left">
+                  <h3 className="text-xl font-bold text-white">User Memory Extraction</h3>
+                  <p className="text-sm text-slate-400">Configure user preference and context extraction</p>
+                </div>
+              </div>
+              {userExtractionExpanded ? (
+                <ChevronUp className="w-5 h-5 text-slate-400" />
+              ) : (
+                <ChevronDown className="w-5 h-5 text-slate-400" />
+              )}
+            </button>
+
+            {userExtractionExpanded && (
+              <div className="p-6 border-t border-white/10 space-y-4">
+                <div className="p-4 bg-cyan-500/10 border border-cyan-500/30 rounded-xl">
+                  <p className="text-sm text-cyan-300 mb-2">
+                    <strong>What is User Memory Extraction?</strong> Extracts user preferences, context, and patterns from conversations and workflow executions to personalize agent behavior over time.
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-white font-medium mb-2">Model</label>
+                    <select
+                      value={config.user_extraction.model}
+                      onChange={(e) => setConfig({
+                        ...config,
+                        user_extraction: { ...config.user_extraction, model: e.target.value }
+                      })}
+                      className="w-full px-4 py-2 bg-slate-800 text-white border border-slate-700 rounded-lg focus:ring-2 focus:ring-cyan-500 focus:border-transparent cursor-pointer"
+                    >
+                      <option value="gpt-4o-mini">GPT-4o Mini</option>
+                      <option value="gpt-4o">GPT-4o</option>
+                      <option value="claude-3-5-haiku-20241022">Claude 3.5 Haiku</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-white font-medium mb-2">Temperature</label>
+                    <input
+                      type="number"
+                      step="0.1"
+                      min="0"
+                      max="2"
+                      value={config.user_extraction.temperature}
+                      onChange={(e) => setConfig({
+                        ...config,
+                        user_extraction: { ...config.user_extraction, temperature: parseFloat(e.target.value) }
+                      })}
+                      className="w-full px-4 py-2 bg-slate-800 text-white border border-slate-700 rounded-lg focus:ring-2 focus:ring-cyan-500 focus:border-transparent"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-white font-medium mb-2">Max Tokens</label>
+                    <input
+                      type="number"
+                      value={config.user_extraction.max_tokens}
+                      onChange={(e) => setConfig({
+                        ...config,
+                        user_extraction: { ...config.user_extraction, max_tokens: parseInt(e.target.value) }
+                      })}
+                      className="w-full px-4 py-2 bg-slate-800 text-white border border-slate-700 rounded-lg focus:ring-2 focus:ring-cyan-500 focus:border-transparent"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-white font-medium mb-2">Confidence Threshold</label>
+                    <input
+                      type="number"
+                      step="0.1"
+                      min="0"
+                      max="1"
+                      value={config.user_extraction.confidence_threshold}
+                      onChange={(e) => setConfig({
+                        ...config,
+                        user_extraction: { ...config.user_extraction, confidence_threshold: parseFloat(e.target.value) }
+                      })}
+                      className="w-full px-4 py-2 bg-slate-800 text-white border border-slate-700 rounded-lg focus:ring-2 focus:ring-cyan-500 focus:border-transparent"
+                    />
+                    <p className="text-xs text-slate-400 mt-1">Minimum confidence score (0.0-1.0) to store extracted memory.</p>
+                  </div>
+                </div>
+              </div>
             )}
-          </button>
-        </div>
+          </motion.div>
+
+          </>
+        )}
+
+        {activeTab === 'insights' && (
+          <>
+            {/* Section 7: Baseline & Anomaly Detection */}
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.6 }}
+            className="bg-slate-900/50 backdrop-blur-xl border border-white/10 rounded-2xl overflow-hidden"
+          >
+            <button
+              onClick={() => setBaselineExpanded(!baselineExpanded)}
+              className="w-full p-6 flex items-center justify-between hover:bg-white/5 transition-colors"
+            >
+              <div className="flex items-center gap-3">
+                <AlertTriangle className="w-6 h-6 text-amber-400" />
+                <div className="text-left">
+                  <h3 className="text-xl font-bold text-white">Baseline & Anomaly Detection</h3>
+                  <p className="text-sm text-slate-400">Configure execution baseline and anomaly detection thresholds</p>
+                </div>
+                {config.baseline.enabled ? (
+                  <span className="ml-2 px-2 py-0.5 text-xs bg-green-500/20 text-green-400 rounded-full">Enabled</span>
+                ) : (
+                  <span className="ml-2 px-2 py-0.5 text-xs bg-slate-500/20 text-slate-400 rounded-full">Disabled</span>
+                )}
+              </div>
+              {baselineExpanded ? (
+                <ChevronUp className="w-5 h-5 text-slate-400" />
+              ) : (
+                <ChevronDown className="w-5 h-5 text-slate-400" />
+              )}
+            </button>
+
+            {baselineExpanded && (
+              <div className="p-6 border-t border-white/10 space-y-4">
+                <div className="p-4 bg-amber-500/10 border border-amber-500/30 rounded-xl">
+                  <p className="text-sm text-amber-300 mb-2">
+                    <strong>What is Anomaly Detection?</strong> The system learns normal execution patterns for each agent (duration, token usage, step count). When an execution significantly deviates from the baseline, it's flagged as an anomaly for investigation.
+                  </p>
+                </div>
+
+                {/* Enable Toggle */}
+                <div className="flex items-center justify-between p-4 bg-slate-800/50 rounded-xl">
+                  <div>
+                    <label className="text-sm font-medium text-white block mb-1">Enable Anomaly Detection</label>
+                    <p className="text-xs text-slate-400">Track execution baselines and detect anomalies</p>
+                  </div>
+                  <button
+                    onClick={() => setConfig({ ...config, baseline: { ...config.baseline, enabled: !config.baseline.enabled } })}
+                    className={`relative inline-flex h-8 w-16 items-center rounded-full transition-colors ${config.baseline.enabled ? 'bg-amber-500' : 'bg-slate-700'}`}
+                  >
+                    <span className={`inline-block h-6 w-6 transform rounded-full bg-white shadow-lg transition-transform ${config.baseline.enabled ? 'translate-x-9' : 'translate-x-1'}`} />
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                  <div>
+                    <label className="block text-white font-medium mb-2">Min Samples</label>
+                    <input
+                      type="number"
+                      value={config.baseline.min_samples}
+                      onChange={(e) => setConfig({ ...config, baseline: { ...config.baseline, min_samples: parseInt(e.target.value) } })}
+                      className="w-full px-4 py-2 bg-slate-800 text-white border border-slate-700 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                    />
+                    <p className="text-xs text-slate-400 mt-1">Executions needed before detection starts</p>
+                  </div>
+
+                  <div>
+                    <label className="block text-white font-medium mb-2">Z-Score Threshold</label>
+                    <input
+                      type="number"
+                      step="0.1"
+                      value={config.baseline.zscore_threshold}
+                      onChange={(e) => setConfig({ ...config, baseline: { ...config.baseline, zscore_threshold: parseFloat(e.target.value) } })}
+                      className="w-full px-4 py-2 bg-slate-800 text-white border border-slate-700 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                    />
+                    <p className="text-xs text-slate-400 mt-1">Anomaly detection threshold (2.0 = 2 std deviations)</p>
+                  </div>
+
+                  <div>
+                    <label className="block text-white font-medium mb-2">Z-Score Warning</label>
+                    <input
+                      type="number"
+                      step="0.1"
+                      value={config.baseline.zscore_warning}
+                      onChange={(e) => setConfig({ ...config, baseline: { ...config.baseline, zscore_warning: parseFloat(e.target.value) } })}
+                      className="w-full px-4 py-2 bg-slate-800 text-white border border-slate-700 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                    />
+                    <p className="text-xs text-slate-400 mt-1">Medium severity threshold</p>
+                  </div>
+
+                  <div>
+                    <label className="block text-white font-medium mb-2">Z-Score Critical</label>
+                    <input
+                      type="number"
+                      step="0.1"
+                      value={config.baseline.zscore_critical}
+                      onChange={(e) => setConfig({ ...config, baseline: { ...config.baseline, zscore_critical: parseFloat(e.target.value) } })}
+                      className="w-full px-4 py-2 bg-slate-800 text-white border border-slate-700 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                    />
+                    <p className="text-xs text-slate-400 mt-1">Critical severity threshold</p>
+                  </div>
+
+                  <div>
+                    <label className="block text-white font-medium mb-2">Step Deviation %</label>
+                    <input
+                      type="number"
+                      value={config.baseline.step_deviation_threshold}
+                      onChange={(e) => setConfig({ ...config, baseline: { ...config.baseline, step_deviation_threshold: parseInt(e.target.value) } })}
+                      className="w-full px-4 py-2 bg-slate-800 text-white border border-slate-700 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                    />
+                    <p className="text-xs text-slate-400 mt-1">Step count deviation threshold</p>
+                  </div>
+
+                  <div>
+                    <label className="block text-white font-medium mb-2">Retry Deviation %</label>
+                    <input
+                      type="number"
+                      value={config.baseline.retry_deviation_threshold}
+                      onChange={(e) => setConfig({ ...config, baseline: { ...config.baseline, retry_deviation_threshold: parseInt(e.target.value) } })}
+                      className="w-full px-4 py-2 bg-slate-800 text-white border border-slate-700 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                    />
+                    <p className="text-xs text-slate-400 mt-1">Retry count deviation threshold</p>
+                  </div>
+
+                  <div>
+                    <label className="block text-white font-medium mb-2">Duration Spike Factor</label>
+                    <input
+                      type="number"
+                      step="0.1"
+                      value={config.baseline.duration_spike_factor}
+                      onChange={(e) => setConfig({ ...config, baseline: { ...config.baseline, duration_spike_factor: parseFloat(e.target.value) } })}
+                      className="w-full px-4 py-2 bg-slate-800 text-white border border-slate-700 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                    />
+                    <p className="text-xs text-slate-400 mt-1">Duration spike multiplier (2.0 = 2x baseline)</p>
+                  </div>
+                </div>
+              </div>
+            )}
+          </motion.div>
+
+          {/* Section 8: Error Learning */}
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.7 }}
+            className="bg-slate-900/50 backdrop-blur-xl border border-white/10 rounded-2xl overflow-hidden"
+          >
+            <button
+              onClick={() => setErrorLearningExpanded(!errorLearningExpanded)}
+              className="w-full p-6 flex items-center justify-between hover:bg-white/5 transition-colors"
+            >
+              <div className="flex items-center gap-3">
+                <AlertCircle className="w-6 h-6 text-red-400" />
+                <div className="text-left">
+                  <h3 className="text-xl font-bold text-white">Error Learning</h3>
+                  <p className="text-sm text-slate-400">Configure error pattern detection and auto-recovery</p>
+                </div>
+                {config.error_learning.enabled ? (
+                  <span className="ml-2 px-2 py-0.5 text-xs bg-green-500/20 text-green-400 rounded-full">Enabled</span>
+                ) : (
+                  <span className="ml-2 px-2 py-0.5 text-xs bg-slate-500/20 text-slate-400 rounded-full">Disabled</span>
+                )}
+              </div>
+              {errorLearningExpanded ? (
+                <ChevronUp className="w-5 h-5 text-slate-400" />
+              ) : (
+                <ChevronDown className="w-5 h-5 text-slate-400" />
+              )}
+            </button>
+
+            {errorLearningExpanded && (
+              <div className="p-6 border-t border-white/10 space-y-4">
+                <div className="p-4 bg-red-500/10 border border-red-500/30 rounded-xl">
+                  <p className="text-sm text-red-300 mb-2">
+                    <strong>What is Error Learning?</strong> Tracks error patterns across executions and learns which recovery methods work. When an error recurs, the system can automatically apply fixes that worked before.
+                  </p>
+                </div>
+
+                <div className="flex items-center justify-between p-4 bg-slate-800/50 rounded-xl">
+                  <div>
+                    <label className="text-sm font-medium text-white block mb-1">Enable Error Learning</label>
+                    <p className="text-xs text-slate-400">Learn from errors and suggest auto-fixes</p>
+                  </div>
+                  <button
+                    onClick={() => setConfig({ ...config, error_learning: { ...config.error_learning, enabled: !config.error_learning.enabled } })}
+                    className={`relative inline-flex h-8 w-16 items-center rounded-full transition-colors ${config.error_learning.enabled ? 'bg-red-500' : 'bg-slate-700'}`}
+                  >
+                    <span className={`inline-block h-6 w-6 transform rounded-full bg-white shadow-lg transition-transform ${config.error_learning.enabled ? 'translate-x-9' : 'translate-x-1'}`} />
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div>
+                    <label className="block text-white font-medium mb-2">Min Occurrences</label>
+                    <input
+                      type="number"
+                      value={config.error_learning.min_occurrences}
+                      onChange={(e) => setConfig({ ...config, error_learning: { ...config.error_learning, min_occurrences: parseInt(e.target.value) } })}
+                      className="w-full px-4 py-2 bg-slate-800 text-white border border-slate-700 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent"
+                    />
+                    <p className="text-xs text-slate-400 mt-1">Error occurrences before suggesting auto-fix</p>
+                  </div>
+
+                  <div>
+                    <label className="block text-white font-medium mb-2">Min Success Rate</label>
+                    <input
+                      type="number"
+                      step="0.1"
+                      min="0"
+                      max="1"
+                      value={config.error_learning.min_success_rate}
+                      onChange={(e) => setConfig({ ...config, error_learning: { ...config.error_learning, min_success_rate: parseFloat(e.target.value) } })}
+                      className="w-full px-4 py-2 bg-slate-800 text-white border border-slate-700 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent"
+                    />
+                    <p className="text-xs text-slate-400 mt-1">Minimum success rate to keep auto-fix enabled</p>
+                  </div>
+
+                  <div>
+                    <label className="block text-white font-medium mb-2">Min Attempts for Evaluation</label>
+                    <input
+                      type="number"
+                      value={config.error_learning.min_attempts_for_evaluation}
+                      onChange={(e) => setConfig({ ...config, error_learning: { ...config.error_learning, min_attempts_for_evaluation: parseInt(e.target.value) } })}
+                      className="w-full px-4 py-2 bg-slate-800 text-white border border-slate-700 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent"
+                    />
+                    <p className="text-xs text-slate-400 mt-1">Attempts before evaluating success rate</p>
+                  </div>
+                </div>
+              </div>
+            )}
+          </motion.div>
+
+          {/* Section 9: Plugin Performance */}
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.8 }}
+            className="bg-slate-900/50 backdrop-blur-xl border border-white/10 rounded-2xl overflow-hidden"
+          >
+            <button
+              onClick={() => setPluginPerformanceExpanded(!pluginPerformanceExpanded)}
+              className="w-full p-6 flex items-center justify-between hover:bg-white/5 transition-colors"
+            >
+              <div className="flex items-center gap-3">
+                <Puzzle className="w-6 h-6 text-indigo-400" />
+                <div className="text-left">
+                  <h3 className="text-xl font-bold text-white">Plugin Performance</h3>
+                  <p className="text-sm text-slate-400">Monitor plugin success rates and performance</p>
+                </div>
+                {config.plugin_performance.enabled ? (
+                  <span className="ml-2 px-2 py-0.5 text-xs bg-green-500/20 text-green-400 rounded-full">Enabled</span>
+                ) : (
+                  <span className="ml-2 px-2 py-0.5 text-xs bg-slate-500/20 text-slate-400 rounded-full">Disabled</span>
+                )}
+              </div>
+              {pluginPerformanceExpanded ? (
+                <ChevronUp className="w-5 h-5 text-slate-400" />
+              ) : (
+                <ChevronDown className="w-5 h-5 text-slate-400" />
+              )}
+            </button>
+
+            {pluginPerformanceExpanded && (
+              <div className="p-6 border-t border-white/10 space-y-4">
+                <div className="flex items-center justify-between p-4 bg-slate-800/50 rounded-xl">
+                  <div>
+                    <label className="text-sm font-medium text-white block mb-1">Enable Plugin Performance Monitoring</label>
+                    <p className="text-xs text-slate-400">Track plugin success rates and duration metrics</p>
+                  </div>
+                  <button
+                    onClick={() => setConfig({ ...config, plugin_performance: { ...config.plugin_performance, enabled: !config.plugin_performance.enabled } })}
+                    className={`relative inline-flex h-8 w-16 items-center rounded-full transition-colors ${config.plugin_performance.enabled ? 'bg-indigo-500' : 'bg-slate-700'}`}
+                  >
+                    <span className={`inline-block h-6 w-6 transform rounded-full bg-white shadow-lg transition-transform ${config.plugin_performance.enabled ? 'translate-x-9' : 'translate-x-1'}`} />
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  <div>
+                    <label className="block text-white font-medium mb-2">Min Executions (Agent)</label>
+                    <input
+                      type="number"
+                      value={config.plugin_performance.min_executions_agent}
+                      onChange={(e) => setConfig({ ...config, plugin_performance: { ...config.plugin_performance, min_executions_agent: parseInt(e.target.value) } })}
+                      className="w-full px-4 py-2 bg-slate-800 text-white border border-slate-700 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-white font-medium mb-2">Min Executions (User-wide)</label>
+                    <input
+                      type="number"
+                      value={config.plugin_performance.min_executions_userwide}
+                      onChange={(e) => setConfig({ ...config, plugin_performance: { ...config.plugin_performance, min_executions_userwide: parseInt(e.target.value) } })}
+                      className="w-full px-4 py-2 bg-slate-800 text-white border border-slate-700 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-white font-medium mb-2">Success Drop Factor</label>
+                    <input
+                      type="number"
+                      step="0.1"
+                      value={config.plugin_performance.success_drop_factor}
+                      onChange={(e) => setConfig({ ...config, plugin_performance: { ...config.plugin_performance, success_drop_factor: parseFloat(e.target.value) } })}
+                      className="w-full px-4 py-2 bg-slate-800 text-white border border-slate-700 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                    />
+                    <p className="text-xs text-slate-400 mt-1">Alert when rate drops below this factor</p>
+                  </div>
+
+                  <div>
+                    <label className="block text-white font-medium mb-2">Duration Spike Factor</label>
+                    <input
+                      type="number"
+                      step="0.1"
+                      value={config.plugin_performance.duration_spike_factor}
+                      onChange={(e) => setConfig({ ...config, plugin_performance: { ...config.plugin_performance, duration_spike_factor: parseFloat(e.target.value) } })}
+                      className="w-full px-4 py-2 bg-slate-800 text-white border border-slate-700 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-white font-medium mb-2">Duration Critical Factor</label>
+                    <input
+                      type="number"
+                      step="0.1"
+                      value={config.plugin_performance.duration_critical_factor}
+                      onChange={(e) => setConfig({ ...config, plugin_performance: { ...config.plugin_performance, duration_critical_factor: parseFloat(e.target.value) } })}
+                      className="w-full px-4 py-2 bg-slate-800 text-white border border-slate-700 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-white font-medium mb-2">Error Rate Threshold</label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      max="1"
+                      value={config.plugin_performance.error_rate_threshold}
+                      onChange={(e) => setConfig({ ...config, plugin_performance: { ...config.plugin_performance, error_rate_threshold: parseFloat(e.target.value) } })}
+                      className="w-full px-4 py-2 bg-slate-800 text-white border border-slate-700 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
+          </motion.div>
+
+          {/* Section 10: Pattern Learning */}
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.9 }}
+            className="bg-slate-900/50 backdrop-blur-xl border border-white/10 rounded-2xl overflow-hidden"
+          >
+            <button
+              onClick={() => setPatternLearningExpanded(!patternLearningExpanded)}
+              className="w-full p-6 flex items-center justify-between hover:bg-white/5 transition-colors"
+            >
+              <div className="flex items-center gap-3">
+                <BarChart3 className="w-6 h-6 text-emerald-400" />
+                <div className="text-left">
+                  <h3 className="text-xl font-bold text-white">Pattern Learning</h3>
+                  <p className="text-sm text-slate-400">Configure workflow pattern detection</p>
+                </div>
+                {config.pattern_learning.enabled ? (
+                  <span className="ml-2 px-2 py-0.5 text-xs bg-green-500/20 text-green-400 rounded-full">Enabled</span>
+                ) : (
+                  <span className="ml-2 px-2 py-0.5 text-xs bg-slate-500/20 text-slate-400 rounded-full">Disabled</span>
+                )}
+              </div>
+              {patternLearningExpanded ? (
+                <ChevronUp className="w-5 h-5 text-slate-400" />
+              ) : (
+                <ChevronDown className="w-5 h-5 text-slate-400" />
+              )}
+            </button>
+
+            {patternLearningExpanded && (
+              <div className="p-6 border-t border-white/10 space-y-4">
+                <div className="flex items-center justify-between p-4 bg-slate-800/50 rounded-xl">
+                  <div>
+                    <label className="text-sm font-medium text-white block mb-1">Enable Pattern Learning</label>
+                    <p className="text-xs text-slate-400">Detect and learn from workflow patterns</p>
+                  </div>
+                  <button
+                    onClick={() => setConfig({ ...config, pattern_learning: { ...config.pattern_learning, enabled: !config.pattern_learning.enabled } })}
+                    className={`relative inline-flex h-8 w-16 items-center rounded-full transition-colors ${config.pattern_learning.enabled ? 'bg-emerald-500' : 'bg-slate-700'}`}
+                  >
+                    <span className={`inline-block h-6 w-6 transform rounded-full bg-white shadow-lg transition-transform ${config.pattern_learning.enabled ? 'translate-x-9' : 'translate-x-1'}`} />
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-white font-medium mb-2">Min Executions</label>
+                    <input
+                      type="number"
+                      value={config.pattern_learning.min_executions}
+                      onChange={(e) => setConfig({ ...config, pattern_learning: { ...config.pattern_learning, min_executions: parseInt(e.target.value) } })}
+                      className="w-full px-4 py-2 bg-slate-800 text-white border border-slate-700 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
+                    />
+                    <p className="text-xs text-slate-400 mt-1">Executions needed to establish a pattern</p>
+                  </div>
+
+                  <div>
+                    <label className="block text-white font-medium mb-2">Min Success Rate</label>
+                    <input
+                      type="number"
+                      step="0.1"
+                      min="0"
+                      max="1"
+                      value={config.pattern_learning.min_success_rate}
+                      onChange={(e) => setConfig({ ...config, pattern_learning: { ...config.pattern_learning, min_success_rate: parseFloat(e.target.value) } })}
+                      className="w-full px-4 py-2 bg-slate-800 text-white border border-slate-700 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
+                    />
+                    <p className="text-xs text-slate-400 mt-1">Minimum success rate for pattern recognition</p>
+                  </div>
+                </div>
+              </div>
+            )}
+          </motion.div>
+
+          {/* Section 11: Intent Examples (V6) */}
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 1.0 }}
+            className="bg-slate-900/50 backdrop-blur-xl border border-white/10 rounded-2xl overflow-hidden"
+          >
+            <button
+              onClick={() => setIntentExamplesExpanded(!intentExamplesExpanded)}
+              className="w-full p-6 flex items-center justify-between hover:bg-white/5 transition-colors"
+            >
+              <div className="flex items-center gap-3">
+                <MessageSquare className="w-6 h-6 text-violet-400" />
+                <div className="text-left">
+                  <h3 className="text-xl font-bold text-white">Intent Examples (V6)</h3>
+                  <p className="text-sm text-slate-400">Configure V6 intent contract example retrieval</p>
+                </div>
+                {config.intent_examples.enabled ? (
+                  <span className="ml-2 px-2 py-0.5 text-xs bg-green-500/20 text-green-400 rounded-full">Enabled</span>
+                ) : (
+                  <span className="ml-2 px-2 py-0.5 text-xs bg-slate-500/20 text-slate-400 rounded-full">Disabled</span>
+                )}
+              </div>
+              {intentExamplesExpanded ? (
+                <ChevronUp className="w-5 h-5 text-slate-400" />
+              ) : (
+                <ChevronDown className="w-5 h-5 text-slate-400" />
+              )}
+            </button>
+
+            {intentExamplesExpanded && (
+              <div className="p-6 border-t border-white/10 space-y-4">
+                <div className="p-4 bg-violet-500/10 border border-violet-500/30 rounded-xl">
+                  <p className="text-sm text-violet-300">
+                    <strong>What are Intent Examples?</strong> When generating V6 workflows, the system retrieves successful past intent contracts as examples to guide generation. This improves quality and consistency.
+                  </p>
+                </div>
+
+                <div className="flex items-center justify-between p-4 bg-slate-800/50 rounded-xl">
+                  <div>
+                    <label className="text-sm font-medium text-white block mb-1">Enable Intent Examples</label>
+                    <p className="text-xs text-slate-400">Use past successful intents as examples for V6 generation</p>
+                  </div>
+                  <button
+                    onClick={() => setConfig({ ...config, intent_examples: { ...config.intent_examples, enabled: !config.intent_examples.enabled } })}
+                    className={`relative inline-flex h-8 w-16 items-center rounded-full transition-colors ${config.intent_examples.enabled ? 'bg-violet-500' : 'bg-slate-700'}`}
+                  >
+                    <span className={`inline-block h-6 w-6 transform rounded-full bg-white shadow-lg transition-transform ${config.intent_examples.enabled ? 'translate-x-9' : 'translate-x-1'}`} />
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-white font-medium mb-2">Default Limit</label>
+                    <input
+                      type="number"
+                      value={config.intent_examples.default_limit}
+                      onChange={(e) => setConfig({ ...config, intent_examples: { ...config.intent_examples, default_limit: parseInt(e.target.value) } })}
+                      className="w-full px-4 py-2 bg-slate-800 text-white border border-slate-700 rounded-lg focus:ring-2 focus:ring-violet-500 focus:border-transparent"
+                    />
+                    <p className="text-xs text-slate-400 mt-1">Default number of examples to fetch</p>
+                  </div>
+
+                  <div>
+                    <label className="block text-white font-medium mb-2">Max Limit</label>
+                    <input
+                      type="number"
+                      value={config.intent_examples.max_limit}
+                      onChange={(e) => setConfig({ ...config, intent_examples: { ...config.intent_examples, max_limit: parseInt(e.target.value) } })}
+                      className="w-full px-4 py-2 bg-slate-800 text-white border border-slate-700 rounded-lg focus:ring-2 focus:ring-violet-500 focus:border-transparent"
+                    />
+                    <p className="text-xs text-slate-400 mt-1">Maximum examples allowed per request</p>
+                  </div>
+                </div>
+              </div>
+            )}
+          </motion.div>
+          </>
+        )}
       </div>
     </div>
   );

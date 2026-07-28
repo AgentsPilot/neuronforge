@@ -11,10 +11,10 @@
  * 2. Mechanical mapping (no reasoning)
  * 3. Follow IR schema strictly
  * 4. Use plugin schemas for correct action selection
+ *
+ * Uses ProviderFactory for centralized token tracking.
  */
 
-import OpenAI from 'openai'
-import Anthropic from '@anthropic-ai/sdk'
 // WEEK 1: No longer using GroundedSemanticPlan - using Enhanced Prompt directly
 // import type { GroundedSemanticPlan } from './schemas/semantic-plan-types'
 import type { EnhancedPrompt } from './SemanticPlanGenerator'
@@ -28,6 +28,10 @@ import type { PluginManagerV2 } from '../../../server/plugin-manager-v2'
 import { createLogger, Logger } from '@/lib/logger'
 import { HardRequirementsFormatter } from '../utils/HardRequirementsFormatter'
 import { getModelMaxOutputTokens } from '@/lib/ai/context-limits'
+import { ProviderFactory, PROVIDERS } from '@/lib/ai/providerFactory'
+import { OPENAI_MODELS } from '@/lib/ai/providers/openaiProvider'
+import { ANTHROPIC_MODELS } from '@/lib/ai/providers/anthropicProvider'
+import type { CallContext } from '@/lib/ai/providers/baseProvider'
 
 // Week 2: Import validators for comprehensive validation
 import { validateExecutionGraph } from '../logical-ir/validation/ExecutionGraphValidator'
@@ -40,11 +44,9 @@ const moduleLogger = createLogger({ module: 'V6', service: 'IRFormalizer' })
 
 export interface IRFormalizerConfig {
   model?: string
-  model_provider?: 'openai' | 'anthropic'  // NEW: Specify provider
+  model_provider?: 'openai' | 'anthropic'  // Specify provider
   temperature?: number
   max_tokens?: number
-  openai_api_key?: string
-  anthropic_api_key?: string  // NEW: Support Anthropic
   pluginManager?: PluginManagerV2
   servicesInvolved?: string[] // From Enhanced Prompt specifics.services_involved
   resolvedUserInputs?: Array<{ key: string; value: any }> // From Enhanced Prompt specifics.resolved_user_inputs
@@ -69,15 +71,11 @@ export class IRFormalizer {
     model_provider: 'openai' | 'anthropic'
     temperature: number
     max_tokens: number
-    openai_api_key: string
-    anthropic_api_key: string
     pluginManager?: PluginManagerV2
     servicesInvolved?: string[]
     resolvedUserInputs?: Array<{ key: string; value: any }>
     enhancedPrompt?: EnhancedPrompt
   }
-  private openai?: OpenAI
-  private anthropic?: Anthropic
   private systemPrompt: string
   private pluginManager?: PluginManagerV2
   // private groundedPlan?: any  // DEPRECATED - We skip Phases 1 & 2 and use Enhanced Prompt directly
@@ -100,7 +98,7 @@ export class IRFormalizer {
     }
 
     // Determine model name for max_tokens lookup
-    const modelName = config.model || 'gpt-4o-mini'
+    const modelName = config.model || OPENAI_MODELS.GPT_4O_MINI
     const defaultMaxTokens = getModelMaxOutputTokens(modelName)
 
     this.config = {
@@ -108,8 +106,6 @@ export class IRFormalizer {
       model_provider: provider,
       temperature: config.temperature ?? 0.1, // Low but allows slight reasoning for processing_order
       max_tokens: config.max_tokens ?? defaultMaxTokens, // Use model's actual limit instead of hardcoded 4000
-      openai_api_key: config.openai_api_key || process.env.OPENAI_API_KEY || '',
-      anthropic_api_key: config.anthropic_api_key || process.env.ANTHROPIC_API_KEY || '',
       pluginManager: config.pluginManager,
       servicesInvolved: config.servicesInvolved,
       resolvedUserInputs: config.resolvedUserInputs,
@@ -121,12 +117,7 @@ export class IRFormalizer {
     this.resolvedUserInputs = config.resolvedUserInputs
     this.enhancedPrompt = config.enhancedPrompt
 
-    // Initialize LLM client based on provider
-    if (this.config.model_provider === 'anthropic') {
-      this.anthropic = new Anthropic({ apiKey: this.config.anthropic_api_key })
-    } else {
-      this.openai = new OpenAI({ apiKey: this.config.openai_api_key })
-    }
+    // ProviderFactory handles LLM client initialization - no direct SDK instantiation needed
 
     // Load formalization system prompt
     // Use process.cwd() instead of __dirname for Next.js compatibility
@@ -1461,14 +1452,26 @@ ${pluginDetails}
 
   /**
    * Formalize using OpenAI with timeout protection
+   * Uses ProviderFactory for centralized token tracking
    */
   private async formalizeWithOpenAI(userMessage: string): Promise<DeclarativeLogicalIRv4> {
     const openaiLogger = moduleLogger.child({ method: 'formalizeWithOpenAI', model: this.config.model })
     const startTime = Date.now()
 
-    openaiLogger.info('Calling OpenAI API')
+    openaiLogger.info('Calling OpenAI API via ProviderFactory')
 
-    const apiCall = this.openai.chat.completions.create({
+    // Get provider from factory for centralized token tracking
+    const provider = ProviderFactory.getProvider(PROVIDERS.OPENAI)
+    const context: CallContext = {
+      userId: 'system',
+      feature: 'v6_pipeline',
+      component: 'IRFormalizer',
+      category: 'agent_generation',
+      activity_type: 'ir_formalization',
+      activity_name: 'formalize_enhanced_prompt',
+    }
+
+    const apiCall = provider.chatCompletion({
       model: this.config.model,
       messages: [
         { role: 'system', content: this.systemPrompt },
@@ -1476,13 +1479,14 @@ ${pluginDetails}
       ],
       response_format: { type: 'json_object' }, // Use json_object for gpt-5.2 compatibility
       temperature: this.config.temperature,
-      max_completion_tokens: this.config.max_tokens
-    })
+      max_tokens: this.config.max_tokens
+    }, context)
 
     // Wrap with 90-second timeout (complex workflows need more time)
     const response = await this.callWithTimeout(apiCall, 90000)
 
-    const content = response.choices[0]?.message?.content
+    // ProviderFactory returns OpenAI-compatible format
+    const content = response.choices?.[0]?.message?.content
 
     if (!content) {
       openaiLogger.error('No response content from OpenAI')
@@ -1502,17 +1506,25 @@ ${pluginDetails}
 
   /**
    * Formalize using Anthropic with timeout protection
+   * Uses ProviderFactory for centralized token tracking
    */
   private async formalizeWithAnthropic(userMessage: string): Promise<DeclarativeLogicalIRv4> {
     const anthropicLogger = moduleLogger.child({ method: 'formalizeWithAnthropic', model: this.config.model })
     const startTime = Date.now()
 
-    if (!this.anthropic) {
-      throw new Error('Anthropic client not initialized')
-    }
-
     const maxAttempts = 2
     let lastError = ''
+
+    // Get provider from factory for centralized token tracking
+    const provider = ProviderFactory.getProvider(PROVIDERS.ANTHROPIC)
+    const context: CallContext = {
+      userId: 'system',
+      feature: 'v6_pipeline',
+      component: 'IRFormalizer',
+      category: 'agent_generation',
+      activity_type: 'ir_formalization',
+      activity_name: 'formalize_enhanced_prompt',
+    }
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       const attemptStartTime = Date.now()
@@ -1526,40 +1538,42 @@ ${pluginDetails}
           maxAttempts,
           messageLength,
           estimatedInputTokens: estimatedTokens
-        }, 'Calling Anthropic API')
+        }, 'Calling Anthropic API via ProviderFactory')
 
         // Add retry context to user message if this is a retry
         const finalUserMessage = attempt > 1 && lastError
           ? `${userMessage}\n\n---\n\nPREVIOUS ATTEMPT FAILED:\n${lastError}\n\nPlease ensure you generate valid, complete JSON. Do not truncate arrays or objects.`
           : userMessage
 
-        const apiCall = this.anthropic.messages.create({
+        // Use ProviderFactory for centralized token tracking
+        const apiCall = provider.chatCompletion({
           model: this.config.model,
           max_tokens: this.config.max_tokens,
           temperature: this.config.temperature,
-          system: this.systemPrompt,
           messages: [
+            { role: 'system', content: this.systemPrompt },
             { role: 'user', content: finalUserMessage }
           ]
-        })
+        }, context)
 
         // Wrap with 90-second timeout (complex workflows need more time)
         const response = await this.callWithTimeout(apiCall, 90000)
 
-        const content = response.content[0]
-        if (content.type !== 'text') {
-          lastError = 'Unexpected response type from Anthropic'
-          anthropicLogger.warn({ attempt, error: lastError }, 'Attempt failed - unexpected response type')
+        // ProviderFactory returns OpenAI-compatible format
+        const content = response.choices?.[0]?.message?.content
+        if (!content) {
+          lastError = 'Empty response from Anthropic'
+          anthropicLogger.warn({ attempt, error: lastError }, 'Attempt failed - empty response')
           if (attempt === maxAttempts) {
             throw new Error(lastError)
           }
           continue
         }
 
-        anthropicLogger.debug({ responseLength: content.text.length }, 'Received LLM response')
+        anthropicLogger.debug({ responseLength: content.length }, 'Received LLM response')
 
         // Extract JSON from response (Anthropic may wrap it in markdown code blocks)
-        let jsonText = content.text.trim()
+        let jsonText = content.trim()
 
         // Try multiple patterns to extract JSON from markdown code fences
         const patterns = [
@@ -1596,7 +1610,7 @@ ${pluginDetails}
           attempt,
           attemptDuration,
           totalDuration,
-          responseLength: content.text.length
+          responseLength: content.length
         }, 'Anthropic response parsed successfully')
 
         return ir

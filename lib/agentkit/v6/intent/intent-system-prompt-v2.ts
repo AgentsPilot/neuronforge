@@ -1980,6 +1980,20 @@ function buildVocabularyInjection(vocabulary: PluginVocabulary): string {
     }
   }
 
+  // Add intent examples for few-shot learning (Memory System Phase 7)
+  if (vocabulary.intentExamples) {
+    sections.push('')
+    sections.push('────────────────────────────────────────────────────────')
+    sections.push('SIMILAR SUCCESSFUL WORKFLOWS (Few-Shot Examples)')
+    sections.push('────────────────────────────────────────────────────────')
+    sections.push('')
+    sections.push('These are examples of successful IntentContracts for similar requests.')
+    sections.push('Use them as reference for structure and style, but adapt to the current request.')
+    sections.push('')
+    sections.push(vocabulary.intentExamples)
+    sections.push('')
+  }
+
   return sections.join('\n')
 }
 

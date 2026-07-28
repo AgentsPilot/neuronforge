@@ -105,7 +105,6 @@ export async function GET(request: NextRequest) {
     let pluginManager;
     try {
       pluginManager = await PluginManagerV2.getInstance();
-      logger.debug('PluginManager instance created successfully');
     } catch (err: any) {
       logger.error({ err, message: err.message }, 'Failed to get PluginManager instance');
       throw new Error(`PluginManager initialization failed: ${err.message}`);

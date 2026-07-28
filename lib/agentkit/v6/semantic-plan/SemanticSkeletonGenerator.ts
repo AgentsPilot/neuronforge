@@ -3,14 +3,18 @@
  *
  * Generates a semantic skeleton (business logic flow) from an Enhanced Prompt.
  * This is LLM #1 in the 2-stage approach: Structure → Details.
+ *
+ * Uses ProviderFactory for centralized token tracking.
  */
 
-import Anthropic from '@anthropic-ai/sdk'
 import { readFileSync } from 'fs'
 import { join } from 'path'
 import type { SemanticSkeleton } from './types/semantic-skeleton-types'
 import type { EnhancedPrompt } from './SemanticPlanGenerator'
 import { createLogger, Logger } from '@/lib/logger'
+import { ProviderFactory, PROVIDERS } from '@/lib/ai/providerFactory'
+import { ANTHROPIC_MODELS } from '@/lib/ai/providers/anthropicProvider'
+import type { CallContext } from '@/lib/ai/providers/baseProvider'
 
 const moduleLogger = createLogger({ module: 'V6', service: 'SemanticSkeletonGenerator' })
 
@@ -18,7 +22,6 @@ export interface SemanticSkeletonGeneratorConfig {
   model?: string
   temperature?: number
   max_tokens?: number
-  anthropic_api_key?: string
   systemPrompt?: string // Optional: provide custom system prompt
 }
 
@@ -27,9 +30,7 @@ export class SemanticSkeletonGenerator {
     model: string
     temperature: number
     max_tokens: number
-    anthropic_api_key: string
   }
-  private anthropic: Anthropic
   private systemPrompt: string
   private logger: Logger
 
@@ -37,17 +38,12 @@ export class SemanticSkeletonGenerator {
     this.logger = moduleLogger.child({ method: 'constructor' })
 
     this.config = {
-      model: config.model || 'claude-sonnet-4-5-20250929',
+      model: config.model || ANTHROPIC_MODELS.SONNET_4_5,
       temperature: config.temperature ?? 0.0, // Deterministic for structure generation
       max_tokens: config.max_tokens ?? 4000,
-      anthropic_api_key: config.anthropic_api_key || process.env.ANTHROPIC_API_KEY || '',
     }
 
-    if (!this.config.anthropic_api_key) {
-      throw new Error('ANTHROPIC_API_KEY is required for SemanticSkeletonGenerator')
-    }
-
-    this.anthropic = new Anthropic({ apiKey: this.config.anthropic_api_key })
+    // ProviderFactory handles API key validation and client initialization
 
     // Load system prompt
     if (config.systemPrompt) {
@@ -76,6 +72,7 @@ export class SemanticSkeletonGenerator {
    *
    * Calls LLM to analyze Enhanced Prompt and generate a simplified
    * business logic skeleton (structure only, no implementation details).
+   * Uses ProviderFactory for centralized token tracking.
    *
    * @param enhancedPrompt - Enhanced Prompt with structured sections
    * @returns Semantic skeleton with goal, unit_of_work, and flow
@@ -92,30 +89,36 @@ export class SemanticSkeletonGenerator {
     generateLogger.debug({
       userMessageLength: userMessage.length,
       enhancedPromptSections: Object.keys(enhancedPrompt.sections || {}),
-    }, 'Calling LLM for skeleton generation')
+    }, 'Calling LLM for skeleton generation via ProviderFactory')
 
-    // Call Anthropic API
-    const response = await this.anthropic.messages.create({
+    // Get provider from factory for centralized token tracking
+    const provider = ProviderFactory.getProvider(PROVIDERS.ANTHROPIC)
+    const context: CallContext = {
+      userId: 'system',
+      feature: 'v6_pipeline',
+      component: 'SemanticSkeletonGenerator',
+      category: 'agent_generation',
+      activity_type: 'semantic_skeleton_generation',
+      activity_name: 'generate_semantic_skeleton',
+    }
+
+    // Call Anthropic API via ProviderFactory (returns OpenAI-compatible format)
+    const response = await provider.chatCompletion({
       model: this.config.model,
       max_tokens: this.config.max_tokens,
       temperature: this.config.temperature,
-      system: this.systemPrompt,
       messages: [
-        {
-          role: 'user',
-          content: userMessage,
-        },
+        { role: 'system', content: this.systemPrompt },
+        { role: 'user', content: userMessage },
       ],
-    })
+    }, context)
 
-    // Extract text response
-    const textContent = response.content.find(block => block.type === 'text')
-    if (!textContent || textContent.type !== 'text') {
+    // Extract text response (ProviderFactory returns OpenAI-compatible format)
+    const responseText = response.choices?.[0]?.message?.content
+    if (!responseText) {
       generateLogger.error('LLM response does not contain text')
       throw new Error('Invalid LLM response: no text content')
     }
-
-    const responseText = textContent.text
 
     generateLogger.debug({
       responseLength: responseText.length,
@@ -127,12 +130,14 @@ export class SemanticSkeletonGenerator {
 
     const endTime = Date.now()
 
+    // ProviderFactory uses OpenAI-compatible usage format
+    const tokensUsed = (response.usage?.prompt_tokens || 0) + (response.usage?.completion_tokens || 0)
     generateLogger.info({
       latencyMs: endTime - startTime,
       goal: skeleton.goal,
       unitOfWork: skeleton.unit_of_work,
       flowLength: skeleton.flow.length,
-      tokensUsed: response.usage.input_tokens + response.usage.output_tokens,
+      tokensUsed,
     }, 'Semantic skeleton generated successfully')
 
     return skeleton

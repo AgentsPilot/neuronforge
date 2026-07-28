@@ -1,14 +1,11 @@
 // /app/api/orchestration/generate-steps/route.ts
 
 import { NextRequest, NextResponse } from 'next/server'
+import { ProviderFactory, PROVIDERS } from '@/lib/ai/providerFactory'
+import { OPENAI_MODELS } from '@/lib/ai/providers/openaiProvider'
+import type { CallContext } from '@/lib/ai/providers/baseProvider'
 
-// 1. You need the OpenAI SDK
-import OpenAI from 'openai'
-
-// 2. Init OpenAI with your key (from .env.local)
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-})
+// ProviderFactory handles LLM client initialization - no direct SDK instantiation needed
 
 export async function POST(req: NextRequest) {
   try {
@@ -38,15 +35,26 @@ ${processDescription}
 Respond only with the JSON array, no text before or after.
     `.trim()
 
-    const aiRes = await openai.chat.completions.create({
-      model: 'gpt-4o', // or 'gpt-3.5-turbo'
+    // Get provider from factory for centralized token tracking
+    const provider = ProviderFactory.getProvider(PROVIDERS.OPENAI)
+    const context: CallContext = {
+      userId: 'system',
+      feature: 'orchestration',
+      component: 'generate-steps',
+      category: 'workflow_generation',
+      activity_type: 'step_generation',
+      activity_name: 'generate_workflow_steps',
+    }
+
+    const aiRes = await provider.chatCompletion({
+      model: OPENAI_MODELS.GPT_4O,
       messages: [{ role: 'user', content: prompt }],
       temperature: 0.1,
       max_tokens: 800,
-    })
+    }, context)
 
-    // Extract the AI response text
-    const content = aiRes.choices[0]?.message?.content?.trim()
+    // ProviderFactory returns OpenAI-compatible format
+    const content = aiRes.choices?.[0]?.message?.content?.trim()
 
     // Parse JSON result
     let steps

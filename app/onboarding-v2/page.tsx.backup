@@ -1,0 +1,619 @@
+'use client';
+
+import React, { useState, useEffect } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { useRouter } from 'next/navigation';
+import { Upload, MessageSquare, HelpCircle, CheckCircle2, Loader2, Sparkles } from 'lucide-react';
+import { supabase } from '@/lib/supabaseClient';
+
+type OnboardingStep = 'welcome' | 'processing' | 'preview' | 'building' | 'success';
+
+interface BusinessProfile {
+  vertical: string;
+  sub_vertical?: string;
+  company_name?: string;
+  services: string[];
+  clients_per_week?: number;
+  tools: string[];
+  website_url?: string;
+  profile_completeness: number;
+}
+
+export default function OnboardingV2Page() {
+  const router = useRouter();
+
+  const [step, setStep] = useState<OnboardingStep>('welcome');
+  const [profile, setProfile] = useState<BusinessProfile | null>(null);
+  const [buildingProgress, setBuildingProgress] = useState(0);
+  const [error, setError] = useState<string | null>(null);
+  const [isCheckingAuth, setIsCheckingAuth] = useState(true);
+
+  // Handle auth tokens from URL hash (OAuth callback)
+  useEffect(() => {
+    async function handleAuthCallback() {
+      try {
+        // Check if we have tokens in URL hash
+        if (window.location.hash) {
+          const hashParams = new URLSearchParams(window.location.hash.substring(1));
+          const accessToken = hashParams.get('access_token');
+          const refreshToken = hashParams.get('refresh_token');
+
+          if (accessToken && refreshToken) {
+            console.log('Processing auth tokens from URL hash...');
+
+            // Set the session with the tokens
+            const { data, error } = await supabase.auth.setSession({
+              access_token: accessToken,
+              refresh_token: refreshToken
+            });
+
+            if (error) {
+              console.error('Failed to set session:', error);
+              setError('Authentication failed. Please try logging in again.');
+              setIsCheckingAuth(false);
+              return;
+            }
+
+            console.log('Session established:', !!data.session);
+
+            // Clean up URL hash
+            window.history.replaceState(null, '', window.location.pathname);
+          }
+        }
+
+        // Check if user already completed onboarding
+        const { data: { session } } = await supabase.auth.getSession();
+
+        if (session?.user) {
+          const { data: businessProfile } = await supabase
+            .from('business_profiles')
+            .select('onboarding_completed')
+            .eq('user_id', session.user.id)
+            .single();
+
+          if (businessProfile?.onboarding_completed) {
+            console.log('User already completed onboarding, redirecting to dashboard...');
+            router.push('/v2/dashboard');
+            return;
+          }
+        }
+
+        setIsCheckingAuth(false);
+      } catch (err) {
+        console.error('Auth check error:', err);
+        setIsCheckingAuth(false);
+      }
+    }
+
+    handleAuthCallback();
+  }, [router]);
+
+  const handleUploadFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setStep('processing');
+    setError(null);
+
+    try {
+      // Read file content
+      const text = await file.text();
+
+      // Call API to process bio
+      const response = await fetch('/api/onboarding/process-bio', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-correlation-id': crypto.randomUUID()
+        },
+        body: JSON.stringify({ bio: text, locale: 'en' })
+      });
+
+      const result = await response.json();
+
+      if (!result.success) {
+        throw new Error(result.error || 'Failed to process bio');
+      }
+
+      setProfile(result.profile);
+      setStep('preview');
+    } catch (err) {
+      console.error('Bio processing error:', err);
+      setError((err as Error).message);
+      setStep('welcome');
+    }
+  };
+
+  const handleBuildEverything = async () => {
+    if (!profile) return;
+
+    setStep('building');
+    setError(null);
+
+    try {
+      // First, mark onboarding as complete
+      const completeResponse = await fetch('/api/onboarding/complete', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-correlation-id': crypto.randomUUID()
+        },
+        body: JSON.stringify({ confirm: true })
+      });
+
+      const completeResult = await completeResponse.json();
+
+      if (!completeResult.success) {
+        throw new Error(completeResult.error || 'Failed to complete onboarding');
+      }
+
+      setBuildingProgress(33);
+
+      // Then, build all capabilities
+      const buildResponse = await fetch('/api/onboarding/build-capabilities', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-correlation-id': crypto.randomUUID()
+        },
+        body: JSON.stringify({ locale: 'en' })
+      });
+
+      const buildResult = await buildResponse.json();
+
+      setBuildingProgress(66);
+
+      if (!buildResult.success) {
+        throw new Error(buildResult.message || 'Failed to build capabilities');
+      }
+
+      setBuildingProgress(100);
+      setStep('success');
+
+      // Redirect to dashboard after 2 seconds
+      setTimeout(() => {
+        router.push('/v2/dashboard');
+      }, 2000);
+    } catch (err) {
+      console.error('Build error:', err);
+      setError((err as Error).message);
+      setStep('preview');
+    }
+  };
+
+  // Show loading while checking auth
+  if (isCheckingAuth) {
+    return (
+      <div className="min-h-screen bg-[var(--v2-bg)] dark:bg-slate-950 flex items-center justify-center">
+        <div className="text-center">
+          <Loader2 className="w-12 h-12 animate-spin mx-auto mb-4 text-blue-500" />
+          <p className="text-lg text-slate-600 dark:text-slate-400">Checking your account...</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-[var(--v2-bg)] dark:bg-slate-950 relative overflow-hidden">
+      {/* Background gradient effects */}
+      <div className="fixed inset-0 pointer-events-none">
+        <motion.div
+          animate={{
+            backgroundPosition: ['0% 0%', '100% 100%', '0% 0%'],
+          }}
+          transition={{ duration: 25, repeat: Infinity, ease: "linear" }}
+          className="absolute inset-0 bg-gradient-to-br from-blue-500/10 via-purple-500/10 to-pink-500/10"
+          style={{ backgroundSize: '200% 200%' }}
+        />
+      </div>
+
+      {/* Content */}
+      <div className="relative z-10 container mx-auto px-4 sm:px-6 py-8 sm:py-12 max-w-4xl">
+        <AnimatePresence mode="wait">
+          {step === 'welcome' && (
+            <WelcomeStep
+              key="welcome"
+              onUploadFile={handleUploadFile}
+              error={error}
+            />
+          )}
+
+          {step === 'processing' && (
+            <ProcessingStep key="processing" />
+          )}
+
+          {step === 'preview' && profile && (
+            <PreviewStep
+              key="preview"
+              profile={profile}
+              onBuild={handleBuildEverything}
+              error={error}
+            />
+          )}
+
+          {step === 'building' && (
+            <BuildingStep
+              key="building"
+              progress={buildingProgress}
+            />
+          )}
+
+          {step === 'success' && (
+            <SuccessStep key="success" />
+          )}
+        </AnimatePresence>
+      </div>
+    </div>
+  );
+}
+
+// Welcome Step Component
+function WelcomeStep({
+  onUploadFile,
+  error
+}: {
+  onUploadFile: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  error: string | null;
+}) {
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: -20 }}
+      className="text-center"
+    >
+      <motion.div
+        initial={{ scale: 0.8 }}
+        animate={{ scale: 1 }}
+        className="inline-flex items-center justify-center w-16 h-16 sm:w-20 sm:h-20 bg-gradient-to-br from-[var(--v2-primary)] to-[var(--v2-secondary)] rounded-[var(--v2-radius-card)] mb-6 sm:mb-8 shadow-[var(--v2-shadow-card)]"
+      >
+        <Sparkles className="w-8 h-8 sm:w-10 sm:h-10 text-white" />
+      </motion.div>
+
+      <h1 className="text-3xl sm:text-4xl md:text-5xl font-bold mb-4 text-[var(--v2-text-primary)] dark:text-white">
+        Welcome! Let's build your <span className="bg-gradient-to-r from-[var(--v2-primary)] to-[var(--v2-secondary)] bg-clip-text text-transparent">AI Business OS</span>
+      </h1>
+
+      <p className="text-base sm:text-lg text-[var(--v2-text-secondary)] dark:text-slate-300 max-w-2xl mx-auto mb-8 sm:mb-12 px-4">
+        Tell me about your business to get started
+      </p>
+
+      {/* Error Display */}
+      {error && (
+        <motion.div
+          initial={{ opacity: 0, scale: 0.95 }}
+          animate={{ opacity: 1, scale: 1 }}
+          className="max-w-md mx-auto mb-6 p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-[var(--v2-radius-button)] text-red-600 dark:text-red-400 text-sm"
+        >
+          {error}
+        </motion.div>
+      )}
+
+      {/* Upload Options */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 max-w-3xl mx-auto">
+        {/* Type Bio */}
+        <motion.button
+          whileHover={{ scale: 1.02 }}
+          whileTap={{ scale: 0.98 }}
+          className="bg-[var(--v2-surface)] dark:bg-slate-800 border border-[var(--v2-border)] dark:border-slate-700 rounded-[var(--v2-radius-card)] p-6 sm:p-8 hover:border-[var(--v2-primary)] dark:hover:border-blue-500 transition-all cursor-pointer group shadow-[var(--v2-shadow-card)]"
+        >
+          <div className="w-12 h-12 bg-blue-500/10 dark:bg-blue-500/20 rounded-xl flex items-center justify-center mx-auto mb-4 group-hover:bg-blue-500/20 dark:group-hover:bg-blue-500/30 transition-colors">
+            <MessageSquare className="w-6 h-6 text-blue-500" />
+          </div>
+          <h3 className="font-semibold text-[var(--v2-text-primary)] dark:text-white mb-2">
+            Type your bio
+          </h3>
+          <p className="text-sm text-[var(--v2-text-muted)] dark:text-slate-400">
+            Chat with AI
+          </p>
+        </motion.button>
+
+        {/* Upload File */}
+        <motion.label
+          whileHover={{ scale: 1.02 }}
+          whileTap={{ scale: 0.98 }}
+          className="bg-[var(--v2-surface)] dark:bg-slate-800 border border-[var(--v2-border)] dark:border-slate-700 rounded-[var(--v2-radius-card)] p-6 sm:p-8 hover:border-[var(--v2-primary)] dark:hover:border-blue-500 transition-all cursor-pointer group shadow-[var(--v2-shadow-card)]"
+        >
+          <div className="w-12 h-12 bg-purple-500/10 dark:bg-purple-500/20 rounded-xl flex items-center justify-center mx-auto mb-4 group-hover:bg-purple-500/20 dark:group-hover:bg-purple-500/30 transition-colors">
+            <Upload className="w-6 h-6 text-purple-500" />
+          </div>
+          <h3 className="font-semibold text-[var(--v2-text-primary)] dark:text-white mb-2">
+            Upload file
+          </h3>
+          <p className="text-sm text-[var(--v2-text-muted)] dark:text-slate-400">
+            PDF, DOCX, TXT
+          </p>
+          <input
+            type="file"
+            accept=".pdf,.docx,.txt"
+            onChange={onUploadFile}
+            className="hidden"
+          />
+        </motion.label>
+
+        {/* Guided Questions */}
+        <motion.button
+          whileHover={{ scale: 1.02 }}
+          whileTap={{ scale: 0.98 }}
+          className="bg-[var(--v2-surface)] dark:bg-slate-800 border border-[var(--v2-border)] dark:border-slate-700 rounded-[var(--v2-radius-card)] p-6 sm:p-8 hover:border-[var(--v2-primary)] dark:hover:border-blue-500 transition-all cursor-pointer group shadow-[var(--v2-shadow-card)]"
+        >
+          <div className="w-12 h-12 bg-pink-500/10 dark:bg-pink-500/20 rounded-xl flex items-center justify-center mx-auto mb-4 group-hover:bg-pink-500/20 dark:group-hover:bg-pink-500/30 transition-colors">
+            <HelpCircle className="w-6 h-6 text-pink-500" />
+          </div>
+          <h3 className="font-semibold text-[var(--v2-text-primary)] dark:text-white mb-2">
+            Answer guided questions
+          </h3>
+          <p className="text-sm text-[var(--v2-text-muted)] dark:text-slate-400">
+            Step by step
+          </p>
+        </motion.button>
+      </div>
+    </motion.div>
+  );
+}
+
+// Processing Step Component
+function ProcessingStep() {
+  return (
+    <motion.div
+      initial={{ opacity: 0, scale: 0.95 }}
+      animate={{ opacity: 1, scale: 1 }}
+      exit={{ opacity: 0, scale: 0.95 }}
+      className="flex flex-col items-center justify-center py-20"
+    >
+      <div className="relative mb-6">
+        <Loader2 className="w-16 h-16 text-[var(--v2-primary)] dark:text-blue-400 animate-spin" />
+        <div className="absolute inset-0 bg-[var(--v2-primary)]/20 dark:bg-blue-400/20 rounded-full blur-xl" />
+      </div>
+      <h3 className="text-xl font-semibold text-[var(--v2-text-primary)] dark:text-white mb-2">
+        Reading your bio...
+      </h3>
+      <p className="text-sm text-[var(--v2-text-muted)] dark:text-slate-400">
+        This will only take a few seconds
+      </p>
+    </motion.div>
+  );
+}
+
+// Preview Step Component
+function PreviewStep({
+  profile,
+  onBuild,
+  error
+}: {
+  profile: BusinessProfile;
+  onBuild: () => void;
+  error: string | null;
+}) {
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: -20 }}
+    >
+      <div className="text-center mb-8">
+        <motion.div
+          initial={{ scale: 0 }}
+          animate={{ scale: 1 }}
+          className="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-br from-green-500 to-emerald-500 rounded-[var(--v2-radius-card)] mb-6 shadow-[var(--v2-shadow-card)]"
+        >
+          <CheckCircle2 className="w-8 h-8 text-white" />
+        </motion.div>
+
+        <h2 className="text-2xl sm:text-3xl font-bold text-[var(--v2-text-primary)] dark:text-white mb-4">
+          Here's what I found:
+        </h2>
+      </div>
+
+      {/* Error Display */}
+      {error && (
+        <motion.div
+          initial={{ opacity: 0, scale: 0.95 }}
+          animate={{ opacity: 1, scale: 1 }}
+          className="max-w-md mx-auto mb-6 p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-[var(--v2-radius-button)] text-red-600 dark:text-red-400 text-sm"
+        >
+          {error}
+        </motion.div>
+      )}
+
+      {/* Business Profile Card */}
+      <div className="bg-[var(--v2-surface)] dark:bg-slate-800 border border-[var(--v2-border)] dark:border-slate-700 rounded-[var(--v2-radius-card)] p-6 mb-6 shadow-[var(--v2-shadow-card)]">
+        <h4 className="text-blue-400 font-semibold mb-4 flex items-center gap-2">
+          <span className="text-lg">📊</span>
+          Business Profile
+        </h4>
+        <div className="grid grid-cols-2 gap-4 text-sm">
+          <div>
+            <p className="text-[var(--v2-text-muted)] dark:text-slate-400">Vertical</p>
+            <p className="text-[var(--v2-text-primary)] dark:text-white font-medium capitalize">{profile.vertical}</p>
+          </div>
+          {profile.company_name && (
+            <div>
+              <p className="text-[var(--v2-text-muted)] dark:text-slate-400">Business Name</p>
+              <p className="text-[var(--v2-text-primary)] dark:text-white font-medium">{profile.company_name}</p>
+            </div>
+          )}
+          {profile.services.length > 0 && (
+            <div className="col-span-2">
+              <p className="text-[var(--v2-text-muted)] dark:text-slate-400">Services</p>
+              <p className="text-[var(--v2-text-primary)] dark:text-white font-medium">{profile.services.join(', ')}</p>
+            </div>
+          )}
+          {profile.clients_per_week && (
+            <div>
+              <p className="text-[var(--v2-text-muted)] dark:text-slate-400">Clients</p>
+              <p className="text-[var(--v2-text-primary)] dark:text-white font-medium">~{profile.clients_per_week} per week</p>
+            </div>
+          )}
+          {profile.tools.length > 0 && (
+            <div>
+              <p className="text-[var(--v2-text-muted)] dark:text-slate-400">Tools</p>
+              <p className="text-[var(--v2-text-primary)] dark:text-white font-medium">{profile.tools.join(', ')}</p>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Capabilities Checklist */}
+      <div className="bg-[var(--v2-surface)] dark:bg-slate-800 border border-[var(--v2-border)] dark:border-slate-700 rounded-[var(--v2-radius-card)] p-6 mb-6 shadow-[var(--v2-shadow-card)]">
+        <h4 className="text-[var(--v2-text-primary)] dark:text-white font-semibold mb-4">
+          Based on this, I'll build:
+        </h4>
+        <div className="space-y-3">
+          {[
+            { icon: '🌐', text: 'Professional website' },
+            { icon: '👥', text: 'Client management (CRM)' },
+            { icon: '📅', text: 'Booking system' },
+            { icon: '💳', text: 'Payment processing' },
+            { icon: '📧', text: 'Email automation' }
+          ].map((item, idx) => (
+            <motion.div
+              key={idx}
+              initial={{ opacity: 0, x: -20 }}
+              animate={{ opacity: 1, x: 0 }}
+              transition={{ delay: idx * 0.1 }}
+              className="flex items-center gap-3"
+            >
+              <CheckCircle2 className="w-5 h-5 text-green-500 flex-shrink-0" />
+              <span className="text-lg">{item.icon}</span>
+              <span className="text-[var(--v2-text-primary)] dark:text-white">{item.text}</span>
+            </motion.div>
+          ))}
+        </div>
+      </div>
+
+      {/* Actions */}
+      <div className="flex flex-col sm:flex-row gap-3 justify-center">
+        <motion.button
+          whileHover={{ scale: 1.02 }}
+          whileTap={{ scale: 0.98 }}
+          className="px-6 py-3 bg-[var(--v2-surface)] dark:bg-slate-800 border border-[var(--v2-border)] dark:border-slate-700 rounded-[var(--v2-radius-button)] text-[var(--v2-text-primary)] dark:text-white hover:border-[var(--v2-primary)] dark:hover:border-blue-500 transition-all"
+        >
+          Edit Profile
+        </motion.button>
+        <motion.button
+          whileHover={{ scale: 1.02 }}
+          whileTap={{ scale: 0.98 }}
+          onClick={onBuild}
+          className="px-8 py-3 bg-gradient-to-r from-[var(--v2-primary)] to-[var(--v2-secondary)] text-white rounded-[var(--v2-radius-button)] font-semibold shadow-[var(--v2-shadow-button)] hover:shadow-lg transition-all"
+        >
+          Yes, Build Everything!
+        </motion.button>
+      </div>
+    </motion.div>
+  );
+}
+
+// Building Step Component
+function BuildingStep({ progress }: { progress: number }) {
+  const steps = [
+    { label: 'Creating website...', threshold: 33 },
+    { label: 'Setting up CRM...', threshold: 66 },
+    { label: 'Activating capabilities...', threshold: 100 }
+  ];
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="flex flex-col items-center justify-center py-20"
+    >
+      <h3 className="text-2xl font-semibold text-[var(--v2-text-primary)] dark:text-white mb-8">
+        Building your business OS...
+      </h3>
+
+      {/* Progress Bar */}
+      <div className="w-full max-w-md mb-8">
+        <div className="h-2 bg-[var(--v2-border)] dark:bg-slate-800 rounded-full overflow-hidden">
+          <motion.div
+            initial={{ width: 0 }}
+            animate={{ width: `${progress}%` }}
+            transition={{ duration: 0.5 }}
+            className="h-full bg-gradient-to-r from-[var(--v2-primary)] to-[var(--v2-secondary)]"
+          />
+        </div>
+      </div>
+
+      {/* Building Steps */}
+      <div className="space-y-4 w-full max-w-md">
+        {steps.map((step, idx) => {
+          const isComplete = progress >= step.threshold;
+          const isCurrent = progress < step.threshold && (idx === 0 || progress >= steps[idx - 1].threshold);
+
+          return (
+            <motion.div
+              key={idx}
+              initial={{ opacity: 0, x: -20 }}
+              animate={{ opacity: 1, x: 0 }}
+              transition={{ delay: idx * 0.1 }}
+              className="flex items-center gap-3"
+            >
+              {isComplete ? (
+                <CheckCircle2 className="w-5 h-5 text-green-500 flex-shrink-0" />
+              ) : isCurrent ? (
+                <Loader2 className="w-5 h-5 text-[var(--v2-primary)] dark:text-blue-400 animate-spin flex-shrink-0" />
+              ) : (
+                <div className="w-5 h-5 border-2 border-[var(--v2-border)] dark:border-slate-700 rounded-full flex-shrink-0" />
+              )}
+              <span className={`${
+                isComplete || isCurrent
+                  ? 'text-[var(--v2-text-primary)] dark:text-white'
+                  : 'text-[var(--v2-text-muted)] dark:text-slate-500'
+              }`}>
+                {step.label}
+              </span>
+            </motion.div>
+          );
+        })}
+      </div>
+    </motion.div>
+  );
+}
+
+// Success Step Component
+function SuccessStep() {
+  return (
+    <motion.div
+      initial={{ opacity: 0, scale: 0.8 }}
+      animate={{ opacity: 1, scale: 1 }}
+      exit={{ opacity: 0 }}
+      className="flex flex-col items-center justify-center py-20 text-center"
+    >
+      <motion.div
+        initial={{ scale: 0 }}
+        animate={{ scale: 1 }}
+        transition={{ type: "spring", delay: 0.2 }}
+        className="w-24 h-24 bg-gradient-to-br from-green-500 to-emerald-500 rounded-full flex items-center justify-center mb-6 shadow-[var(--v2-shadow-card)]"
+      >
+        <CheckCircle2 className="w-12 h-12 text-white" />
+      </motion.div>
+
+      <motion.h2
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.3 }}
+        className="text-3xl sm:text-4xl font-bold text-[var(--v2-text-primary)] dark:text-white mb-4"
+      >
+        Your practice is LIVE! 🎉
+      </motion.h2>
+
+      <motion.p
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ delay: 0.4 }}
+        className="text-[var(--v2-text-secondary)] dark:text-slate-300 mb-6"
+      >
+        Redirecting to your dashboard...
+      </motion.p>
+
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ delay: 0.5 }}
+      >
+        <Loader2 className="w-8 h-8 text-[var(--v2-primary)] dark:text-blue-400 animate-spin mx-auto" />
+      </motion.div>
+    </motion.div>
+  );
+}

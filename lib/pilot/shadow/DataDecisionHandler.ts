@@ -20,6 +20,7 @@
 
 import { SupabaseClient } from '@supabase/supabase-js';
 import { MemoryManager } from '../insight/MemoryManager';
+import { createLogger } from '@/lib/logger';
 import type {
   DataDecisionContext,
   DataDecisionResult,
@@ -29,8 +30,11 @@ import type {
   BehaviorRuleInsert,
 } from './types';
 
+const logger = createLogger({ service: 'DataDecisionHandler' });
+
 const POLL_INTERVAL_MS = 5000; // Poll every 5 seconds
 const TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes timeout
+const CROSS_AGENT_THRESHOLD = 3; // Minimum same decisions before suggesting cross-agent rule
 
 export class DataDecisionHandler {
   constructor(
@@ -59,7 +63,7 @@ export class DataDecisionHandler {
     classification: FailureClassification
   ): Promise<DataDecisionResult> {
     try {
-      // 1. Check MemoryManager for existing rule
+      // 1. Check MemoryManager for existing rule (agent-specific first)
       if (this.memoryManager) {
         const existingRule = await this.memoryManager.findMatchingRule(
           userId,
@@ -70,9 +74,9 @@ export class DataDecisionHandler {
         );
 
         if (existingRule) {
-          console.log(
-            `[DataDecisionHandler] Found existing rule ${existingRule.id} for ${context.dataField}:${context.operator}` +
-            ` — auto-applying action: ${existingRule.action.type}`
+          logger.debug(
+            { ruleId: existingRule.id, dataField: context.dataField, operator: context.operator },
+            'Found existing rule - auto-applying'
           );
 
           // Record that this rule was applied
@@ -85,12 +89,33 @@ export class DataDecisionHandler {
             ruleId: existingRule.id,
           };
         }
+
+        // 1b. Check for cross-agent plugin-scoped rule (Phase 5 enhancement)
+        const crossAgentRule = await this.findCrossAgentRule(
+          userId,
+          context.plugin,
+          context.dataField,
+          context.operator
+        );
+
+        if (crossAgentRule) {
+          logger.debug(
+            { ruleId: crossAgentRule.id, plugin: context.plugin },
+            'Found cross-agent rule - auto-applying'
+          );
+          await this.memoryManager.recordRuleApplication(crossAgentRule.id);
+          return {
+            decision: crossAgentRule.action.type as 'continue' | 'stop' | 'skip',
+            ruleApplied: true,
+            ruleId: crossAgentRule.id,
+          };
+        }
       }
 
       // 2. No rule found → create decision request and wait for user
-      console.log(
-        `[DataDecisionHandler] No existing rule found for ${context.dataField}:${context.operator}` +
-        ` — pausing execution and creating decision request`
+      logger.debug(
+        { dataField: context.dataField, operator: context.operator },
+        'No existing rule found - pausing for user decision'
       );
 
       return await this.createAndWaitForDecision(
@@ -100,12 +125,56 @@ export class DataDecisionHandler {
         context
       );
     } catch (err) {
-      console.error('[DataDecisionHandler] handleDataUnavailable failed (non-blocking):', err);
+      logger.error({ err }, 'handleDataUnavailable failed (non-blocking)');
       // Fallback: stop execution on error
       return {
         decision: 'stop',
         ruleApplied: false,
       };
+    }
+  }
+
+  /**
+   * Find a cross-agent rule (plugin-scoped, agent_id IS NULL)
+   * that matches the current context.
+   *
+   * @private
+   */
+  private async findCrossAgentRule(
+    userId: string,
+    plugin: string,
+    dataField: string,
+    operator: string
+  ): Promise<{ id: string; action: { type: string } } | null> {
+    try {
+      const { data, error } = await this.supabase
+        .from('behavior_rules')
+        .select('id, action')
+        .eq('user_id', userId)
+        .is('agent_id', null) // Cross-agent rules have no agent_id
+        .eq('status', 'active')
+        .eq('plugin_pattern', plugin)
+        .or(`expires_at.is.null,expires_at.gt.${new Date().toISOString()}`)
+        .limit(1)
+        .maybeSingle();
+
+      if (error || !data) {
+        return null;
+      }
+
+      // Check if trigger_condition matches
+      const trigger = data.action?.trigger_condition || {};
+      if (
+        trigger.data_pattern?.field === dataField &&
+        trigger.data_pattern?.operator === operator
+      ) {
+        return data as { id: string; action: { type: string } };
+      }
+
+      return null;
+    } catch (err) {
+      logger.debug({ err }, 'Cross-agent rule lookup failed (non-blocking)');
+      return null;
     }
   }
 
@@ -182,14 +251,21 @@ export class DataDecisionHandler {
           result.action,
           request.id
         );
-        console.log(`[DataDecisionHandler] Created behavior rule ${ruleId}`);
+        logger.info({ ruleId }, 'Created behavior rule');
+
+        // Check if user has made similar decisions across agents (cross-agent learning)
+        // Fire-and-forget: don't block on this check
+        this.checkCrossAgentPattern(userId, context, result.action).catch((err) => {
+          logger.debug({ err }, 'Cross-agent pattern check failed (non-blocking)');
+        });
+
         return {
           decision: result.action,
           ruleApplied: false, // Rule will be applied on future runs
           ruleId,
         };
       } catch (ruleErr) {
-        console.error('[DataDecisionHandler] Failed to create behavior rule (non-blocking):', ruleErr);
+        logger.error({ err: ruleErr }, 'Failed to create behavior rule (non-blocking)');
         // Continue anyway — user's decision is still valid
       }
     }
@@ -198,6 +274,104 @@ export class DataDecisionHandler {
       decision: result.action,
       ruleApplied: false,
     };
+  }
+
+  /**
+   * Check if user has made the same decision multiple times across different agents.
+   * If threshold reached, create a cross-agent (plugin-scoped) rule suggestion.
+   *
+   * This enables learning: "User always continues on empty Gmail results"
+   * becomes a global rule after CROSS_AGENT_THRESHOLD occurrences.
+   *
+   * @private
+   */
+  private async checkCrossAgentPattern(
+    userId: string,
+    context: DataDecisionContext,
+    decision: 'continue' | 'stop' | 'skip'
+  ): Promise<void> {
+    try {
+      // Count similar decisions across all agents for this plugin+operator combo
+      const { data: similarRules, error } = await this.supabase
+        .from('behavior_rules')
+        .select('id, agent_id')
+        .eq('user_id', userId)
+        .eq('status', 'active')
+        .not('agent_id', 'is', null) // Only agent-specific rules
+        .contains('trigger_condition', {
+          data_pattern: {
+            field: context.dataField,
+            operator: context.operator,
+          },
+        })
+        .contains('action', { type: decision });
+
+      if (error || !similarRules) {
+        return;
+      }
+
+      // Count unique agents with this pattern
+      const uniqueAgents = new Set(similarRules.map((r) => r.agent_id));
+
+      if (uniqueAgents.size >= CROSS_AGENT_THRESHOLD) {
+        // Check if cross-agent rule already exists
+        const { data: existingCrossAgent } = await this.supabase
+          .from('behavior_rules')
+          .select('id')
+          .eq('user_id', userId)
+          .is('agent_id', null)
+          .eq('plugin_pattern', context.plugin)
+          .contains('trigger_condition', {
+            data_pattern: {
+              field: context.dataField,
+              operator: context.operator,
+            },
+          })
+          .maybeSingle();
+
+        if (existingCrossAgent) {
+          // Cross-agent rule already exists
+          return;
+        }
+
+        // Create cross-agent rule suggestion
+        logger.info(
+          {
+            plugin: context.plugin,
+            dataField: context.dataField,
+            operator: context.operator,
+            decision,
+            agentCount: uniqueAgents.size,
+          },
+          'Creating cross-agent rule - pattern detected across multiple agents'
+        );
+
+        await this.supabase.from('behavior_rules').insert({
+          user_id: userId,
+          agent_id: null, // NULL = cross-agent (plugin-scoped)
+          rule_type: decision === 'stop' ? 'data_fallback' : 'skip_on_empty',
+          plugin_pattern: context.plugin,
+          trigger_condition: {
+            data_pattern: {
+              field: context.dataField,
+              operator: context.operator,
+            },
+          },
+          action: {
+            type: decision,
+            params: {},
+          },
+          name: `Cross-agent: ${context.operator} ${context.dataField} → ${decision} (${context.plugin})`,
+          description: `Auto-promoted from ${uniqueAgents.size} agents. ${decision} when ${context.plugin} returns ${context.operator} ${context.dataField}`,
+          status: 'active',
+          applied_count: 0,
+          priority: 10, // Lower priority than agent-specific rules
+        });
+      }
+    } catch (err) {
+      // Non-blocking - just log and continue
+      logger.debug({ err }, 'Cross-agent pattern check failed');
+    }
   }
 
   /**

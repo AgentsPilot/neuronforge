@@ -9,12 +9,15 @@
  *
  * Principle: Workflow creation is COMPILATION, not generation.
  * Every transformation must be: Lossless, Traceable, Constraint-preserving, Rejectable
+ *
+ * Uses ProviderFactory for centralized token tracking.
  */
 
-import OpenAI from 'openai'
-import Anthropic from '@anthropic-ai/sdk'
 import { readFileSync } from 'fs'
 import { join } from 'path'
+import { ProviderFactory, PROVIDERS } from '@/lib/ai/providerFactory'
+import { OPENAI_MODELS } from '@/lib/ai/providers/openaiProvider'
+import type { CallContext } from '@/lib/ai/providers/baseProvider'
 
 // Enhanced Prompt structure from Phase 0
 export type EnhancedPrompt = {
@@ -122,10 +125,9 @@ export interface RequirementsExtractorConfig {
  *
  * Extracts machine-checkable constraints from Enhanced Prompt using LLM.
  * LLM-based extraction is necessary to handle natural language variations.
+ * Uses ProviderFactory for centralized token tracking.
  */
 export class HardRequirementsExtractor {
-  private openai?: OpenAI
-  private anthropic?: Anthropic
   private systemPrompt: string
   private config: Required<RequirementsExtractorConfig>
 
@@ -133,20 +135,11 @@ export class HardRequirementsExtractor {
     // Set defaults
     this.config = {
       provider: config.provider || 'openai',
-      model: config.model || 'gpt-4o-mini',
+      model: config.model || OPENAI_MODELS.GPT_4O_MINI,
       temperature: config.temperature ?? 0.0
     }
 
-    // Initialize LLM client based on provider
-    if (this.config.provider === 'openai') {
-      this.openai = new OpenAI({
-        apiKey: process.env.OPENAI_API_KEY
-      })
-    } else {
-      this.anthropic = new Anthropic({
-        apiKey: process.env.ANTHROPIC_API_KEY
-      })
-    }
+    // ProviderFactory handles LLM client initialization - no direct SDK instantiation needed
 
     // Load system prompt from file
     // Use process.cwd() instead of __dirname for Next.js compatibility
@@ -156,53 +149,38 @@ export class HardRequirementsExtractor {
 
   /**
    * Extract hard requirements from Enhanced Prompt using LLM
+   * Uses ProviderFactory for centralized token tracking
    */
   async extract(enhancedPrompt: EnhancedPrompt): Promise<HardRequirements> {
-    console.log(`[HardRequirementsExtractor] Starting LLM-based extraction (${this.config.provider}/${this.config.model})...`)
+    console.log(`[HardRequirementsExtractor] Starting LLM-based extraction via ProviderFactory (${this.config.provider}/${this.config.model})...`)
 
     try {
-      let content: string | null = null
-
-      if (this.config.provider === 'openai' && this.openai) {
-        // Call OpenAI with structured output
-        const response = await this.openai.chat.completions.create({
-          model: this.config.model,
-          temperature: this.config.temperature,
-          response_format: { type: 'json_object' },
-          messages: [
-            {
-              role: 'system',
-              content: this.systemPrompt
-            },
-            {
-              role: 'user',
-              content: JSON.stringify(enhancedPrompt, null, 2)
-            }
-          ]
-        })
-
-        content = response.choices[0].message.content
-      } else if (this.config.provider === 'anthropic' && this.anthropic) {
-        // Call Anthropic
-        const response = await this.anthropic.messages.create({
-          model: this.config.model,
-          max_tokens: 4000,
-          temperature: this.config.temperature,
-          system: this.systemPrompt,
-          messages: [
-            {
-              role: 'user',
-              content: JSON.stringify(enhancedPrompt, null, 2)
-            }
-          ]
-        })
-
-        if (response.content[0].type === 'text') {
-          content = response.content[0].text
-        }
-      } else {
-        throw new Error(`Invalid provider configuration: ${this.config.provider}`)
+      // Get provider from factory for centralized token tracking
+      const providerName = this.config.provider === 'openai' ? PROVIDERS.OPENAI : PROVIDERS.ANTHROPIC
+      const provider = ProviderFactory.getProvider(providerName)
+      const context: CallContext = {
+        userId: 'system',
+        feature: 'v6_pipeline',
+        component: 'HardRequirementsExtractor',
+        category: 'agent_generation',
+        activity_type: 'requirements_extraction',
+        activity_name: 'extract_hard_requirements',
       }
+
+      // Call LLM via ProviderFactory (returns OpenAI-compatible format)
+      const response = await provider.chatCompletion({
+        model: this.config.model,
+        temperature: this.config.temperature,
+        max_tokens: 4000,
+        response_format: this.config.provider === 'openai' ? { type: 'json_object' } : undefined,
+        messages: [
+          { role: 'system', content: this.systemPrompt },
+          { role: 'user', content: JSON.stringify(enhancedPrompt, null, 2) }
+        ]
+      }, context)
+
+      // ProviderFactory returns OpenAI-compatible format
+      const content = response.choices?.[0]?.message?.content
 
       if (!content) {
         throw new Error('Empty response from LLM')

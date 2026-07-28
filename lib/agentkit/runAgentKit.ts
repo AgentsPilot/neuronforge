@@ -151,7 +151,8 @@ export async function runAgentKit(
   },
   userInput: string,
   inputValues?: Record<string, any>, // Input values from agent_configurations
-  sessionId?: string // NEW: Session ID for analytics tracking
+  sessionId?: string, // Session ID for analytics tracking
+  executionId?: string // Execution ID for BI token tracking correlation
 ): Promise<AgentKitExecutionResult> {
   const startTime = Date.now();
   const toolCalls: AgentKitExecutionResult['toolCalls'] = [];
@@ -491,8 +492,9 @@ Please use these input values when executing the task.`;
           workflow_step: `iteration_${iteration}`,
           category: 'agent_execution',
           activity_type: 'agent_execution',
-          activity_name: `${agent.agent_name} - Iteration ${iteration}`, // Temporary, will be enhanced below
+          activity_name: `${agent.agent_name} - Iteration ${iteration}`,
           agent_id: agent.id,
+          execution_id: executionId,  // Pass execution_id for BI token tracking
           activity_step: `iteration_${iteration}_of_${AGENTKIT_CONFIG.maxIterations}`
         }
       );

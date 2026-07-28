@@ -45,6 +45,7 @@ interface UserStorageInfo {
 
 export default function StorageConfigPage() {
   const [loading, setLoading] = useState(true);
+  const [loadingStats, setLoadingStats] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -102,6 +103,7 @@ export default function StorageConfigPage() {
 
   const loadStorageStats = async () => {
     try {
+      setLoadingStats(true);
       // Call API route to get statistics
       const response = await fetch('/api/admin/storage-stats');
       const result = await response.json();
@@ -151,6 +153,8 @@ export default function StorageConfigPage() {
       }
     } catch (err: any) {
       console.error('Failed to load storage stats:', err);
+    } finally {
+      setLoadingStats(false);
     }
   };
 
@@ -268,57 +272,46 @@ export default function StorageConfigPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 flex items-center justify-center">
-        <motion.div
-          initial={{ opacity: 0, scale: 0.9 }}
-          animate={{ opacity: 1, scale: 1 }}
-          className="text-center"
-        >
-          <RefreshCw className="w-12 h-12 text-blue-400 animate-spin mx-auto mb-4" />
-          <p className="text-slate-300">Loading storage configuration...</p>
-        </motion.div>
+      <div className="flex items-center justify-center py-12">
+        <RefreshCw className="w-8 h-8 text-purple-500 animate-spin" />
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 p-6">
-      <div className="max-w-7xl mx-auto space-y-6">
+    <div className="space-y-6">
         {/* Header */}
-        <motion.div
-          initial={{ opacity: 0, y: -20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="flex items-center justify-between"
-        >
-          <div className="flex items-center gap-3">
-            <div className="p-3 bg-gradient-to-br from-blue-500 to-purple-600 rounded-xl">
-              <HardDrive className="w-6 h-6 text-white" />
+        <header className="border-b border-slate-700">
+          <div className="flex items-center justify-between pb-4">
+            <div className="flex items-center gap-4">
+              <div className="flex flex-col">
+                <div className="flex items-center gap-4 mb-1">
+                  <h1 className="text-xl font-semibold text-white">Storage Management</h1>
+                  <span className="text-xs px-2 py-1 rounded bg-purple-500/20 text-purple-400">System Config</span>
+                </div>
+                <p className="text-sm text-slate-400">Configure storage quotas based on LLM tokens purchased</p>
+              </div>
             </div>
-            <div>
-              <h1 className="text-2xl font-bold text-white">Storage Management</h1>
-              <p className="text-slate-400 text-sm">Configure storage quotas based on LLM tokens purchased</p>
+            <div className="flex items-center gap-4">
+              <button
+                onClick={loadStorageStats}
+                disabled={loadingStats}
+                className="p-2 rounded-lg border border-slate-700 hover:bg-slate-800 transition-colors"
+                title="Load Stats"
+              >
+                <Activity className={`w-5 h-5 text-slate-400 ${loadingStats ? 'animate-spin' : ''}`} />
+              </button>
+              <button
+                onClick={loadStorageConfig}
+                disabled={loading}
+                className="p-2 rounded-lg border border-slate-700 hover:bg-slate-800 transition-colors"
+                title="Refresh Config"
+              >
+                <RefreshCw className={`w-5 h-5 text-slate-400 ${loading ? 'animate-spin' : ''}`} />
+              </button>
             </div>
           </div>
-
-          <div className="flex gap-2">
-            <button
-              onClick={loadStorageStats}
-              disabled={loading}
-              className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors"
-            >
-              <Activity className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-              Load Stats
-            </button>
-            <button
-              onClick={loadStorageConfig}
-              disabled={loading}
-              className="flex items-center gap-2 px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-lg transition-colors border border-slate-700"
-            >
-              <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-              Refresh Config
-            </button>
-          </div>
-        </motion.div>
+        </header>
 
         {/* Alerts */}
         {error && (
@@ -543,7 +536,7 @@ export default function StorageConfigPage() {
 
           {/* Add New Tier Form */}
           {showAddTier && (
-            <div className="p-6 bg-slate-700/50 border-t border-slate-700">
+            <div className="p-6 bg-slate-900/50 border-t border-slate-700">
               <div className="flex items-center justify-between pb-3 mb-4 border-b border-slate-600">
                 <h4 className="text-white font-semibold flex items-center gap-2">
                   <Plus className="w-4 h-4 text-blue-400" />
@@ -551,7 +544,7 @@ export default function StorageConfigPage() {
                 </h4>
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <label className="text-xs text-slate-400 mb-2 block">
                     Minimum LLM Tokens *
@@ -729,7 +722,6 @@ export default function StorageConfigPage() {
             </table>
           </div>
         </motion.div>
-      </div>
     </div>
   );
 }

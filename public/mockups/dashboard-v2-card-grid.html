@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dashboard V2 - Card Grid Design</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: #f8fafc;
+      min-height: 100vh;
+    }
+
+    .create-card {
+      background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+      border-radius: 24px;
+    }
+
+    .card {
+      background: white;
+      border-radius: 20px;
+      border: 1px solid #e2e8f0;
+      transition: all 0.2s;
+    }
+
+    .card:hover {
+      box-shadow: 0 8px 30px rgba(0,0,0,0.08);
+      transform: translateY(-2px);
+    }
+
+    .automation-card {
+      background: white;
+      border-radius: 16px;
+      border: 1px solid #e2e8f0;
+      transition: all 0.2s;
+    }
+
+    .automation-card:hover {
+      border-color: #c7d2fe;
+      box-shadow: 0 4px 20px rgba(99,102,241,0.1);
+    }
+  </style>
+</head>
+<body class="p-4 md:p-6">
+
+  <div class="max-w-6xl mx-auto">
+
+    <!-- Header -->
+    <header class="flex items-center justify-between mb-6">
+      <div class="flex items-center gap-3">
+        <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center">
+          <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+          </svg>
+        </div>
+        <div>
+          <h1 class="font-semibold text-slate-900">Hi Sarah</h1>
+          <p class="text-sm text-slate-500">Welcome back</p>
+        </div>
+      </div>
+      <div class="flex items-center gap-3">
+        <div class="px-3 py-1.5 bg-white border border-slate-200 rounded-full text-sm text-slate-600">
+          8.5K credits
+        </div>
+        <div class="w-9 h-9 rounded-full bg-gradient-to-br from-violet-400 to-purple-500"></div>
+      </div>
+    </header>
+
+    <!-- Bento Grid -->
+    <div class="grid grid-cols-12 gap-4">
+
+      <!-- CREATE CARD - Hero (spans 8 cols) -->
+      <div class="col-span-12 lg:col-span-8">
+        <div class="create-card p-8 h-full">
+          <div class="flex items-start justify-between mb-6">
+            <div>
+              <h2 class="text-2xl font-bold text-white mb-2">Create new automation</h2>
+              <p class="text-white/70">Describe what you want to automate</p>
+            </div>
+            <div class="flex items-center gap-2">
+              <button class="p-2 rounded-lg bg-white/10 hover:bg-white/20 transition">
+                <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+                </svg>
+              </button>
+            </div>
+          </div>
+
+          <div class="bg-white/10 backdrop-blur rounded-xl p-4 mb-6">
+            <textarea
+              placeholder="Example: Every day at 9am, check my Gmail for emails from clients and create a summary in Notion..."
+              rows="3"
+              class="w-full bg-transparent text-white text-lg placeholder:text-white/50 outline-none resize-none"
+            ></textarea>
+          </div>
+
+          <div class="flex items-center justify-between">
+            <div class="flex flex-wrap gap-2">
+              <span class="px-3 py-1.5 bg-white/10 rounded-full text-sm text-white/80 cursor-pointer hover:bg-white/20 transition">📧 Emails</span>
+              <span class="px-3 py-1.5 bg-white/10 rounded-full text-sm text-white/80 cursor-pointer hover:bg-white/20 transition">📊 Data</span>
+              <span class="px-3 py-1.5 bg-white/10 rounded-full text-sm text-white/80 cursor-pointer hover:bg-white/20 transition">🔔 Alerts</span>
+              <span class="px-3 py-1.5 bg-white/10 rounded-full text-sm text-white/80 cursor-pointer hover:bg-white/20 transition">📝 Reports</span>
+            </div>
+            <button class="px-6 py-3 bg-white text-indigo-600 font-semibold rounded-xl hover:bg-white/90 transition flex items-center gap-2">
+              Create
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7l5 5m0 0l-5 5m5-5H6" />
+              </svg>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Quick Stats (spans 4 cols, 2 rows) -->
+      <div class="col-span-12 lg:col-span-4 grid grid-cols-2 gap-4">
+        <div class="card p-5 cursor-pointer">
+          <p class="text-3xl font-bold text-slate-900">8</p>
+          <p class="text-sm text-slate-500 mt-1">Active</p>
+          <div class="flex items-center gap-1 mt-2">
+            <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
+            <span class="text-xs text-emerald-600">All healthy</span>
+          </div>
+        </div>
+
+        <div class="card p-5 cursor-pointer">
+          <p class="text-3xl font-bold text-emerald-600">98%</p>
+          <p class="text-sm text-slate-500 mt-1">Success</p>
+          <div class="flex items-center gap-1 mt-2">
+            <svg class="w-3 h-3 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 10l7-7m0 0l7 7m-7-7v18" />
+            </svg>
+            <span class="text-xs text-emerald-600">+2%</span>
+          </div>
+        </div>
+
+        <div class="card p-5 cursor-pointer">
+          <p class="text-3xl font-bold text-slate-900">127h</p>
+          <p class="text-sm text-slate-500 mt-1">Saved</p>
+          <p class="text-xs text-slate-400 mt-2">This month</p>
+        </div>
+
+        <div class="card p-5 cursor-pointer">
+          <p class="text-3xl font-bold text-indigo-600">$6.3K</p>
+          <p class="text-sm text-slate-500 mt-1">Value</p>
+          <p class="text-xs text-slate-400 mt-2">This month</p>
+        </div>
+      </div>
+
+      <!-- My Automations (full width) -->
+      <div class="col-span-12">
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="font-semibold text-slate-900">My Automations</h2>
+          <button class="text-sm text-indigo-600 hover:text-indigo-700">View all →</button>
+        </div>
+
+        <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          <!-- Automation Card -->
+          <div class="automation-card p-4 cursor-pointer">
+            <div class="flex items-center gap-3 mb-3">
+              <div class="w-10 h-10 rounded-xl bg-blue-100 flex items-center justify-center">
+                <svg class="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                </svg>
+              </div>
+              <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
+            </div>
+            <p class="font-medium text-slate-900 mb-1">Email Digest</p>
+            <p class="text-xs text-slate-500">247 runs • 5 min ago</p>
+          </div>
+
+          <div class="automation-card p-4 cursor-pointer">
+            <div class="flex items-center gap-3 mb-3">
+              <div class="w-10 h-10 rounded-xl bg-purple-100 flex items-center justify-center">
+                <svg class="w-5 h-5 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+                </svg>
+              </div>
+              <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
+            </div>
+            <p class="font-medium text-slate-900 mb-1">Lead Capture</p>
+            <p class="text-xs text-slate-500">184 runs • 23 min ago</p>
+          </div>
+
+          <div class="automation-card p-4 cursor-pointer">
+            <div class="flex items-center gap-3 mb-3">
+              <div class="w-10 h-10 rounded-xl bg-amber-100 flex items-center justify-center">
+                <svg class="w-5 h-5 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+              </div>
+              <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
+            </div>
+            <p class="font-medium text-slate-900 mb-1">Invoice Processor</p>
+            <p class="text-xs text-slate-500">89 runs • 1 hour ago</p>
+          </div>
+
+          <div class="automation-card p-4 cursor-pointer">
+            <div class="flex items-center gap-3 mb-3">
+              <div class="w-10 h-10 rounded-xl bg-rose-100 flex items-center justify-center">
+                <svg class="w-5 h-5 text-rose-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 4v16M17 4v16M3 8h4m10 0h4M3 12h18M3 16h4m10 0h4M4 20h16a1 1 0 001-1V5a1 1 0 00-1-1H4a1 1 0 00-1 1v14a1 1 0 001 1z" />
+                </svg>
+              </div>
+              <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
+            </div>
+            <p class="font-medium text-slate-900 mb-1">Social Posts</p>
+            <p class="text-xs text-slate-500">56 runs • 2 hours ago</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Recent Activity + Analytics (split) -->
+      <div class="col-span-12 lg:col-span-6">
+        <div class="card p-5">
+          <div class="flex items-center justify-between mb-4">
+            <h3 class="font-semibold text-slate-900">Recent Activity</h3>
+            <div class="flex items-center gap-1.5">
+              <span class="w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></span>
+              <span class="text-xs text-emerald-600">Live</span>
+            </div>
+          </div>
+
+          <div class="space-y-3">
+            <div class="flex items-center gap-3">
+              <div class="w-8 h-8 rounded-full bg-emerald-100 flex items-center justify-center">
+                <svg class="w-4 h-4 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                </svg>
+              </div>
+              <div class="flex-1">
+                <p class="text-sm text-slate-900"><span class="font-medium">Email Digest</span> processed 12 emails</p>
+                <p class="text-xs text-slate-500">5 min ago</p>
+              </div>
+            </div>
+
+            <div class="flex items-center gap-3">
+              <div class="w-8 h-8 rounded-full bg-emerald-100 flex items-center justify-center">
+                <svg class="w-4 h-4 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                </svg>
+              </div>
+              <div class="flex-1">
+                <p class="text-sm text-slate-900"><span class="font-medium">Lead Capture</span> added 3 contacts</p>
+                <p class="text-xs text-slate-500">23 min ago</p>
+              </div>
+            </div>
+
+            <div class="flex items-center gap-3">
+              <div class="w-8 h-8 rounded-full bg-emerald-100 flex items-center justify-center">
+                <svg class="w-4 h-4 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                </svg>
+              </div>
+              <div class="flex-1">
+                <p class="text-sm text-slate-900"><span class="font-medium">Invoice Processor</span> sent 2 invoices</p>
+                <p class="text-xs text-slate-500">1 hour ago</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="col-span-12 lg:col-span-6">
+        <div class="card p-5 cursor-pointer">
+          <div class="flex items-center justify-between mb-4">
+            <h3 class="font-semibold text-slate-900">Credits</h3>
+            <span class="text-xs text-slate-500">View billing →</span>
+          </div>
+
+          <div class="flex items-center gap-6">
+            <div>
+              <p class="text-3xl font-bold text-slate-900">8,500</p>
+              <p class="text-sm text-slate-500">available</p>
+            </div>
+            <div class="flex-1">
+              <div class="h-3 bg-slate-100 rounded-full overflow-hidden">
+                <div class="h-full w-[85%] bg-gradient-to-r from-indigo-500 to-purple-500 rounded-full"></div>
+              </div>
+              <p class="text-xs text-slate-500 mt-2">1,500 used this month</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+  </div>
+
+  <!-- Design Notes -->
+  <div class="max-w-6xl mx-auto px-4 py-8">
+    <div class="p-5 bg-violet-50 border border-violet-200 rounded-2xl">
+      <h3 class="font-semibold text-violet-800 mb-3">Design: Bento Grid Layout</h3>
+      <ul class="text-sm text-violet-700 space-y-1">
+        <li>• <strong>Bento-style grid</strong> - modern, visual hierarchy</li>
+        <li>• <strong>Create card is hero</strong> - largest element, gradient, prominent</li>
+        <li>• <strong>Stats in small cards</strong> - quick glance, clickable</li>
+        <li>• <strong>Automations as tiles</strong> - visual, easy to scan</li>
+        <li>• <strong>Activity + Credits side by side</strong> - secondary info grouped</li>
+        <li>• <strong>Responsive</strong> - stacks well on mobile</li>
+      </ul>
+    </div>
+  </div>
+
+</body>
+</html>

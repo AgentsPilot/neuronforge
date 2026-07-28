@@ -409,6 +409,134 @@ export class StripeService {
   ): Stripe.Event {
     return this.stripe.webhooks.constructEvent(payload, signature, webhookSecret);
   }
+
+  // ============================================
+  // STRIPE CONNECT METHODS
+  // For accepting payments from business clients
+  // ============================================
+
+  /**
+   * Create Stripe Express account for new users
+   * Express accounts are the simplest - Stripe handles all KYC/verification
+   */
+  async createExpressAccount(params: {
+    email: string;
+    country?: string;
+    businessType?: 'individual' | 'company';
+    businessProfile?: {
+      name?: string;
+      url?: string;
+    };
+  }): Promise<{ accountId: string }> {
+    const account = await this.stripe.accounts.create({
+      type: 'express',
+      email: params.email,
+      country: params.country || 'US',
+      business_type: params.businessType || 'individual',
+      capabilities: {
+        card_payments: { requested: true },
+        transfers: { requested: true },
+      },
+      business_profile: params.businessProfile ? {
+        name: params.businessProfile.name,
+        url: params.businessProfile.url,
+      } : undefined,
+    });
+
+    return { accountId: account.id };
+  }
+
+  /**
+   * Create Account Link for Express onboarding
+   * This generates a URL where the user completes their Stripe setup
+   */
+  async createAccountLink(params: {
+    accountId: string;
+    refreshUrl: string;
+    returnUrl: string;
+    type?: 'account_onboarding' | 'account_update';
+  }): Promise<string> {
+    const accountLink = await this.stripe.accountLinks.create({
+      account: params.accountId,
+      refresh_url: params.refreshUrl,
+      return_url: params.returnUrl,
+      type: params.type || 'account_onboarding',
+    });
+
+    return accountLink.url;
+  }
+
+  /**
+   * Generate OAuth link for existing Stripe account owners (Standard accounts)
+   */
+  generateStandardOAuthLink(params: {
+    clientId: string;
+    redirectUri: string;
+    state: string;
+  }): string {
+    const baseUrl = 'https://connect.stripe.com/oauth/authorize';
+    const queryParams = new URLSearchParams({
+      response_type: 'code',
+      client_id: params.clientId,
+      scope: 'read_write',
+      redirect_uri: params.redirectUri,
+      state: params.state,
+    });
+
+    return `${baseUrl}?${queryParams.toString()}`;
+  }
+
+  /**
+   * Exchange OAuth authorization code for account access (Standard accounts)
+   */
+  async handleOAuthCallback(code: string): Promise<{
+    accountId: string;
+    accessToken: string;
+    refreshToken: string;
+  }> {
+    const response = await this.stripe.oauth.token({
+      grant_type: 'authorization_code',
+      code,
+    });
+
+    return {
+      accountId: response.stripe_user_id!,
+      accessToken: response.access_token!,
+      refreshToken: response.refresh_token!,
+    };
+  }
+
+  /**
+   * Retrieve account status from Stripe
+   */
+  async getConnectAccountStatus(accountId: string): Promise<{
+    chargesEnabled: boolean;
+    payoutsEnabled: boolean;
+    detailsSubmitted: boolean;
+    country: string | null;
+    defaultCurrency: string | null;
+    businessType: string | null;
+  }> {
+    const account = await this.stripe.accounts.retrieve(accountId);
+
+    return {
+      chargesEnabled: account.charges_enabled || false,
+      payoutsEnabled: account.payouts_enabled || false,
+      detailsSubmitted: account.details_submitted || false,
+      country: account.country || null,
+      defaultCurrency: account.default_currency || null,
+      businessType: account.business_type || null,
+    };
+  }
+
+  /**
+   * Generate Express Dashboard login link
+   * Only works for Express accounts
+   */
+  async createExpressDashboardLink(accountId: string): Promise<string> {
+    const loginLink = await this.stripe.accounts.createLoginLink(accountId);
+    return loginLink.url;
+  }
 }
 
 // Export singleton instance (created with env var)
