@@ -273,19 +273,30 @@ export class OutlookPluginExecutor extends BasePluginExecutor {
 
     const calendarPath = calendar_id ? `/me/calendars/${calendar_id}` : '/me/calendar';
 
+    // Request times in UTC using Prefer header
     const url = `${calendarPath}/calendarView?startDateTime=${start_date}&endDateTime=${end_date}&$top=${max_results}&$select=id,subject,start,end,location,attendees,organizer`;
 
-    const response = await this.makeGraphRequest(connection, url, 'GET');
+    const response = await this.makeGraphRequestWithPrefer(connection, url, 'GET', undefined, 'outlook.timezone="UTC"');
 
-    const events = response.value.map((evt: any) => ({
-      id: evt.id,
-      subject: evt.subject,
-      start: evt.start.dateTime,
-      end: evt.end.dateTime,
-      location: evt.location?.displayName,
-      attendees: evt.attendees?.map((a: any) => a.emailAddress.address) || [],
-      organizer: evt.organizer?.emailAddress?.address
-    }));
+    const events = response.value.map((evt: any) => {
+      // Convert dateTime to proper ISO format with Z suffix for UTC
+      const startDateTime = evt.start.dateTime;
+      const endDateTime = evt.end.dateTime;
+
+      // Ensure times are in ISO format with Z suffix (UTC)
+      const startISO = startDateTime.endsWith('Z') ? startDateTime : `${startDateTime.split('.')[0]}Z`;
+      const endISO = endDateTime.endsWith('Z') ? endDateTime : `${endDateTime.split('.')[0]}Z`;
+
+      return {
+        id: evt.id,
+        subject: evt.subject,
+        start: startISO,
+        end: endISO,
+        location: evt.location?.displayName,
+        attendees: evt.attendees?.map((a: any) => a.emailAddress.address) || [],
+        organizer: evt.organizer?.emailAddress?.address
+      };
+    });
 
     return {
       events,

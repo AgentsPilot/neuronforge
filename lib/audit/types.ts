@@ -23,7 +23,9 @@ export type EntityType =
   | 'profile'
   | 'connection'
   | 'execution'
-  | 'system';
+  | 'system'
+  | 'scheduling_service'
+  | 'scheduling_booking';
 
 /**
  * Compliance frameworks this event relates to

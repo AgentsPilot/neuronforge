@@ -340,6 +340,63 @@ export async function PUT(
 
     console.log(`Agent updated: ${updatedAgent.agent_name} by user ${userId}`);
 
+    // 📚 Memory System Phase 7: Store intent example on production approval
+    // When an agent is approved for production, store its intent as a few-shot example
+    if (agentData.production_ready === true && !existingAgent.production_ready) {
+      try {
+        const { getIntentExampleRepository } = await import('@/lib/repositories/IntentExampleRepository');
+        const { supabaseServer } = await import('@/lib/supabaseServer');
+
+        // Extract intent contract from agent_config if available
+        const intentContract = updatedAgent.agent_config?.ai_context?.intent_contract;
+        const pluginsUsed = updatedAgent.connected_plugins || [];
+        const userPrompt = updatedAgent.user_prompt || updatedAgent.created_from_prompt || '';
+
+        if (intentContract && pluginsUsed.length > 0 && userPrompt) {
+          const intentExampleRepo = getIntentExampleRepository(supabaseServer);
+
+          // Normalize user input (remove PII-like content)
+          const normalizedPrompt = userPrompt
+            .replace(/\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b/g, '[EMAIL]')
+            .replace(/\b\d{3}[-.]?\d{3}[-.]?\d{4}\b/g, '[PHONE]')
+            .substring(0, 500); // Limit length
+
+          // Detect category from plugins
+          let category: string | undefined;
+          const pluginList = pluginsUsed.map((p: string) => p.toLowerCase());
+          if (pluginList.some((p: string) => ['hubspot', 'salesforce', 'pipedrive'].includes(p))) {
+            category = 'crm';
+          } else if (pluginList.some((p: string) => ['slack', 'discord', 'teams'].includes(p))) {
+            category = 'notification';
+          } else if (pluginList.some((p: string) => ['gmail', 'outlook'].includes(p))) {
+            category = 'email';
+          } else if (pluginList.some((p: string) => ['google-sheets', 'airtable', 'notion'].includes(p))) {
+            category = 'data-sync';
+          }
+
+          // Get calibration iterations from history if available
+          const calibrationIterations = updatedAgent.agent_config?.calibration_iterations || 1;
+
+          intentExampleRepo.upsert({
+            userInputNormalized: normalizedPrompt,
+            intentContract,
+            pluginSet: pluginsUsed,
+            calibrationIterations,
+            category,
+          }).then(({ data, error }) => {
+            if (error) {
+              console.debug('[AgentAPI] Intent example storage failed (non-blocking):', error);
+            } else {
+              console.log(`[AgentAPI] Intent example stored: ${data}`);
+            }
+          });
+        }
+      } catch (intentError) {
+        // Non-blocking
+        console.debug('[AgentAPI] Intent example extraction failed (non-blocking):', intentError);
+      }
+    }
+
     // 📝 Audit Trail: Log agent update with change tracking (non-blocking)
     try {
       const changes = generateDiff(existingAgent, updatedAgent);

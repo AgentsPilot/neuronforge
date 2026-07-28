@@ -1,6 +1,9 @@
 // app/api/admin/token-usage/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { createLogger } from '@/lib/logger';
+
+const logger = createLogger({ module: 'TokenUsageAPI' });
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -17,10 +20,22 @@ export async function GET(request: NextRequest) {
     const provider = searchParams.get('provider') || 'all';
     const model = searchParams.get('model') || 'all';
     const search = searchParams.get('search') || '';
-    const dateFrom = searchParams.get('dateFrom');
-    const dateTo = searchParams.get('dateTo');
 
-    console.log('Token usage API called with params:', { filter, provider, model, search, dateFrom, dateTo });
+    // Support period parameter (days) - defaults to 30
+    const periodParam = searchParams.get('period');
+    const periodDays = periodParam ? Math.min(Math.max(parseInt(periodParam, 10), 1), 365) : null;
+
+    // Calculate date range from period or use explicit dates
+    let dateFrom = searchParams.get('dateFrom');
+    let dateTo = searchParams.get('dateTo');
+
+    if (periodDays && !dateFrom) {
+      const periodStart = new Date();
+      periodStart.setDate(periodStart.getDate() - periodDays);
+      dateFrom = periodStart.toISOString();
+    }
+
+    logger.info({ filter, provider, model, search, dateFrom, dateTo, periodDays }, 'Token usage API called');
 
     // Start with a basic query without JOINs to avoid potential issues
     let query = supabase
@@ -71,14 +86,14 @@ export async function GET(request: NextRequest) {
     const { data: tokenUsage, error: queryError } = await query.limit(1000);
 
     if (queryError) {
-      console.error('Database query error:', queryError);
-      return NextResponse.json({ 
+      logger.error({ err: queryError }, 'Database query error');
+      return NextResponse.json({
         error: 'Failed to fetch token usage data',
-        details: queryError.message 
+        details: queryError.message
       }, { status: 500 });
     }
 
-    console.log(`Fetched ${tokenUsage?.length || 0} token usage records`);
+    logger.debug({ count: tokenUsage?.length || 0 }, 'Fetched token usage records');
 
     // Try to enrich data with user profiles separately if possible
     let enrichedData = tokenUsage || [];
@@ -101,11 +116,11 @@ export async function GET(request: NextRequest) {
               ...record,
               profiles: profiles.find(profile => profile.id === record.user_id) || null
             }));
-            console.log(`Enriched data with ${profiles.length} user profiles`);
+            logger.debug({ profileCount: profiles.length }, 'Enriched data with user profiles');
           }
         }
       } catch (enrichError) {
-        console.log('Could not enrich with profile data, continuing with basic data:', enrichError);
+        logger.debug({ err: enrichError }, 'Could not enrich with profile data, continuing with basic data');
         // Continue with basic data if enrichment fails
       }
     }
@@ -153,7 +168,7 @@ export async function GET(request: NextRequest) {
       stats.byOperation[operation].requests += 1;
     });
 
-    console.log(`Successfully processed ${enrichedData?.length || 0} token usage records`);
+    logger.info({ count: enrichedData?.length || 0 }, 'Successfully processed token usage records');
 
     return NextResponse.json({
       success: true,
@@ -163,11 +178,12 @@ export async function GET(request: NextRequest) {
         total: enrichedData?.length || 0,
         page: 1,
         limit: 1000
-      }
+      },
+      period: periodDays
     });
 
   } catch (error) {
-    console.error('Token usage API error:', error);
+    logger.error({ err: error }, 'Token usage API error');
     return NextResponse.json({ 
       error: 'Internal server error',
       message: error instanceof Error ? error.message : 'Unknown error'

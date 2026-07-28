@@ -64,7 +64,6 @@ import {
   Phone,
   Cloud
 } from 'lucide-react'
-import DraftAgentTour from '@/components/agents/DraftAgentTour'
 
 // Ultra-Modern Modal with Dynamic Sizing
 const Modal = ({ isOpen, onClose, children }: { isOpen: boolean; onClose: () => void; children: React.ReactNode }) => {
@@ -956,13 +955,6 @@ export default function AgentPage() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-blue-50">
-      {/* Draft Agent Tour */}
-      <DraftAgentTour
-        agentId={agent.id}
-        agentName={agent.agent_name}
-        agentStatus={agent.status}
-      />
-
       {/* Success Notification */}
       {showSuccessNotification && (
         <div className="fixed top-6 right-6 z-50 animate-in slide-in-from-top-2 duration-300">

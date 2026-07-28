@@ -105,6 +105,7 @@ export abstract class BaseAIProvider {
         activity_type: context.activity_type,
         activity_name: context.activity_name,
         agent_id: context.agent_id,
+        execution_id: context.execution_id,  // Track execution_id for BI correlation
         activity_step: context.activity_step
       });
       
@@ -134,9 +135,10 @@ export abstract class BaseAIProvider {
         activity_type: context.activity_type,
         activity_name: context.activity_name,
         agent_id: context.agent_id,
+        execution_id: context.execution_id,  // Track execution_id for BI correlation
         activity_step: context.activity_step
       });
-      
+
       throw error;
     }
   }

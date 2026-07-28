@@ -13,8 +13,6 @@
  *                      [Formalization] → IR
  */
 
-import { OpenAI } from 'openai'
-import Anthropic from '@anthropic-ai/sdk'
 import { readFileSync } from 'fs'
 import { join } from 'path'
 import type {
@@ -27,6 +25,10 @@ import { createLogger, Logger } from '@/lib/logger'
 import type { HardRequirements } from '../requirements/HardRequirementsExtractor'
 import { getModelMaxOutputTokens } from '@/lib/ai/context-limits'
 import { HardRequirementsFormatter } from '../utils/HardRequirementsFormatter'
+import { ProviderFactory, PROVIDERS } from '@/lib/ai/providerFactory'
+import { OPENAI_MODELS } from '@/lib/ai/providers/openaiProvider'
+import { ANTHROPIC_MODELS } from '@/lib/ai/providers/anthropicProvider'
+import type { CallContext } from '@/lib/ai/providers/baseProvider'
 
 // Create module-scoped logger
 const moduleLogger = createLogger({ module: 'V6', service: 'SemanticPlanGenerator' })
@@ -70,8 +72,6 @@ export interface SemanticPlanConfig {
 // ============================================================================
 
 export class SemanticPlanGenerator {
-  private openai?: OpenAI
-  private anthropic?: Anthropic
   private config: SemanticPlanConfig
   private systemPrompt: string
   private ajv: AjvInstance
@@ -93,16 +93,7 @@ export class SemanticPlanGenerator {
       ...config
     }
 
-    // Initialize LLM clients
-    if (config.model_provider === 'openai') {
-      this.openai = new OpenAI({
-        apiKey: process.env.OPENAI_API_KEY
-      })
-    } else if (config.model_provider === 'anthropic') {
-      this.anthropic = new Anthropic({
-        apiKey: process.env.ANTHROPIC_API_KEY
-      })
-    }
+    // ProviderFactory handles client initialization - no direct SDK instantiation needed
 
     // Load system prompt
     this.systemPrompt = this.loadSystemPrompt()
@@ -339,11 +330,11 @@ export class SemanticPlanGenerator {
   }
 
   /**
-   * Call OpenAI API with retry logic and timeout protection
+   * Call OpenAI API with retry logic and timeout protection (via ProviderFactory - tracked)
    */
   private async callOpenAI(
     enhancedPrompt: EnhancedPrompt,
-    hardRequirements?: HardRequirements
+    _hardRequirements?: HardRequirements
   ): Promise<{
     success: boolean
     semantic_plan?: SemanticPlan
@@ -351,11 +342,7 @@ export class SemanticPlanGenerator {
     tokens_used?: number
   }> {
     const openaiLogger = moduleLogger.child({ method: 'callOpenAI', model: this.getModelName() })
-
-    if (!this.openai) {
-      openaiLogger.error('OpenAI client not initialized')
-      return { success: false, errors: ['OpenAI client not initialized'] }
-    }
+    const provider = ProviderFactory.getProvider(PROVIDERS.OPENAI)
 
     const maxAttempts = 2
     let lastError: string | undefined
@@ -364,7 +351,7 @@ export class SemanticPlanGenerator {
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       const attemptStartTime = Date.now()
       try {
-        openaiLogger.info({ attempt, maxAttempts }, 'Calling OpenAI API')
+        openaiLogger.info({ attempt, maxAttempts }, 'Calling OpenAI API via ProviderFactory')
 
         const userMessage = this.buildUserMessage(enhancedPrompt)
 
@@ -373,9 +360,19 @@ export class SemanticPlanGenerator {
           ? `${userMessage}\n\n---\n\nPREVIOUS ATTEMPT FAILED:\n${lastError}\n\nPlease fix these issues in your response.`
           : userMessage
 
+        // Build CallContext for tracking
+        const context: CallContext = {
+          userId: 'system', // V6 pipeline runs at system level
+          feature: 'v6_pipeline',
+          component: 'SemanticPlanGenerator',
+          category: 'agent_generation',
+          activity_type: 'semantic_plan_generation',
+          activity_name: 'generate_semantic_plan',
+        }
+
         // Use OpenAI strict schema mode to guarantee structure compliance
         // This eliminates first-attempt validation failures by enforcing schema at generation time
-        const apiCall = this.openai.chat.completions.create({
+        const apiCall = provider.chatCompletion({
           model: this.getModelName(),
           messages: [
             { role: 'system', content: this.systemPrompt },
@@ -390,8 +387,8 @@ export class SemanticPlanGenerator {
             }
           },
           temperature: this.config.temperature,
-          max_completion_tokens: this.config.max_tokens
-        })
+          max_tokens: this.config.max_tokens
+        }, context)
 
         // Wrap with 180-second timeout (complex prompts with structured output need more time)
         const response = await this.callWithTimeout(apiCall, 180000)
@@ -479,6 +476,7 @@ export class SemanticPlanGenerator {
 
   /**
    * Call Anthropic API with retry logic for JSON parsing errors
+   * Uses ProviderFactory for centralized token tracking
    */
   private async callAnthropic(
     enhancedPrompt: EnhancedPrompt,
@@ -491,14 +489,20 @@ export class SemanticPlanGenerator {
   }> {
     const anthropicLogger = moduleLogger.child({ method: 'callAnthropic', model: this.getModelName() })
 
-    if (!this.anthropic) {
-      anthropicLogger.error('Anthropic client not initialized')
-      return { success: false, errors: ['Anthropic client not initialized'] }
-    }
-
     const maxAttempts = 2
     let lastError = ''
     let totalTokens = 0
+
+    // Get provider from factory for centralized token tracking
+    const provider = ProviderFactory.getProvider(PROVIDERS.ANTHROPIC)
+    const context: CallContext = {
+      userId: 'system',
+      feature: 'v6_pipeline',
+      component: 'SemanticPlanGenerator',
+      category: 'agent_generation',
+      activity_type: 'semantic_plan_generation',
+      activity_name: 'generate_semantic_plan',
+    }
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       const attemptStartTime = Date.now()
@@ -514,40 +518,44 @@ export class SemanticPlanGenerator {
           maxAttempts,
           messageLength,
           estimatedInputTokens: estimatedTokens
-        }, 'Calling Anthropic API')
+        }, 'Calling Anthropic API via ProviderFactory')
 
         // Add retry context to user message if this is a retry
         const finalUserMessage = attempt > 1 && lastError
           ? `${userMessage}\n\n---\n\nPREVIOUS ATTEMPT FAILED:\n${lastError}\n\nPlease ensure you generate valid, complete JSON. Do not truncate arrays or objects.`
           : userMessage
 
-        const apiCall = this.anthropic.messages.create({
+        // Use ProviderFactory for centralized token tracking
+        // Note: ProviderFactory returns OpenAI-compatible response format
+        const apiCall = provider.chatCompletion({
           model: this.getModelName(),
           max_tokens: this.config.max_tokens || 16384,
           temperature: this.config.temperature,
-          system: this.systemPrompt,
           messages: [
+            { role: 'system', content: this.systemPrompt },
             { role: 'user', content: finalUserMessage }
           ]
-        })
+        }, context)
 
         // Wrap with 180-second timeout (Opus 4.5 is slower but provides better quality)
         const response = await this.callWithTimeout(apiCall, 180000)
 
-        const content = response.content[0]
-        if (content.type !== 'text') {
-          lastError = 'Unexpected response type from Anthropic'
-          anthropicLogger.warn({ attempt, error: lastError }, 'Attempt failed - unexpected response type')
+        // ProviderFactory returns OpenAI-compatible format
+        const content = response.choices?.[0]?.message?.content
+        if (!content) {
+          lastError = 'Empty response from Anthropic'
+          anthropicLogger.warn({ attempt, error: lastError }, 'Attempt failed - empty response')
           if (attempt === maxAttempts) {
             return { success: false, errors: [lastError] }
           }
           continue
         }
 
-        anthropicLogger.debug({ responseLength: content.text.length }, 'Received LLM response')
+        anthropicLogger.debug({ responseLength: content.length }, 'Received LLM response')
 
         // Extract JSON from response (Anthropic sometimes wraps it in markdown)
-        let jsonText = content.text.trim()
+        // Note: content is already a string from ProviderFactory (OpenAI-compatible format)
+        let jsonText = content.trim()
 
         // Try multiple patterns to extract JSON from markdown code fences
         const patterns = [
@@ -578,7 +586,8 @@ export class SemanticPlanGenerator {
         try {
           semanticPlan = JSON.parse(jsonText) as SemanticPlan
         } catch (parseError) {
-          const tokensUsed = response.usage.input_tokens + response.usage.output_tokens
+          // ProviderFactory uses OpenAI-compatible usage format
+          const tokensUsed = (response.usage?.prompt_tokens || 0) + (response.usage?.completion_tokens || 0)
           totalTokens = tokensUsed
           lastError = `JSON parse error: ${parseError instanceof Error ? parseError.message : 'Invalid JSON'}`
           anthropicLogger.error({
@@ -609,7 +618,8 @@ export class SemanticPlanGenerator {
         }
 
         const attemptDuration = Date.now() - attemptStartTime
-        const tokensUsed = response.usage.input_tokens + response.usage.output_tokens
+        // ProviderFactory uses OpenAI-compatible usage format
+        const tokensUsed = (response.usage?.prompt_tokens || 0) + (response.usage?.completion_tokens || 0)
         anthropicLogger.info({
           attempt,
           duration: attemptDuration,

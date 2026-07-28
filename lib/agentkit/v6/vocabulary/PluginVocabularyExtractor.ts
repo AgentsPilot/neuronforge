@@ -61,6 +61,11 @@ export interface PluginVocabulary {
     actions: PluginActionInfo[]
   }[]
   userContext?: Array<{ key: string; value: string }>  // Optional: resolved user inputs from enhanced prompt
+  userMemoryContext?: string  // Optional: formatted user memory (preferences, patterns, insights)
+  preferredPlugins?: string[]  // Optional: user's preferred plugins for biasing selection
+  patternSuggestions?: string  // Optional: similar successful workflow patterns (Phase 3)
+  platformAlerts?: string  // Optional: known platform issues for the plugins being used
+  intentExamples?: string  // Optional: similar successful intent examples for few-shot learning
 }
 
 export class PluginVocabularyExtractor {

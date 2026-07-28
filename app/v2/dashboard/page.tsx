@@ -13,7 +13,8 @@ import {
   Bot,
   Mic,
   MicOff,
-  ArrowRight
+  ArrowRight,
+  Lightbulb
 } from 'lucide-react'
 
 interface AgentStat {
@@ -21,6 +22,7 @@ interface AgentStat {
   name: string
   count: number
   lastRun: string | null
+  status: string
 }
 
 interface RecentRun {
@@ -91,7 +93,7 @@ export default function V2DashboardPage() {
   const [accountFrozen] = useState(false)
   const [helpOpen, setHelpOpen] = useState(false)
   const textareaRef = React.useRef<HTMLTextAreaElement>(null)
-  const [systemStatusTimeFilter] = useState<7 | 30 | 90 | 'all'>(30)
+  const [systemStatusTimeFilter] = useState<7 | 30 | 90 | 'all'>('all')
   const [recentActivityTimeFilter] = useState<7 | 30 | 90 | 'all'>(30)
 
   const fetchDashboardData = React.useCallback(async () => {
@@ -253,17 +255,18 @@ export default function V2DashboardPage() {
         })
       }
 
-      // Parse agent stats using TIME-FILTERED execution counts from agent_executions table
+      // Parse agent stats using ALL-TIME execution counts from agent_executions table
       const parsedStats: AgentStat[] = agentStatsData?.map((s) => {
         const agentData = s.agents as any
-        const actualCount = executionCountMap.get(s.agent_id) || 0 // Use TIME-FILTERED count for Recent Activity
+        const actualCount = executionCountMapAllTime.get(s.agent_id) || 0 // Use ALL-TIME count for Agent List
         const lastRun = lastRunMap.get(s.agent_id) || s.last_run_at
 
         return {
           id: s.agent_id,
           name: agentData?.agent_name ?? 'Unknown Agent',
-          count: actualCount, // Use TIME-FILTERED count from agent_executions (excluding calibration)
+          count: actualCount, // Use ALL-TIME count from agent_executions (excluding calibration)
           lastRun: lastRun,
+          status: agentData?.status ?? 'active',
         }
       }) || []
 
@@ -681,19 +684,31 @@ export default function V2DashboardPage() {
         </div>
       )}
 
-      {/* Today's Impact + Credits Row */}
+      {/* Total Impact + Credits Row */}
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_auto] gap-4 mt-4">
-        {/* Today's Impact Section */}
+        {/* Total Impact Section */}
         <div className="bg-gradient-to-br from-emerald-500/5 via-green-500/5 to-teal-500/5 border border-emerald-500/20 p-4 sm:p-6" style={{ borderRadius: 'var(--v2-radius-card)' }}>
           <div className="flex items-start justify-between">
             <div>
-              <p className="text-sm font-medium text-emerald-600 dark:text-emerald-400 mb-2">Today so far</p>
-              <h2 className="text-3xl sm:text-4xl font-bold text-[var(--v2-text-primary)] mb-2">
-                {stats.totalTimeSavedSeconds > 0
-                  ? `You saved ${(stats.totalTimeSavedSeconds / 3600).toFixed(1)} hours`
-                  : 'No automation runs yet'
-                }
-              </h2>
+              <p className="text-sm font-medium text-emerald-600 dark:text-emerald-400 mb-2">Total Impact</p>
+              <div className="flex items-center gap-3 flex-wrap mb-2">
+                <h2 className="text-3xl sm:text-4xl font-bold text-[var(--v2-text-primary)]">
+                  {stats.totalTimeSavedSeconds > 0
+                    ? `You saved ${(stats.totalTimeSavedSeconds / 3600).toFixed(1)} hours`
+                    : 'No automation runs yet'
+                  }
+                </h2>
+                {/* Insights indicator */}
+                {stats.activeInsightsCount > 0 && (
+                  <button
+                    onClick={() => router.push('/v2/analytics')}
+                    className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-600 dark:text-amber-400 text-sm font-medium hover:bg-amber-500/20 transition-colors"
+                  >
+                    <Lightbulb className="w-3.5 h-3.5" />
+                    {stats.activeInsightsCount} insight{stats.activeInsightsCount !== 1 ? 's' : ''} to review
+                  </button>
+                )}
+              </div>
               <p className="text-base sm:text-lg text-[var(--v2-text-secondary)]">
                 {stats.moneySavedTotal > 0 ? (
                   <>
@@ -703,11 +718,6 @@ export default function V2DashboardPage() {
                   'Run your automations to start saving time'
                 )}
               </p>
-            </div>
-            <div className="relative hidden sm:block">
-              <div className="w-14 h-14 sm:w-16 sm:h-16 rounded-full bg-emerald-500/20 flex items-center justify-center">
-                <CheckCircle2 className="w-7 h-7 sm:w-8 sm:h-8 text-emerald-500" />
-              </div>
             </div>
           </div>
 
@@ -838,26 +848,31 @@ export default function V2DashboardPage() {
               const maxCount = Math.max(...visibleAgents.map(a => a.count), 1)
 
               return visibleAgents.map((agent, index) => {
-                // Color palette for status bars and progress bars
-                const colors = [
-                  { bar: 'bg-blue-500', dot: 'bg-blue-500' },
-                  { bar: 'bg-purple-500', dot: 'bg-purple-500' },
-                  { bar: 'bg-amber-500', dot: 'bg-amber-500' },
-                  { bar: 'bg-emerald-500', dot: 'bg-emerald-500' },
-                ]
-                const color = colors[index % colors.length]
+                // Status-based dot color (matches agent-list page)
+                const getStatusDotColor = (status: string) => {
+                  switch (status) {
+                    case 'active': return 'bg-green-500'
+                    case 'inactive': return 'bg-gray-400'
+                    case 'draft': return 'bg-yellow-500'
+                    default: return 'bg-gray-300'
+                  }
+                }
+                // Color palette for progress bars only
+                const barColors = ['bg-blue-500', 'bg-purple-500', 'bg-amber-500', 'bg-emerald-500']
+                const barColor = barColors[index % barColors.length]
+                const dotColor = getStatusDotColor(agent.status)
                 const barWidth = agent.count > 0 ? Math.max((agent.count / maxCount) * 100, 5) : 0
 
                 return (
                   <div
                     key={agent.id}
                     onClick={() => router.push(`/v2/agents/${agent.id}`)}
-                    className="bg-[var(--v2-surface)] border border-[var(--v2-border)] p-4 cursor-pointer hover:bg-[var(--v2-surface-hover)] hover:border-[var(--v2-border-hover)] transition-all active:scale-[0.99]"
+                    className="bg-[var(--v2-surface)] border border-[var(--v2-border)] p-4 cursor-pointer hover:bg-[var(--v2-surface-hover)] hover:border-[var(--v2-primary)]/30 transition-all active:scale-[0.99]"
                     style={{ borderRadius: 'var(--v2-radius-card)' }}
                   >
                     <div className="flex items-center gap-4">
                       {/* Status Bar - matches agent-list style */}
-                      <div className={`w-1.5 h-12 rounded-full ${color.dot} flex-shrink-0`} />
+                      <div className={`w-1.5 h-12 rounded-full ${dotColor} flex-shrink-0`} />
                       <div className="flex-1 min-w-0">
                         <p className="font-medium text-[var(--v2-text-primary)] truncate">{agent.name}</p>
                         <p className="text-xs text-[var(--v2-text-muted)]">
@@ -868,7 +883,7 @@ export default function V2DashboardPage() {
                       <div className="flex-1 max-w-32 sm:max-w-48">
                         <div className="h-2 bg-[var(--v2-border)] rounded-full overflow-hidden">
                           <div
-                            className={`h-full ${color.bar} rounded-full transition-all duration-500`}
+                            className={`h-full ${barColor} rounded-full transition-all duration-500`}
                             style={{ width: `${barWidth}%` }}
                           />
                         </div>
@@ -876,7 +891,6 @@ export default function V2DashboardPage() {
                       <div className="text-right flex-shrink-0">
                         <p className="text-sm font-medium text-[var(--v2-text-primary)]">{agent.count.toLocaleString()} runs</p>
                       </div>
-                      <span className="w-2 h-2 rounded-full bg-emerald-500 flex-shrink-0"></span>
                     </div>
                   </div>
                 )

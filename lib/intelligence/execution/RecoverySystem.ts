@@ -1,6 +1,10 @@
 // /lib/intelligence/execution/RecoverySystem.ts
 import { ContextualMemory, RecoveryResult } from '../core/types'
-import OpenAI from 'openai'
+import { ProviderFactory, PROVIDERS } from '@/lib/ai/providerFactory'
+import { OPENAI_MODELS } from '@/lib/ai/providers/openaiProvider'
+import type { CallContext } from '@/lib/ai/providers/baseProvider'
+
+// ProviderFactory handles LLM client initialization - no direct SDK instantiation needed
 
 
 export class RecoverySystem {
@@ -57,17 +61,29 @@ RECOVERY CONTEXT: ${JSON.stringify(recoveryContext, null, 2)}
 
 [ADVANCED RECOVERY MODE: Execute with available resources and provide executive-level analysis]`
 
-      const recoveryCompletion = await openai.chat.completions.create({
-        model: 'gpt-3.5-turbo-16k',
+      // Get provider from factory for centralized token tracking
+      const provider = ProviderFactory.getProvider(PROVIDERS.OPENAI)
+      const llmContext: CallContext = {
+        userId,
+        feature: 'intelligence',
+        component: 'RecoverySystem',
+        category: 'error_recovery',
+        activity_type: 'advanced_recovery',
+        activity_name: `recovery_${recoveryStrategy}`,
+      }
+
+      const recoveryCompletion = await provider.chatCompletion({
+        model: OPENAI_MODELS.GPT_4O_MINI,
         messages: [
           { role: 'system', content: recoverySystemPrompt },
           { role: 'user', content: recoveryUserPrompt },
         ],
         temperature: 0.3,
         max_tokens: 3000,
-      })
+      }, llmContext)
 
-      const recoveryResponse = recoveryCompletion.choices[0]?.message?.content || 
+      // ProviderFactory returns OpenAI-compatible format
+      const recoveryResponse = recoveryCompletion.choices?.[0]?.message?.content ||
                              'Advanced recovery response generated with limited context.'
 
       const advancedRecoveryMetrics = {
@@ -180,13 +196,24 @@ RECOVERY CONTEXT: ${JSON.stringify(recoveryContext, null, 2)}
 
   private async checkOpenAIHealth(): Promise<boolean> {
     try {
-      const testCompletion = await openai.chat.completions.create({
-        model: 'gpt-3.5-turbo',
+      // Get provider from factory for centralized token tracking
+      const provider = ProviderFactory.getProvider(PROVIDERS.OPENAI)
+      const context: CallContext = {
+        userId: 'system',
+        feature: 'intelligence',
+        component: 'RecoverySystem',
+        category: 'health_check',
+        activity_type: 'health_check',
+        activity_name: 'check_openai_health',
+      }
+
+      const testCompletion = await provider.chatCompletion({
+        model: OPENAI_MODELS.GPT_4O_MINI,
         messages: [{ role: 'user', content: 'Health check' }],
         max_tokens: 5,
-      })
-      
-      return !!testCompletion.choices[0]?.message?.content
+      }, context)
+
+      return !!testCompletion.choices?.[0]?.message?.content
     } catch (error) {
       console.warn('OpenAI health check failed:', error)
       return false
@@ -229,22 +256,33 @@ RECOVERY CONTEXT: ${JSON.stringify(recoveryContext, null, 2)}
   async executeSimplifiedProcessing(prompt: string): Promise<string> {
     // Use minimal processing to avoid resource constraints
     const simplifiedPrompt = prompt.slice(0, 1000)
-    
+
     try {
-      const completion = await openai.chat.completions.create({
-        model: 'gpt-3.5-turbo',
+      // Get provider from factory for centralized token tracking
+      const provider = ProviderFactory.getProvider(PROVIDERS.OPENAI)
+      const context: CallContext = {
+        userId: 'system',
+        feature: 'intelligence',
+        component: 'RecoverySystem',
+        category: 'error_recovery',
+        activity_type: 'simplified_processing',
+        activity_name: 'execute_simplified_processing',
+      }
+
+      const completion = await provider.chatCompletion({
+        model: OPENAI_MODELS.GPT_4O_MINI,
         messages: [
-          { 
-            role: 'system', 
-            content: 'You are a business assistant operating in simplified mode due to system constraints. Provide concise, practical responses.' 
+          {
+            role: 'system',
+            content: 'You are a business assistant operating in simplified mode due to system constraints. Provide concise, practical responses.'
           },
           { role: 'user', content: simplifiedPrompt }
         ],
         temperature: 0.1,
         max_tokens: 1000,
-      })
-      
-      return completion.choices[0]?.message?.content || 'Simplified processing completed.'
+      }, context)
+
+      return completion.choices?.[0]?.message?.content || 'Simplified processing completed.'
     } catch (error) {
       return 'System operating in minimal mode. Please retry with a simpler request.'
     }

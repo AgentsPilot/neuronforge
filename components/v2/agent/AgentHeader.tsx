@@ -1,19 +1,28 @@
 'use client'
 
 import React from 'react'
-import { Play, Settings, TrendingUp, Settings2, BarChart3, Target, Calendar, User } from 'lucide-react'
+import { Play, Settings, TrendingUp, Settings2, BarChart3, Target, Calendar, User, Cpu, Brain } from 'lucide-react'
 import type { Agent } from '@/lib/repositories/types'
 import { formatScheduleDisplay, formatNextRun } from '@/lib/utils/scheduleFormatter'
+
+interface LearningModeInfo {
+  isLearning: boolean
+  currentSamples: number
+  requiredSamples: number
+}
 
 interface AgentHeaderProps {
   agent: Agent
   stats: {
     runCount: number
     successRate: number
+    totalTokens?: number
+    tokensPerPilotCredit?: number
   }
   isExecuting: boolean
   advancedMode: boolean
   timePeriodLabel?: string
+  learningMode?: LearningModeInfo
   onRun: () => void
   onSettingsClick: () => void
   onAnalyticsClick: () => void
@@ -26,6 +35,7 @@ export function AgentHeader({
   isExecuting,
   advancedMode,
   timePeriodLabel,
+  learningMode,
   onRun,
   onSettingsClick,
   onAnalyticsClick,
@@ -84,6 +94,25 @@ export function AgentHeader({
                 <span className="w-2 h-2 rounded-full bg-current animate-pulse shadow-lg" />
                 {getStatusText()}
               </span>
+              {learningMode && (
+                learningMode.isLearning ? (
+                  <span
+                    className="flex items-center gap-2 text-sm font-semibold px-3 py-1.5 rounded-full text-purple-600 dark:text-purple-400 bg-purple-100 dark:bg-purple-900/30"
+                    title={`Building baseline: ${learningMode.currentSamples} of ${learningMode.requiredSamples} runs needed for anomaly detection`}
+                  >
+                    <Brain className="w-4 h-4 animate-pulse" />
+                    <span>Learning ({learningMode.currentSamples}/{learningMode.requiredSamples})</span>
+                  </span>
+                ) : (
+                  <span
+                    className="flex items-center gap-2 text-sm font-semibold px-3 py-1.5 rounded-full text-emerald-600 dark:text-emerald-400 bg-emerald-100 dark:bg-emerald-900/30"
+                    title={`Baseline established with ${learningMode.currentSamples} runs. Anomaly detection active.`}
+                  >
+                    <Brain className="w-4 h-4" />
+                    <span>Monitoring</span>
+                  </span>
+                )
+              )}
             </div>
           </div>
 
@@ -133,7 +162,7 @@ export function AgentHeader({
       </div>
 
       {/* Stats Row */}
-      <div className="grid grid-cols-4 gap-px bg-[var(--v2-border)]">
+      <div className="grid grid-cols-5 gap-px bg-[var(--v2-border)]">
         <div className="bg-[var(--v2-surface)] p-6 hover:bg-[var(--v2-hover)] transition-colors">
           <div className="flex items-center justify-between mb-2">
             <span className="text-xs font-semibold text-[var(--v2-text-muted)] uppercase tracking-wider">Total Runs</span>
@@ -149,6 +178,25 @@ export function AgentHeader({
           </div>
           <div className="text-2xl font-bold text-[var(--v2-text-primary)] tabular-nums">{stats.successRate.toFixed(1)}%</div>
           {timePeriodLabel && <div className="text-xs text-[var(--v2-text-muted)] mt-1">{timePeriodLabel}</div>}
+        </div>
+        <div className="bg-[var(--v2-surface)] p-6 hover:bg-[var(--v2-hover)] transition-colors">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-xs font-semibold text-[var(--v2-text-muted)] uppercase tracking-wider">Pilot Credits</span>
+            <Cpu className="w-4 h-4 text-[var(--v2-text-muted)] opacity-50" />
+          </div>
+          <div className="text-2xl font-bold text-[var(--v2-text-primary)] tabular-nums">
+            {stats.totalTokens !== undefined
+              ? (() => {
+                  const credits = Math.ceil(stats.totalTokens / (stats.tokensPerPilotCredit || 10))
+                  return credits >= 1000000
+                    ? `${(credits / 1000000).toFixed(1)}M`
+                    : credits >= 1000
+                    ? `${(credits / 1000).toFixed(1)}k`
+                    : credits.toLocaleString()
+                })()
+              : '—'}
+          </div>
+          <div className="text-xs text-[var(--v2-text-muted)] mt-1">Creation + Execution</div>
         </div>
         <div className="bg-[var(--v2-surface)] p-6 hover:bg-[var(--v2-hover)] transition-colors">
           <div className="flex items-center justify-between mb-2">

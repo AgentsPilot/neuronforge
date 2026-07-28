@@ -160,11 +160,8 @@ export default function HelpBotConfigPage() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-96">
-        <div className="text-center">
-          <div className="w-12 h-12 border-4 border-purple-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
-          <p className="text-slate-400">Loading configuration...</p>
-        </div>
+      <div className="flex items-center justify-center py-12">
+        <RefreshCw className="w-8 h-8 text-purple-500 animate-spin" />
       </div>
     )
   }
@@ -172,34 +169,46 @@ export default function HelpBotConfigPage() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="w-12 h-12 bg-gradient-to-br from-blue-500 to-purple-500 rounded-xl flex items-center justify-center shadow-lg">
-            <MessageCircle className="w-6 h-6 text-white" />
+      <header className="border-b border-slate-700">
+        <div className="flex items-center justify-between pb-4">
+          <div className="flex items-center gap-4">
+            <div className="flex flex-col">
+              <div className="flex items-center gap-4 mb-1">
+                <h1 className="text-xl font-semibold text-white">HelpBot Configuration</h1>
+                <span className="text-xs px-2 py-1 rounded bg-purple-500/20 text-purple-400">System Config</span>
+              </div>
+              <p className="text-sm text-slate-400">Configure AI assistant models and behavior</p>
+            </div>
           </div>
-          <div>
-            <h1 className="text-3xl font-bold text-white">HelpBot Configuration</h1>
-            <p className="text-slate-400">Configure AI assistant models and behavior</p>
+          <div className="flex items-center gap-4">
+            <Button
+              onClick={saveConfig}
+              disabled={saving}
+              className="bg-violet-600 hover:bg-violet-700"
+            >
+              {saving ? (
+                <>
+                  <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+                  Saving...
+                </>
+              ) : (
+                <>
+                  <Save className="w-4 h-4 mr-2" />
+                  Save Changes
+                </>
+              )}
+            </Button>
+            <button
+              onClick={fetchConfig}
+              disabled={loading}
+              className="p-2 rounded-lg border border-slate-700 hover:bg-slate-800 transition-colors"
+              title="Refresh Config"
+            >
+              <RefreshCw className={`w-5 h-5 text-slate-400 ${loading ? 'animate-spin' : ''}`} />
+            </button>
           </div>
         </div>
-        <Button
-          onClick={saveConfig}
-          disabled={saving}
-          className="bg-violet-600 hover:bg-violet-700"
-        >
-          {saving ? (
-            <>
-              <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
-              Saving...
-            </>
-          ) : (
-            <>
-              <Save className="w-4 h-4 mr-2" />
-              Save Changes
-            </>
-          )}
-        </Button>
-      </div>
+      </header>
 
       {/* Message Banner */}
       {message && (
@@ -225,7 +234,7 @@ export default function HelpBotConfigPage() {
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
-        className="bg-slate-800/50 backdrop-blur-xl rounded-xl p-6 border border-white/10"
+        className="bg-slate-800 border border-slate-700 rounded-xl p-6"
       >
         <h2 className="text-xl font-semibold text-white mb-4 flex items-center gap-2">
           <Settings className="w-5 h-5" />
@@ -270,7 +279,7 @@ export default function HelpBotConfigPage() {
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.1 }}
-        className="bg-slate-800/50 backdrop-blur-xl rounded-xl p-6 border border-white/10"
+        className="bg-slate-800 border border-slate-700 rounded-xl p-6"
       >
         <h2 className="text-xl font-semibold text-white mb-4 flex items-center gap-2">
           <Brain className="w-5 h-5 text-blue-400" />
@@ -290,7 +299,7 @@ export default function HelpBotConfigPage() {
                   general: { ...config.general, model: e.target.value },
                 })
               }
-              className="w-full mt-2 px-4 py-2 bg-slate-700/50 border border-white/10 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-violet-500"
+              className="w-full mt-2 px-4 py-2 bg-slate-900/50 border border-white/10 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-violet-500"
             >
               {MODEL_OPTIONS.map((opt) => (
                 <option key={opt.value} value={opt.value}>
@@ -314,7 +323,7 @@ export default function HelpBotConfigPage() {
                   general: { ...config.general, temperature: parseFloat(e.target.value) },
                 })
               }
-              className="bg-slate-700/50 border-white/10 text-white"
+              className="bg-slate-900/50 border-white/10 text-white"
             />
           </div>
           <div>
@@ -331,7 +340,7 @@ export default function HelpBotConfigPage() {
                   general: { ...config.general, maxTokens: parseInt(e.target.value) },
                 })
               }
-              className="bg-slate-700/50 border-white/10 text-white"
+              className="bg-slate-900/50 border-white/10 text-white"
             />
           </div>
         </div>
@@ -342,7 +351,7 @@ export default function HelpBotConfigPage() {
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.2 }}
-        className="bg-slate-800/50 backdrop-blur-xl rounded-xl p-6 border border-white/10"
+        className="bg-slate-800 border border-slate-700 rounded-xl p-6"
       >
         <h2 className="text-xl font-semibold text-white mb-4 flex items-center gap-2">
           <Zap className="w-5 h-5 text-purple-400" />
@@ -362,7 +371,7 @@ export default function HelpBotConfigPage() {
                   input: { ...config.input, model: e.target.value },
                 })
               }
-              className="w-full mt-2 px-4 py-2 bg-slate-700/50 border border-white/10 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-violet-500"
+              className="w-full mt-2 px-4 py-2 bg-slate-900/50 border border-white/10 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-violet-500"
             >
               {MODEL_OPTIONS.map((opt) => (
                 <option key={opt.value} value={opt.value}>
@@ -386,7 +395,7 @@ export default function HelpBotConfigPage() {
                   input: { ...config.input, temperature: parseFloat(e.target.value) },
                 })
               }
-              className="bg-slate-700/50 border-white/10 text-white"
+              className="bg-slate-900/50 border-white/10 text-white"
             />
           </div>
           <div>
@@ -403,7 +412,7 @@ export default function HelpBotConfigPage() {
                   input: { ...config.input, maxTokens: parseInt(e.target.value) },
                 })
               }
-              className="bg-slate-700/50 border-white/10 text-white"
+              className="bg-slate-900/50 border-white/10 text-white"
             />
           </div>
         </div>
@@ -414,7 +423,7 @@ export default function HelpBotConfigPage() {
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.3 }}
-        className="bg-slate-800/50 backdrop-blur-xl rounded-xl p-6 border border-white/10"
+        className="bg-slate-800 border border-slate-700 rounded-xl p-6"
       >
         <h2 className="text-xl font-semibold text-white mb-4 flex items-center gap-2">
           <Database className="w-5 h-5 text-green-400" />
@@ -455,7 +464,7 @@ export default function HelpBotConfigPage() {
                       semantic: { ...config.semantic, embeddingModel: e.target.value },
                     })
                   }
-                  className="w-full mt-2 px-4 py-2 bg-slate-700/50 border border-white/10 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-violet-500"
+                  className="w-full mt-2 px-4 py-2 bg-slate-900/50 border border-white/10 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-violet-500"
                 >
                   <option value="text-embedding-3-small">text-embedding-3-small (1536 dims, $0.02/1M tokens)</option>
                   <option value="text-embedding-3-large">text-embedding-3-large (3072 dims, $0.13/1M tokens)</option>
@@ -483,7 +492,7 @@ export default function HelpBotConfigPage() {
                         semantic: { ...config.semantic, cacheThreshold: parseFloat(e.target.value) },
                       })
                     }
-                    className="bg-slate-700/50 border-white/10 text-white"
+                    className="bg-slate-900/50 border-white/10 text-white"
                   />
                   <p className="text-xs text-slate-500 mt-1">Higher = stricter matching (recommended: 0.85)</p>
                 </div>
@@ -502,7 +511,7 @@ export default function HelpBotConfigPage() {
                         semantic: { ...config.semantic, faqThreshold: parseFloat(e.target.value) },
                       })
                     }
-                    className="bg-slate-700/50 border-white/10 text-white"
+                    className="bg-slate-900/50 border-white/10 text-white"
                   />
                   <p className="text-xs text-slate-500 mt-1">Slightly lower for broader matches (recommended: 0.80)</p>
                 </div>
@@ -542,7 +551,7 @@ export default function HelpBotConfigPage() {
                             semantic: { ...config.semantic, autoPromoteThreshold: parseInt(e.target.value) },
                           })
                         }
-                        className="bg-slate-700/50 border-white/10 text-white"
+                        className="bg-slate-900/50 border-white/10 text-white"
                       />
                     </div>
                     <div>
@@ -559,7 +568,7 @@ export default function HelpBotConfigPage() {
                             semantic: { ...config.semantic, autoPromoteMinThumbsUp: parseInt(e.target.value) },
                           })
                         }
-                        className="bg-slate-700/50 border-white/10 text-white"
+                        className="bg-slate-900/50 border-white/10 text-white"
                       />
                     </div>
                   </div>
@@ -575,7 +584,7 @@ export default function HelpBotConfigPage() {
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.4 }}
-        className="bg-slate-800/50 backdrop-blur-xl rounded-xl p-6 border border-white/10"
+        className="bg-slate-800 border border-slate-700 rounded-xl p-6"
       >
         <h2 className="text-xl font-semibold text-white mb-4 flex items-center gap-2">
           <FileText className="w-5 h-5 text-purple-400" />
@@ -604,7 +613,7 @@ export default function HelpBotConfigPage() {
               }
               placeholder="Leave blank to use default general help prompt..."
               rows={12}
-              className="bg-slate-700/50 border-white/10 text-white font-mono text-sm"
+              className="bg-slate-900/50 border-white/10 text-white font-mono text-sm"
             />
             <p className="text-xs text-slate-500 mt-2">
               Default prompt includes page context, formatting rules, and available features.
@@ -627,7 +636,7 @@ export default function HelpBotConfigPage() {
               }
               placeholder="Leave blank to use default input assistance prompt..."
               rows={12}
-              className="bg-slate-700/50 border-white/10 text-white font-mono text-sm"
+              className="bg-slate-900/50 border-white/10 text-white font-mono text-sm"
             />
             <p className="text-xs text-slate-500 mt-2">
               Default prompt handles field types, URL extraction, and JSON response formatting.
@@ -641,7 +650,7 @@ export default function HelpBotConfigPage() {
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.5 }}
-        className="bg-slate-800/50 backdrop-blur-xl rounded-xl p-6 border border-white/10"
+        className="bg-slate-800 border border-slate-700 rounded-xl p-6"
       >
         <h2 className="text-xl font-semibold text-white mb-4 flex items-center gap-2">
           <MessageCircle className="w-5 h-5 text-green-400" />
@@ -669,7 +678,7 @@ export default function HelpBotConfigPage() {
               }
               placeholder="e.g., 👋 Welcome to {{pageTitle}}! How can I help you today?"
               rows={3}
-              className="bg-slate-700/50 border-white/10 text-white"
+              className="bg-slate-900/50 border-white/10 text-white"
             />
             <p className="text-xs text-slate-500 mt-2">
               Default: Context-aware welcome based on current page
@@ -692,7 +701,7 @@ export default function HelpBotConfigPage() {
               }
               placeholder="e.g., I'll help you fill the {{fieldName}} field for {{agentName}}. What do you have?"
               rows={3}
-              className="bg-slate-700/50 border-white/10 text-white"
+              className="bg-slate-900/50 border-white/10 text-white"
             />
             <p className="text-xs text-slate-500 mt-2">
               Default: Field-specific guidance based on input type
@@ -706,7 +715,7 @@ export default function HelpBotConfigPage() {
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.6 }}
-        className="bg-slate-800/50 backdrop-blur-xl rounded-xl p-6 border border-white/10"
+        className="bg-slate-800 border border-slate-700 rounded-xl p-6"
       >
         <h2 className="text-xl font-semibold text-white mb-4 flex items-center gap-2">
           <Zap className="w-5 h-5 text-pink-400" />
@@ -731,7 +740,7 @@ export default function HelpBotConfigPage() {
                     theme: { ...config.theme, primaryColor: e.target.value },
                   })
                 }
-                className="w-16 h-16 p-1 cursor-pointer bg-slate-700/50 border-white/10"
+                className="w-16 h-16 p-1 cursor-pointer bg-slate-900/50 border-white/10"
               />
               <Input
                 type="text"
@@ -742,7 +751,7 @@ export default function HelpBotConfigPage() {
                     theme: { ...config.theme, primaryColor: e.target.value },
                   })
                 }
-                className="flex-1 bg-slate-700/50 border-white/10 text-white font-mono"
+                className="flex-1 bg-slate-900/50 border-white/10 text-white font-mono"
                 placeholder="#8b5cf6"
               />
             </div>
@@ -762,7 +771,7 @@ export default function HelpBotConfigPage() {
                     theme: { ...config.theme, secondaryColor: e.target.value },
                   })
                 }
-                className="w-16 h-16 p-1 cursor-pointer bg-slate-700/50 border-white/10"
+                className="w-16 h-16 p-1 cursor-pointer bg-slate-900/50 border-white/10"
               />
               <Input
                 type="text"
@@ -773,7 +782,7 @@ export default function HelpBotConfigPage() {
                     theme: { ...config.theme, secondaryColor: e.target.value },
                   })
                 }
-                className="flex-1 bg-slate-700/50 border-white/10 text-white font-mono"
+                className="flex-1 bg-slate-900/50 border-white/10 text-white font-mono"
                 placeholder="#9333ea"
               />
             </div>
@@ -793,7 +802,7 @@ export default function HelpBotConfigPage() {
                     theme: { ...config.theme, borderColor: e.target.value },
                   })
                 }
-                className="w-16 h-16 p-1 cursor-pointer bg-slate-700/50 border-white/10"
+                className="w-16 h-16 p-1 cursor-pointer bg-slate-900/50 border-white/10"
               />
               <Input
                 type="text"
@@ -804,7 +813,7 @@ export default function HelpBotConfigPage() {
                     theme: { ...config.theme, borderColor: e.target.value },
                   })
                 }
-                className="flex-1 bg-slate-700/50 border-white/10 text-white font-mono"
+                className="flex-1 bg-slate-900/50 border-white/10 text-white font-mono"
                 placeholder="#e2e8f0"
               />
             </div>
@@ -823,7 +832,7 @@ export default function HelpBotConfigPage() {
                   theme: { ...config.theme, shadowColor: e.target.value },
                 })
               }
-              className="bg-slate-700/50 border-white/10 text-white font-mono"
+              className="bg-slate-900/50 border-white/10 text-white font-mono"
               placeholder="rgba(139, 92, 246, 0.2)"
             />
           </div>
@@ -844,7 +853,7 @@ export default function HelpBotConfigPage() {
                     theme: { ...config.theme, closeButtonColor: e.target.value },
                   })
                 }
-                className="w-16 h-16 p-1 cursor-pointer bg-slate-700/50 border-white/10"
+                className="w-16 h-16 p-1 cursor-pointer bg-slate-900/50 border-white/10"
               />
               <Input
                 type="text"
@@ -855,7 +864,7 @@ export default function HelpBotConfigPage() {
                     theme: { ...config.theme, closeButtonColor: e.target.value },
                   })
                 }
-                className="flex-1 bg-slate-700/50 border-white/10 text-white font-mono"
+                className="flex-1 bg-slate-900/50 border-white/10 text-white font-mono"
                 placeholder="#ef4444"
               />
             </div>

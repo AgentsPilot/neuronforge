@@ -1,8 +1,15 @@
-import OpenAI from 'openai'
+/**
+ * DSL Repairer / Reviewer
+ *
+ * Uses ProviderFactory for centralized token tracking.
+ */
+
 import type { PluginManagerV2 } from '../../../server/plugin-manager-v2'
+import { ProviderFactory, PROVIDERS } from '@/lib/ai/providerFactory'
+import { OPENAI_MODELS } from '@/lib/ai/providers/openaiProvider'
+import type { CallContext } from '@/lib/ai/providers/baseProvider'
 
 export interface DSLRepairConfig {
-  apiKey?: string
   model?: string
   temperature?: number
   maxTokens?: number
@@ -14,23 +21,23 @@ export interface DSLRepairResult {
 }
 
 export class DSLRepairer {
-  private openai: OpenAI
   private model: string
   private temperature: number
   private maxTokens: number
   private pluginManager?: PluginManagerV2
 
   constructor(config: DSLRepairConfig = {}) {
-    this.openai = new OpenAI({
-      apiKey: config.apiKey || process.env.OPENAI_API_KEY
-    })
-
-    this.model = config.model || 'gpt-5.2'
+    // ProviderFactory handles LLM client initialization - no direct SDK instantiation needed
+    this.model = config.model || OPENAI_MODELS.GPT_5_2
     this.temperature = config.temperature ?? 0
     this.maxTokens = config.maxTokens ?? 6000
     this.pluginManager = config.pluginManager
   }
 
+  /**
+   * Repair DSL using LLM
+   * Uses ProviderFactory for centralized token tracking
+   */
   async repairDSL(
     enhancedPrompt: any,
     dslBeforeRepair: any[]
@@ -38,18 +45,30 @@ export class DSLRepairer {
     const systemPrompt = this.buildSystemPrompt()
     const userPrompt = this.buildUserPrompt(enhancedPrompt, dslBeforeRepair)
 
-    const response = await this.openai.chat.completions.create({
+    // Get provider from factory for centralized token tracking
+    const provider = ProviderFactory.getProvider(PROVIDERS.OPENAI)
+    const context: CallContext = {
+      userId: 'system',
+      feature: 'v6_pipeline',
+      component: 'DSLRepairer',
+      category: 'agent_generation',
+      activity_type: 'dsl_repair',
+      activity_name: 'repair_dsl',
+    }
+
+    const response = await provider.chatCompletion({
       model: this.model,
       temperature: this.temperature,
-      max_completion_tokens: this.maxTokens,
+      max_tokens: this.maxTokens,
       response_format: { type: 'json_object' },
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userPrompt }
       ]
-    })
+    }, context)
 
-    const content = response.choices[0]?.message?.content
+    // ProviderFactory returns OpenAI-compatible format
+    const content = response.choices?.[0]?.message?.content
     if (!content) {
       throw new Error('Empty repair response from LLM')
     }

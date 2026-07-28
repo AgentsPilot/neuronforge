@@ -19,13 +19,12 @@
  * Success Rate Target: 95%+ on simple, 90%+ on complex workflows
  */
 
-import Anthropic from '@anthropic-ai/sdk';
 import { PluginManagerV2 } from '../server/plugin-manager-v2';
+import { ProviderFactory, PROVIDERS } from '@/lib/ai/providerFactory';
+import { ANTHROPIC_MODELS } from '@/lib/ai/providers/anthropicProvider';
+import type { CallContext } from '@/lib/ai/providers/baseProvider';
 
-// Initialize Anthropic client
-const anthropic = new Anthropic({
-  apiKey: process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_API_KEY,
-});
+// ProviderFactory handles LLM client initialization - no direct SDK instantiation needed
 
 /**
  * Stage 1 Output: Workflow structure with parameter placeholders
@@ -147,54 +146,60 @@ export async function designWorkflowStructure(
   try {
     console.log('🔄 [Stage 1] Calling Claude Sonnet 4 API...');
 
+    // Get provider from factory for centralized token tracking
+    const provider = ProviderFactory.getProvider(PROVIDERS.ANTHROPIC);
+    const context: CallContext = {
+      userId,
+      feature: 'agent_creation',
+      component: 'Stage1WorkflowDesigner',
+      category: 'workflow_design',
+      activity_type: 'workflow_generation',
+      activity_name: 'design_workflow_structure',
+    };
+
     // Create timeout promise (60 seconds)
     const timeoutPromise = new Promise((_, reject) => {
       setTimeout(() => reject(new Error('Stage 1 API timeout after 60 seconds')), 60000);
     });
 
-    // Call Claude Sonnet 4 with STRICT mode
-    const responsePromise = anthropic.messages.create({
-      model: 'claude-sonnet-4-20250514',
+    // Call Claude Sonnet 4 with tool use via ProviderFactory
+    const responsePromise = provider.chatCompletionWithTools({
+      model: ANTHROPIC_MODELS.SONNET_4,
       max_tokens: 4096,
       temperature: 0.3, // Low temperature for consistency
-      system: systemPrompt,
       messages: [
-        {
-          role: 'user',
-          content: userMessage
-        }
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userMessage }
       ],
       tools: [
         {
-          name: 'workflow_designer',
-          description: 'Design a workflow structure with parameter placeholders',
-          input_schema: buildStage1ToolSchema()
+          type: 'function',
+          function: {
+            name: 'workflow_designer',
+            description: 'Design a workflow structure with parameter placeholders',
+            parameters: buildStage1ToolSchema()
+          }
         }
       ],
-      tool_choice: {
-        type: 'tool',
-        name: 'workflow_designer'
-      }
-    });
+      tool_choice: { type: 'function', function: { name: 'workflow_designer' } }
+    }, context);
 
     // Race between API call and timeout
-    const response = await Promise.race([responsePromise, timeoutPromise]) as Anthropic.Message;
+    const response = await Promise.race([responsePromise, timeoutPromise]) as any;
 
-    // Extract tool use from response
-    const toolUse = response.content.find((block): block is Anthropic.ToolUseBlock =>
-      block.type === 'tool_use' && block.name === 'workflow_designer'
-    );
+    // ProviderFactory returns OpenAI-compatible format - extract tool call
+    const toolCall = response.choices?.[0]?.message?.tool_calls?.[0];
 
-    if (!toolUse) {
+    if (!toolCall || toolCall.function?.name !== 'workflow_designer') {
       throw new Error('No workflow design returned from Claude');
     }
 
-    const design = toolUse.input as any;
+    const design = JSON.parse(toolCall.function.arguments);
 
-    // Add token usage
+    // Add token usage from response
     const tokensUsed = {
-      input: response.usage.input_tokens,
-      output: response.usage.output_tokens
+      input: response.usage?.prompt_tokens || 0,
+      output: response.usage?.completion_tokens || 0
     };
 
     console.log('✅ [Stage 1] Workflow structure designed:', {

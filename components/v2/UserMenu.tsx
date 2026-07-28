@@ -135,13 +135,17 @@ export function UserMenu({ triggerIcon = 'avatar' }: UserMenuProps) {
     return null
   }
 
+  // Determine if we're in Business OS context based on current path
+  const isBusinessOS = typeof window !== 'undefined' && window.location.pathname.startsWith('/business-os')
+
   const menuItems = [
     {
       icon: Settings,
       label: 'Settings',
       onClick: () => {
         setIsOpen(false)
-        router.push('/v2/settings') // V2 settings page (Profile + Security)
+        // Route to Business OS settings if in Business OS context, otherwise V2 settings
+        router.push(isBusinessOS ? '/business-os/settings' : '/v2/settings')
       }
     },
     {
@@ -149,7 +153,7 @@ export function UserMenu({ triggerIcon = 'avatar' }: UserMenuProps) {
       label: 'Billing',
       onClick: () => {
         setIsOpen(false)
-        router.push('/v2/billing') // V2 billing page
+        router.push(isBusinessOS ? '/business-os/payments?tab=settings' : '/v2/billing')
       }
     },
     {
@@ -157,7 +161,7 @@ export function UserMenu({ triggerIcon = 'avatar' }: UserMenuProps) {
       label: 'Notifications',
       onClick: () => {
         setIsOpen(false)
-        router.push('/v2/notifications') // V2 notifications page
+        router.push('/v2/notifications') // V2 notifications page (shared)
       }
     },
     {

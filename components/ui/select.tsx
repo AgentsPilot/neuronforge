@@ -15,9 +15,11 @@ export const SelectTrigger = React.forwardRef<
   <SelectPrimitive.Trigger
     ref={ref}
     className={cn(
-      'flex h-10 w-full items-center justify-between rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background',
-      'placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2',
+      'flex h-10 w-full items-center justify-between rounded-md border px-3 py-2 text-sm',
+      'border-[var(--v2-border,theme(colors.gray.200))] bg-[var(--v2-bg,white)] text-[var(--v2-text-primary,theme(colors.gray.900))]',
+      'placeholder:text-[var(--v2-text-muted,theme(colors.gray.400))] focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2',
       'disabled:cursor-not-allowed disabled:opacity-50',
+      'rtl:flex-row-reverse rtl:text-right',
       className
     )}
     {...props}
@@ -36,11 +38,13 @@ export const SelectContent = React.forwardRef<
     <SelectPrimitive.Content
       ref={ref}
       position={position}
+      align="start"
       className={cn(
-        'z-[100] min-w-[8rem] overflow-hidden rounded-md border border-gray-200 bg-white text-popover-foreground shadow-md',
-        'dark:border-gray-700 dark:bg-gray-900',
+        'z-[100] min-w-[8rem] overflow-hidden rounded-md border shadow-md',
+        'border-[var(--v2-border,theme(colors.gray.200))] bg-[var(--v2-surface,white)] text-[var(--v2-text-primary,theme(colors.gray.900))]',
         'data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95',
         position === 'popper' && 'data-[side=bottom]:translate-y-1 data-[side=top]:-translate-y-1',
+        'rtl:text-right',
         className
       )}
       {...props}
@@ -78,13 +82,15 @@ export const SelectItem = React.forwardRef<
     ref={ref}
     className={cn(
       'relative flex w-full cursor-pointer select-none items-center rounded-sm px-2 py-1.5 text-sm outline-none',
-      'focus:bg-accent focus:text-accent-foreground',
+      'text-[var(--v2-text-primary,inherit)]',
+      'focus:bg-[var(--v2-surface-hover,theme(colors.gray.100))] focus:text-[var(--v2-text-primary,inherit)]',
       'data-[disabled]:pointer-events-none data-[disabled]:opacity-50',
+      'rtl:flex-row-reverse rtl:text-right',
       className
     )}
     {...props}
   >
-    <span className="mr-2 h-4 w-4 flex items-center justify-center">
+    <span className="me-2 h-4 w-4 flex items-center justify-center">
       <SelectPrimitive.ItemIndicator>
         <Check className="h-4 w-4" />
       </SelectPrimitive.ItemIndicator>

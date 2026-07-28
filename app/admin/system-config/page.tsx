@@ -541,35 +541,37 @@ export default function SystemConfigPage() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-96">
-        <div className="text-center">
-          <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
-          <p className="text-slate-400">Loading configuration...</p>
-        </div>
+      <div className="flex items-center justify-center py-12">
+        <RefreshCw className="w-8 h-8 text-purple-500 animate-spin" />
       </div>
     );
   }
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold text-white mb-2 flex items-center gap-3">
-            <DollarSign className="w-8 h-8 text-green-400" />
-            Pricing & Billing Configuration
-          </h1>
-          <p className="text-slate-400">Manage AI model pricing, billing settings, boost packs, and cost calculator parameters</p>
+      <header className="border-b border-slate-700">
+        <div className="flex items-center justify-between pb-4">
+          <div className="flex items-center gap-4">
+            <div className="flex flex-col">
+              <div className="flex items-center gap-4 mb-1">
+                <h1 className="text-xl font-semibold text-white">Pricing & Billing Configuration</h1>
+                <span className="text-xs px-2 py-1 rounded bg-purple-500/20 text-purple-400">System Config</span>
+              </div>
+              <p className="text-sm text-slate-400">Manage AI model pricing, billing settings, boost packs, and cost calculator parameters</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-4">
+            <button
+              onClick={() => fetchData()}
+              disabled={loading}
+              className="p-2 rounded-lg border border-slate-700 hover:bg-slate-800 transition-colors"
+            >
+              <RefreshCw className={`w-5 h-5 text-slate-400 ${loading ? 'animate-spin' : ''}`} />
+            </button>
+          </div>
         </div>
-
-        <button
-          onClick={() => fetchData()}
-          disabled={loading}
-          className="p-2 bg-slate-800/50 hover:bg-slate-700/50 rounded-lg transition-colors disabled:opacity-50"
-        >
-          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-        </button>
-      </div>
+      </header>
 
       {/* Success/Error Messages */}
       {success && (
@@ -599,7 +601,7 @@ export default function SystemConfigPage() {
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.1 }}
-        className="bg-slate-800/50 backdrop-blur-xl rounded-xl border border-white/10"
+        className="bg-slate-800 border border-slate-700 rounded-xl"
       >
         <div className="p-6 border-b border-white/10">
           <div className="flex items-center justify-between">
@@ -632,7 +634,7 @@ export default function SystemConfigPage() {
               </button>
               <button
                 onClick={() => setPricingExpanded(!pricingExpanded)}
-                className="p-2 bg-slate-700/50 hover:bg-slate-600/50 rounded-lg transition-colors"
+                className="p-2 bg-slate-900/50 hover:bg-slate-600/50 rounded-lg transition-colors"
               >
                 {pricingExpanded ? (
                   <ChevronUp className="w-4 h-4 text-slate-400" />
@@ -833,7 +835,7 @@ export default function SystemConfigPage() {
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.12 }}
-        className="bg-slate-800/50 backdrop-blur-xl rounded-xl border border-white/10"
+        className="bg-slate-800 border border-slate-700 rounded-xl"
       >
         <div className="p-6 border-b border-white/10">
           <div className="flex items-center justify-between">
@@ -848,7 +850,7 @@ export default function SystemConfigPage() {
             </div>
             <button
               onClick={() => setBillingExpanded(!billingExpanded)}
-              className="p-2 bg-slate-700/50 hover:bg-slate-600/50 rounded-lg transition-colors"
+              className="p-2 bg-slate-900/50 hover:bg-slate-600/50 rounded-lg transition-colors"
             >
               {billingExpanded ? (
                 <ChevronUp className="w-4 h-4 text-slate-400" />
@@ -925,7 +927,7 @@ export default function SystemConfigPage() {
                     })}
                     min="0"
                     max="30"
-                    className="w-full px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-green-500"
+                    className="w-full px-4 py-2 bg-slate-900/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-green-500"
                   />
                   <p className="text-xs text-slate-500">
                     Number of days to wait after a payment failure before pausing agents.
@@ -1038,7 +1040,7 @@ export default function SystemConfigPage() {
                                   onChange={(e) => setBoostPacks(boostPacks.map(p =>
                                     p.id === pack.id ? { ...p, pack_key: e.target.value } : p
                                   ))}
-                                  className="w-full px-3 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white text-sm"
+                                  className="w-full px-3 py-2 bg-slate-900/50 border border-slate-600 rounded-lg text-white text-sm"
                                   placeholder="boost_quick"
                                 />
                               </div>
@@ -1050,7 +1052,7 @@ export default function SystemConfigPage() {
                                   onChange={(e) => setBoostPacks(boostPacks.map(p =>
                                     p.id === pack.id ? { ...p, pack_name: e.target.value } : p
                                   ))}
-                                  className="w-full px-3 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white text-sm"
+                                  className="w-full px-3 py-2 bg-slate-900/50 border border-slate-600 rounded-lg text-white text-sm"
                                   placeholder="Quick Boost"
                                 />
                               </div>
@@ -1065,7 +1067,7 @@ export default function SystemConfigPage() {
                                   onChange={(e) => setBoostPacks(boostPacks.map(p =>
                                     p.id === pack.id ? { ...p, display_name: e.target.value } : p
                                   ))}
-                                  className="w-full px-3 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white text-sm"
+                                  className="w-full px-3 py-2 bg-slate-900/50 border border-slate-600 rounded-lg text-white text-sm"
                                   placeholder="Quick Boost"
                                 />
                               </div>
@@ -1077,7 +1079,7 @@ export default function SystemConfigPage() {
                                   onChange={(e) => setBoostPacks(boostPacks.map(p =>
                                     p.id === pack.id ? { ...p, badge_text: e.target.value || null } : p
                                   ))}
-                                  className="w-full px-3 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white text-sm"
+                                  className="w-full px-3 py-2 bg-slate-900/50 border border-slate-600 rounded-lg text-white text-sm"
                                   placeholder="POPULAR"
                                 />
                               </div>
@@ -1091,7 +1093,7 @@ export default function SystemConfigPage() {
                                 onChange={(e) => setBoostPacks(boostPacks.map(p =>
                                   p.id === pack.id ? { ...p, description: e.target.value } : p
                                 ))}
-                                className="w-full px-3 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white text-sm"
+                                className="w-full px-3 py-2 bg-slate-900/50 border border-slate-600 rounded-lg text-white text-sm"
                                 placeholder="Perfect for a quick credit refill"
                               />
                             </div>
@@ -1107,7 +1109,7 @@ export default function SystemConfigPage() {
                                   ))}
                                   step="0.01"
                                   min="0"
-                                  className="w-full px-3 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white text-sm"
+                                  className="w-full px-3 py-2 bg-slate-900/50 border border-slate-600 rounded-lg text-white text-sm"
                                 />
                               </div>
                               <div>
@@ -1121,7 +1123,7 @@ export default function SystemConfigPage() {
                                   step="1"
                                   min="0"
                                   max="100"
-                                  className="w-full px-3 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white text-sm"
+                                  className="w-full px-3 py-2 bg-slate-900/50 border border-slate-600 rounded-lg text-white text-sm"
                                 />
                               </div>
                             </div>
@@ -1270,7 +1272,7 @@ export default function SystemConfigPage() {
 
               {/* Add New Boost Pack Modal/Form */}
               {showAddBoostPack && (
-                <div className="bg-slate-700/50 rounded-lg p-4 space-y-3 border-2 border-yellow-500/30">
+                <div className="bg-slate-900/50 rounded-lg p-4 space-y-3 border-2 border-yellow-500/30">
                   <div className="flex items-center justify-between pb-2 border-b border-white/10">
                     <h4 className="text-white font-semibold flex items-center gap-2">
                       <Zap className="w-4 h-4 text-yellow-400" />
@@ -1285,7 +1287,7 @@ export default function SystemConfigPage() {
                         type="text"
                         value={newBoostPack.pack_key}
                         onChange={(e) => setNewBoostPack({ ...newBoostPack, pack_key: e.target.value })}
-                        className="w-full px-3 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white text-sm"
+                        className="w-full px-3 py-2 bg-slate-900/50 border border-slate-600 rounded-lg text-white text-sm"
                         placeholder="boost_quick"
                       />
                     </div>
@@ -1295,7 +1297,7 @@ export default function SystemConfigPage() {
                         type="text"
                         value={newBoostPack.pack_name}
                         onChange={(e) => setNewBoostPack({ ...newBoostPack, pack_name: e.target.value })}
-                        className="w-full px-3 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white text-sm"
+                        className="w-full px-3 py-2 bg-slate-900/50 border border-slate-600 rounded-lg text-white text-sm"
                         placeholder="Quick Boost"
                       />
                     </div>
@@ -1308,7 +1310,7 @@ export default function SystemConfigPage() {
                         type="text"
                         value={newBoostPack.display_name}
                         onChange={(e) => setNewBoostPack({ ...newBoostPack, display_name: e.target.value })}
-                        className="w-full px-3 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white text-sm"
+                        className="w-full px-3 py-2 bg-slate-900/50 border border-slate-600 rounded-lg text-white text-sm"
                         placeholder="Quick Boost"
                       />
                     </div>
@@ -1318,7 +1320,7 @@ export default function SystemConfigPage() {
                         type="text"
                         value={newBoostPack.badge_text || ''}
                         onChange={(e) => setNewBoostPack({ ...newBoostPack, badge_text: e.target.value || null })}
-                        className="w-full px-3 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white text-sm"
+                        className="w-full px-3 py-2 bg-slate-900/50 border border-slate-600 rounded-lg text-white text-sm"
                         placeholder="POPULAR"
                       />
                     </div>
@@ -1330,7 +1332,7 @@ export default function SystemConfigPage() {
                       type="text"
                       value={newBoostPack.description}
                       onChange={(e) => setNewBoostPack({ ...newBoostPack, description: e.target.value })}
-                      className="w-full px-3 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white text-sm"
+                      className="w-full px-3 py-2 bg-slate-900/50 border border-slate-600 rounded-lg text-white text-sm"
                       placeholder="Perfect for a quick credit refill"
                     />
                   </div>
@@ -1344,7 +1346,7 @@ export default function SystemConfigPage() {
                         onChange={(e) => setNewBoostPack({ ...newBoostPack, price_usd: parseFloat(e.target.value) || 0 })}
                         step="0.01"
                         min="0"
-                        className="w-full px-3 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white text-sm"
+                        className="w-full px-3 py-2 bg-slate-900/50 border border-slate-600 rounded-lg text-white text-sm"
                       />
                     </div>
                     <div>
@@ -1356,7 +1358,7 @@ export default function SystemConfigPage() {
                         step="1"
                         min="0"
                         max="100"
-                        className="w-full px-3 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white text-sm"
+                        className="w-full px-3 py-2 bg-slate-900/50 border border-slate-600 rounded-lg text-white text-sm"
                       />
                     </div>
                   </div>
@@ -1429,7 +1431,7 @@ export default function SystemConfigPage() {
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.15 }}
-        className="bg-slate-800/50 backdrop-blur-xl rounded-xl border border-white/10"
+        className="bg-slate-800 border border-slate-700 rounded-xl"
       >
         <div className="p-6 border-b border-white/10">
           <div className="flex items-center justify-between">
@@ -1444,7 +1446,7 @@ export default function SystemConfigPage() {
             </div>
             <button
               onClick={() => setCalcExpanded(!calcExpanded)}
-              className="p-2 bg-slate-700/50 hover:bg-slate-600/50 rounded-lg transition-colors"
+              className="p-2 bg-slate-900/50 hover:bg-slate-600/50 rounded-lg transition-colors"
             >
               {calcExpanded ? (
                 <ChevronUp className="w-4 h-4 text-slate-400" />
@@ -1505,7 +1507,7 @@ export default function SystemConfigPage() {
                     onChange={(e) => setCalcConfig({ ...calcConfig, baseTokens: parseFloat(e.target.value) })}
                     min="0"
                     step="100"
-                    className="w-full px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
+                    className="w-full px-4 py-2 bg-slate-900/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
                   />
                   <div className="text-xs text-slate-400 leading-relaxed">
                     <p className="text-blue-300 font-medium mb-1">Foundation Tokens (default: 5000)</p>
@@ -1524,7 +1526,7 @@ export default function SystemConfigPage() {
                     onChange={(e) => setCalcConfig({ ...calcConfig, tokensPerPlugin: parseFloat(e.target.value) })}
                     min="0"
                     step="50"
-                    className="w-full px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
+                    className="w-full px-4 py-2 bg-slate-900/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
                   />
                   <div className="text-xs text-slate-400 leading-relaxed">
                     <p className="text-blue-300 font-medium mb-1">Plugin Token Cost (default: 400)</p>
@@ -1544,7 +1546,7 @@ export default function SystemConfigPage() {
                     min="1"
                     max="3"
                     step="0.1"
-                    className="w-full px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
+                    className="w-full px-4 py-2 bg-slate-900/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
                   />
                   <div className="text-xs text-slate-400 leading-relaxed">
                     <p className="text-purple-300 font-medium mb-1">Burst Factor (default: 1.5)</p>
@@ -1564,7 +1566,7 @@ export default function SystemConfigPage() {
                     min="0"
                     max="1"
                     step="0.1"
-                    className="w-full px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
+                    className="w-full px-4 py-2 bg-slate-900/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
                   />
                   <div className="text-xs text-slate-400 leading-relaxed">
                     <p className="text-green-300 font-medium mb-1">Active Usage Percentage (default: 0.8)</p>
@@ -1583,7 +1585,7 @@ export default function SystemConfigPage() {
                     onChange={(e) => setCalcConfig({ ...calcConfig, orchestrationOverheadMs: parseFloat(e.target.value) })}
                     min="0"
                     step="100"
-                    className="w-full px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
+                    className="w-full px-4 py-2 bg-slate-900/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
                   />
                   <div className="text-xs text-slate-400 leading-relaxed">
                     <p className="text-yellow-300 font-medium mb-1">Coordination Time (default: 500ms)</p>
@@ -1602,7 +1604,7 @@ export default function SystemConfigPage() {
                     onChange={(e) => setCalcConfig({ ...calcConfig, estimatedDurationMs: parseFloat(e.target.value) })}
                     min="0"
                     step="1000"
-                    className="w-full px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
+                    className="w-full px-4 py-2 bg-slate-900/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
                   />
                   <div className="text-xs text-slate-400 leading-relaxed">
                     <p className="text-cyan-300 font-medium mb-1">Average Execution Time (default: 15000ms)</p>
@@ -1622,7 +1624,7 @@ export default function SystemConfigPage() {
                     min="0"
                     max="100"
                     step="1"
-                    className="w-full px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
+                    className="w-full px-4 py-2 bg-slate-900/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
                   />
                   <div className="text-xs text-slate-400 leading-relaxed">
                     <p className="text-red-300 font-medium mb-1">Error Rate (default: 5%)</p>
@@ -1641,7 +1643,7 @@ export default function SystemConfigPage() {
                     onChange={(e) => setCalcConfig({ ...calcConfig, estimatedRetryRate: parseFloat(e.target.value) })}
                     min="0"
                     step="0.1"
-                    className="w-full px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
+                    className="w-full px-4 py-2 bg-slate-900/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
                   />
                   <div className="text-xs text-slate-400 leading-relaxed">
                     <p className="text-orange-300 font-medium mb-1">Retry Multiplier (default: 0.3)</p>
@@ -1660,7 +1662,7 @@ export default function SystemConfigPage() {
                     onChange={(e) => setCalcConfig({ ...calcConfig, ioRatio: parseFloat(e.target.value) })}
                     min="0"
                     step="0.1"
-                    className="w-full px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
+                    className="w-full px-4 py-2 bg-slate-900/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
                   />
                   <div className="text-xs text-slate-400 leading-relaxed">
                     <p className="text-indigo-300 font-medium mb-1">Output/Input Token Ratio (default: 2.0)</p>
@@ -1689,7 +1691,7 @@ export default function SystemConfigPage() {
                     min="1"
                     max="20"
                     step="1"
-                    className="w-full px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
+                    className="w-full px-4 py-2 bg-slate-900/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
                   />
                   <div className="text-xs text-slate-400 leading-relaxed">
                     <p className="text-yellow-300 font-medium mb-1">Minimum Cycles (default: 3)</p>
@@ -1709,7 +1711,7 @@ export default function SystemConfigPage() {
                     min="1"
                     max="50"
                     step="1"
-                    className="w-full px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
+                    className="w-full px-4 py-2 bg-slate-900/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
                   />
                   <div className="text-xs text-slate-400 leading-relaxed">
                     <p className="text-red-300 font-medium mb-1">Safety Limit (default: 15)</p>
@@ -1738,7 +1740,7 @@ export default function SystemConfigPage() {
                     min="1"
                     max="1000"
                     step="1"
-                    className="w-full px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
+                    className="w-full px-4 py-2 bg-slate-900/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
                   />
                   <div className="text-xs text-slate-400 leading-relaxed">
                     <p className="text-blue-300 font-medium mb-1">Average Monthly Usage (default: 30)</p>
@@ -1757,7 +1759,7 @@ export default function SystemConfigPage() {
                     onChange={(e) => setCalcConfig({ ...calcConfig, agentCreationCost: parseFloat(e.target.value) })}
                     min="0"
                     step="100"
-                    className="w-full px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
+                    className="w-full px-4 py-2 bg-slate-900/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
                   />
                   <div className="text-xs text-slate-400 leading-relaxed">
                     <p className="text-purple-300 font-medium mb-1">One-Time Creation Fee (default: 1000)</p>
@@ -1776,7 +1778,7 @@ export default function SystemConfigPage() {
                     onChange={(e) => setCalcConfig({ ...calcConfig, creditCostUsd: parseFloat(e.target.value) })}
                     min="0"
                     step="0.00001"
-                    className="w-full px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500 font-mono"
+                    className="w-full px-4 py-2 bg-slate-900/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500 font-mono"
                   />
                   <div className="text-xs text-slate-400 leading-relaxed">
                     <p className="text-green-300 font-medium mb-1">Real Money Value (default: $0.00048)</p>
@@ -1795,7 +1797,7 @@ export default function SystemConfigPage() {
                     onChange={(e) => setCalcConfig({ ...calcConfig, minimumMonthlyCostUsd: parseFloat(e.target.value) })}
                     min="0"
                     step="1"
-                    className="w-full px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
+                    className="w-full px-4 py-2 bg-slate-900/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
                   />
                   <div className="text-xs text-slate-400 leading-relaxed">
                     <p className="text-amber-300 font-medium mb-1">Floor Price (default: $0)</p>
@@ -1814,7 +1816,7 @@ export default function SystemConfigPage() {
                     onChange={(e) => setCalcConfig({ ...calcConfig, baseCreditsPerRun: parseFloat(e.target.value) })}
                     min="0"
                     step="10"
-                    className="w-full px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
+                    className="w-full px-4 py-2 bg-slate-900/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
                   />
                   <div className="text-xs text-slate-400 leading-relaxed">
                     <p className="text-cyan-300 font-medium mb-1">Flat Fee Per Run (default: 50)</p>
@@ -1833,7 +1835,7 @@ export default function SystemConfigPage() {
                     onChange={(e) => setCalcConfig({ ...calcConfig, pluginOverheadPerRun: parseFloat(e.target.value) })}
                     min="0"
                     step="10"
-                    className="w-full px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
+                    className="w-full px-4 py-2 bg-slate-900/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
                   />
                   <div className="text-xs text-slate-400 leading-relaxed">
                     <p className="text-indigo-300 font-medium mb-1">Plugin Fee (default: 20)</p>
@@ -1852,7 +1854,7 @@ export default function SystemConfigPage() {
                     onChange={(e) => setCalcConfig({ ...calcConfig, systemOverheadPerRun: parseFloat(e.target.value) })}
                     min="0"
                     step="5"
-                    className="w-full px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
+                    className="w-full px-4 py-2 bg-slate-900/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
                   />
                   <div className="text-xs text-slate-400 leading-relaxed">
                     <p className="text-slate-300 font-medium mb-1">Infrastructure Fee (default: 10)</p>
@@ -1871,7 +1873,7 @@ export default function SystemConfigPage() {
                     onChange={(e) => setCalcConfig({ ...calcConfig, executionStepMultiplier: parseFloat(e.target.value) })}
                     min="1"
                     step="0.1"
-                    className="w-full px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
+                    className="w-full px-4 py-2 bg-slate-900/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
                   />
                   <div className="text-xs text-slate-400 leading-relaxed">
                     <p className="text-purple-300 font-medium mb-1">Complexity Multiplier (default: 1.2)</p>
@@ -1890,7 +1892,7 @@ export default function SystemConfigPage() {
                     onChange={(e) => setCalcConfig({ ...calcConfig, freeTierCredits: parseFloat(e.target.value) })}
                     min="0"
                     step="100"
-                    className="w-full px-4 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
+                    className="w-full px-4 py-2 bg-slate-900/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500"
                   />
                   <div className="text-xs text-slate-400 leading-relaxed">
                     <p className="text-green-300 font-medium mb-1">Welcome Bonus (default: 1000)</p>
@@ -1929,7 +1931,7 @@ export default function SystemConfigPage() {
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.2 }}
-        className="bg-slate-800/50 backdrop-blur-xl rounded-xl border border-white/10"
+        className="bg-slate-800 border border-slate-700 rounded-xl"
       >
         <div className="p-6 border-b border-white/10">
           <div className="flex items-center justify-between">
@@ -1944,7 +1946,7 @@ export default function SystemConfigPage() {
             </div>
             <button
               onClick={() => setAdvancedExpanded(!advancedExpanded)}
-              className="p-2 bg-slate-700/50 hover:bg-slate-600/50 rounded-lg transition-colors"
+              className="p-2 bg-slate-900/50 hover:bg-slate-600/50 rounded-lg transition-colors"
             >
               {advancedExpanded ? (
                 <ChevronUp className="w-4 h-4 text-slate-400" />

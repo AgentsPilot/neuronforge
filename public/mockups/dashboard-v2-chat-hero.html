@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dashboard V2 - Chat Hero Design</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%);
+      min-height: 100vh;
+    }
+
+    .chat-glow {
+      box-shadow:
+        0 0 0 1px rgba(99, 102, 241, 0.1),
+        0 4px 24px rgba(99, 102, 241, 0.15),
+        0 8px 48px rgba(99, 102, 241, 0.1);
+    }
+
+    .chat-glow:focus-within {
+      box-shadow:
+        0 0 0 2px rgba(99, 102, 241, 0.3),
+        0 8px 32px rgba(99, 102, 241, 0.2),
+        0 16px 64px rgba(99, 102, 241, 0.15);
+    }
+
+    .suggestion-chip {
+      transition: all 0.2s ease;
+    }
+    .suggestion-chip:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    }
+
+    .card {
+      background: white;
+      border: 1px solid #e2e8f0;
+      border-radius: 16px;
+    }
+
+    .status-pulse {
+      animation: pulse 2s infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+  </style>
+</head>
+<body>
+  <div class="max-w-4xl mx-auto px-4 py-6">
+
+    <!-- Minimal Top Bar -->
+    <header class="flex items-center justify-between mb-8">
+      <div class="flex items-center gap-2">
+        <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center">
+          <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+          </svg>
+        </div>
+        <span class="font-semibold text-slate-800">AgentPilot</span>
+      </div>
+      <div class="flex items-center gap-2">
+        <button class="px-3 py-1.5 text-sm text-slate-600 hover:text-slate-900 transition">My Automations</button>
+        <button class="px-3 py-1.5 text-sm text-slate-600 hover:text-slate-900 transition">Analytics</button>
+        <div class="w-8 h-8 rounded-full bg-gradient-to-br from-indigo-400 to-purple-400 ml-2"></div>
+      </div>
+    </header>
+
+    <!-- HERO: Chat Input -->
+    <div class="text-center mb-8">
+      <h1 class="text-3xl font-bold text-slate-900 mb-2">What would you like to automate?</h1>
+      <p class="text-slate-500">Describe any task and I'll build it for you</p>
+    </div>
+
+    <!-- Big Beautiful Chat Input -->
+    <div class="chat-glow bg-white rounded-2xl p-6 mb-6 transition-all duration-300">
+      <textarea
+        placeholder="Example: Every morning, summarize my unread emails and send me a Slack message with the highlights..."
+        rows="3"
+        class="w-full text-lg text-slate-800 placeholder:text-slate-400 outline-none resize-none"
+      ></textarea>
+      <div class="flex items-center justify-between mt-4 pt-4 border-t border-slate-100">
+        <div class="flex items-center gap-2">
+          <button class="p-2 rounded-lg hover:bg-slate-100 transition text-slate-400 hover:text-slate-600">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+            </svg>
+          </button>
+          <span class="text-xs text-slate-400">or speak your idea</span>
+        </div>
+        <button class="px-6 py-2.5 bg-gradient-to-r from-indigo-500 to-purple-600 text-white font-medium rounded-xl hover:opacity-90 transition flex items-center gap-2">
+          <span>Create Automation</span>
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7l5 5m0 0l-5 5m5-5H6" />
+          </svg>
+        </button>
+      </div>
+    </div>
+
+    <!-- Quick Suggestions -->
+    <div class="flex flex-wrap gap-2 justify-center mb-10">
+      <button class="suggestion-chip px-4 py-2 bg-white border border-slate-200 rounded-full text-sm text-slate-600 hover:border-indigo-300 hover:text-indigo-600">
+        📧 Summarize my emails
+      </button>
+      <button class="suggestion-chip px-4 py-2 bg-white border border-slate-200 rounded-full text-sm text-slate-600 hover:border-indigo-300 hover:text-indigo-600">
+        📊 Track new leads
+      </button>
+      <button class="suggestion-chip px-4 py-2 bg-white border border-slate-200 rounded-full text-sm text-slate-600 hover:border-indigo-300 hover:text-indigo-600">
+        🧾 Send invoices
+      </button>
+      <button class="suggestion-chip px-4 py-2 bg-white border border-slate-200 rounded-full text-sm text-slate-600 hover:border-indigo-300 hover:text-indigo-600">
+        📱 Post to social media
+      </button>
+    </div>
+
+    <!-- Divider -->
+    <div class="flex items-center gap-4 mb-8">
+      <div class="flex-1 h-px bg-slate-200"></div>
+      <span class="text-xs text-slate-400 uppercase tracking-wider">Your Automations</span>
+      <div class="flex-1 h-px bg-slate-200"></div>
+    </div>
+
+    <!-- Stats Summary - Compact -->
+    <div class="grid grid-cols-4 gap-3 mb-6">
+      <div class="card p-4 text-center">
+        <p class="text-2xl font-bold text-slate-900">8</p>
+        <p class="text-xs text-slate-500">Running</p>
+      </div>
+      <div class="card p-4 text-center">
+        <p class="text-2xl font-bold text-emerald-600">98%</p>
+        <p class="text-xs text-slate-500">Success</p>
+      </div>
+      <div class="card p-4 text-center">
+        <p class="text-2xl font-bold text-slate-900">127h</p>
+        <p class="text-xs text-slate-500">Saved</p>
+      </div>
+      <div class="card p-4 text-center">
+        <p class="text-2xl font-bold text-emerald-600">$6.3K</p>
+        <p class="text-xs text-slate-500">Value</p>
+      </div>
+    </div>
+
+    <!-- Automations Grid -->
+    <div class="grid grid-cols-2 gap-4">
+      <!-- Automation Card -->
+      <div class="card p-4 hover:shadow-lg transition cursor-pointer">
+        <div class="flex items-center gap-3 mb-3">
+          <div class="w-10 h-10 rounded-xl bg-blue-100 flex items-center justify-center">
+            <svg class="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+            </svg>
+          </div>
+          <div class="flex-1">
+            <p class="font-medium text-slate-900">Email Digest</p>
+            <p class="text-xs text-slate-500">247 runs • Last: 5 min ago</p>
+          </div>
+          <span class="w-2 h-2 rounded-full bg-emerald-500 status-pulse"></span>
+        </div>
+      </div>
+
+      <div class="card p-4 hover:shadow-lg transition cursor-pointer">
+        <div class="flex items-center gap-3 mb-3">
+          <div class="w-10 h-10 rounded-xl bg-purple-100 flex items-center justify-center">
+            <svg class="w-5 h-5 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+            </svg>
+          </div>
+          <div class="flex-1">
+            <p class="font-medium text-slate-900">Lead Capture</p>
+            <p class="text-xs text-slate-500">184 runs • Last: 23 min ago</p>
+          </div>
+          <span class="w-2 h-2 rounded-full bg-emerald-500 status-pulse"></span>
+        </div>
+      </div>
+
+      <div class="card p-4 hover:shadow-lg transition cursor-pointer">
+        <div class="flex items-center gap-3 mb-3">
+          <div class="w-10 h-10 rounded-xl bg-amber-100 flex items-center justify-center">
+            <svg class="w-5 h-5 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+            </svg>
+          </div>
+          <div class="flex-1">
+            <p class="font-medium text-slate-900">Invoice Processor</p>
+            <p class="text-xs text-slate-500">89 runs • Last: 1 hour ago</p>
+          </div>
+          <span class="w-2 h-2 rounded-full bg-emerald-500 status-pulse"></span>
+        </div>
+      </div>
+
+      <div class="card p-4 hover:shadow-lg transition cursor-pointer">
+        <div class="flex items-center gap-3 mb-3">
+          <div class="w-10 h-10 rounded-xl bg-rose-100 flex items-center justify-center">
+            <svg class="w-5 h-5 text-rose-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 4v16M17 4v16M3 8h4m10 0h4M3 12h18M3 16h4m10 0h4M4 20h16a1 1 0 001-1V5a1 1 0 00-1-1H4a1 1 0 00-1 1v14a1 1 0 001 1z" />
+            </svg>
+          </div>
+          <div class="flex-1">
+            <p class="font-medium text-slate-900">Social Posts</p>
+            <p class="text-xs text-slate-500">56 runs • Last: 2 hours ago</p>
+          </div>
+          <span class="w-2 h-2 rounded-full bg-emerald-500 status-pulse"></span>
+        </div>
+      </div>
+    </div>
+
+    <!-- View All -->
+    <div class="text-center mt-6">
+      <button class="text-sm text-indigo-600 font-medium hover:text-indigo-700">
+        View all 8 automations →
+      </button>
+    </div>
+
+  </div>
+
+  <!-- Design Notes -->
+  <div class="max-w-4xl mx-auto px-4 pb-8 mt-8">
+    <div class="p-5 bg-indigo-50 border border-indigo-200 rounded-2xl">
+      <h3 class="font-semibold text-indigo-800 mb-3">Design: Chat-First Hero</h3>
+      <ul class="text-sm text-indigo-700 space-y-1">
+        <li>• <strong>Chat input is THE hero</strong> - big, glowing, center of attention</li>
+        <li>• Headline asks the key question: "What would you like to automate?"</li>
+        <li>• Placeholder shows example of what to type</li>
+        <li>• Quick suggestion chips for inspiration</li>
+        <li>• Automations are secondary, below a divider</li>
+        <li>• Stats are compact, not competing with chat</li>
+      </ul>
+    </div>
+  </div>
+
+</body>
+</html>

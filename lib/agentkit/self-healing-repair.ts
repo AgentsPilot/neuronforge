@@ -11,15 +11,14 @@
  * This creates a self-repair mechanism that automatically resolves workflow generation errors.
  */
 
-import Anthropic from '@anthropic-ai/sdk';
 import { PluginManagerV2 } from '../server/plugin-manager-v2';
+import { ProviderFactory, PROVIDERS } from '@/lib/ai/providerFactory';
+import { ANTHROPIC_MODELS } from '@/lib/ai/providers/anthropicProvider';
+import type { CallContext } from '@/lib/ai/providers/baseProvider';
 
 const MAX_REPAIR_RETRIES = 3;
 
-// Initialize Anthropic client
-const anthropic = new Anthropic({
-  apiKey: process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_API_KEY,
-});
+// ProviderFactory handles LLM client initialization - no direct SDK instantiation needed
 
 /**
  * Context needed to repair a broken step
@@ -63,9 +62,20 @@ export async function repairInvalidStep(
       // Build focused correction prompt
       const repairPrompt = buildRepairPrompt(context, lastError);
 
-      // Ask Sonnet 4 to fix ONLY this step
-      const response = await anthropic.messages.create({
-        model: 'claude-sonnet-4-20250514',
+      // Get provider from factory for centralized token tracking
+      const provider = ProviderFactory.getProvider(PROVIDERS.ANTHROPIC);
+      const llmContext: CallContext = {
+        userId: 'system',
+        feature: 'agent_creation',
+        component: 'SelfHealingRepair',
+        category: 'workflow_repair',
+        activity_type: 'step_repair',
+        activity_name: `repair_step_attempt_${attempts}`,
+      };
+
+      // Ask Sonnet 4 to fix ONLY this step via ProviderFactory
+      const response = await provider.chatCompletionWithTools({
+        model: ANTHROPIC_MODELS.SONNET_4,
         max_tokens: 2000,
         temperature: 0.1, // Low temperature for precise fixes
         messages: [{
@@ -73,28 +83,26 @@ export async function repairInvalidStep(
           content: repairPrompt
         }],
         tools: [{
-          name: 'fix_workflow_step',
-          description: 'Fix the invalid workflow step',
-          input_schema: buildRepairToolSchema()
+          type: 'function',
+          function: {
+            name: 'fix_workflow_step',
+            description: 'Fix the invalid workflow step',
+            parameters: buildRepairToolSchema()
+          }
         }],
-        tool_choice: {
-          type: 'tool',
-          name: 'fix_workflow_step'
-        }
-      });
+        tool_choice: { type: 'function', function: { name: 'fix_workflow_step' } }
+      }, llmContext);
 
-      // Extract repaired step
-      const toolUse = response.content.find((block): block is Anthropic.ToolUseBlock =>
-        block.type === 'tool_use' && block.name === 'fix_workflow_step'
-      );
+      // ProviderFactory returns OpenAI-compatible format - extract tool call
+      const toolCall = response.choices?.[0]?.message?.tool_calls?.[0];
 
-      if (!toolUse) {
+      if (!toolCall || toolCall.function?.name !== 'fix_workflow_step') {
         console.warn(`⚠️ [Repair Loop] No fix returned on attempt ${attempts}`);
         lastError = 'LLM did not return a fixed step';
         continue;
       }
 
-      const repairedStep = toolUse.input as any;
+      const repairedStep = JSON.parse(toolCall.function.arguments);
 
       // Validate the repaired step
       const validation = await validateSingleStep(repairedStep, context);

@@ -117,7 +117,7 @@ export class PluginManagerV2 {
         const pluginName = fileName.replace('-plugin-v2.json', '');
         const filePath = path.join(pluginsDir, fileName);
 
-        logger.debug({ fileName, filePath }, 'Loading plugin file');
+        logger.trace({ fileName, filePath }, 'Loading plugin file');
 
         // Read and parse JSON file
         const fileContent = fs.readFileSync(filePath, 'utf8');
@@ -132,7 +132,7 @@ export class PluginManagerV2 {
         // Load the plugin
         this.plugins.set(pluginName, processedDefinition);
 
-        logger.debug({ pluginName }, 'Successfully loaded plugin');
+        logger.trace({ pluginName }, 'Successfully loaded plugin');
       } catch (error) {
         logger.error({ err: error, fileName }, 'Failed to load plugin');
         // Continue loading other plugins even if one fails
@@ -142,7 +142,7 @@ export class PluginManagerV2 {
 
   // Process environment variables in plugin definition
   private processEnvironmentVariables(definition: any): any {
-    logger.debug('Processing environment variables in plugin definition');
+    logger.trace('Processing environment variables in plugin definition');
 
     const processed = JSON.parse(JSON.stringify(definition)); // Deep clone
 
@@ -156,7 +156,7 @@ export class PluginManagerV2 {
               logger.warn({ varName }, 'Environment variable not found, keeping placeholder');
               return match;
             }
-            logger.debug({ varName }, 'Replaced environment variable');
+            logger.trace({ varName }, 'Replaced environment variable');
             return envValue;
           });
         } else if (typeof obj[key] === 'object' && obj[key] !== null) {
@@ -721,7 +721,7 @@ export class PluginManagerV2 {
 
   // Validate plugin definition structure
   private validatePluginDefinition(definition: PluginDefinition): void {
-    logger.debug('Validating plugin definition structure');
+    logger.trace('Validating plugin definition structure');
     
     if (!definition.plugin?.name) {
       throw new Error('Plugin definition missing required field: plugin.name');
@@ -742,7 +742,7 @@ export class PluginManagerV2 {
       }
     }
 
-    logger.debug('Plugin definition validation passed');
+    logger.trace('Plugin definition validation passed');
   }
 
   // Validate parameters against JSON Schema

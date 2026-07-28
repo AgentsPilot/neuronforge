@@ -1,10 +1,12 @@
 // /app/api/plugins/suggest/route.ts
 
 import { NextResponse } from 'next/server'
-import OpenAI from 'openai'
+import { ProviderFactory, PROVIDERS } from '@/lib/ai/providerFactory'
+import { OPENAI_MODELS } from '@/lib/ai/providers/openaiProvider'
+import type { CallContext } from '@/lib/ai/providers/baseProvider'
 import { pluginList } from '@/lib/plugins/pluginList'
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! })
+// ProviderFactory handles LLM client initialization - no direct SDK instantiation needed
 
 export async function POST(req: Request) {
   const { prompt } = await req.json()
@@ -25,16 +27,28 @@ ${formattedList}
 Respond ONLY with a JSON array of plugin keys from the list above.
 Example: ["google-mail", "notion"]`
 
-  const completion = await openai.chat.completions.create({
-    model: 'gpt-4o',
+  // Get provider from factory for centralized token tracking
+  const provider = ProviderFactory.getProvider(PROVIDERS.OPENAI)
+  const context: CallContext = {
+    userId: 'system',
+    feature: 'plugins',
+    component: 'suggest',
+    category: 'plugin_suggestion',
+    activity_type: 'plugin_recommendation',
+    activity_name: 'suggest_plugins',
+  }
+
+  const completion = await provider.chatCompletion({
+    model: OPENAI_MODELS.GPT_4O,
     messages: [
       { role: 'system', content: systemPrompt },
       { role: 'user', content: prompt },
     ],
     temperature: 0.1,
-  })
+  }, context)
 
-  const responseText = completion.choices[0].message.content ?? '[]'
+  // ProviderFactory returns OpenAI-compatible format
+  const responseText = completion.choices?.[0]?.message?.content ?? '[]'
 
   let pluginsFromGPT: string[] = []
   try {

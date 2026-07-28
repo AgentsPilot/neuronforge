@@ -1,0 +1,80 @@
+{
+  "onboarding": {
+    "welcome": {
+      "title": "Welcome! Let's build your AI Business OS.",
+      "subtitle": "Tell me about your business to get started",
+      "typeBio": "Type your bio",
+      "uploadFile": "Upload file",
+      "guidedQuestions": "Answer guided questions"
+    },
+    "bioUpload": {
+      "processing": "Reading your bio...",
+      "profileExtracted": "Here's what I found:",
+      "vertical": "Vertical",
+      "services": "Services",
+      "clients": "Clients",
+      "tools": "Tools",
+      "website": "Website"
+    },
+    "preview": {
+      "title": "Based on this, I'll build:",
+      "website": "Professional website",
+      "crm": "Client management",
+      "booking": "Booking system",
+      "payments": "Payment processing",
+      "email": "Email automation",
+      "aiEmployees": "AI Employees",
+      "clientIntake": "Client Intake Assistant",
+      "sessionPrep": "Session Prep Assistant",
+      "followUp": "Follow-up Scheduler"
+    },
+    "actions": {
+      "editProfile": "Edit Profile",
+      "buildEverything": "Yes, Build Everything!",
+      "building": "Building your business OS...",
+      "creatingWebsite": "Creating website...",
+      "settingUpCRM": "Setting up CRM...",
+      "connectingCalendar": "Connecting calendar...",
+      "activatingAI": "Activating AI Employees...",
+      "success": "Your practice is LIVE!",
+      "goToDashboard": "Go to Dashboard"
+    }
+  },
+  "common": {
+    "loading": "Loading...",
+    "error": "Something went wrong",
+    "retry": "Try again"
+  },
+  "scheduling": {
+    "frequency_short": {
+      "weekly": "/wk",
+      "biweekly": "/2wk",
+      "monthly": "/mo",
+      "quarterly": "/qtr"
+    },
+    "availability": {
+      "working_days": "Working days:"
+    }
+  },
+  "config": {
+    "title": "Configuration",
+    "subtitle": "Manage your services, availability, and payments",
+    "tab": {
+      "services": "Services",
+      "availability": "Availability",
+      "payments": "Payments"
+    },
+    "stripe": {
+      "title": "Stripe Payments",
+      "connected": "Connected",
+      "connected_desc": "Your Stripe account is connected. You can accept payments for your services.",
+      "not_connected_desc": "Connect your Stripe account to accept payments for bookings and services.",
+      "connect": "Connect Stripe",
+      "manage": "Manage account"
+    },
+    "payments": {
+      "settings_title": "Payment Settings",
+      "settings_desc": "Payment options are configured per service. Edit a service to set its price and payment plan options."
+    }
+  }
+}

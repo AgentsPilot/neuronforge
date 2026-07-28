@@ -2,7 +2,9 @@
 // Service for managing cross-agent user preferences and context
 
 import { SupabaseClient } from '@supabase/supabase-js';
-import OpenAI from 'openai';
+import { ProviderFactory, PROVIDERS } from '@/lib/ai/providerFactory';
+import { OPENAI_MODELS } from '@/lib/ai/providers/openaiProvider';
+import type { CallContext } from '@/lib/ai/providers/baseProvider';
 import { AuditTrailService } from '@/lib/services/AuditTrailService';
 import { AUDIT_EVENTS } from '@/lib/audit/events';
 
@@ -38,16 +40,13 @@ export interface ExtractedMemory {
  * Uses LLM to extract preferences from conversations and execution patterns
  */
 export class UserMemoryService {
-  private openai: OpenAI;
   private auditTrail: AuditTrailService;
 
   constructor(
     private supabase: SupabaseClient,
-    openaiApiKey?: string
+    _openaiApiKey?: string // Deprecated: ProviderFactory handles API keys
   ) {
-    this.openai = new OpenAI({
-      apiKey: openaiApiKey || process.env.OPENAI_API_KEY
-    });
+    // ProviderFactory handles LLM client initialization - no direct SDK instantiation needed
     this.auditTrail = AuditTrailService.getInstance();
   }
 
@@ -198,15 +197,27 @@ export class UserMemoryService {
         agentOutput
       );
 
-      const completion = await this.openai.chat.completions.create({
-        model: 'gpt-4o-mini',
+      // Get provider from factory for centralized token tracking
+      const provider = ProviderFactory.getProvider(PROVIDERS.OPENAI);
+      const context: CallContext = {
+        userId,
+        feature: 'memory_system',
+        component: 'UserMemoryService',
+        category: 'memory_extraction',
+        activity_type: 'user_memory_extraction',
+        activity_name: 'extract_memories_from_execution',
+      };
+
+      const completion = await provider.chatCompletion({
+        model: OPENAI_MODELS.GPT_4O_MINI,
         messages: [{ role: 'user', content: prompt }],
         temperature: 0.3,
         max_tokens: 1000, // Increased from 500 to prevent JSON truncation
         response_format: { type: 'json_object' }
-      });
+      }, context);
 
-      const responseText = completion.choices[0].message.content;
+      // ProviderFactory returns OpenAI-compatible format
+      const responseText = completion.choices?.[0]?.message?.content;
       if (!responseText) {
         console.log('⚠️  [UserMemoryService] Empty LLM response');
         return [];

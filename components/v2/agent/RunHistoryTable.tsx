@@ -1,7 +1,7 @@
 'use client'
 
 import React, { useState } from 'react'
-import { CheckCircle2, XCircle, Clock, AlertCircle, ChevronLeft, ChevronRight } from 'lucide-react'
+import { CheckCircle2, XCircle, Clock, AlertCircle, ChevronLeft, ChevronRight, Cpu } from 'lucide-react'
 import type { Execution } from '@/lib/repositories/types'
 
 interface RunHistoryTableProps {
@@ -10,6 +10,7 @@ interface RunHistoryTableProps {
   selectedExecutionId?: string
   className?: string
   hourlyRate?: number
+  tokensPerPilotCredit?: number
 }
 
 export function RunHistoryTable({
@@ -17,7 +18,8 @@ export function RunHistoryTable({
   onSelectExecution,
   selectedExecutionId,
   className = '',
-  hourlyRate
+  hourlyRate,
+  tokensPerPilotCredit = 10
 }: RunHistoryTableProps) {
   const [currentPage, setCurrentPage] = useState(1)
   const itemsPerPage = 5
@@ -117,6 +119,9 @@ export function RunHistoryTable({
               <th className="px-4 py-2 text-left text-xs font-medium text-[var(--v2-text-muted)] uppercase tracking-wider">
                 Steps
               </th>
+              <th className="px-4 py-2 text-left text-xs font-medium text-[var(--v2-text-muted)] uppercase tracking-wider">
+                Pilot Credits
+              </th>
               {hourlyRate && (
                 <th className="px-4 py-2 text-left text-xs font-medium text-[var(--v2-text-muted)] uppercase tracking-wider">
                   Value Saved
@@ -180,6 +185,16 @@ export function RunHistoryTable({
                         )}
                       </span>
                     ) : <span className="text-[var(--v2-text-muted)]">—</span>}
+                  </td>
+                  <td className="px-4 py-2.5 whitespace-nowrap text-xs text-[var(--v2-text-primary)] tabular-nums">
+                    {(() => {
+                      const totalTokens = logs?.tokensUsed?.total
+                      if (!totalTokens) return <span className="text-[var(--v2-text-muted)]">—</span>
+                      const credits = Math.ceil(totalTokens / tokensPerPilotCredit)
+                      return credits >= 1000
+                        ? `${(credits / 1000).toFixed(1)}k`
+                        : credits.toLocaleString()
+                    })()}
                   </td>
                   {hourlyRate && (
                     <td className="px-4 py-2.5 whitespace-nowrap text-xs font-semibold text-emerald-600 dark:text-emerald-400 tabular-nums">

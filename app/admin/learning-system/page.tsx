@@ -295,8 +295,8 @@ export default function MemorySystemAdminPage() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-screen">
-        <RefreshCw className="h-8 w-8 animate-spin text-purple-400" />
+      <div className="flex items-center justify-center py-12">
+        <RefreshCw className="w-8 h-8 text-purple-500 animate-spin" />
       </div>
     )
   }
@@ -308,45 +308,46 @@ export default function MemorySystemAdminPage() {
       className="space-y-6"
     >
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <header className="flex items-center justify-between border-b border-slate-700 pb-4">
         <div className="flex items-center gap-4">
-          <div className="w-12 h-12 bg-gradient-to-br from-purple-500 to-indigo-600 rounded-xl flex items-center justify-center">
-            <Brain className="h-6 w-6 text-white" />
-          </div>
-          <div>
-            <h1 className="text-2xl font-bold text-white">Memory System Analytics</h1>
-            <p className="text-slate-400 text-sm">Platform-wide agent memory insights and ROI</p>
-          </div>
+          <h1 className="text-xl font-semibold text-white">Memory System Analytics</h1>
+          <span className="text-xs px-2 py-1 rounded bg-purple-500/20 text-purple-400">
+            Learning System
+          </span>
         </div>
-
-        {/* Time Range Selector */}
-        <div className="flex items-center gap-2">
-          {isRefreshing && (
-            <RefreshCw className="h-4 w-4 animate-spin text-purple-400" />
-          )}
-          <div className="flex items-center gap-2 bg-slate-800/50 backdrop-blur-xl rounded-lg p-1 border border-white/10">
+        <div className="flex items-center gap-4">
+          {/* Time Range Selector - Inline Button Group */}
+          <div className="flex items-center gap-1 bg-slate-800 border border-slate-700 rounded-lg p-1">
             {(['7d', '30d', '90d'] as const).map(range => (
               <button
                 key={range}
                 onClick={() => setTimeRange(range)}
                 disabled={isRefreshing}
-                className={`px-4 py-2 rounded-lg text-sm font-medium transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
+                className={`px-3 py-1.5 text-sm rounded transition-colors ${
                   timeRange === range
-                    ? 'bg-gradient-to-r from-purple-500 to-indigo-600 text-white'
-                    : 'text-slate-300 hover:bg-slate-700/50'
+                    ? 'bg-purple-500 text-white'
+                    : 'text-slate-400 hover:text-white'
                 }`}
               >
-                {range === '7d' ? '7 Days' : range === '30d' ? '30 Days' : '90 Days'}
+                {range}
               </button>
             ))}
           </div>
+          {/* Refresh */}
+          <button
+            onClick={() => fetchSystemStats()}
+            disabled={isRefreshing}
+            className="p-2 rounded-lg border border-slate-700 hover:bg-slate-800 transition-colors"
+          >
+            <RefreshCw className={`w-5 h-5 text-slate-400 ${isRefreshing ? 'animate-spin' : ''}`} />
+          </button>
         </div>
-      </div>
+      </header>
 
       {/* Key Metrics Grid */}
       <div className={`grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 transition-opacity duration-300 ${isRefreshing ? 'opacity-60' : 'opacity-100'}`}>
         {/* Total Memories */}
-        <div className="bg-purple-500/20 backdrop-blur-xl rounded-xl p-4 border border-purple-500/20">
+        <div className="bg-slate-800 border border-purple-500/30 rounded-xl p-5">
           <div className="flex items-center justify-between mb-3">
             <Brain className="h-6 w-6 text-purple-300" />
             <div className={`flex items-center gap-1 px-2 py-1 rounded-full text-xs font-semibold ${
@@ -361,7 +362,7 @@ export default function MemorySystemAdminPage() {
         </div>
 
         {/* Active Users */}
-        <div className="bg-blue-500/20 backdrop-blur-xl rounded-xl p-4 border border-blue-500/20">
+        <div className="bg-slate-800 border border-blue-500/30 rounded-xl p-5">
           <div className="flex items-center justify-between mb-3">
             <Users className="h-6 w-6 text-blue-300" />
           </div>
@@ -370,7 +371,7 @@ export default function MemorySystemAdminPage() {
         </div>
 
         {/* Memory-Enhanced Agents */}
-        <div className="bg-indigo-500/20 backdrop-blur-xl rounded-xl p-4 border border-indigo-500/20">
+        <div className="bg-slate-800 border border-indigo-500/30 rounded-xl p-5">
           <div className="flex items-center justify-between mb-3">
             <Bot className="h-6 w-6 text-indigo-300" />
           </div>
@@ -379,7 +380,7 @@ export default function MemorySystemAdminPage() {
         </div>
 
         {/* Daily Rate */}
-        <div className="bg-amber-500/20 backdrop-blur-xl rounded-xl p-4 border border-amber-500/20">
+        <div className="bg-slate-800 border border-amber-500/30 rounded-xl p-5">
           <div className="flex items-center justify-between mb-3">
             <Zap className="h-6 w-6 text-amber-300" />
           </div>
@@ -391,7 +392,7 @@ export default function MemorySystemAdminPage() {
       {/* ROI and Health Section */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         {/* ROI Calculator */}
-        <div className="bg-green-500/20 backdrop-blur-xl rounded-xl p-6 border border-green-500/20">
+        <div className="bg-slate-800 border border-green-500/30 rounded-xl p-6">
           <div className="flex items-center gap-3 mb-4">
             <DollarSign className="h-6 w-6 text-green-300" />
             <div>
@@ -403,7 +404,7 @@ export default function MemorySystemAdminPage() {
           <div className="text-sm text-green-400 mb-4">
             ${stats.estimatedSavings.toFixed(4)} saved from ${stats.memoryCost.toFixed(4)} investment
           </div>
-          <div className="p-3 bg-slate-800/50 rounded-lg border border-green-500/10">
+          <div className="p-3 bg-slate-800 rounded-lg border border-green-500/10">
             <div className="text-xs space-y-1">
               <div className="flex justify-between text-slate-300">
                 <span>Memory Cost:</span>
@@ -418,7 +419,7 @@ export default function MemorySystemAdminPage() {
         </div>
 
         {/* System Health */}
-        <div className="bg-slate-800/50 backdrop-blur-xl rounded-xl p-6 border border-white/10">
+        <div className="bg-slate-800 border border-slate-700 rounded-xl p-6">
           <div className="flex items-center gap-3 mb-4">
             <Activity className="h-6 w-6 text-purple-300" />
             <div>
@@ -463,7 +464,7 @@ export default function MemorySystemAdminPage() {
         </div>
 
         {/* Quick Insights */}
-        <div className="bg-blue-500/20 backdrop-blur-xl rounded-xl p-6 border border-blue-500/20">
+        <div className="bg-slate-800 border border-blue-500/30 rounded-xl p-6">
           <div className="flex items-center gap-3 mb-4">
             <Target className="h-6 w-6 text-blue-300" />
             <div>
@@ -503,7 +504,7 @@ export default function MemorySystemAdminPage() {
       </div>
 
       {/* Growth Chart */}
-      <div className="bg-slate-800/50 backdrop-blur-xl rounded-xl p-6 border border-white/10">
+      <div className="bg-slate-800 border border-slate-700 rounded-xl p-6">
         <div className="flex items-center gap-3 mb-6">
           <BarChart3 className="h-5 w-5 text-purple-300" />
           <div>
@@ -591,7 +592,7 @@ export default function MemorySystemAdminPage() {
       </div>
 
       {/* Top Memory Agents Table */}
-      <div className="bg-slate-800/50 backdrop-blur-xl rounded-xl p-6 border border-white/10">
+      <div className="bg-slate-800 border border-slate-700 rounded-xl p-6">
         <div className="flex items-center gap-3 mb-6">
           <Award className="h-5 w-5 text-purple-300" />
           <div>
@@ -602,7 +603,7 @@ export default function MemorySystemAdminPage() {
 
         <div className="overflow-x-auto">
           <table className="w-full">
-            <thead className="bg-slate-700/50">
+            <thead className="bg-slate-900/50">
               <tr>
                 <th className="text-left py-3 px-4 text-xs font-medium text-slate-300 uppercase">Rank</th>
                 <th className="text-left py-3 px-4 text-xs font-medium text-slate-300 uppercase">Agent Name</th>

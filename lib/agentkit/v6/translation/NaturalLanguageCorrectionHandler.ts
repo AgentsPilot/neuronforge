@@ -10,12 +10,15 @@
  * - "Remove the AI classification step"
  *
  * This uses a small LLM to extract correction intent and update the IR.
+ * Uses ProviderFactory for centralized token tracking.
  */
 
-import { OpenAI } from 'openai'
-import Anthropic from '@anthropic-ai/sdk'
 import type { ExtendedLogicalIR } from '../logical-ir/schemas/extended-ir-types'
 import { validateIR, normalizeIR } from '../logical-ir/schemas/extended-ir-validation'
+import { ProviderFactory, PROVIDERS } from '@/lib/ai/providerFactory'
+import { OPENAI_MODELS } from '@/lib/ai/providers/openaiProvider'
+import { ANTHROPIC_MODELS } from '@/lib/ai/providers/anthropicProvider'
+import type { CallContext } from '@/lib/ai/providers/baseProvider'
 
 // ============================================================================
 // Types
@@ -45,23 +48,12 @@ export interface CorrectionIntent {
 // ============================================================================
 
 export class NaturalLanguageCorrectionHandler {
-  private openai?: OpenAI
-  private anthropic?: Anthropic
   private modelProvider: 'openai' | 'anthropic'
 
   constructor(modelProvider: 'openai' | 'anthropic' = 'openai') {
     console.log('[CorrectionHandler] Initializing with provider:', modelProvider)
     this.modelProvider = modelProvider
-
-    if (modelProvider === 'openai') {
-      this.openai = new OpenAI({
-        apiKey: process.env.OPENAI_API_KEY
-      })
-    } else {
-      this.anthropic = new Anthropic({
-        apiKey: process.env.ANTHROPIC_API_KEY
-      })
-    }
+    // ProviderFactory handles LLM client initialization - no direct SDK instantiation needed
   }
 
   /**
@@ -167,50 +159,44 @@ User's correction: "${request.userMessage}"
 
 What is the correction intent?`
 
-    if (this.modelProvider === 'openai') {
-      const response = await this.openai!.chat.completions.create({
-        model: 'gpt-4o-mini',
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userPrompt }
-        ],
-        response_format: { type: 'json_object' },
-        temperature: 0.1,
-        max_tokens: 500
-      })
-
-      const content = response.choices[0]?.message?.content
-      if (!content) {
-        throw new Error('LLM returned empty response')
-      }
-
-      return JSON.parse(content)
-    } else {
-      const response = await this.anthropic!.messages.create({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 500,
-        temperature: 0.1,
-        system: systemPrompt,
-        messages: [
-          {
-            role: 'user',
-            content: userPrompt
-          }
-        ]
-      })
-
-      const content = response.content[0]
-      if (content.type !== 'text') {
-        throw new Error('Anthropic returned non-text response')
-      }
-
-      const jsonMatch = content.text.match(/\{[\s\S]*\}/)
-      if (!jsonMatch) {
-        throw new Error('Failed to extract JSON from response')
-      }
-
-      return JSON.parse(jsonMatch[0])
+    // Get provider from factory for centralized token tracking
+    const providerName = this.modelProvider === 'openai' ? PROVIDERS.OPENAI : PROVIDERS.ANTHROPIC
+    const provider = ProviderFactory.getProvider(providerName)
+    const model = this.modelProvider === 'openai' ? OPENAI_MODELS.GPT_4O_MINI : ANTHROPIC_MODELS.SONNET_4
+    const context: CallContext = {
+      userId: 'system',
+      feature: 'v6_pipeline',
+      component: 'NaturalLanguageCorrectionHandler',
+      category: 'workflow_correction',
+      activity_type: 'correction_intent_extraction',
+      activity_name: 'extract_correction_intent',
     }
+
+    // Use ProviderFactory for centralized token tracking
+    const response = await provider.chatCompletion({
+      model,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt }
+      ],
+      response_format: this.modelProvider === 'openai' ? { type: 'json_object' } : undefined,
+      temperature: 0.1,
+      max_tokens: 500
+    }, context)
+
+    // ProviderFactory returns OpenAI-compatible format
+    const content = response.choices?.[0]?.message?.content
+    if (!content) {
+      throw new Error('LLM returned empty response')
+    }
+
+    // Extract JSON from response (Anthropic may include extra text)
+    const jsonMatch = content.match(/\{[\s\S]*\}/)
+    if (!jsonMatch) {
+      throw new Error('Failed to extract JSON from response')
+    }
+
+    return JSON.parse(jsonMatch[0])
   }
 
   /**

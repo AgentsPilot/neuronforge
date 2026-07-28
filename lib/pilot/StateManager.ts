@@ -532,6 +532,26 @@ export class StateManager {
         // Non-fatal - don't throw, just log the error
       } else {
         console.log(`[StateManager] Logged execution to agent_executions for UI display`);
+
+        // Aggregate model usage from token_usage table to populate cost/model fields
+        try {
+          const { data: aggregateResult, error: aggregateError } = await supabaseAdmin
+            .rpc('aggregate_execution_model_usage', { p_execution_id: executionId });
+
+          if (aggregateError) {
+            console.error('[StateManager] Failed to aggregate model usage:', aggregateError);
+          } else if (aggregateResult) {
+            console.log('[StateManager] ✅ Aggregated model usage:', {
+              total_cost_usd: aggregateResult.total_cost_usd,
+              primary_model: aggregateResult.primary_model,
+              primary_provider: aggregateResult.primary_provider,
+              models_count: aggregateResult.models_used?.length || 0
+            });
+          }
+        } catch (aggregateErr) {
+          console.error('[StateManager] Error aggregating model usage:', aggregateErr);
+          // Non-fatal - continue
+        }
       }
     } catch (logError) {
       console.error('[StateManager] Error logging to agent_executions:', logError);
@@ -695,6 +715,25 @@ export class StateManager {
         // Non-fatal - don't throw
       } else {
         console.log(`[StateManager] Logged failed execution to agent_executions for UI display`);
+
+        // Aggregate model usage from token_usage table to populate cost/model fields
+        try {
+          const { data: aggregateResult, error: aggregateError } = await supabaseAdmin
+            .rpc('aggregate_execution_model_usage', { p_execution_id: executionId });
+
+          if (aggregateError) {
+            console.error('[StateManager] Failed to aggregate model usage:', aggregateError);
+          } else if (aggregateResult) {
+            console.log('[StateManager] ✅ Aggregated model usage for failed execution:', {
+              total_cost_usd: aggregateResult.total_cost_usd,
+              primary_model: aggregateResult.primary_model,
+              primary_provider: aggregateResult.primary_provider
+            });
+          }
+        } catch (aggregateErr) {
+          console.error('[StateManager] Error aggregating model usage:', aggregateErr);
+          // Non-fatal - continue
+        }
       }
     } catch (logError) {
       console.error('[StateManager] Error logging failed execution to agent_executions:', logError);

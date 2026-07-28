@@ -3,12 +3,13 @@
 import { UserPluginConnections } from './user-plugin-connections';
 import { PluginManagerV2 } from './plugin-manager-v2';
 import { BasePluginExecutor } from './base-plugin-executor';
-import OpenAI from 'openai';
+import { ProviderFactory, PROVIDERS } from '@/lib/ai/providerFactory';
+import { OPENAI_MODELS } from '@/lib/ai/providers/openaiProvider';
+import type { CallContext } from '@/lib/ai/providers/baseProvider';
 
 const pluginName = 'chatgpt-research';
 
-// Initialize OpenAI client
-const openai = process.env.OPENAI_API_KEY ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY }) : null;
+// ProviderFactory handles LLM client initialization and token tracking - no direct SDK instantiation needed
 
 /**
  * Executor for ChatGPT Research plugin actions
@@ -114,10 +115,6 @@ export class ChatGPTResearchPluginExecutor extends BasePluginExecutor {
       };
     }
 
-    if (!openai) {
-      throw new Error('OpenAI API key not configured');
-    }
-
     // Determine summary length
     const lengthInstructions: Record<string, string> = {
       brief: '1-2 sentences',
@@ -135,17 +132,28 @@ export class ChatGPTResearchPluginExecutor extends BasePluginExecutor {
     const userPrompt = `Summarize the following content in ${lengthInstruction}:${focusInstruction}\n\n${content}`;
 
     try {
-      const completion = await openai.chat.completions.create({
-        model: 'gpt-4o',
+      // Get provider from factory for centralized token tracking
+      const provider = ProviderFactory.getProvider(PROVIDERS.OPENAI);
+      const llmContext: CallContext = {
+        userId: 'system',
+        feature: 'plugin_execution',
+        component: 'ChatGPTResearchPluginExecutor',
+        category: 'content_summarization',
+        activity_type: 'summarize_content',
+        activity_name: 'chatgpt_research_summarize',
+      };
+
+      const completion = await provider.chatCompletion({
+        model: OPENAI_MODELS.GPT_4O,
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userPrompt }
         ],
         temperature: 0.3,
         max_tokens: 2000 // Optimized for cost
-      });
+      }, llmContext);
 
-      const summaryText = completion.choices[0].message.content || 'Unable to generate summary';
+      const summaryText = completion.choices?.[0]?.message?.content || 'Unable to generate summary';
 
       return {
         summary: summaryText,
@@ -171,10 +179,6 @@ export class ChatGPTResearchPluginExecutor extends BasePluginExecutor {
 
     if (!question || question.length < 5) {
       throw new Error('Question must be at least 5 characters');
-    }
-
-    if (!openai) {
-      throw new Error('OpenAI API key not configured');
     }
 
     let contextData = '';
@@ -206,17 +210,28 @@ export class ChatGPTResearchPluginExecutor extends BasePluginExecutor {
     const userPrompt = `${detailInstruction}\n\nQuestion: ${question}${contextData}`;
 
     try {
-      const completion = await openai.chat.completions.create({
-        model: 'gpt-4o',
+      // Get provider from factory for centralized token tracking
+      const provider = ProviderFactory.getProvider(PROVIDERS.OPENAI);
+      const llmContext: CallContext = {
+        userId: 'system',
+        feature: 'plugin_execution',
+        component: 'ChatGPTResearchPluginExecutor',
+        category: 'question_answering',
+        activity_type: 'answer_question',
+        activity_name: 'chatgpt_research_answer',
+      };
+
+      const completion = await provider.chatCompletion({
+        model: OPENAI_MODELS.GPT_4O,
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userPrompt }
         ],
         temperature: 0.5,
         max_tokens: 2000 // Optimized for cost
-      });
+      }, llmContext);
 
-      const answer = completion.choices[0].message.content || 'Unable to answer the question';
+      const answer = completion.choices?.[0]?.message?.content || 'Unable to answer the question';
 
       return {
         answer: answer,
@@ -339,10 +354,6 @@ export class ChatGPTResearchPluginExecutor extends BasePluginExecutor {
     outputFormat: string,
     maxLength: number
   ): Promise<{ text: string; key_points: string[] }> {
-    if (!openai) {
-      throw new Error('OpenAI API key not configured');
-    }
-
     const formatInstructions: Record<string, string> = {
       summary: 'a brief summary (2-3 paragraphs)',
       detailed: 'a comprehensive analysis with multiple detailed paragraphs, specific examples, and thorough coverage of all important aspects. Provide substantial depth and detail.',
@@ -380,17 +391,28 @@ REQUIREMENTS:
         ? Math.min(Math.floor(maxLength / 3), 4000) // Detailed: allow up to 4000 tokens
         : Math.min(Math.floor(maxLength / 3), 2500); // Standard: 2500 tokens max
 
-      const completion = await openai.chat.completions.create({
-        model: 'gpt-4o',
+      // Get provider from factory for centralized token tracking
+      const provider = ProviderFactory.getProvider(PROVIDERS.OPENAI);
+      const llmContext: CallContext = {
+        userId: 'system',
+        feature: 'plugin_execution',
+        component: 'ChatGPTResearchPluginExecutor',
+        category: 'research_summary',
+        activity_type: 'generate_research_summary',
+        activity_name: 'chatgpt_research_summary',
+      };
+
+      const completion = await provider.chatCompletion({
+        model: OPENAI_MODELS.GPT_4O,
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userPrompt }
         ],
         temperature: 0.5, // Balanced for quality research
         max_tokens: tokenLimit
-      });
+      }, llmContext);
 
-      const summaryText = completion.choices[0].message.content || 'Unable to generate research summary';
+      const summaryText = completion.choices?.[0]?.message?.content || 'Unable to generate research summary';
 
       // Extract key points (first 5 bullet points or main ideas)
       const keyPoints = this.extractKeyPoints(summaryText);

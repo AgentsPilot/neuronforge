@@ -19,6 +19,13 @@ import {
   CheckCircle
 } from 'lucide-react';
 
+const PERIOD_OPTIONS = [
+  { value: 7, label: '7d' },
+  { value: 30, label: '30d' },
+  { value: 90, label: '90d' },
+  { value: 365, label: '1y' },
+] as const;
+
 interface DashboardData {
   users: {
     total: number;
@@ -70,17 +77,18 @@ export default function AdminDashboard() {
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<DashboardData | null>(null);
   const [lastUpdate, setLastUpdate] = useState<Date>(new Date());
+  const [period, setPeriod] = useState<number>(30);
 
   useEffect(() => {
     fetchDashboardData();
-  }, []);
+  }, [period]);
 
   const fetchDashboardData = async () => {
     try {
       setLoading(true);
       setError(null);
 
-      const response = await fetch('/api/admin/dashboard', {
+      const response = await fetch(`/api/admin/dashboard?period=${period}`, {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',
@@ -133,10 +141,10 @@ export default function AdminDashboard() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-96">
+      <div className="flex items-center justify-center py-12">
         <div className="text-center">
-          <div className="w-12 h-12 border-4 border-purple-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
-          <p className="text-slate-400">Loading dashboard...</p>
+          <RefreshCw className="w-12 h-12 text-purple-400 animate-spin mx-auto mb-4" />
+          <p className="text-slate-300">Loading dashboard...</p>
         </div>
       </div>
     );
@@ -144,11 +152,9 @@ export default function AdminDashboard() {
 
   if (error) {
     return (
-      <div className="flex flex-col items-center justify-center p-8 text-center">
-        <div className="bg-red-500/20 border border-red-500/30 rounded-lg p-6 max-w-md backdrop-blur-xl">
-          <div className="flex items-center justify-center w-12 h-12 mx-auto mb-4 bg-red-500/20 rounded-full">
-            <AlertCircle className="w-6 h-6 text-red-400" />
-          </div>
+      <div className="flex items-center justify-center py-12">
+        <div className="bg-red-500/20 border border-red-500/30 rounded-lg p-6 max-w-md backdrop-blur-xl text-center">
+          <AlertCircle className="w-12 h-12 text-red-400 mx-auto mb-4" />
           <h3 className="text-lg font-semibold text-red-300 mb-2">Failed to Load Dashboard</h3>
           <p className="text-red-400 mb-4">{error}</p>
           <button
@@ -167,24 +173,38 @@ export default function AdminDashboard() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold text-white mb-2">System Overview</h1>
-          <p className="text-slate-400">Critical platform metrics at a glance</p>
-        </div>
-
+      <header className="flex items-center justify-between border-b border-slate-700 pb-4">
         <div className="flex items-center gap-4">
-          <div className="text-sm text-slate-400">
-            Last updated: {lastUpdate.toLocaleTimeString()}
+          <h1 className="text-xl font-semibold text-white">System Overview</h1>
+          <span className="text-xs px-2 py-1 rounded bg-purple-500/20 text-purple-400">Dashboard</span>
+        </div>
+        <div className="flex items-center gap-4">
+          {/* Period Selector - Inline Button Group */}
+          <div className="flex items-center gap-1 bg-slate-800 border border-slate-700 rounded-lg p-1">
+            {PERIOD_OPTIONS.map((option) => (
+              <button
+                key={option.value}
+                onClick={() => setPeriod(option.value)}
+                className={`px-3 py-1.5 text-sm rounded transition-colors ${
+                  period === option.value
+                    ? 'bg-purple-500 text-white'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                {option.label}
+              </button>
+            ))}
           </div>
+          {/* Refresh */}
           <button
             onClick={fetchDashboardData}
-            className="p-2 bg-slate-800/50 hover:bg-slate-700/50 rounded-lg transition-colors border border-white/10"
+            disabled={loading}
+            className="p-2 rounded-lg border border-slate-700 hover:bg-slate-800 transition-colors"
           >
-            <RefreshCw className="w-4 h-4" />
+            <RefreshCw className={`w-5 h-5 text-slate-400 ${loading ? 'animate-spin' : ''}`} />
           </button>
         </div>
-      </div>
+      </header>
 
       {/* Primary Metrics - 2x2 Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -192,7 +212,7 @@ export default function AdminDashboard() {
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          className="bg-slate-800/50 backdrop-blur-xl rounded-xl p-6 border border-white/10 hover:border-green-500/30 transition-all"
+          className="bg-slate-800 border border-slate-700 rounded-xl p-6 hover:border-green-500/30 transition-all"
         >
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-3">
@@ -201,7 +221,7 @@ export default function AdminDashboard() {
               </div>
               <div>
                 <h3 className="text-lg font-semibold text-white">Platform Users</h3>
-                <p className="text-xs text-slate-400">Total & Active (30d)</p>
+                <p className="text-xs text-slate-400">Total & Active ({period}d)</p>
               </div>
             </div>
             <Link href="/admin/users" className="text-green-400 hover:text-green-300 transition-colors">
@@ -225,7 +245,7 @@ export default function AdminDashboard() {
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.1 }}
-          className="bg-slate-800/50 backdrop-blur-xl rounded-xl p-6 border border-white/10 hover:border-orange-500/30 transition-all"
+          className="bg-slate-800 border border-slate-700 rounded-xl p-6 hover:border-orange-500/30 transition-all"
         >
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-3">
@@ -234,7 +254,7 @@ export default function AdminDashboard() {
               </div>
               <div>
                 <h3 className="text-lg font-semibold text-white">Token Usage</h3>
-                <p className="text-xs text-slate-400">Total Cost & Success Rate</p>
+                <p className="text-xs text-slate-400">Last {period}d</p>
               </div>
             </div>
             <Link href="/admin/analytics" className="text-orange-400 hover:text-orange-300 transition-colors">
@@ -261,7 +281,7 @@ export default function AdminDashboard() {
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.2 }}
-          className="bg-slate-800/50 backdrop-blur-xl rounded-xl p-6 border border-white/10 hover:border-purple-500/30 transition-all"
+          className="bg-slate-800 border border-slate-700 rounded-xl p-6 hover:border-purple-500/30 transition-all"
         >
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-3">
@@ -270,7 +290,7 @@ export default function AdminDashboard() {
               </div>
               <div>
                 <h3 className="text-lg font-semibold text-white">Memory System</h3>
-                <p className="text-xs text-slate-400">Memories & ROI</p>
+                <p className="text-xs text-slate-400">All time (weekly growth)</p>
               </div>
             </div>
             <Link href="/admin/learning-system" className="text-purple-400 hover:text-purple-300 transition-colors">
@@ -304,7 +324,7 @@ export default function AdminDashboard() {
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.3 }}
-          className="bg-slate-800/50 backdrop-blur-xl rounded-xl p-6 border border-white/10 hover:border-blue-500/30 transition-all"
+          className="bg-slate-800 border border-slate-700 rounded-xl p-6 hover:border-blue-500/30 transition-all"
         >
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-3">
@@ -313,7 +333,7 @@ export default function AdminDashboard() {
               </div>
               <div>
                 <h3 className="text-lg font-semibold text-white">Execution Queue</h3>
-                <p className="text-xs text-slate-400">Success & Health</p>
+                <p className="text-xs text-slate-400">Last {period}d</p>
               </div>
             </div>
             <Link href="/admin/queues" className="text-blue-400 hover:text-blue-300 transition-colors">
@@ -343,7 +363,7 @@ export default function AdminDashboard() {
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.4 }}
-          className="bg-slate-800/50 backdrop-blur-xl rounded-xl p-4 border border-white/10"
+          className="bg-slate-800 border border-slate-700 rounded-xl p-4"
         >
           <div className="flex items-center gap-3 mb-3">
             <Bot className="w-5 h-5 text-indigo-400" />
@@ -366,12 +386,15 @@ export default function AdminDashboard() {
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.45 }}
-          className="bg-slate-800/50 backdrop-blur-xl rounded-xl p-4 border border-white/10"
+          className="bg-slate-800 border border-slate-700 rounded-xl p-4"
         >
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-3">
               <Zap className="w-5 h-5 text-yellow-400" />
-              <h3 className="text-sm font-semibold text-white">AIS</h3>
+              <div>
+                <h3 className="text-sm font-semibold text-white">AIS</h3>
+                <p className="text-xs text-slate-500">Last {period}d</p>
+              </div>
             </div>
             <span className={`px-2 py-0.5 rounded text-xs font-semibold ${
               data.ais.mode === 'dynamic' ? 'bg-green-500/20 text-green-300' : 'bg-blue-500/20 text-blue-300'
@@ -424,7 +447,7 @@ export default function AdminDashboard() {
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.5 }}
-          className="bg-slate-800/50 backdrop-blur-xl rounded-xl p-4 border border-white/10"
+          className="bg-slate-800 border border-slate-700 rounded-xl p-4"
         >
           <div className="flex items-center gap-3 mb-3">
             <Activity className="w-5 h-5 text-blue-400" />
@@ -451,7 +474,7 @@ export default function AdminDashboard() {
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.55 }}
-          className="bg-slate-800/50 backdrop-blur-xl rounded-xl p-4 border border-white/10"
+          className="bg-slate-800 border border-slate-700 rounded-xl p-4"
         >
           <div className="flex items-center gap-3 mb-3">
             <Zap className="w-5 h-5 text-orange-400" />
@@ -475,13 +498,13 @@ export default function AdminDashboard() {
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.6 }}
-        className="bg-slate-800/50 backdrop-blur-xl rounded-xl p-6 border border-white/10"
+        className="bg-slate-800 border border-slate-700 rounded-xl p-6"
       >
-        <h2 className="text-xl font-semibold text-white mb-4">Quick Actions</h2>
+        <h2 className="text-lg font-semibold text-white mb-4">Quick Actions</h2>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-3">
           <Link
             href="/admin/users"
-            className="flex items-center justify-between p-3 bg-slate-700/30 hover:bg-slate-700/50 rounded-lg transition-colors group border border-white/5"
+            className="flex items-center justify-between p-3 bg-slate-700/30 hover:bg-slate-700/50 rounded-lg transition-colors group"
           >
             <div className="flex items-center gap-3">
               <Users className="w-4 h-4 text-green-400" />
@@ -492,7 +515,7 @@ export default function AdminDashboard() {
 
           <Link
             href="/admin/analytics"
-            className="flex items-center justify-between p-3 bg-slate-700/30 hover:bg-slate-700/50 rounded-lg transition-colors group border border-white/5"
+            className="flex items-center justify-between p-3 bg-slate-700/30 hover:bg-slate-700/50 rounded-lg transition-colors group"
           >
             <div className="flex items-center gap-3">
               <DollarSign className="w-4 h-4 text-orange-400" />
@@ -503,7 +526,7 @@ export default function AdminDashboard() {
 
           <Link
             href="/admin/learning-system"
-            className="flex items-center justify-between p-3 bg-slate-700/30 hover:bg-slate-700/50 rounded-lg transition-colors group border border-white/5"
+            className="flex items-center justify-between p-3 bg-slate-700/30 hover:bg-slate-700/50 rounded-lg transition-colors group"
           >
             <div className="flex items-center gap-3">
               <Brain className="w-4 h-4 text-purple-400" />
@@ -514,7 +537,7 @@ export default function AdminDashboard() {
 
           <Link
             href="/admin/ais-config"
-            className="flex items-center justify-between p-3 bg-slate-700/30 hover:bg-slate-700/50 rounded-lg transition-colors group border border-white/5"
+            className="flex items-center justify-between p-3 bg-slate-700/30 hover:bg-slate-700/50 rounded-lg transition-colors group"
           >
             <div className="flex items-center gap-3">
               <Zap className="w-4 h-4 text-yellow-400" />
@@ -525,7 +548,7 @@ export default function AdminDashboard() {
 
           <Link
             href="/admin/queues"
-            className="flex items-center justify-between p-3 bg-slate-700/30 hover:bg-slate-700/50 rounded-lg transition-colors group border border-white/5"
+            className="flex items-center justify-between p-3 bg-slate-700/30 hover:bg-slate-700/50 rounded-lg transition-colors group"
           >
             <div className="flex items-center gap-3">
               <Server className="w-4 h-4 text-blue-400" />

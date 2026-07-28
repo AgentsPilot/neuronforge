@@ -12,9 +12,9 @@ const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
     
     const variantClasses = {
       default: 'bg-primary text-primary-foreground hover:bg-primary/90',
-      outline: 'border-2 border-input bg-transparent hover:bg-accent hover:text-accent-foreground',
+      outline: 'border border-[var(--v2-border,var(--border))] bg-transparent text-[var(--v2-text-primary,inherit)] hover:bg-[var(--v2-surface,var(--accent))]',
       secondary: 'bg-secondary text-secondary-foreground hover:bg-secondary/80',
-      ghost: 'hover:bg-accent hover:text-accent-foreground',
+      ghost: 'hover:bg-[var(--v2-surface,var(--accent))] text-[var(--v2-text-primary,inherit)]',
       link: 'text-primary underline-offset-4 hover:underline'
     }
     

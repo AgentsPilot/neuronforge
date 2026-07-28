@@ -365,30 +365,38 @@ export default function OrchestrationConfigPage() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-screen bg-gradient-to-br from-slate-950 via-blue-950 to-slate-950">
-        <div className="text-center">
-          <RefreshCw className="w-8 h-8 text-blue-400 animate-spin mx-auto mb-4" />
-          <p className="text-slate-300">Loading orchestration configuration...</p>
-        </div>
+      <div className="flex items-center justify-center py-12">
+        <RefreshCw className="w-8 h-8 text-purple-500 animate-spin" />
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-950 via-blue-950 to-slate-950 p-8">
-      <div className="max-w-7xl mx-auto">
+    <div className="space-y-6">
         {/* Header */}
-        <div className="mb-8">
-          <div className="flex items-center gap-3 mb-2">
-            <div className="w-12 h-12 bg-gradient-to-br from-blue-500 to-purple-600 rounded-xl flex items-center justify-center">
-              <Brain className="w-6 h-6 text-white" />
+        <header className="border-b border-slate-700">
+          <div className="flex items-center justify-between pb-4">
+            <div className="flex items-center gap-4">
+              <div className="flex flex-col">
+                <div className="flex items-center gap-4 mb-1">
+                  <h1 className="text-xl font-semibold text-white">Orchestration Configuration</h1>
+                  <span className="text-xs px-2 py-1 rounded bg-purple-500/20 text-purple-400">System Config</span>
+                </div>
+                <p className="text-sm text-slate-400">Unified routing system with AIS + step complexity analysis</p>
+              </div>
             </div>
-            <div>
-              <h1 className="text-3xl font-bold text-white">Orchestration Configuration</h1>
-              <p className="text-slate-400">Unified routing system with AIS + step complexity analysis</p>
+            <div className="flex items-center gap-4">
+              <button
+                onClick={fetchConfig}
+                disabled={loading}
+                className="p-2 rounded-lg border border-slate-700 hover:bg-slate-800 transition-colors"
+                title="Refresh Config"
+              >
+                <RefreshCw className={`w-5 h-5 text-slate-400 ${loading ? 'animate-spin' : ''}`} />
+              </button>
             </div>
           </div>
-        </div>
+        </header>
 
         {/* Alert Messages */}
         {error && (
@@ -1671,7 +1679,6 @@ export default function OrchestrationConfigPage() {
             )}
           </button>
         </div>
-      </div>
     </div>
   );
 }

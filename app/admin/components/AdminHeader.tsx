@@ -2,16 +2,16 @@
 
 import { usePathname } from 'next/navigation';
 import { motion } from 'framer-motion';
-import { 
-  Menu, 
-  Bell, 
-  Search, 
-  User, 
-  Settings, 
+import {
+  Menu,
+  Search,
+  User,
   LogOut,
-  ChevronDown
+  ChevronDown,
+  Settings
 } from 'lucide-react';
 import { useState } from 'react';
+import Link from 'next/link';
 
 interface AdminHeaderProps {
   onMenuClick: () => void;
@@ -86,10 +86,14 @@ export default function AdminHeader({ onMenuClick }: AdminHeaderProps) {
               className="absolute right-0 top-full mt-2 w-48 bg-slate-800/95 backdrop-blur-xl border border-white/10 rounded-xl shadow-xl z-50"
             >
               <div className="p-2">
-                <button className="w-full flex items-center gap-3 p-3 text-slate-300 hover:text-white hover:bg-white/5 rounded-lg transition-colors">
+                <Link
+                  href="/admin/settings"
+                  onClick={() => setShowProfile(false)}
+                  className="w-full flex items-center gap-3 p-3 text-slate-300 hover:text-white hover:bg-white/5 rounded-lg transition-colors"
+                >
                   <Settings className="w-4 h-4" />
                   <span className="text-sm">Settings</span>
-                </button>
+                </Link>
                 <hr className="my-2 border-white/10" />
                 <button className="w-full flex items-center gap-3 p-3 text-red-400 hover:text-red-300 hover:bg-red-500/10 rounded-lg transition-colors">
                   <LogOut className="w-4 h-4" />

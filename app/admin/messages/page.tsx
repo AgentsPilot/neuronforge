@@ -308,11 +308,8 @@ export default function AdminMessages() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-96">
-        <div className="text-center">
-          <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
-          <p className="text-slate-400">Loading messages...</p>
-        </div>
+      <div className="flex items-center justify-center py-12">
+        <RefreshCw className="w-8 h-8 text-purple-500 animate-spin" />
       </div>
     );
   }
@@ -322,31 +319,17 @@ export default function AdminMessages() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold text-white mb-2">Contact Messages</h1>
-          <div className="flex items-center gap-4">
-            <p className="text-slate-400">Manage and respond to user inquiries</p>
-            {messages.length > 0 && (
-              <div className="flex items-center gap-3 text-sm">
-                <span className="flex items-center gap-1">
-                  <div className="w-2 h-2 bg-blue-400 rounded-full"></div>
-                  <span className="text-blue-300">
-                    {messages.filter(m => m.status === 'unread').length} unread
-                  </span>
-                </span>
-                <span className="flex items-center gap-1">
-                  <MessageSquare className="w-3 h-3 text-green-400" />
-                  <span className="text-green-300">
-                    {messages.filter(m => m.replies && m.replies.length > 0).length} with replies
-                  </span>
-                </span>
-              </div>
-            )}
-          </div>
+      <header className="flex items-center justify-between border-b border-slate-700 pb-4">
+        <div className="flex items-center gap-4">
+          <h1 className="text-xl font-semibold text-white">Contact Messages</h1>
+          <span className="text-xs px-2 py-1 rounded bg-purple-500/20 text-purple-400">Messages</span>
+          {messages.length > 0 && messages.filter(m => m.status === 'unread').length > 0 && (
+            <span className="text-xs px-2 py-1 rounded bg-blue-500/20 text-blue-400">
+              {messages.filter(m => m.status === 'unread').length} unread
+            </span>
+          )}
         </div>
-        
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-4">
           {messages.filter(m => m.status === 'unread').length > 0 && (
             <button
               onClick={async () => {
@@ -363,25 +346,26 @@ export default function AdminMessages() {
                   }
                 }
               }}
-              className="px-3 py-1 bg-blue-500/20 text-blue-300 rounded text-sm hover:bg-blue-500/30 transition-colors border border-blue-500/20"
+              className="px-3 py-1.5 text-sm bg-blue-500/20 text-blue-300 rounded-lg hover:bg-blue-500/30 transition-colors border border-blue-500/30"
             >
               Mark All Read
             </button>
           )}
-          <button 
+          <button
             onClick={fetchMessages}
-            className="p-2 bg-slate-800/50 hover:bg-slate-700/50 rounded-lg transition-colors"
+            disabled={loading}
+            className="p-2 rounded-lg border border-slate-700 hover:bg-slate-800 transition-colors"
           >
-            <RefreshCw className="w-4 h-4" />
+            <RefreshCw className={`w-5 h-5 text-slate-400 ${loading ? 'animate-spin' : ''}`} />
           </button>
         </div>
-      </div>
+      </header>
 
       {/* Filters & Search */}
-      <div className="bg-slate-800/50 backdrop-blur-xl rounded-xl p-6 border border-white/10">
+      <div className="bg-slate-800 border border-slate-700 rounded-xl p-6">
         <div className="flex flex-col md:flex-row gap-4 items-center justify-between">
           <div className="flex items-center gap-4">
-            <div className="flex items-center gap-2 bg-slate-700/50 rounded-lg px-3 py-2 w-64">
+            <div className="flex items-center gap-2 bg-slate-900/50 rounded-lg px-3 py-2 w-64">
               <Search className="w-4 h-4 text-slate-400" />
               <input
                 type="text"
@@ -395,7 +379,7 @@ export default function AdminMessages() {
             <select
               value={filter}
               onChange={(e) => setFilter(e.target.value as any)}
-              className="bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none"
+              className="bg-slate-900/50 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none"
             >
               <option value="all">All Messages</option>
               <option value="unread">Unread</option>
@@ -407,9 +391,9 @@ export default function AdminMessages() {
       </div>
 
       {/* Messages List */}
-      <div className="bg-slate-800/50 backdrop-blur-xl rounded-xl border border-white/10 overflow-hidden">
+      <div className="bg-slate-800 border border-slate-700 rounded-xl overflow-hidden">
         <table className="w-full">
-          <thead className="bg-slate-700/50">
+          <thead className="bg-slate-900/50">
             <tr>
               <th className="px-6 py-3 text-left text-xs font-medium text-slate-300 uppercase">Contact</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-slate-300 uppercase">Message</th>
@@ -637,7 +621,7 @@ export default function AdminMessages() {
                 <h3 className="text-lg font-semibold text-white mb-4">
                   {selectedMessage.subject ? `Subject: ${selectedMessage.subject}` : 'Message'}
                 </h3>
-                <div className="bg-slate-700/50 p-4 rounded-lg">
+                <div className="bg-slate-900/50 p-4 rounded-lg">
                   <p className="text-slate-200 leading-relaxed whitespace-pre-wrap">
                     {selectedMessage.message}
                   </p>
@@ -670,11 +654,11 @@ export default function AdminMessages() {
                     value={adminNotes}
                     onChange={(e) => setAdminNotes(e.target.value)}
                     rows={3}
-                    className="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2 text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="w-full bg-slate-900/50 border border-slate-600 rounded-lg px-3 py-2 text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
                     placeholder="Add internal notes about this message..."
                   />
                 ) : (
-                  <div className="bg-slate-700/50 p-4 rounded-lg">
+                  <div className="bg-slate-900/50 p-4 rounded-lg">
                     <p className="text-slate-200">
                       {selectedMessage.admin_notes || 'No admin notes yet.'}
                     </p>
@@ -760,7 +744,7 @@ export default function AdminMessages() {
                   value={replyContent}
                   onChange={(e) => setReplyContent(e.target.value)}
                   rows={8}
-                  className="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2 text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  className="w-full bg-slate-900/50 border border-slate-600 rounded-lg px-3 py-2 text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                   placeholder="Type your reply here..."
                 />
               </div>

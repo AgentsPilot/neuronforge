@@ -1,0 +1,515 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Business OS - Conversational Onboarding</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+    body {
+      font-family: 'Inter', sans-serif;
+    }
+
+    .chat-message {
+      animation: slideIn 0.3s ease-out;
+    }
+
+    @keyframes slideIn {
+      from {
+        opacity: 0;
+        transform: translateY(10px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    .typing-indicator {
+      display: flex;
+      gap: 4px;
+      padding: 12px 16px;
+    }
+
+    .typing-indicator span {
+      width: 8px;
+      height: 8px;
+      background: #94a3b8;
+      border-radius: 50%;
+      animation: bounce 1.4s infinite ease-in-out both;
+    }
+
+    .typing-indicator span:nth-child(1) {
+      animation-delay: -0.32s;
+    }
+
+    .typing-indicator span:nth-child(2) {
+      animation-delay: -0.16s;
+    }
+
+    @keyframes bounce {
+      0%, 80%, 100% {
+        transform: scale(0);
+      }
+      40% {
+        transform: scale(1);
+      }
+    }
+
+    .upload-card {
+      transition: all 0.2s ease;
+      cursor: pointer;
+    }
+
+    .upload-card:hover {
+      transform: translateY(-4px);
+      box-shadow: 0 20px 25px -5px rgb(0 0 0 / 0.3), 0 8px 10px -6px rgb(0 0 0 / 0.3);
+    }
+
+    .progress-step {
+      animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% {
+        opacity: 1;
+      }
+      50% {
+        opacity: .5;
+      }
+    }
+
+    @keyframes checkmarkAppear {
+      0% {
+        transform: scale(0);
+        opacity: 0;
+      }
+      50% {
+        transform: scale(1.2);
+      }
+      100% {
+        transform: scale(1);
+        opacity: 1;
+      }
+    }
+
+    .checkmark-appear {
+      animation: checkmarkAppear 0.5s ease-out;
+    }
+  </style>
+</head>
+<body class="bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 min-h-screen">
+
+  <!-- Language Selector -->
+  <div class="absolute top-4 right-4 z-10">
+    <div class="flex items-center gap-2 bg-slate-800/50 backdrop-blur-xl border border-white/10 rounded-lg px-3 py-2">
+      <svg class="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 5h12M9 3v2m1.048 9.5A18.022 18.022 0 016.412 9m6.088 9h7M11 21l5-10 5 10M12.751 5C11.783 10.77 8.07 15.61 3 18.129"/>
+      </svg>
+      <select class="bg-transparent text-white text-sm focus:outline-none">
+        <option value="en">EN</option>
+        <option value="es">ES</option>
+        <option value="he">HE</option>
+      </select>
+    </div>
+  </div>
+
+  <!-- Main Container -->
+  <div class="max-w-4xl mx-auto px-4 py-8 min-h-screen flex flex-col">
+
+    <!-- Header -->
+    <div class="text-center mb-8">
+      <h1 class="text-4xl font-bold text-white mb-2">Welcome to AI Business OS</h1>
+      <p class="text-slate-400">Let's build your business in minutes</p>
+    </div>
+
+    <!-- Chat Container -->
+    <div id="chatContainer" class="flex-1 bg-slate-800/30 backdrop-blur-xl border border-white/10 rounded-2xl p-6 mb-6 overflow-y-auto">
+
+      <!-- System Message -->
+      <div class="chat-message mb-6 flex items-start gap-3">
+        <div class="w-10 h-10 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex items-center justify-center flex-shrink-0">
+          <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>
+          </svg>
+        </div>
+        <div class="flex-1">
+          <div class="bg-slate-700/50 rounded-2xl rounded-tl-none p-4">
+            <p class="text-white mb-3">Welcome! Let's build your AI Business OS.</p>
+            <p class="text-slate-300 text-sm">Tell me about your business:</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Bio Upload Options -->
+      <div id="uploadOptions" class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+
+        <!-- Type Bio Card -->
+        <div class="upload-card bg-slate-700/30 border border-white/10 rounded-xl p-6 text-center" onclick="showTypeBio()">
+          <div class="w-16 h-16 bg-gradient-to-br from-blue-500 to-cyan-500 rounded-2xl flex items-center justify-center mx-auto mb-4">
+            <span class="text-4xl">💬</span>
+          </div>
+          <h3 class="text-white font-semibold mb-2">Type your bio</h3>
+          <p class="text-slate-400 text-sm">Describe your business in your own words</p>
+        </div>
+
+        <!-- Upload File Card -->
+        <div class="upload-card bg-slate-700/30 border border-white/10 rounded-xl p-6 text-center" onclick="showUploadFile()">
+          <div class="w-16 h-16 bg-gradient-to-br from-purple-500 to-pink-500 rounded-2xl flex items-center justify-center mx-auto mb-4">
+            <span class="text-4xl">📄</span>
+          </div>
+          <h3 class="text-white font-semibold mb-2">Upload file</h3>
+          <p class="text-slate-400 text-sm">PDF, DOCX, TXT - Resume, bio, business description</p>
+        </div>
+
+        <!-- Guided Questions Card -->
+        <div class="upload-card bg-slate-700/30 border border-white/10 rounded-xl p-6 text-center" onclick="showGuidedQuestions()">
+          <div class="w-16 h-16 bg-gradient-to-br from-orange-500 to-red-500 rounded-2xl flex items-center justify-center mx-auto mb-4">
+            <span class="text-4xl">❓</span>
+          </div>
+          <h3 class="text-white font-semibold mb-2">Answer questions</h3>
+          <p class="text-slate-400 text-sm">I'll ask a few questions to understand your business</p>
+        </div>
+      </div>
+
+      <!-- Typing Indicator (hidden initially) -->
+      <div id="typingIndicator" class="chat-message mb-6 flex items-start gap-3 hidden">
+        <div class="w-10 h-10 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex items-center justify-center flex-shrink-0">
+          <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>
+          </svg>
+        </div>
+        <div class="bg-slate-700/50 rounded-2xl rounded-tl-none">
+          <div class="typing-indicator">
+            <span></span>
+            <span></span>
+            <span></span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Profile Preview (hidden initially) -->
+      <div id="profilePreview" class="chat-message mb-6 flex items-start gap-3 hidden">
+        <div class="w-10 h-10 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex items-center justify-center flex-shrink-0">
+          <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>
+          </svg>
+        </div>
+        <div class="flex-1">
+          <div class="bg-slate-700/50 rounded-2xl rounded-tl-none p-6">
+            <p class="text-white mb-4 text-lg font-semibold">Here's what I found:</p>
+
+            <!-- Business Profile Card -->
+            <div class="bg-slate-800/50 border border-white/10 rounded-lg p-4 mb-6">
+              <h4 class="text-blue-300 font-semibold mb-3 flex items-center gap-2">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 13.255A23.931 23.931 0 0112 15c-3.183 0-6.22-.62-9-1.745M16 6V4a2 2 0 00-2-2h-4a2 2 0 00-2 2v2m4 6h.01M5 20h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>
+                </svg>
+                Business Profile
+              </h4>
+              <div class="grid grid-cols-2 gap-3 text-sm">
+                <div>
+                  <p class="text-slate-400">Vertical</p>
+                  <p class="text-white font-medium">Therapist</p>
+                </div>
+                <div>
+                  <p class="text-slate-400">Services</p>
+                  <p class="text-white font-medium">Individual therapy, Couples therapy</p>
+                </div>
+                <div>
+                  <p class="text-slate-400">Clients</p>
+                  <p class="text-white font-medium">~20 per week</p>
+                </div>
+                <div>
+                  <p class="text-slate-400">Tools</p>
+                  <p class="text-white font-medium">Google Calendar, Stripe</p>
+                </div>
+                <div class="col-span-2">
+                  <p class="text-slate-400">Website</p>
+                  <p class="text-white font-medium">therapypractice.com</p>
+                </div>
+              </div>
+            </div>
+
+            <p class="text-white mb-4">Based on this, I'll build:</p>
+
+            <!-- Capability Checklist -->
+            <div class="space-y-3 mb-6">
+              <div class="flex items-start gap-3 text-white bg-slate-800/30 rounded-lg p-3">
+                <svg class="w-6 h-6 text-green-400 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+                </svg>
+                <div class="flex-1">
+                  <p class="font-medium">Professional website (therapist template)</p>
+                  <p class="text-sm text-slate-400">Custom domain + booking page</p>
+                </div>
+              </div>
+
+              <div class="flex items-start gap-3 text-white bg-slate-800/30 rounded-lg p-3">
+                <svg class="w-6 h-6 text-green-400 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+                </svg>
+                <div class="flex-1">
+                  <p class="font-medium">Client management (CRM with 24 contacts)</p>
+                  <p class="text-sm text-slate-400">Track clients, notes, progress</p>
+                </div>
+              </div>
+
+              <div class="flex items-start gap-3 text-white bg-slate-800/30 rounded-lg p-3">
+                <svg class="w-6 h-6 text-green-400 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+                </svg>
+                <div class="flex-1">
+                  <p class="font-medium">Booking system (Google Calendar sync)</p>
+                  <p class="text-sm text-slate-400">Automated scheduling + reminders</p>
+                </div>
+              </div>
+
+              <div class="flex items-start gap-3 text-white bg-slate-800/30 rounded-lg p-3">
+                <svg class="w-6 h-6 text-green-400 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+                </svg>
+                <div class="flex-1">
+                  <p class="font-medium">Payment processing (Stripe)</p>
+                  <p class="text-sm text-slate-400">Accept payments, send invoices</p>
+                </div>
+              </div>
+
+              <div class="flex items-start gap-3 text-white bg-slate-800/30 rounded-lg p-3">
+                <svg class="w-6 h-6 text-green-400 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+                </svg>
+                <div class="flex-1">
+                  <p class="font-medium">Email automation (3 sequences)</p>
+                  <p class="text-sm text-slate-400">Welcome emails, reminders, check-ins</p>
+                </div>
+              </div>
+            </div>
+
+            <!-- AI Employees Section -->
+            <div class="bg-purple-500/10 border border-purple-500/30 rounded-lg p-4 mb-6">
+              <p class="text-purple-300 font-semibold mb-3 flex items-center gap-2">
+                <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                  <path d="M13 7H7v6h6V7z"/>
+                  <path fill-rule="evenodd" d="M7 2a1 1 0 012 0v1h2V2a1 1 0 112 0v1h2a2 2 0 012 2v2h1a1 1 0 110 2h-1v2h1a1 1 0 110 2h-1v2a2 2 0 01-2 2h-2v1a1 1 0 11-2 0v-1H9v1a1 1 0 11-2 0v-1H5a2 2 0 01-2-2v-2H2a1 1 0 110-2h1V9H2a1 1 0 010-2h1V5a2 2 0 012-2h2V2zM5 5h10v10H5V5z" clip-rule="evenodd"/>
+                </svg>
+                AI Employees
+              </p>
+              <div class="space-y-2 text-sm">
+                <div class="flex items-center gap-2 text-purple-200">
+                  <span>🤖</span>
+                  <span>Client Intake Assistant</span>
+                </div>
+                <div class="flex items-center gap-2 text-purple-200">
+                  <span>🤖</span>
+                  <span>Session Prep Assistant</span>
+                </div>
+                <div class="flex items-center gap-2 text-purple-200">
+                  <span>🤖</span>
+                  <span>Follow-up Scheduler</span>
+                </div>
+              </div>
+            </div>
+
+            <p class="text-slate-300 text-sm mb-4">Does this look good?</p>
+
+            <div class="flex gap-3">
+              <button class="flex-1 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white font-semibold py-3 px-6 rounded-lg transition-all" onclick="buildEverything()">
+                ✅ Yes, Build Everything!
+              </button>
+              <button class="px-6 py-3 bg-slate-600 hover:bg-slate-500 text-white font-semibold rounded-lg transition-colors">
+                ✏️ Edit Profile
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Building Progress (hidden initially) -->
+      <div id="buildingProgress" class="chat-message mb-6 flex items-start gap-3 hidden">
+        <div class="w-10 h-10 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex items-center justify-center flex-shrink-0">
+          <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>
+          </svg>
+        </div>
+        <div class="flex-1">
+          <div class="bg-slate-700/50 rounded-2xl rounded-tl-none p-6">
+            <p class="text-white mb-4 text-lg font-semibold">Building your business OS...</p>
+
+            <!-- Progress Steps -->
+            <div class="space-y-3">
+              <div id="step1" class="flex items-center gap-3 text-slate-400 progress-step">
+                <div class="w-6 h-6 border-2 border-slate-400 rounded-full flex items-center justify-center">
+                  <div class="w-3 h-3 bg-slate-400 rounded-full"></div>
+                </div>
+                <span>Creating website...</span>
+              </div>
+
+              <div id="step2" class="flex items-center gap-3 text-slate-400">
+                <div class="w-6 h-6 border-2 border-slate-600 rounded-full"></div>
+                <span>Setting up CRM...</span>
+              </div>
+
+              <div id="step3" class="flex items-center gap-3 text-slate-400">
+                <div class="w-6 h-6 border-2 border-slate-600 rounded-full"></div>
+                <span>Connecting calendar...</span>
+              </div>
+
+              <div id="step4" class="flex items-center gap-3 text-slate-400">
+                <div class="w-6 h-6 border-2 border-slate-600 rounded-full"></div>
+                <span>Configuring payments...</span>
+              </div>
+
+              <div id="step5" class="flex items-center gap-3 text-slate-400">
+                <div class="w-6 h-6 border-2 border-slate-600 rounded-full"></div>
+                <span>Activating AI Employees...</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Success Screen (hidden initially) -->
+      <div id="successScreen" class="chat-message mb-6 flex items-start gap-3 hidden">
+        <div class="w-10 h-10 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex items-center justify-center flex-shrink-0">
+          <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>
+          </svg>
+        </div>
+        <div class="flex-1">
+          <div class="bg-gradient-to-br from-green-500/20 to-emerald-500/20 border border-green-500/30 rounded-2xl rounded-tl-none p-6 text-center">
+            <div class="text-6xl mb-4">🎉</div>
+            <h3 class="text-2xl font-bold text-white mb-2">Your practice is LIVE!</h3>
+            <p class="text-green-200 mb-6">All systems are running and ready to go</p>
+            <button class="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white font-semibold py-3 px-8 rounded-lg transition-all" onclick="window.location.href='ai-business-os-dashboard.html'">
+              View Dashboard →
+            </button>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Progress Bar -->
+    <div class="bg-slate-800/30 backdrop-blur-xl border border-white/10 rounded-xl p-4">
+      <div class="flex items-center justify-between mb-2">
+        <span class="text-slate-400 text-sm">Onboarding Progress</span>
+        <span id="progressPercent" class="text-white text-sm font-semibold">0%</span>
+      </div>
+      <div class="w-full bg-slate-700 rounded-full h-2">
+        <div id="progressBar" class="bg-gradient-to-r from-blue-600 to-purple-600 h-2 rounded-full transition-all duration-500" style="width: 0%"></div>
+      </div>
+    </div>
+
+  </div>
+
+  <script>
+    function updateProgress(percent) {
+      document.getElementById('progressBar').style.width = percent + '%';
+      document.getElementById('progressPercent').textContent = percent + '%';
+    }
+
+    function showTypeBio() {
+      // In real implementation, show text input
+      // For demo, simulate file upload
+      simulateBioUpload();
+    }
+
+    function showUploadFile() {
+      simulateBioUpload();
+    }
+
+    function showGuidedQuestions() {
+      // In real implementation, show questionnaire
+      // For demo, simulate file upload
+      simulateBioUpload();
+    }
+
+    function simulateBioUpload() {
+      // Hide upload options
+      document.getElementById('uploadOptions').style.display = 'none';
+
+      // Show typing indicator
+      document.getElementById('typingIndicator').classList.remove('hidden');
+      updateProgress(25);
+
+      // Show profile preview after 3 seconds
+      setTimeout(() => {
+        document.getElementById('typingIndicator').classList.add('hidden');
+        document.getElementById('profilePreview').classList.remove('hidden');
+        updateProgress(50);
+      }, 3000);
+    }
+
+    function buildEverything() {
+      // Hide profile preview
+      document.getElementById('profilePreview').classList.add('hidden');
+
+      // Show building progress
+      document.getElementById('buildingProgress').classList.remove('hidden');
+      updateProgress(60);
+
+      // Animate progress steps
+      const steps = [
+        { id: 'step1', delay: 500, text: 'Creating website...' },
+        { id: 'step2', delay: 1500, text: 'Setting up CRM...' },
+        { id: 'step3', delay: 2500, text: 'Connecting calendar...' },
+        { id: 'step4', delay: 3500, text: 'Configuring payments...' },
+        { id: 'step5', delay: 4500, text: 'Activating AI Employees...' }
+      ];
+
+      steps.forEach((step, index) => {
+        setTimeout(() => {
+          // Mark current step as complete
+          const stepEl = document.getElementById(step.id);
+          stepEl.classList.remove('progress-step');
+          stepEl.classList.add('text-green-400');
+          stepEl.querySelector('.border-slate-400, .border-slate-600').classList.remove('border-slate-400', 'border-slate-600');
+          stepEl.querySelector('.border-2').classList.add('border-green-400');
+
+          const checkmark = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+          checkmark.setAttribute('class', 'w-4 h-4 text-green-400 checkmark-appear');
+          checkmark.setAttribute('fill', 'none');
+          checkmark.setAttribute('stroke', 'currentColor');
+          checkmark.setAttribute('viewBox', '0 0 24 24');
+          const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+          path.setAttribute('stroke-linecap', 'round');
+          path.setAttribute('stroke-linejoin', 'round');
+          path.setAttribute('stroke-width', '3');
+          path.setAttribute('d', 'M5 13l4 4L19 7');
+          checkmark.appendChild(path);
+
+          stepEl.querySelector('.rounded-full').innerHTML = '';
+          stepEl.querySelector('.rounded-full').appendChild(checkmark);
+
+          // Activate next step
+          if (index < steps.length - 1) {
+            const nextStep = document.getElementById(steps[index + 1].id);
+            nextStep.classList.add('progress-step', 'text-blue-400');
+            nextStep.querySelector('.border-2').classList.remove('border-slate-600');
+            nextStep.querySelector('.border-2').classList.add('border-blue-400');
+            const dot = nextStep.querySelector('.rounded-full');
+            if (!dot.querySelector('div')) {
+              const innerDot = document.createElement('div');
+              innerDot.className = 'w-3 h-3 bg-blue-400 rounded-full';
+              dot.appendChild(innerDot);
+            }
+          }
+
+          updateProgress(60 + (index + 1) * 8);
+        }, step.delay);
+      });
+
+      // Show success screen
+      setTimeout(() => {
+        document.getElementById('buildingProgress').classList.add('hidden');
+        document.getElementById('successScreen').classList.remove('hidden');
+        updateProgress(100);
+      }, 6000);
+    }
+  </script>
+
+</body>
+</html>

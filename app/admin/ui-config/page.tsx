@@ -320,11 +320,8 @@ export default function UIConfigPage() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-96">
-        <div className="text-center">
-          <div className="w-12 h-12 border-4 border-purple-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
-          <p className="text-slate-400">Loading configuration...</p>
-        </div>
+      <div className="flex items-center justify-center py-12">
+        <RefreshCw className="w-8 h-8 text-purple-500 animate-spin" />
       </div>
     )
   }
@@ -332,34 +329,46 @@ export default function UIConfigPage() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="w-12 h-12 bg-gradient-to-br from-violet-500 to-purple-500 rounded-xl flex items-center justify-center shadow-lg">
-            <Palette className="w-6 h-6 text-white" />
+      <header className="border-b border-slate-700">
+        <div className="flex items-center justify-between pb-4">
+          <div className="flex items-center gap-4">
+            <div className="flex flex-col">
+              <div className="flex items-center gap-4 mb-1">
+                <h1 className="text-xl font-semibold text-white">UI Configuration</h1>
+                <span className="text-xs px-2 py-1 rounded bg-purple-500/20 text-purple-400">System Config</span>
+                <div className={`px-3 py-1 rounded-lg border flex items-center gap-2 text-xs ${
+                  currentVersion === 'v2'
+                    ? 'bg-violet-500/20 border-violet-500/30 text-violet-300'
+                    : 'bg-slate-900/50 border-white/10 text-slate-300'
+                }`}>
+                  {currentVersion === 'v2' ? (
+                    <>
+                      <Sparkles className="w-3 h-3" />
+                      <span className="font-medium">V2 Active</span>
+                    </>
+                  ) : (
+                    <>
+                      <Monitor className="w-3 h-3" />
+                      <span className="font-medium">V1 Active</span>
+                    </>
+                  )}
+                </div>
+              </div>
+              <p className="text-sm text-slate-400">Control design system and UI version</p>
+            </div>
           </div>
-          <div>
-            <h1 className="text-3xl font-bold text-white">UI Configuration</h1>
-            <p className="text-slate-400">Control design system and UI version</p>
+          <div className="flex items-center gap-4">
+            <button
+              onClick={fetchCurrentVersion}
+              disabled={loading}
+              className="p-2 rounded-lg border border-slate-700 hover:bg-slate-800 transition-colors"
+              title="Refresh Config"
+            >
+              <RefreshCw className={`w-5 h-5 text-slate-400 ${loading ? 'animate-spin' : ''}`} />
+            </button>
           </div>
         </div>
-        <div className={`px-4 py-2 rounded-lg border flex items-center gap-2 ${
-          currentVersion === 'v2'
-            ? 'bg-violet-500/20 border-violet-500/30 text-violet-300'
-            : 'bg-slate-700/50 border-white/10 text-slate-300'
-        }`}>
-          {currentVersion === 'v2' ? (
-            <>
-              <Sparkles className="w-4 h-4" />
-              <span className="font-medium">V2 Active</span>
-            </>
-          ) : (
-            <>
-              <Monitor className="w-4 h-4" />
-              <span className="font-medium">V1 Active</span>
-            </>
-          )}
-        </div>
-      </div>
+      </header>
 
       {/* Message Banner */}
       {message && (
@@ -381,7 +390,7 @@ export default function UIConfigPage() {
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
-        className="bg-slate-800/50 backdrop-blur-xl rounded-xl p-6 border border-white/10"
+        className="bg-slate-800 border border-slate-700 rounded-xl p-6"
       >
         <div className="mb-6">
           <h2 className="text-xl font-semibold text-white flex items-center gap-2 mb-2">
@@ -486,7 +495,7 @@ export default function UIConfigPage() {
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.1 }}
-        className="bg-slate-800/50 backdrop-blur-xl rounded-xl p-6 border border-white/10"
+        className="bg-slate-800 border border-slate-700 rounded-xl p-6"
       >
         <div className="mb-6">
           <div className="flex items-center justify-between">
@@ -579,18 +588,18 @@ export default function UIConfigPage() {
                         type="color"
                         value={token.value}
                         onChange={(e) => handleTokenChange('colors', token.name, e.target.value)}
-                        className="w-16 h-10 p-1 bg-slate-700/50 border-slate-600 cursor-pointer"
+                        className="w-16 h-10 p-1 bg-slate-900/50 border-slate-600 cursor-pointer"
                       />
                       <Input
                         type="text"
                         value={token.value}
                         onChange={(e) => handleTokenChange('colors', token.name, e.target.value)}
-                        className="flex-1 font-mono text-xs bg-slate-700/50 border-slate-600 text-white"
+                        className="flex-1 font-mono text-xs bg-slate-900/50 border-slate-600 text-white"
                         placeholder="#000000"
                       />
                     </div>
                   ) : (
-                    <div className="mt-2 px-2 py-1 bg-slate-700/50 rounded border border-slate-600">
+                    <div className="mt-2 px-2 py-1 bg-slate-900/50 rounded border border-slate-600">
                       <code className="text-xs font-mono text-violet-400">{token.value}</code>
                     </div>
                   )}
@@ -623,7 +632,7 @@ export default function UIConfigPage() {
                       <select
                         value={isCustomValue(token.value, radiusOptions.filter(o => o !== 'custom')) ? 'custom' : token.value}
                         onChange={(e) => handleSelectChange('borderRadius', token.name, e.target.value, radiusOptions)}
-                        className="w-full px-3 py-2 font-mono text-xs bg-slate-700/50 border border-slate-600 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-500"
+                        className="w-full px-3 py-2 font-mono text-xs bg-slate-900/50 border border-slate-600 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-500"
                       >
                         {radiusOptions.map((option) => (
                           <option key={option} value={option}>{option}</option>
@@ -634,13 +643,13 @@ export default function UIConfigPage() {
                           type="text"
                           value={token.value}
                           onChange={(e) => handleTokenChange('borderRadius', token.name, e.target.value)}
-                          className="font-mono text-xs bg-slate-700/50 border-slate-600 text-white"
+                          className="font-mono text-xs bg-slate-900/50 border-slate-600 text-white"
                           placeholder="12px"
                         />
                       )}
                     </div>
                   ) : (
-                    <div className="px-2 py-1 bg-slate-700/50 rounded border border-slate-600">
+                    <div className="px-2 py-1 bg-slate-900/50 rounded border border-slate-600">
                       <code className="text-xs font-mono text-violet-400">{token.value}</code>
                     </div>
                   )}
@@ -672,7 +681,7 @@ export default function UIConfigPage() {
                       <select
                         value={isCustomValue(token.value, shadowOptions.filter(o => o !== 'custom')) ? 'custom' : token.value}
                         onChange={(e) => handleSelectChange('shadows', token.name, e.target.value, shadowOptions)}
-                        className="w-full px-3 py-2 font-mono text-xs bg-slate-700/50 border border-slate-600 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-500"
+                        className="w-full px-3 py-2 font-mono text-xs bg-slate-900/50 border border-slate-600 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-500"
                       >
                         {shadowOptions.map((option) => (
                           <option key={option} value={option}>{option === 'custom' ? 'Custom' : option}</option>
@@ -683,13 +692,13 @@ export default function UIConfigPage() {
                           type="text"
                           value={token.value}
                           onChange={(e) => handleTokenChange('shadows', token.name, e.target.value)}
-                          className="font-mono text-xs bg-slate-700/50 border-slate-600 text-white"
+                          className="font-mono text-xs bg-slate-900/50 border-slate-600 text-white"
                           placeholder="0 2px 4px rgba(0,0,0,0.1)"
                         />
                       )}
                     </div>
                   ) : (
-                    <div className="px-2 py-1 bg-slate-700/50 rounded border border-slate-600">
+                    <div className="px-2 py-1 bg-slate-900/50 rounded border border-slate-600">
                       <code className="text-xs font-mono text-violet-400 break-all">{token.value}</code>
                     </div>
                   )}
@@ -726,7 +735,7 @@ export default function UIConfigPage() {
                       <select
                         value={isCustomValue(token.value, spacingOptions.filter(o => o !== 'custom')) ? 'custom' : token.value}
                         onChange={(e) => handleSelectChange('spacing', token.name, e.target.value, spacingOptions)}
-                        className="w-full px-3 py-2 font-mono text-xs bg-slate-700/50 border border-slate-600 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-500"
+                        className="w-full px-3 py-2 font-mono text-xs bg-slate-900/50 border border-slate-600 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-500"
                       >
                         {spacingOptions.map((option) => (
                           <option key={option} value={option}>{option === 'custom' ? 'Custom' : option}</option>
@@ -737,13 +746,13 @@ export default function UIConfigPage() {
                           type="text"
                           value={token.value}
                           onChange={(e) => handleTokenChange('spacing', token.name, e.target.value)}
-                          className="font-mono text-xs bg-slate-700/50 border-slate-600 text-white"
+                          className="font-mono text-xs bg-slate-900/50 border-slate-600 text-white"
                           placeholder="24px"
                         />
                       )}
                     </div>
                   ) : (
-                    <div className="px-2 py-1 bg-slate-700/50 rounded border border-slate-600">
+                    <div className="px-2 py-1 bg-slate-900/50 rounded border border-slate-600">
                       <code className="text-xs font-mono text-violet-400">{token.value}</code>
                     </div>
                   )}
@@ -773,7 +782,7 @@ export default function UIConfigPage() {
                       <select
                         value={isCustomValue(token.value, fontSizeOptions.filter(o => o !== 'custom')) ? 'custom' : token.value}
                         onChange={(e) => handleSelectChange('typography', token.name, e.target.value, fontSizeOptions)}
-                        className="w-full px-3 py-2 font-mono text-xs bg-slate-700/50 border border-slate-600 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-500"
+                        className="w-full px-3 py-2 font-mono text-xs bg-slate-900/50 border border-slate-600 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-500"
                       >
                         {fontSizeOptions.map((option) => (
                           <option key={option} value={option}>{option === 'custom' ? 'Custom' : option}</option>
@@ -784,13 +793,13 @@ export default function UIConfigPage() {
                           type="text"
                           value={token.value}
                           onChange={(e) => handleTokenChange('typography', token.name, e.target.value)}
-                          className="font-mono text-xs bg-slate-700/50 border-slate-600 text-white"
+                          className="font-mono text-xs bg-slate-900/50 border-slate-600 text-white"
                           placeholder="1rem"
                         />
                       )}
                     </div>
                   ) : (
-                    <div className="px-2 py-1 bg-slate-700/50 rounded border border-slate-600">
+                    <div className="px-2 py-1 bg-slate-900/50 rounded border border-slate-600">
                       <code className="text-xs font-mono text-violet-400">{token.value}</code>
                     </div>
                   )}
@@ -815,7 +824,7 @@ export default function UIConfigPage() {
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.2 }}
-        className="bg-slate-800/50 backdrop-blur-xl rounded-xl p-6 border border-white/10"
+        className="bg-slate-800 border border-slate-700 rounded-xl p-6"
       >
         <div className="mb-6">
           <h2 className="text-xl font-semibold text-white flex items-center gap-2">

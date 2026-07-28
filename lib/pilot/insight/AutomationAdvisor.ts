@@ -20,7 +20,9 @@ import { supabaseServer as defaultSupabase } from '@/lib/supabaseServer';
 import { OrganizationService } from '@/lib/services/OrganizationService';
 import { WorkflowGroupRepository, WorkflowGroupWithStats } from '@/lib/repositories/WorkflowGroupRepository';
 import { Agent } from '@/lib/repositories/types';
-import Anthropic from '@anthropic-ai/sdk';
+import { ProviderFactory, PROVIDERS } from '@/lib/ai/providerFactory';
+import { ANTHROPIC_MODELS } from '@/lib/ai/providers/anthropicProvider';
+import type { CallContext } from '@/lib/ai/providers/baseProvider';
 
 const logger = createLogger({ service: 'AutomationAdvisor' });
 
@@ -181,15 +183,11 @@ export class AutomationAdvisor {
   private supabase: SupabaseClient;
   private orgService: OrganizationService;
   private groupRepo: WorkflowGroupRepository;
-  private anthropic: Anthropic;
 
   constructor(supabaseClient?: SupabaseClient) {
     this.supabase = supabaseClient || defaultSupabase;
     this.orgService = new OrganizationService(this.supabase);
     this.groupRepo = new WorkflowGroupRepository(this.supabase);
-    this.anthropic = new Anthropic({
-      apiKey: process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_API_KEY,
-    });
   }
 
   // ============================================================================
@@ -493,7 +491,7 @@ export class AutomationAdvisor {
     }, 'Portfolio data gathered');
 
     // 4. Generate AI recommendations with organization context
-    const { recommendations, summary } = await this.generateAIRecommendations(portfolio, false, orgContext);
+    const { recommendations, summary } = await this.generateAIRecommendations(portfolio, false, orgContext, userId);
 
     // 4. Build report
     const report: AdvisorReport = {
@@ -538,7 +536,7 @@ export class AutomationAdvisor {
     }
 
     const portfolio = await this.gatherPortfolioData(userId, org.id);
-    const { recommendations } = await this.generateAIRecommendations(portfolio, true, orgContext);
+    const { recommendations } = await this.generateAIRecommendations(portfolio, true, orgContext, userId);
 
     return recommendations.slice(0, limit);
   }
@@ -874,7 +872,8 @@ export class AutomationAdvisor {
   private async generateAIRecommendations(
     portfolio: PortfolioSummary,
     quickMode = false,
-    orgContext?: OrganizationContext
+    orgContext?: OrganizationContext,
+    userId?: string
   ): Promise<{ recommendations: StrategicRecommendation[]; summary: string }> {
     if (portfolio.total_workflows === 0) {
       return {
@@ -887,8 +886,18 @@ export class AutomationAdvisor {
     const prompt = this.buildPrompt(portfolio, quickMode, orgContext);
 
     try {
-      const response = await this.anthropic.messages.create({
-        model: 'claude-haiku-4-5-20251001',
+      const provider = ProviderFactory.getProvider(PROVIDERS.ANTHROPIC);
+      const context: CallContext = {
+        userId: userId || 'system',
+        feature: 'automation_advisor',
+        component: 'AutomationAdvisor',
+        category: 'insights',
+        activity_type: 'recommendation_generation',
+        activity_name: quickMode ? 'quick_recommendations' : 'full_recommendations',
+      };
+
+      const response = await provider.chatCompletion({
+        model: ANTHROPIC_MODELS.CLAUDE_45_HAIKU,
         max_tokens: quickMode ? 1000 : 2000,
         messages: [
           {
@@ -896,15 +905,15 @@ export class AutomationAdvisor {
             content: prompt,
           },
         ],
-      });
+      }, context);
 
-      // Parse response
-      const content = response.content[0];
-      if (content.type !== 'text') {
-        throw new Error('Unexpected response type');
+      // Parse response (OpenAI-compatible format)
+      const content = response.choices[0]?.message?.content;
+      if (!content) {
+        throw new Error('Empty response from AI');
       }
 
-      return this.parseAIResponse(content.text);
+      return this.parseAIResponse(content);
     } catch (error) {
       logger.error({ err: error }, 'Failed to generate AI recommendations');
 

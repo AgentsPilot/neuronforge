@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AgentsPilot — Dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;450;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --ink:#1B130D; --canvas:#F6F7FB; --text:#131A2B; --muted:#697187; --line:#E7E9F1;
+  --violet:#F97316; --amber:#FFB24D; --green:#22C58B; --danger:#F26B6B; --blue:#4F6EF7; --pink:#D14E97;
+  --aurora:linear-gradient(120deg,#FFB454 0%,#F97316 55%,#EA580C 100%);
+  --display:"Space Grotesk",system-ui,sans-serif; --body:"Inter",system-ui,sans-serif;
+  --card:#fff; --soft:#FAFAFC;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--body);color:var(--text);-webkit-font-smoothing:antialiased;line-height:1.5;min-height:100vh;
+     background:radial-gradient(70% 45% at 12% -5%,#FFE9D6 0%,transparent 50%),radial-gradient(60% 40% at 100% 0%,#FFF0E0 0%,transparent 45%),#F1F3F8}
+button{font-family:inherit;cursor:pointer;border:0;background:none;color:inherit}
+input{font-family:inherit}
+svg{display:block}
+
+.dash{max-width:1160px;margin:0 auto;padding:20px 26px 40px}
+
+/* ===== header ===== */
+.dhead{display:flex;align-items:center;gap:14px;margin-bottom:22px}
+.logo{display:flex;align-items:center;gap:11px}
+.logo-mark{width:40px;height:40px;border-radius:12px;background:var(--aurora);display:grid;place-items:center;
+           box-shadow:0 12px 26px -12px rgba(249,115,22,.6),0 0 0 1px rgba(255,255,255,.18) inset}
+.logo-mark svg{width:21px;height:21px;stroke:#fff;stroke-width:2.2;fill:none;stroke-linecap:round;stroke-linejoin:round}
+.logo-tx b{font-family:var(--display);font-size:18px;font-weight:700;letter-spacing:-.02em;display:block;line-height:1.1}
+.logo-tx span{font-size:11.5px;color:var(--muted);font-weight:500}
+.dhead-actions{margin-left:auto;display:flex;align-items:center;gap:10px}
+.hbtn{width:42px;height:42px;border-radius:12px;background:var(--card);border:1px solid var(--line);display:grid;place-items:center;transition:.15s;position:relative}
+.hbtn:hover{border-color:#D6DAE6;transform:translateY(-1px)}
+.hbtn svg{width:19px;height:19px;stroke:var(--text);stroke-width:1.9;fill:none;stroke-linecap:round;stroke-linejoin:round}
+.hbtn .lang-lbl{position:absolute;bottom:-4px;right:-4px;background:var(--ink);color:#fff;font-size:8px;font-weight:700;padding:1px 4px;border-radius:5px}
+.hprofile{width:42px;height:42px;border-radius:50%;background:var(--aurora);display:grid;place-items:center;color:#fff;font-family:var(--display);font-weight:700;font-size:15px;margin-left:2px;box-shadow:0 8px 18px -8px rgba(249,115,22,.6)}
+
+/* ===== ROW 2 — my day / story ===== */
+.myday{background:var(--card);border:1px solid var(--line);border-radius:22px;padding:22px 24px;margin-bottom:20px;
+       box-shadow:0 20px 50px -34px rgba(20,26,43,.4);position:relative;overflow:hidden}
+.myday::before{content:"";position:absolute;top:-40%;right:-6%;width:280px;height:280px;border-radius:50%;
+               background:radial-gradient(circle,rgba(255,180,84,.16),transparent 68%);pointer-events:none}
+.md-top{display:flex;align-items:flex-start;gap:14px;margin-bottom:18px;position:relative}
+.md-greet{flex:1}
+.md-greet .eyebrow{font-family:var(--display);font-size:11px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;color:var(--violet);margin-bottom:7px;display:flex;align-items:center;gap:7px}
+.md-greet .eyebrow .live{width:7px;height:7px;border-radius:50%;background:var(--green);position:relative}
+.md-greet .eyebrow .live::after{content:"";position:absolute;inset:0;border-radius:50%;background:var(--green);animation:pulse 1.8s ease-out infinite}
+@keyframes pulse{0%{transform:scale(1);opacity:.6}100%{transform:scale(2.8);opacity:0}}
+.md-greet h1{font-family:var(--display);font-weight:600;font-size:25px;letter-spacing:-.025em;line-height:1.15;margin-bottom:6px}
+.md-greet p{font-size:14.5px;color:var(--muted);line-height:1.55;max-width:44rem}
+.md-greet p b{color:var(--text);font-weight:600}
+.md-date{text-align:right;flex:none}
+.md-date b{font-family:var(--display);font-size:15px;font-weight:600;display:block}
+.md-date span{font-size:12px;color:var(--muted)}
+
+/* story beats */
+.story{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;position:relative}
+.beat{background:var(--soft);border:1px solid var(--line);border-radius:15px;padding:14px 15px;transition:.18s;cursor:default;position:relative}
+.beat:hover{border-color:#D6DAE6;background:#fff}
+.beat-ic{width:32px;height:32px;border-radius:9px;display:grid;place-items:center;margin-bottom:11px}
+.beat-ic svg{width:16px;height:16px;stroke-width:2;fill:none;stroke-linecap:round;stroke-linejoin:round}
+.beat.done .beat-ic{background:rgba(34,197,139,.13)} .beat.done .beat-ic svg{stroke:var(--green)}
+.beat.run .beat-ic{background:rgba(249,115,22,.12)} .beat.run .beat-ic svg{stroke:var(--violet)}
+.beat.next .beat-ic{background:rgba(79,110,247,.12)} .beat.next .beat-ic svg{stroke:var(--blue)}
+.beat.plan .beat-ic{background:rgba(255,178,77,.16)} .beat.plan .beat-ic svg{stroke:#C68A26}
+.beat b{display:block;font-size:13.5px;font-weight:600;margin-bottom:3px;line-height:1.3}
+.beat small{font-size:12px;color:var(--muted);line-height:1.4}
+.beat-tag{position:absolute;top:13px;right:13px;font-size:9px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;padding:2px 6px;border-radius:5px}
+.beat.done .beat-tag{color:#128a5e;background:rgba(34,197,139,.13)}
+.beat.run .beat-tag{color:var(--violet);background:rgba(249,115,22,.12);display:flex;align-items:center;gap:4px}
+.beat.run .beat-tag .rp{width:5px;height:5px;border-radius:50%;background:var(--violet);animation:blink 1.2s infinite}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
+
+/* ===== ROW 3 ===== */
+.row3{display:grid;grid-template-columns:390px 1fr;gap:20px;align-items:stretch}
+
+/* chat command panel */
+.chatcard{background:var(--card);border:1px solid var(--line);border-radius:22px;display:flex;flex-direction:column;overflow:hidden;
+          box-shadow:0 20px 50px -34px rgba(20,26,43,.4);min-height:460px}
+.cc-head{padding:18px 20px 14px;border-bottom:1px solid #F1F2F7}
+.cc-head .cc-orb{width:34px;height:34px;border-radius:10px;background:var(--aurora);display:grid;place-items:center;flex:none;box-shadow:0 8px 18px -8px rgba(249,115,22,.6)}
+.cc-head-row{display:flex;align-items:center;gap:11px}
+.cc-head b{font-family:var(--display);font-size:16px;font-weight:600;letter-spacing:-.01em}
+.cc-head small{display:block;font-size:12px;color:var(--muted);margin-top:1px}
+.cc-scroll{flex:1;overflow-y:auto;padding:16px 18px;display:flex;flex-direction:column;gap:11px}
+.cmsg{max-width:88%;font-size:13.5px;line-height:1.5;opacity:0;animation:msgIn .4s forwards}
+@keyframes msgIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+.cmsg-ai{align-self:flex-start;background:var(--soft);border:1px solid var(--line);border-radius:4px 14px 14px 14px;padding:11px 13px}
+.cmsg-me{align-self:flex-end;background:var(--aurora);color:#fff;border-radius:14px 14px 4px 14px;padding:10px 14px;font-weight:500}
+.cmsg-route{align-self:flex-start;display:inline-flex;align-items:center;gap:7px;font-size:11.5px;font-weight:600;color:var(--violet);
+            background:rgba(249,115,22,.09);border:1px solid rgba(249,115,22,.2);border-radius:20px;padding:6px 12px}
+.cmsg-route svg{width:13px;height:13px;stroke:currentColor;stroke-width:2;fill:none}
+.cc-dock{padding:12px 16px 16px;border-top:1px solid #F1F2F7}
+.cc-egs{display:flex;flex-wrap:wrap;gap:7px;margin-bottom:11px}
+.cc-eg{font-size:12px;font-weight:500;color:var(--text);background:var(--soft);border:1px solid var(--line);border-radius:16px;padding:7px 12px;transition:.15s}
+.cc-eg:hover{border-color:var(--violet);color:var(--violet)}
+.cc-inbar{display:flex;gap:8px;align-items:center;background:#fff;border:1.5px solid var(--line);border-radius:14px;padding:5px 5px 5px 14px;transition:.18s}
+.cc-inbar:focus-within{border-color:var(--violet);box-shadow:0 0 0 4px rgba(249,115,22,.08)}
+.cc-inbar input{flex:1;border:0;font-size:14px;background:none}
+.cc-inbar input:focus{outline:0}
+.cc-send{width:38px;height:38px;border-radius:10px;background:var(--aurora);display:grid;place-items:center;flex:none;transition:.15s}
+.cc-send:active{transform:scale(.93)}
+.cc-send svg{width:17px;height:17px;stroke:#fff;stroke-width:2.2;fill:none;stroke-linecap:round;stroke-linejoin:round}
+
+/* four capability cards */
+.capgrid{display:grid;grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr;gap:20px}
+.cap{background:var(--card);border:1px solid var(--line);border-radius:20px;padding:20px;display:flex;flex-direction:column;
+     box-shadow:0 16px 44px -34px rgba(20,26,43,.4);transition:.18s;cursor:pointer;position:relative;overflow:hidden}
+.cap:hover{transform:translateY(-3px);box-shadow:0 26px 54px -30px rgba(20,26,43,.45);border-color:#DDE0EA}
+.cap-head{display:flex;align-items:center;gap:11px;margin-bottom:14px}
+.cap-ic{width:40px;height:40px;border-radius:11px;display:grid;place-items:center;flex:none}
+.cap-ic svg{width:20px;height:20px;stroke-width:2;fill:none;stroke-linecap:round;stroke-linejoin:round}
+.cap-web .cap-ic{background:rgba(79,110,247,.12)} .cap-web .cap-ic svg{stroke:var(--blue)}
+.cap-ppl .cap-ic{background:rgba(249,115,22,.12)} .cap-ppl .cap-ic svg{stroke:var(--violet)}
+.cap-rep .cap-ic{background:rgba(34,197,139,.13)} .cap-rep .cap-ic svg{stroke:var(--green)}
+.cap-cfg .cap-ic{background:rgba(209,78,151,.12)} .cap-cfg .cap-ic svg{stroke:var(--pink)}
+.cap-title{flex:1}
+.cap-title b{font-family:var(--display);font-size:16px;font-weight:600;letter-spacing:-.01em;display:block}
+.cap-title small{font-size:11.5px;color:var(--muted)}
+.cap-status{font-size:10px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;padding:3px 8px;border-radius:6px;color:#128a5e;background:rgba(34,197,139,.13)}
+.cap-body{flex:1;display:flex;flex-direction:column;justify-content:center;gap:9px}
+.cap-stat{display:flex;align-items:baseline;gap:8px}
+.cap-stat b{font-family:var(--display);font-size:27px;font-weight:700;letter-spacing:-.02em}
+.cap-stat span{font-size:12.5px;color:var(--muted)}
+.cap-sub{font-size:12.5px;color:var(--muted);line-height:1.45}
+.cap-sub b{color:var(--text);font-weight:600}
+.cap-foot{display:flex;align-items:center;gap:6px;margin-top:14px;font-size:13px;font-weight:600;color:var(--violet)}
+.cap-foot svg{width:15px;height:15px;stroke:currentColor;stroke-width:2.2;fill:none}
+/* mini visuals */
+.mini-pipe{display:flex;gap:4px;height:8px;border-radius:6px;overflow:hidden}
+.mini-pipe i{height:100%}
+.mini-bars{display:flex;align-items:flex-end;gap:5px;height:38px}
+.mini-bars i{flex:1;background:rgba(34,197,139,.25);border-radius:3px 3px 0 0}
+.mini-bars i.hi{background:var(--green)}
+.mini-browser{background:var(--soft);border:1px solid var(--line);border-radius:9px;overflow:hidden}
+.mini-browser .mb-bar{display:flex;align-items:center;gap:4px;padding:6px 8px;border-bottom:1px solid var(--line)}
+.mini-browser .mb-dot{width:6px;height:6px;border-radius:50%;background:#D6DAE6}
+.mini-browser .mb-url{margin-left:6px;font-size:9.5px;color:var(--muted)}
+.mini-browser .mb-body{padding:10px;display:flex;flex-direction:column;gap:5px}
+.mini-browser .mb-line{height:6px;border-radius:4px;background:#E4E7EF}
+.cfg-rows{display:flex;flex-direction:column;gap:7px}
+.cfg-row{display:flex;align-items:center;gap:8px;font-size:12.5px}
+.cfg-row .cfg-dot{width:15px;height:15px;border-radius:50%;background:rgba(34,197,139,.15);display:grid;place-items:center;flex:none}
+.cfg-row .cfg-dot svg{width:9px;height:9px;stroke:var(--green);stroke-width:3;fill:none}
+.cfg-row span{color:var(--muted)} .cfg-row b{font-weight:600;color:var(--text)}
+
+/* toast */
+.toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%) translateY(20px);z-index:50;background:var(--ink);color:#fff;
+       font-size:13.5px;font-weight:500;padding:13px 20px;border-radius:14px;box-shadow:0 20px 44px -12px rgba(0,0,0,.5);opacity:0;transition:.3s;display:flex;align-items:center;gap:10px;max-width:420px}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+.toast svg{width:16px;height:16px;stroke:var(--green);stroke-width:2.6;fill:none;stroke-linecap:round;stroke-linejoin:round;flex:none}
+.toast b{font-weight:700}
+
+@media(max-width:920px){
+  .story{grid-template-columns:1fr 1fr}
+  .row3{grid-template-columns:1fr}
+  .capgrid{grid-template-rows:auto}
+}
+@media(max-width:560px){.story{grid-template-columns:1fr}.capgrid{grid-template-columns:1fr}}
+@media(prefers-reduced-motion:reduce){*{animation-duration:.01ms!important;transition-duration:.01ms!important}}
+</style>
+</head>
+<body>
+<div class="dash">
+
+  <!-- ===== HEADER ===== -->
+  <header class="dhead">
+    <div class="logo">
+      <div class="logo-mark"><svg viewBox="0 0 24 24"><path d="M12 3l2.5 5.5L20 11l-5.5 2.5L12 19l-2.5-5.5L4 11l5.5-2.5z"/></svg></div>
+      <div class="logo-tx"><b>AgentsPilot</b><span>Bright Minds Therapy</span></div>
+    </div>
+    <div class="dhead-actions">
+      <button class="hbtn" title="Language" onclick="cycleLang()"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 010 18M12 3a15 15 0 000 18"/></svg><span class="lang-lbl" id="langLbl">EN</span></button>
+      <button class="hbtn" title="Settings" onclick="toast('Opening settings…')"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 11-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 110-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 114 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 110 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg></button>
+      <div class="hprofile">M</div>
+    </div>
+  </header>
+
+  <!-- ===== ROW 2 — MY DAY ===== -->
+  <section class="myday">
+    <div class="md-top">
+      <div class="md-greet">
+        <div class="eyebrow"><span class="live"></span> Your day, so far</div>
+        <h1>Good morning, Maya ☀️</h1>
+        <p>While you slept I kept things moving. <b>3 new people</b> found you and I've already replied to each one. You've got <b>3 sessions today</b>, and I'm quietly chasing what's owed. Here's everything running for you right now.</p>
+      </div>
+      <div class="md-date"><b id="dDay">Tuesday</b><span id="dDate">15 July</span></div>
+    </div>
+    <div class="story">
+      <div class="beat done">
+        <span class="beat-tag">Done</span>
+        <div class="beat-ic"><svg viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></div>
+        <b>Replied to 3 new enquiries</b>
+        <small>Overnight — all within 2 minutes</small>
+      </div>
+      <div class="beat next">
+        <span class="beat-tag" style="color:var(--blue);background:rgba(79,110,247,.12)">Next</span>
+        <div class="beat-ic"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></div>
+        <b>David at 10:00, Aisha at 2:00</b>
+        <small>3 sessions on today</small>
+      </div>
+      <div class="beat run">
+        <span class="beat-tag"><span class="rp"></span> Running</span>
+        <div class="beat-ic"><svg viewBox="0 0 24 24"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 01-3.4 0"/></svg></div>
+        <b>Following up with 6 people</b>
+        <small>Who went quiet — gently</small>
+      </div>
+      <div class="beat run">
+        <span class="beat-tag"><span class="rp"></span> Running</span>
+        <div class="beat-ic"><svg viewBox="0 0 24 24"><path d="M12 1v22M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></svg></div>
+        <b>Chasing $680 in invoices</b>
+        <small>2 clients — reminders sent</small>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== ROW 3 ===== -->
+  <div class="row3">
+
+    <!-- LEFT: chat command center -->
+    <section class="chatcard">
+      <div class="cc-head">
+        <div class="cc-head-row">
+          <div class="cc-orb"><svg viewBox="0 0 24 24" stroke="#fff" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l2.5 5.5L20 11l-5.5 2.5L12 19l-2.5-5.5L4 11l5.5-2.5z"/></svg></div>
+          <div><b>Just tell me</b><small>Change anything, anywhere — I'll handle it</small></div>
+        </div>
+      </div>
+      <div class="cc-scroll" id="ccScroll"></div>
+      <div class="cc-dock">
+        <div class="cc-egs" id="ccEgs"></div>
+        <div class="cc-inbar">
+          <input id="ccIn" placeholder="e.g. add a Saturday morning slot…" onkeydown="if(event.key==='Enter')ccSend()">
+          <button class="cc-send" onclick="ccSend()"><svg viewBox="0 0 24 24"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg></button>
+        </div>
+      </div>
+    </section>
+
+    <!-- RIGHT: four capability cards -->
+    <div class="capgrid">
+      <div class="cap cap-web" onclick="toast('Opening your website…')">
+        <div class="cap-head">
+          <div class="cap-ic"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 010 18M12 3a15 15 0 000 18"/></svg></div>
+          <div class="cap-title"><b>Website</b><small>Your online presence</small></div>
+          <span class="cap-status">Live</span>
+        </div>
+        <div class="cap-body">
+          <div class="mini-browser">
+            <div class="mb-bar"><span class="mb-dot"></span><span class="mb-dot"></span><span class="mb-dot"></span><span class="mb-url">bright-minds-therapy.agentspilot.site</span></div>
+            <div class="mb-body"><div class="mb-line" style="width:60%"></div><div class="mb-line" style="width:90%"></div><div class="mb-line" style="width:40%"></div></div>
+          </div>
+          <div class="cap-sub"><b>42 visitors</b> today · <b>5</b> started a booking</div>
+        </div>
+        <div class="cap-foot">View site <svg viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>
+      </div>
+
+      <div class="cap cap-ppl" onclick="toast('Opening your people…')">
+        <div class="cap-head">
+          <div class="cap-ic"><svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/></svg></div>
+          <div class="cap-title"><b>People</b><small>Your clients & pipeline</small></div>
+          <span class="cap-status" style="color:var(--violet);background:rgba(249,115,22,.12)">+9 new</span>
+        </div>
+        <div class="cap-body">
+          <div class="cap-stat"><b>342</b><span>people you know</span></div>
+          <div class="mini-pipe"><i style="flex:9;background:var(--blue)"></i><i style="flex:4;background:var(--amber)"></i><i style="flex:20;background:var(--violet)"></i><i style="flex:6;background:var(--green)"></i></div>
+          <div class="cap-sub"><b>3</b> became clients this week · <b>6</b> went quiet</div>
+        </div>
+        <div class="cap-foot">Open pipeline <svg viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>
+      </div>
+
+      <div class="cap cap-rep" onclick="toast('Opening your reports…')">
+        <div class="cap-head">
+          <div class="cap-ic"><svg viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="M7 15l4-5 3 3 5-7"/></svg></div>
+          <div class="cap-title"><b>Reports</b><small>How the business is doing</small></div>
+          <span class="cap-status">↑ 18%</span>
+        </div>
+        <div class="cap-body">
+          <div class="cap-stat"><b>$2,400</b><span>booked this week</span></div>
+          <div class="mini-bars"><i style="height:40%"></i><i style="height:55%"></i><i style="height:45%"></i><i style="height:70%"></i><i style="height:60%"></i><i class="hi" style="height:100%"></i></div>
+          <div class="cap-sub">Up from <b>$2,030</b> last week</div>
+        </div>
+        <div class="cap-foot">See insights <svg viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>
+      </div>
+
+      <div class="cap cap-cfg" onclick="toast('Opening configuration…')">
+        <div class="cap-head">
+          <div class="cap-ic"><svg viewBox="0 0 24 24"><path d="M12 15a3 3 0 100-6 3 3 0 000 6z"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82M4.6 9a1.65 1.65 0 00-.33-1.82"/><circle cx="12" cy="12" r="9"/></svg></div>
+          <div class="cap-title"><b>Configuration</b><small>Services, hours, payments</small></div>
+          <span class="cap-status">All set</span>
+        </div>
+        <div class="cap-body">
+          <div class="cfg-rows">
+            <div class="cfg-row"><span class="cfg-dot"><svg viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><b>3 services</b> <span>· priced & live</span></div>
+            <div class="cfg-row"><span class="cfg-dot"><svg viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><b>Mon–Fri 9–5</b> <span>· taking bookings</span></div>
+            <div class="cfg-row"><span class="cfg-dot"><svg viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><b>Stripe</b> <span>· payments on</span></div>
+            <div class="cfg-row"><span class="cfg-dot"><svg viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span><b>5 automations</b> <span>· running</span></div>
+          </div>
+        </div>
+        <div class="cap-foot">Adjust setup <svg viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"><svg viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg> <span id="toastTx"></span></div>
+
+<script>
+const el=id=>document.getElementById(id);
+function toast(html){ el('toastTx').innerHTML=html; el('toast').classList.add('show'); clearTimeout(window._t); window._t=setTimeout(()=>el('toast').classList.remove('show'),2800); }
+
+/* language cycle (demo) */
+const LANGS=['EN','עב','ES','FR']; let li=0;
+function cycleLang(){ li=(li+1)%LANGS.length; el('langLbl').textContent=LANGS[li]; toast('Switched interface to <b>'+({EN:'English','עב':'Hebrew',ES:'Spanish',FR:'French'}[LANGS[li]])+'</b>.'); }
+
+/* ===== chat command center ===== */
+const scroll=el('ccScroll');
+function ccAI(html,route){
+  const t=document.createElement('div'); t.className='cmsg cmsg-ai'; t.innerHTML=html; scroll.appendChild(t);
+  if(route){ const r=document.createElement('div'); r.className='cmsg cmsg-route';
+    r.innerHTML='<svg viewBox="0 0 24 24">'+route.ic+'</svg> '+route.tx; scroll.appendChild(r); }
+  scroll.scrollTop=scroll.scrollHeight;
+}
+function ccMe(t){ const m=document.createElement('div'); m.className='cmsg cmsg-me'; m.textContent=t; scroll.appendChild(m); scroll.scrollTop=scroll.scrollHeight; }
+
+const ROUTES={
+  website:{ic:'<circle cx="12" cy="12" r="9"/><path d="M3 12h18"/>',tx:'Updating your Website'},
+  people: {ic:'<circle cx="9" cy="7" r="4"/><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/>',tx:'Updating your People'},
+  reports:{ic:'<path d="M3 3v18h18"/><path d="M7 15l4-5 3 3 5-7"/>',tx:'Pulling from Reports'},
+  config: {ic:'<circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="9"/>',tx:'Changing your Configuration'}
+};
+const EGS=['Add a Saturday morning slot','Write a post about anxiety','Who owes me money?','Raise couples to $200'];
+function renderEgs(){ el('ccEgs').innerHTML=EGS.map(e=>'<button class="cc-eg" onclick="ccFill(this)">'+e+'</button>').join(''); }
+function ccFill(b){ el('ccIn').value=b.textContent; ccSend(); }
+
+function ccSend(){
+  const v=(el('ccIn').value||'').trim(); if(!v) return; ccMe(v); el('ccIn').value='';
+  const t=v.toLowerCase();
+  setTimeout(()=>{
+    // route to the right capability + a plausible action
+    if(/hour|slot|saturday|availab|time|evening|open/.test(t)){
+      ccAI('Done — I\u2019ve opened up that time on your booking page. People can book it right away.', ROUTES.config);
+    } else if(/price|\$|charge|raise|cost|couples|session/.test(t)){
+      ccAI('Updated — the new price is live on your site and booking page.', ROUTES.config);
+    } else if(/post|write|blog|campaign|market|instagram|facebook/.test(t)){
+      ccAI('I\u2019ve drafted a warm post on that. It\u2019s waiting for your OK before anything goes out.', ROUTES.website);
+    } else if(/site|website|page|design|template|logo/.test(t)){
+      ccAI('Made that change to your site — have a look and I\u2019ll publish when you\u2019re happy.', ROUTES.website);
+    } else if(/owe|invoice|paid|money|unpaid|chase/.test(t)){
+      ccAI('Right now <b>$680</b> is outstanding — David Kim ($500) and Aisha Patel ($180). I\u2019m already chasing both.', ROUTES.reports);
+    } else if(/client|contact|people|lead|pipeline|add .* to|follow up/.test(t)){
+      ccAI('Sorted — I\u2019ve updated your people and set the follow-ups to match.', ROUTES.people);
+    } else if(/how|doing|revenue|report|week|month|number/.test(t)){
+      ccAI('You\u2019re at <b>$2,400</b> booked this week, up 18%. Bookings from your website are your biggest driver.', ROUTES.reports);
+    } else {
+      ccAI('I can change anything across your website, people, reports and setup — just say it in plain words and I\u2019ll take care of it.');
+    }
+  }, 550);
+}
+
+/* date */
+(function(){ const d=new Date(); const days=['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+  const mons=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  el('dDay').textContent=days[d.getDay()]; el('dDate').textContent=d.getDate()+' '+mons[d.getMonth()];
+})();
+
+renderEgs();
+ccAI('Morning! I\u2019m watching over everything. Want to change something? Just tell me in plain words — a price, your hours, a post, anything — and I\u2019ll make it happen across the right place.');
+</script>
+</body>
+</html>

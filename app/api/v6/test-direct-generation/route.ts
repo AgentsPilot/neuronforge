@@ -1,9 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
-import OpenAI from 'openai';
 import { PluginManagerV2 } from '@/lib/server/plugin-manager-v2';
 import { WorkflowPostValidator } from '@/lib/agentkit/v6/compiler/WorkflowPostValidator';
+import { ProviderFactory, PROVIDERS } from '@/lib/ai/providerFactory';
+import type { CallContext } from '@/lib/ai/providers/baseProvider';
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+// ProviderFactory handles LLM client initialization and token tracking - no direct SDK instantiation needed
+// Note: This test route uses experimental model (gpt-5.2) - mapped via provider configuration
 
 /**
  * STRONG TEST ROUTE (executable):
@@ -703,14 +705,25 @@ export async function POST(req: NextRequest) {
 
     debug.semanticPromptLength = semanticPrompt.length;
 
-    const planResp = await openai.chat.completions.create({
+    // Get provider from factory for centralized token tracking
+    const provider = ProviderFactory.getProvider(PROVIDERS.OPENAI);
+    const llmContext: CallContext = {
+      userId: 'system',
+      feature: 'v6_test',
+      component: 'test-direct-generation',
+      category: 'workflow_generation',
+      activity_type: 'semantic_plan',
+      activity_name: 'generate_semantic_plan',
+    };
+
+    const planResp = await provider.chatCompletion({
       model: 'gpt-5.2',
       messages: [{ role: 'user', content: semanticPrompt }],
       temperature: 0.2,
       response_format: { type: 'json_object' },
-    });
+    }, llmContext);
 
-    const planRaw = planResp.choices[0]?.message?.content;
+    const planRaw = planResp.choices?.[0]?.message?.content;
     if (!planRaw) throw new Error('No semantic plan response');
 
     let plan: any;
@@ -736,14 +749,23 @@ export async function POST(req: NextRequest) {
 
       debug.irRepairPromptLength = irRepairPrompt.length;
 
-            const irRepairResp = await openai.chat.completions.create({
+      const irRepairContext: CallContext = {
+        userId: 'system',
+        feature: 'v6_test',
+        component: 'test-direct-generation',
+        category: 'workflow_repair',
+        activity_type: 'ir_repair',
+        activity_name: 'repair_semantic_ir',
+      };
+
+      const irRepairResp = await provider.chatCompletion({
         model: 'gpt-5.2',
         messages: [{ role: 'user', content: irRepairPrompt }],
         temperature: 0.0,
         response_format: { type: 'json_object' },
-      });
+      }, irRepairContext);
 
-      const irRepairRaw = irRepairResp.choices[0]?.message?.content;
+      const irRepairRaw = irRepairResp.choices?.[0]?.message?.content;
       if (!irRepairRaw) throw new Error('No IR repair response');
 
       try {
@@ -783,14 +805,23 @@ export async function POST(req: NextRequest) {
 
       debug.pilotRepairPromptLength = pilotRepairPrompt.length;
 
-      const pilotRepairResp = await openai.chat.completions.create({
+      const pilotRepairContext: CallContext = {
+        userId: 'system',
+        feature: 'v6_test',
+        component: 'test-direct-generation',
+        category: 'workflow_repair',
+        activity_type: 'pilot_repair',
+        activity_name: 'repair_pilot_workflow',
+      };
+
+      const pilotRepairResp = await provider.chatCompletion({
         model: 'gpt-5.2',
         messages: [{ role: 'user', content: pilotRepairPrompt }],
         temperature: 0.0,
         response_format: { type: 'json_object' },
-      });
+      }, pilotRepairContext);
 
-      const pilotRepairRaw = pilotRepairResp.choices[0]?.message?.content;
+      const pilotRepairRaw = pilotRepairResp.choices?.[0]?.message?.content;
       if (!pilotRepairRaw) throw new Error('No Pilot repair response');
 
       let repairedPilot: any;

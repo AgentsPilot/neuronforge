@@ -172,49 +172,60 @@ export default function OnboardingConfigPage() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold text-white mb-2">Onboarding Management</h1>
-          <p className="text-slate-400">Configure free tier quotas and monitor user onboarding</p>
+      <header className="border-b border-slate-700">
+        <div className="flex items-center justify-between pb-4">
+          <div className="flex items-center gap-4">
+            <div className="flex flex-col">
+              <div className="flex items-center gap-4 mb-1">
+                <h1 className="text-xl font-semibold text-white">Onboarding Management</h1>
+                <span className="text-xs px-2 py-1 rounded bg-purple-500/20 text-purple-400">System Config</span>
+              </div>
+              <p className="text-sm text-slate-400">Configure free tier quotas and monitor user onboarding</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-4">
+            {activeTab === 'users' && (
+              <button
+                onClick={loadUsers}
+                disabled={isLoadingUsers}
+                className="p-2 rounded-lg border border-slate-700 hover:bg-slate-800 transition-colors"
+              >
+                <RefreshCw className={`w-5 h-5 text-slate-400 ${isLoadingUsers ? 'animate-spin' : ''}`} />
+              </button>
+            )}
+          </div>
         </div>
-        <div className="flex items-center gap-3">
-          {activeTab === 'users' && (
-            <button
-              onClick={loadUsers}
-              disabled={isLoadingUsers}
-              className="p-2 bg-slate-800/50 hover:bg-slate-700/50 rounded-lg transition-colors"
-            >
-              <RefreshCw className={`w-4 h-4 ${isLoadingUsers ? 'animate-spin' : ''}`} />
-            </button>
-          )}
-        </div>
-      </div>
 
-      {/* Tabs */}
-      <div className="bg-slate-800/50 backdrop-blur-xl rounded-xl p-2 border border-white/10 inline-flex gap-2">
-        <button
-          onClick={() => setActiveTab('config')}
-          className={`px-4 py-2 rounded-lg font-medium text-sm transition-all ${
-            activeTab === 'config'
-              ? 'bg-gradient-to-r from-blue-500/20 to-purple-500/20 text-white border border-blue-400/30'
-              : 'text-slate-300 hover:text-white hover:bg-white/5'
-          }`}
-        >
-          <Settings className="w-4 h-4 inline-block mr-2" />
-          Free Tier Configuration
-        </button>
-        <button
-          onClick={() => setActiveTab('users')}
-          className={`px-4 py-2 rounded-lg font-medium text-sm transition-all ${
-            activeTab === 'users'
-              ? 'bg-gradient-to-r from-blue-500/20 to-purple-500/20 text-white border border-blue-400/30'
-              : 'text-slate-300 hover:text-white hover:bg-white/5'
-          }`}
-        >
-          <Users className="w-4 h-4 inline-block mr-2" />
-          User List ({users.length})
-        </button>
-      </div>
+        {/* Tabs */}
+        <div className="flex gap-1 -mb-px">
+          <button
+            onClick={() => setActiveTab('config')}
+            className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 ${
+              activeTab === 'config'
+                ? 'text-purple-400 border-purple-500'
+                : 'text-slate-400 border-transparent hover:text-white'
+            }`}
+          >
+            <div className="flex items-center gap-2">
+              <Settings className="w-4 h-4" />
+              Free Tier Config
+            </div>
+          </button>
+          <button
+            onClick={() => setActiveTab('users')}
+            className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 ${
+              activeTab === 'users'
+                ? 'text-purple-400 border-purple-500'
+                : 'text-slate-400 border-transparent hover:text-white'
+            }`}
+          >
+            <div className="flex items-center gap-2">
+              <Users className="w-4 h-4" />
+              Users ({users.length})
+            </div>
+          </button>
+        </div>
+      </header>
 
       {/* Configuration Tab */}
       {activeTab === 'config' && (
@@ -224,7 +235,7 @@ export default function OnboardingConfigPage() {
           transition={{ duration: 0.3 }}
           className="space-y-6"
         >
-          <div className="bg-slate-800/50 backdrop-blur-xl rounded-xl p-6 border border-white/10">
+          <div className="bg-slate-800 border border-slate-700 rounded-xl p-6">
             <h2 className="text-xl font-bold text-white mb-2">Free Tier Quotas</h2>
             <p className="text-sm text-slate-400 mb-6">
               Configure the default quotas granted to new users upon signup or onboarding completion.
@@ -250,7 +261,7 @@ export default function OnboardingConfigPage() {
                   type="number"
                   value={config.free_pilot_tokens}
                   onChange={(e) => setConfig({ ...config, free_pilot_tokens: parseInt(e.target.value) || 0 })}
-                  className="w-full px-4 py-3 bg-slate-700/50 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full px-4 py-3 bg-slate-900/50 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
                   min="0"
                 />
                 <p className="text-xs text-blue-300 mt-2">
@@ -277,7 +288,7 @@ export default function OnboardingConfigPage() {
                   type="number"
                   value={config.free_storage_mb}
                   onChange={(e) => setConfig({ ...config, free_storage_mb: parseInt(e.target.value) || 0 })}
-                  className="w-full px-4 py-3 bg-slate-700/50 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-green-500"
+                  className="w-full px-4 py-3 bg-slate-900/50 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-green-500"
                   min="0"
                 />
                 <p className="text-xs text-green-300 mt-2">
@@ -309,10 +320,10 @@ export default function OnboardingConfigPage() {
                       setConfig({ ...config, free_executions: val === 0 ? null : val });
                     }}
                     disabled={config.free_executions === null}
-                    className="flex-1 px-4 py-3 bg-slate-700/50 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-yellow-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="flex-1 px-4 py-3 bg-slate-900/50 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-yellow-500 disabled:opacity-50 disabled:cursor-not-allowed"
                     min="0"
                   />
-                  <label className="flex items-center text-sm text-slate-300 bg-slate-700/30 px-4 py-3 rounded-lg cursor-pointer hover:bg-slate-700/50 transition-colors">
+                  <label className="flex items-center text-sm text-slate-300 bg-slate-700/30 px-4 py-3 rounded-lg cursor-pointer hover:bg-slate-900/50 transition-colors">
                     <input
                       type="checkbox"
                       checked={config.free_executions === null}
@@ -343,7 +354,7 @@ export default function OnboardingConfigPage() {
                   type="number"
                   value={config.free_tier_duration_days}
                   onChange={(e) => setConfig({ ...config, free_tier_duration_days: parseInt(e.target.value) || 30 })}
-                  className="w-full px-4 py-3 bg-slate-700/50 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  className="w-full px-4 py-3 bg-slate-900/50 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                   min="1"
                   max="365"
                 />
@@ -435,13 +446,13 @@ export default function OnboardingConfigPage() {
           </div>
 
           {/* Filters */}
-          <div className="bg-slate-800/50 backdrop-blur-xl rounded-xl p-4 border border-white/10 flex items-center justify-between">
+          <div className="bg-slate-800 border border-slate-700 rounded-xl p-4 flex items-center justify-between">
             <div className="flex items-center gap-4">
               <label className="text-sm font-medium text-slate-300">Filter:</label>
               <select
                 value={filterOnboarding}
                 onChange={(e) => setFilterOnboarding(e.target.value as any)}
-                className="px-3 py-2 bg-slate-700/50 border border-slate-600 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="px-3 py-2 bg-slate-900/50 border border-slate-600 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
                 <option value="all">All Users ({stats.total})</option>
                 <option value="completed">Completed ({stats.completed})</option>
@@ -451,10 +462,10 @@ export default function OnboardingConfigPage() {
           </div>
 
           {/* Users Table */}
-          <div className="bg-slate-800/50 backdrop-blur-xl rounded-xl border border-white/10 overflow-hidden">
+          <div className="bg-slate-800 border border-slate-700 rounded-xl overflow-hidden">
             <div className="overflow-x-auto">
               <table className="w-full">
-                <thead className="bg-slate-700/50">
+                <thead className="bg-slate-900/50">
                   <tr>
                     <th className="px-6 py-3 text-left text-xs font-medium text-slate-300 uppercase">User</th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-slate-300 uppercase">Company</th>

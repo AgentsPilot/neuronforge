@@ -1,0 +1,80 @@
+{
+  "onboarding": {
+    "welcome": {
+      "title": "ברוכים הבאים! בואו נבנה את מערכת ההפעלה העסקית שלכם.",
+      "subtitle": "ספרו לי על העסק שלכם כדי להתחיל",
+      "typeBio": "הקלידו את הביוגרפיה שלכם",
+      "uploadFile": "העלו קובץ",
+      "guidedQuestions": "ענו על שאלות מודרכות"
+    },
+    "bioUpload": {
+      "processing": "קורא את הביוגרפיה שלך...",
+      "profileExtracted": "הנה מה שמצאתי:",
+      "vertical": "אנכי",
+      "services": "שירותים",
+      "clients": "לקוחות",
+      "tools": "כלים",
+      "website": "אתר אינטרנט"
+    },
+    "preview": {
+      "title": "בהתבסס על זה, אני אבנה:",
+      "website": "אתר אינטרנט מקצועי",
+      "crm": "ניהול לקוחות",
+      "booking": "מערכת פגישות",
+      "payments": "עיבוד תשלומים",
+      "email": "אוטומציה של דוא\"ל",
+      "aiEmployees": "עובדי AI",
+      "clientIntake": "עוזר קליטת לקוחות",
+      "sessionPrep": "עוזר הכנת פגישות",
+      "followUp": "מתזמן מעקב"
+    },
+    "actions": {
+      "editProfile": "ערוך פרופיל",
+      "buildEverything": "כן, בנה הכל!",
+      "building": "בונה את מערכת ההפעלה העסקית שלך...",
+      "creatingWebsite": "יוצר אתר אינטרנט...",
+      "settingUpCRM": "מגדיר CRM...",
+      "connectingCalendar": "מחבר יומן...",
+      "activatingAI": "מפעיל עובדי AI...",
+      "success": "המרפאה שלך פעילה!",
+      "goToDashboard": "עבור ללוח הבקרה"
+    }
+  },
+  "common": {
+    "loading": "טוען...",
+    "error": "משהו השתבש",
+    "retry": "נסה שוב"
+  },
+  "scheduling": {
+    "frequency_short": {
+      "weekly": "/שבוע",
+      "biweekly": "/2שב׳",
+      "monthly": "/חודש",
+      "quarterly": "/רבעון"
+    },
+    "availability": {
+      "working_days": "ימי עבודה:"
+    }
+  },
+  "config": {
+    "title": "הגדרות",
+    "subtitle": "נהל את השירותים, הזמינות והתשלומים שלך",
+    "tab": {
+      "services": "שירותים",
+      "availability": "זמינות",
+      "payments": "תשלומים"
+    },
+    "stripe": {
+      "title": "תשלומי Stripe",
+      "connected": "מחובר",
+      "connected_desc": "חשבון ה-Stripe שלך מחובר. אתה יכול לקבל תשלומים עבור השירותים שלך.",
+      "not_connected_desc": "חבר את חשבון ה-Stripe שלך כדי לקבל תשלומים עבור הזמנות ושירותים.",
+      "connect": "התחבר ל-Stripe",
+      "manage": "נהל חשבון"
+    },
+    "payments": {
+      "settings_title": "הגדרות תשלום",
+      "settings_desc": "אפשרויות תשלום מוגדרות לכל שירות. ערוך שירות כדי להגדיר את המחיר ואפשרויות תוכנית התשלום."
+    }
+  }
+}

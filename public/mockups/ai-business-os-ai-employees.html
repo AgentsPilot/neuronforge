@@ -1,0 +1,476 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Business OS - AI Employees</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+
+    body {
+      font-family: 'Inter', sans-serif;
+    }
+
+    .employee-card {
+      transition: all 0.2s ease;
+    }
+
+    .employee-card:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 10px 20px rgba(0, 0, 0, 0.3);
+    }
+
+    .pulse-green {
+      animation: pulse-green 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+    }
+
+    @keyframes pulse-green {
+      0%, 100% {
+        opacity: 1;
+      }
+      50% {
+        opacity: 0.5;
+      }
+    }
+
+    .ai-glow {
+      box-shadow: 0 0 30px rgba(59, 130, 246, 0.4);
+    }
+  </style>
+</head>
+<body class="bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 min-h-screen">
+
+  <div class="max-w-7xl mx-auto px-4 py-8">
+
+    <!-- Header -->
+    <div class="mb-8">
+      <div class="flex items-center justify-between">
+        <div>
+          <h1 class="text-3xl font-bold text-white mb-2">🤖 AI Employees</h1>
+          <p class="text-slate-400">Your AI team working 24/7</p>
+        </div>
+
+        <button class="px-6 py-3 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white font-semibold rounded-lg transition-all">
+          + Add AI Employee
+        </button>
+      </div>
+    </div>
+
+    <!-- Performance Summary -->
+    <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
+
+      <div class="bg-slate-800/30 backdrop-blur-xl border border-white/10 rounded-xl p-6">
+        <div class="flex items-center justify-between mb-2">
+          <span class="text-slate-400 text-sm">Active Employees</span>
+          <div class="w-2 h-2 bg-green-400 rounded-full pulse-green"></div>
+        </div>
+        <div class="text-3xl font-bold text-white">5</div>
+      </div>
+
+      <div class="bg-slate-800/30 backdrop-blur-xl border border-white/10 rounded-xl p-6">
+        <div class="text-slate-400 text-sm mb-2">Actions Today</div>
+        <div class="text-3xl font-bold text-white">38</div>
+        <div class="text-green-400 text-sm">+12 from yesterday</div>
+      </div>
+
+      <div class="bg-slate-800/30 backdrop-blur-xl border border-white/10 rounded-xl p-6">
+        <div class="text-slate-400 text-sm mb-2">Avg Response Time</div>
+        <div class="text-3xl font-bold text-white">3m</div>
+        <div class="text-green-400 text-sm">↓ 40% faster</div>
+      </div>
+
+      <div class="bg-slate-800/30 backdrop-blur-xl border border-white/10 rounded-xl p-6">
+        <div class="text-slate-400 text-sm mb-2">Time Saved</div>
+        <div class="text-3xl font-bold text-white">8h</div>
+        <div class="text-slate-400 text-sm">this week</div>
+      </div>
+
+    </div>
+
+    <!-- Recent Activity Stream -->
+    <div class="bg-gradient-to-r from-blue-600/20 to-purple-600/20 border border-blue-500/30 rounded-2xl p-6 mb-8 ai-glow">
+      <h3 class="text-white font-semibold text-lg mb-4 flex items-center gap-2">
+        <svg class="w-5 h-5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+        </svg>
+        Live Activity
+      </h3>
+
+      <div class="space-y-3">
+
+        <div class="flex items-start gap-3 bg-slate-800/50 rounded-lg p-4">
+          <div class="w-8 h-8 bg-green-600 rounded-full flex items-center justify-center flex-shrink-0">
+            🤖
+          </div>
+          <div class="flex-1">
+            <p class="text-white text-sm"><span class="font-semibold">Client Intake Assistant</span> responded to Sarah Johnson's inquiry</p>
+            <p class="text-slate-400 text-xs">2 minutes ago • Sent intake form + booking link</p>
+          </div>
+          <button class="text-blue-400 hover:text-blue-300 text-sm font-medium">
+            View
+          </button>
+        </div>
+
+        <div class="flex items-start gap-3 bg-slate-800/50 rounded-lg p-4">
+          <div class="w-8 h-8 bg-purple-600 rounded-full flex items-center justify-center flex-shrink-0">
+            📅
+          </div>
+          <div class="flex-1">
+            <p class="text-white text-sm"><span class="font-semibold">Session Prep Assistant</span> prepared notes for tomorrow's 3pm session</p>
+            <p class="text-slate-400 text-xs">15 minutes ago • Mike Chen, Individual Therapy</p>
+          </div>
+          <button class="text-blue-400 hover:text-blue-300 text-sm font-medium">
+            View
+          </button>
+        </div>
+
+        <div class="flex items-start gap-3 bg-slate-800/50 rounded-lg p-4">
+          <div class="w-8 h-8 bg-orange-600 rounded-full flex items-center justify-center flex-shrink-0">
+            💳
+          </div>
+          <div class="flex-1">
+            <p class="text-white text-sm"><span class="font-semibold">Invoice Chaser</span> sent payment reminder to Emily Davis</p>
+            <p class="text-slate-400 text-xs">1 hour ago • Invoice #1234 ($150)</p>
+          </div>
+          <button class="text-blue-400 hover:text-blue-300 text-sm font-medium">
+            View
+          </button>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- AI Employees Grid -->
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+
+      <!-- Client Intake Assistant -->
+      <div class="employee-card bg-gradient-to-br from-slate-800/50 to-slate-700/30 backdrop-blur-xl border border-white/10 rounded-2xl p-6">
+        <div class="flex items-start justify-between mb-4">
+          <div class="flex items-center gap-3">
+            <div class="w-12 h-12 bg-gradient-to-br from-green-500 to-emerald-600 rounded-xl flex items-center justify-center text-2xl">
+              🤖
+            </div>
+            <div>
+              <h3 class="text-white font-semibold">Client Intake Assistant</h3>
+              <div class="flex items-center gap-2">
+                <div class="w-1.5 h-1.5 bg-green-400 rounded-full pulse-green"></div>
+                <span class="text-green-400 text-xs font-medium">Active</span>
+              </div>
+            </div>
+          </div>
+
+          <button class="p-2 text-slate-400 hover:text-white transition-colors">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z"/>
+            </svg>
+          </button>
+        </div>
+
+        <p class="text-slate-400 text-sm mb-4">Handles new client inquiries, sends intake forms, schedules consultations</p>
+
+        <!-- Performance Metrics -->
+        <div class="grid grid-cols-3 gap-4 mb-4">
+          <div class="bg-slate-900/50 rounded-lg p-3">
+            <div class="text-2xl font-bold text-white">28</div>
+            <div class="text-slate-400 text-xs">Inquiries handled</div>
+          </div>
+
+          <div class="bg-slate-900/50 rounded-lg p-3">
+            <div class="text-2xl font-bold text-white">3m</div>
+            <div class="text-slate-400 text-xs">Avg response</div>
+          </div>
+
+          <div class="bg-slate-900/50 rounded-lg p-3">
+            <div class="text-2xl font-bold text-white">85%</div>
+            <div class="text-slate-400 text-xs">Conversion rate</div>
+          </div>
+        </div>
+
+        <!-- User Ratings -->
+        <div class="flex items-center justify-between mb-4">
+          <div class="flex items-center gap-1">
+            <span class="text-yellow-400">⭐⭐⭐⭐⭐</span>
+            <span class="text-slate-400 text-sm ml-2">(24 ratings)</span>
+          </div>
+        </div>
+
+        <!-- Settings -->
+        <div class="flex gap-2">
+          <button class="flex-1 bg-slate-700 hover:bg-slate-600 text-white text-sm font-medium py-2 rounded-lg transition-colors">
+            Configure
+          </button>
+          <button class="flex-1 bg-green-600 hover:bg-green-700 text-white text-sm font-medium py-2 rounded-lg transition-colors">
+            View Activity
+          </button>
+        </div>
+      </div>
+
+      <!-- Session Prep Assistant -->
+      <div class="employee-card bg-gradient-to-br from-slate-800/50 to-slate-700/30 backdrop-blur-xl border border-white/10 rounded-2xl p-6">
+        <div class="flex items-start justify-between mb-4">
+          <div class="flex items-center gap-3">
+            <div class="w-12 h-12 bg-gradient-to-br from-purple-500 to-pink-600 rounded-xl flex items-center justify-center text-2xl">
+              📅
+            </div>
+            <div>
+              <h3 class="text-white font-semibold">Session Prep Assistant</h3>
+              <div class="flex items-center gap-2">
+                <div class="w-1.5 h-1.5 bg-green-400 rounded-full pulse-green"></div>
+                <span class="text-green-400 text-xs font-medium">Active</span>
+              </div>
+            </div>
+          </div>
+
+          <button class="p-2 text-slate-400 hover:text-white transition-colors">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z"/>
+            </svg>
+          </button>
+        </div>
+
+        <p class="text-slate-400 text-sm mb-4">Reviews previous notes before sessions, suggests discussion topics</p>
+
+        <!-- Performance Metrics -->
+        <div class="grid grid-cols-3 gap-4 mb-4">
+          <div class="bg-slate-900/50 rounded-lg p-3">
+            <div class="text-2xl font-bold text-white">42</div>
+            <div class="text-slate-400 text-xs">Sessions prepped</div>
+          </div>
+
+          <div class="bg-slate-900/50 rounded-lg p-3">
+            <div class="text-2xl font-bold text-white">1hr</div>
+            <div class="text-slate-400 text-xs">Before session</div>
+          </div>
+
+          <div class="bg-slate-900/50 rounded-lg p-3">
+            <div class="text-2xl font-bold text-white">100%</div>
+            <div class="text-slate-400 text-xs">Usage rate</div>
+          </div>
+        </div>
+
+        <!-- User Ratings -->
+        <div class="flex items-center justify-between mb-4">
+          <div class="flex items-center gap-1">
+            <span class="text-yellow-400">⭐⭐⭐⭐⭐</span>
+            <span class="text-slate-400 text-sm ml-2">(42 ratings)</span>
+          </div>
+        </div>
+
+        <!-- Settings -->
+        <div class="flex gap-2">
+          <button class="flex-1 bg-slate-700 hover:bg-slate-600 text-white text-sm font-medium py-2 rounded-lg transition-colors">
+            Configure
+          </button>
+          <button class="flex-1 bg-purple-600 hover:bg-purple-700 text-white text-sm font-medium py-2 rounded-lg transition-colors">
+            View Activity
+          </button>
+        </div>
+      </div>
+
+      <!-- Follow-up Scheduler -->
+      <div class="employee-card bg-gradient-to-br from-slate-800/50 to-slate-700/30 backdrop-blur-xl border border-white/10 rounded-2xl p-6">
+        <div class="flex items-start justify-between mb-4">
+          <div class="flex items-center gap-3">
+            <div class="w-12 h-12 bg-gradient-to-br from-blue-500 to-cyan-600 rounded-xl flex items-center justify-center text-2xl">
+              📧
+            </div>
+            <div>
+              <h3 class="text-white font-semibold">Follow-up Scheduler</h3>
+              <div class="flex items-center gap-2">
+                <div class="w-1.5 h-1.5 bg-green-400 rounded-full pulse-green"></div>
+                <span class="text-green-400 text-xs font-medium">Active</span>
+              </div>
+            </div>
+          </div>
+
+          <button class="p-2 text-slate-400 hover:text-white transition-colors">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z"/>
+            </svg>
+          </button>
+        </div>
+
+        <p class="text-slate-400 text-sm mb-4">Sends post-session check-ins, tracks client progress</p>
+
+        <!-- Performance Metrics -->
+        <div class="grid grid-cols-3 gap-4 mb-4">
+          <div class="bg-slate-900/50 rounded-lg p-3">
+            <div class="text-2xl font-bold text-white">38</div>
+            <div class="text-slate-400 text-xs">Follow-ups sent</div>
+          </div>
+
+          <div class="bg-slate-900/50 rounded-lg p-3">
+            <div class="text-2xl font-bold text-white">48hr</div>
+            <div class="text-slate-400 text-xs">After session</div>
+          </div>
+
+          <div class="bg-slate-900/50 rounded-lg p-3">
+            <div class="text-2xl font-bold text-white">72%</div>
+            <div class="text-slate-400 text-xs">Response rate</div>
+          </div>
+        </div>
+
+        <!-- User Ratings -->
+        <div class="flex items-center justify-between mb-4">
+          <div class="flex items-center gap-1">
+            <span class="text-yellow-400">⭐⭐⭐⭐⭐</span>
+            <span class="text-slate-400 text-sm ml-2">(38 ratings)</span>
+          </div>
+        </div>
+
+        <!-- Settings -->
+        <div class="flex gap-2">
+          <button class="flex-1 bg-slate-700 hover:bg-slate-600 text-white text-sm font-medium py-2 rounded-lg transition-colors">
+            Configure
+          </button>
+          <button class="flex-1 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium py-2 rounded-lg transition-colors">
+            View Activity
+          </button>
+        </div>
+      </div>
+
+      <!-- Invoice Chaser (Paused Example) -->
+      <div class="employee-card bg-gradient-to-br from-slate-800/50 to-slate-700/30 backdrop-blur-xl border border-white/10 rounded-2xl p-6 opacity-75">
+        <div class="flex items-start justify-between mb-4">
+          <div class="flex items-center gap-3">
+            <div class="w-12 h-12 bg-gradient-to-br from-orange-500 to-red-600 rounded-xl flex items-center justify-center text-2xl">
+              💳
+            </div>
+            <div>
+              <h3 class="text-white font-semibold">Invoice Chaser</h3>
+              <div class="flex items-center gap-2">
+                <div class="w-1.5 h-1.5 bg-yellow-400 rounded-full"></div>
+                <span class="text-yellow-400 text-xs font-medium">Paused</span>
+              </div>
+            </div>
+          </div>
+
+          <button class="p-2 text-slate-400 hover:text-white transition-colors">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z"/>
+            </svg>
+          </button>
+        </div>
+
+        <p class="text-slate-400 text-sm mb-4">Follows up on late payments, sends polite reminders</p>
+
+        <!-- Performance Metrics -->
+        <div class="grid grid-cols-3 gap-4 mb-4">
+          <div class="bg-slate-900/50 rounded-lg p-3">
+            <div class="text-2xl font-bold text-white">12</div>
+            <div class="text-slate-400 text-xs">Reminders sent</div>
+          </div>
+
+          <div class="bg-slate-900/50 rounded-lg p-3">
+            <div class="text-2xl font-bold text-white">$850</div>
+            <div class="text-slate-400 text-xs">Recovered</div>
+          </div>
+
+          <div class="bg-slate-900/50 rounded-lg p-3">
+            <div class="text-2xl font-bold text-white">7d</div>
+            <div class="text-slate-400 text-xs">After due date</div>
+          </div>
+        </div>
+
+        <!-- User Ratings -->
+        <div class="flex items-center justify-between mb-4">
+          <div class="flex items-center gap-1">
+            <span class="text-yellow-400">⭐⭐⭐⭐☆</span>
+            <span class="text-slate-400 text-sm ml-2">(12 ratings)</span>
+          </div>
+        </div>
+
+        <!-- Settings -->
+        <div class="flex gap-2">
+          <button class="flex-1 bg-slate-700 hover:bg-slate-600 text-white text-sm font-medium py-2 rounded-lg transition-colors">
+            Configure
+          </button>
+          <button class="flex-1 bg-green-600 hover:bg-green-700 text-white text-sm font-medium py-2 rounded-lg transition-colors">
+            Activate
+          </button>
+        </div>
+      </div>
+
+      <!-- Campaign Lead Qualifier -->
+      <div class="employee-card bg-gradient-to-br from-slate-800/50 to-slate-700/30 backdrop-blur-xl border border-white/10 rounded-2xl p-6">
+        <div class="flex items-start justify-between mb-4">
+          <div class="flex items-center gap-3">
+            <div class="w-12 h-12 bg-gradient-to-br from-pink-500 to-rose-600 rounded-xl flex items-center justify-center text-2xl">
+              📢
+            </div>
+            <div>
+              <h3 class="text-white font-semibold">Campaign Lead Qualifier</h3>
+              <div class="flex items-center gap-2">
+                <div class="w-1.5 h-1.5 bg-green-400 rounded-full pulse-green"></div>
+                <span class="text-green-400 text-xs font-medium">Active</span>
+              </div>
+            </div>
+          </div>
+
+          <button class="p-2 text-slate-400 hover:text-white transition-colors">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z"/>
+            </svg>
+          </button>
+        </div>
+
+        <p class="text-slate-400 text-sm mb-4">Responds to campaign leads within 5 minutes, qualifies interest</p>
+
+        <!-- Performance Metrics -->
+        <div class="grid grid-cols-3 gap-4 mb-4">
+          <div class="bg-slate-900/50 rounded-lg p-3">
+            <div class="text-2xl font-bold text-white">18</div>
+            <div class="text-slate-400 text-xs">Leads qualified</div>
+          </div>
+
+          <div class="bg-slate-900/50 rounded-lg p-3">
+            <div class="text-2xl font-bold text-white">4m</div>
+            <div class="text-slate-400 text-xs">Avg response</div>
+          </div>
+
+          <div class="bg-slate-900/50 rounded-lg p-3">
+            <div class="text-2xl font-bold text-white">50%</div>
+            <div class="text-slate-400 text-xs">Conversion rate</div>
+          </div>
+        </div>
+
+        <!-- User Ratings -->
+        <div class="flex items-center justify-between mb-4">
+          <div class="flex items-center gap-1">
+            <span class="text-yellow-400">⭐⭐⭐⭐⭐</span>
+            <span class="text-slate-400 text-sm ml-2">(18 ratings)</span>
+          </div>
+        </div>
+
+        <!-- Settings -->
+        <div class="flex gap-2">
+          <button class="flex-1 bg-slate-700 hover:bg-slate-600 text-white text-sm font-medium py-2 rounded-lg transition-colors">
+            Configure
+          </button>
+          <button class="flex-1 bg-pink-600 hover:bg-pink-700 text-white text-sm font-medium py-2 rounded-lg transition-colors">
+            View Activity
+          </button>
+        </div>
+      </div>
+
+      <!-- Add New AI Employee -->
+      <div class="bg-slate-800/30 backdrop-blur-xl border border-dashed border-white/20 rounded-2xl p-8 text-center hover:border-blue-500/50 transition-colors cursor-pointer">
+        <div class="w-16 h-16 bg-gradient-to-br from-blue-600/20 to-purple-600/20 rounded-2xl flex items-center justify-center mx-auto mb-4">
+          <svg class="w-8 h-8 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+          </svg>
+        </div>
+        <h3 class="text-white font-semibold mb-2">Add AI Employee</h3>
+        <p class="text-slate-400 text-sm mb-4">Describe what you need help with</p>
+        <button class="px-6 py-2 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white font-medium rounded-lg transition-all">
+          Create Custom
+        </button>
+      </div>
+
+    </div>
+
+  </div>
+
+</body>
+</html>

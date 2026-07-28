@@ -274,8 +274,8 @@ export default function RewardConfigPage() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <RefreshCw className="w-8 h-8 animate-spin text-blue-500" />
+      <div className="flex items-center justify-center py-12">
+        <RefreshCw className="w-8 h-8 text-purple-500 animate-spin" />
       </div>
     );
   }
@@ -283,31 +283,43 @@ export default function RewardConfigPage() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold text-white flex items-center gap-3">
-            <Gift className="w-8 h-8 text-purple-400" />
-            Reward Configuration
-          </h1>
-          <p className="text-slate-400 mt-2">
-            Manage reward credits and distribution rules
-          </p>
+      <header className="border-b border-slate-700">
+        <div className="flex items-center justify-between pb-4">
+          <div className="flex items-center gap-4">
+            <div className="flex flex-col">
+              <div className="flex items-center gap-4 mb-1">
+                <h1 className="text-xl font-semibold text-white">Reward Configuration</h1>
+                <span className="text-xs px-2 py-1 rounded bg-purple-500/20 text-purple-400">System Config</span>
+              </div>
+              <p className="text-sm text-slate-400">Manage reward credits and distribution rules</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-4">
+            <button
+              onClick={() => {
+                setShowCreateForm(true);
+                setEditForm({
+                  is_active: true,
+                  cooldown_hours: 0,
+                  credits_amount: defaultCredits
+                });
+              }}
+              className="px-4 py-2 bg-violet-600 hover:bg-violet-700 rounded-lg transition-colors flex items-center gap-2"
+            >
+              <Plus className="w-5 h-5" />
+              Add Reward
+            </button>
+            <button
+              onClick={fetchRewards}
+              disabled={loading}
+              className="p-2 rounded-lg border border-slate-700 hover:bg-slate-800 transition-colors"
+              title="Refresh"
+            >
+              <RefreshCw className={`w-5 h-5 text-slate-400 ${loading ? 'animate-spin' : ''}`} />
+            </button>
+          </div>
         </div>
-        <button
-          onClick={() => {
-            setShowCreateForm(true);
-            setEditForm({
-              is_active: true,
-              cooldown_hours: 0,
-              credits_amount: defaultCredits
-            });
-          }}
-          className="px-4 py-2 bg-gradient-to-r from-blue-500 to-purple-600 rounded-lg hover:from-blue-600 hover:to-purple-700 transition-all duration-200 flex items-center gap-2"
-        >
-          <Plus className="w-5 h-5" />
-          Add Reward
-        </button>
-      </div>
+      </header>
 
       {/* Error Alert */}
       {error && (

@@ -94,9 +94,6 @@ import {
   type TimePeriod
 } from '@/components/v2/agent'
 
-// PERFORMANCE: Lazy load heavy components that may not be used immediately
-const DraftAgentTour = lazy(() => import('@/components/agents/DraftAgentTour'))
-
 // Helper function to get plugin-specific icon
 const getPluginIcon = (pluginName: string) => {
   const name = pluginName.toLowerCase()
@@ -229,6 +226,11 @@ export default function V2AgentDetailPage() {
   const [refreshingExecutions, setRefreshingExecutions] = useState(false)
   const [executing, setExecuting] = useState(false)
   const [insights, setInsights] = useState<any[]>([]) // Business + technical insights
+  const [learningMode, setLearningMode] = useState<{
+    isLearning: boolean;
+    currentSamples: number;
+    requiredSamples: number;
+  } | undefined>(undefined)
 
   // UI state
   const [copiedId, setCopiedId] = useState(false)
@@ -278,6 +280,7 @@ export default function V2AgentDetailPage() {
   // Other
   const [memoryCount, setMemoryCount] = useState(0)
   const [tokensPerPilotCredit, setTokensPerPilotCredit] = useState<number>(10)
+  const [totalTokensUsed, setTotalTokensUsed] = useState<number | undefined>(undefined)
 
   // Inline editing state (kept for compatibility)
   const [isEditingDetails, setIsEditingDetails] = useState(false)
@@ -350,7 +353,7 @@ export default function V2AgentDetailPage() {
       // Parallel fetch all data
       // PERFORMANCE: Skip token enrichment for faster load
       // Also pre-fetch form metadata and global schema metadata for input config drawer
-      const [agentResult, executionsResult, configResult, rewardStatus, insightsResult, formMetadataResult, globalSchemaResult, profileResult] = await Promise.all([
+      const [agentResult, executionsResult, configResult, rewardStatus, insightsResult, formMetadataResult, globalSchemaResult, profileResult, intensityResult, baselineResult] = await Promise.all([
         agentApi.getById(agentId, user.id),
         agentApi.getExecutions(agentId, user.id, { includeTokens: false }),
         systemConfigApi.getByKeys(['tokens_per_pilot_credit', 'agent_sharing_reward_amount']),
@@ -358,7 +361,9 @@ export default function V2AgentDetailPage() {
         fetch(`/api/v6/insights?agentId=${agentId}&status=new,viewed`).then(r => r.json()).catch(() => ({ success: false, data: [] })),
         fetch(`/api/v2/agents/${agentId}/form-metadata`).then(r => r.json()).catch(() => ({ metadata: [] })),
         fetch('/api/plugins/schema-metadata').then(r => r.json()).catch(() => ({ data: { metadata: {} } })),
-        supabase.from('profiles').select('hourly_rate_usd').eq('id', user.id).single()
+        supabase.from('profiles').select('hourly_rate_usd').eq('id', user.id).single(),
+        fetch(`/api/agents/${agentId}/intensity`, { headers: { 'x-user-id': user.id } }).then(r => r.json()).catch(() => null),
+        fetch(`/api/insights?agentId=${agentId}&includeAnomalies=false`).then(r => r.json()).catch(() => ({ success: false }))
       ])
 
       // Process agent
@@ -445,6 +450,29 @@ export default function V2AgentDetailPage() {
         setUserHourlyRate(profileResult.data.hourly_rate_usd)
       }
 
+      // Process intensity data for total tokens used
+      if (intensityResult?.details?.token_stats?.total_tokens) {
+        setTotalTokensUsed(intensityResult.details.token_stats.total_tokens)
+      }
+
+      // Process baseline data for learning mode indicator
+      const REQUIRED_SAMPLES = 5 // Matches BaselineService.hasStatisticalSignificance default
+      if (baselineResult?.success && baselineResult.data?.baseline) {
+        const sampleCount = baselineResult.data.baseline.sampleCount || 0
+        setLearningMode({
+          isLearning: sampleCount < REQUIRED_SAMPLES,
+          currentSamples: sampleCount,
+          requiredSamples: REQUIRED_SAMPLES
+        })
+      } else {
+        // No baseline yet = definitely learning
+        setLearningMode({
+          isLearning: true,
+          currentSamples: 0,
+          requiredSamples: REQUIRED_SAMPLES
+        })
+      }
+
       // PERFORMANCE: Defer non-critical data until after initial render
       // This reduces blocking time and improves perceived performance
       setTimeout(() => {
@@ -496,10 +524,10 @@ export default function V2AgentDetailPage() {
   const handleConfirmExecution = useCallback(async () => {
     if (!agent || !user) return
 
-    // Use inputConfigValues if available, otherwise fall back to agent.input_config
+    // Use inputConfigValues if available, otherwise fall back to agent.config
     const configToUse = Object.keys(inputConfigValues).length > 0
       ? inputConfigValues
-      : (agent.input_config || {})
+      : (agent.config || {})
 
     // Start execution
     setExecuting(true)
@@ -1971,16 +1999,6 @@ export default function V2AgentDetailPage() {
 
   return (
     <div className="min-h-screen" style={{ background: 'var(--v2-background)' }}>
-      {/* PERFORMANCE: Lazy load tour component with Suspense */}
-      <Suspense fallback={null}>
-        <DraftAgentTour
-          agentId={agent.id}
-          agentName={agent.agent_name}
-          agentStatus={agent.status}
-          productionReady={agent.production_ready ?? false}
-        />
-      </Suspense>
-
       {/* NEW SINGLE-COLUMN LAYOUT */}
       <div className="max-w-[1000px] mx-auto p-4">
         {/* Logo */}
@@ -2018,7 +2036,9 @@ export default function V2AgentDetailPage() {
           agent={agent}
           stats={{
             runCount: filteredExecutions.length, // Use filtered count based on selected time period
-            successRate: health.percentage
+            successRate: health.percentage,
+            totalTokens: totalTokensUsed,
+            tokensPerPilotCredit: tokensPerPilotCredit
           }}
           isExecuting={executing}
           advancedMode={advancedMode}
@@ -2028,6 +2048,7 @@ export default function V2AgentDetailPage() {
             timePeriod === '30d' ? 'Last 30 Days' :
             'All Time'
           }
+          learningMode={learningMode}
           onRun={handleRunNow}
           onSettingsClick={() => {
             setInputConfigExpanded(false)
@@ -2055,6 +2076,7 @@ export default function V2AgentDetailPage() {
                 isRunning={executing}
                 advancedMode={advancedMode}
                 hourlyRate={userHourlyRate ?? undefined}
+                tokensPerPilotCredit={tokensPerPilotCredit}
               />
             </div>
           </div>
@@ -2076,6 +2098,7 @@ export default function V2AgentDetailPage() {
           selectedExecutionId={selectedExecution?.id}
           className="mt-4"
           hourlyRate={userHourlyRate ?? undefined}
+          tokensPerPilotCredit={tokensPerPilotCredit}
         />
       </div>
 
@@ -2089,6 +2112,7 @@ export default function V2AgentDetailPage() {
         hourlyRate={userHourlyRate ?? undefined}
         insights={insights}
         manualTimePerItemSeconds={agent?.manual_time_per_item_seconds}
+        tokensPerPilotCredit={tokensPerPilotCredit}
       />
 
       {/* Settings Drawer Overlay */}
@@ -3213,8 +3237,8 @@ export default function V2AgentDetailPage() {
                   const businessInsights = latestBusinessInsight ? [latestBusinessInsight] : []
                   return (
                     <div className="space-y-6">
-                      {/* Business Metrics Charts */}
-                      {businessInsights.length > 0 && (
+                      {/* Business Metrics Charts - Always show if we have execution data */}
+                      {(metricsData?.chartData || executions.length > 0) && (
                         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
                           {/* Volume Trend Chart */}
                           <div className="bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-xl p-4">
@@ -3286,19 +3310,36 @@ export default function V2AgentDetailPage() {
                               ROI Metrics
                             </h3>
                             <div className="space-y-3">
-                              {businessInsights[0]?.time_saved_hours_per_week && (
+                              {businessInsights[0]?.time_saved_hours_per_week ? (
                                 <div className="bg-[var(--v2-bg)] rounded-lg p-3">
                                   <div className="text-xs text-[var(--v2-success)] font-medium mb-1">Time Saved</div>
                                   <div className="text-2xl font-bold text-[var(--v2-success)]">
                                     {businessInsights[0].time_saved_hours_per_week.toFixed(1)} hrs/week
                                   </div>
                                 </div>
+                              ) : (
+                                <div className="bg-[var(--v2-bg)] rounded-lg p-3">
+                                  <div className="text-xs text-emerald-600 dark:text-emerald-400 font-medium mb-1">Total Runs</div>
+                                  <div className="text-2xl font-bold text-emerald-600 dark:text-emerald-400">
+                                    {executions.length}
+                                  </div>
+                                </div>
                               )}
-                              {businessInsights[0]?.cost_saved_usd_per_week && (
+                              {businessInsights[0]?.cost_saved_usd_per_week ? (
                                 <div className="bg-[var(--v2-bg)] rounded-lg p-3">
                                   <div className="text-xs text-[var(--v2-success)] font-medium mb-1">Cost Saved</div>
                                   <div className="text-2xl font-bold text-[var(--v2-success)]">
                                     ${businessInsights[0].cost_saved_usd_per_week.toFixed(2)}/week
+                                  </div>
+                                </div>
+                              ) : (
+                                <div className="bg-[var(--v2-bg)] rounded-lg p-3">
+                                  <div className="text-xs text-emerald-600 dark:text-emerald-400 font-medium mb-1">Success Rate</div>
+                                  <div className="text-2xl font-bold text-emerald-600 dark:text-emerald-400">
+                                    {executions.length > 0
+                                      ? ((executions.filter(e => e.status === 'success' || e.status === 'completed').length / executions.length) * 100).toFixed(1)
+                                      : '0'
+                                    }%
                                   </div>
                                 </div>
                               )}
@@ -3420,8 +3461,8 @@ export default function V2AgentDetailPage() {
                   })
                   return (
                     <div className="space-y-6">
-                      {/* Technical Performance Charts */}
-                      {technicalInsights.length > 0 && (
+                      {/* Technical Performance Charts - Always show if we have execution data */}
+                      {(metricsData?.chartData || executions.length > 0) && (
                         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
                           {/* Performance Trend */}
                           <div className="bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-xl p-4">

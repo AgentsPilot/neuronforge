@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CRM - AI Business OS</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+
+    body {
+      font-family: 'Inter', sans-serif;
+    }
+
+    .contact-card {
+      transition: all 0.2s ease;
+      cursor: move;
+    }
+
+    .contact-card:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.3);
+    }
+
+    .pipeline-column {
+      min-height: 400px;
+    }
+
+    @keyframes pulse-soft {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+
+    .ai-badge {
+      animation: pulse-soft 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+    }
+  </style>
+</head>
+<body class="bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 min-h-screen text-white">
+
+  <!-- Header -->
+  <div class="border-b border-white/10 bg-slate-900/50 backdrop-blur-xl sticky top-0 z-50">
+    <div class="max-w-7xl mx-auto px-6 py-4">
+      <div class="flex items-center justify-between">
+        <div class="flex items-center gap-3">
+          <div class="w-10 h-10 bg-gradient-to-br from-cyan-500 to-blue-600 rounded-xl flex items-center justify-center">
+            <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"/>
+            </svg>
+          </div>
+          <h1 class="text-2xl font-bold text-white">CRM</h1>
+        </div>
+
+        <div class="flex items-center gap-3">
+          <button class="px-4 py-2 bg-blue-500/20 hover:bg-blue-500/30 border border-blue-500/30 rounded-lg text-blue-300 text-sm font-medium transition-all">
+            + Add Contact
+          </button>
+          <button class="p-2 hover:bg-white/10 rounded-lg transition-all">
+            <svg class="w-5 h-5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- Tabs -->
+      <div class="flex items-center gap-4 mt-4">
+        <button class="px-4 py-2 bg-blue-500/20 border-b-2 border-blue-500 text-blue-300 font-medium text-sm">
+          Pipeline
+        </button>
+        <button class="px-4 py-2 text-slate-400 hover:text-slate-300 font-medium text-sm transition-all">
+          Contacts
+        </button>
+        <button class="px-4 py-2 text-slate-400 hover:text-slate-300 font-medium text-sm transition-all">
+          Activity
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Search & Filters -->
+  <div class="max-w-7xl mx-auto px-6 py-4">
+    <div class="flex items-center gap-4">
+      <div class="flex-1 relative">
+        <svg class="w-5 h-5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+        </svg>
+        <input
+          type="text"
+          placeholder="Search contacts..."
+          class="w-full pl-10 pr-4 py-2 bg-slate-800/50 border border-white/10 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/50"
+        />
+      </div>
+      <div class="flex items-center gap-2">
+        <button class="px-4 py-2 bg-slate-800/50 border border-white/10 rounded-lg text-slate-300 hover:bg-slate-800 transition-all flex items-center gap-2">
+          <span class="text-sm">Tag</span>
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+          </svg>
+        </button>
+        <button class="px-4 py-2 bg-slate-800/50 border border-white/10 rounded-lg text-slate-300 hover:bg-slate-800 transition-all flex items-center gap-2">
+          <span class="text-sm">All Stages</span>
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Pipeline Kanban -->
+  <div class="max-w-7xl mx-auto px-6 pb-12">
+    <div class="grid grid-cols-3 gap-4">
+
+      <!-- Lead Column -->
+      <div class="bg-slate-800/30 backdrop-blur-xl border border-white/10 rounded-xl p-4 pipeline-column">
+        <div class="flex items-center justify-between mb-4">
+          <div class="flex items-center gap-2">
+            <div class="w-2 h-2 bg-yellow-400 rounded-full"></div>
+            <h3 class="font-semibold text-white">Lead</h3>
+            <span class="px-2 py-0.5 bg-yellow-500/20 text-yellow-300 text-xs rounded-full">8</span>
+          </div>
+        </div>
+
+        <div class="space-y-3">
+          <!-- Contact Card 1 -->
+          <div class="contact-card bg-slate-900/50 border border-white/10 rounded-lg p-3">
+            <div class="flex items-start justify-between mb-2">
+              <div>
+                <h4 class="font-semibold text-white text-sm">Sarah Johnson</h4>
+                <p class="text-xs text-slate-400">2 days ago</p>
+              </div>
+              <div class="flex items-center gap-1">
+                <span class="px-2 py-0.5 bg-blue-500/20 text-blue-300 text-xs rounded">ADHD Course</span>
+              </div>
+            </div>
+            <div class="flex items-center gap-2 text-xs">
+              <span class="flex items-center gap-1 text-green-400">
+                <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                  <path d="M2.003 5.884L10 9.882l7.997-3.998A2 2 0 0016 4H4a2 2 0 00-1.997 1.884z"/>
+                  <path d="M18 8.118l-8 4-8-4V14a2 2 0 002 2h12a2 2 0 002-2V8.118z"/>
+                </svg>
+                Sent
+              </span>
+            </div>
+          </div>
+
+          <!-- Contact Card 2 with AI Badge -->
+          <div class="contact-card bg-slate-900/50 border border-white/10 rounded-lg p-3">
+            <div class="flex items-start justify-between mb-2">
+              <div>
+                <h4 class="font-semibold text-white text-sm">Alex Martinez</h4>
+                <p class="text-xs text-slate-400">5 days ago</p>
+              </div>
+            </div>
+            <div class="flex items-center gap-2 text-xs">
+              <span class="flex items-center gap-1 text-purple-400 ai-badge">
+                <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                  <path d="M13 7H7v6h6V7z"/>
+                  <path fill-rule="evenodd" d="M7 2a1 1 0 012 0v1h2V2a1 1 0 112 0v1h2a2 2 0 012 2v2h1a1 1 0 110 2h-1v2h1a1 1 0 110 2h-1v2a2 2 0 01-2 2h-2v1a1 1 0 11-2 0v-1H9v1a1 1 0 11-2 0v-1H5a2 2 0 01-2-2v-2H2a1 1 0 110-2h1V9H2a1 1 0 010-2h1V5a2 2 0 012-2h2V2zM5 5h10v10H5V5z" clip-rule="evenodd"/>
+                </svg>
+                AI Responded
+              </span>
+            </div>
+          </div>
+
+          <!-- Contact Card 3 -->
+          <div class="contact-card bg-slate-900/50 border border-white/10 rounded-lg p-3">
+            <div class="flex items-start justify-between mb-2">
+              <div>
+                <h4 class="font-semibold text-white text-sm">Jamie Lee</h4>
+                <p class="text-xs text-slate-400">1 week ago</p>
+              </div>
+            </div>
+            <div class="flex items-center gap-2 text-xs">
+              <span class="flex items-center gap-1 text-slate-400">
+                <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                  <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z" clip-rule="evenodd"/>
+                </svg>
+                Waiting
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Client Column -->
+      <div class="bg-slate-800/30 backdrop-blur-xl border border-white/10 rounded-xl p-4 pipeline-column">
+        <div class="flex items-center justify-between mb-4">
+          <div class="flex items-center gap-2">
+            <div class="w-2 h-2 bg-green-400 rounded-full"></div>
+            <h3 class="font-semibold text-white">Client</h3>
+            <span class="px-2 py-0.5 bg-green-500/20 text-green-300 text-xs rounded-full">24</span>
+          </div>
+        </div>
+
+        <div class="space-y-3">
+          <!-- Contact Card 1 -->
+          <div class="contact-card bg-slate-900/50 border border-white/10 rounded-lg p-3">
+            <div class="flex items-start justify-between mb-2">
+              <div>
+                <h4 class="font-semibold text-white text-sm">Mike Chen</h4>
+                <p class="text-xs text-slate-400">Weekly client</p>
+              </div>
+            </div>
+            <div class="flex items-center gap-2 text-xs">
+              <span class="flex items-center gap-1 text-blue-400">
+                <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                  <path fill-rule="evenodd" d="M6 2a1 1 0 00-1 1v1H4a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V6a2 2 0 00-2-2h-1V3a1 1 0 10-2 0v1H7V3a1 1 0 00-1-1zm0 5a1 1 0 000 2h8a1 1 0 100-2H6z" clip-rule="evenodd"/>
+                </svg>
+                Tomorrow 3pm
+              </span>
+            </div>
+          </div>
+
+          <!-- Contact Card 2 -->
+          <div class="contact-card bg-slate-900/50 border border-white/10 rounded-lg p-3">
+            <div class="flex items-start justify-between mb-2">
+              <div>
+                <h4 class="font-semibold text-white text-sm">Jordan Park</h4>
+                <p class="text-xs text-slate-400">Bi-weekly</p>
+              </div>
+            </div>
+            <div class="flex items-center gap-2 text-xs">
+              <span class="flex items-center gap-1 text-green-400">
+                <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                  <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
+                </svg>
+                Paid up
+              </span>
+            </div>
+          </div>
+
+          <!-- Contact Card 3 -->
+          <div class="contact-card bg-slate-900/50 border border-white/10 rounded-lg p-3">
+            <div class="flex items-start justify-between mb-2">
+              <div>
+                <h4 class="font-semibold text-white text-sm">Taylor Swift</h4>
+                <p class="text-xs text-slate-400">Monthly</p>
+              </div>
+              <div class="flex items-center gap-1">
+                <span class="px-2 py-0.5 bg-purple-500/20 text-purple-300 text-xs rounded">VIP</span>
+              </div>
+            </div>
+            <div class="flex items-center gap-2 text-xs">
+              <span class="flex items-center gap-1 text-blue-400">
+                <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                  <path fill-rule="evenodd" d="M6 2a1 1 0 00-1 1v1H4a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V6a2 2 0 00-2-2h-1V3a1 1 0 10-2 0v1H7V3a1 1 0 00-1-1zm0 5a1 1 0 000 2h8a1 1 0 100-2H6z" clip-rule="evenodd"/>
+                </svg>
+                Next week
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Past Client Column -->
+      <div class="bg-slate-800/30 backdrop-blur-xl border border-white/10 rounded-xl p-4 pipeline-column">
+        <div class="flex items-center justify-between mb-4">
+          <div class="flex items-center gap-2">
+            <div class="w-2 h-2 bg-slate-400 rounded-full"></div>
+            <h3 class="font-semibold text-white">Past Client</h3>
+            <span class="px-2 py-0.5 bg-slate-500/20 text-slate-300 text-xs rounded-full">12</span>
+          </div>
+        </div>
+
+        <div class="space-y-3">
+          <!-- Contact Card 1 -->
+          <div class="contact-card bg-slate-900/50 border border-white/10 rounded-lg p-3">
+            <div class="flex items-start justify-between mb-2">
+              <div>
+                <h4 class="font-semibold text-white text-sm">Emily Davis</h4>
+                <p class="text-xs text-slate-400">3 months ago</p>
+              </div>
+            </div>
+            <div class="flex items-center gap-2 text-xs">
+              <div class="flex items-center">
+                <span class="text-yellow-400">⭐⭐⭐⭐⭐</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Contact Card 2 -->
+          <div class="contact-card bg-slate-900/50 border border-white/10 rounded-lg p-3">
+            <div class="flex items-start justify-between mb-2">
+              <div>
+                <h4 class="font-semibold text-white text-sm">Chris Lopez</h4>
+                <p class="text-xs text-slate-400">6 months ago</p>
+              </div>
+            </div>
+            <div class="flex items-center gap-2 text-xs">
+              <div class="flex items-center">
+                <span class="text-yellow-400">⭐⭐⭐⭐</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Contact Card 3 -->
+          <div class="contact-card bg-slate-900/50 border border-white/10 rounded-lg p-3">
+            <div class="flex items-start justify-between mb-2">
+              <div>
+                <h4 class="font-semibold text-white text-sm">Sam Rivera</h4>
+                <p class="text-xs text-slate-400">8 months ago</p>
+              </div>
+            </div>
+            <div class="flex items-center gap-2 text-xs">
+              <span class="flex items-center gap-1 text-green-400">
+                <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                  <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
+                </svg>
+                Completed
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- Contact Detail Modal (Hidden by default, shown on card click) -->
+  <div id="contactModal" class="hidden fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+    <div class="bg-slate-900 border border-white/10 rounded-2xl max-w-md w-full p-6 shadow-2xl">
+      <div class="flex items-start justify-between mb-4">
+        <div>
+          <h2 class="text-2xl font-bold text-white mb-1">Sarah Johnson</h2>
+          <a href="mailto:sarah@email.com" class="text-blue-400 text-sm hover:underline">sarah@email.com</a>
+          <p class="text-slate-400 text-sm mt-1">📞 (555) 123-4567</p>
+        </div>
+        <button onclick="document.getElementById('contactModal').classList.add('hidden')" class="p-2 hover:bg-white/10 rounded-lg transition-all">
+          <svg class="w-5 h-5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+          </svg>
+        </button>
+      </div>
+
+      <div class="space-y-4">
+        <!-- Stage -->
+        <div>
+          <label class="text-xs text-slate-400 mb-1 block">Stage</label>
+          <select class="w-full bg-slate-800/50 border border-white/10 rounded-lg px-3 py-2 text-white text-sm">
+            <option>Lead</option>
+            <option>Client</option>
+            <option>Past Client</option>
+          </select>
+        </div>
+
+        <!-- Tags -->
+        <div>
+          <label class="text-xs text-slate-400 mb-1 block">Tags</label>
+          <div class="flex flex-wrap gap-2">
+            <span class="px-2 py-1 bg-blue-500/20 text-blue-300 text-xs rounded flex items-center gap-1">
+              ADHD Course
+              <button class="hover:bg-blue-500/30 rounded px-1">×</button>
+            </span>
+            <button class="px-2 py-1 bg-white/5 hover:bg-white/10 text-slate-400 text-xs rounded transition-all">
+              + Add
+            </button>
+          </div>
+        </div>
+
+        <!-- Upcoming -->
+        <div class="bg-slate-800/30 border border-white/10 rounded-lg p-3">
+          <div class="text-xs text-slate-400 mb-1">📅 Upcoming</div>
+          <div class="text-sm text-white">None scheduled</div>
+        </div>
+
+        <!-- Last Payment -->
+        <div class="bg-slate-800/30 border border-white/10 rounded-lg p-3">
+          <div class="text-xs text-slate-400 mb-1">💳 Last Payment</div>
+          <div class="text-sm text-white">None</div>
+        </div>
+
+        <!-- AI Activity -->
+        <div class="bg-purple-500/10 border border-purple-500/30 rounded-lg p-3">
+          <div class="text-xs text-purple-300 mb-2 flex items-center gap-1 font-semibold">
+            <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+              <path d="M13 7H7v6h6V7z"/>
+              <path fill-rule="evenodd" d="M7 2a1 1 0 012 0v1h2V2a1 1 0 112 0v1h2a2 2 0 012 2v2h1a1 1 0 110 2h-1v2h1a1 1 0 110 2h-1v2a2 2 0 01-2 2h-2v1a1 1 0 11-2 0v-1H9v1a1 1 0 11-2 0v-1H5a2 2 0 01-2-2v-2H2a1 1 0 110-2h1V9H2a1 1 0 010-2h1V5a2 2 0 012-2h2V2zM5 5h10v10H5V5z" clip-rule="evenodd"/>
+            </svg>
+            AI Activity
+          </div>
+          <ul class="space-y-1 text-sm text-purple-200">
+            <li>• Sent intake form (2d ago)</li>
+            <li>• Waiting for response</li>
+          </ul>
+        </div>
+
+        <!-- Recent Activity -->
+        <div class="bg-slate-800/30 border border-white/10 rounded-lg p-3">
+          <div class="text-xs text-slate-400 mb-2">📝 Recent Activity</div>
+          <ul class="space-y-1 text-sm text-slate-300">
+            <li class="flex items-start gap-2">
+              <span class="text-slate-500">•</span>
+              <span>Inquiry received (2d ago)</span>
+            </li>
+            <li class="flex items-start gap-2">
+              <span class="text-slate-500">•</span>
+              <span>Welcome email sent (2d ago)</span>
+            </li>
+          </ul>
+        </div>
+
+        <!-- Actions -->
+        <div class="flex gap-2 pt-2">
+          <button class="flex-1 px-4 py-2 bg-blue-500/20 hover:bg-blue-500/30 border border-blue-500/30 rounded-lg text-blue-300 font-medium text-sm transition-all">
+            Move to Client
+          </button>
+          <button class="flex-1 px-4 py-2 bg-green-500/20 hover:bg-green-500/30 border border-green-500/30 rounded-lg text-green-300 font-medium text-sm transition-all">
+            Schedule Call
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Simple modal functionality
+    document.querySelectorAll('.contact-card').forEach(card => {
+      card.addEventListener('click', () => {
+        document.getElementById('contactModal').classList.remove('hidden');
+      });
+    });
+  </script>
+
+</body>
+</html>

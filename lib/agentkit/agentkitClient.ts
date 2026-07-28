@@ -1,12 +1,16 @@
 // lib/agentkit/agentkitClient.ts
 
-import OpenAI from "openai";
 import { createClient } from '@supabase/supabase-js';
+import { ProviderFactory, PROVIDERS } from '@/lib/ai/providerFactory';
 
-// Singleton OpenAI client for AgentKit
-export const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY
-});
+// ProviderFactory handles LLM client initialization - no direct SDK instantiation needed
+// Legacy: For backwards compatibility, export a getter function instead of singleton
+// Consumers should migrate to ProviderFactory.getProvider(PROVIDERS.OPENAI)
+/**
+ * @deprecated Use ProviderFactory.getProvider(PROVIDERS.OPENAI) instead
+ * This export is maintained for backwards compatibility only
+ */
+export const getOpenAIProvider = () => ProviderFactory.getProvider(PROVIDERS.OPENAI);
 
 // AgentKit Configuration Defaults
 const DEFAULT_AGENTKIT_CONFIG = {

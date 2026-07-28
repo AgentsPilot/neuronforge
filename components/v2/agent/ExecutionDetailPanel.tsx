@@ -103,6 +103,7 @@ interface ExecutionDetailPanelProps {
   hourlyRate?: number
   insights?: ExecutionInsight[]
   manualTimePerItemSeconds?: number | null
+  tokensPerPilotCredit?: number
 }
 
 export function ExecutionDetailPanel({
@@ -113,7 +114,8 @@ export function ExecutionDetailPanel({
   executionDetails,
   hourlyRate,
   insights = [],
-  manualTimePerItemSeconds
+  manualTimePerItemSeconds,
+  tokensPerPilotCredit = 10
 }: ExecutionDetailPanelProps) {
   const [expandedSteps, setExpandedSteps] = useState<Set<number>>(new Set())
   const [expandedInsights, setExpandedInsights] = useState<Set<string>>(new Set())
@@ -335,14 +337,19 @@ export function ExecutionDetailPanel({
               </div>
             </div>
 
-            {/* Tokens */}
+            {/* Pilot Credits */}
             <div className="bg-[var(--v2-hover)] rounded-lg p-3">
               <div className="flex items-center gap-1.5 text-xs text-[var(--v2-text-muted)] mb-1">
                 <Zap className="w-3.5 h-3.5 text-amber-500" />
-                Tokens
+                Pilot Credits
               </div>
               <div className="text-lg font-bold text-[var(--v2-text-primary)]">
-                {formatTokens(tokens)}
+                {(() => {
+                  if (!tokens) return 'N/A'
+                  const credits = Math.ceil(tokens / tokensPerPilotCredit)
+                  if (credits >= 1000) return `${(credits / 1000).toFixed(1)}k`
+                  return credits.toLocaleString()
+                })()}
               </div>
             </div>
 

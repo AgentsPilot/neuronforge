@@ -155,11 +155,11 @@ export default function QueueManagerV2() {
           <div className="flex items-center gap-3">
             <button
               onClick={() => navigator.clipboard.writeText(execution.id)}
-              className="p-2 text-slate-400 hover:text-white rounded-lg hover:bg-slate-700/50"
+              className="p-2 text-slate-400 hover:text-white rounded-lg hover:bg-slate-900/50"
             >
               <Copy className="w-4 h-4" />
             </button>
-            <button onClick={onClose} className="p-2 text-slate-400 hover:text-white rounded-lg hover:bg-slate-700/50">
+            <button onClick={onClose} className="p-2 text-slate-400 hover:text-white rounded-lg hover:bg-slate-900/50">
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
               </svg>
@@ -197,18 +197,18 @@ export default function QueueManagerV2() {
               Timeline
             </h3>
             <div className="space-y-2">
-              <div className="flex justify-between items-center p-3 bg-slate-700/50 rounded">
+              <div className="flex justify-between items-center p-3 bg-slate-900/50 rounded">
                 <span className="text-slate-300">Scheduled</span>
                 <span className="text-white font-mono text-sm">{new Date(execution.scheduled_at).toLocaleString()}</span>
               </div>
               {execution.started_at && (
-                <div className="flex justify-between items-center p-3 bg-slate-700/50 rounded">
+                <div className="flex justify-between items-center p-3 bg-slate-900/50 rounded">
                   <span className="text-slate-300">Started</span>
                   <span className="text-white font-mono text-sm">{new Date(execution.started_at).toLocaleString()}</span>
                 </div>
               )}
               {execution.completed_at && (
-                <div className="flex justify-between items-center p-3 bg-slate-700/50 rounded">
+                <div className="flex justify-between items-center p-3 bg-slate-900/50 rounded">
                   <span className="text-slate-300">Completed</span>
                   <span className="text-white font-mono text-sm">{new Date(execution.completed_at).toLocaleString()}</span>
                 </div>
@@ -248,18 +248,15 @@ export default function QueueManagerV2() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-slate-900 flex items-center justify-center">
-        <div className="text-center">
-          <Loader2 className="w-12 h-12 animate-spin mx-auto mb-4 text-indigo-400" />
-          <p className="text-lg text-slate-400">Loading execution stats...</p>
-        </div>
+      <div className="flex items-center justify-center py-12">
+        <RefreshCw className="w-8 h-8 text-purple-500 animate-spin" />
       </div>
     );
   }
 
   if (error) {
     return (
-      <div className="min-h-screen bg-slate-900 flex items-center justify-center">
+      <div className="flex items-center justify-center py-12">
         <div className="text-center max-w-md">
           <AlertCircle className="w-12 h-12 mx-auto mb-4 text-red-400" />
           <h2 className="text-xl font-semibold text-white mb-2">Connection Error</h2>
@@ -279,63 +276,47 @@ export default function QueueManagerV2() {
   const filteredExecutions = getExecutionsByFilter();
 
   return (
-    <div className="min-h-screen bg-slate-900">
+    <div className="space-y-6">
       {/* Header */}
-      <div className="bg-slate-800/50 backdrop-blur-xl border-b border-white/10">
-        <div className="max-w-7xl mx-auto px-6 py-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              <div className="p-2 bg-indigo-500/20 rounded-lg">
-                <Activity className="w-8 h-8 text-indigo-400" />
+      <header className="border-b border-slate-700">
+        <div className="flex items-center justify-between pb-4">
+          <div className="flex items-center gap-4">
+            <div className="flex flex-col">
+              <div className="flex items-center gap-4 mb-1">
+                <h1 className="text-xl font-semibold text-white">Queue Monitor</h1>
+                <span className="text-xs px-2 py-1 rounded bg-purple-500/20 text-purple-400">Execution Queue</span>
+                {autoRefresh && (
+                  <span className="text-xs px-2 py-1 rounded bg-green-500/20 text-green-400 flex items-center gap-1">
+                    <div className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
+                    Live
+                  </span>
+                )}
               </div>
-              <div>
-                <h1 className="text-2xl font-bold text-white">Agent Execution Monitor</h1>
-                <p className="text-slate-400 mt-1">QStash-powered execution tracking</p>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-4">
-              <div className="flex items-center gap-2 px-3 py-1 bg-green-500/20 border border-green-500/20 rounded-lg">
-                <div className={`w-2 h-2 rounded-full ${autoRefresh ? 'bg-green-400 animate-pulse' : 'bg-slate-400'}`} />
-                <span className="text-sm font-medium text-green-300">
-                  {autoRefresh ? 'Live' : 'Paused'}
-                </span>
-              </div>
-
-              <button
-                onClick={() => setAutoRefresh(!autoRefresh)}
-                className={`px-3 py-1 text-sm rounded border transition-colors ${
-                  autoRefresh
-                    ? 'bg-green-500/20 text-green-300 border-green-500/20'
-                    : 'bg-slate-700/50 text-slate-300 border-slate-600'
-                }`}
-              >
-                {autoRefresh ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
-              </button>
-
-              <button
-                onClick={fetchStats}
-                className="flex items-center gap-2 px-4 py-2 bg-indigo-500/20 text-indigo-300 rounded-lg hover:bg-indigo-500/30 border border-indigo-500/20"
-              >
-                <RefreshCw className="w-4 h-4" />
-                Refresh
-              </button>
-
-              {lastUpdate && (
-                <div className="text-sm text-slate-400 bg-slate-700/50 px-3 py-1 rounded border border-slate-600">
-                  {lastUpdate.toLocaleTimeString()}
-                </div>
-              )}
+              <p className="text-sm text-slate-400">QStash-powered execution tracking</p>
             </div>
           </div>
+          <div className="flex items-center gap-4">
+            <button
+              onClick={() => setAutoRefresh(!autoRefresh)}
+              className="p-2 rounded-lg border border-slate-700 hover:bg-slate-800 transition-colors"
+              title={autoRefresh ? 'Pause auto-refresh' : 'Enable auto-refresh'}
+            >
+              {autoRefresh ? <Pause className="w-5 h-5 text-slate-400" /> : <Play className="w-5 h-5 text-slate-400" />}
+            </button>
+            <button
+              onClick={fetchStats}
+              disabled={loading}
+              className="p-2 rounded-lg border border-slate-700 hover:bg-slate-800 transition-colors"
+            >
+              <RefreshCw className={`w-5 h-5 text-slate-400 ${loading ? 'animate-spin' : ''}`} />
+            </button>
+          </div>
         </div>
-      </div>
-
-      <div className="max-w-7xl mx-auto p-6 space-y-6">
+      </header>
         {/* Metrics */}
         {metrics && (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-            <div className="bg-slate-800/50 backdrop-blur-xl rounded-xl p-4 border border-white/10">
+            <div className="bg-slate-800 border border-slate-700 rounded-xl p-4">
               <div className="flex items-center gap-3">
                 <div className="p-2 bg-indigo-500/30 rounded-lg">
                   <BarChart3 className="w-5 h-5 text-indigo-300" />
@@ -347,7 +328,7 @@ export default function QueueManagerV2() {
               </div>
             </div>
 
-            <div className="bg-slate-800/50 backdrop-blur-xl rounded-xl p-4 border border-white/10">
+            <div className="bg-slate-800 border border-slate-700 rounded-xl p-4">
               <div className="flex items-center gap-3">
                 <div className="p-2 bg-green-500/30 rounded-lg">
                   <TrendingUp className="w-5 h-5 text-green-300" />
@@ -359,7 +340,7 @@ export default function QueueManagerV2() {
               </div>
             </div>
 
-            <div className="bg-slate-800/50 backdrop-blur-xl rounded-xl p-4 border border-white/10">
+            <div className="bg-slate-800 border border-slate-700 rounded-xl p-4">
               <div className="flex items-center gap-3">
                 <div className="p-2 bg-blue-500/30 rounded-lg">
                   <Zap className="w-5 h-5 text-blue-300" />
@@ -371,7 +352,7 @@ export default function QueueManagerV2() {
               </div>
             </div>
 
-            <div className="bg-slate-800/50 backdrop-blur-xl rounded-xl p-4 border border-white/10">
+            <div className="bg-slate-800 border border-slate-700 rounded-xl p-4">
               <div className="flex items-center gap-3">
                 <div className="p-2 bg-purple-500/30 rounded-lg">
                   <Activity className="w-5 h-5 text-purple-300" />
@@ -416,7 +397,7 @@ export default function QueueManagerV2() {
         </div>
 
         {/* Executions Table */}
-        <div className="bg-slate-800/50 backdrop-blur-xl rounded-xl border border-white/10">
+        <div className="bg-slate-800 border border-slate-700 rounded-xl">
           <div className="px-6 py-4 border-b border-white/10">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-xl font-semibold text-white flex items-center gap-2">
@@ -426,7 +407,7 @@ export default function QueueManagerV2() {
             </div>
 
             <div className="flex items-center gap-4">
-              <div className="flex items-center gap-2 bg-slate-700/50 rounded-lg px-3 py-2 flex-1 max-w-md">
+              <div className="flex items-center gap-2 bg-slate-900/50 rounded-lg px-3 py-2 flex-1 max-w-md">
                 <Search className="w-4 h-4 text-slate-400" />
                 <input
                   type="text"
@@ -440,7 +421,7 @@ export default function QueueManagerV2() {
               <select
                 value={filter}
                 onChange={(e) => setFilter(e.target.value as any)}
-                className="bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm"
+                className="bg-slate-900/50 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm"
               >
                 <option value="all">All Status</option>
                 <option value="pending">Pending</option>
@@ -453,7 +434,7 @@ export default function QueueManagerV2() {
 
           <div className="overflow-x-auto">
             <table className="w-full">
-              <thead className="bg-slate-700/50">
+              <thead className="bg-slate-900/50">
                 <tr>
                   <th className="px-6 py-3 text-left text-xs font-medium text-slate-300 uppercase">ID</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-slate-300 uppercase">Agent</th>
@@ -529,7 +510,6 @@ export default function QueueManagerV2() {
             </div>
           )}
         </div>
-      </div>
 
       {selectedExecution && (
         <ExecutionDetailsModal

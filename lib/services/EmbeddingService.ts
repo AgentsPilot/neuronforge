@@ -9,10 +9,12 @@
  * - Cost estimation and tracking
  * - Batch processing for multiple texts
  * - Integration with SystemConfigService for dynamic model selection
+ * - Token tracking via ProviderFactory
  */
 
-import OpenAI from 'openai'
 import { SupabaseClient } from '@supabase/supabase-js'
+import { ProviderFactory, PROVIDERS } from '@/lib/ai/providerFactory'
+import type { CallContext } from '@/lib/ai/providers/baseProvider'
 import { SystemConfigService } from './SystemConfigService'
 
 interface EmbeddingResult {
@@ -30,11 +32,10 @@ interface BatchEmbeddingResult {
 }
 
 export class EmbeddingService {
-  private openai: OpenAI
   private supabase: SupabaseClient
 
-  constructor(apiKey: string, supabase: SupabaseClient) {
-    this.openai = new OpenAI({ apiKey })
+  constructor(_apiKey: string, supabase: SupabaseClient) { // Deprecated: ProviderFactory handles API keys
+    // ProviderFactory handles LLM client initialization and token tracking - no direct SDK instantiation needed
     this.supabase = supabase
   }
 
@@ -86,14 +87,24 @@ export class EmbeddingService {
     )
 
     try {
-      const response = await this.openai.embeddings.create({
+      // Get provider from factory for centralized token tracking
+      const provider = ProviderFactory.getProvider(PROVIDERS.OPENAI)
+      const context: CallContext = {
+        userId: 'system',
+        feature: 'helpbot',
+        component: 'EmbeddingService',
+        category: 'embedding_generation',
+        activity_type: 'single_embedding',
+        activity_name: 'generate_embedding',
+      }
+
+      const response = await provider.createEmbedding({
         model,
         input: normalizedText,
-        encoding_format: 'float',
-      })
+      }, context)
 
       const embedding = response.data[0].embedding
-      const tokens = response.usage.total_tokens
+      const tokens = response.usage?.total_tokens || 0
       const cost = await this.calculateCost(tokens)
 
       return {
@@ -132,14 +143,24 @@ export class EmbeddingService {
     )
 
     try {
-      const response = await this.openai.embeddings.create({
+      // Get provider from factory for centralized token tracking
+      const provider = ProviderFactory.getProvider(PROVIDERS.OPENAI)
+      const context: CallContext = {
+        userId: 'system',
+        feature: 'helpbot',
+        component: 'EmbeddingService',
+        category: 'embedding_generation',
+        activity_type: 'batch_embedding',
+        activity_name: 'generate_batch_embeddings',
+      }
+
+      const response = await provider.createEmbedding({
         model,
         input: normalizedTexts,
-        encoding_format: 'float',
-      })
+      }, context)
 
-      const embeddings = response.data.map((item) => item.embedding)
-      const totalTokens = response.usage.total_tokens
+      const embeddings = response.data.map((item: any) => item.embedding)
+      const totalTokens = response.usage?.total_tokens || 0
       const totalCost = await this.calculateCost(totalTokens)
 
       return {

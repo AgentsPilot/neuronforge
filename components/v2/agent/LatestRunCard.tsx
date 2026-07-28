@@ -1,17 +1,39 @@
 'use client'
 
-import React from 'react'
-import { Clock, CheckCircle2, XCircle, AlertCircle, Play, DollarSign, Calendar, User, Timer, Cpu, PlayCircle, StopCircle, Hash } from 'lucide-react'
+import React, { useState } from 'react'
+import { Clock, CheckCircle2, XCircle, AlertCircle, Play, DollarSign, Calendar, User, Timer, Cpu, PlayCircle, StopCircle, Hash, Copy, Check } from 'lucide-react'
 import type { Execution } from '@/lib/repositories/types'
 
 interface LatestRunCardProps {
   execution: Execution | null
   isRunning: boolean
-  advancedMode: boolean
+  advancedMode?: boolean
   hourlyRate?: number
+  tokensPerPilotCredit?: number
 }
 
-export function LatestRunCard({ execution, isRunning, advancedMode, hourlyRate }: LatestRunCardProps) {
+export function LatestRunCard({ execution, isRunning, hourlyRate, tokensPerPilotCredit = 10 }: LatestRunCardProps) {
+  const [copied, setCopied] = useState(false)
+
+  const copyRunId = async () => {
+    if (!execution?.id) return
+    try {
+      await navigator.clipboard.writeText(execution.id)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    } catch (err) {
+      // Fallback for older browsers
+      const textArea = document.createElement('textarea')
+      textArea.value = execution.id
+      document.body.appendChild(textArea)
+      textArea.select()
+      document.execCommand('copy')
+      document.body.removeChild(textArea)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    }
+  }
+
   const getStatusIcon = () => {
     if (isRunning) return <Play className="w-5 h-5 text-blue-600 dark:text-blue-400 animate-pulse" />
     if (!execution) return <AlertCircle className="w-5 h-5 text-gray-400" />
@@ -174,157 +196,111 @@ export function LatestRunCard({ execution, isRunning, advancedMode, hourlyRate }
           <p className="text-sm text-[var(--v2-text-muted)]">Click "Run Now" to test this agent</p>
         </div>
       ) : (
-        <div className="p-6 flex-1">
-          {/* Run Info - Start, End, ID */}
+        <div className="p-4 flex-1">
           {execution && (
-            <div className="mb-4 p-4 rounded-xl bg-[var(--v2-hover)] border border-[var(--v2-border)]">
-              <div className="grid grid-cols-3 gap-4">
-                {/* Started */}
+            <div className="space-y-2">
+              {/* Row 1: Run ID */}
+              <div className="flex items-center justify-between py-2 border-b border-[var(--v2-border)]">
+                <span className="text-xs text-[var(--v2-text-muted)] flex items-center gap-1.5">
+                  <Hash className="w-3.5 h-3.5 text-purple-500" />
+                  Run ID
+                </span>
                 <div className="flex items-center gap-2">
-                  <PlayCircle className="w-4 h-4 text-emerald-500 flex-shrink-0" />
-                  <div className="min-w-0">
-                    <div className="text-xs text-[var(--v2-text-muted)] uppercase tracking-wider">Started</div>
-                    <div className="text-sm font-semibold text-[var(--v2-text-primary)] tabular-nums truncate">
-                      {formatAbsoluteTime(execution.created_at)}
-                    </div>
-                  </div>
-                </div>
-
-                {/* Ended */}
-                <div className="flex items-center gap-2">
-                  <StopCircle className="w-4 h-4 text-blue-500 flex-shrink-0" />
-                  <div className="min-w-0">
-                    <div className="text-xs text-[var(--v2-text-muted)] uppercase tracking-wider">Ended</div>
-                    <div className="text-sm font-semibold text-[var(--v2-text-primary)] tabular-nums truncate">
-                      {getEndTime() ? formatAbsoluteTime(getEndTime()) : 'N/A'}
-                    </div>
-                  </div>
-                </div>
-
-                {/* Run ID */}
-                <div className="flex items-center gap-2">
-                  <Hash className="w-4 h-4 text-purple-500 flex-shrink-0" />
-                  <div className="min-w-0">
-                    <div className="text-xs text-[var(--v2-text-muted)] uppercase tracking-wider">Run ID</div>
-                    <div className="text-sm font-semibold text-[var(--v2-text-primary)] font-mono truncate" title={execution.id}>
-                      {execution.id.slice(0, 8)}
-                    </div>
-                  </div>
+                  <span className="text-sm font-mono text-[var(--v2-text-primary)]" title={execution.id}>
+                    {execution.id.slice(0, 8)}
+                  </span>
+                  <button
+                    onClick={copyRunId}
+                    className="p-1 rounded hover:bg-[var(--v2-hover)] transition-colors"
+                    title="Copy full Run ID"
+                  >
+                    {copied ? (
+                      <Check className="w-3.5 h-3.5 text-emerald-500" />
+                    ) : (
+                      <Copy className="w-3.5 h-3.5 text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)]" />
+                    )}
+                  </button>
                 </div>
               </div>
 
-              {/* Cost Saved for this run - shown prominently if available */}
-              {timeSavedValue > 0 && (
-                <div className="mt-3 pt-3 border-t border-[var(--v2-border)] flex items-center justify-between">
+              {/* Row 2: Time (From → To) */}
+              <div className="flex items-center justify-between py-2 border-b border-[var(--v2-border)]">
+                <span className="text-xs text-[var(--v2-text-muted)] flex items-center gap-1.5">
+                  <Clock className="w-3.5 h-3.5 text-blue-500" />
+                  Time
+                </span>
+                <span className="text-sm text-[var(--v2-text-primary)] tabular-nums">
+                  {formatAbsoluteTime(execution.created_at)} → {getEndTime() ? formatAbsoluteTime(getEndTime()) : 'N/A'}
+                </span>
+              </div>
+
+              {/* Row 3: Duration */}
+              <div className="flex items-center justify-between py-2 border-b border-[var(--v2-border)]">
+                <span className="text-xs text-[var(--v2-text-muted)] flex items-center gap-1.5">
+                  <Timer className="w-3.5 h-3.5 text-blue-500" />
+                  Duration
+                </span>
+                <span className="text-sm font-semibold text-[var(--v2-text-primary)] tabular-nums">
+                  {formatDuration(execution.execution_duration_ms)}
+                </span>
+              </div>
+
+              {/* Row 4: Pilot Credits */}
+              <div className="flex items-center justify-between py-2 border-b border-[var(--v2-border)]">
+                <span className="text-xs text-[var(--v2-text-muted)] flex items-center gap-1.5">
+                  <Cpu className="w-3.5 h-3.5 text-purple-500" />
+                  Pilot Credits
+                </span>
+                <span className="text-sm font-semibold text-[var(--v2-text-primary)] tabular-nums">
+                  {(() => {
+                    const totalTokens = execution.logs?.tokensUsed?.total
+                    if (!totalTokens) return 'N/A'
+                    const credits = Math.ceil(totalTokens / tokensPerPilotCredit)
+                    if (credits >= 1000) return `${(credits / 1000).toFixed(1)}k`
+                    return credits.toLocaleString()
+                  })()}
+                </span>
+              </div>
+
+              {/* Row 5: Time Saved */}
+              <div className="flex items-center justify-between py-2 border-b border-[var(--v2-border)]">
+                <span className="text-xs text-[var(--v2-text-muted)] flex items-center gap-1.5">
+                  <Timer className="w-3.5 h-3.5 text-emerald-500" />
+                  Time Saved
+                </span>
+                <span className="text-sm font-semibold text-emerald-600 dark:text-emerald-400 tabular-nums">
+                  {timeSavedSeconds > 0 ? formatTimeSaved(timeSavedSeconds) : 'N/A'}
+                </span>
+              </div>
+
+              {/* Row 6: Value Saved */}
+              <div className="flex items-center justify-between py-2 border-b border-[var(--v2-border)]">
+                <span className="text-xs text-[var(--v2-text-muted)] flex items-center gap-1.5">
+                  <DollarSign className="w-3.5 h-3.5 text-emerald-500" />
+                  Value Saved
+                </span>
+                <span className="text-sm font-semibold text-emerald-600 dark:text-emerald-400 tabular-nums">
+                  {timeSavedValue > 0 ? `$${timeSavedValue.toFixed(2)}` : 'N/A'}
+                </span>
+              </div>
+
+              {/* Row 7: Progress (if available) */}
+              {hasStepsData && stepsData && (
+                <div className="flex items-center justify-between py-2">
+                  <span className="text-xs text-[var(--v2-text-muted)]">Progress</span>
                   <div className="flex items-center gap-2">
-                    <DollarSign className="w-4 h-4 text-emerald-500" />
-                    <span className="text-xs text-[var(--v2-text-muted)] uppercase tracking-wider">Value Saved This Run</span>
-                  </div>
-                  <div className="text-lg font-bold text-emerald-600 dark:text-emerald-400 tabular-nums">
-                    ${timeSavedValue.toFixed(2)}
+                    <div className="w-20 h-1.5 bg-[var(--v2-border)] rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-emerald-500 rounded-full transition-all duration-300"
+                        style={{ width: `${(stepsData.completed / stepsData.total) * 100}%` }}
+                      />
+                    </div>
+                    <span className="text-sm font-semibold text-[var(--v2-text-primary)] tabular-nums">
+                      {stepsData.completed}/{stepsData.total}
+                    </span>
                   </div>
                 </div>
               )}
-            </div>
-          )}
-
-          {/* Metrics - single row */}
-          {execution && (
-            <div className="grid grid-cols-3 gap-3 mb-4">
-              {/* Duration */}
-              <div className="p-3 rounded-xl bg-[var(--v2-hover)] border border-[var(--v2-border)]">
-                <div className="flex items-center gap-1.5 mb-1">
-                  <Clock className="w-3.5 h-3.5 text-blue-500" />
-                  <span className="text-xs font-semibold text-[var(--v2-text-muted)] uppercase tracking-wider">Duration</span>
-                </div>
-                <div className="text-lg font-bold text-[var(--v2-text-primary)] tabular-nums">
-                  {formatDuration(execution.execution_duration_ms)}
-                </div>
-              </div>
-
-              {/* Time Saved */}
-              <div className="p-3 rounded-xl bg-[var(--v2-hover)] border border-[var(--v2-border)]">
-                <div className="flex items-center gap-1.5 mb-1">
-                  <Timer className="w-3.5 h-3.5 text-emerald-500" />
-                  <span className="text-xs font-semibold text-[var(--v2-text-muted)] uppercase tracking-wider">Time Saved</span>
-                </div>
-                <div className="text-lg font-bold text-emerald-600 dark:text-emerald-400 tabular-nums">
-                  {timeSavedSeconds > 0 ? formatTimeSaved(timeSavedSeconds) : 'N/A'}
-                </div>
-              </div>
-
-              {/* Tokens */}
-              <div className="p-3 rounded-xl bg-[var(--v2-hover)] border border-[var(--v2-border)]">
-                <div className="flex items-center gap-1.5 mb-1">
-                  <Cpu className="w-3.5 h-3.5 text-purple-500" />
-                  <span className="text-xs font-semibold text-[var(--v2-text-muted)] uppercase tracking-wider">Tokens</span>
-                </div>
-                <div className="text-lg font-bold text-[var(--v2-text-primary)] tabular-nums">
-                  {execution.logs?.tokensUsed?.total ? `${(execution.logs.tokensUsed.total / 1000).toFixed(1)}k` : 'N/A'}
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Steps Progress Graph - shown if available */}
-          {hasStepsData && stepsData && (
-            <div className="mb-4 p-3 rounded-lg bg-gradient-to-br from-emerald-500/5 to-blue-500/5 border border-emerald-200/50 dark:border-emerald-800/30">
-              <div className="flex items-baseline justify-between mb-2">
-                <span className="text-xs font-semibold text-[var(--v2-text-muted)] uppercase tracking-wider">Workflow Progress</span>
-                <div className="flex items-baseline gap-1.5">
-                  <span className="text-lg font-bold text-[var(--v2-text-primary)] tabular-nums">
-                    {Math.round((stepsData.completed / stepsData.total) * 100)}%
-                  </span>
-                  <span className="text-xs text-[var(--v2-text-muted)]">
-                    {stepsData.completed}/{stepsData.total}
-                  </span>
-                </div>
-              </div>
-
-              {/* Dots Progress Line */}
-              <div className="relative py-1">
-                <div className="flex items-center justify-between relative">
-                  {/* Build array of step states */}
-                  {Array.from({ length: stepsData.total }, (_, i) => {
-                    let status: 'completed' | 'failed' | 'skipped' = 'completed'
-                    if (i < stepsData.completed) {
-                      status = 'completed'
-                    } else if (i < stepsData.completed + stepsData.failed) {
-                      status = 'failed'
-                    } else {
-                      status = 'skipped'
-                    }
-
-                    const isLast = i === stepsData.total - 1
-
-                    return (
-                      <div key={i} className="flex items-center flex-1 last:flex-none">
-                        {/* Dot */}
-                        <div className="relative z-10">
-                          <div className={`w-2.5 h-2.5 rounded-full transition-all duration-300 ${
-                            status === 'completed'
-                              ? 'bg-emerald-500 dark:bg-emerald-400 shadow-md shadow-emerald-500/50'
-                              : status === 'failed'
-                              ? 'bg-red-500 dark:bg-red-400 shadow-md shadow-red-500/50'
-                              : 'bg-yellow-500 dark:bg-yellow-400 shadow-md shadow-yellow-500/50'
-                          }`} />
-                        </div>
-
-                        {/* Line */}
-                        {!isLast && (
-                          <div className={`flex-1 h-0.5 transition-all duration-300 ${
-                            status === 'completed'
-                              ? 'bg-emerald-500 dark:bg-emerald-400'
-                              : status === 'failed'
-                              ? 'bg-red-500 dark:bg-red-400'
-                              : 'bg-yellow-500 dark:bg-yellow-400'
-                          }`} />
-                        )}
-                      </div>
-                    )
-                  })}
-                </div>
-              </div>
             </div>
           )}
 

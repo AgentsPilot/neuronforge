@@ -55,6 +55,46 @@ interface UserLoginStats {
   unique_ips: number;
 }
 
+interface UserDetailedStats {
+  agents: {
+    total: number;
+    active: number;
+    inactive: number;
+    draft: number;
+    scheduled: number;
+    list: Array<{ id: string; name: string; status: string; mode: string; created_at: string }>;
+  };
+  executions: {
+    total_30d: number;
+    successful: number;
+    failed: number;
+    total_duration_ms: number;
+    total_tokens: number;
+    total_cost_usd: number;
+    success_rate: number;
+  };
+  tokens: {
+    total_input_tokens: number;
+    total_output_tokens: number;
+    total_cost_usd: number;
+    total_calls: number;
+    by_model: Array<{ model: string; input: number; output: number; cost: number; calls: number }>;
+  };
+  subscription: {
+    balance: number;
+    total_spent: number;
+    executions_quota: number | null;
+    executions_used: number;
+    plan_name: string;
+    status: string;
+  } | null;
+  plugins: {
+    total: number;
+    active: number;
+    list: Array<{ plugin: string; connected_at: string; is_active: boolean }>;
+  };
+}
+
 interface AuditLogEntry {
   id: string;
   action: string;
@@ -82,6 +122,7 @@ export default function UsersPage() {
   const [expandedUserId, setExpandedUserId] = useState<string | null>(null);
   const [userLoginStats, setUserLoginStats] = useState<Record<string, UserLoginStats>>({});
   const [userAuditLogs, setUserAuditLogs] = useState<Record<string, AuditLogEntry[]>>({});
+  const [userDetailedStats, setUserDetailedStats] = useState<Record<string, UserDetailedStats>>({});
   const [loadingUserDetails, setLoadingUserDetails] = useState<Record<string, boolean>>({});
   const [filter, setFilter] = useState<'all' | 'active' | 'inactive'>('all');
   const [searchTerm, setSearchTerm] = useState('');
@@ -112,7 +153,7 @@ export default function UsersPage() {
       setError(null);
 
       const queryParams = new URLSearchParams({
-        filter,
+        status: filter,  // Backend expects 'status' not 'filter'
         search: searchTerm
       });
 
@@ -222,25 +263,42 @@ export default function UsersPage() {
     setExpandedUserId(user.id);
 
     // Don't fetch if already loaded
-    if (userLoginStats[user.id] && userAuditLogs[user.id]) {
+    if (userLoginStats[user.id] && userAuditLogs[user.id] && userDetailedStats[user.id]) {
       return;
     }
 
     setLoadingUserDetails(prev => ({ ...prev, [user.id]: true }));
 
     try {
-      // Fetch login statistics
-      const statsResponse = await fetch(`/api/admin/users/${user.id}/login-stats`);
+      // Fetch all data in parallel
+      const [statsResponse, auditResponse, detailedStatsResponse] = await Promise.all([
+        fetch(`/api/admin/users/${user.id}/login-stats`),
+        fetch(`/api/admin/users/${user.id}/audit-logs`),
+        fetch(`/api/admin/users/${user.id}/stats`)
+      ]);
+
+      // Process login statistics
       if (statsResponse.ok) {
         const statsData = await statsResponse.json();
         setUserLoginStats(prev => ({ ...prev, [user.id]: statsData.data }));
       }
 
-      // Fetch audit logs
-      const auditResponse = await fetch(`/api/admin/users/${user.id}/audit-logs`);
+      // Process audit logs
       if (auditResponse.ok) {
         const auditData = await auditResponse.json();
         setUserAuditLogs(prev => ({ ...prev, [user.id]: auditData.data || [] }));
+      }
+
+      // Process detailed stats (agents, tokens, etc.)
+      if (detailedStatsResponse.ok) {
+        const detailedData = await detailedStatsResponse.json();
+        console.log('User detailed stats response:', detailedData);
+        if (detailedData.success) {
+          console.log('Plugins data:', detailedData.data?.plugins);
+          setUserDetailedStats(prev => ({ ...prev, [user.id]: detailedData.data }));
+        }
+      } else {
+        console.error('Failed to fetch detailed stats:', detailedStatsResponse.status);
       }
 
       // Initialize audit filter for this user
@@ -327,9 +385,9 @@ export default function UsersPage() {
       setUserToTerminate(null);
       setTerminateReason('');
 
-      // If the terminated user was selected in details, close that too
-      if (selectedUser?.id === userToTerminate.id) {
-        setSelectedUser(null);
+      // If the terminated user was expanded in details, close that too
+      if (expandedUserId === userToTerminate.id) {
+        setExpandedUserId(null);
       }
 
     } catch (error) {
@@ -367,11 +425,8 @@ export default function UsersPage() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-96">
-        <div className="text-center">
-          <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
-          <p className="text-slate-400">Loading users...</p>
-        </div>
+      <div className="flex items-center justify-center py-12">
+        <RefreshCw className="w-8 h-8 text-purple-500 animate-spin" />
       </div>
     );
   }
@@ -385,78 +440,69 @@ export default function UsersPage() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold text-white mb-2">User Management</h1>
-          <div className="flex items-center gap-4">
-            <p className="text-slate-400">Manage platform users and their activity</p>
-            {stats && (
-              <div className="flex items-center gap-3 text-sm">
-                <span className="flex items-center gap-1">
-                  <UsersIcon className="w-3 h-3 text-blue-400" />
-                  <span className="text-blue-300">
-                    {stats.totalUsers} total users
-                  </span>
-                </span>
-                <span className="flex items-center gap-1">
-                  <Activity className="w-3 h-3 text-green-400" />
-                  <span className="text-green-300">
-                    {stats.activeUsers} active
-                  </span>
-                </span>
-              </div>
-            )}
-          </div>
+      <header className="flex items-center justify-between border-b border-slate-700 pb-4">
+        <div className="flex items-center gap-4">
+          <h1 className="text-xl font-semibold text-white">User Management</h1>
+          {stats && (
+            <>
+              <span className="text-xs px-2 py-1 rounded bg-blue-500/20 text-blue-400">
+                {stats.totalUsers} total
+              </span>
+              <span className="text-xs px-2 py-1 rounded bg-green-500/20 text-green-400">
+                {stats.activeUsers} active
+              </span>
+            </>
+          )}
         </div>
-
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-4">
           <button
             onClick={() => setShowAdvancedFilters(!showAdvancedFilters)}
-            className="px-3 py-1 bg-slate-700/50 text-slate-300 rounded text-sm hover:bg-slate-600/50 transition-colors border border-slate-600"
+            className="px-3 py-1.5 text-sm bg-slate-800 border border-slate-700 rounded-lg hover:bg-slate-700 transition-colors flex items-center gap-2"
           >
-            <Filter className="w-4 h-4 inline mr-1" />
-            {showAdvancedFilters ? 'Hide Filters' : 'Advanced Filters'}
+            <Filter className="w-4 h-4" />
+            {showAdvancedFilters ? 'Hide Filters' : 'Filters'}
           </button>
           <button
             onClick={fetchUsers}
-            className="p-2 bg-slate-800/50 hover:bg-slate-700/50 rounded-lg transition-colors"
+            className="p-2 rounded-lg border border-slate-700 hover:bg-slate-800 transition-colors"
           >
-            <RefreshCw className="w-4 h-4" />
+            <RefreshCw className="w-5 h-5 text-slate-400" />
           </button>
         </div>
-      </div>
+      </header>
 
       {/* Stats Cards */}
       {stats && (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div className="bg-blue-500/20 backdrop-blur-xl rounded-xl p-4 border border-blue-500/20">
-            <div className="text-center">
-              <UsersIcon className="w-6 h-6 mx-auto mb-2 text-blue-300" />
-              <p className="text-2xl font-bold text-blue-300">{formatNumber(stats.totalUsers)}</p>
-              <p className="text-xs text-blue-400">Total Users</p>
+          <div className="bg-slate-800 border border-blue-500/30 rounded-xl p-5">
+            <div className="flex items-center gap-3 mb-3">
+              <UsersIcon className="w-5 h-5 text-blue-400" />
+              <h3 className="text-sm font-medium text-white">Total Users</h3>
             </div>
+            <p className="text-2xl font-bold text-white">{formatNumber(stats.totalUsers)}</p>
           </div>
 
-          <div className="bg-green-500/20 backdrop-blur-xl rounded-xl p-4 border border-green-500/20">
-            <div className="text-center">
-              <Activity className="w-6 h-6 mx-auto mb-2 text-green-300" />
-              <p className="text-2xl font-bold text-green-300">{formatNumber(stats.activeUsers)}</p>
-              <p className="text-xs text-green-400">Active Users (30d)</p>
+          <div className="bg-slate-800 border border-green-500/30 rounded-xl p-5">
+            <div className="flex items-center gap-3 mb-3">
+              <Activity className="w-5 h-5 text-green-400" />
+              <h3 className="text-sm font-medium text-white">Active Users</h3>
             </div>
+            <p className="text-2xl font-bold text-white">{formatNumber(stats.activeUsers)}</p>
+            <p className="text-xs text-slate-400 mt-1">Last 30 days</p>
           </div>
 
-          <div className="bg-purple-500/20 backdrop-blur-xl rounded-xl p-4 border border-purple-500/20">
-            <div className="text-center">
-              <TrendingUp className="w-6 h-6 mx-auto mb-2 text-purple-300" />
-              <p className="text-2xl font-bold text-purple-300">{formatNumber(stats.newUsersToday)}</p>
-              <p className="text-xs text-purple-400">New Today</p>
+          <div className="bg-slate-800 border border-purple-500/30 rounded-xl p-5">
+            <div className="flex items-center gap-3 mb-3">
+              <TrendingUp className="w-5 h-5 text-purple-400" />
+              <h3 className="text-sm font-medium text-white">New Today</h3>
             </div>
+            <p className="text-2xl font-bold text-white">{formatNumber(stats.newUsersToday)}</p>
           </div>
         </div>
       )}
 
       {/* Filters & Search */}
-      <div className="bg-slate-800/50 backdrop-blur-xl rounded-xl p-6 border border-white/10">
+      <div className="bg-slate-800 border border-slate-700 rounded-xl p-6">
         <div className="flex flex-col gap-4">
           <div className="flex flex-wrap items-center gap-4">
             <div className="flex items-center gap-2 bg-slate-700/50 rounded-lg px-3 py-2 min-w-[300px]">
@@ -480,22 +526,99 @@ export default function UsersPage() {
               <option value="inactive">Inactive (30+ days)</option>
             </select>
           </div>
+
+          {/* Advanced Filters Panel */}
+          {showAdvancedFilters && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: 'auto' }}
+              exit={{ opacity: 0, height: 0 }}
+              className="pt-4 border-t border-slate-700"
+            >
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div>
+                  <label className="block text-xs text-slate-400 mb-1">Email Verified</label>
+                  <select
+                    className="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none"
+                    defaultValue="all"
+                  >
+                    <option value="all">All</option>
+                    <option value="verified">Verified Only</option>
+                    <option value="unverified">Unverified Only</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs text-slate-400 mb-1">Auth Provider</label>
+                  <select
+                    className="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none"
+                    defaultValue="all"
+                  >
+                    <option value="all">All Providers</option>
+                    <option value="email">Email</option>
+                    <option value="google">Google</option>
+                    <option value="github">GitHub</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs text-slate-400 mb-1">Joined Date</label>
+                  <select
+                    className="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none"
+                    defaultValue="all"
+                  >
+                    <option value="all">Any Time</option>
+                    <option value="today">Today</option>
+                    <option value="week">This Week</option>
+                    <option value="month">This Month</option>
+                    <option value="quarter">Last 3 Months</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs text-slate-400 mb-1">Has Agents</label>
+                  <select
+                    className="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none"
+                    defaultValue="all"
+                  >
+                    <option value="all">All</option>
+                    <option value="yes">With Agents</option>
+                    <option value="no">Without Agents</option>
+                  </select>
+                </div>
+              </div>
+              <div className="flex justify-end gap-2 mt-4">
+                <button
+                  onClick={() => setShowAdvancedFilters(false)}
+                  className="px-3 py-1 text-sm text-slate-400 hover:text-white transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => {
+                    // TODO: Apply advanced filters
+                    fetchUsers();
+                  }}
+                  className="px-4 py-1 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                >
+                  Apply Filters
+                </button>
+              </div>
+            </motion.div>
+          )}
         </div>
       </div>
 
       {/* Users Table */}
-      <div className="bg-slate-800/50 backdrop-blur-xl rounded-xl border border-white/10 overflow-hidden">
+      <div className="bg-slate-800 border border-slate-700 rounded-xl overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full">
-            <thead className="bg-slate-700/50">
-              <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-slate-300 uppercase">User</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-slate-300 uppercase">Contact</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-slate-300 uppercase">Status</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-slate-300 uppercase">Login Activity</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-slate-300 uppercase">Last Sign In</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-slate-300 uppercase">Joined</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-slate-300 uppercase">Actions</th>
+            <thead className="bg-slate-900/50">
+              <tr className="text-left text-xs text-slate-400 uppercase tracking-wider">
+                <th className="px-4 py-3 font-medium">User</th>
+                <th className="px-4 py-3 font-medium">Contact</th>
+                <th className="px-4 py-3 font-medium">Status</th>
+                <th className="px-4 py-3 font-medium">Login Activity</th>
+                <th className="px-4 py-3 font-medium">Last Sign In</th>
+                <th className="px-4 py-3 font-medium">Joined</th>
+                <th className="px-4 py-3 font-medium">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-700/50">
@@ -535,7 +658,9 @@ export default function UsersPage() {
                                   {user.full_name || 'No name'}
                                 </p>
                                 {user.email_confirmed && (
-                                  <CheckCircle className="w-3 h-3 text-green-400" title="Email verified" />
+                                  <span title="Email verified">
+                                    <CheckCircle className="w-3 h-3 text-green-400" />
+                                  </span>
                                 )}
                               </div>
                               <p className="text-xs text-slate-400">{user.email}</p>
@@ -812,6 +937,214 @@ export default function UsersPage() {
                                   </div>
                                 )}
 
+                                {/* Automations List - Full Width */}
+                                {userDetailedStats[user.id] && (
+                                  <div className="bg-gradient-to-br from-green-500/10 to-emerald-500/10 p-6 rounded-xl border border-green-500/20">
+                                    <h3 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
+                                      <Activity className="w-5 h-5 text-green-400" />
+                                      Automations
+                                      <span className="ml-auto text-sm font-normal text-slate-400">
+                                        {userDetailedStats[user.id].agents.total} total
+                                      </span>
+                                    </h3>
+                                    <div className="grid grid-cols-4 gap-2 mb-4">
+                                      <div className="bg-slate-800/50 p-3 rounded-lg text-center">
+                                        <p className="text-xl font-bold text-green-300">{userDetailedStats[user.id].agents.active}</p>
+                                        <p className="text-xs text-slate-400">Active</p>
+                                      </div>
+                                      <div className="bg-slate-800/50 p-3 rounded-lg text-center">
+                                        <p className="text-xl font-bold text-slate-300">{userDetailedStats[user.id].agents.inactive}</p>
+                                        <p className="text-xs text-slate-400">Inactive</p>
+                                      </div>
+                                      <div className="bg-slate-800/50 p-3 rounded-lg text-center">
+                                        <p className="text-xl font-bold text-yellow-300">{userDetailedStats[user.id].agents.draft}</p>
+                                        <p className="text-xs text-slate-400">Draft</p>
+                                      </div>
+                                      <div className="bg-slate-800/50 p-3 rounded-lg text-center">
+                                        <p className="text-xl font-bold text-blue-300">{userDetailedStats[user.id].agents.scheduled}</p>
+                                        <p className="text-xs text-slate-400">Scheduled</p>
+                                      </div>
+                                    </div>
+                                    {userDetailedStats[user.id].agents.list.length > 0 ? (
+                                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2 max-h-64 overflow-y-auto">
+                                        {userDetailedStats[user.id].agents.list.map((agent) => (
+                                          <div key={agent.id} className="bg-slate-800/50 p-3 rounded-lg flex items-center justify-between">
+                                            <div>
+                                              <p className="text-sm font-medium text-white">{agent.name}</p>
+                                              <p className="text-xs text-slate-500">{formatDate(agent.created_at)}</p>
+                                            </div>
+                                            <div className="flex items-center gap-2">
+                                              {agent.mode === 'scheduled' && (
+                                                <span className="px-2 py-0.5 text-xs bg-blue-500/20 text-blue-300 rounded">
+                                                  Scheduled
+                                                </span>
+                                              )}
+                                              <span className={`px-2 py-0.5 text-xs rounded ${
+                                                agent.status === 'active' ? 'bg-green-500/20 text-green-300' :
+                                                agent.status === 'draft' ? 'bg-yellow-500/20 text-yellow-300' :
+                                                'bg-slate-500/20 text-slate-300'
+                                              }`}>
+                                                {agent.status}
+                                              </span>
+                                            </div>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    ) : (
+                                      <p className="text-slate-400 text-sm text-center py-4">No automations created</p>
+                                    )}
+                                  </div>
+                                )}
+
+                                {/* Subscription Info - Full Width */}
+                                {userDetailedStats[user.id]?.subscription && (
+                                  <div className="bg-gradient-to-br from-purple-500/10 to-pink-500/10 p-6 rounded-xl border border-purple-500/20">
+                                    <h3 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
+                                      <Shield className="w-5 h-5 text-purple-400" />
+                                      Subscription
+                                    </h3>
+                                    <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                                      <div className="bg-slate-800/50 p-3 rounded-lg">
+                                        <p className="text-xs text-slate-400">Plan</p>
+                                        <p className="text-lg font-bold text-purple-300 capitalize">
+                                          {userDetailedStats[user.id].subscription?.plan_name || 'Free'}
+                                        </p>
+                                      </div>
+                                      <div className="bg-slate-800/50 p-3 rounded-lg">
+                                        <p className="text-xs text-slate-400">Status</p>
+                                        <p className={`text-lg font-bold capitalize ${
+                                          userDetailedStats[user.id].subscription?.status === 'active' ? 'text-green-300' : 'text-slate-300'
+                                        }`}>
+                                          {userDetailedStats[user.id].subscription?.status || 'N/A'}
+                                        </p>
+                                      </div>
+                                      <div className="bg-slate-800/50 p-3 rounded-lg">
+                                        <p className="text-xs text-slate-400">Balance</p>
+                                        <p className="text-lg font-bold text-white">
+                                          {formatCost(userDetailedStats[user.id].subscription?.balance || 0)}
+                                        </p>
+                                      </div>
+                                      <div className="bg-slate-800/50 p-3 rounded-lg">
+                                        <p className="text-xs text-slate-400">Total Spent</p>
+                                        <p className="text-lg font-bold text-white">
+                                          {formatCost(userDetailedStats[user.id].subscription?.total_spent || 0)}
+                                        </p>
+                                      </div>
+                                      <div className="bg-slate-800/50 p-3 rounded-lg">
+                                        <p className="text-xs text-slate-400 mb-1">Executions</p>
+                                        <div className="flex items-center gap-2">
+                                          <div className="flex-1 bg-slate-700/50 rounded-full h-2">
+                                            <div
+                                              className="bg-purple-500 h-2 rounded-full"
+                                              style={{
+                                                width: `${Math.min(100, ((userDetailedStats[user.id].subscription?.executions_used || 0) / (userDetailedStats[user.id].subscription?.executions_quota || 1)) * 100)}%`
+                                              }}
+                                            />
+                                          </div>
+                                          <span className="text-sm text-white">
+                                            {userDetailedStats[user.id].subscription?.executions_used || 0}
+                                            {userDetailedStats[user.id].subscription?.executions_quota && (
+                                              <span className="text-slate-400">/{userDetailedStats[user.id].subscription?.executions_quota}</span>
+                                            )}
+                                          </span>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  </div>
+                                )}
+
+                                {/* Plugin Connections - Full Width Row */}
+                                {userDetailedStats[user.id] && (
+                                  <div className="bg-gradient-to-br from-orange-500/10 to-amber-500/10 p-6 rounded-xl border border-orange-500/20">
+                                    <h3 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
+                                      <Settings className="w-5 h-5 text-orange-400" />
+                                      Connected Plugins
+                                      <span className="ml-auto text-sm font-normal text-slate-400">
+                                        {userDetailedStats[user.id].plugins.active}/{userDetailedStats[user.id].plugins.total} active
+                                      </span>
+                                    </h3>
+                                    {userDetailedStats[user.id].plugins.list.length > 0 ? (
+                                      <div className="flex flex-wrap gap-2">
+                                        {userDetailedStats[user.id].plugins.list.map((plugin, idx) => (
+                                          <span
+                                            key={idx}
+                                            className={`px-3 py-1.5 text-sm rounded-lg flex items-center gap-2 ${
+                                              plugin.is_active
+                                                ? 'bg-orange-500/20 text-orange-300 border border-orange-500/30'
+                                                : 'bg-slate-700/50 text-slate-400 border border-slate-600'
+                                            }`}
+                                          >
+                                            <span className={`w-2 h-2 rounded-full ${plugin.is_active ? 'bg-green-400' : 'bg-slate-500'}`} />
+                                            {plugin.plugin.replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
+                                          </span>
+                                        ))}
+                                      </div>
+                                    ) : (
+                                      <p className="text-slate-400 text-sm text-center py-4">No plugins connected</p>
+                                    )}
+                                  </div>
+                                )}
+
+                                {/* Token Consumption & Executions */}
+                                {userDetailedStats[user.id] && (
+                                  <div className="bg-gradient-to-br from-cyan-500/10 to-teal-500/10 p-6 rounded-xl border border-cyan-500/20">
+                                    <h3 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
+                                      <TrendingUp className="w-5 h-5 text-cyan-400" />
+                                      Token Consumption & Costs (Last 30 Days)
+                                    </h3>
+
+                                    {/* Summary Stats */}
+                                    <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4">
+                                      <div className="bg-slate-800/50 p-4 rounded-lg">
+                                        <p className="text-xs text-slate-400">Executions</p>
+                                        <p className="text-xl font-bold text-white">{userDetailedStats[user.id].executions.total_30d}</p>
+                                        <p className="text-xs text-green-400">
+                                          {userDetailedStats[user.id].executions.success_rate}% success
+                                        </p>
+                                      </div>
+                                      <div className="bg-slate-800/50 p-4 rounded-lg">
+                                        <p className="text-xs text-slate-400">Input Tokens</p>
+                                        <p className="text-xl font-bold text-white">{formatNumber(userDetailedStats[user.id].tokens.total_input_tokens)}</p>
+                                      </div>
+                                      <div className="bg-slate-800/50 p-4 rounded-lg">
+                                        <p className="text-xs text-slate-400">Output Tokens</p>
+                                        <p className="text-xl font-bold text-white">{formatNumber(userDetailedStats[user.id].tokens.total_output_tokens)}</p>
+                                      </div>
+                                      <div className="bg-slate-800/50 p-4 rounded-lg">
+                                        <p className="text-xs text-slate-400">LLM Calls</p>
+                                        <p className="text-xl font-bold text-white">{formatNumber(userDetailedStats[user.id].tokens.total_calls)}</p>
+                                      </div>
+                                      <div className="bg-slate-800/50 p-4 rounded-lg">
+                                        <p className="text-xs text-slate-400">Total Cost</p>
+                                        <p className="text-xl font-bold text-cyan-300">{formatCost(userDetailedStats[user.id].tokens.total_cost_usd)}</p>
+                                      </div>
+                                    </div>
+
+                                    {/* Cost by Model */}
+                                    {userDetailedStats[user.id].tokens.by_model.length > 0 && (
+                                      <div>
+                                        <h4 className="text-sm font-semibold text-slate-300 mb-3">Cost by Model</h4>
+                                        <div className="space-y-2 max-h-48 overflow-y-auto">
+                                          {userDetailedStats[user.id].tokens.by_model.map((model, idx) => (
+                                            <div key={idx} className="bg-slate-800/50 p-3 rounded-lg flex items-center justify-between">
+                                              <div className="flex items-center gap-3">
+                                                <span className="text-sm font-mono text-white">{model.model}</span>
+                                                <span className="text-xs text-slate-500">{formatNumber(model.calls)} calls</span>
+                                              </div>
+                                              <div className="flex items-center gap-4 text-sm">
+                                                <span className="text-slate-400">
+                                                  <span className="text-blue-300">{formatNumber(model.input)}</span> in / <span className="text-green-300">{formatNumber(model.output)}</span> out
+                                                </span>
+                                                <span className="text-cyan-300 font-semibold">{formatCost(model.cost)}</span>
+                                              </div>
+                                            </div>
+                                          ))}
+                                        </div>
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
+
                                 {/* Audit Trail */}
                                 <div className="bg-slate-700/30 p-6 rounded-xl border border-white/5">
                                   <div className="flex items-center justify-between mb-4">
@@ -843,39 +1176,65 @@ export default function UsersPage() {
                                       {getFilteredAuditLogs(user.id).slice(0, 50).map((log) => (
                                         <div
                                           key={log.id}
-                                          className="bg-slate-800/50 p-4 rounded-lg border border-slate-700/50 hover:border-slate-600 transition-all"
+                                          className="bg-slate-800/50 p-4 rounded-lg border border-slate-700/50 hover:border-slate-600 transition-all w-full"
                                         >
-                                          <div className="flex items-start justify-between gap-4">
-                                            <div className="flex-1">
-                                              <div className="flex items-center gap-2 mb-2">
-                                                <h4 className="font-semibold text-white text-sm">{formatActionName(log.action)}</h4>
-                                                <span className={`px-2 py-0.5 text-xs font-semibold rounded-full border ${getSeverityColor(log.severity)}`}>
-                                                  {log.severity.toUpperCase()}
-                                                </span>
-                                              </div>
-                                              {log.resource_name && (
-                                                <p className="text-xs text-slate-400 mb-1">
-                                                  <span className="text-slate-500">Resource:</span> {log.resource_name}
-                                                </p>
+                                          <div className="grid grid-cols-12 gap-6 items-start w-full">
+                                            {/* Action & Severity - 2 cols */}
+                                            <div className="col-span-2">
+                                              <p className="text-xs text-slate-500 mb-1">Action</p>
+                                              <h4 className="font-semibold text-white text-sm truncate">{formatActionName(log.action)}</h4>
+                                              <span className={`inline-block mt-2 px-2 py-0.5 text-xs font-semibold rounded-full border ${getSeverityColor(log.severity)}`}>
+                                                {log.severity.toUpperCase()}
+                                              </span>
+                                            </div>
+
+                                            {/* Resource - 3 cols */}
+                                            <div className="col-span-3">
+                                              <p className="text-xs text-slate-500 mb-1">Resource</p>
+                                              {log.resource_name ? (
+                                                <p className="text-sm text-white truncate">{log.resource_name}</p>
+                                              ) : (
+                                                <span className="text-sm text-slate-600">—</span>
                                               )}
-                                              <div className="flex flex-wrap gap-3 text-xs text-slate-500 mt-2">
-                                                <span className="flex items-center gap-1">
-                                                  <Clock className="w-3 h-3" />
-                                                  {new Date(log.created_at).toLocaleString()}
-                                                </span>
-                                                {log.ip_address && (
-                                                  <span className="flex items-center gap-1">
-                                                    <MapPin className="w-3 h-3" />
-                                                    {log.ip_address}
-                                                  </span>
-                                                )}
-                                                {log.compliance_flags && log.compliance_flags.length > 0 && (
-                                                  <span className="flex items-center gap-1">
-                                                    <Shield className="w-3 h-3" />
-                                                    {log.compliance_flags.join(', ')}
-                                                  </span>
-                                                )}
-                                              </div>
+                                            </div>
+
+                                            {/* Timestamp - 2 cols */}
+                                            <div className="col-span-2">
+                                              <p className="text-xs text-slate-500 mb-1">Time</p>
+                                              <p className="text-sm text-white flex items-center gap-1">
+                                                <Clock className="w-3 h-3 text-slate-400" />
+                                                {new Date(log.created_at).toLocaleDateString()}
+                                              </p>
+                                              <p className="text-xs text-slate-400 mt-0.5">{new Date(log.created_at).toLocaleTimeString()}</p>
+                                            </div>
+
+                                            {/* IP Address - 2 cols */}
+                                            <div className="col-span-2">
+                                              <p className="text-xs text-slate-500 mb-1">IP Address</p>
+                                              {log.ip_address ? (
+                                                <p className="text-sm text-white font-mono flex items-center gap-1">
+                                                  <MapPin className="w-3 h-3 text-slate-400" />
+                                                  {log.ip_address}
+                                                </p>
+                                              ) : (
+                                                <span className="text-sm text-slate-600">—</span>
+                                              )}
+                                            </div>
+
+                                            {/* Compliance Flags - 3 cols */}
+                                            <div className="col-span-3">
+                                              <p className="text-xs text-slate-500 mb-1">Compliance Flags</p>
+                                              {log.compliance_flags && log.compliance_flags.length > 0 ? (
+                                                <div className="flex flex-wrap gap-1">
+                                                  {log.compliance_flags.map((flag, i) => (
+                                                    <span key={i} className="px-2 py-0.5 text-xs bg-indigo-500/20 text-indigo-300 rounded">
+                                                      {flag}
+                                                    </span>
+                                                  ))}
+                                                </div>
+                                              ) : (
+                                                <span className="text-sm text-slate-600">—</span>
+                                              )}
                                             </div>
                                           </div>
                                         </div>
