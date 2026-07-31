@@ -19,6 +19,16 @@ export interface BusinessProfileRepositoryResult<T> {
   error: Error | null;
 }
 
+/**
+ * Process step structure for "How It Works" section
+ */
+export interface ProcessStep {
+  title: string;
+  description: string;
+  icon?: string;
+  number?: number;
+}
+
 export class BusinessProfileRepository {
   private supabase = supabaseServer;
 
@@ -337,6 +347,70 @@ export class BusinessProfileRepository {
       return { data: users, error: null };
     } catch (error) {
       logger.error({ err: error, staleAfterMinutes }, 'Failed to get users with calendar sync enabled');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  // ==================== PROCESS STEPS METHODS ====================
+
+  /**
+   * Get user-defined process steps
+   */
+  async getProcessSteps(userId: string): Promise<BusinessProfileRepositoryResult<ProcessStep[]>> {
+    try {
+      const { data, error } = await this.supabase
+        .from('business_profiles')
+        .select('process_steps')
+        .eq('user_id', userId)
+        .single();
+
+      if (error) {
+        if (error.code === 'PGRST116') {
+          // No profile found - return empty array
+          return { data: [], error: null };
+        }
+        throw error;
+      }
+
+      const steps = (data?.process_steps || []) as ProcessStep[];
+      logger.debug({ userId, stepCount: steps.length }, 'Retrieved process steps');
+      return { data: steps, error: null };
+    } catch (error) {
+      logger.error({ err: error, userId }, 'Failed to get process steps');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
+   * Update user-defined process steps
+   */
+  async updateProcessSteps(
+    userId: string,
+    steps: ProcessStep[]
+  ): Promise<BusinessProfileRepositoryResult<ProcessStep[]>> {
+    try {
+      logger.info({ userId, stepCount: steps.length }, 'Updating process steps');
+
+      // Ensure steps have sequential numbers
+      const numberedSteps = steps.map((step, index) => ({
+        ...step,
+        number: index + 1
+      }));
+
+      const { error } = await this.supabase
+        .from('business_profiles')
+        .update({
+          process_steps: numberedSteps,
+          updated_at: new Date().toISOString()
+        })
+        .eq('user_id', userId);
+
+      if (error) throw error;
+
+      logger.info({ userId, stepCount: numberedSteps.length }, 'Process steps updated');
+      return { data: numberedSteps, error: null };
+    } catch (error) {
+      logger.error({ err: error, userId }, 'Failed to update process steps');
       return { data: null, error: error as Error };
     }
   }

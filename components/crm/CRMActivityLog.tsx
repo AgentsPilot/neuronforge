@@ -28,6 +28,40 @@ const ACTIVITY_COLORS: Record<string, string> = {
   contact_created: 'bg-cyan-500/20 text-cyan-600 dark:text-cyan-400'
 };
 
+// Format activity title - handles database-stored titles like "Booking: ServiceName"
+const formatActivityTitle = (
+  title: string,
+  activityType: string,
+  t: (key: string) => string
+): string => {
+  // Handle "Booking: ServiceName"
+  if (activityType === 'booking') {
+    const bookingMatch = title.match(/^Booking:\s*(.+)$/);
+    if (bookingMatch) {
+      return `${t('crm.activity.title.booking')}: ${bookingMatch[1]}`;
+    }
+  }
+
+  // Handle "Payment Received: $100"
+  if (activityType === 'payment') {
+    const paymentMatch = title.match(/^Payment Received:\s*(.+)$/);
+    if (paymentMatch) {
+      return `${t('crm.activity.title.payment_received')}: ${paymentMatch[1]}`;
+    }
+  }
+
+  // Handle "Email Sent: Subject"
+  if (activityType === 'email') {
+    const emailMatch = title.match(/^Email Sent:\s*(.+)$/);
+    if (emailMatch) {
+      return `${t('crm.activity.title.email_sent')}: ${emailMatch[1]}`;
+    }
+  }
+
+  // Return as-is for other titles
+  return title;
+};
+
 // Format activity description - handles both old format and new JSON format
 const formatActivityDescription = (
   description: string | null | undefined,
@@ -98,6 +132,21 @@ const formatActivityDescription = (
     if (scheduledMatch) {
       return `${t('crm.activity.desc.scheduled_for')} ${scheduledMatch[1]}`;
     }
+    // Translate "Booked via website for DATE (paid)"
+    const bookedViaPaidMatch = description.match(/^Booked via website for (.+) \(paid\)$/);
+    if (bookedViaPaidMatch) {
+      return `${t('crm.activity.desc.booked_via_website')} ${bookedViaPaidMatch[1]} (${t('crm.activity.desc.paid')})`;
+    }
+    // Translate "Booked via website for DATE - Paid CURRENCY AMOUNT"
+    const bookedViaCurrencyMatch = description.match(/^Booked via website for (.+) - Paid (.+)$/);
+    if (bookedViaCurrencyMatch) {
+      return `${t('crm.activity.desc.booked_via_website')} ${bookedViaCurrencyMatch[1]} - ${t('crm.activity.desc.paid')} ${bookedViaCurrencyMatch[2]}`;
+    }
+    // Translate "Booked via website for DATE"
+    const bookedViaMatch = description.match(/^Booked via website for (.+)$/);
+    if (bookedViaMatch) {
+      return `${t('crm.activity.desc.booked_via_website')} ${bookedViaMatch[1]}`;
+    }
   }
 
   // Return as-is for other activity types
@@ -161,10 +210,8 @@ export function CRMActivityLog() {
     <div className="p-6 max-w-4xl mx-auto">
       <div className="space-y-4">
         {activities.map(activity => {
-          // Get translated activity type title, fallback to raw title
-          const activityTypeKey = `crm.activity.type.${activity.activity_type}`;
-          const translatedTitle = t(activityTypeKey);
-          const displayTitle = translatedTitle !== activityTypeKey ? translatedTitle : activity.title;
+          // Translate the activity title (handles patterns like "Booking: ServiceName")
+          const displayTitle = formatActivityTitle(activity.title, activity.activity_type, t);
 
           return (
           <div

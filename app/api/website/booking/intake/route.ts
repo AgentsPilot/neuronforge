@@ -79,7 +79,49 @@ export async function GET(request: NextRequest) {
 
     requestLogger.info({ userId, subdomain }, 'Fetching public intake template');
 
-    // 2. Get enabled template for this user
+    // 2. Check if intake is enabled in the client journey flow
+    // Look up the process block to see if "intake" is in client_flow
+    if (subdomain) {
+      const { data: pageData } = await supabaseServer
+        .from('website_pages')
+        .select('id')
+        .eq('subdomain', subdomain)
+        .single();
+
+      if (pageData) {
+        const { data: processBlock } = await supabaseServer
+          .from('website_blocks')
+          .select('content')
+          .eq('page_id', pageData.id)
+          .eq('block_type', 'process')
+          .single();
+
+        // Check if services_only is true OR intake is not in client_flow
+        if (processBlock?.content) {
+          const content = processBlock.content as { services_only?: boolean; client_flow?: string[] };
+          if (content.services_only === true) {
+            requestLogger.info({ subdomain }, 'Services only mode - intake disabled');
+            return NextResponse.json({
+              success: true,
+              hasIntake: false,
+              template: null
+            });
+          }
+          if (content.client_flow && Array.isArray(content.client_flow)) {
+            if (!content.client_flow.includes('intake')) {
+              requestLogger.info({ subdomain, clientFlow: content.client_flow }, 'Intake not in client flow');
+              return NextResponse.json({
+                success: true,
+                hasIntake: false,
+                template: null
+              });
+            }
+          }
+        }
+      }
+    }
+
+    // 3. Get enabled template for this user
     const { data: template, error } = await intakeRepository.getEnabledTemplateForUser(userId);
     if (error) {
       throw error;

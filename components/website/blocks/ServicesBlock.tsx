@@ -8,7 +8,7 @@ import {
   Calculator, PenTool, Mic, Video, Utensils, Wrench, Car,
   Home, ShieldCheck, Plane, Dog, Baby, Leaf, ArrowRight, Calendar,
   Clock, Check, Zap, Eye, Shield, Award, Globe, Lock, CreditCard,
-  Activity, Compass, Moon, Building, Feather, BarChart,
+  Activity, Compass, Moon, Building, Feather, BarChart, Star, TrendingUp,
   type LucideIcon
 } from 'lucide-react';
 import type { BlockRendererProps, ServiceItem, FlowStep, SelectedServiceData } from './types';
@@ -22,7 +22,7 @@ const ICON_REGISTRY: Record<string, LucideIcon> = {
   Calculator, PenTool, Mic, Video, Utensils, Wrench, Car,
   Home, ShieldCheck, Plane, Dog, Baby, Leaf, Clock, Check,
   Zap, Eye, Shield, Award, Globe, Lock, CreditCard,
-  Activity, Compass, Moon, Building, Feather, BarChart
+  Activity, Compass, Moon, Building, Feather, BarChart, Star, TrendingUp
 };
 
 // Helper to check if string is a Lucide icon name
@@ -82,6 +82,20 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
   // Translation helper
   const t = (key: string, section: 'services' | 'common' = 'services') =>
     getBlockTranslation(section, key, locale);
+
+  // Format duration with translation
+  const formatDuration = (service: ServiceItemWithRawData): string | null => {
+    // Prefer raw minutes if available
+    if (service.durationMinutes) {
+      if (service.durationMinutes >= 60 && service.durationMinutes % 60 === 0) {
+        const hours = service.durationMinutes / 60;
+        return `${hours} ${t('hours', 'common')}`;
+      }
+      return `${service.durationMinutes} ${t('minutes', 'common')}`;
+    }
+    // Fallback to pre-formatted duration string
+    return service.duration || null;
+  };
 
   const typedContent = content as unknown as ServicesContent;
   const {
@@ -167,20 +181,20 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
     <section
       id="services"
       dir={isRTL ? 'rtl' : 'ltr'}
-      className={`relative overflow-hidden ${styles?.padding || 'py-24 sm:py-32'} ${className || ''}`}
+      className={`relative overflow-hidden ${styles?.padding || 'py-12 sm:py-16 lg:py-20'} ${className || ''}`}
       style={{
         backgroundColor: isDark ? backgroundColor : '#fafbfc'
       }}
     >
       {/* Decorative background elements */}
       <div className="absolute inset-0 overflow-hidden">
-        {/* Gradient orbs */}
+        {/* Gradient orbs - smaller for compact layout */}
         <div
-          className="absolute -top-40 -right-40 w-[500px] h-[500px] rounded-full opacity-20 blur-3xl"
+          className="absolute -top-20 -right-20 w-[300px] h-[300px] rounded-full opacity-15 blur-3xl"
           style={{ backgroundColor: primaryColor }}
         />
         <div
-          className="absolute -bottom-40 -left-40 w-[600px] h-[600px] rounded-full opacity-15 blur-3xl"
+          className="absolute -bottom-20 -left-20 w-[350px] h-[350px] rounded-full opacity-10 blur-3xl"
           style={{ backgroundColor: secondaryColor }}
         />
 
@@ -205,7 +219,7 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
       <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         {/* Header with decorative elements */}
         {(title || subtitle) && (
-          <div className="text-center mb-16 sm:mb-20">
+          <div className="text-center mb-10 sm:mb-12">
             {/* Decorative badge */}
             <motion.div
               initial={{ opacity: 0, y: 20 }}
@@ -224,11 +238,11 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
 
             {title && (
               <motion.h2
-                initial={{ opacity: 0, y: 20 }}
+                initial={{ opacity: 0, y: 15 }}
                 whileInView={{ opacity: 1, y: 0 }}
                 viewport={{ once: true }}
                 transition={{ delay: 0.1 }}
-                className="text-3xl sm:text-4xl lg:text-5xl font-bold"
+                className="text-2xl sm:text-3xl lg:text-4xl font-bold"
                 style={{
                   fontFamily: theme?.fonts.heading,
                   color: isDark ? '#ffffff' : textColor
@@ -370,7 +384,7 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
                         {service.price}
                       </span>
                     )}
-                    {service.duration && (
+                    {formatDuration(service) && (
                       <span
                         className="inline-flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-full"
                         style={{
@@ -379,7 +393,7 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
                         }}
                       >
                         <Clock className="w-3.5 h-3.5" />
-                        {service.duration}
+                        {formatDuration(service)}
                       </span>
                     )}
                   </div>
@@ -626,9 +640,9 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
                       >
                         {service.price}
                       </span>
-                      {service.duration && (
+                      {formatDuration(service) && (
                         <span className="text-sm" style={{ color: isDark ? '#6b7280' : '#9ca3af' }}>
-                          / {service.duration}
+                          / {formatDuration(service)}
                         </span>
                       )}
                     </div>
@@ -768,9 +782,9 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
                       >
                         {services[0].price}
                       </span>
-                      {services[0].duration && (
+                      {formatDuration(services[0]) && (
                         <p className="mt-2 text-sm" style={{ color: isDark ? '#6b7280' : '#9ca3af' }}>
-                          {services[0].duration}
+                          {formatDuration(services[0])}
                         </p>
                       )}
                     </div>

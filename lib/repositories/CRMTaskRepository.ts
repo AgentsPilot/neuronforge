@@ -78,6 +78,7 @@ export interface CRMTaskListOptions {
   due_after?: string;
   created_by?: string;
   include_completed?: boolean;
+  search?: string; // Search in title and description
   limit?: number;
   offset?: number;
   orderBy?: 'due_date' | 'created_at' | 'priority';
@@ -209,6 +210,12 @@ export class CRMTaskRepository {
       // Filter by creator
       if (created_by) {
         query = query.eq('created_by', created_by);
+      }
+
+      // Search by title or description
+      if (options.search) {
+        const searchPattern = `%${options.search}%`;
+        query = query.or(`title.ilike.${searchPattern},description.ilike.${searchPattern}`);
       }
 
       // Order

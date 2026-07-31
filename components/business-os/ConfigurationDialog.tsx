@@ -6,6 +6,7 @@ import { useLanguage } from '@/lib/business-os/LanguageContext';
 import { SchedulingServicesList } from '@/components/scheduling/SchedulingServicesList';
 import { AvailabilityEditor, DEFAULT_AVAILABILITY, parseAvailability, type WeeklyAvailability } from '@/components/scheduling/AvailabilityEditor';
 import { IntakeSettingsPanel } from '@/components/scheduling/IntakeSettingsPanel';
+import { CalendarSyncSettings } from '@/components/scheduling/CalendarSyncSettings';
 import { createLogger } from '@/lib/logger';
 import type { SchedulingService } from '@/lib/repositories/SchedulingRepository';
 
@@ -350,6 +351,13 @@ export function ConfigurationDialog({ isOpen, onClose, initialTab, serviceToEdit
             {/* Availability Tab */}
             {activeTab === 'availability' && (
               <div className="space-y-6">
+                {/* Calendar Sync Settings */}
+                <CalendarSyncSettings />
+
+                {/* Divider */}
+                <div className="border-t border-[var(--v2-border)]" />
+
+                {/* Working Hours */}
                 <AvailabilityEditor
                   availability={availability}
                   onChange={setAvailability}

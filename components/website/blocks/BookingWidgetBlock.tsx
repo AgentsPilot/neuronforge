@@ -27,7 +27,9 @@ const LABELS = {
     book: 'Book Now',
     loading: 'Loading availability...',
     noServices: 'No services available',
-    viewSchedule: 'View Schedule'
+    viewSchedule: 'View Schedule',
+    minutes: 'min',
+    hours: 'hr'
   },
   es: {
     title: 'Reservar una Cita',
@@ -38,7 +40,9 @@ const LABELS = {
     book: 'Reservar Ahora',
     loading: 'Cargando disponibilidad...',
     noServices: 'No hay servicios disponibles',
-    viewSchedule: 'Ver Calendario'
+    viewSchedule: 'Ver Calendario',
+    minutes: 'min',
+    hours: 'hr'
   },
   he: {
     title: 'קביעת תור',
@@ -49,7 +53,9 @@ const LABELS = {
     book: 'הזמן עכשיו',
     loading: '...טוען זמינות',
     noServices: 'אין שירותים זמינים',
-    viewSchedule: 'צפה בלוח זמנים'
+    viewSchedule: 'צפה בלוח זמנים',
+    minutes: 'דק׳',
+    hours: 'שע׳'
   }
 };
 
@@ -216,7 +222,7 @@ export function BookingWidgetBlock({ content, styles, theme, locale, isRTL, clas
                   >
                     <p className="font-medium text-gray-900 dark:text-white">{service.name}</p>
                     <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-                      {service.duration} min {service.price && `• ${service.price}`}
+                      {service.duration} {labels.minutes} {service.price && `• ${service.price}`}
                     </p>
                   </button>
                 ))}

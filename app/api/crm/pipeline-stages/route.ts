@@ -25,6 +25,15 @@ const seedDefaultsSchema = z.object({
   vertical: z.string().min(1).max(50)
 });
 
+const createCustomSchema = z.object({
+  action: z.literal('create_custom'),
+  stages: z.array(z.object({
+    stage_key: z.string().min(1).max(50),
+    stage_label: z.string().min(1).max(100),
+    color: z.string().max(20).optional().nullable()
+  })).min(2).max(15)
+});
+
 export async function GET(request: NextRequest) {
   const correlationId = request.headers.get('x-correlation-id') || crypto.randomUUID();
   const requestLogger = logger.child({ correlationId });
@@ -99,6 +108,37 @@ export async function POST(request: NextRequest) {
         requestLogger.error({ err: result.error, userId: user.id }, 'Failed to seed default stages');
         return NextResponse.json(
           { success: false, error: 'Failed to seed default stages' },
+          { status: 500 }
+        );
+      }
+
+      return NextResponse.json({
+        success: true,
+        stages: result.data
+      });
+    }
+
+    // Check if this is a create custom stages request (from onboarding)
+    if (body.action === 'create_custom') {
+      const validated = createCustomSchema.parse(body);
+      requestLogger.info({ userId: user.id, count: validated.stages.length }, 'Creating custom pipeline stages');
+
+      // Build stages with positions
+      const stagesToCreate = validated.stages.map((stage, index) => ({
+        user_id: user.id,
+        vertical: 'custom',
+        stage_key: stage.stage_key,
+        stage_label: stage.stage_label,
+        position: index,
+        color: stage.color || null
+      }));
+
+      const result = await crmPipelineStagesRepository.createMany(stagesToCreate);
+
+      if (result.error) {
+        requestLogger.error({ err: result.error, userId: user.id }, 'Failed to create custom stages');
+        return NextResponse.json(
+          { success: false, error: 'Failed to create custom stages' },
           { status: 500 }
         );
       }

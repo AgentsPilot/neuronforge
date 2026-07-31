@@ -144,6 +144,13 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 
       // SERVICES: Always use live services from Scheduling capability
       // Merge with saved hidden flags from block content
+      // PROCESS: Use block content directly (page-specific flow/steps)
+      // HEADER: Use block content directly (page-specific menu/logo)
+      if (block.block_type === 'process' || block.block_type === 'header') {
+        // These blocks store page-specific content that should not be merged with central content
+        return block;
+      }
+
       if (block.block_type === 'services') {
         if (liveServices.length > 0) {
           // Get saved services to preserve hidden flags

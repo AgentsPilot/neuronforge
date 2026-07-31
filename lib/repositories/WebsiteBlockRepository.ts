@@ -378,21 +378,80 @@ export class WebsiteBlockRepository {
 
   async reorder(pageId: string, blockIds: string[]): Promise<RepositoryResult<WebsiteBlock[]>> {
     try {
-      // Update positions for all blocks
-      const updates = blockIds.map((id, index) =>
-        this.supabase
+      // Due to unique constraint on (page_id, position), we use a transaction-like approach:
+      // 1. First clear all positions by setting them to large negative values
+      // 2. Then set the final positions
+
+      // Step 1: Set ALL blocks for this page to temporary negative positions
+      // Use a single update to set all to position = -9999 - current_position to ensure uniqueness
+      const { error: clearError } = await this.supabase.rpc('clear_block_positions', {
+        p_page_id: pageId
+      });
+
+      // If RPC doesn't exist, fall back to sequential updates
+      if (clearError) {
+        logger.warn({ err: clearError }, 'RPC not available, using sequential clear');
+
+        // Get all blocks first
+        const allBlocksResult = await this.findByPageId(pageId);
+        if (allBlocksResult.error || !allBlocksResult.data) {
+          throw allBlocksResult.error || new Error('Failed to fetch blocks');
+        }
+
+        // Set each to a unique negative position
+        for (let i = 0; i < allBlocksResult.data.length; i++) {
+          const { error } = await this.supabase
+            .from('website_blocks')
+            .update({ position: -(i + 10000) })
+            .eq('id', allBlocksResult.data[i].id)
+            .eq('page_id', pageId);
+
+          if (error) {
+            logger.error({ err: error, blockId: allBlocksResult.data[i].id }, 'Failed to clear position');
+            throw error;
+          }
+        }
+      }
+
+      // Step 2: Set the provided blocks to their new positions
+      for (let i = 0; i < blockIds.length; i++) {
+        const { error } = await this.supabase
           .from('website_blocks')
-          .update({ position: index })
-          .eq('id', id)
-          .eq('page_id', pageId)
-      );
+          .update({ position: i })
+          .eq('id', blockIds[i])
+          .eq('page_id', pageId);
 
-      await Promise.all(updates);
+        if (error) {
+          logger.error({ err: error, blockId: blockIds[i], position: i }, 'Failed to set position');
+          throw error;
+        }
+      }
 
-      // Fetch updated blocks
-      const result = await this.findByPageId(pageId);
+      // Step 3: Handle any blocks that weren't in the provided list (set them to end)
+      const allBlocksResult = await this.findByPageId(pageId);
+      if (allBlocksResult.data) {
+        const providedSet = new Set(blockIds);
+        const missingBlocks = allBlocksResult.data.filter(b => !providedSet.has(b.id) && b.position < 0);
+
+        let nextPosition = blockIds.length;
+        for (const block of missingBlocks) {
+          const { error } = await this.supabase
+            .from('website_blocks')
+            .update({ position: nextPosition++ })
+            .eq('id', block.id)
+            .eq('page_id', pageId);
+
+          if (error) {
+            logger.error({ err: error, blockId: block.id, position: nextPosition - 1 }, 'Failed to set missing block position');
+            throw error;
+          }
+        }
+      }
+
       logger.info({ pageId, count: blockIds.length }, 'Reordered blocks');
-      return result;
+
+      // Fetch and return updated blocks
+      return await this.findByPageId(pageId);
     } catch (error) {
       logger.error({ err: error, pageId }, 'Failed to reorder blocks');
       return { data: null, error: error as Error };

@@ -11,6 +11,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
+import { WebsiteBlockRepository } from '@/lib/repositories/WebsiteBlockRepository';
 import { z } from 'zod';
 
 const logger = createLogger({ module: 'WebsiteAvailabilityAPI' });
@@ -172,12 +173,15 @@ export async function GET(request: NextRequest) {
 
     let ownerId: string;
 
+    // Track hidden service names for validation (only used for public access)
+    let hiddenServiceNames: Set<string> = new Set();
+
     // If subdomain is provided, look up website owner (public access)
     // Otherwise, use authenticated user (preview mode)
     if (subdomain) {
       const { data: websitePage, error: pageError } = await supabaseServer
         .from('website_pages')
-        .select('user_id')
+        .select('id, user_id')
         .eq('subdomain', subdomain)
         .single();
 
@@ -188,6 +192,27 @@ export async function GET(request: NextRequest) {
         );
       }
       ownerId = websitePage.user_id;
+
+      // Fetch hidden service names from the services block content
+      try {
+        const blockRepo = new WebsiteBlockRepository(supabaseServer);
+        const blocksResult = await blockRepo.findByPageId(websitePage.id);
+        if (blocksResult.data) {
+          const servicesBlock = blocksResult.data.find(b => b.block_type === 'services');
+          if (servicesBlock) {
+            const savedServices = (servicesBlock.content as Record<string, unknown>)?.services as Array<{ name: string; hidden?: boolean }> | undefined;
+            if (savedServices && Array.isArray(savedServices)) {
+              savedServices.forEach(s => {
+                if (s.name && s.hidden === true) {
+                  hiddenServiceNames.add(s.name);
+                }
+              });
+            }
+          }
+        }
+      } catch (err) {
+        requestLogger.warn({ err }, 'Failed to fetch hidden service flags');
+      }
     } else {
       // Authenticated access - use current user
       const user = await getUser();
@@ -216,6 +241,14 @@ export async function GET(request: NextRequest) {
     }
 
     if (!service.is_active) {
+      return NextResponse.json(
+        { success: false, error: 'Service is not available' },
+        { status: 400 }
+      );
+    }
+
+    // Check if service is hidden on website (only for public access)
+    if (hiddenServiceNames.has(service.service_name)) {
       return NextResponse.json(
         { success: false, error: 'Service is not available' },
         { status: 400 }

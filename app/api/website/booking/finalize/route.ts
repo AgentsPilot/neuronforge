@@ -14,6 +14,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
+import { BookingEmailService } from '@/lib/services/BookingEmailService';
 import { z } from 'zod';
 
 const logger = createLogger({ module: 'WebsiteBookingFinalizeAPI' });
@@ -212,6 +213,35 @@ export async function POST(request: NextRequest) {
             requestLogger.warn({ err: error }, 'Failed to create activity (non-blocking)');
           }
         });
+    }
+
+    // Send booking confirmation email (non-blocking)
+    // skipInvoice=true since payment is already completed
+    BookingEmailService.sendBookingConfirmation(booking.id, ownerId, { skipInvoice: true })
+      .catch(err => requestLogger.warn({ err, bookingId: booking.id }, 'Booking confirmation email failed'));
+
+    // Send intake form request email (non-blocking)
+    // This helps clients prepare for their appointment
+    BookingEmailService.sendIntakeFormRequest(booking.id, ownerId)
+      .catch(err => requestLogger.warn({ err, bookingId: booking.id }, 'Intake form request email failed'));
+
+    // Send payment receipt (non-blocking)
+    // Get service price for receipt
+    const { data: serviceForReceipt } = await supabaseServer
+      .from('scheduling_services')
+      .select('price, currency')
+      .eq('id', booking.service_id)
+      .single();
+
+    if (serviceForReceipt?.price && serviceForReceipt.price > 0) {
+      const clientName = [booking.client_first_name, booking.client_last_name].filter(Boolean).join(' ');
+      BookingEmailService.sendPaymentReceipt(ownerId, {
+        customerEmail: booking.client_email,
+        customerName: clientName,
+        amount: serviceForReceipt.price,
+        currency: serviceForReceipt.currency,
+        bookingId: booking.id
+      }).catch(err => requestLogger.warn({ err, bookingId: booking.id }, 'Payment receipt email failed'));
     }
 
     requestLogger.info(

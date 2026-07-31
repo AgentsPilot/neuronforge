@@ -6,6 +6,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { revalidateTag } from 'next/cache';
 import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
@@ -111,6 +112,15 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
       throw result.error || new Error('Failed to update block');
     }
 
+    // Revalidate the public website cache if page has a subdomain
+    if (pageResult.data.subdomain) {
+      try {
+        revalidateTag(`website-${pageResult.data.subdomain}`);
+      } catch (revalidateError) {
+        requestLogger.warn({ err: revalidateError }, 'Failed to revalidate cache');
+      }
+    }
+
     requestLogger.info({ blockId, pageId: id }, 'Updated website block');
 
     return NextResponse.json({ success: true, block: result.data });
@@ -160,6 +170,15 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
 
     if (result.error) {
       throw result.error;
+    }
+
+    // Revalidate the public website cache if page has a subdomain
+    if (pageResult.data.subdomain) {
+      try {
+        revalidateTag(`website-${pageResult.data.subdomain}`);
+      } catch (revalidateError) {
+        requestLogger.warn({ err: revalidateError }, 'Failed to revalidate cache');
+      }
     }
 
     requestLogger.info({ blockId, pageId: id }, 'Deleted website block');

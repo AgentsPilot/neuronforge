@@ -23,13 +23,25 @@ export interface Plugin {
 export type UserRole = 'business_owner' | 'manager' | 'consultant' | 'operations' | 'sales' | 'marketing' | 'finance' | 'other';
 export type UserDomain = 'sales' | 'marketing' | 'operations' | 'engineering' | 'executive' | 'other';
 
+// Pipeline stage for customization
+export interface PipelineStage {
+  key: string;
+  label: string;
+  color: string;
+}
+
+// Pipeline template types
+export type PipelineTemplate = 'therapist' | 'coach' | 'consultant' | 'sales' | 'default';
+
 export interface OnboardingData {
   profile: ProfileData;
   goal: string; // User's main goal for using agents
   mode: 'on_demand' | 'scheduled' | 'monitor' | 'guided' | null; // Preferred agent mode (matches spec), null until selected
   domain: UserDomain; // Add domain field (kept for backward compatibility)
   plugins: Plugin[];
-  role: UserRole | null; // null until user selects a role
+  role: UserRole | null; // null until user selects a role (kept for backward compat)
+  pipelineTemplate: PipelineTemplate | null; // Selected pipeline template
+  pipelineStages: PipelineStage[]; // Customized pipeline stages
 }
 
 export interface OnboardingState {
@@ -40,7 +52,7 @@ export interface OnboardingState {
   isInitialized: boolean;
 }
 
-const TOTAL_STEPS = 4; // Profile, Goal, Trigger (Mode), Role
+const TOTAL_STEPS = 4; // Profile, Goal, Trigger (Mode), Pipeline
 
 const initialState: OnboardingState = {
   currentStep: 0,
@@ -61,7 +73,9 @@ const initialState: OnboardingState = {
       { id: 'calendar', name: 'Google Calendar', description: 'Connect your calendar', enabled: false },
       { id: 'drive', name: 'Google Drive', description: 'Connect your Google Drive', enabled: false },
     ],
-    role: null, // null until user selects - forces explicit choice
+    role: null, // null until user selects - forces explicit choice (kept for backward compat)
+    pipelineTemplate: null, // null until user selects a template
+    pipelineStages: [], // Empty until template is selected and optionally customized
   },
   isLoading: false,
   error: null,
@@ -220,6 +234,27 @@ export const useOnboarding = () => {
     }));
   }, []);
 
+  // Pipeline functions
+  const updatePipelineTemplate = useCallback((template: PipelineTemplate) => {
+    setState(prev => ({
+      ...prev,
+      data: {
+        ...prev.data,
+        pipelineTemplate: template,
+      },
+    }));
+  }, []);
+
+  const updatePipelineStages = useCallback((stages: PipelineStage[]) => {
+    setState(prev => ({
+      ...prev,
+      data: {
+        ...prev.data,
+        pipelineStages: stages,
+      },
+    }));
+  }, []);
+
   // Validation functions - make company and job title optional
   const isProfileValid = useCallback(() => {
     const { fullName, email, timezone } = state.data.profile;
@@ -235,12 +270,12 @@ export const useOnboarding = () => {
         return state.data.goal.trim().length >= 10; // Require at least 10 characters
       case 2: // Trigger/Mode step
         return state.data.mode !== null;
-      case 3: // Role step
-        return state.data.role !== null;
+      case 3: // Pipeline step - require template selection OR at least 2 custom stages
+        return state.data.pipelineTemplate !== null || state.data.pipelineStages.length >= 2;
       default:
         return false;
     }
-  }, [state.currentStep, state.data.goal, state.data.role, state.data.mode, isProfileValid]);
+  }, [state.currentStep, state.data.goal, state.data.pipelineTemplate, state.data.pipelineStages, state.data.mode, isProfileValid]);
 
   // API functions
   const saveOnboardingData = useCallback(async () => {
@@ -398,6 +433,60 @@ export const useOnboarding = () => {
         // Don't fail onboarding if allocation fails
       }
 
+      // Seed pipeline stages based on user selection
+      console.log('📊 Seeding pipeline stages...');
+      try {
+        const pipelineStages = state.data.pipelineStages;
+        const pipelineTemplate = state.data.pipelineTemplate;
+
+        if (pipelineStages.length >= 2) {
+          // User customized stages - use create_custom
+          const pipelineResponse = await fetch('/api/crm/pipeline-stages', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              action: 'create_custom',
+              stages: pipelineStages.map(s => ({
+                stage_key: s.key,
+                stage_label: s.label,
+                color: s.color
+              }))
+            }),
+          });
+
+          const pipelineResult = await pipelineResponse.json();
+          if (pipelineResult.success) {
+            console.log('✅ Custom pipeline stages created:', pipelineResult.stages?.length);
+          } else {
+            console.error('⚠️ Failed to create custom pipeline stages:', pipelineResult.error);
+          }
+        } else if (pipelineTemplate) {
+          // User selected a template but didn't customize - seed defaults
+          const pipelineResponse = await fetch('/api/crm/pipeline-stages', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              action: 'seed_defaults',
+              vertical: pipelineTemplate
+            }),
+          });
+
+          const pipelineResult = await pipelineResponse.json();
+          if (pipelineResult.success) {
+            console.log('✅ Default pipeline stages seeded for:', pipelineTemplate);
+          } else {
+            console.error('⚠️ Failed to seed default pipeline stages:', pipelineResult.error);
+          }
+        }
+      } catch (pipelineError) {
+        console.error('⚠️ Error during pipeline seeding:', pipelineError);
+        // Don't fail onboarding if pipeline seeding fails
+      }
+
       // Update auth metadata to mark onboarding as complete
       const { error: metadataError } = await supabase.auth.updateUser({
         data: {
@@ -485,7 +574,7 @@ export const useOnboarding = () => {
       'Welcome! Tell Us About You',
       'What Do You Want to Accomplish?',
       'When Should Your Agent Work?',
-      'Choose Your Access Level'
+      'Set Up Your Client Pipeline'
     ];
     return titles[currentStepIndex] || 'Unknown Step';
   }, [state.currentStep]);
@@ -516,6 +605,8 @@ export const useOnboarding = () => {
     updateMode,
     updateDomain, // Add updateDomain (backward compatibility)
     updateRole,
+    updatePipelineTemplate,
+    updatePipelineStages,
 
     // Validation
     canProceedToNext,

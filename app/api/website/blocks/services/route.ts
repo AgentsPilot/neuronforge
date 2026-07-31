@@ -4,6 +4,9 @@
  *
  * This endpoint provides live data for website block renderers,
  * ensuring services are always up-to-date with the Scheduling capability.
+ *
+ * When subdomain is provided (public access), also filters out services
+ * that are marked as "hidden" in the services block content.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -11,6 +14,7 @@ import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { SchedulingServiceRepository, type SchedulingService } from '@/lib/repositories/SchedulingRepository';
+import { WebsiteBlockRepository } from '@/lib/repositories/WebsiteBlockRepository';
 
 const logger = createLogger({ module: 'WebsiteBlockServicesAPI' });
 
@@ -61,14 +65,16 @@ interface BlockService {
 }
 
 function transformServiceForBlock(service: SchedulingService): BlockService {
+  // Ensure currency is always a valid 3-char code
+  const currency = service.currency && service.currency.length === 3 ? service.currency : 'USD';
   return {
     id: service.id,
     name: service.service_name,
     description: service.description || '',
     icon: getServiceIcon(service.service_name),
-    price: service.price ? formatPrice(service.price, service.currency) : undefined,
+    price: service.price ? formatPrice(service.price, currency) : undefined,
     priceRaw: service.price || undefined,
-    currency: service.currency,
+    currency,
     duration: service.duration_minutes ? `${service.duration_minutes} min` : undefined,
     durationMinutes: service.duration_minutes,
     isActive: service.is_active
@@ -89,11 +95,15 @@ export async function GET(request: NextRequest) {
 
     let userId: string;
 
+    // Track hidden service names for filtering (only used for public access)
+    let hiddenServiceNames: Set<string> = new Set();
+    let pageId: string | undefined;
+
     // If subdomain is provided, look up the website owner (public access)
     if (subdomain) {
       const { data: websitePage, error: pageError } = await supabaseServer
         .from('website_pages')
-        .select('user_id')
+        .select('id, user_id')
         .eq('subdomain', subdomain)
         .single();
 
@@ -101,6 +111,29 @@ export async function GET(request: NextRequest) {
         return NextResponse.json({ success: false, error: 'Website not found' }, { status: 404 });
       }
       userId = websitePage.user_id;
+      pageId = websitePage.id;
+
+      // Fetch hidden service names from the services block content
+      try {
+        const blockRepo = new WebsiteBlockRepository(supabaseServer);
+        const blocksResult = await blockRepo.findByPageId(pageId);
+        if (blocksResult.data) {
+          const servicesBlock = blocksResult.data.find(b => b.block_type === 'services');
+          if (servicesBlock) {
+            const savedServices = (servicesBlock.content as Record<string, unknown>)?.services as Array<{ name: string; hidden?: boolean }> | undefined;
+            if (savedServices && Array.isArray(savedServices)) {
+              savedServices.forEach(s => {
+                if (s.name && s.hidden === true) {
+                  hiddenServiceNames.add(s.name);
+                }
+              });
+            }
+          }
+        }
+      } catch (err) {
+        requestLogger.warn({ err }, 'Failed to fetch hidden service flags');
+        // Continue without filtering - better to show all than fail
+      }
     } else {
       // Authenticated access - use current user
       const user = await getUser();
@@ -124,10 +157,18 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    const services = servicesResult.data.slice(0, limit);
+    let services = servicesResult.data;
+
+    // Filter out hidden services (only for public access via subdomain)
+    if (hiddenServiceNames.size > 0) {
+      services = services.filter(s => !hiddenServiceNames.has(s.service_name));
+      requestLogger.debug({ hiddenCount: hiddenServiceNames.size, filteredCount: servicesResult.data.length - services.length }, 'Filtered hidden services');
+    }
+
+    services = services.slice(0, limit);
     const blockServices = services.map(transformServiceForBlock);
 
-    requestLogger.info({ userId, serviceCount: blockServices.length }, 'Fetched services for block');
+    requestLogger.info({ userId, serviceCount: blockServices.length, hiddenCount: hiddenServiceNames.size }, 'Fetched services for block');
 
     return NextResponse.json({
       success: true,

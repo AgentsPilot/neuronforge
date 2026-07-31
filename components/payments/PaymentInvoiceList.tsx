@@ -24,9 +24,10 @@ interface PaymentInvoice {
 interface PaymentInvoiceListProps {
   searchQuery?: string;
   onCreateInvoice?: () => void;
+  highlightId?: string | null; // Invoice ID to highlight/scroll to
 }
 
-export function PaymentInvoiceList({ searchQuery = '', onCreateInvoice }: PaymentInvoiceListProps) {
+export function PaymentInvoiceList({ searchQuery = '', onCreateInvoice, highlightId }: PaymentInvoiceListProps) {
   const { t, isRTL, language } = useLanguage();
   const [invoices, setInvoices] = useState<PaymentInvoice[]>([]);
   const [loading, setLoading] = useState(true);
@@ -45,6 +46,16 @@ export function PaymentInvoiceList({ searchQuery = '', onCreateInvoice }: Paymen
   useEffect(() => {
     fetchInvoices();
   }, [filter]);
+
+  // Scroll to highlighted invoice when it loads
+  useEffect(() => {
+    if (highlightId && !loading) {
+      const element = document.getElementById(`invoice-${highlightId}`);
+      if (element) {
+        element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    }
+  }, [highlightId, loading, invoices]);
 
   // Filter invoices by search query
   const filteredInvoices = invoices.filter((invoice) => {
@@ -170,7 +181,12 @@ export function PaymentInvoiceList({ searchQuery = '', onCreateInvoice }: Paymen
           {filteredInvoices.map((invoice) => (
             <div
               key={invoice.id}
-              className="border border-[var(--v2-border)] p-4 hover:border-[#F59E0B]/50 transition-colors bg-[var(--v2-surface)]"
+              id={`invoice-${invoice.id}`}
+              className={`border p-4 transition-colors bg-[var(--v2-surface)] ${
+                highlightId === invoice.id
+                  ? 'border-[#F59E0B] ring-2 ring-[#F59E0B]/20 animate-pulse'
+                  : 'border-[var(--v2-border)] hover:border-[#F59E0B]/50'
+              }`}
               style={{ borderRadius: 'var(--v2-radius-card)' }}
             >
               <div className="flex items-start justify-between gap-4">

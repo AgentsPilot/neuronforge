@@ -33,7 +33,7 @@ export function FAQBlock({ content, styles, theme, isRTL, className, locale = 'e
   return (
     <section
       dir={isRTL ? 'rtl' : 'ltr'}
-      className={`${styles?.padding || 'py-16 sm:py-24'} ${styles?.background || 'bg-white dark:bg-slate-950'} ${className || ''}`}
+      className={`${styles?.padding || 'py-12 sm:py-16'} ${styles?.background || 'bg-white dark:bg-slate-950'} ${className || ''}`}
     >
       <div className="max-w-3xl mx-auto px-4 sm:px-6">
         {/* Header */}

@@ -190,20 +190,20 @@ export function TestimonialsBlock({ content, styles, theme, isRTL, className, lo
     <section
       id="testimonials"
       dir={isRTL ? 'rtl' : 'ltr'}
-      className={`relative overflow-hidden ${styles?.padding || 'py-24 sm:py-32'} ${className || ''}`}
+      className={`relative overflow-hidden ${styles?.padding || 'py-12 sm:py-16 lg:py-20'} ${className || ''}`}
       style={{
         backgroundColor: isDark ? backgroundColor : '#f8fafc'
       }}
     >
       {/* Decorative background */}
       <div className="absolute inset-0 overflow-hidden">
-        {/* Gradient orbs */}
+        {/* Gradient orbs - smaller for compact layout */}
         <div
-          className="absolute top-0 left-1/4 w-[600px] h-[600px] rounded-full opacity-20 blur-3xl"
+          className="absolute top-0 left-1/4 w-[350px] h-[350px] rounded-full opacity-15 blur-3xl"
           style={{ backgroundColor: primaryColor }}
         />
         <div
-          className="absolute bottom-0 right-1/4 w-[500px] h-[500px] rounded-full opacity-15 blur-3xl"
+          className="absolute bottom-0 right-1/4 w-[300px] h-[300px] rounded-full opacity-10 blur-3xl"
           style={{ backgroundColor: secondaryColor }}
         />
 
@@ -220,7 +220,7 @@ export function TestimonialsBlock({ content, styles, theme, isRTL, className, lo
       <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         {/* Header */}
         {(title || subtitle) && (
-          <div className="text-center mb-16 sm:mb-20">
+          <div className="text-center mb-10 sm:mb-12">
             {/* Badge */}
             <motion.div
               initial={{ opacity: 0, y: 20 }}
@@ -239,11 +239,11 @@ export function TestimonialsBlock({ content, styles, theme, isRTL, className, lo
 
             {title && (
               <motion.h2
-                initial={{ opacity: 0, y: 20 }}
+                initial={{ opacity: 0, y: 15 }}
                 whileInView={{ opacity: 1, y: 0 }}
                 viewport={{ once: true }}
                 transition={{ delay: 0.1 }}
-                className="text-3xl sm:text-4xl lg:text-5xl font-bold"
+                className="text-2xl sm:text-3xl lg:text-4xl font-bold"
                 style={{
                   fontFamily: theme?.fonts.heading,
                   color: isDark ? '#ffffff' : textColor

@@ -15,6 +15,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
+import { BookingEmailService } from '@/lib/services/BookingEmailService';
 import { z } from 'zod';
 
 const logger = createLogger({ module: 'WebsiteBookingConfirmAPI' });
@@ -230,6 +231,23 @@ export async function POST(request: NextRequest) {
             requestLogger.warn({ err: error }, 'Failed to create activity (non-blocking)');
           }
         });
+    }
+
+    // Send booking confirmation email (non-blocking)
+    // skipInvoice=true since payment is already completed
+    BookingEmailService.sendBookingConfirmation(booking.id, ownerId, { skipInvoice: true })
+      .catch(err => requestLogger.warn({ err, bookingId: booking.id }, 'Booking confirmation email failed'));
+
+    // Send payment receipt if service has a price (non-blocking)
+    if (service.price && service.price > 0) {
+      BookingEmailService.sendPaymentReceipt(ownerId, {
+        customerEmail: data.email,
+        customerName: data.name,
+        amount: service.price,
+        currency: service.currency,
+        bookingId: booking.id,
+        paymentMethod: data.payment_intent_id ? 'Card' : undefined
+      }).catch(err => requestLogger.warn({ err, bookingId: booking.id }, 'Payment receipt email failed'));
     }
 
     requestLogger.info(

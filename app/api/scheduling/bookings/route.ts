@@ -13,6 +13,7 @@ import { CalendarSyncService } from '@/lib/services/CalendarSyncService';
 import { paymentInvoiceRepository } from '@/lib/repositories/PaymentRepository';
 import { paymentReminderService } from '@/lib/services/PaymentReminderService';
 import { emitPaymentEvent } from '@/lib/services/PaymentEventService';
+import { BookingEmailService } from '@/lib/services/BookingEmailService';
 import { z } from 'zod';
 
 const logger = createLogger({ module: 'SchedulingBookingsAPI' });
@@ -291,7 +292,12 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // 7. Return success
+    // 7. Send booking confirmation email (non-blocking)
+    // Skip invoice email since we've already created the invoice above
+    BookingEmailService.sendBookingConfirmation(result.data!.id, user.id, { skipInvoice: true })
+      .catch(err => requestLogger.warn({ err, bookingId: result.data!.id }, 'Booking confirmation email failed'));
+
+    // 8. Return success
     requestLogger.info({ bookingId: result.data!.id, userId: user.id }, 'Booking created successfully');
     return NextResponse.json({
       success: true,

@@ -15,6 +15,7 @@ import { WebsitePageRepository } from '@/lib/repositories/WebsitePageRepository'
 import { WebsiteBlockRepository, WebsiteBlock } from '@/lib/repositories/WebsiteBlockRepository';
 import { WebsiteContentRepository, WebsiteContent, SectionType } from '@/lib/repositories/WebsiteContentRepository';
 import { SchedulingServiceRepository } from '@/lib/repositories/SchedulingRepository';
+import { WebsiteAnalyticsRepository, hashIP, detectDeviceType } from '@/lib/repositories/WebsiteAnalyticsRepository';
 
 const logger = createLogger({ module: 'PublicWebsiteAPI' });
 
@@ -201,7 +202,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     });
 
     // Track page view (non-blocking)
-    trackPageView(subdomain, request).catch(err =>
+    trackPageView(subdomain, pageResult.data.id, userId, request).catch(err =>
       requestLogger.warn({ err }, 'Failed to track page view')
     );
 
@@ -227,12 +228,45 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
   }
 }
 
-// Track page view for analytics (future feature)
-async function trackPageView(subdomain: string, request: NextRequest): Promise<void> {
-  // TODO: Implement analytics tracking
-  // For now, just log it
-  const userAgent = request.headers.get('user-agent') || 'unknown';
-  const referer = request.headers.get('referer') || 'direct';
+// Track page view for analytics
+async function trackPageView(
+  subdomain: string,
+  pageId: string,
+  userId: string,
+  request: NextRequest
+): Promise<void> {
+  try {
+    const analyticsRepo = new WebsiteAnalyticsRepository(supabaseServer);
 
-  logger.debug({ subdomain, userAgent, referer }, 'Page view');
+    const userAgent = request.headers.get('user-agent') || null;
+    const referer = request.headers.get('referer') || null;
+
+    // Get IP from various headers (Vercel, Cloudflare, or direct)
+    const ip =
+      request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ||
+      request.headers.get('x-real-ip') ||
+      request.headers.get('cf-connecting-ip') ||
+      'unknown';
+
+    // Hash IP for privacy
+    const ipHash = ip !== 'unknown' ? hashIP(ip) : null;
+
+    // Detect device type
+    const deviceType = detectDeviceType(userAgent);
+
+    await analyticsRepo.trackPageView({
+      page_id: pageId,
+      user_id: userId,
+      subdomain,
+      user_agent: userAgent,
+      referer,
+      ip_hash: ipHash,
+      device_type: deviceType
+    });
+
+    logger.debug({ subdomain, deviceType, hasReferer: !!referer }, 'Page view tracked');
+  } catch (error) {
+    // Don't throw - just log the error (non-blocking)
+    logger.warn({ err: error, subdomain }, 'Failed to track page view');
+  }
 }

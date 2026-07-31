@@ -179,6 +179,7 @@ export type DialogAction =
   | { type: 'open_service_modal'; mode: 'create' | 'edit'; serviceId?: string; prefill?: Partial<ServiceDraftData> } // Alias for open_service_dialog
   | { type: 'open_contact_dialog'; mode: 'create' | 'edit'; contactId?: string; prefill?: Partial<ContactDraftData> }
   | { type: 'open_booking_dialog'; mode: 'create'; prefill?: Partial<BookingDraftData> }
+  | { type: 'open_booking'; bookingId: string } // Open a specific booking in the calendar dialog
   | { type: 'open_booking_calendar'; date?: string } // Open calendar/schedule view, optionally focused on a date
   | { type: 'open_availability_dialog'; days?: string[] } // Optional days to pre-select
   | { type: 'open_invoice_dialog'; prefill?: Partial<InvoiceDraftData> }

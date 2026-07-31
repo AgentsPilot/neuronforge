@@ -171,6 +171,20 @@ export interface EntityCardResult extends ToolResult {
   };
 }
 
+export interface BookingListResult extends ToolResult {
+  action: {
+    type: 'present_booking_list';
+    bookings: Array<{
+      id: string;
+      serviceName: string;
+      contactName?: string;
+      startTime: string;
+      endTime?: string;
+      status: string;
+    }>;
+  };
+}
+
 // =============================================================================
 // Context Types
 // =============================================================================
@@ -236,15 +250,26 @@ export interface ChatMessage {
   tool_call_id?: string;
 }
 
+// =============================================================================
+// Active Entity Context (for context-aware follow-ups)
+// =============================================================================
+
+export interface ActiveEntity {
+  type: 'tasks' | 'contacts' | 'services' | 'bookings' | 'invoices';
+  id: string;
+  data: Record<string, unknown>;
+}
+
 export interface AIDataLayerRequest {
   message: string;
   conversationHistory?: ChatMessage[];
   pendingConfirmationId?: string;  // If user is confirming a mutation
+  activeEntity?: ActiveEntity;  // Currently displayed entity for context-aware follow-ups
 }
 
 export interface AIDataLayerResponse {
   message: string;
-  actions?: Array<NavigationResult['action'] | ModalResult['action'] | ChoicesResult['action'] | EntityCardResult['action']>;
+  actions?: Array<NavigationResult['action'] | ModalResult['action'] | ChoicesResult['action'] | EntityCardResult['action'] | BookingListResult['action']>;
   pendingConfirmation?: {
     id: string;
     /** English preview text describing the action */
@@ -387,7 +412,6 @@ export const TOOL_DEFINITIONS: ChatCompletionTool[] = [
             enum: [
               '/business-os',
               '/business-os/crm',
-              '/business-os/scheduling',
               '/business-os/payments',
               '/business-os/email-automation',
               '/business-os/settings'

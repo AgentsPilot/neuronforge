@@ -118,50 +118,50 @@ export function HeroBlock({ content, styles, theme, isRTL, className, locale = '
   return (
     <section
       dir={isRTL ? 'rtl' : 'ltr'}
-      className={`relative overflow-hidden ${styles?.padding || 'py-24 sm:py-32 lg:py-40'} ${background_value || ''} ${className || ''}`}
+      className={`relative overflow-hidden ${styles?.padding || 'py-16 sm:py-20 lg:py-24'} ${background_value || ''} ${className || ''}`}
       style={getBackgroundStyle()}
     >
       {/* Decorative elements */}
       {background_type !== 'image' && (
         <>
-          {/* Animated floating shapes */}
+          {/* Animated floating shapes - smaller for compact layout */}
           <motion.div
             animate={{
-              y: [0, -20, 0],
-              scale: [1, 1.05, 1],
+              y: [0, -15, 0],
+              scale: [1, 1.03, 1],
             }}
             transition={{
               duration: 8,
               repeat: Infinity,
               ease: "easeInOut"
             }}
-            className="absolute top-20 right-[10%] w-72 h-72 rounded-full opacity-30 blur-3xl"
+            className="absolute top-10 right-[10%] w-48 h-48 rounded-full opacity-25 blur-3xl"
             style={{ backgroundColor: primaryColor }}
           />
           <motion.div
             animate={{
-              y: [0, 20, 0],
-              scale: [1, 0.95, 1],
+              y: [0, 15, 0],
+              scale: [1, 0.97, 1],
             }}
             transition={{
               duration: 10,
               repeat: Infinity,
               ease: "easeInOut"
             }}
-            className="absolute bottom-20 left-[5%] w-96 h-96 rounded-full opacity-25 blur-3xl"
+            className="absolute bottom-10 left-[5%] w-64 h-64 rounded-full opacity-20 blur-3xl"
             style={{ backgroundColor: secondaryColor }}
           />
           <motion.div
             animate={{
-              x: [0, 10, 0],
-              y: [0, -10, 0],
+              x: [0, 8, 0],
+              y: [0, -8, 0],
             }}
             transition={{
               duration: 12,
               repeat: Infinity,
               ease: "easeInOut"
             }}
-            className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] rounded-full opacity-10 blur-3xl"
+            className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[400px] h-[400px] rounded-full opacity-10 blur-3xl"
             style={{ backgroundColor: primaryColor }}
           />
 
@@ -197,7 +197,7 @@ export function HeroBlock({ content, styles, theme, isRTL, className, locale = '
 
           {/* Gradient orb glow */}
           <div
-            className="absolute top-0 left-1/2 -translate-x-1/2 w-full h-[500px] opacity-40"
+            className="absolute top-0 left-1/2 -translate-x-1/2 w-full h-[300px] opacity-30"
             style={{
               background: `radial-gradient(ellipse at center top, ${primaryColor}20 0%, transparent 70%)`
             }}
@@ -242,10 +242,10 @@ export function HeroBlock({ content, styles, theme, isRTL, className, locale = '
 
         {/* Headline with optional gradient text */}
         <motion.h1
-          initial={{ opacity: 0, y: 30 }}
+          initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.7, delay: 0.1 }}
-          className="text-4xl sm:text-5xl lg:text-6xl xl:text-7xl font-bold tracking-tight leading-[1.1]"
+          transition={{ duration: 0.6, delay: 0.1 }}
+          className="text-3xl sm:text-4xl lg:text-5xl xl:text-6xl font-bold tracking-tight leading-[1.15]"
           style={{
             fontFamily: theme?.fonts.heading,
             color: background_type === 'image' ? '#ffffff' : textColor,
@@ -257,10 +257,10 @@ export function HeroBlock({ content, styles, theme, isRTL, className, locale = '
 
         {subheadline && (
           <motion.p
-            initial={{ opacity: 0, y: 30 }}
+            initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.7, delay: 0.2 }}
-            className="mt-6 sm:mt-8 text-lg sm:text-xl lg:text-2xl max-w-3xl leading-relaxed"
+            transition={{ duration: 0.6, delay: 0.2 }}
+            className="mt-4 sm:mt-6 text-base sm:text-lg lg:text-xl max-w-2xl leading-relaxed"
             style={{
               fontFamily: theme?.fonts.body,
               color: background_type === 'image' ? '#e5e7eb' : (isDark ? '#9ca3af' : '#4b5563')
@@ -273,10 +273,10 @@ export function HeroBlock({ content, styles, theme, isRTL, className, locale = '
         {/* CTA Buttons */}
         {(cta_text || secondary_cta_text) && (
           <motion.div
-            initial={{ opacity: 0, y: 30 }}
+            initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.7, delay: 0.3 }}
-            className="mt-10 sm:mt-12 flex flex-col sm:flex-row gap-4"
+            transition={{ duration: 0.6, delay: 0.3 }}
+            className="mt-8 sm:mt-10 flex flex-col sm:flex-row gap-3"
           >
             {cta_text && (
               <a
@@ -334,10 +334,10 @@ export function HeroBlock({ content, styles, theme, isRTL, className, locale = '
         {/* Trust Indicators */}
         {trust_indicators && (
           <motion.div
-            initial={{ opacity: 0, y: 20 }}
+            initial={{ opacity: 0, y: 15 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.6, delay: 0.5 }}
-            className="mt-12 sm:mt-16 flex flex-wrap items-center justify-center gap-6 sm:gap-10"
+            transition={{ duration: 0.5, delay: 0.4 }}
+            className="mt-8 sm:mt-10 flex flex-wrap items-center justify-center gap-4 sm:gap-8"
           >
             {/* Rating */}
             {trust_indicators.rating && (
@@ -404,8 +404,8 @@ export function HeroBlock({ content, styles, theme, isRTL, className, locale = '
         <motion.div
           initial={{ scaleX: 0 }}
           animate={{ scaleX: 1 }}
-          transition={{ duration: 1, delay: 0.6 }}
-          className="mt-16 w-24 h-1 rounded-full mx-auto hidden sm:block"
+          transition={{ duration: 0.8, delay: 0.5 }}
+          className="mt-10 w-20 h-0.5 rounded-full mx-auto hidden sm:block"
           style={{
             background: `linear-gradient(90deg, transparent 0%, ${primaryColor}50 50%, transparent 100%)`
           }}

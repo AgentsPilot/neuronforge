@@ -36,6 +36,14 @@ interface ExternalBusySlot {
   is_all_day: boolean;
 }
 
+interface PrefilledContact {
+  id: string;
+  first_name: string;
+  last_name: string | null;
+  email: string;
+  phone: string | null;
+}
+
 interface SchedulingBookingModalProps {
   booking?: SchedulingBooking;
   services: SchedulingService[];
@@ -44,6 +52,7 @@ interface SchedulingBookingModalProps {
   onBookingUpdated: () => void;
   availability?: WeeklyAvailability;
   prefilledDateTime?: PrefilledDateTime;
+  prefilledContact?: PrefilledContact; // Skip contact search when provided
   existingBookings?: SchedulingBooking[]; // For filtering out booked slots
 }
 
@@ -317,6 +326,7 @@ export function SchedulingBookingModal({
   onBookingUpdated,
   availability,
   prefilledDateTime,
+  prefilledContact,
   existingBookings = []
 }: SchedulingBookingModalProps) {
   const { t, language } = useLanguage();
@@ -366,7 +376,7 @@ export function SchedulingBookingModal({
         client_phone: booking.client_phone || '',
         start_time: formatDateTimeLocal(new Date(booking.start_time)),
         end_time: formatDateTimeLocal(new Date(booking.end_time)),
-        timezone: booking.timezone,
+        timezone: booking.timezone || 'UTC',
         notes: booking.notes || '',
         status: booking.status
       });
@@ -394,21 +404,46 @@ export function SchedulingBookingModal({
         endTime = defaultTimes.end;
       }
 
-      setFormData({
-        service_id: defaultService?.id || '',
-        contact_id: null,
-        client_first_name: '',
-        client_last_name: '',
-        client_email: '',
-        client_phone: '',
-        start_time: startTime,
-        end_time: endTime,
-        timezone: 'UTC',
-        notes: '',
-        status: 'confirmed'
-      });
-      setShowClientSearch(true);
-      setSelectedContact(null);
+      // If prefilled contact provided, use it
+      if (prefilledContact) {
+        setFormData({
+          service_id: defaultService?.id || '',
+          contact_id: prefilledContact.id,
+          client_first_name: prefilledContact.first_name,
+          client_last_name: prefilledContact.last_name || '',
+          client_email: prefilledContact.email,
+          client_phone: prefilledContact.phone || '',
+          start_time: startTime,
+          end_time: endTime,
+          timezone: 'UTC',
+          notes: '',
+          status: 'confirmed'
+        });
+        setShowClientSearch(false); // Hide search when contact is prefilled
+        setSelectedContact({
+          id: prefilledContact.id,
+          first_name: prefilledContact.first_name,
+          last_name: prefilledContact.last_name,
+          email: prefilledContact.email,
+          phone: prefilledContact.phone
+        });
+      } else {
+        setFormData({
+          service_id: defaultService?.id || '',
+          contact_id: null,
+          client_first_name: '',
+          client_last_name: '',
+          client_email: '',
+          client_phone: '',
+          start_time: startTime,
+          end_time: endTime,
+          timezone: 'UTC',
+          notes: '',
+          status: 'confirmed'
+        });
+        setShowClientSearch(true);
+        setSelectedContact(null);
+      }
       setClientSearchQuery('');
       setClientSearchResults([]);
       // Reset new client CRM fields
@@ -417,7 +452,7 @@ export function SchedulingBookingModal({
       setNewClientNotes('');
       setNewTagInput('');
     }
-  }, [booking, services, availability, prefilledDateTime]);
+  }, [booking, services, availability, prefilledDateTime, prefilledContact]);
 
   // Fetch external calendar busy slots
   useEffect(() => {
@@ -536,6 +571,15 @@ export function SchedulingBookingModal({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    // Prevent booking in the past (only for new bookings or when changing time)
+    const startTime = new Date(formData.start_time);
+    const now = new Date();
+    if (!booking && startTime < now) {
+      alert(t('scheduling.booking.error_past_time'));
+      return;
+    }
+
     setLoading(true);
 
     try {
@@ -1165,6 +1209,7 @@ export function SchedulingBookingModal({
                   value={formData.start_time}
                   onChange={(e) => setFormData(prev => ({ ...prev, start_time: e.target.value }))}
                   required
+                  min={!booking ? formatDateTimeLocal(new Date()) : undefined}
                   disabled={booking && ['completed', 'cancelled'].includes(booking.status)}
                   className="datetime-input-scheduling w-full px-4 py-2.5 bg-[var(--v2-bg)] border border-[var(--v2-border)] text-[var(--v2-text-primary)] text-sm focus:outline-none focus:border-[#14B8A6] focus:ring-2 focus:ring-[#14B8A6]/20 transition-all disabled:opacity-60 disabled:cursor-not-allowed disabled:bg-[var(--v2-bg)]/50"
                   style={{ borderRadius: 'var(--v2-radius-button)', colorScheme: 'inherit' }}
@@ -1179,6 +1224,7 @@ export function SchedulingBookingModal({
                   value={formData.end_time}
                   onChange={(e) => setFormData(prev => ({ ...prev, end_time: e.target.value }))}
                   required
+                  min={formData.start_time || (!booking ? formatDateTimeLocal(new Date()) : undefined)}
                   disabled={booking && ['completed', 'cancelled'].includes(booking.status)}
                   className="datetime-input-scheduling w-full px-4 py-2.5 bg-[var(--v2-bg)] border border-[var(--v2-border)] text-[var(--v2-text-primary)] text-sm focus:outline-none focus:border-[#14B8A6] focus:ring-2 focus:ring-[#14B8A6]/20 transition-all disabled:opacity-60 disabled:cursor-not-allowed disabled:bg-[var(--v2-bg)]/50"
                   style={{ borderRadius: 'var(--v2-radius-button)', colorScheme: 'inherit' }}

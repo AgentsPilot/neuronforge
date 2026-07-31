@@ -11,6 +11,7 @@ import { createLogger } from '@/lib/logger';
 import { AuditTrailService } from '@/lib/services/AuditTrailService';
 import { schedulingBookingRepository, schedulingServiceRepository } from '@/lib/repositories/SchedulingRepository';
 import { CalendarSyncService } from '@/lib/services/CalendarSyncService';
+import { BookingEmailService } from '@/lib/services/BookingEmailService';
 import { z } from 'zod';
 
 const logger = createLogger({ module: 'SchedulingBookingAPI' });
@@ -122,7 +123,17 @@ export async function PUT(
     const bookingId = params.id;
     requestLogger.info({ userId: user.id, bookingId, updates: Object.keys(validated) }, 'Updating booking');
 
-    // 3. Update booking
+    // 3. Fetch old booking first (for time change comparison)
+    const oldBookingResult = await schedulingBookingRepository.findById(bookingId, user.id);
+    if (oldBookingResult.error || !oldBookingResult.data) {
+      return NextResponse.json(
+        { success: false, error: 'Booking not found' },
+        { status: 404 }
+      );
+    }
+    const oldBooking = oldBookingResult.data;
+
+    // 4. Update booking
     const result = await schedulingBookingRepository.update(bookingId, user.id, validated);
 
     if (result.error) {
@@ -140,7 +151,7 @@ export async function PUT(
       );
     }
 
-    // 4. Audit log (non-blocking)
+    // 5. Audit log (non-blocking)
     auditTrail
       .log({
         action: 'SCHEDULING_BOOKING_UPDATED',
@@ -153,7 +164,7 @@ export async function PUT(
       })
       .catch(err => requestLogger.error({ err }, 'Audit failed'));
 
-    // 5. Sync calendar event if booking has one (non-blocking)
+    // 6. Sync calendar event if booking has one (non-blocking)
     if (result.data.external_calendar_event_id) {
       schedulingServiceRepository.findById(result.data.service_id, user.id)
         .then(serviceResult => {
@@ -172,7 +183,17 @@ export async function PUT(
         .catch(err => requestLogger.warn({ err }, 'Failed to get service for calendar sync'));
     }
 
-    // 6. Return success
+    // 7. Send update email if time changed and booking is confirmed (non-blocking)
+    const timeChanged = validated.start_time || validated.end_time;
+    if (timeChanged && result.data.status === 'confirmed' && result.data.client_email) {
+      BookingEmailService.sendRescheduledEmail(
+        bookingId,
+        user.id,
+        new Date(oldBooking.start_time)
+      ).catch(err => requestLogger.warn({ err, bookingId }, 'Reschedule email failed'));
+    }
+
+    // 8. Return success
     requestLogger.info({ bookingId, userId: user.id }, 'Booking updated successfully');
     return NextResponse.json({
       success: true,

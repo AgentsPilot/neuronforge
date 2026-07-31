@@ -1,6 +1,5 @@
 'use client';
 
-import { useState } from 'react';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import { Check, Clock, Bell, ChevronDown } from 'lucide-react';
 
@@ -24,6 +23,8 @@ interface MyDaySectionProps {
   summaryData: SummaryData;
   storyBeats: StoryBeat[];
   loading?: boolean;
+  isFullyCollapsed?: boolean;
+  onFullyCollapsedChange?: (collapsed: boolean) => void;
 }
 
 const BEAT_STYLES = {
@@ -55,10 +56,18 @@ export function MyDaySection({
   greeting,
   summaryData,
   storyBeats,
-  loading = false
+  loading = false,
+  isFullyCollapsed = false,
+  onFullyCollapsedChange
 }: MyDaySectionProps) {
   const { t, isRTL } = useLanguage();
-  const [isCollapsed, setIsCollapsed] = useState(false);
+
+  // Handle toggling the collapse state - use parent state if provided, otherwise internal
+  const handleToggleCollapse = () => {
+    if (onFullyCollapsedChange) {
+      onFullyCollapsedChange(!isFullyCollapsed);
+    }
+  };
 
   const now = new Date();
   const dayKeys = ['day.sunday', 'day.monday', 'day.tuesday', 'day.wednesday', 'day.thursday', 'day.friday', 'day.saturday'];
@@ -114,9 +123,63 @@ export function MyDaySection({
     );
   }
 
+  // Fully collapsed state - show minimal bar
+  if (isFullyCollapsed) {
+    return (
+      <section
+        className="bg-[var(--v2-surface)] border border-[var(--v2-border)] relative overflow-hidden transition-all duration-300"
+        style={{
+          borderRadius: '22px',
+          padding: '12px 24px',
+          boxShadow: '0 10px 30px -20px rgba(20, 26, 43, 0.3)'
+        }}
+      >
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            {/* Live pulse */}
+            <span className="relative">
+              <span
+                className="block w-2 h-2 rounded-full"
+                style={{ background: '#22C58B' }}
+              />
+              <span
+                className="absolute inset-0 rounded-full animate-ping"
+                style={{ background: '#22C58B', opacity: 0.4 }}
+              />
+            </span>
+            <span
+              style={{
+                fontFamily: '"Space Grotesk", system-ui, sans-serif',
+                fontWeight: 600,
+                fontSize: '15px',
+                color: 'var(--v2-text-primary)'
+              }}
+            >
+              {greetingText}, {userName}
+            </span>
+            <span className="text-[var(--v2-text-muted)] text-sm">
+              · {dayName}, {dateStr}
+            </span>
+          </div>
+          <button
+            onClick={handleToggleCollapse}
+            className="flex items-center gap-2 px-3 py-1.5 rounded-full border border-[var(--v2-border)] bg-[var(--v2-bg)] hover:bg-[var(--v2-surface)] hover:border-[#F97316] text-[var(--v2-text-muted)] hover:text-[#F97316] transition-all group"
+            style={{ fontSize: '12px', fontWeight: 500 }}
+          >
+            <span>{t('myday.show_details') || 'Show details'}</span>
+            <ChevronDown
+              className="w-3.5 h-3.5 transition-transform duration-200"
+              style={{ transform: 'rotate(0deg)' }}
+            />
+          </button>
+        </div>
+      </section>
+    );
+  }
+
   return (
     <section
-      className="bg-[var(--v2-surface)] border border-[var(--v2-border)] relative overflow-hidden"
+      className="bg-[var(--v2-surface)] border border-[var(--v2-border)] relative overflow-hidden transition-all duration-300"
       style={{
         borderRadius: '22px',
         padding: '22px 24px',
@@ -205,14 +268,9 @@ export function MyDaySection({
         </div>
       </div>
 
-      {/* Story beats - collapsible */}
+      {/* Story beats */}
       <div
-        className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 relative overflow-hidden transition-all duration-300 ease-in-out"
-        style={{
-          maxHeight: isCollapsed ? '0px' : '500px',
-          opacity: isCollapsed ? 0 : 1,
-          marginTop: isCollapsed ? '-12px' : '0px'
-        }}
+        className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 relative"
       >
         {storyBeats.map((beat, index) => {
           const style = BEAT_STYLES[beat.type];
@@ -299,14 +357,14 @@ export function MyDaySection({
       {/* Bottom collapse toggle */}
       <div className={`flex pt-4 mt-2 ${isRTL ? 'justify-start' : 'justify-end'}`}>
         <button
-          onClick={() => setIsCollapsed(!isCollapsed)}
+          onClick={handleToggleCollapse}
           className="flex items-center gap-2 px-3 py-1.5 rounded-full border border-[var(--v2-border)] bg-[var(--v2-bg)] hover:bg-[var(--v2-surface)] hover:border-[#F97316] text-[var(--v2-text-muted)] hover:text-[#F97316] transition-all group"
           style={{ fontSize: '12px', fontWeight: 500 }}
         >
-          <span>{isCollapsed ? t('myday.show_details') : t('myday.hide_details')}</span>
+          <span>{isFullyCollapsed ? t('myday.show_details') : t('myday.hide_details')}</span>
           <ChevronDown
             className="w-3.5 h-3.5 transition-transform duration-200"
-            style={{ transform: isCollapsed ? 'rotate(0deg)' : 'rotate(180deg)' }}
+            style={{ transform: isFullyCollapsed ? 'rotate(0deg)' : 'rotate(180deg)' }}
           />
         </button>
       </div>

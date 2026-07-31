@@ -163,6 +163,9 @@ export interface SchedulingBookingUpdate {
   internal_notes?: string | null;
   reminder_24hr_sent?: boolean;
   reminder_2hr_sent?: boolean;
+  // Rescheduling fields
+  start_time?: string;
+  end_time?: string;
   // Calendar sync fields
   external_calendar_event_id?: string | null;
   calendar_sync_provider?: CalendarSyncProvider | null;
@@ -357,7 +360,9 @@ export class SchedulingServiceRepository {
         .eq('user_id', userId);
 
       if (activeOnly) {
-        query = query.eq('is_active', true);
+        // Filter by both is_active flag AND status field
+        // This ensures draft/inactive services don't show on public website
+        query = query.eq('is_active', true).eq('status', 'active');
       }
 
       query = query.order('created_at', { ascending: false });
@@ -587,6 +592,7 @@ export class SchedulingBookingRepository {
       status?: string;
       startDate?: string;
       endDate?: string;
+      search?: string;
       limit?: number;
       offset?: number;
     } = {}
@@ -598,6 +604,7 @@ export class SchedulingBookingRepository {
         status,
         startDate,
         endDate,
+        search,
         limit = 50,
         offset = 0
       } = options;
@@ -625,6 +632,12 @@ export class SchedulingBookingRepository {
 
       if (endDate) {
         query = query.lte('start_time', endDate);
+      }
+
+      // Client name search - searches in client_first_name and client_last_name
+      if (search) {
+        const searchPattern = `%${search}%`;
+        query = query.or(`client_first_name.ilike.${searchPattern},client_last_name.ilike.${searchPattern}`);
       }
 
       query = query

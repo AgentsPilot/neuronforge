@@ -31,7 +31,7 @@ export function FeaturesBlock({ content, styles, theme, isRTL, className }: Bloc
   return (
     <section
       dir={isRTL ? 'rtl' : 'ltr'}
-      className={`${styles?.padding || 'py-16 sm:py-24'} ${styles?.background || 'bg-white dark:bg-slate-950'} ${className || ''}`}
+      className={`${styles?.padding || 'py-12 sm:py-16'} ${styles?.background || 'bg-white dark:bg-slate-950'} ${className || ''}`}
     >
       <div className="max-w-7xl mx-auto px-4 sm:px-6">
         {/* Header */}
@@ -137,7 +137,7 @@ export function FeaturesBlock({ content, styles, theme, isRTL, className }: Bloc
 
         {/* Alternating Layout */}
         {layout === 'alternating' && (
-          <div className="space-y-16">
+          <div className="space-y-10">
             {features.map((feature, index) => (
               <motion.div
                 key={index}
@@ -145,12 +145,12 @@ export function FeaturesBlock({ content, styles, theme, isRTL, className }: Bloc
                 whileInView={{ opacity: 1, y: 0 }}
                 viewport={{ once: true }}
                 transition={{ delay: 0.1 }}
-                className={`flex flex-col lg:flex-row items-center gap-10 ${
+                className={`flex flex-col lg:flex-row items-center gap-6 ${
                   index % 2 === 1 ? 'lg:flex-row-reverse' : ''
                 }`}
               >
                 <div
-                  className="w-32 h-32 rounded-2xl flex items-center justify-center text-5xl flex-shrink-0"
+                  className="w-20 h-20 rounded-2xl flex items-center justify-center text-3xl flex-shrink-0"
                   style={{ backgroundColor: `${primaryColor}15` }}
                 >
                   {feature.icon || '✨'}

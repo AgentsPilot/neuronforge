@@ -13,7 +13,7 @@ import {
   schedulingServiceRepository,
   schedulingBookingRepository
 } from '@/lib/repositories/SchedulingRepository';
-import { paymentInvoiceRepository } from '@/lib/repositories/PaymentRepository';
+import { paymentInvoiceRepository, paymentTransactionRepository } from '@/lib/repositories/PaymentRepository';
 import type { UserContext } from './types';
 
 const logger = createLogger({ service: 'AIDataLayerContextBuilder' });
@@ -155,12 +155,14 @@ export class ContextBuilder {
         contactCountResult,
         todayBookingsResult,
         pendingTasksResult,
-        pendingInvoicesResult
+        pendingInvoicesResult,
+        thisWeekRevenueResult
       ] = await Promise.all([
         crmContactRepository.count(userId),
         this.countTodayBookings(userId),
         this.countPendingTasks(userId),
-        this.countPendingInvoices(userId)
+        this.countPendingInvoices(userId),
+        this.getThisWeekRevenue(userId)
       ]);
 
       return {
@@ -168,7 +170,7 @@ export class ContextBuilder {
         todayBookings: todayBookingsResult,
         pendingTasks: pendingTasksResult,
         pendingInvoices: pendingInvoicesResult,
-        thisWeekRevenue: 0 // TODO: Implement when needed
+        thisWeekRevenue: thisWeekRevenueResult
       };
     } catch (error) {
       logger.error({ err: error, userId }, 'Failed to fetch stats for context');
@@ -210,6 +212,24 @@ export class ContextBuilder {
     try {
       const result = await paymentInvoiceRepository.list(userId, { status: 'sent' });
       return result.data?.length || 0;
+    } catch {
+      return 0;
+    }
+  }
+
+  private async getThisWeekRevenue(userId: string): Promise<number> {
+    try {
+      const now = new Date();
+      const dayOfWeek = now.getDay();
+      const startOfWeek = new Date(now.getFullYear(), now.getMonth(), now.getDate() - dayOfWeek);
+
+      const result = await paymentTransactionRepository.getTotalRevenue(
+        userId,
+        startOfWeek.toISOString(),
+        now.toISOString()
+      );
+
+      return result.data || 0;
     } catch {
       return 0;
     }

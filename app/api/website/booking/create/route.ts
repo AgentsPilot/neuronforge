@@ -16,6 +16,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
+import { BookingEmailService } from '@/lib/services/BookingEmailService';
+import { WebsiteBlockRepository } from '@/lib/repositories/WebsiteBlockRepository';
 import { z } from 'zod';
 
 const logger = createLogger({ module: 'WebsiteBookingCreateAPI' });
@@ -55,12 +57,15 @@ export async function POST(request: NextRequest) {
 
     let ownerId: string;
 
+    // Track hidden service names for validation (only used for public access)
+    let hiddenServiceNames: Set<string> = new Set();
+
     // If subdomain is provided, look up website owner (public access)
     // Otherwise, use authenticated user (preview mode)
     if (data.subdomain && data.subdomain.trim()) {
       const { data: websitePage, error: pageError } = await supabaseServer
         .from('website_pages')
-        .select('user_id')
+        .select('id, user_id')
         .eq('subdomain', data.subdomain)
         .single();
 
@@ -72,6 +77,27 @@ export async function POST(request: NextRequest) {
         );
       }
       ownerId = websitePage.user_id;
+
+      // Fetch hidden service names from the services block content
+      try {
+        const blockRepo = new WebsiteBlockRepository(supabaseServer);
+        const blocksResult = await blockRepo.findByPageId(websitePage.id);
+        if (blocksResult.data) {
+          const servicesBlock = blocksResult.data.find(b => b.block_type === 'services');
+          if (servicesBlock) {
+            const savedServices = (servicesBlock.content as Record<string, unknown>)?.services as Array<{ name: string; hidden?: boolean }> | undefined;
+            if (savedServices && Array.isArray(savedServices)) {
+              savedServices.forEach(s => {
+                if (s.name && s.hidden === true) {
+                  hiddenServiceNames.add(s.name);
+                }
+              });
+            }
+          }
+        }
+      } catch (err) {
+        requestLogger.warn({ err }, 'Failed to fetch hidden service flags');
+      }
     } else {
       // Authenticated access - use current user (preview mode)
       const user = await getUser();
@@ -101,6 +127,14 @@ export async function POST(request: NextRequest) {
     }
 
     if (!service.is_active) {
+      return NextResponse.json(
+        { success: false, error: 'This service is currently unavailable' },
+        { status: 400 }
+      );
+    }
+
+    // Check if service is hidden on website (only for public access)
+    if (hiddenServiceNames.has(service.service_name)) {
       return NextResponse.json(
         { success: false, error: 'This service is currently unavailable' },
         { status: 400 }
@@ -248,7 +282,17 @@ export async function POST(request: NextRequest) {
         });
     }
 
-    // TODO: Trigger 'booking_confirmed' email sequence
+    // Send booking confirmation email (non-blocking)
+    // Only for FREE bookings - paid bookings get confirmation after payment in Stripe webhook
+    if (!requiresPayment) {
+      BookingEmailService.sendBookingConfirmation(booking.id, ownerId)
+        .catch(err => requestLogger.warn({ err, bookingId: booking.id }, 'Booking confirmation email failed'));
+
+      // Send intake form request email (non-blocking)
+      // This helps clients prepare for their appointment
+      BookingEmailService.sendIntakeFormRequest(booking.id, ownerId)
+        .catch(err => requestLogger.warn({ err, bookingId: booking.id }, 'Intake form request email failed'));
+    }
 
     requestLogger.info(
       { bookingId: booking.id, subdomain: data.subdomain, serviceId: data.service_id, requiresPayment },

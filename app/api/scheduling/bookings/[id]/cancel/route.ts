@@ -9,6 +9,7 @@ import { createLogger } from '@/lib/logger';
 import { AuditTrailService } from '@/lib/services/AuditTrailService';
 import { schedulingBookingRepository } from '@/lib/repositories/SchedulingRepository';
 import { CalendarSyncService } from '@/lib/services/CalendarSyncService';
+import { BookingEmailService } from '@/lib/services/BookingEmailService';
 import { z } from 'zod';
 
 const logger = createLogger({ module: 'SchedulingBookingCancelAPI' });
@@ -79,7 +80,11 @@ export async function POST(
         .catch(err => requestLogger.warn({ err, bookingId }, 'Calendar event delete failed'));
     }
 
-    // 6. Return success
+    // 6. Send cancellation email (non-blocking)
+    BookingEmailService.sendCancellationEmail(bookingId, user.id, validated.reason)
+      .catch(err => requestLogger.warn({ err, bookingId }, 'Cancellation email failed'));
+
+    // 7. Return success
     requestLogger.info({ bookingId, userId: user.id }, 'Booking cancelled successfully');
     return NextResponse.json({
       success: true,

@@ -132,7 +132,7 @@ export function FocusList({ items, loading, stats }: FocusListProps) {
         router.push('/business-os/payments?filter=pending');
         break;
       case 'share_link':
-        router.push('/business-os/scheduling');
+        router.push('/business-os');
         break;
       default:
         // keep_going - no action needed

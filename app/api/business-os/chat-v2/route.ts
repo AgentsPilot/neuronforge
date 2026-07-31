@@ -22,6 +22,13 @@ import type { ChatMessage } from '@/lib/business-os/ai-data-layer/types';
 const logger = createLogger({ module: 'BusinessOSChatV2API' });
 const auditTrail = AuditTrailService.getInstance();
 
+// Active entity schema for context-aware follow-ups
+const activeEntitySchema = z.object({
+  type: z.enum(['tasks', 'contacts', 'services', 'bookings', 'invoices']),
+  id: z.string().uuid(),
+  data: z.record(z.unknown())
+});
+
 // Request validation schema
 const chatRequestSchema = z.object({
   message: z.string().min(1).max(2000),
@@ -38,7 +45,8 @@ const chatRequestSchema = z.object({
     })).optional(),
     tool_call_id: z.string().optional()
   })).optional(),
-  pendingConfirmationId: z.string().optional()
+  pendingConfirmationId: z.string().optional(),
+  activeEntity: activeEntitySchema.optional()
 });
 
 export async function POST(request: NextRequest) {
@@ -79,14 +87,15 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { message, conversationHistory, pendingConfirmationId } = parseResult.data;
+    const { message, conversationHistory, pendingConfirmationId, activeEntity } = parseResult.data;
 
     requestLogger.info(
       {
         userId: user.id,
         messageLength: message.length,
         historyLength: conversationHistory?.length || 0,
-        hasPendingConfirmation: !!pendingConfirmationId
+        hasPendingConfirmation: !!pendingConfirmationId,
+        hasActiveEntity: !!activeEntity
       },
       'Processing chat-v2 request'
     );
@@ -97,17 +106,19 @@ export async function POST(request: NextRequest) {
     const response = await aiService.processMessage({
       message,
       conversationHistory: conversationHistory as ChatMessage[],
-      pendingConfirmationId
+      pendingConfirmationId,
+      activeEntity
     });
 
     // 5. Audit log (non-blocking)
+    // Note: Using 'details' instead of 'changes' because 'changes' expects ChangeSet format
     auditTrail.log({
       action: 'BUSINESS_OS_CHAT_V2',
       entityType: 'chat',
       userId: user.id,
       resourceName: 'business-os-chat-v2',
-      changes: {
-        message: message.substring(0, 100),
+      details: {
+        messagePreview: message.substring(0, 100),
         toolCallCount: response.toolCalls?.length || 0,
         hasActions: (response.actions?.length || 0) > 0,
         hasPendingConfirmation: !!response.pendingConfirmation

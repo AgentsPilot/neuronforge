@@ -410,20 +410,33 @@ export class PaymentInvoiceRepository {
     options: {
       status?: string;
       contactId?: string;
+      search?: string; // Search by invoice_number or contact name
       limit?: number;
       offset?: number;
+      includeContact?: boolean;
     } = {}
   ): Promise<PaymentRepositoryResult<PaymentInvoice[]>> {
     try {
-      const { status, contactId, limit = 50, offset = 0 } = options;
+      const { status, contactId, search, limit = 50, offset = 0, includeContact = false } = options;
+
+      // Use join to get contact info if requested
+      const selectClause = includeContact
+        ? '*, contact:crm_contacts(id, first_name, last_name, email)'
+        : '*';
 
       let query = this.supabase
         .from('payment_invoices')
-        .select('*')
+        .select(selectClause)
         .eq('user_id', userId);
 
       if (status) query = query.eq('status', status);
       if (contactId) query = query.eq('contact_id', contactId);
+
+      // Search by invoice number
+      if (search) {
+        const searchPattern = `%${search}%`;
+        query = query.ilike('invoice_number', searchPattern);
+      }
 
       query = query
         .order('created_at', { ascending: false })
@@ -432,7 +445,21 @@ export class PaymentInvoiceRepository {
       const { data, error } = await query;
       if (error) throw error;
 
-      return { data: data || [], error: null };
+      // Transform data to include contact_name if contact info was included
+      const transformedData = (data || []).map((invoice: any) => {
+        if (invoice.contact) {
+          const contact = invoice.contact;
+          const contactName = `${contact.first_name || ''} ${contact.last_name || ''}`.trim() || contact.email || '';
+          return {
+            ...invoice,
+            contact_name: contactName,
+            contact: undefined // Remove nested object
+          };
+        }
+        return invoice;
+      });
+
+      return { data: transformedData, error: null };
     } catch (error) {
       logger.error({ err: error }, 'Failed to list payment invoices');
       return { data: null, error: error as Error };

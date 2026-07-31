@@ -2,12 +2,12 @@
 
 import { useState, useRef, useEffect, useCallback, useImperativeHandle, forwardRef } from 'react';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
-import { Send, CheckCircle2, Bot, User, Phone, Mail, ExternalLink, Edit3, Trash2, Power } from 'lucide-react';
+import { Send, CheckCircle2, Bot, User, Phone, Mail, ExternalLink, Edit3, Trash2, Power, Calendar, Clock, AlertCircle, X, RefreshCw, DollarSign, FileText } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import type { DialogAction, PendingContext } from '@/lib/business-os/DraftManagerTypes';
 
 interface EntityCardAction {
-  type: 'navigate' | 'edit' | 'call' | 'email' | 'deactivate' | 'delete' | 'complete';
+  type: 'navigate' | 'edit' | 'call' | 'email' | 'deactivate' | 'delete' | 'complete' | 'reschedule' | 'cancel' | 'send_invoice' | 'mark_paid';
   label: string;
   labelHe?: string;
   destination?: string;
@@ -20,10 +20,20 @@ interface EntityCard {
   actions: EntityCardAction[];
 }
 
+interface BookingListItem {
+  id: string;
+  serviceName: string;
+  contactName?: string;
+  startTime: string;
+  endTime?: string;
+  status: string;
+}
+
 interface ChatMessage {
-  type: 'ai' | 'user' | 'success' | 'entity_card';
+  type: 'ai' | 'user' | 'success' | 'entity_card' | 'booking_list';
   content: string;
   entityCard?: EntityCard;
+  bookingList?: BookingListItem[];
 }
 
 interface ChatCommandPanelProps {
@@ -32,6 +42,7 @@ interface ChatCommandPanelProps {
   onPublishDraft?: () => void;
   onConfirmUpdate?: () => void;
   onCancelUpdate?: () => void;
+  expanded?: boolean;
 }
 
 export interface ChatCommandPanelRef {
@@ -52,6 +63,10 @@ function getEntityDisplayName(entity: Record<string, unknown>, entityType: strin
   if (entityType === 'tasks') {
     return (entity.title || 'Task') as string;
   }
+  if (entityType === 'invoices') {
+    const invoiceNumber = entity.invoice_number as string;
+    return invoiceNumber ? `Invoice #${invoiceNumber}` : `Invoice #${entity.id}`;
+  }
   return (entity.name || entity.title || 'Item') as string;
 }
 
@@ -61,13 +76,19 @@ function EntityCardMessage({
   router,
   isHebrew,
   onCompleteTask,
-  onEditEntity
+  onEditEntity,
+  onOpenBooking,
+  onSendInvoice,
+  onMarkInvoicePaid
 }: {
   entityCard: EntityCard;
   router: ReturnType<typeof useRouter>;
   isHebrew: boolean;
   onCompleteTask?: (taskId: string) => Promise<void>;
   onEditEntity?: (entityType: string, entityId: string, entity: Record<string, unknown>) => void;
+  onOpenBooking?: (bookingId: string) => void;
+  onSendInvoice?: (invoiceId: string) => void;
+  onMarkInvoicePaid?: (invoiceId: string) => void;
 }) {
   const entityName = getEntityDisplayName(entityCard.entity, entityCard.entityType);
 
@@ -80,7 +101,7 @@ function EntityCardMessage({
         <Bot className="w-3.5 h-3.5 text-white" strokeWidth={2.2} />
       </div>
       <div
-        className="bg-white border border-[var(--v2-border)] shadow-sm overflow-hidden w-full max-w-[320px]"
+        className="bg-[var(--v2-surface)] border border-[var(--v2-border)] shadow-sm overflow-hidden w-full max-w-[320px]"
         style={{ borderRadius: '12px' }}
       >
         {/* Entity Header */}
@@ -106,8 +127,9 @@ function EntityCardMessage({
           </div>
         </div>
 
-        {/* Entity Details */}
+        {/* Entity Details - varies by entity type */}
         <div className="px-4 py-3 space-y-2">
+          {/* Contact fields */}
           {entityCard.entity.email && (
             <div className="flex items-center gap-2 text-sm">
               <Mail className="w-3.5 h-3.5 text-[var(--v2-text-muted)]" />
@@ -124,6 +146,161 @@ function EntityCardMessage({
               </span>
             </div>
           )}
+
+          {/* Task fields */}
+          {entityCard.entityType === 'tasks' && (
+            <>
+              {entityCard.entity.due_date && (
+                <div className="flex items-center gap-2 text-sm">
+                  <Calendar className="w-3.5 h-3.5 text-[var(--v2-text-muted)]" />
+                  <span className="text-[var(--v2-text-secondary)]">
+                    {new Date(entityCard.entity.due_date as string).toLocaleDateString(isHebrew ? 'he-IL' : 'en-US', {
+                      weekday: 'short',
+                      year: 'numeric',
+                      month: 'short',
+                      day: 'numeric'
+                    })}
+                  </span>
+                </div>
+              )}
+              {entityCard.entity.status && (
+                <div className="flex items-center gap-2 text-sm">
+                  <Clock className="w-3.5 h-3.5 text-[var(--v2-text-muted)]" />
+                  <span className={`capitalize ${
+                    entityCard.entity.status === 'completed' ? 'text-green-600 dark:text-green-400' :
+                    entityCard.entity.status === 'overdue' ? 'text-red-600 dark:text-red-400' :
+                    'text-[var(--v2-text-secondary)]'
+                  }`}>
+                    {isHebrew ? (
+                      entityCard.entity.status === 'pending' ? 'ממתין' :
+                      entityCard.entity.status === 'in_progress' ? 'בתהליך' :
+                      entityCard.entity.status === 'completed' ? 'הושלם' :
+                      entityCard.entity.status
+                    ) : entityCard.entity.status as string}
+                  </span>
+                </div>
+              )}
+              {entityCard.entity.priority && entityCard.entity.priority !== 'medium' && (
+                <div className="flex items-center gap-2 text-sm">
+                  <AlertCircle className={`w-3.5 h-3.5 ${
+                    entityCard.entity.priority === 'high' ? 'text-red-500 dark:text-red-400' :
+                    entityCard.entity.priority === 'low' ? 'text-gray-400 dark:text-gray-500' :
+                    'text-[var(--v2-text-muted)]'
+                  }`} />
+                  <span className={`capitalize ${
+                    entityCard.entity.priority === 'high' ? 'text-red-600 dark:text-red-400 font-medium' :
+                    'text-[var(--v2-text-secondary)]'
+                  }`}>
+                    {isHebrew ? (
+                      entityCard.entity.priority === 'high' ? 'עדיפות גבוהה' :
+                      entityCard.entity.priority === 'low' ? 'עדיפות נמוכה' :
+                      entityCard.entity.priority
+                    ) : `${entityCard.entity.priority} priority`}
+                  </span>
+                </div>
+              )}
+            </>
+          )}
+
+          {/* Service fields */}
+          {entityCard.entityType === 'services' && (
+            <>
+              {entityCard.entity.price !== undefined && (
+                <div className="flex items-center gap-2 text-sm">
+                  <span className="text-[var(--v2-text-muted)]">₪</span>
+                  <span className="text-[var(--v2-text-secondary)] font-medium">
+                    {entityCard.entity.price as number}
+                  </span>
+                </div>
+              )}
+              {entityCard.entity.duration_minutes && (
+                <div className="flex items-center gap-2 text-sm">
+                  <Clock className="w-3.5 h-3.5 text-[var(--v2-text-muted)]" />
+                  <span className="text-[var(--v2-text-secondary)]">
+                    {entityCard.entity.duration_minutes} {isHebrew ? 'דקות' : 'minutes'}
+                  </span>
+                </div>
+              )}
+            </>
+          )}
+
+          {/* Booking fields */}
+          {entityCard.entityType === 'bookings' && entityCard.entity.start_time && (
+            <div className="flex items-center gap-2 text-sm">
+              <Calendar className="w-3.5 h-3.5 text-[var(--v2-text-muted)]" />
+              <span className="text-[var(--v2-text-secondary)]">
+                {new Date(entityCard.entity.start_time as string).toLocaleString(isHebrew ? 'he-IL' : 'en-US', {
+                  weekday: 'short',
+                  month: 'short',
+                  day: 'numeric',
+                  hour: '2-digit',
+                  minute: '2-digit'
+                })}
+              </span>
+            </div>
+          )}
+
+          {/* Invoice fields */}
+          {entityCard.entityType === 'invoices' && (
+            <>
+              {/* Amount */}
+              {(entityCard.entity.amount !== undefined || entityCard.entity.total_amount !== undefined) && (
+                <div className="flex items-center gap-2 text-sm">
+                  <span className="text-[var(--v2-text-muted)]">{entityCard.entity.currency || '₪'}</span>
+                  <span className="text-[var(--v2-text-secondary)] font-medium">
+                    {(entityCard.entity.amount ?? entityCard.entity.total_amount) as number}
+                  </span>
+                </div>
+              )}
+              {/* Status */}
+              {entityCard.entity.status && (
+                <div className="flex items-center gap-2 text-sm">
+                  <Clock className="w-3.5 h-3.5 text-[var(--v2-text-muted)]" />
+                  <span className={`capitalize ${
+                    entityCard.entity.status === 'paid' ? 'text-green-600 dark:text-green-400' :
+                    entityCard.entity.status === 'overdue' ? 'text-red-600 dark:text-red-400' :
+                    (entityCard.entity.status === 'sent' || entityCard.entity.status === 'pending') ? 'text-orange-500 dark:text-orange-400' :
+                    'text-[var(--v2-text-secondary)]'
+                  }`}>
+                    {isHebrew ? (
+                      entityCard.entity.status === 'draft' ? 'טיוטה' :
+                      entityCard.entity.status === 'sent' ? 'נשלחה' :
+                      entityCard.entity.status === 'pending' ? 'ממתינה' :
+                      entityCard.entity.status === 'paid' ? 'שולמה' :
+                      entityCard.entity.status === 'overdue' ? 'באיחור' :
+                      entityCard.entity.status === 'cancelled' ? 'בוטלה' :
+                      entityCard.entity.status
+                    ) : entityCard.entity.status as string}
+                  </span>
+                </div>
+              )}
+              {/* Due date */}
+              {entityCard.entity.due_date && (
+                <div className="flex items-center gap-2 text-sm">
+                  <Calendar className="w-3.5 h-3.5 text-[var(--v2-text-muted)]" />
+                  <span className="text-[var(--v2-text-secondary)]">
+                    {isHebrew ? 'תאריך יעד: ' : 'Due: '}
+                    {new Date(entityCard.entity.due_date as string).toLocaleDateString(isHebrew ? 'he-IL' : 'en-US', {
+                      year: 'numeric',
+                      month: 'short',
+                      day: 'numeric'
+                    })}
+                  </span>
+                </div>
+              )}
+              {/* Contact name */}
+              {entityCard.entity.contact_name && (
+                <div className="flex items-center gap-2 text-sm">
+                  <User className="w-3.5 h-3.5 text-[var(--v2-text-muted)]" />
+                  <span className="text-[var(--v2-text-secondary)]">
+                    {entityCard.entity.contact_name as string}
+                  </span>
+                </div>
+              )}
+            </>
+          )}
+
+          {/* Notes (for all entity types) */}
           {entityCard.entity.notes && (
             <div className="text-xs text-[var(--v2-text-muted)] mt-2 line-clamp-2">
               {entityCard.entity.notes as string}
@@ -145,6 +322,10 @@ function EntityCardMessage({
                 : action.type === 'deactivate' ? Power
                 : action.type === 'delete' ? Trash2
                 : action.type === 'complete' ? CheckCircle2
+                : action.type === 'reschedule' ? RefreshCw
+                : action.type === 'cancel' ? X
+                : action.type === 'send_invoice' ? FileText
+                : action.type === 'mark_paid' ? DollarSign
                 : ExternalLink;
 
               return (
@@ -167,12 +348,19 @@ function EntityCardMessage({
                       await onCompleteTask(entityCard.entity.id as string);
                     } else if (action.type === 'edit' && entityCard.entity.id && onEditEntity) {
                       onEditEntity(entityCard.entityType, entityCard.entity.id as string, entityCard.entity);
+                    } else if ((action.type === 'reschedule' || action.type === 'cancel') && entityCard.entity.id && onOpenBooking) {
+                      // Both reschedule and cancel open the booking modal which has these options
+                      onOpenBooking(entityCard.entity.id as string);
+                    } else if (action.type === 'send_invoice' && entityCard.entity.id && onSendInvoice) {
+                      onSendInvoice(entityCard.entity.id as string);
+                    } else if (action.type === 'mark_paid' && entityCard.entity.id && onMarkInvoicePaid) {
+                      onMarkInvoicePaid(entityCard.entity.id as string);
                     }
                   }}
                   className={`inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1.5 rounded-md transition-colors ${
                     isDestructive
-                      ? 'text-red-600 hover:bg-red-50'
-                      : 'text-[var(--v2-text-secondary)] hover:bg-[var(--v2-surface)] hover:text-[#F97316]'
+                      ? 'text-red-600 hover:bg-red-500/10 dark:hover:bg-red-500/20'
+                      : 'text-[var(--v2-text-secondary)] hover:bg-[var(--v2-bg)] hover:text-[#F97316]'
                   }`}
                 >
                   <ActionIcon className="w-3 h-3" />
@@ -187,8 +375,122 @@ function EntityCardMessage({
   );
 }
 
+// Booking List Message Component - displays multiple bookings as styled cards
+function BookingListMessage({
+  bookings,
+  isHebrew,
+  onOpenBooking
+}: {
+  bookings: BookingListItem[];
+  isHebrew: boolean;
+  onOpenBooking?: (bookingId: string) => void;
+}) {
+  const formatDateTime = (isoString: string) => {
+    const date = new Date(isoString);
+    return {
+      date: date.toLocaleDateString(isHebrew ? 'he-IL' : 'en-US', {
+        weekday: 'short',
+        month: 'short',
+        day: 'numeric'
+      }),
+      time: date.toLocaleTimeString(isHebrew ? 'he-IL' : 'en-US', {
+        hour: '2-digit',
+        minute: '2-digit'
+      })
+    };
+  };
+
+  return (
+    <div className="flex items-start gap-2">
+      <div
+        className="w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5"
+        style={{ background: 'linear-gradient(135deg, #FFB454 0%, #F97316 100%)' }}
+      >
+        <Bot className="w-3.5 h-3.5 text-white" strokeWidth={2.2} />
+      </div>
+      <div className="flex-1 space-y-2 max-w-[340px]">
+        {/* Header */}
+        <div className="text-sm font-medium text-[var(--v2-text-primary)]">
+          {isHebrew ? 'הפגישות הקרובות שלך:' : 'Your upcoming meetings:'}
+        </div>
+
+        {/* Booking Cards */}
+        {bookings.map((booking, index) => {
+          const { date, time } = formatDateTime(booking.startTime);
+          const displayName = booking.contactName || booking.serviceName;
+
+          return (
+            <div
+              key={booking.id}
+              onClick={() => onOpenBooking?.(booking.id)}
+              className="bg-[var(--v2-surface)] border border-[var(--v2-border)] overflow-hidden cursor-pointer hover:border-[#F97316] transition-colors group"
+              style={{ borderRadius: '10px' }}
+            >
+              <div className="px-3 py-2.5 flex items-center gap-3">
+                {/* Avatar/Number */}
+                <div
+                  className="w-9 h-9 rounded-full flex items-center justify-center text-white font-semibold text-sm flex-shrink-0"
+                  style={{ background: 'linear-gradient(135deg, #F97316 0%, #EA580C 100%)' }}
+                >
+                  {displayName.charAt(0).toUpperCase()}
+                </div>
+
+                {/* Details */}
+                <div className="flex-1 min-w-0">
+                  <div className="font-medium text-[var(--v2-text-primary)] truncate group-hover:text-[#F97316] transition-colors">
+                    {displayName}
+                  </div>
+                  <div className="flex items-center gap-2 text-xs text-[var(--v2-text-muted)]">
+                    <div className="flex items-center gap-1">
+                      <Calendar className="w-3 h-3" />
+                      <span>{date}</span>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <Clock className="w-3 h-3" />
+                      <span>{time}</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Arrow indicator */}
+                <ExternalLink className="w-4 h-4 text-[var(--v2-text-muted)] opacity-0 group-hover:opacity-100 transition-opacity" />
+              </div>
+
+              {/* Action buttons - opens booking modal where user can reschedule or cancel */}
+              {booking.status === 'confirmed' && (
+                <div className="px-3 pb-2.5 flex gap-2">
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onOpenBooking?.(booking.id);
+                    }}
+                    className="flex-1 inline-flex items-center justify-center gap-1.5 text-xs font-medium px-2.5 py-1.5 rounded-md transition-colors text-[var(--v2-text-secondary)] hover:bg-[var(--v2-bg)] hover:text-[#F97316] border border-[var(--v2-border)]"
+                  >
+                    <RefreshCw className="w-3 h-3" />
+                    {isHebrew ? 'שנה מועד' : 'Reschedule'}
+                  </button>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onOpenBooking?.(booking.id);
+                    }}
+                    className="flex-1 inline-flex items-center justify-center gap-1.5 text-xs font-medium px-2.5 py-1.5 rounded-md transition-colors text-red-600 hover:bg-red-500/10 dark:hover:bg-red-500/20 border border-[var(--v2-border)]"
+                  >
+                    <X className="w-3 h-3" />
+                    {isHebrew ? 'בטל' : 'Cancel'}
+                  </button>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 export const ChatCommandPanel = forwardRef<ChatCommandPanelRef, ChatCommandPanelProps>(
-  function ChatCommandPanel({ onCommand, onAction, onPublishDraft, onConfirmUpdate, onCancelUpdate }, ref) {
+  function ChatCommandPanel({ onCommand, onAction, onPublishDraft, onConfirmUpdate, onCancelUpdate, expanded = false }, ref) {
   const { t } = useLanguage();
   const router = useRouter();
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -207,6 +509,12 @@ export const ChatCommandPanel = forwardRef<ChatCommandPanelRef, ChatCommandPanel
   const [pendingContext, setPendingContext] = useState<PendingContext | null>(null);
   // Legacy: keep for backward compatibility until migration complete
   const [pendingAvailabilityDays, setPendingAvailabilityDays] = useState<string[] | null>(null);
+  // Track the currently displayed entity for context-aware follow-ups
+  const [activeEntity, setActiveEntity] = useState<{
+    type: 'tasks' | 'contacts' | 'services' | 'bookings' | 'invoices';
+    id: string;
+    data: Record<string, unknown>;
+  } | null>(null);
 
   // Default examples
   const defaultExamples = [
@@ -290,41 +598,50 @@ export const ChatCommandPanel = forwardRef<ChatCommandPanelRef, ChatCommandPanel
     }
   }, [t]);
 
-  // Handle editing an entity from entity card - navigate to the appropriate page
+  // Handle editing an entity from entity card
+  // For tasks: use in-chat editing (context-aware follow-ups)
+  // For other entities: navigate to the appropriate page
   const handleEditEntity = useCallback((entityType: string, entityId: string, entity: Record<string, unknown>) => {
     // Check if user's language is Hebrew
     const isHebrew = /[\u0590-\u05FF]/.test(messages[0]?.content || '');
 
     // Hardcoded fallback messages (translation keys may not exist)
     const editTaskPrompt = isHebrew
-      ? 'כדי לערוך את המשימה הזו, ספר/י לי מה לשנות. לדוגמה: "שנה את התאריך למחר" או "עדכן את הכותרת ל..."'
-      : `To edit this task, tell me what you'd like to change. For example: "change the due date to tomorrow" or "update the title to..."`;
+      ? 'ספר/י לי מה לשנות. לדוגמה: "שנה תאריך למחר", "עדכן עדיפות לגבוהה", "שנה כותרת ל..."'
+      : `Tell me what to change. For example: "change date to tomorrow", "set priority to high", "rename to..."`;
 
     const editEntityPrompt = isHebrew
-      ? 'ספר/י לי מה תרצה לשנות בפריט הזה.'
+      ? 'ספר/י לי מה לשנות בפריט הזה.'
       : `Tell me what you'd like to change about this item.`;
 
     switch (entityType) {
       case 'tasks':
-        // For tasks linked to a contact, navigate to CRM with task param
-        if (entity.contact_id) {
-          router.push(`/business-os/crm?task=${entityId}`);
-        } else {
-          // For standalone tasks, show edit message in chat
-          setMessages(prev => [...prev, {
-            type: 'ai',
-            content: editTaskPrompt
-          }]);
-        }
+        // Always use in-chat editing for tasks (leverages activeEntity context)
+        setMessages(prev => [...prev, {
+          type: 'ai',
+          content: editTaskPrompt
+        }]);
+        // Ensure active entity is set for context-aware edits
+        setActiveEntity({
+          type: 'tasks',
+          id: entityId,
+          data: entity
+        });
         break;
       case 'contacts':
         router.push(`/business-os/crm?contact=${entityId}`);
         break;
       case 'services':
-        router.push(`/business-os/scheduling?service=${entityId}`);
+        // Open service edit dialog via onAction
+        onAction?.({
+          type: 'open_service_modal',
+          mode: 'edit',
+          serviceId: entityId,
+          prefill: entity
+        });
         break;
       case 'bookings':
-        router.push(`/business-os/scheduling?booking=${entityId}`);
+        router.push(`/business-os`);
         break;
       case 'invoices':
         router.push(`/business-os/payments?invoice=${entityId}`);
@@ -337,6 +654,67 @@ export const ChatCommandPanel = forwardRef<ChatCommandPanelRef, ChatCommandPanel
         }]);
     }
   }, [router, messages]);
+
+  // Handle sending an invoice
+  const handleSendInvoice = useCallback(async (invoiceId: string) => {
+    const isHebrew = /[\u0590-\u05FF]/.test(messages[0]?.content || '');
+    try {
+      const response = await fetch(`/api/payments/invoices/${invoiceId}/send`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      });
+
+      const result = await response.json();
+      if (result.success) {
+        setMessages(prev => [...prev, {
+          type: 'success',
+          content: isHebrew ? 'החשבונית נשלחה בהצלחה ✓' : 'Invoice sent successfully ✓'
+        }]);
+      } else {
+        setMessages(prev => [...prev, {
+          type: 'ai',
+          content: isHebrew ? 'לא הצלחתי לשלוח את החשבונית. נסה שוב.' : 'Failed to send invoice. Please try again.'
+        }]);
+      }
+    } catch (error) {
+      console.error('Failed to send invoice:', error);
+      setMessages(prev => [...prev, {
+        type: 'ai',
+        content: isHebrew ? 'שגיאה בשליחת החשבונית.' : 'Error sending invoice.'
+      }]);
+    }
+  }, [messages]);
+
+  // Handle marking invoice as paid
+  const handleMarkInvoicePaid = useCallback(async (invoiceId: string) => {
+    const isHebrew = /[\u0590-\u05FF]/.test(messages[0]?.content || '');
+    try {
+      const response = await fetch(`/api/payments/invoices/${invoiceId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'paid' })
+      });
+
+      const result = await response.json();
+      if (result.success) {
+        setMessages(prev => [...prev, {
+          type: 'success',
+          content: isHebrew ? 'החשבונית סומנה כשולמה ✓' : 'Invoice marked as paid ✓'
+        }]);
+      } else {
+        setMessages(prev => [...prev, {
+          type: 'ai',
+          content: isHebrew ? 'לא הצלחתי לעדכן את החשבונית.' : 'Failed to update invoice.'
+        }]);
+      }
+    } catch (error) {
+      console.error('Failed to mark invoice as paid:', error);
+      setMessages(prev => [...prev, {
+        type: 'ai',
+        content: isHebrew ? 'שגיאה בעדכון החשבונית.' : 'Error updating invoice.'
+      }]);
+    }
+  }, [messages]);
 
   const handleSend = useCallback(async () => {
     const command = input.trim();
@@ -417,6 +795,8 @@ export const ChatCommandPanel = forwardRef<ChatCommandPanelRef, ChatCommandPanel
           message: messageToSend,
           conversationHistory,
           pendingConfirmationId: pendingContext?.confirmationId || undefined,
+          // Pass active entity context for follow-up commands
+          activeEntity: activeEntity || undefined,
         }),
       });
 
@@ -501,6 +881,20 @@ export const ChatCommandPanel = forwardRef<ChatCommandPanelRef, ChatCommandPanel
                   actions: action.actions
                 }
               }]);
+              // Track this entity for context-aware follow-ups
+              setActiveEntity({
+                type: action.entityType as 'tasks' | 'contacts' | 'services' | 'bookings' | 'invoices',
+                id: action.entity.id as string,
+                data: action.entity
+              });
+              break;
+            } else if (action.type === 'present_booking_list') {
+              // Display booking list as styled cards
+              setMessages(prev => [...prev, {
+                type: 'booking_list',
+                content: '',
+                bookingList: action.bookings
+              }]);
               break;
             }
           }
@@ -510,6 +904,9 @@ export const ChatCommandPanel = forwardRef<ChatCommandPanelRef, ChatCommandPanel
       onCommand?.(command, null);
 
     } catch (error) {
+      // Log the error for debugging
+      console.error('Chat processing error:', error);
+
       // Show error message
       setMessages(prev => [
         ...prev,
@@ -528,20 +925,23 @@ export const ChatCommandPanel = forwardRef<ChatCommandPanelRef, ChatCommandPanel
     inputRef.current?.focus();
   };
 
+  // Calculate height based on expanded state (when MyDay section is collapsed)
+  const panelHeight = expanded ? '640px' : '460px';
+
   return (
     <section
-      className="bg-[var(--v2-surface)] border border-[var(--v2-border)] flex flex-col overflow-hidden"
+      className="bg-[var(--v2-surface)] border border-[var(--v2-border)] flex flex-col overflow-hidden transition-all duration-300"
       style={{
         borderRadius: '22px',
         boxShadow: '0 20px 50px -34px rgba(20, 26, 43, 0.4)',
-        height: '460px',
-        maxHeight: '460px'
+        height: panelHeight,
+        maxHeight: panelHeight
       }}
     >
       {/* Header */}
       <div
-        className="flex-shrink-0 border-b"
-        style={{ padding: '18px 20px 14px', borderColor: '#F1F2F7' }}
+        className="flex-shrink-0 border-b border-[var(--v2-border)]"
+        style={{ padding: '18px 20px 14px' }}
       >
         <div className="flex items-center gap-3">
           {/* AI Orb */}
@@ -588,7 +988,7 @@ export const ChatCommandPanel = forwardRef<ChatCommandPanelRef, ChatCommandPanel
       {/* Messages - scrollable area with fixed height */}
       <div
         ref={scrollRef}
-        className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-3 scrollbar-thin"
+        className="flex-1 min-h-0 overflow-y-scroll flex flex-col gap-3 scrollbar-thin"
         style={{
           padding: '16px 18px',
           scrollbarWidth: 'thin',
@@ -614,7 +1014,7 @@ export const ChatCommandPanel = forwardRef<ChatCommandPanelRef, ChatCommandPanel
                   <Bot className="w-3.5 h-3.5 text-white" strokeWidth={2.2} />
                 </div>
                 <div
-                  className="bg-[var(--v2-bg)] border border-[var(--v2-border)] [&_a]:text-[#F97316] [&_a]:underline [&_a]:hover:text-[#EA580C]"
+                  className="bg-[var(--v2-bg)] border border-[var(--v2-border)] text-[var(--v2-text-primary)] [&_a]:text-[#F97316] [&_a]:underline [&_a]:hover:text-[#EA580C] [&_strong]:text-[var(--v2-text-primary)] whitespace-pre-wrap"
                   style={{ borderRadius: '4px 14px 14px 14px', padding: '11px 13px' }}
                   dangerouslySetInnerHTML={{ __html: msg.content }}
                 />
@@ -639,11 +1039,8 @@ export const ChatCommandPanel = forwardRef<ChatCommandPanelRef, ChatCommandPanel
             )}
             {msg.type === 'success' && (
               <div
-                className="inline-flex items-center gap-2 text-xs font-semibold"
+                className="inline-flex items-center gap-2 text-xs font-semibold text-green-600 dark:text-green-400 bg-green-500/10 dark:bg-green-500/20 border border-green-500/20 dark:border-green-500/30"
                 style={{
-                  color: '#22C58B',
-                  background: 'rgba(34, 197, 139, 0.09)',
-                  border: '1px solid rgba(34, 197, 139, 0.2)',
                   borderRadius: '20px',
                   padding: '6px 12px'
                 }}
@@ -659,6 +1056,18 @@ export const ChatCommandPanel = forwardRef<ChatCommandPanelRef, ChatCommandPanel
                 isHebrew={/[\u0590-\u05FF]/.test(messages[0]?.content || '')}
                 onCompleteTask={msg.entityCard.entityType === 'tasks' ? handleCompleteTask : undefined}
                 onEditEntity={handleEditEntity}
+                onOpenBooking={msg.entityCard.entityType === 'bookings' ? (id) => onAction?.({ type: 'open_booking', bookingId: id }) : undefined}
+                onSendInvoice={msg.entityCard.entityType === 'invoices' ? handleSendInvoice : undefined}
+                onMarkInvoicePaid={msg.entityCard.entityType === 'invoices' ? handleMarkInvoicePaid : undefined}
+              />
+            )}
+            {msg.type === 'booking_list' && msg.bookingList && (
+              <BookingListMessage
+                bookings={msg.bookingList}
+                isHebrew={/[\u0590-\u05FF]/.test(messages[0]?.content || '')}
+                onOpenBooking={(bookingId) => {
+                  onAction?.({ type: 'open_booking', bookingId });
+                }}
               />
             )}
           </div>
@@ -687,8 +1096,8 @@ export const ChatCommandPanel = forwardRef<ChatCommandPanelRef, ChatCommandPanel
 
       {/* Dock */}
       <div
-        className="flex-shrink-0 border-t"
-        style={{ padding: '12px 16px 16px', borderColor: '#F1F2F7' }}
+        className="flex-shrink-0 border-t border-[var(--v2-border)]"
+        style={{ padding: '12px 16px 16px' }}
       >
         {/* Example chips */}
         <div className="flex flex-wrap gap-2 mb-3">
@@ -706,8 +1115,8 @@ export const ChatCommandPanel = forwardRef<ChatCommandPanelRef, ChatCommandPanel
 
         {/* Input bar */}
         <div
-          className="flex gap-2 items-center bg-white border transition-all focus-within:border-[#F97316] focus-within:shadow-[0_0_0_4px_rgba(249,115,22,0.08)]"
-          style={{ borderRadius: '14px', padding: '5px 5px 5px 14px', borderWidth: '1.5px', borderColor: 'var(--v2-border)' }}
+          className="flex gap-2 items-center bg-[var(--v2-surface)] border border-[var(--v2-border)] transition-all focus-within:border-[#F97316] focus-within:shadow-[0_0_0_4px_rgba(249,115,22,0.08)]"
+          style={{ borderRadius: '14px', padding: '5px 5px 5px 14px', borderWidth: '1.5px' }}
         >
           <input
             ref={inputRef}
@@ -716,7 +1125,7 @@ export const ChatCommandPanel = forwardRef<ChatCommandPanelRef, ChatCommandPanel
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && handleSend()}
             placeholder={t('chat.placeholder') || 'e.g. add a 90 min session for $150…'}
-            className="flex-1 border-0 bg-transparent text-sm focus:outline-none"
+            className="flex-1 border-0 bg-transparent text-sm focus:outline-none text-[var(--v2-text-primary)] placeholder:text-[var(--v2-text-muted)]"
             disabled={loading}
           />
           <button
@@ -732,6 +1141,7 @@ export const ChatCommandPanel = forwardRef<ChatCommandPanelRef, ChatCommandPanel
           </button>
         </div>
       </div>
+
     </section>
   );
 });

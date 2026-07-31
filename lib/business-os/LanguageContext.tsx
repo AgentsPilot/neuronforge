@@ -1,6 +1,7 @@
 'use client';
 
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import { supabase } from '@/lib/supabaseClient';
 
 type Language = 'en' | 'es' | 'he';
 export type CurrencyCode = 'USD' | 'EUR' | 'ILS' | 'GBP';
@@ -139,11 +140,11 @@ const translations = {
     'chat.title': 'Just tell me',
     'chat.subtitle': 'Change anything, anywhere — I\'ll handle it',
     'chat.placeholder': 'e.g. add a Saturday morning slot…',
-    'chat.welcome': 'Morning! I\'m watching over everything. Want to change something? Just tell me in plain words — a price, your hours, a post, anything — and I\'ll make it happen across the right place.',
-    'chat.example.slot': 'Add Saturday morning hours',
-    'chat.example.service': 'Add a 90 min session for $150',
+    'chat.welcome': 'Hey! Tell me what you need and I\'ll handle it.',
+    'chat.example.slot': 'Open a task',
+    'chat.example.service': 'Add a new service',
     'chat.example.money': 'Who owes me money?',
-    'chat.example.booking': 'Book a client for tomorrow at 2pm',
+    'chat.example.booking': 'Find a contact',
     // AI Chat Confirmation - Action type labels
     'chat.action.deactivate': 'Deactivate',
     'chat.action.activate': 'Activate',
@@ -210,6 +211,9 @@ const translations = {
     'cap.config.days': 'days',
     'cap.config.stripe_not_connected': 'Stripe not connected',
     'cap.config.connect_stripe': 'connect to accept payments',
+    'cap.config.calendar': 'Calendar',
+    'cap.config.calendar_synced': 'synced',
+    'cap.config.connect_calendar': 'connect to sync',
     'cap.status.setup_needed': 'Setup needed',
 
     // Configuration Dialog
@@ -352,6 +356,7 @@ const translations = {
     // Pipeline stages - consultant vertical
     'crm.stage.qualified': 'Qualified',
     'crm.stage.negotiation': 'Negotiation',
+    'crm.stage.consultation': 'Consultation',
     'crm.pipeline.no_contacts': 'No contacts in this stage',
     'crm.pipeline.no_stages': 'No pipeline stages configured',
     'crm.pipeline.drop_here': 'Drop here',
@@ -402,6 +407,16 @@ const translations = {
     'crm.activity.desc.no_reason': 'No reason provided',
     'crm.activity.desc.scheduled_for': 'Scheduled for',
     'crm.activity.desc.client_no_show': 'Client did not attend scheduled session',
+    'crm.activity.desc.booked_via_website': 'Booked via website for',
+    'crm.activity.desc.paid': 'Paid',
+    // Activity title translations (for database-stored titles)
+    'crm.activity.title.booking': 'Booking',
+    'crm.activity.title.booking_confirmed': 'Booking Confirmed',
+    'crm.activity.title.booking_cancelled': 'Booking Cancelled',
+    'crm.activity.title.no_show': 'No-Show',
+    'crm.activity.title.payment_received': 'Payment Received',
+    'crm.activity.title.email_sent': 'Email Sent',
+    'crm.activity.title.website_contact_form': 'Website Contact Form Submission',
 
     // Quick Activity Input
     'crm.quick_activity.note': 'Note',
@@ -500,6 +515,7 @@ const translations = {
     'crm.drawer.delete_data_warning_title': 'The following data will be permanently deleted:',
     'crm.drawer.delete_data_bookings': '{count} booking(s)',
     'crm.drawer.delete_data_payments': '{count} payment record(s)',
+    'crm.drawer.delete_data_emails': '{count} email record(s)',
     'crm.drawer.delete_data_documents': '{count} document(s)',
     'crm.drawer.delete_data_activities': '{count} activity record(s)',
     'crm.drawer.loading_payments': 'Loading payments...',
@@ -507,6 +523,10 @@ const translations = {
     'crm.drawer.loading_appointments': 'Loading appointments...',
     'crm.drawer.no_appointments': 'No appointments yet',
     'crm.drawer.booking': 'Booking',
+    'crm.drawer.new_meeting': 'New Meeting',
+    'crm.drawer.sort_date_desc': 'Newest First',
+    'crm.drawer.sort_date_asc': 'Oldest First',
+    'crm.drawer.sort_service': 'By Service',
     'crm.drawer.created_at': 'Created',
     'crm.drawer.updated_at': 'Updated',
     'crm.drawer.bookings_count': '{count} bookings',
@@ -548,6 +568,21 @@ const translations = {
     'crm.drawer.priority_urgent': 'Urgent',
     'crm.drawer.adding': 'Adding...',
     'crm.drawer.add': 'Add',
+    // Email sub-tab
+    'crm.drawer.subtab_activity': 'Activity',
+    'crm.drawer.subtab_emails': 'Emails',
+    'crm.drawer.loading_emails': 'Loading emails...',
+    'crm.drawer.no_emails': 'No emails sent yet',
+    'crm.drawer.no_emails_hint': 'Emails will appear here when you send confirmations, invoices, or other communications',
+    // Email status
+    'crm.email.status.pending': 'Pending',
+    'crm.email.status.sent': 'Sent',
+    'crm.email.status.delivered': 'Delivered',
+    'crm.email.status.opened': 'Opened',
+    'crm.email.status.clicked': 'Clicked',
+    'crm.email.status.bounced': 'Bounced',
+    'crm.email.status.failed': 'Failed',
+    'crm.email.opened_at': 'Opened',
 
     // Document Types
     'crm.document.type.contract': 'Contract',
@@ -623,6 +658,8 @@ const translations = {
     'scheduling.service.draft': 'Draft',
     'scheduling.service.publish': 'Publish Service',
     'scheduling.service.edit': 'Edit',
+    'scheduling.service.activate': 'Activate Service',
+    'scheduling.service.deactivate': 'Deactivate Service',
     'scheduling.service.ai_generated': 'AI',
     'scheduling.service.manual': 'Manual',
     'scheduling.service.delete': 'Delete',
@@ -702,6 +739,7 @@ const translations = {
     'scheduling.booking.end_time': 'End Time',
     'scheduling.booking.notes_section': 'Notes',
     'scheduling.booking.notes_placeholder': 'Any additional information...',
+    'scheduling.booking.error_past_time': 'Cannot book a meeting in the past. Please select a future date and time.',
 
     // Public Booking Widget (website)
     'public_booking.choose_service': 'Choose a Service',
@@ -895,6 +933,7 @@ const translations = {
     'reports.tab_transactions': 'Transactions',
     'reports.tab_invoices': 'Invoices',
     'reports.loading': 'Loading your story...',
+    'reports.click_for_details': 'Click for details',
     'reports.revenue_30d': 'Revenue (30 days)',
     'reports.bookings_30d': 'Bookings (30 days)',
     'reports.new_clients': 'New clients this week',
@@ -1250,11 +1289,11 @@ const translations = {
     'chat.title': 'Solo dime',
     'chat.subtitle': 'Cambia lo que quieras — yo me encargo',
     'chat.placeholder': 'ej. agregar horario del sábado…',
-    'chat.welcome': '¡Buenos días! Estoy vigilando todo. ¿Quieres cambiar algo? Solo dímelo con palabras simples — un precio, tus horarios, una publicación, lo que sea — y lo haré realidad en el lugar correcto.',
-    'chat.example.slot': 'Agregar horario del sábado',
-    'chat.example.service': 'Agregar sesión de 90 min por $150',
+    'chat.welcome': '¡Hola! Dime qué necesitas y yo me encargo.',
+    'chat.example.slot': 'Abrir una tarea',
+    'chat.example.service': 'Agregar un servicio nuevo',
     'chat.example.money': '¿Quién me debe dinero?',
-    'chat.example.booking': 'Reservar un cliente para mañana a las 2pm',
+    'chat.example.booking': 'Buscar un contacto',
     // AI Chat Confirmation - Action type labels
     'chat.action.deactivate': 'Desactivar',
     'chat.action.activate': 'Activar',
@@ -1321,6 +1360,9 @@ const translations = {
     'cap.config.days': 'días',
     'cap.config.stripe_not_connected': 'Stripe no conectado',
     'cap.config.connect_stripe': 'conectar para aceptar pagos',
+    'cap.config.calendar': 'Calendario',
+    'cap.config.calendar_synced': 'sincronizado',
+    'cap.config.connect_calendar': 'conectar para sincronizar',
     'cap.status.setup_needed': 'Configuración necesaria',
 
     // Configuration Dialog
@@ -1463,6 +1505,7 @@ const translations = {
     // Pipeline stages - consultant vertical
     'crm.stage.qualified': 'Calificado',
     'crm.stage.negotiation': 'Negociación',
+    'crm.stage.consultation': 'Consulta',
     'crm.pipeline.no_contacts': 'Sin contactos en esta etapa',
     'crm.pipeline.no_stages': 'No hay etapas de pipeline configuradas',
     'crm.pipeline.drop_here': 'Soltar aquí',
@@ -1513,6 +1556,16 @@ const translations = {
     'crm.activity.desc.no_reason': 'Sin motivo proporcionado',
     'crm.activity.desc.scheduled_for': 'Programado para',
     'crm.activity.desc.client_no_show': 'El cliente no asistió a la sesión programada',
+    'crm.activity.desc.booked_via_website': 'Reservado a través del sitio web para',
+    'crm.activity.desc.paid': 'Pagado',
+    // Activity title translations (for database-stored titles)
+    'crm.activity.title.booking': 'Reserva',
+    'crm.activity.title.booking_confirmed': 'Reserva Confirmada',
+    'crm.activity.title.booking_cancelled': 'Reserva Cancelada',
+    'crm.activity.title.no_show': 'No Asistió',
+    'crm.activity.title.payment_received': 'Pago Recibido',
+    'crm.activity.title.email_sent': 'Correo Enviado',
+    'crm.activity.title.website_contact_form': 'Envío de Formulario de Contacto',
 
     // Quick Activity Input
     'crm.quick_activity.note': 'Nota',
@@ -1611,6 +1664,7 @@ const translations = {
     'crm.drawer.delete_data_warning_title': 'Los siguientes datos se eliminarán permanentemente:',
     'crm.drawer.delete_data_bookings': '{count} reserva(s)',
     'crm.drawer.delete_data_payments': '{count} registro(s) de pago',
+    'crm.drawer.delete_data_emails': '{count} registro(s) de correo',
     'crm.drawer.delete_data_documents': '{count} documento(s)',
     'crm.drawer.delete_data_activities': '{count} registro(s) de actividad',
     'crm.drawer.loading_payments': 'Cargando pagos...',
@@ -1618,6 +1672,10 @@ const translations = {
     'crm.drawer.loading_appointments': 'Cargando citas...',
     'crm.drawer.no_appointments': 'Sin citas aún',
     'crm.drawer.booking': 'Reserva',
+    'crm.drawer.new_meeting': 'Nueva Reunión',
+    'crm.drawer.sort_date_desc': 'Más Recientes',
+    'crm.drawer.sort_date_asc': 'Más Antiguos',
+    'crm.drawer.sort_service': 'Por Servicio',
     'crm.drawer.created_at': 'Creado',
     'crm.drawer.updated_at': 'Actualizado',
     'crm.drawer.bookings_count': '{count} reservas',
@@ -1659,6 +1717,21 @@ const translations = {
     'crm.drawer.priority_urgent': 'Urgente',
     'crm.drawer.adding': 'Agregando...',
     'crm.drawer.add': 'Agregar',
+    // Email sub-tab
+    'crm.drawer.subtab_activity': 'Actividad',
+    'crm.drawer.subtab_emails': 'Correos',
+    'crm.drawer.loading_emails': 'Cargando correos...',
+    'crm.drawer.no_emails': 'Sin correos enviados aún',
+    'crm.drawer.no_emails_hint': 'Los correos aparecerán aquí cuando envíes confirmaciones, facturas u otras comunicaciones',
+    // Email status
+    'crm.email.status.pending': 'Pendiente',
+    'crm.email.status.sent': 'Enviado',
+    'crm.email.status.delivered': 'Entregado',
+    'crm.email.status.opened': 'Abierto',
+    'crm.email.status.clicked': 'Clicado',
+    'crm.email.status.bounced': 'Rebotado',
+    'crm.email.status.failed': 'Fallido',
+    'crm.email.opened_at': 'Abierto',
 
     // Document Types
     'crm.document.type.contract': 'Contrato',
@@ -1734,6 +1807,8 @@ const translations = {
     'scheduling.service.draft': 'Borrador',
     'scheduling.service.publish': 'Publicar Servicio',
     'scheduling.service.edit': 'Editar',
+    'scheduling.service.activate': 'Activar Servicio',
+    'scheduling.service.deactivate': 'Desactivar Servicio',
     'scheduling.service.ai_generated': 'IA',
     'scheduling.service.manual': 'Manual',
     'scheduling.service.delete': 'Eliminar',
@@ -1813,6 +1888,7 @@ const translations = {
     'scheduling.booking.end_time': 'Hora de Fin',
     'scheduling.booking.notes_section': 'Notas',
     'scheduling.booking.notes_placeholder': 'Información adicional...',
+    'scheduling.booking.error_past_time': 'No se puede reservar una reunión en el pasado. Por favor selecciona una fecha y hora futura.',
 
     // Public Booking Widget (website)
     'public_booking.choose_service': 'Elige un Servicio',
@@ -2007,6 +2083,7 @@ const translations = {
     'reports.tab_transactions': 'Transacciones',
     'reports.tab_invoices': 'Facturas',
     'reports.loading': 'Cargando tu historia...',
+    'reports.click_for_details': 'Clic para más detalles',
     'reports.revenue_30d': 'Ingresos (30 días)',
     'reports.bookings_30d': 'Reservas (30 días)',
     'reports.new_clients': 'Nuevos clientes esta semana',
@@ -2384,6 +2461,7 @@ const translations = {
     // Pipeline stages - consultant vertical
     'crm.stage.qualified': 'מתאים',
     'crm.stage.negotiation': 'משא ומתן',
+    'crm.stage.consultation': 'ייעוץ',
     'crm.pipeline.no_contacts': 'אין אנשי קשר בשלב זה',
     'crm.pipeline.no_stages': 'לא הוגדרו שלבים בפייפליין',
     'crm.pipeline.drop_here': 'שחרר כאן',
@@ -2434,6 +2512,16 @@ const translations = {
     'crm.activity.desc.no_reason': 'לא סופק נימוק',
     'crm.activity.desc.scheduled_for': 'מתוזמן ל',
     'crm.activity.desc.client_no_show': 'הלקוח לא הגיע לפגישה המתוזמנת',
+    'crm.activity.desc.booked_via_website': 'הוזמן דרך האתר ל',
+    'crm.activity.desc.paid': 'שולם',
+    // Activity title translations (for database-stored titles)
+    'crm.activity.title.booking': 'הזמנה',
+    'crm.activity.title.booking_confirmed': 'הזמנה אושרה',
+    'crm.activity.title.booking_cancelled': 'הזמנה בוטלה',
+    'crm.activity.title.no_show': 'לא הגיע',
+    'crm.activity.title.payment_received': 'תשלום התקבל',
+    'crm.activity.title.email_sent': 'אימייל נשלח',
+    'crm.activity.title.website_contact_form': 'שליחת טופס יצירת קשר מהאתר',
 
     // Quick Activity Input
     'crm.quick_activity.note': 'הערה',
@@ -2532,6 +2620,7 @@ const translations = {
     'crm.drawer.delete_data_warning_title': 'הנתונים הבאים יימחקו לצמיתות:',
     'crm.drawer.delete_data_bookings': '{count} פגישות',
     'crm.drawer.delete_data_payments': '{count} רשומות תשלום',
+    'crm.drawer.delete_data_emails': '{count} רשומות אימייל',
     'crm.drawer.delete_data_documents': '{count} מסמכים',
     'crm.drawer.delete_data_activities': '{count} רשומות פעילות',
     'crm.drawer.loading_payments': 'טוען תשלומים...',
@@ -2539,6 +2628,10 @@ const translations = {
     'crm.drawer.loading_appointments': 'טוען פגישות...',
     'crm.drawer.no_appointments': 'אין פגישות עדיין',
     'crm.drawer.booking': 'הזמנה',
+    'crm.drawer.new_meeting': 'פגישה חדשה',
+    'crm.drawer.sort_date_desc': 'החדשים ביותר',
+    'crm.drawer.sort_date_asc': 'הישנים ביותר',
+    'crm.drawer.sort_service': 'לפי שירות',
     'crm.drawer.created_at': 'נוצר',
     'crm.drawer.updated_at': 'עודכן',
     'crm.drawer.bookings_count': '{count} פגישות',
@@ -2580,6 +2673,21 @@ const translations = {
     'crm.drawer.priority_urgent': 'דחוף',
     'crm.drawer.adding': 'מוסיף...',
     'crm.drawer.add': 'הוסף',
+    // Email sub-tab
+    'crm.drawer.subtab_activity': 'פעילות',
+    'crm.drawer.subtab_emails': 'אימיילים',
+    'crm.drawer.loading_emails': 'טוען אימיילים...',
+    'crm.drawer.no_emails': 'אין אימיילים עדיין',
+    'crm.drawer.no_emails_hint': 'אימיילים יופיעו כאן כאשר תשלח אישורים, חשבוניות או תקשורת אחרת',
+    // Email status
+    'crm.email.status.pending': 'ממתין',
+    'crm.email.status.sent': 'נשלח',
+    'crm.email.status.delivered': 'נמסר',
+    'crm.email.status.opened': 'נפתח',
+    'crm.email.status.clicked': 'נלחץ',
+    'crm.email.status.bounced': 'קפץ בחזרה',
+    'crm.email.status.failed': 'נכשל',
+    'crm.email.opened_at': 'נפתח',
 
     // Document Types
     'crm.document.type.contract': 'חוזה',
@@ -2655,6 +2763,8 @@ const translations = {
     'scheduling.service.draft': 'טיוטה',
     'scheduling.service.publish': 'פרסם שירות',
     'scheduling.service.edit': 'עריכה',
+    'scheduling.service.activate': 'הפעל שירות',
+    'scheduling.service.deactivate': 'השבת שירות',
     'scheduling.service.ai_generated': 'AI',
     'scheduling.service.manual': 'ידני',
     'scheduling.service.delete': 'מחיקה',
@@ -2734,6 +2844,7 @@ const translations = {
     'scheduling.booking.end_time': 'שעת סיום',
     'scheduling.booking.notes_section': 'הערות',
     'scheduling.booking.notes_placeholder': 'מידע נוסף...',
+    'scheduling.booking.error_past_time': 'לא ניתן להזמין פגישה בעבר. אנא בחר תאריך ושעה עתידיים.',
 
     // Public Booking Widget (website)
     'public_booking.choose_service': 'בחר שירות',
@@ -2928,6 +3039,7 @@ const translations = {
     'reports.tab_transactions': 'עסקאות',
     'reports.tab_invoices': 'חשבוניות',
     'reports.loading': 'טוען את הסיפור שלך...',
+    'reports.click_for_details': 'לחץ לפרטים',
     'reports.revenue_30d': 'הכנסות (30 יום)',
     'reports.bookings_30d': 'תורים (30 יום)',
     'reports.new_clients': 'לקוחות חדשים השבוע',
@@ -3163,11 +3275,11 @@ const translations = {
     'chat.title': 'רק תגיד לי',
     'chat.subtitle': 'שנה כל דבר, בכל מקום — אני אטפל',
     'chat.placeholder': 'לדוג׳ הוסף משבצת לשבת בבוקר…',
-    'chat.welcome': 'בוקר טוב! אני שומר על הכל. רוצה לשנות משהו? פשוט תגיד לי במילים רגילות — מחיר, שעות, פוסט, כל דבר — ואני אדאג לזה במקום הנכון.',
-    'chat.example.slot': 'הוסף שעות לשבת בבוקר',
-    'chat.example.service': 'הוסף שירות 90 דקות ב-150',
+    'chat.welcome': 'היי! ספר לי מה צריך ואני אטפל.',
+    'chat.example.slot': 'פתח משימה',
+    'chat.example.service': 'הוסף שירות חדש',
     'chat.example.money': 'מי חייב לי כסף?',
-    'chat.example.booking': 'קבע פגישה עם לקוח למחר ב-14:00',
+    'chat.example.booking': 'מצא איש קשר',
     // AI Chat Confirmation - Action type labels
     'chat.action.deactivate': 'השבתה',
     'chat.action.activate': 'הפעלה',
@@ -3234,6 +3346,9 @@ const translations = {
     'cap.config.days': 'ימים',
     'cap.config.stripe_not_connected': 'Stripe לא מחובר',
     'cap.config.connect_stripe': 'התחבר לקבלת תשלומים',
+    'cap.config.calendar': 'יומן',
+    'cap.config.calendar_synced': 'מסונכרן',
+    'cap.config.connect_calendar': 'חבר לסנכרון',
     'cap.status.setup_needed': 'נדרשת הגדרה',
 
     // Configuration Dialog
@@ -3382,22 +3497,59 @@ export function LanguageProvider({ children }: { children: React.ReactNode }) {
   const [language, setLanguageState] = useState<Language>('en');
   const [currencyCode, setCurrencyCode] = useState<CurrencyCode>('USD');
   const [currencyInitialized, setCurrencyInitialized] = useState(false);
+  const [userId, setUserId] = useState<string | null>(null);
 
-  // Load language and currency from localStorage on mount
+  // Load language and currency from localStorage and database on mount
   useEffect(() => {
-    const savedLang = localStorage.getItem('business-os-language');
-    if (savedLang && (savedLang === 'en' || savedLang === 'es' || savedLang === 'he')) {
-      setLanguageState(savedLang);
-    }
+    const loadPreferences = async () => {
+      // First load from localStorage for immediate UI
+      const savedLang = localStorage.getItem('business-os-language');
+      if (savedLang && (savedLang === 'en' || savedLang === 'es' || savedLang === 'he')) {
+        setLanguageState(savedLang);
+      }
 
-    const savedCurrency = localStorage.getItem('business-os-currency');
-    if (savedCurrency && savedCurrency in CURRENCY_CONFIGS) {
-      setCurrencyCode(savedCurrency as CurrencyCode);
-    } else if (savedLang && savedLang in DEFAULT_CURRENCY_BY_LANGUAGE) {
-      // Use default currency for language if no currency was saved
-      setCurrencyCode(DEFAULT_CURRENCY_BY_LANGUAGE[savedLang as Language]);
-    }
-    setCurrencyInitialized(true);
+      const savedCurrency = localStorage.getItem('business-os-currency');
+      if (savedCurrency && savedCurrency in CURRENCY_CONFIGS) {
+        setCurrencyCode(savedCurrency as CurrencyCode);
+      } else if (savedLang && savedLang in DEFAULT_CURRENCY_BY_LANGUAGE) {
+        setCurrencyCode(DEFAULT_CURRENCY_BY_LANGUAGE[savedLang as Language]);
+      }
+      setCurrencyInitialized(true);
+
+      // Then check if user is authenticated and load from database
+      try {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (user) {
+          setUserId(user.id);
+
+          // Load language preference from database (source of truth for emails)
+          const { data: prefs } = await supabase
+            .from('user_preferences')
+            .select('preferred_language')
+            .eq('user_id', user.id)
+            .single();
+
+          if (prefs?.preferred_language && (prefs.preferred_language === 'en' || prefs.preferred_language === 'es' || prefs.preferred_language === 'he')) {
+            setLanguageState(prefs.preferred_language);
+            localStorage.setItem('business-os-language', prefs.preferred_language);
+          } else if (savedLang) {
+            // If no database preference but we have localStorage, sync to database
+            await supabase
+              .from('user_preferences')
+              .upsert({
+                user_id: user.id,
+                preferred_language: savedLang,
+                updated_at: new Date().toISOString()
+              }, { onConflict: 'user_id' });
+          }
+        }
+      } catch (err) {
+        // Silently fail - localStorage will be used as fallback
+        console.debug('Failed to load language from database:', err);
+      }
+    };
+
+    loadPreferences();
   }, []);
 
   // Apply RTL to HTML element when language changes
@@ -3407,7 +3559,24 @@ export function LanguageProvider({ children }: { children: React.ReactNode }) {
     document.documentElement.lang = language;
   }, [language]);
 
-  const setLanguage = (lang: Language) => {
+  // Sync language to database when it changes
+  const syncLanguageToDatabase = useCallback(async (lang: Language) => {
+    if (!userId) return;
+
+    try {
+      await supabase
+        .from('user_preferences')
+        .upsert({
+          user_id: userId,
+          preferred_language: lang,
+          updated_at: new Date().toISOString()
+        }, { onConflict: 'user_id' });
+    } catch (err) {
+      console.debug('Failed to sync language to database:', err);
+    }
+  }, [userId]);
+
+  const setLanguage = useCallback((lang: Language) => {
     setLanguageState(lang);
     localStorage.setItem('business-os-language', lang);
 
@@ -3415,7 +3584,10 @@ export function LanguageProvider({ children }: { children: React.ReactNode }) {
     if (!localStorage.getItem('business-os-currency')) {
       setCurrencyCode(DEFAULT_CURRENCY_BY_LANGUAGE[lang]);
     }
-  };
+
+    // Sync to database for email locale
+    syncLanguageToDatabase(lang);
+  }, [syncLanguageToDatabase]);
 
   const setCurrency = (code: CurrencyCode) => {
     setCurrencyCode(code);

@@ -87,6 +87,8 @@ interface ConfigStats {
   paymentsConnected: boolean;
   paymentsProvider: string;
   automationsCount: number;
+  calendarSynced: boolean;
+  calendarProvider: 'google_calendar' | 'outlook' | null;
 }
 
 type CardStats = WebsiteStats | PeopleStats | ReportsStats | ConfigStats;
@@ -203,6 +205,15 @@ function ConfigSummary({ stats, t }: { stats: ConfigStats; t: (key: string) => s
       label: stats.paymentsConnected ? (stats.paymentsProvider || 'Stripe') : (t('cap.config.stripe_not_connected') || 'Stripe not connected'),
       detail: stats.paymentsConnected ? (t('cap.config.payments_on') || 'payments on') : (t('cap.config.connect_stripe') || 'connect to accept payments'),
       isSet: stats.paymentsConnected
+    },
+    {
+      label: stats.calendarSynced
+        ? (stats.calendarProvider === 'google_calendar' ? 'Google' : 'Outlook')
+        : (t('cap.config.calendar') || 'Calendar'),
+      detail: stats.calendarSynced
+        ? (t('cap.config.calendar_synced') || 'synced')
+        : (t('cap.config.connect_calendar') || 'connect to sync'),
+      isSet: stats.calendarSynced
     }
   ];
 

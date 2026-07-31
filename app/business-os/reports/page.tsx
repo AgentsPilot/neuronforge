@@ -1,11 +1,10 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { BusinessOSHeader } from '@/components/business-os/BusinessOSHeader';
 import { BigPictureSummary } from '@/components/business-os/reports/BigPictureSummary';
 import { StoryCard } from '@/components/business-os/reports/StoryCard';
-import { FocusList } from '@/components/business-os/reports/FocusList';
 import {
   ArrowLeft,
   BarChart3,
@@ -15,7 +14,8 @@ import {
   LayoutDashboard,
   List,
   FileText,
-  Banknote
+  Banknote,
+  Globe
 } from 'lucide-react';
 import { assessAllCards } from '@/lib/business-os/insights/StaticHealthRules';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
@@ -31,23 +31,78 @@ type ViewMode = 'overview' | 'transactions' | 'invoices';
 
 export default function ReportsPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { t, language, formatCurrency } = useLanguage();
-  const [viewMode, setViewMode] = useState<ViewMode>('overview');
+
+  // Check URL params for initial view mode and invoice filter
+  const tabParam = searchParams.get('tab');
+  const invoiceIdParam = searchParams.get('invoice');
+  const initialViewMode = tabParam === 'invoices' || tabParam === 'transactions' ? tabParam : 'overview';
+
+  const [viewMode, setViewMode] = useState<ViewMode>(initialViewMode);
+  const [selectedInvoiceId, setSelectedInvoiceId] = useState<string | null>(invoiceIdParam);
   const [loading, setLoading] = useState(true);
   const [storyLoading, setStoryLoading] = useState(false);
   const [stats, setStats] = useState<BusinessStats | null>(null);
   const [story, setStory] = useState<StoryResponse | null>(null);
   const [hasGeneratedStory, setHasGeneratedStory] = useState(false);
+  const [websiteAnalytics, setWebsiteAnalytics] = useState<{
+    total_views: number;
+    unique_visitors: number;
+    visitors_today: number;
+    visitors_7d: number;
+    visitors_30d: number;
+  } | null>(null);
+  // Detailed stats from the API for expandable cards
+  const [detailedStats, setDetailedStats] = useState<{
+    scheduling: {
+      confirmed_30d: number;
+      completed_30d: number;
+      cancelled_30d: number;
+      no_show_30d: number;
+      total_revenue_30d: number;
+    };
+    payments: {
+      successful_transactions_30d: number;
+      failed_transactions_30d: number;
+      refunded_30d: number;
+      invoices_sent_30d: number;
+      invoices_paid_30d: number;
+      invoices_overdue: number;
+      average_invoice_amount: number;
+    };
+    crm: {
+      active_leads: number;
+      active_clients: number;
+      contacts_by_source: { source: string; count: number }[];
+    };
+    website: {
+      form_submissions_30d: number;
+    };
+  } | null>(null);
 
   // Fetch stats on mount (no LLM call - just static data)
   useEffect(() => {
     fetchStats();
+    fetchWebsiteAnalytics();
   }, []);
+
+  // Update view mode when URL params change
+  useEffect(() => {
+    const tab = searchParams.get('tab');
+    const invoice = searchParams.get('invoice');
+    if (tab === 'invoices' || tab === 'transactions') {
+      setViewMode(tab);
+    }
+    if (invoice) {
+      setSelectedInvoiceId(invoice);
+    }
+  }, [searchParams]);
 
   const fetchStats = async () => {
     try {
       setLoading(true);
-      const response = await fetch('/api/business-os/stats');
+      const response = await fetch('/api/business-os/stats', { cache: 'no-store' });
       const data = await response.json();
 
       if (data.success && data.stats) {
@@ -69,6 +124,34 @@ export default function ReportsPage() {
         };
         setStats(newStats);
 
+        // Extract detailed stats for expandable cards
+        setDetailedStats({
+          scheduling: {
+            confirmed_30d: data.stats.scheduling?.confirmed_30d || 0,
+            completed_30d: data.stats.scheduling?.completed_30d || 0,
+            cancelled_30d: data.stats.scheduling?.cancelled_30d || 0,
+            no_show_30d: data.stats.scheduling?.no_show_30d || 0,
+            total_revenue_30d: data.stats.scheduling?.total_revenue_30d || 0,
+          },
+          payments: {
+            successful_transactions_30d: data.stats.payments?.successful_transactions_30d || 0,
+            failed_transactions_30d: data.stats.payments?.failed_transactions_30d || 0,
+            refunded_30d: data.stats.payments?.refunded_30d || 0,
+            invoices_sent_30d: data.stats.payments?.invoices_sent_30d || 0,
+            invoices_paid_30d: data.stats.payments?.invoices_paid_30d || 0,
+            invoices_overdue: data.stats.payments?.invoices_overdue || 0,
+            average_invoice_amount: data.stats.payments?.average_invoice_amount || 0,
+          },
+          crm: {
+            active_leads: data.stats.crm?.active_leads || 0,
+            active_clients: data.stats.crm?.active_clients || 0,
+            contacts_by_source: data.stats.crm?.contacts_by_source || [],
+          },
+          website: {
+            form_submissions_30d: data.stats.website?.form_submissions_30d || 0,
+          },
+        });
+
         // Set static health assessments (no LLM)
         const cardHealth = assessAllCards(newStats);
         setStory({
@@ -82,6 +165,18 @@ export default function ReportsPage() {
       console.error('Failed to fetch stats:', error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchWebsiteAnalytics = async () => {
+    try {
+      const response = await fetch('/api/website/analytics', { cache: 'no-store' });
+      const data = await response.json();
+      if (data.success && data.analytics) {
+        setWebsiteAnalytics(data.analytics);
+      }
+    } catch (error) {
+      console.error('Failed to fetch website analytics:', error);
     }
   };
 
@@ -130,6 +225,36 @@ export default function ReportsPage() {
       en: 'Collecting Payment',
       es: 'Cobrando Pagos',
       he: 'גביית תשלומים'
+    },
+    website: {
+      en: 'Website Traffic',
+      es: 'Tráfico del Sitio',
+      he: 'תנועה באתר'
+    },
+    visitors: {
+      en: 'visitors',
+      es: 'visitantes',
+      he: 'מבקרים'
+    },
+    views: {
+      en: 'page views',
+      es: 'vistas',
+      he: 'צפיות'
+    },
+    today: {
+      en: 'today',
+      es: 'hoy',
+      he: 'היום'
+    },
+    last_7_days: {
+      en: 'last 7 days',
+      es: 'últimos 7 días',
+      he: '7 ימים אחרונים'
+    },
+    last_30_days: {
+      en: 'last 30 days',
+      es: 'últimos 30 días',
+      he: '30 ימים אחרונים'
     },
     this_month: {
       en: 'this month',
@@ -180,6 +305,87 @@ export default function ReportsPage() {
       en: 'Send Reminder',
       es: 'Enviar Recordatorio',
       he: 'שלח תזכורת'
+    },
+    // Detailed stats translations
+    confirmed: {
+      en: 'Confirmed',
+      es: 'Confirmadas',
+      he: 'מאושר'
+    },
+    completed: {
+      en: 'Completed',
+      es: 'Completadas',
+      he: 'הושלם'
+    },
+    cancelled: {
+      en: 'Cancelled',
+      es: 'Canceladas',
+      he: 'בוטל'
+    },
+    no_show: {
+      en: 'No-Show',
+      es: 'No asistió',
+      he: 'לא הגיע'
+    },
+    booking_revenue: {
+      en: 'Revenue',
+      es: 'Ingresos',
+      he: 'הכנסות'
+    },
+    successful: {
+      en: 'Successful',
+      es: 'Exitosas',
+      he: 'הצליחו'
+    },
+    failed: {
+      en: 'Failed',
+      es: 'Fallidas',
+      he: 'נכשלו'
+    },
+    refunded: {
+      en: 'Refunded',
+      es: 'Reembolsadas',
+      he: 'הוחזרו'
+    },
+    invoices_sent: {
+      en: 'Sent',
+      es: 'Enviadas',
+      he: 'נשלחו'
+    },
+    invoices_paid: {
+      en: 'Paid',
+      es: 'Pagadas',
+      he: 'שולמו'
+    },
+    overdue: {
+      en: 'Overdue',
+      es: 'Vencidas',
+      he: 'באיחור'
+    },
+    average_amount: {
+      en: 'Avg. Amount',
+      es: 'Monto Prom.',
+      he: 'סכום ממוצע'
+    },
+    active_leads: {
+      en: 'Active Leads',
+      es: 'Leads Activos',
+      he: 'לידים פעילים'
+    },
+    active_clients: {
+      en: 'Active Clients',
+      es: 'Clientes Activos',
+      he: 'לקוחות פעילים'
+    },
+    form_submissions: {
+      en: 'Form Submissions',
+      es: 'Envíos de Formulario',
+      he: 'הגשות טפסים'
+    },
+    breakdown_30d: {
+      en: '30-day breakdown',
+      es: 'Desglose de 30 días',
+      he: 'פירוט 30 יום'
     }
   };
 
@@ -197,7 +403,9 @@ export default function ReportsPage() {
     quiet: { en: 'Quiet', es: 'Tranquilo', he: 'שקט' },
     all_collected: { en: 'All collected', es: 'Todo cobrado', he: 'הכל נגבה' },
     some_pending: { en: 'Some pending', es: 'Algunos pendientes', he: 'כמה ממתינים' },
-    many_pending: { en: 'Many pending', es: 'Muchos pendientes', he: 'רבים ממתינים' }
+    many_pending: { en: 'Many pending', es: 'Muchos pendientes', he: 'רבים ממתינים' },
+    getting_traffic: { en: 'Getting traffic', es: 'Recibiendo tráfico', he: 'מקבל תנועה' },
+    no_traffic: { en: 'No traffic yet', es: 'Sin tráfico aún', he: 'אין תנועה עדיין' }
   };
 
   // Card explanations based on health status
@@ -306,6 +514,36 @@ export default function ReportsPage() {
       }
     };
     return explanations[key]?.[language] || explanations.all_collected.en;
+  };
+
+  const getWebsiteExplanation = () => {
+    if (!websiteAnalytics) return '';
+    const hasTraffic = websiteAnalytics.visitors_30d > 0;
+    const explanations: Record<string, Record<string, string>> = {
+      getting_traffic: {
+        en: 'People are finding your website. Keep sharing your link.',
+        es: 'La gente está encontrando tu sitio. Sigue compartiendo tu enlace.',
+        he: 'אנשים מוצאים את האתר שלך. המשך לשתף את הקישור.'
+      },
+      no_traffic: {
+        en: 'Your website is ready. Share your link to get visitors.',
+        es: 'Tu sitio está listo. Comparte tu enlace para conseguir visitantes.',
+        he: 'האתר שלך מוכן. שתף את הקישור שלך כדי לקבל מבקרים.'
+      }
+    };
+    const key = hasTraffic ? 'getting_traffic' : 'no_traffic';
+    return explanations[key]?.[language] || explanations.no_traffic.en;
+  };
+
+  const getWebsiteHealth = (): HealthStatus => {
+    if (!websiteAnalytics) return 'healthy';
+    if (websiteAnalytics.visitors_30d > 0) return 'healthy';
+    return 'watch';
+  };
+
+  const getWebsiteStatusLabel = (): string => {
+    if (!websiteAnalytics) return 'no_traffic';
+    return websiteAnalytics.visitors_30d > 0 ? 'getting_traffic' : 'no_traffic';
   };
 
   const tr = (key: string) => cardTranslations[key]?.[language] || cardTranslations[key]?.en || key;
@@ -418,8 +656,8 @@ export default function ReportsPage() {
               hasGeneratedStory={hasGeneratedStory}
             />
 
-            {/* Story Cards Grid - Each card has its own contextual trend graph */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
+            {/* Story Cards Grid - 3 cards per row, equal heights */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3" style={{ gridAutoRows: 'minmax(280px, auto)' }}>
               {/* Money Card */}
               <StoryCard
                 icon={Banknote}
@@ -433,6 +671,13 @@ export default function ReportsPage() {
                 trendType="revenue"
                 currentValue={stats?.payments.revenue_30d || 0}
                 previousValue={(stats?.payments.revenue_30d || 0) * 0.85}
+                expandedTitle={tr('breakdown_30d')}
+                expandedDetails={[
+                  { label: tr('successful'), value: detailedStats?.payments.successful_transactions_30d || 0, color: 'green' },
+                  { label: tr('failed'), value: detailedStats?.payments.failed_transactions_30d || 0, color: detailedStats?.payments.failed_transactions_30d ? 'red' : 'default' },
+                  { label: tr('refunded'), value: detailedStats?.payments.refunded_30d || 0 },
+                  { label: tr('average_amount'), value: formatCurrency(detailedStats?.payments.average_invoice_amount || 0) },
+                ]}
               />
 
               {/* People Card */}
@@ -457,6 +702,13 @@ export default function ReportsPage() {
                 trendType="people"
                 currentValue={stats?.crm.total_contacts || 0}
                 previousValue={(stats?.crm.total_contacts || 0) - (stats?.crm.new_this_week || 0)}
+                expandedTitle={tr('breakdown_30d')}
+                expandedDetails={[
+                  { label: tr('active_leads'), value: detailedStats?.crm.active_leads || 0 },
+                  { label: tr('active_clients'), value: detailedStats?.crm.active_clients || 0, color: 'green' },
+                  { label: tr('went_quiet'), value: stats?.crm.went_quiet || 0, color: stats?.crm.went_quiet ? 'amber' : 'default' },
+                  { label: tr('became_clients'), value: stats?.crm.became_clients_this_week || 0 },
+                ]}
               />
 
               {/* Calendar Card */}
@@ -475,6 +727,13 @@ export default function ReportsPage() {
                 trendType="calendar"
                 currentValue={stats?.scheduling.bookings_30d || 0}
                 previousValue={(stats?.scheduling.bookings_30d || 0) * 0.8}
+                expandedTitle={tr('breakdown_30d')}
+                expandedDetails={[
+                  { label: tr('confirmed'), value: detailedStats?.scheduling.confirmed_30d || 0 },
+                  { label: tr('completed'), value: detailedStats?.scheduling.completed_30d || 0, color: 'green' },
+                  { label: tr('cancelled'), value: detailedStats?.scheduling.cancelled_30d || 0, color: detailedStats?.scheduling.cancelled_30d ? 'red' : 'default' },
+                  { label: tr('no_show'), value: detailedStats?.scheduling.no_show_30d || 0, color: detailedStats?.scheduling.no_show_30d ? 'amber' : 'default' },
+                ]}
               />
 
               {/* Collection Card */}
@@ -494,15 +753,41 @@ export default function ReportsPage() {
                 trendType="collection"
                 currentValue={stats?.payments.pending_invoices || 0}
                 previousValue={(stats?.payments.pending_invoices || 0) * 1.2}
+                expandedTitle={tr('breakdown_30d')}
+                expandedDetails={[
+                  { label: tr('invoices_sent'), value: detailedStats?.payments.invoices_sent_30d || 0 },
+                  { label: tr('invoices_paid'), value: detailedStats?.payments.invoices_paid_30d || 0, color: 'green' },
+                  { label: tr('overdue'), value: detailedStats?.payments.invoices_overdue || 0, color: detailedStats?.payments.invoices_overdue ? 'red' : 'default' },
+                  { label: tr('waiting'), value: stats?.payments.pending_invoices || 0, color: stats?.payments.pending_invoices ? 'amber' : 'default' },
+                ]}
+              />
+
+              {/* Website Card */}
+              <StoryCard
+                icon={Globe}
+                iconColor="#3B82F6"
+                iconBgColor="rgba(59, 130, 246, 0.15)"
+                title={tr('website')}
+                mainValue={`${websiteAnalytics?.visitors_30d || 0} ${tr('visitors')} ${tr('last_30_days')}`}
+                health={getWebsiteHealth()}
+                statusLabel={getStatusLabel(getWebsiteStatusLabel())}
+                explanation={getWebsiteExplanation()}
+                action={{
+                  label: language === 'he' ? 'צפה באתר' : language === 'es' ? 'Ver sitio' : 'View site',
+                  onClick: () => router.push('/business-os/website')
+                }}
+                trendType="people"
+                currentValue={websiteAnalytics?.visitors_30d || 0}
+                previousValue={(websiteAnalytics?.visitors_30d || 0) * 0.8}
+                expandedTitle={tr('breakdown_30d')}
+                expandedDetails={[
+                  { label: tr('today'), value: websiteAnalytics?.visitors_today || 0 },
+                  { label: tr('last_7_days'), value: websiteAnalytics?.visitors_7d || 0 },
+                  { label: tr('form_submissions'), value: detailedStats?.website.form_submissions_30d || 0, color: detailedStats?.website.form_submissions_30d ? 'green' : 'default' },
+                  { label: tr('views'), value: websiteAnalytics?.total_views || 0 },
+                ]}
               />
             </div>
-
-            {/* Focus List */}
-            <FocusList
-              items={story?.focusItems || []}
-              loading={storyLoading}
-              stats={stats}
-            />
           </div>
         ) : (
           /* Transactions / Invoices view */
@@ -512,7 +797,11 @@ export default function ReportsPage() {
           >
             {viewMode === 'transactions' && <PaymentTransactionList searchQuery="" />}
             {viewMode === 'invoices' && (
-              <PaymentInvoiceList searchQuery="" onCreateInvoice={() => {}} />
+              <PaymentInvoiceList
+                searchQuery=""
+                onCreateInvoice={() => {}}
+                highlightId={selectedInvoiceId}
+              />
             )}
           </div>
         )}

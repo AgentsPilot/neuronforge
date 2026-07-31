@@ -45,14 +45,13 @@ import {
  */
 export function getStandardHomepageBlocks(): BuildingBlock[] {
   return [
-    // 1. Header - Navigation
+    // 1. Header - Navigation (4 main sections: About, Services, Process, Contact)
     HeaderBlock.standard({
       logo_text: 'Your Business',
       menu_items: [
         { label: 'About', anchor: '#about' },
         { label: 'Services', anchor: '#services' },
         { label: 'Process', anchor: '#process' },
-        { label: 'Testimonials', anchor: '#testimonials' },
         { label: 'Contact', anchor: '#contact' }
       ],
       cta_button: { text: 'Book Now', link: '#booking' },
@@ -80,10 +79,14 @@ export function getStandardHomepageBlocks(): BuildingBlock[] {
     ]),
 
     // 5. Process - How it works
+    // NOTE: Steps are PLACEHOLDERS - they get replaced by:
+    // 1. User-defined steps from business_profiles.process_steps (if set)
+    // 2. Auto-generated steps from user's active capabilities (CRM, Scheduling, Payments, etc.)
+    // These placeholders only show if neither of the above exist
     ProcessBlock.numbered([
-      { title: 'Initial Consultation', description: 'Free 15-minute call to discuss your needs' },
-      { title: 'First Session', description: 'Begin building a therapeutic relationship' },
-      { title: 'Ongoing Support', description: 'Regular sessions to support your growth' }
+      { title: 'Step 1', description: 'Define your first step' },
+      { title: 'Step 2', description: 'Define your second step' },
+      { title: 'Step 3', description: 'Define your third step' }
     ]),
 
     // 6. Testimonials - Social proof
@@ -107,6 +110,76 @@ export function getStandardHomepageBlocks(): BuildingBlock[] {
     // 9. Contact Form - Get in touch
     ContactFormBlock.standard({
       title: 'Get in Touch',
+      email: 'contact@yourbusiness.com',
+      phone: '+1 (555) 123-4567'
+    })
+  ];
+}
+
+// =============================================
+// STANDARD LANDING PAGE BLOCKS
+// Used for service-focused landing pages
+// Simpler structure than homepage
+// =============================================
+
+/**
+ * Standard landing page block structure.
+ * Focused on promoting a single service with clear CTA.
+ * @param serviceName - Name of the service this landing page promotes
+ * @param serviceDescription - Description of the service
+ * @param servicePrice - Optional price to display
+ */
+export function getStandardLandingPageBlocks(
+  serviceName: string = 'Service',
+  serviceDescription: string = 'Professional service tailored to your needs',
+  servicePrice?: number | null
+): BuildingBlock[] {
+  return [
+    // 1. Header - Minimal navigation
+    HeaderBlock.minimal({
+      logo_text: 'Your Business',
+      menu_items: []
+    }),
+
+    // 2. Hero - Service headline and CTA
+    HeroBlock.minimal({
+      name: serviceName,
+      tagline: serviceDescription,
+      cta: 'Book Now'
+    }),
+
+    // 3. Features/Benefits - Why choose this service
+    FeaturesBlock.grid([
+      { title: 'Expert Guidance', description: 'Work with experienced professionals', icon: 'Star' },
+      { title: 'Personalized Approach', description: 'Tailored to your specific needs', icon: 'Users' },
+      { title: 'Proven Results', description: 'Track record of success', icon: 'TrendingUp' }
+    ]),
+
+    // 4. Pricing - Service price (if available)
+    PricingBlock.simple([
+      {
+        name: serviceName,
+        price: servicePrice ? `$${servicePrice}` : 'Contact for pricing',
+        features: ['One-on-one session', 'Personalized attention', 'Follow-up support']
+      }
+    ]),
+
+    // 5. FAQ - Common questions about this service
+    FAQBlock.accordion([
+      { question: 'What can I expect?', answer: 'A supportive, professional environment focused on your goals.' },
+      { question: 'How do I prepare?', answer: 'Simply come as you are. We\'ll guide you through everything.' },
+      { question: 'What if I need to reschedule?', answer: 'We understand life happens. Contact us to reschedule.' }
+    ]),
+
+    // 6. Booking Widget - CTA to book this specific service
+    BookingWidgetBlock.embedded({
+      title: 'Ready to Get Started?',
+      services: [serviceName]
+    }),
+
+    // 7. Contact Form - Alternative contact method
+    ContactFormBlock.standard({
+      title: 'Have Questions?',
       email: 'contact@yourbusiness.com'
     })
   ];
@@ -198,7 +271,8 @@ export const TherapistTemplates: WebsiteTemplate[] = [
       }),
       ContactFormBlock.standard({
         title: 'Questions? Reach Out',
-        email: 'contact@therapypractice.com'
+        email: 'contact@therapypractice.com',
+        phone: '+1 (555) 234-5678'
       })
     ]
   },
@@ -225,8 +299,8 @@ export const TherapistTemplates: WebsiteTemplate[] = [
         menu_items: [
           { label: 'About', anchor: '#about' },
           { label: 'Services', anchor: '#services' },
-          { label: 'Credentials', anchor: '#features' },
-          { label: 'FAQ', anchor: '#faq' }
+          { label: 'Process', anchor: '#process' },
+          { label: 'Contact', anchor: '#contact' }
         ],
         cta_button: { text: 'Request Appointment', link: '#contact' },
         style: 'solid'
@@ -269,7 +343,8 @@ export const TherapistTemplates: WebsiteTemplate[] = [
       }),
       ContactFormBlock.standard({
         title: 'Have Questions?',
-        email: 'appointments@clinicalpractice.com'
+        email: 'appointments@clinicalpractice.com',
+        phone: '+1 (555) 345-6789'
       })
     ]
   },
@@ -355,9 +430,9 @@ export const TherapistTemplates: WebsiteTemplate[] = [
         logo_text: 'Trauma Recovery',
         menu_items: [
           { label: 'About', anchor: '#about' },
-          { label: 'Specializations', anchor: '#services' },
-          { label: 'Approach', anchor: '#process' },
-          { label: 'Resources', anchor: '#faq' }
+          { label: 'Services', anchor: '#services' },
+          { label: 'Process', anchor: '#process' },
+          { label: 'Contact', anchor: '#contact' }
         ],
         cta_button: { text: 'Free Consultation', link: '#contact' },
         style: 'blur'

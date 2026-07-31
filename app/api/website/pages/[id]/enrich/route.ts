@@ -76,7 +76,9 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         user.id,
         block.block_type,
         block.content as Record<string, unknown>,
-        pageLanguage
+        pageLanguage,
+        false, // useAI
+        user.email // userEmail for contact form enrichment
       );
 
       if (result.enriched) {

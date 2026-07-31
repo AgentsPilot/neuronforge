@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Clock, Pause, Sparkles, Check, Loader2, Pencil, Trash2, AlertCircle, Tag, CreditCard, FileText, X, Plus } from 'lucide-react';
+import { Clock, Pause, Sparkles, Check, Loader2, Pencil, Trash2, AlertCircle, Tag, CreditCard, FileText, X, Plus, Power } from 'lucide-react';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import type { SchedulingService, PaymentType, InstallmentFrequency, FirstPaymentDue, ServiceCurrency } from '@/lib/repositories/SchedulingRepository';
 
@@ -62,8 +62,24 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
 
   // Valid currencies for services
   const validCurrencies: ServiceCurrency[] = ['USD', 'EUR', 'ILS', 'GBP'];
-  const getValidCurrency = (code: string): ServiceCurrency =>
-    validCurrencies.includes(code as ServiceCurrency) ? code as ServiceCurrency : 'ILS';
+  const currencySymbolToCode: Record<string, ServiceCurrency> = {
+    '$': 'USD',
+    '€': 'EUR',
+    '₪': 'ILS',
+    '£': 'GBP'
+  };
+  const getValidCurrency = (code: string | undefined | null): ServiceCurrency => {
+    if (!code) return 'ILS';
+    // If it's already a valid code, return it
+    if (validCurrencies.includes(code as ServiceCurrency)) {
+      return code as ServiceCurrency;
+    }
+    // If it's a symbol, convert to code
+    if (currencySymbolToCode[code]) {
+      return currencySymbolToCode[code];
+    }
+    return 'ILS';
+  };
 
   // New row state for inline service creation
   const [isAddingNewRow, setIsAddingNewRow] = useState(false);
@@ -89,6 +105,8 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
   const [deleteConfirm, setDeleteConfirm] = useState<{ serviceId: string; serviceName: string } | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<{ message: string; bookingCount?: number } | null>(null);
+  // Toggle active state
+  const [togglingId, setTogglingId] = useState<string | null>(null);
 
   // Description mini-dialog state
   const [descriptionDialogId, setDescriptionDialogId] = useState<string | null>(null);
@@ -272,6 +290,52 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
       // Silently fail - user can retry
     } finally {
       setPublishingId(null);
+    }
+  };
+
+  const handleToggleActive = async (e: React.MouseEvent, service: SchedulingService) => {
+    e.stopPropagation();
+    if (togglingId) return;
+
+    const newActiveState = !service.is_active;
+    setTogglingId(service.id);
+
+    // Optimistic update
+    setOptimisticUpdates(prev => ({
+      ...prev,
+      [service.id]: { ...prev[service.id], is_active: newActiveState }
+    }));
+
+    try {
+      const response = await fetch(`/api/scheduling/services/${service.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          is_active: newActiveState,
+          // Sync status with is_active flag
+          status: newActiveState ? 'active' : 'inactive'
+        })
+      });
+
+      if (response.ok) {
+        onSilentRefresh?.();
+      } else {
+        // Revert optimistic update on failure
+        setOptimisticUpdates(prev => {
+          const updated = { ...prev };
+          delete updated[service.id];
+          return updated;
+        });
+      }
+    } catch {
+      // Revert optimistic update on error
+      setOptimisticUpdates(prev => {
+        const updated = { ...prev };
+        delete updated[service.id];
+        return updated;
+      });
+    } finally {
+      setTogglingId(null);
     }
   };
 
@@ -584,7 +648,7 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
       duration: service.duration_minutes?.toString() || '60',
       buffer: service.buffer_minutes?.toString() || '0',
       price: service.price?.toString() || '0',
-      currency: service.currency || 'ILS',
+      currency: getValidCurrency(service.currency),
       payment_type: service.payment_type || 'full',
       installment_count: service.installment_count || 1,
       installment_frequency: service.installment_frequency || 'monthly',
@@ -617,7 +681,7 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
       service_name: editRowValues.name,
       duration_minutes: parseInt(editRowValues.duration) || 60,
       buffer_minutes: parseInt(editRowValues.buffer) || 0,
-      price: parseFloat(editRowValues.price) || null,
+      price: editRowValues.price !== '' ? parseFloat(editRowValues.price) : null,
       currency: editRowValues.currency,
       payment_type: editRowValues.payment_type,
       installment_count: editRowValues.installment_count,
@@ -653,7 +717,7 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(updateData)
-    }).then(response => {
+    }).then(async response => {
       if (response.ok) {
         // Success - clear optimistic update and do silent refresh
         setOptimisticUpdates(prev => {
@@ -667,6 +731,13 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
         onServiceEdited?.(serviceId);
         onSilentRefresh?.();
       } else {
+        // Log error for debugging
+        const errorData = await response.json().catch(() => ({}));
+        console.error('Service update failed:', { status: response.status, ...errorData });
+        console.error('Sent data:', updateData);
+        if (errorData.details) {
+          console.error('Validation errors:', errorData.details);
+        }
         setOptimisticUpdates(prev => {
           const updated = { ...prev };
           delete updated[serviceId];
@@ -674,7 +745,8 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
         });
         onSilentRefresh?.();
       }
-    }).catch(() => {
+    }).catch((err) => {
+      console.error('Service update error:', err);
       setOptimisticUpdates(prev => {
         const updated = { ...prev };
         delete updated[serviceId];
@@ -946,6 +1018,24 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
                 {isPublishing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
               </button>
             )}
+            {/* Toggle Active/Inactive */}
+            <button
+              onClick={(e) => handleToggleActive(e, service)}
+              disabled={togglingId === service.id}
+              className={`p-1.5 transition-all ${
+                effectiveService.is_active
+                  ? 'text-[#14B8A6] hover:text-[#0D9488] hover:bg-[#14B8A6]/10'
+                  : 'text-[var(--v2-text-muted)] hover:text-[#14B8A6] hover:bg-[#14B8A6]/10'
+              }`}
+              style={{ borderRadius: 'var(--v2-radius-button)' }}
+              title={effectiveService.is_active ? t('scheduling.service.deactivate') : t('scheduling.service.activate')}
+            >
+              {togglingId === service.id ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Power className="h-4 w-4" />
+              )}
+            </button>
             <button
               onClick={() => startRowEdit(service)}
               className="p-1.5 text-[var(--v2-text-muted)] hover:text-[#D14E97] hover:bg-[#D14E97]/10 transition-all"

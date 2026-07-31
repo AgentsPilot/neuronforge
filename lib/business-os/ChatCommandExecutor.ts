@@ -2303,7 +2303,7 @@ async function executeBookingCancel(
     return {
       success: false,
       response: t('booking.cancel.response', lang),
-      route: '/business-os/scheduling',
+      route: '/business-os',
       suggestions: getSuggestionsLocalized(['suggestion.openCalendar'], lang),
     };
   }
@@ -3587,9 +3587,9 @@ function executeNavigate(entities: Record<string, any>, lang: string): CommandRe
     pipeline: '/business-os/crm?view=pipeline',
     reports: '/business-os/reports',
     analytics: '/business-os/reports',
-    services: '/business-os/scheduling',
-    scheduling: '/business-os/scheduling',
-    calendar: '/business-os/scheduling?view=calendar',
+    services: '/business-os',
+    scheduling: '/business-os',
+    calendar: '/business-os',
     payments: '/business-os/payments',
     invoices: '/business-os/payments',
     settings: '/business-os/settings',

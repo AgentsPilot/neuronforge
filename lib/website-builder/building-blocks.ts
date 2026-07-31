@@ -285,7 +285,13 @@ export const CTABlock = {
 // =============================================
 
 export const ContactFormBlock = {
-  standard: (data: { title: string; email: string }): BuildingBlock => ({
+  standard: (data: {
+    title: string;
+    email: string;
+    phone?: string;
+    address?: string;
+    hours?: string;
+  }): BuildingBlock => ({
     block_type: 'contact_form',
     position: 3,
     content: {
@@ -293,18 +299,22 @@ export const ContactFormBlock = {
       fields: [
         { name: 'name', type: 'text', label: 'Name', required: true },
         { name: 'email', type: 'email', label: 'Email', required: true },
-        { name: 'phone', type: 'tel', label: 'Phone', required: false },
+        { name: 'phone', type: 'tel', label: 'Phone', required: true },
         { name: 'message', type: 'textarea', label: 'Message', required: true }
       ],
-      submit_text: 'Send Message',
       recipient_email: data.email,
-      success_message: 'Thank you! I\'ll get back to you soon.',
-      // Auto-create CRM contact on submit
+      // Business contact info for sidebar
+      business_email: data.email,
+      business_phone: data.phone,
+      business_address: data.address,
+      business_hours: data.hours,
+      // submit_text and success_message intentionally omitted
+      // to use ContactFormBlock's localized labels instead
       crm_integration: true
     },
     styles: {
-      padding: 'py-16 sm:py-24',
-      background: 'bg-white dark:bg-slate-950'
+      padding: 'py-12 sm:py-16',
+      background: 'bg-gray-50 dark:bg-slate-900'
     }
   })
 };

@@ -83,6 +83,11 @@ export interface ContactFormBlockContent {
     required?: boolean;
   }>;
   submit_text?: string;
+  // Business contact info for sidebar
+  business_email?: string;
+  business_phone?: string;
+  business_address?: string;
+  business_hours?: string;
 }
 
 export interface PricingBlockContent {
@@ -144,13 +149,15 @@ export class WebsiteBlockEnrichmentService {
    * @param templateContent - Existing content to enrich
    * @param language - Target language for AI-generated content
    * @param useAI - Whether to use AI for content generation (default: false for backwards compatibility)
+   * @param userEmail - Optional user email address for contact info enrichment
    */
   async enrichBlock(
     userId: string,
     blockType: string,
     templateContent: Record<string, unknown>,
     language: WebsiteLanguage = 'en',
-    useAI: boolean = false
+    useAI: boolean = false,
+    userEmail?: string
   ): Promise<EnrichmentResult<Record<string, unknown>>> {
     logger.info({ userId, blockType, language, useAI }, 'Enriching block');
 
@@ -170,7 +177,7 @@ export class WebsiteBlockEnrichmentService {
       case 'pricing':
         return this.enrichPricingBlock(userId, templateContent as PricingBlockContent, language);
       case 'contact_form':
-        return this.enrichContactFormBlock(userId, templateContent as ContactFormBlockContent, language);
+        return this.enrichContactFormBlock(userId, templateContent as ContactFormBlockContent, language, userEmail);
       case 'process':
         return this.enrichProcessBlock(userId, templateContent as ProcessBlockContent, language);
       case 'faq':
@@ -198,16 +205,18 @@ export class WebsiteBlockEnrichmentService {
    * @param blocks - Array of blocks to enrich
    * @param language - Target language for AI-generated content
    * @param useAI - Whether to use AI for content generation
+   * @param userEmail - Optional user email address for contact info enrichment
    */
   async enrichBlocks(
     userId: string,
     blocks: Array<{ block_type: string; content: Record<string, unknown>; position: number }>,
     language: WebsiteLanguage = 'en',
-    useAI: boolean = false
+    useAI: boolean = false,
+    userEmail?: string
   ): Promise<Array<{ block_type: string; content: Record<string, unknown>; position: number; enriched: boolean }>> {
     const enrichedBlocks = await Promise.all(
       blocks.map(async (block) => {
-        const result = await this.enrichBlock(userId, block.block_type, block.content, language, useAI);
+        const result = await this.enrichBlock(userId, block.block_type, block.content, language, useAI, userEmail);
         return {
           ...block,
           content: result.content,
@@ -715,26 +724,19 @@ export class WebsiteBlockEnrichmentService {
   }
 
   /**
-   * Enrich Contact Form block (minimal enrichment)
+   * Enrich Contact Form block with business contact info
+   * Populates the sidebar with user's email from auth
    */
   private async enrichContactFormBlock(
     userId: string,
     templateContent: ContactFormBlockContent,
-    language: WebsiteLanguage = 'en'
+    language: WebsiteLanguage = 'en',
+    userEmail?: string
   ): Promise<EnrichmentResult<ContactFormBlockContent>> {
     try {
       const profileResult = await this.profileRepo.findByUserId(userId);
-
-      if (!profileResult.data) {
-        return {
-          content: templateContent,
-          enriched: false,
-          source: 'template',
-          enrichedFields: []
-        };
-      }
-
       const profile = profileResult.data;
+
       const enrichedFields: string[] = [];
       const content = { ...templateContent };
 
@@ -757,8 +759,8 @@ export class WebsiteBlockEnrichmentService {
         he: 'שלח הודעה'
       };
 
-      // Use company name in title
-      if (profile.company_name && (!content.title || content.title.includes('Contact') || content.title.includes('צור קשר'))) {
+      // Use company name in title if available
+      if (profile?.company_name && (!content.title || content.title.includes('Contact') || content.title.includes('צור קשר'))) {
         content.title = contactTitles[language](profile.company_name);
         enrichedFields.push('title');
       }
@@ -772,6 +774,16 @@ export class WebsiteBlockEnrichmentService {
         content.submit_text = submitTexts[language];
         enrichedFields.push('submit_text');
       }
+
+      // Add business contact info for sidebar
+      // Use provided userEmail or existing content value
+      if (userEmail && !content.business_email) {
+        content.business_email = userEmail;
+        enrichedFields.push('business_email');
+      }
+
+      // Keep existing business contact info if already set in content
+      // These can be set manually in the website editor or via templates
 
       return {
         content,
@@ -791,7 +803,10 @@ export class WebsiteBlockEnrichmentService {
   }
 
   /**
-   * Enrich Process block from user's activated capabilities
+   * Enrich Process block from user-defined steps or capabilities
+   * Priority: 1. User-defined steps (from business_profiles.process_steps)
+   *           2. Auto-generated from capabilities
+   *           3. Template defaults
    */
   private async enrichProcessBlock(
     userId: string,
@@ -799,7 +814,55 @@ export class WebsiteBlockEnrichmentService {
     language: WebsiteLanguage = 'en'
   ): Promise<EnrichmentResult<ProcessBlockContent>> {
     try {
-      // Get user's active capabilities
+      // Localized titles
+      const titles: Record<WebsiteLanguage, string> = {
+        en: 'How It Works',
+        es: 'Cómo Funciona',
+        he: 'איך זה עובד'
+      };
+
+      const subtitles: Record<WebsiteLanguage, string> = {
+        en: 'Simple steps to get started',
+        es: 'Pasos sencillos para comenzar',
+        he: 'צעדים פשוטים להתחיל'
+      };
+
+      // PRIORITY 1: Check for user-defined process steps in business profile
+      const profileResult = await this.profileRepo.findByUserId(userId);
+      const userDefinedSteps = (profileResult.data as any)?.process_steps as Array<{
+        title: string;
+        description: string;
+        icon?: string;
+        number?: number;
+      }> | undefined;
+
+      if (userDefinedSteps && userDefinedSteps.length > 0) {
+        // User has defined their own steps - use them
+        const steps = userDefinedSteps.map((step, index) => ({
+          title: step.title,
+          description: step.description,
+          icon: step.icon || 'CheckCircle',
+          number: step.number || index + 1,
+          auto_generated: false
+        }));
+
+        logger.info({ userId, stepCount: steps.length }, 'Process block enriched from user-defined steps');
+
+        return {
+          content: {
+            ...templateContent,
+            title: templateContent.title || titles[language],
+            subtitle: templateContent.subtitle || subtitles[language],
+            steps,
+            layout: templateContent.layout || 'numbered'
+          },
+          enriched: true,
+          source: 'database',
+          enrichedFields: ['steps', 'title', 'subtitle']
+        };
+      }
+
+      // PRIORITY 2: Generate steps from user's active capabilities
       const capabilitiesResult = await this.capabilityRepo.getActiveCapabilityKeys(userId);
 
       if (!capabilitiesResult.data || capabilitiesResult.data.length === 0) {
@@ -827,37 +890,18 @@ export class WebsiteBlockEnrichmentService {
         };
       }
 
-      // Localized titles
-      const titles: Record<WebsiteLanguage, string> = {
-        en: 'How It Works',
-        es: 'Cómo Funciona',
-        he: 'איך זה עובד'
-      };
-
-      const subtitles: Record<WebsiteLanguage, string> = {
-        en: 'Simple steps to get started',
-        es: 'Pasos sencillos para comenzar',
-        he: 'צעדים פשוטים להתחיל'
-      };
-
-      // Merge with existing manual steps (if any)
-      const existingManualSteps = (templateContent.steps || []).filter(
-        (step: any) => step.auto_generated === false
-      );
-      const finalSteps = [...steps, ...existingManualSteps];
-
-      logger.info({ userId, stepCount: finalSteps.length, capabilityCount: capabilitiesResult.data.length }, 'Process block enriched from capabilities');
+      logger.info({ userId, stepCount: steps.length, capabilityCount: capabilitiesResult.data.length }, 'Process block enriched from capabilities');
 
       return {
         content: {
           ...templateContent,
           title: templateContent.title || titles[language],
           subtitle: templateContent.subtitle || subtitles[language],
-          steps: finalSteps,
+          steps,
           layout: templateContent.layout || 'numbered'
         },
         enriched: true,
-        source: 'database',
+        source: 'generated',
         enrichedFields: ['steps', 'title', 'subtitle']
       };
     } catch (error) {

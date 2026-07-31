@@ -140,6 +140,25 @@ export class WebsitePageRepository {
     }
   }
 
+  /**
+   * Find page by subdomain regardless of status (for analytics tracking)
+   */
+  async findBySubdomainAny(subdomain: string): Promise<RepositoryResult<WebsitePage>> {
+    try {
+      const { data, error } = await this.supabase
+        .from('website_pages')
+        .select('*')
+        .eq('subdomain', subdomain)
+        .single();
+
+      if (error) throw error;
+      return { data, error: null };
+    } catch (error) {
+      logger.error({ err: error, subdomain }, 'Failed to find page by subdomain (any status)');
+      return { data: null, error: error as Error };
+    }
+  }
+
   async findByCustomDomain(domain: string): Promise<RepositoryResult<WebsitePage>> {
     try {
       const { data, error } = await this.supabase
@@ -189,6 +208,50 @@ export class WebsitePageRepository {
       return { data, error: null };
     } catch (error) {
       logger.error({ err: error, userId }, 'Failed to get homepage');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
+   * Get all landing pages for a user
+   */
+  async getLandingPages(userId: string): Promise<RepositoryResult<WebsitePage[]>> {
+    try {
+      const { data, error } = await this.supabase
+        .from('website_pages')
+        .select('*')
+        .eq('user_id', userId)
+        .eq('page_type', 'landing')
+        .neq('status', 'archived')
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      return { data: data || [], error: null };
+    } catch (error) {
+      logger.error({ err: error, userId }, 'Failed to get landing pages');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
+   * Find a page by type (homepage, landing, etc.)
+   */
+  async findByType(userId: string, pageType: PageType): Promise<RepositoryResult<WebsitePage>> {
+    try {
+      const { data, error } = await this.supabase
+        .from('website_pages')
+        .select('*')
+        .eq('user_id', userId)
+        .eq('page_type', pageType)
+        .neq('status', 'archived')
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .single();
+
+      if (error && error.code !== 'PGRST116') throw error;
+      return { data, error: null };
+    } catch (error) {
+      logger.error({ err: error, userId, pageType }, 'Failed to find page by type');
       return { data: null, error: error as Error };
     }
   }

@@ -22,11 +22,14 @@ import type {
   EntityType,
   ToolResult,
   QueryResult,
+  AggregateResult,
   MutationResult,
   NavigationResult,
-  PendingMutation
+  PendingMutation,
+  BookingListResult
 } from './types';
 import { getAction, type ActionType } from './capabilities-schema';
+import { resolveAllSemanticFilters } from './semantic-schema';
 
 const logger = createLogger({ service: 'SafeExecutionLayer' });
 
@@ -101,10 +104,20 @@ export class SafeExecutionLayer {
       switch (toolName) {
         case 'execute_action':
           return this.executeAction(args);
+        case 'update_entity_field':
+          return this.executeUpdateEntityField(args);
         case 'present_choices':
           return this.executePresentChoices(args);
         case 'present_entity_card':
           return this.executePresentEntityCard(args);
+        case 'present_booking_list':
+          return this.executePresentBookingList(args);
+        case 'reschedule_booking':
+          return this.executeRescheduleBooking(args);
+        case 'update_availability':
+          return this.executeUpdateAvailability(args);
+        case 'get_revenue_stats':
+          return this.executeGetRevenueStats(args);
         case 'navigate':
           return this.executeNavigate(args);
         // Legacy tools for backward compatibility
@@ -144,11 +157,13 @@ export class SafeExecutionLayer {
 
     // Route to appropriate handler based on action type
     if (actionDef.operation === 'query') {
-      // List or Get
+      // List, Get, or Count
       if (action === 'list') {
         return this.executeQuery({ entity, filters, limit });
       } else if (action === 'get' && id) {
         return this.executeGetById(entity, id);
+      } else if (action === 'count') {
+        return this.executeCount(entity, filters);
       }
       return { success: false, error: 'Invalid query action' };
     }
@@ -248,6 +263,123 @@ export class SafeExecutionLayer {
       data: [this.sanitizeRecord(entity, result.data as Record<string, unknown>)],
       totalCount: 1
     };
+  }
+
+  /**
+   * Update a single field on an entity - for quick inline edits
+   * Safe fields are updated immediately without confirmation
+   */
+  private async executeUpdateEntityField(args: Record<string, unknown>): Promise<ToolResult> {
+    const entityType = args.entityType as EntityType;
+    const entityId = args.entityId as string;
+    const field = args.field as string;
+    let value = args.value;
+
+    // Validate required args
+    if (!entityType || !entityId || !field || value === undefined) {
+      return { success: false, error: 'Missing required parameters: entityType, entityId, field, value' };
+    }
+
+    // Validate UUID
+    if (!this.isValidUUID(entityId)) {
+      return { success: false, error: 'Invalid entity ID format' };
+    }
+
+    // Define safe fields that can be updated without confirmation
+    const safeFields: Record<EntityType, string[]> = {
+      tasks: ['title', 'description', 'due_date', 'priority', 'status'],
+      contacts: ['first_name', 'last_name', 'email', 'phone', 'notes'],
+      services: ['service_name', 'description', 'duration_minutes', 'price'],
+      bookings: ['notes', 'status'],
+      invoices: ['notes', 'due_date'],
+      availability: []
+    };
+
+    const entitySafeFields = safeFields[entityType] || [];
+    if (!entitySafeFields.includes(field)) {
+      return {
+        success: false,
+        error: `Field "${field}" cannot be updated directly. Allowed fields for ${entityType}: ${entitySafeFields.join(', ')}`
+      };
+    }
+
+    // Parse date values if the field is a date field
+    if (field.includes('date') && typeof value === 'string') {
+      // Handle relative dates
+      const today = new Date();
+      const lowerValue = value.toLowerCase();
+
+      if (lowerValue === 'tomorrow' || lowerValue === 'מחר') {
+        const tomorrow = new Date(today);
+        tomorrow.setDate(tomorrow.getDate() + 1);
+        value = tomorrow.toISOString().split('T')[0];
+      } else if (lowerValue.includes('next week') || lowerValue.includes('בעוד שבוע')) {
+        const nextWeek = new Date(today);
+        nextWeek.setDate(nextWeek.getDate() + 7);
+        value = nextWeek.toISOString().split('T')[0];
+      }
+      // Otherwise assume it's already in ISO format or let DB handle it
+    }
+
+    // Execute the update
+    logger.info(
+      { userId: this.userId, entityType, entityId, field, value },
+      'Executing direct field update'
+    );
+
+    try {
+      let result: { data: unknown | null; error: Error | null };
+
+      switch (entityType) {
+        case 'tasks':
+          result = await crmTaskRepository.update(entityId, this.userId, { [field]: value });
+          break;
+        case 'contacts':
+          result = await crmContactRepository.update(entityId, this.userId, { [field]: value });
+          break;
+        case 'services':
+          result = await schedulingServiceRepository.update(entityId, this.userId, { [field]: value });
+          break;
+        case 'bookings':
+          result = await schedulingBookingRepository.update(entityId, this.userId, { [field]: value });
+          break;
+        case 'invoices':
+          result = await paymentInvoiceRepository.update(entityId, this.userId, { [field]: value });
+          break;
+        default:
+          return { success: false, error: `Cannot update entity type: ${entityType}` };
+      }
+
+      if (result.error) {
+        logger.error(
+          { err: result.error, userId: this.userId, entityType, entityId, field },
+          'Field update failed'
+        );
+        return { success: false, error: result.error.message };
+      }
+
+      logger.info(
+        { userId: this.userId, entityType, entityId, field, value },
+        'Field update successful'
+      );
+
+      return {
+        success: true,
+        data: {
+          entityType,
+          entityId,
+          field,
+          newValue: value,
+          updatedEntity: result.data
+        }
+      };
+    } catch (error) {
+      logger.error(
+        { err: error, userId: this.userId, entityType, entityId, field },
+        'Field update threw exception'
+      );
+      return { success: false, error: 'Failed to update field' };
+    }
   }
 
   /**
@@ -356,9 +488,9 @@ export class SafeExecutionLayer {
       case 'services':
         actions.push({
           type: 'navigate',
-          label: 'Open in Scheduling',
-          labelHe: 'פתח בתזמון',
-          destination: '/business-os/scheduling',
+          label: 'Open in Dashboard',
+          labelHe: 'פתח בלוח הבקרה',
+          destination: '/business-os',
           params: { service: entityId }
         });
         actions.push({
@@ -397,9 +529,9 @@ export class SafeExecutionLayer {
       case 'bookings':
         actions.push({
           type: 'navigate',
-          label: 'Open in Scheduling',
-          labelHe: 'פתח בתזמון',
-          destination: '/business-os/scheduling',
+          label: 'Open in Dashboard',
+          labelHe: 'פתח בלוח הבקרה',
+          destination: '/business-os',
           params: { booking: entityId }
         });
         break;
@@ -407,10 +539,10 @@ export class SafeExecutionLayer {
       case 'invoices':
         actions.push({
           type: 'navigate',
-          label: 'Open in Payments',
-          labelHe: 'פתח בתשלומים',
-          destination: '/business-os/payments',
-          params: { invoice: entityId }
+          label: 'Open in Reports',
+          labelHe: 'פתח בדוחות',
+          destination: '/business-os/reports',
+          params: { tab: 'invoices', invoice: entityId }
         });
         break;
     }
@@ -424,6 +556,443 @@ export class SafeExecutionLayer {
         actions
       }
     };
+  }
+
+  /**
+   * Execute present_booking_list tool - returns booking data for beautiful card display
+   */
+  private executePresentBookingList(args: Record<string, unknown>): BookingListResult {
+    const bookings = args.bookings as Array<{
+      id: string;
+      start_time: string;
+      end_time?: string;
+      status: string;
+      service_name?: string;
+      client_first_name?: string;
+      client_last_name?: string;
+      client_email?: string;
+      client_phone?: string;
+      service?: { service_name?: string };
+      contact?: { first_name?: string; last_name?: string };
+    }>;
+
+    logger.info(
+      { userId: this.userId, bookingCount: bookings?.length },
+      'Presenting booking list to user'
+    );
+
+    // Transform bookings to the required format
+    const formattedBookings = (bookings || []).map(booking => {
+      // Get service name from nested object or direct field
+      const serviceName = booking.service_name ||
+        booking.service?.service_name ||
+        'Service';
+
+      // Get contact name from nested object or direct fields
+      const contactFirstName = booking.client_first_name ||
+        booking.contact?.first_name ||
+        '';
+      const contactLastName = booking.client_last_name ||
+        booking.contact?.last_name ||
+        '';
+      const contactName = `${contactFirstName} ${contactLastName}`.trim() || undefined;
+
+      return {
+        id: booking.id,
+        serviceName,
+        contactName,
+        startTime: booking.start_time,
+        endTime: booking.end_time,
+        status: booking.status || 'confirmed'
+      };
+    });
+
+    return {
+      success: true,
+      action: {
+        type: 'present_booking_list',
+        bookings: formattedBookings
+      }
+    };
+  }
+
+  /**
+   * Execute reschedule_booking tool - reschedule a booking to a new time with availability check
+   */
+  private async executeRescheduleBooking(args: Record<string, unknown>): Promise<ToolResult> {
+    const bookingId = args.booking_id as string;
+    const newStartTime = args.new_start_time as string;
+
+    if (!bookingId || !newStartTime) {
+      return { success: false, error: 'booking_id and new_start_time are required' };
+    }
+
+    logger.info(
+      { userId: this.userId, bookingId, newStartTime },
+      'Rescheduling booking'
+    );
+
+    try {
+      // 1. Get the current booking to find service duration
+      const bookingResult = await schedulingBookingRepository.findById(bookingId, this.userId);
+      if (bookingResult.error || !bookingResult.data) {
+        return { success: false, error: 'Booking not found' };
+      }
+
+      const booking = bookingResult.data;
+
+      // Calculate duration from existing booking
+      const existingStart = new Date(booking.start_time);
+      const existingEnd = new Date(booking.end_time);
+      const durationMs = existingEnd.getTime() - existingStart.getTime();
+
+      // Calculate new end time based on duration
+      const newStart = new Date(newStartTime);
+      const newEnd = new Date(newStart.getTime() + durationMs);
+
+      // 2. Check for overlapping bookings (excluding current booking)
+      const overlapResult = await schedulingBookingRepository.checkOverlap(
+        this.userId,
+        newStart.toISOString(),
+        newEnd.toISOString(),
+        bookingId // exclude this booking from overlap check
+      );
+
+      if (overlapResult.data && overlapResult.data.length > 0) {
+        // There's a conflict - return error with details
+        const conflicts = overlapResult.data.map(b => ({
+          start: b.start_time,
+          end: b.end_time,
+          client: `${b.client_first_name} ${b.client_last_name || ''}`.trim()
+        }));
+
+        return {
+          success: false,
+          error: `Time slot not available. Conflicts with ${conflicts.length} existing booking(s).`,
+          data: { conflicts }
+        };
+      }
+
+      // 3. Check availability for this day/time
+      // Get availability settings from business profile
+      const profileResult = await businessProfileRepository.findByUserId(this.userId);
+
+      if (profileResult.data) {
+        const profile = profileResult.data as { scheduling_availability?: Record<string, Array<{ start: string; end: string }>> };
+        const availability = profile.scheduling_availability;
+
+        if (availability) {
+          const days = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+          const dayOfWeek = days[newStart.getDay()] as string;
+
+          const daySlots = availability[dayOfWeek] as Array<{ start: string; end: string }> | undefined;
+
+          if (!daySlots || daySlots.length === 0) {
+            return {
+              success: false,
+              error: `Not available on ${newStart.toLocaleDateString('en-US', { weekday: 'long' })}s. Please choose a different day.`
+            };
+          }
+
+          // Check if new time falls within available hours
+          const newStartHour = newStart.getHours();
+          const newStartMinutes = newStart.getMinutes();
+          const newStartTimeStr = `${String(newStartHour).padStart(2, '0')}:${String(newStartMinutes).padStart(2, '0')}`;
+
+          const newEndHour = newEnd.getHours();
+          const newEndMinutes = newEnd.getMinutes();
+          const newEndTimeStr = `${String(newEndHour).padStart(2, '0')}:${String(newEndMinutes).padStart(2, '0')}`;
+
+          const isWithinAvailability = daySlots.some(slot =>
+            slot.start <= newStartTimeStr && slot.end >= newEndTimeStr
+          );
+
+          if (!isWithinAvailability) {
+            return {
+              success: false,
+              error: `Time ${newStartTimeStr} is outside available hours. Available times: ${daySlots.map(s => `${s.start}-${s.end}`).join(', ')}`
+            };
+          }
+        }
+      }
+
+      // 4. Create pending mutation for confirmation
+      const confirmationId = crypto.randomUUID();
+      const now = new Date();
+      const expiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes
+
+      pendingMutations.set(confirmationId, {
+        id: confirmationId,
+        userId: this.userId,
+        entity: 'bookings',
+        operation: 'update',
+        entityId: bookingId,
+        payload: {
+          start_time: newStart.toISOString(),
+          end_time: newEnd.toISOString()
+        },
+        preview: `Reschedule booking to ${newStart.toLocaleDateString()} ${newStart.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`,
+        createdAt: now,
+        expiresAt
+      });
+
+      return {
+        success: true,
+        requiresConfirmation: true,
+        confirmationId,
+        preview: `Reschedule booking to ${newStart.toLocaleDateString()} ${newStart.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`,
+        actionType: 'update',
+        entity: 'bookings'
+      };
+    } catch (error) {
+      logger.error({ err: error, bookingId, newStartTime }, 'Failed to reschedule booking');
+      return { success: false, error: 'Failed to reschedule booking' };
+    }
+  }
+
+  /**
+   * Execute update_availability tool - update business hours for specific days
+   */
+  private async executeUpdateAvailability(args: Record<string, unknown>): Promise<ToolResult> {
+    const days = args.days as string[] | undefined;
+    const hours = args.hours as Array<{ start: string; end: string }> | undefined;
+    const clearDay = args.clear_day as string | undefined;
+
+    logger.info(
+      { userId: this.userId, days, hours, clearDay },
+      'Updating availability'
+    );
+
+    try {
+      // Get current availability
+      const profileResult = await businessProfileRepository.findByUserId(this.userId);
+      if (profileResult.error) {
+        return { success: false, error: 'Failed to fetch current availability' };
+      }
+
+      const profile = profileResult.data as { scheduling_availability?: Record<string, Array<{ start: string; end: string }>> } | null;
+      const currentAvailability = profile?.scheduling_availability || {};
+
+      // Handle clearing a day (making it unavailable)
+      if (clearDay) {
+        const dayName = this.normalizeDayName(clearDay);
+        if (!dayName) {
+          return { success: false, error: `Invalid day name: ${clearDay}` };
+        }
+
+        const updatedAvailability = { ...currentAvailability };
+        delete updatedAvailability[dayName];
+
+        // Create pending mutation for confirmation
+        const confirmationId = crypto.randomUUID();
+        const now = new Date();
+        const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
+
+        pendingMutations.set(confirmationId, {
+          id: confirmationId,
+          userId: this.userId,
+          entity: 'availability',
+          operation: 'update',
+          payload: { scheduling_availability: updatedAvailability },
+          preview: `Mark ${dayName} as unavailable (closed)`,
+          createdAt: now,
+          expiresAt
+        });
+
+        return {
+          success: true,
+          requiresConfirmation: true,
+          confirmationId,
+          preview: `Mark ${dayName} as unavailable (closed)`,
+          actionType: 'update',
+          entity: 'availability'
+        } as any;
+      }
+
+      // Handle setting hours for days
+      if (!days || days.length === 0) {
+        return { success: false, error: 'days array is required' };
+      }
+
+      if (!hours || hours.length === 0) {
+        return { success: false, error: 'hours array with start/end times is required' };
+      }
+
+      // Validate time format (HH:MM)
+      const timeRegex = /^([01]?[0-9]|2[0-3]):([0-5][0-9])$/;
+      for (const slot of hours) {
+        if (!timeRegex.test(slot.start) || !timeRegex.test(slot.end)) {
+          return { success: false, error: `Invalid time format. Use HH:MM (e.g., "09:00", "17:00")` };
+        }
+        if (slot.start >= slot.end) {
+          return { success: false, error: `Start time (${slot.start}) must be before end time (${slot.end})` };
+        }
+      }
+
+      // Normalize day names
+      const normalizedDays: string[] = [];
+      for (const day of days) {
+        const normalized = this.normalizeDayName(day);
+        if (!normalized) {
+          return { success: false, error: `Invalid day name: ${day}` };
+        }
+        normalizedDays.push(normalized);
+      }
+
+      // Build updated availability
+      const updatedAvailability = { ...currentAvailability };
+      for (const dayName of normalizedDays) {
+        updatedAvailability[dayName] = hours;
+      }
+
+      // Create pending mutation for confirmation
+      const confirmationId = crypto.randomUUID();
+      const now = new Date();
+      const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
+
+      const hoursDescription = hours.map(h => `${h.start}-${h.end}`).join(', ');
+      const daysDescription = normalizedDays.join(', ');
+
+      pendingMutations.set(confirmationId, {
+        id: confirmationId,
+        userId: this.userId,
+        entity: 'availability',
+        operation: 'update',
+        payload: { scheduling_availability: updatedAvailability },
+        preview: `Set availability for ${daysDescription}: ${hoursDescription}`,
+        createdAt: now,
+        expiresAt
+      });
+
+      return {
+        success: true,
+        requiresConfirmation: true,
+        confirmationId,
+        preview: `Set availability for ${daysDescription}: ${hoursDescription}`,
+        actionType: 'update',
+        entity: 'availability'
+      } as any;
+    } catch (error) {
+      logger.error({ err: error, days, hours }, 'Failed to update availability');
+      return { success: false, error: 'Failed to update availability' };
+    }
+  }
+
+  /**
+   * Normalize day name to lowercase English (sunday, monday, etc.)
+   */
+  private normalizeDayName(day: string): string | null {
+    const dayMap: Record<string, string> = {
+      // English
+      'sunday': 'sunday', 'sun': 'sunday',
+      'monday': 'monday', 'mon': 'monday',
+      'tuesday': 'tuesday', 'tue': 'tuesday', 'tues': 'tuesday',
+      'wednesday': 'wednesday', 'wed': 'wednesday',
+      'thursday': 'thursday', 'thu': 'thursday', 'thur': 'thursday', 'thurs': 'thursday',
+      'friday': 'friday', 'fri': 'friday',
+      'saturday': 'saturday', 'sat': 'saturday',
+      // Hebrew
+      'ראשון': 'sunday', 'יום ראשון': 'sunday',
+      'שני': 'monday', 'יום שני': 'monday',
+      'שלישי': 'tuesday', 'יום שלישי': 'tuesday',
+      'רביעי': 'wednesday', 'יום רביעי': 'wednesday',
+      'חמישי': 'thursday', 'יום חמישי': 'thursday',
+      'שישי': 'friday', 'יום שישי': 'friday',
+      'שבת': 'saturday', 'יום שבת': 'saturday'
+    };
+
+    return dayMap[day.toLowerCase().trim()] || null;
+  }
+
+  /**
+   * Execute get_revenue_stats tool - get revenue and payment statistics
+   */
+  private async executeGetRevenueStats(args: Record<string, unknown>): Promise<ToolResult> {
+    const period = (args.period as string) || 'this_month';
+
+    logger.info({ userId: this.userId, period }, 'Getting revenue stats');
+
+    try {
+      // Calculate date range based on period
+      const now = new Date();
+      let startDate: Date;
+
+      switch (period) {
+        case 'today':
+          startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+          break;
+        case 'this_week':
+          const dayOfWeek = now.getDay();
+          startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() - dayOfWeek);
+          break;
+        case 'this_month':
+          startDate = new Date(now.getFullYear(), now.getMonth(), 1);
+          break;
+        case 'last_30_days':
+          startDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+          break;
+        case 'all_time':
+        default:
+          startDate = new Date(0); // Beginning of time
+      }
+
+      // Fetch revenue data
+      const [revenueResult, invoicesResult, transactionsResult] = await Promise.all([
+        paymentTransactionRepository.getTotalRevenue(
+          this.userId,
+          startDate.toISOString(),
+          now.toISOString()
+        ),
+        paymentInvoiceRepository.list(this.userId, { status: 'paid' }),
+        paymentTransactionRepository.list(this.userId, { status: 'succeeded' })
+      ]);
+
+      // Calculate stats
+      const totalRevenue = revenueResult.data || 0;
+      const paidInvoices = invoicesResult.data?.filter(inv => {
+        const paidDate = inv.paid_at ? new Date(inv.paid_at) : null;
+        return paidDate && paidDate >= startDate && paidDate <= now;
+      }).length || 0;
+      const transactionCount = transactionsResult.data?.filter(tx => {
+        const txDate = tx.paid_at ? new Date(tx.paid_at) : new Date(tx.created_at);
+        return txDate >= startDate && txDate <= now;
+      }).length || 0;
+
+      // Get pending invoices (sent or overdue - not paid yet)
+      const [sentInvoicesResult, overdueInvoicesResult] = await Promise.all([
+        paymentInvoiceRepository.list(this.userId, { status: 'sent' }),
+        paymentInvoiceRepository.list(this.userId, { status: 'overdue' })
+      ]);
+      const allPendingInvoices = [
+        ...(sentInvoicesResult.data || []),
+        ...(overdueInvoicesResult.data || [])
+      ];
+      const pendingAmount = allPendingInvoices.reduce((sum, inv) => sum + inv.amount, 0);
+      const pendingCount = allPendingInvoices.length;
+
+      // Get user's currency from profile
+      const profileResult = await businessProfileRepository.findByUserId(this.userId);
+      const currency = profileResult.data?.currency || 'ILS';
+
+      return {
+        success: true,
+        data: {
+          period,
+          currency,
+          totalRevenue,
+          transactionCount,
+          paidInvoicesCount: paidInvoices,
+          pendingInvoices: {
+            count: pendingCount,
+            totalAmount: pendingAmount
+          },
+          summary: `Revenue for ${period.replace('_', ' ')}: ${currency} ${totalRevenue.toLocaleString()}. ${transactionCount} transactions, ${paidInvoices} paid invoices. ${pendingCount} pending invoices worth ${currency} ${pendingAmount.toLocaleString()}.`
+        }
+      };
+    } catch (error) {
+      logger.error({ err: error, userId: this.userId, period }, 'Failed to get revenue stats');
+      return { success: false, error: 'Failed to retrieve revenue statistics' };
+    }
   }
 
   /**
@@ -476,26 +1045,36 @@ export class SafeExecutionLayer {
       return { success: false, error: `Invalid query parameters: ${parsed.error.message}` };
     }
 
-    const { entity, filters, fields, orderBy, limit } = parsed.data;
+    const { entity, fields, orderBy, limit } = parsed.data;
     const maxLimit = Math.min(limit || 20, 50);
+
+    // Resolve semantic filters (e.g., status_semantic: "pending" → status: ["sent", "overdue"])
+    const resolvedFilters = parsed.data.filters
+      ? resolveAllSemanticFilters(entity, parsed.data.filters)
+      : undefined;
+
+    logger.debug(
+      { entity, originalFilters: parsed.data.filters, resolvedFilters },
+      'Resolved semantic filters'
+    );
 
     let result: { data: unknown[] | null; error: Error | null };
 
     switch (entity) {
       case 'contacts':
-        result = await this.queryContacts(filters, orderBy, maxLimit);
+        result = await this.queryContacts(resolvedFilters, orderBy, maxLimit);
         break;
       case 'services':
-        result = await this.queryServices(filters, maxLimit);
+        result = await this.queryServices(resolvedFilters, maxLimit);
         break;
       case 'bookings':
-        result = await this.queryBookings(filters, orderBy, maxLimit);
+        result = await this.queryBookings(resolvedFilters, orderBy, maxLimit);
         break;
       case 'tasks':
-        result = await this.queryTasks(filters, orderBy, maxLimit);
+        result = await this.queryTasks(resolvedFilters, orderBy, maxLimit);
         break;
       case 'invoices':
-        result = await this.queryInvoices(filters, maxLimit);
+        result = await this.queryInvoices(resolvedFilters, maxLimit);
         break;
       case 'availability':
         result = await this.queryAvailability();
@@ -563,12 +1142,57 @@ export class SafeExecutionLayer {
     orderBy: { field: string; direction: 'asc' | 'desc' } | undefined,
     limit: number
   ) {
+    // Handle array status (from semantic resolution) by fetching multiple statuses
+    if (filters?.status && Array.isArray(filters.status)) {
+      const statuses = filters.status as string[];
+      const serviceId = filters.service_id ? String(filters.service_id) : undefined;
+      const contactId = filters.contact_id ? String(filters.contact_id) : undefined;
+      const startDate = filters.start_date ? String(filters.start_date) : undefined;
+      const endDate = filters.end_date ? String(filters.end_date) : undefined;
+      const search = filters.search ? String(filters.search) : undefined;
+
+      // Fetch all statuses in parallel
+      const results = await Promise.all(
+        statuses.map(status =>
+          schedulingBookingRepository.list(this.userId, {
+            serviceId,
+            contactId,
+            status,
+            startDate,
+            endDate,
+            search,
+            limit
+          })
+        )
+      );
+
+      // Combine results and remove duplicates by ID
+      const allBookings = results.flatMap(r => r.data || []);
+      const uniqueBookings = Array.from(
+        new Map(allBookings.map(booking => [booking.id, booking])).values()
+      );
+
+      // Sort by start_time and apply limit
+      uniqueBookings.sort((a, b) => {
+        const aTime = (a as { start_time: string }).start_time;
+        const bTime = (b as { start_time: string }).start_time;
+        return new Date(aTime).getTime() - new Date(bTime).getTime();
+      });
+
+      return {
+        data: uniqueBookings.slice(0, limit),
+        error: null
+      };
+    }
+
+    // Single status or no status filter
     const options: {
       serviceId?: string;
       contactId?: string;
       status?: string;
       startDate?: string;
       endDate?: string;
+      search?: string;
       limit: number;
     } = { limit };
 
@@ -578,6 +1202,8 @@ export class SafeExecutionLayer {
       if (filters.status) options.status = String(filters.status);
       if (filters.start_date) options.startDate = String(filters.start_date);
       if (filters.end_date) options.endDate = String(filters.end_date);
+      // Search by client name
+      if (filters.search) options.search = String(filters.search);
     }
 
     return schedulingBookingRepository.list(this.userId, options);
@@ -588,11 +1214,88 @@ export class SafeExecutionLayer {
     orderBy: { field: string; direction: 'asc' | 'desc' } | undefined,
     limit: number
   ) {
+    // Handle array status (from semantic resolution) by fetching multiple statuses
+    if (filters?.status && Array.isArray(filters.status)) {
+      const statuses = filters.status as string[];
+      const contactId = filters.contact_id ? String(filters.contact_id) : undefined;
+      const priority = filters.priority as 'low' | 'medium' | 'high' | 'urgent' | undefined;
+      const search = filters.search ? String(filters.search) : undefined;
+
+      // Fetch all statuses in parallel
+      const results = await Promise.all(
+        statuses.map(status =>
+          crmTaskRepository.list(this.userId, {
+            contact_id: contactId,
+            status: status as 'pending' | 'in_progress' | 'completed' | 'cancelled',
+            priority,
+            search,
+            include_completed: status === 'completed',
+            limit
+          })
+        )
+      );
+
+      // Combine results and remove duplicates by ID
+      const allTasks = results.flatMap(r => r.data || []);
+      const uniqueTasks = Array.from(
+        new Map(allTasks.map(task => [task.id, task])).values()
+      );
+
+      // Sort by due_date or created_at and apply limit
+      uniqueTasks.sort((a, b) => {
+        const aTask = a as { due_date?: string; created_at: string };
+        const bTask = b as { due_date?: string; created_at: string };
+        const aDate = aTask.due_date ? new Date(aTask.due_date) : new Date(aTask.created_at);
+        const bDate = bTask.due_date ? new Date(bTask.due_date) : new Date(bTask.created_at);
+        return aDate.getTime() - bDate.getTime();
+      });
+
+      return {
+        data: uniqueTasks.slice(0, limit),
+        error: null
+      };
+    }
+
+    // Handle array priority (from semantic resolution)
+    if (filters?.priority && Array.isArray(filters.priority)) {
+      const priorities = filters.priority as string[];
+      const contactId = filters.contact_id ? String(filters.contact_id) : undefined;
+      const status = filters.status as 'pending' | 'in_progress' | 'completed' | 'cancelled' | undefined;
+      const search = filters.search ? String(filters.search) : undefined;
+
+      // Fetch all priorities in parallel
+      const results = await Promise.all(
+        priorities.map(priority =>
+          crmTaskRepository.list(this.userId, {
+            contact_id: contactId,
+            status,
+            priority: priority as 'low' | 'medium' | 'high' | 'urgent',
+            search,
+            include_completed: status === 'completed',
+            limit
+          })
+        )
+      );
+
+      // Combine results and remove duplicates by ID
+      const allTasks = results.flatMap(r => r.data || []);
+      const uniqueTasks = Array.from(
+        new Map(allTasks.map(task => [task.id, task])).values()
+      );
+
+      return {
+        data: uniqueTasks.slice(0, limit),
+        error: null
+      };
+    }
+
+    // Single status or no status filter
     const options: {
       contact_id?: string;
       status?: 'pending' | 'in_progress' | 'completed' | 'cancelled';
       priority?: 'low' | 'medium' | 'high' | 'urgent';
       include_completed?: boolean;
+      search?: string;
       limit: number;
     } = { limit };
 
@@ -601,6 +1304,8 @@ export class SafeExecutionLayer {
       if (filters.status) options.status = filters.status as any;
       if (filters.priority) options.priority = filters.priority as any;
       if (filters.include_completed) options.include_completed = true;
+      // Search by title/description
+      if (filters.search) options.search = String(filters.search);
     }
 
     return crmTaskRepository.list(this.userId, options);
@@ -610,15 +1315,56 @@ export class SafeExecutionLayer {
     filters: Record<string, unknown> | undefined,
     limit: number
   ) {
+    // Handle array status (from semantic resolution) by fetching multiple statuses
+    if (filters?.status && Array.isArray(filters.status)) {
+      const statuses = filters.status as string[];
+      const contactId = filters.contact_id ? String(filters.contact_id) : undefined;
+      const search = filters.search ? String(filters.search) : undefined;
+
+      // Fetch all statuses in parallel, including contact info for display
+      const results = await Promise.all(
+        statuses.map(status =>
+          paymentInvoiceRepository.list(this.userId, {
+            status,
+            contactId,
+            search,
+            limit,
+            includeContact: true
+          })
+        )
+      );
+
+      // Combine results and remove duplicates by ID
+      const allInvoices = results.flatMap(r => r.data || []);
+      const uniqueInvoices = Array.from(
+        new Map(allInvoices.map(inv => [inv.id, inv])).values()
+      );
+
+      // Sort by created_at descending and apply limit
+      uniqueInvoices.sort((a, b) =>
+        new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+      );
+
+      return {
+        data: uniqueInvoices.slice(0, limit),
+        error: null
+      };
+    }
+
+    // Single status or no status filter
     const options: {
       status?: string;
       contactId?: string;
+      search?: string;
       limit: number;
-    } = { limit };
+      includeContact: boolean;
+    } = { limit, includeContact: true };
 
     if (filters) {
       if (filters.status) options.status = String(filters.status);
       if (filters.contact_id) options.contactId = String(filters.contact_id);
+      // Search by invoice number
+      if (filters.search) options.search = String(filters.search);
     }
 
     return paymentInvoiceRepository.list(this.userId, options);
@@ -662,15 +1408,54 @@ export class SafeExecutionLayer {
     entity: EntityType,
     filters: Record<string, unknown> | undefined
   ): Promise<AggregateResult> {
+    // Resolve semantic filters before counting
+    const resolvedFilters = filters
+      ? resolveAllSemanticFilters(entity, filters)
+      : undefined;
+
     let count = 0;
 
     switch (entity) {
       case 'contacts': {
-        const result = await crmContactRepository.count(this.userId, {
-          stage: filters?.stage as string,
-          search: filters?.search as string
-        });
-        count = result.data || 0;
+        // Check if we have date filters
+        const hasDateFilters = filters?.created_at_gte || filters?.created_at_lte;
+
+        if (hasDateFilters) {
+          // Use list with date filters and count results
+          const listResult = await crmContactRepository.list(this.userId, {
+            stage: filters?.stage as string,
+            search: filters?.search as string,
+            limit: 1000 // Get all for counting
+          });
+
+          if (listResult.data) {
+            // Filter by date range
+            let filteredContacts = listResult.data;
+
+            if (filters?.created_at_gte) {
+              const startDate = new Date(filters.created_at_gte as string);
+              filteredContacts = filteredContacts.filter(c =>
+                new Date(c.created_at) >= startDate
+              );
+            }
+
+            if (filters?.created_at_lte) {
+              const endDate = new Date(filters.created_at_lte as string);
+              filteredContacts = filteredContacts.filter(c =>
+                new Date(c.created_at) <= endDate
+              );
+            }
+
+            count = filteredContacts.length;
+          }
+        } else {
+          // Use optimized count query without date filters
+          const result = await crmContactRepository.count(this.userId, {
+            stage: filters?.stage as string,
+            search: filters?.search as string
+          });
+          count = result.data || 0;
+        }
         break;
       }
       case 'services': {
@@ -687,8 +1472,12 @@ export class SafeExecutionLayer {
       }
       case 'tasks': {
         const result = await crmTaskRepository.countByStatus(this.userId);
-        if (filters?.status) {
-          const statusKey = filters.status as 'pending' | 'in_progress' | 'completed' | 'cancelled';
+        // Handle array status (from semantic resolution like "open" → ["pending", "in_progress"])
+        if (resolvedFilters?.status && Array.isArray(resolvedFilters.status)) {
+          const statuses = resolvedFilters.status as Array<'pending' | 'in_progress' | 'completed' | 'cancelled'>;
+          count = statuses.reduce((sum, status) => sum + (result.data?.[status] || 0), 0);
+        } else if (resolvedFilters?.status) {
+          const statusKey = resolvedFilters.status as 'pending' | 'in_progress' | 'completed' | 'cancelled';
           count = result.data?.[statusKey] || 0;
         } else {
           const counts = result.data || { pending: 0, in_progress: 0, completed: 0, cancelled: 0 };
@@ -697,10 +1486,24 @@ export class SafeExecutionLayer {
         break;
       }
       case 'invoices': {
-        const result = await paymentInvoiceRepository.list(this.userId, {
-          status: filters?.status as string
-        });
-        count = result.data?.length || 0;
+        // Handle array status (from semantic resolution)
+        if (resolvedFilters?.status && Array.isArray(resolvedFilters.status)) {
+          const statuses = resolvedFilters.status as string[];
+          const results = await Promise.all(
+            statuses.map(status =>
+              paymentInvoiceRepository.list(this.userId, { status })
+            )
+          );
+          // Combine and deduplicate by ID
+          const allInvoices = results.flatMap(r => r.data || []);
+          const uniqueIds = new Set(allInvoices.map(inv => inv.id));
+          count = uniqueIds.size;
+        } else {
+          const result = await paymentInvoiceRepository.list(this.userId, {
+            status: resolvedFilters?.status as string
+          });
+          count = result.data?.length || 0;
+        }
         break;
       }
       default:
@@ -910,6 +1713,8 @@ export class SafeExecutionLayer {
           return this.mutateTask(operation, payload, entityId);
         case 'invoices':
           return this.mutateInvoice(operation, payload, entityId);
+        case 'availability':
+          return this.mutateAvailability(operation, payload);
         default:
           return { success: false, error: `Cannot mutate entity: ${entity}` };
       }
@@ -1039,10 +1844,14 @@ export class SafeExecutionLayer {
       }
       case 'update': {
         if (!id) return { success: false, error: 'ID required for update' };
-        const result = await schedulingBookingRepository.update(id, this.userId, {
-          status: payload?.status as 'confirmed' | 'cancelled' | 'completed' | 'no_show',
-          internal_notes: payload?.internal_notes as string
-        });
+        // Build update object with only provided fields
+        const updateData: Record<string, unknown> = {};
+        if (payload?.status) updateData.status = payload.status as 'confirmed' | 'cancelled' | 'completed' | 'no_show';
+        if (payload?.internal_notes !== undefined) updateData.internal_notes = payload.internal_notes as string;
+        if (payload?.start_time) updateData.start_time = payload.start_time as string;
+        if (payload?.end_time) updateData.end_time = payload.end_time as string;
+
+        const result = await schedulingBookingRepository.update(id, this.userId, updateData);
         return result.error
           ? { success: false, error: result.error.message }
           : { success: true, data: result.data };
@@ -1110,11 +1919,82 @@ export class SafeExecutionLayer {
     id: string | undefined
   ): Promise<ToolResult> {
     switch (operation) {
+      case 'create': {
+        // Get next invoice number
+        const invoiceNumberResult = await paymentInvoiceRepository.getNextInvoiceNumber(this.userId);
+        if (invoiceNumberResult.error || !invoiceNumberResult.data) {
+          return { success: false, error: 'Failed to generate invoice number' };
+        }
+
+        // Build line items from payload
+        const lineItems = payload?.line_items as Array<{
+          description: string;
+          quantity: number;
+          unit_price: number;
+          total?: number;
+        }> || [];
+
+        // Calculate total if line items provided
+        const calculatedItems = lineItems.map(item => ({
+          description: item.description,
+          quantity: item.quantity || 1,
+          unit_price: item.unit_price,
+          total: item.total ?? (item.quantity || 1) * item.unit_price
+        }));
+
+        const totalAmount = payload?.amount as number ||
+          calculatedItems.reduce((sum, item) => sum + item.total, 0);
+
+        const result = await paymentInvoiceRepository.create({
+          user_id: this.userId,
+          contact_id: payload?.contact_id as string || null,
+          invoice_number: invoiceNumberResult.data,
+          amount: totalAmount,
+          currency: (payload?.currency as string) || 'ILS',
+          status: 'draft',
+          line_items: calculatedItems.length > 0 ? calculatedItems : [{
+            description: (payload?.description as string) || 'Services',
+            quantity: 1,
+            unit_price: totalAmount,
+            total: totalAmount
+          }],
+          due_date: payload?.due_date as string || null,
+          payment_terms: (payload?.payment_terms as string) || 'due_on_receipt',
+          notes: payload?.notes as string || null,
+          internal_notes: payload?.internal_notes as string || null,
+          sent_at: null,
+          paid_at: null,
+          payment_method: null,
+          payment_received_at: null,
+          payment_notes: null,
+          processor_type: null,
+          processor_checkout_id: null,
+          processor_payment_id: null,
+          processor_customer_id: null,
+          processor_payment_method_id: null,
+          retry_count: 0,
+          last_retry_at: null,
+          next_retry_at: null
+        });
+
+        if (result.error) {
+          return { success: false, error: result.error.message };
+        }
+
+        logger.info(
+          { userId: this.userId, invoiceId: result.data?.id, invoiceNumber: invoiceNumberResult.data },
+          'Invoice created via chat'
+        );
+
+        return { success: true, data: result.data };
+      }
       case 'update': {
         if (!id) return { success: false, error: 'ID required for update' };
         const result = await paymentInvoiceRepository.update(id, this.userId, {
           status: payload?.status as 'draft' | 'sent' | 'paid' | 'overdue' | 'cancelled',
-          notes: payload?.notes as string
+          notes: payload?.notes as string,
+          due_date: payload?.due_date as string,
+          amount: payload?.amount as number
         });
         return result.error
           ? { success: false, error: result.error.message }
@@ -1130,6 +2010,34 @@ export class SafeExecutionLayer {
       default:
         return { success: false, error: `Invoice ${operation} not supported via chat` };
     }
+  }
+
+  private async mutateAvailability(
+    operation: string,
+    payload: Record<string, unknown> | undefined
+  ): Promise<ToolResult> {
+    if (operation !== 'update') {
+      return { success: false, error: `Availability ${operation} not supported` };
+    }
+
+    if (!payload?.scheduling_availability) {
+      return { success: false, error: 'scheduling_availability payload required' };
+    }
+
+    const result = await businessProfileRepository.update(this.userId, {
+      scheduling_availability: payload.scheduling_availability as Record<string, Array<{ start: string; end: string }>>
+    });
+
+    if (result.error) {
+      return { success: false, error: result.error.message };
+    }
+
+    logger.info(
+      { userId: this.userId },
+      'Availability updated via chat'
+    );
+
+    return { success: true, data: result.data };
   }
 
   // ==========================================================================

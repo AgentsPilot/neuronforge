@@ -65,6 +65,9 @@ function BusinessOSContent() {
   const [schedulingInitialDate, setSchedulingInitialDate] = useState<string | undefined>(undefined);
   const [schedulingInitialBookingId, setSchedulingInitialBookingId] = useState<string | undefined>(undefined);
 
+  // My Day section collapsed state - controls expanded height for chat and cards
+  const [isMyDayCollapsed, setIsMyDayCollapsed] = useState(false);
+
   // My Day data
   const [myDay, setMyDay] = useState<MyDayData>({
     userName: 'there',
@@ -101,7 +104,9 @@ function BusinessOSContent() {
       openDaysCount: 0,
       paymentsConnected: false,
       paymentsProvider: 'Stripe',
-      automationsCount: 0
+      automationsCount: 0,
+      calendarSynced: false,
+      calendarProvider: null
     }
   });
 
@@ -114,10 +119,11 @@ function BusinessOSContent() {
   const fetchDashboardData = async () => {
     try {
       // Fetch My Day data, stats, and pipeline stages in parallel
+      // Use cache: 'no-store' to ensure fresh data on each load
       const [myDayResponse, statsResponse, stagesResponse] = await Promise.all([
-        fetch('/api/business-os/my-day'),
-        fetch('/api/business-os/stats'),
-        fetch('/api/crm/pipeline-stages')
+        fetch('/api/business-os/my-day', { cache: 'no-store' }),
+        fetch('/api/business-os/stats', { cache: 'no-store' }),
+        fetch('/api/crm/pipeline-stages', { cache: 'no-store' })
       ]);
 
       // Fetch pipeline stages for contact modal
@@ -145,7 +151,7 @@ function BusinessOSContent() {
             website: {
               url: s.website?.url || 'your-site.agentspilot.site',
               visitorsToday: s.website?.visitors_30d || 0,
-              bookingStarts: Math.floor((s.website?.visitors_30d || 0) * 0.12), // Estimate
+              bookingStarts: s.website?.bookings_30d || 0,
               status: s.website?.has_live_pages ? 'live' : 'draft',
               wantsWebsite: s.website?.wants_website || false,
               hasLivePages: s.website?.has_live_pages || false
@@ -170,7 +176,9 @@ function BusinessOSContent() {
               openDaysCount: s.scheduling?.open_days_count || 0,
               paymentsConnected: s.scheduling?.stripe_connected || false,
               paymentsProvider: 'Stripe',
-              automationsCount: s.automation_engine?.workflows_count || 0
+              automationsCount: s.automation_engine?.workflows_count || 0,
+              calendarSynced: s.scheduling?.calendar_synced || false,
+              calendarProvider: s.scheduling?.calendar_provider || null
             }
           });
         }
@@ -260,6 +268,13 @@ function BusinessOSContent() {
         // Open scheduling dialog, optionally focused on a date
         setSchedulingInitialDate(action.date);
         setSchedulingInitialBookingId(undefined);
+        setIsSchedulingDialogOpen(true);
+        break;
+
+      case 'open_booking':
+        // Open scheduling dialog focused on a specific booking
+        setSchedulingInitialDate(undefined);
+        setSchedulingInitialBookingId(action.bookingId);
         setIsSchedulingDialogOpen(true);
         break;
 
@@ -675,6 +690,8 @@ function BusinessOSContent() {
           summaryData={myDay.summaryData}
           storyBeats={myDay.storyBeats}
           loading={loading}
+          isFullyCollapsed={isMyDayCollapsed}
+          onFullyCollapsedChange={setIsMyDayCollapsed}
         />
 
         {/* Row 3: Chat Panel + Capability Cards - matches mockup exactly */}
@@ -693,16 +710,17 @@ function BusinessOSContent() {
             onPublishDraft={pendingDraftService ? publishDraftService : undefined}
             onConfirmUpdate={pendingServiceUpdate ? confirmServiceUpdate : undefined}
             onCancelUpdate={pendingServiceUpdate ? cancelServiceUpdate : undefined}
+            expanded={isMyDayCollapsed}
           />
 
           {/* Right: 4 Capability Cards (2x2 grid) - matches mockup: equal height cards */}
           <div
-            className="grid"
+            className="grid transition-all duration-300"
             style={{
               gridTemplateColumns: '1fr 1fr',
               gridTemplateRows: '1fr 1fr',
               gap: '20px',
-              height: '460px'
+              height: isMyDayCollapsed ? '640px' : '460px'
             }}
           >
             <CapabilityCard

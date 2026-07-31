@@ -6,7 +6,7 @@ import { useOnboarding } from './hooks/useOnboarding';
 import ProfileStep from './ProfileStep';
 import GoalStep from './GoalStep';
 import TriggerStep from './TriggerStep';
-import RoleStep from './RoleStep';
+import PipelineStep from './PipelineStep';
 
 const Onboarding: React.FC = () => {
   const [mousePosition, setMousePosition] = useState({ x: 0, y: 0 });
@@ -22,7 +22,8 @@ const Onboarding: React.FC = () => {
     updateProfile,
     updateGoal,
     updateMode,
-    updateRole,
+    updatePipelineTemplate,
+    updatePipelineStages,
     canProceedToNext,
     completeOnboarding,
     getStepTitle,
@@ -123,13 +124,20 @@ const Onboarding: React.FC = () => {
       case 2:
         return <TriggerStep data={data.mode} onChange={updateMode} />;
       case 3:
-        return <RoleStep data={data.role} onChange={updateRole} />;
+        return (
+          <PipelineStep
+            selectedTemplate={data.pipelineTemplate}
+            customStages={data.pipelineStages}
+            onTemplateChange={updatePipelineTemplate}
+            onStagesChange={updatePipelineStages}
+          />
+        );
       default:
         return null;
     }
   };
 
-  const stepLabels = ['Profile', 'Goal', 'Trigger', 'Role'];
+  const stepLabels = ['Profile', 'Goal', 'Trigger', 'Pipeline'];
 
   return (
     <div className="min-h-screen bg-black text-white overflow-hidden">

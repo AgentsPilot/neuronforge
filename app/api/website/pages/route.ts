@@ -234,7 +234,7 @@ export async function POST(request: NextRequest) {
         }));
 
         // Use the page's language for localized content
-        const enrichedBlocks = await websiteBlockEnrichmentService.enrichBlocks(user.id, blocksForEnrichment, validated.website_language);
+        const enrichedBlocks = await websiteBlockEnrichmentService.enrichBlocks(user.id, blocksForEnrichment, validated.website_language, false, user.email);
 
         // Update blocksToCreate with enriched content
         blocksToCreate = blocksToCreate.map((block, index) => ({

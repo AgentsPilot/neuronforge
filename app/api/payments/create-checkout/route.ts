@@ -20,11 +20,14 @@ const CheckoutSchema = z.object({
   service_id: z.string().uuid('Invalid service ID').optional(),
   booking_id: z.string().uuid('Invalid booking ID').optional(),
   amount: z.number().positive('Amount must be positive'),
-  // Handle empty string or missing currency - transform to USD as default
-  currency: z.string().optional().transform(val => {
+  // Handle null, undefined, empty string, or invalid currency - normalize to valid 3-char code
+  currency: z.string().nullish().transform(val => {
     if (!val || val.trim().length === 0) return 'USD';
-    return val.toUpperCase();
-  }).refine(val => val.length === 3, { message: 'Currency must be 3 characters' }),
+    const upper = val.toUpperCase().trim();
+    // If not exactly 3 chars, default to USD
+    if (upper.length !== 3) return 'USD';
+    return upper;
+  }),
   customer_name: z.string().min(1, 'Customer name is required'),
   customer_email: z.string().email('Invalid email address'),
   description: z.string().optional(),

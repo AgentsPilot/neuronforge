@@ -19,6 +19,7 @@
 export type ActionType =
   | 'list'      // Query multiple records
   | 'get'       // Get single record by ID
+  | 'count'     // Count records matching filters
   | 'create'    // Create new record
   | 'update'    // Modify existing record (generic)
   | 'delete'    // Permanently remove (destructive)
@@ -157,6 +158,14 @@ export const CAPABILITIES_SCHEMA: Record<string, CapabilityDefinition> = {
             operation: 'query',
             requiredFields: ['id'],
           },
+          count: {
+            type: 'count',
+            description: 'Count contacts matching filters. Use created_at_gte/created_at_lte for date range filtering (e.g., contacts added today).',
+            destructive: false,
+            requiresConfirmation: false,
+            operation: 'query',
+            optionalFields: ['stage', 'created_at_gte', 'created_at_lte'],
+          },
           create: {
             type: 'create',
             description: 'Create a new contact',
@@ -281,6 +290,7 @@ export const CAPABILITIES_SCHEMA: Record<string, CapabilityDefinition> = {
             dbOperation: 'delete',
             requiredFields: ['id'],
           },
+          count: undefined,
           deactivate: undefined,
           activate: undefined,
           archive: undefined,
@@ -301,10 +311,10 @@ export const CAPABILITIES_SCHEMA: Record<string, CapabilityDefinition> = {
     icon: 'Calendar',
     color: '#10B981',
     routes: {
-      main: '/business-os/scheduling',
-      services: '/business-os/scheduling?tab=services',
-      bookings: '/business-os/scheduling',
-      availability: '/business-os/scheduling?tab=availability',
+      main: '/business-os',
+      services: '/business-os',
+      bookings: '/business-os',
+      availability: '/business-os',
     },
     entities: {
       services: {
@@ -400,6 +410,7 @@ export const CAPABILITIES_SCHEMA: Record<string, CapabilityDefinition> = {
             dbOperation: 'delete',
             requiredFields: ['id'],
           },
+          count: undefined,
           complete: undefined,
           cancel: undefined,
           archive: undefined,
@@ -494,6 +505,14 @@ export const CAPABILITIES_SCHEMA: Record<string, CapabilityDefinition> = {
             dbOperation: 'delete',
             requiredFields: ['id'],
           },
+          count: {
+            type: 'count',
+            description: 'Count bookings matching filters (e.g., by status, date range)',
+            destructive: false,
+            requiresConfirmation: false,
+            operation: 'query',
+            optionalFields: ['status', 'start_date', 'end_date'],
+          },
           deactivate: undefined,
           activate: undefined,
           archive: undefined,
@@ -533,7 +552,7 @@ export const CAPABILITIES_SCHEMA: Record<string, CapabilityDefinition> = {
           { name: 'contact_id', type: 'string', description: 'Client contact' },
           { name: 'amount', type: 'number', description: 'Total amount', required: true },
           { name: 'currency', type: 'string', description: 'Currency', enum: ['USD', 'EUR', 'ILS', 'GBP'] },
-          { name: 'status', type: 'string', description: 'Invoice status', enum: ['draft', 'sent', 'paid', 'overdue', 'cancelled'] },
+          { name: 'status', type: 'string', description: 'Invoice status. "sent" and "overdue" are pending/unpaid invoices (ממתינה). Use these statuses when user asks for pending invoices.', enum: ['draft', 'sent', 'paid', 'overdue', 'cancelled'] },
           { name: 'due_date', type: 'date', description: 'Payment due date' },
           { name: 'line_items', type: 'array', description: 'Invoice line items' },
           { name: 'notes', type: 'string', description: 'Notes for client' },
@@ -603,6 +622,14 @@ export const CAPABILITIES_SCHEMA: Record<string, CapabilityDefinition> = {
             dbOperation: 'delete',
             requiredFields: ['id'],
           },
+          count: {
+            type: 'count',
+            description: 'Count invoices matching filters (e.g., by status like draft, sent, paid, overdue)',
+            destructive: false,
+            requiresConfirmation: false,
+            operation: 'query',
+            optionalFields: ['status', 'contact_id'],
+          },
           deactivate: undefined,
           activate: undefined,
           complete: undefined,
@@ -649,6 +676,7 @@ export const CAPABILITIES_SCHEMA: Record<string, CapabilityDefinition> = {
             requiredFields: ['id'],
           },
           // Transactions are typically read-only (created by payment processors)
+          count: undefined,
           create: undefined,
           update: undefined,
           delete: undefined,
@@ -757,6 +785,7 @@ export const CAPABILITIES_SCHEMA: Record<string, CapabilityDefinition> = {
             dbOperation: 'delete',
             requiredFields: ['id'],
           },
+          count: undefined,
           complete: undefined,
           cancel: undefined,
           archive: undefined,

@@ -49,7 +49,7 @@ export function AboutBlock({ content, styles, theme, isRTL, className, locale = 
   return (
     <section
       dir={isRTL ? 'rtl' : 'ltr'}
-      className={`relative overflow-hidden ${styles?.padding || 'py-20 sm:py-32'} ${className || ''}`}
+      className={`relative overflow-hidden ${styles?.padding || 'py-12 sm:py-16 lg:py-20'} ${className || ''}`}
       style={{ backgroundColor: isDark ? backgroundColor : '#ffffff' }}
     >
       {/* Enhanced decorative background */}
@@ -110,7 +110,7 @@ export function AboutBlock({ content, styles, theme, isRTL, className, locale = 
       <div className={`relative mx-auto px-4 sm:px-6 lg:px-8 ${styles?.max_width ? `max-w-${styles.max_width}` : 'max-w-7xl'}`}>
         {/* Side by Side Layout - Enhanced */}
         {layout === 'side-by-side' && (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 lg:gap-20 items-center">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 lg:gap-12 items-center">
             {/* Image with enhanced frame */}
             <motion.div
               initial={{ opacity: 0, x: isRTL ? 50 : -50 }}
@@ -151,10 +151,10 @@ export function AboutBlock({ content, styles, theme, isRTL, className, locale = 
                   <img
                     src={image}
                     alt={title}
-                    className="relative w-full rounded-2xl shadow-2xl object-cover aspect-[4/5] transition-transform duration-500 group-hover:scale-[1.02]"
+                    className="relative w-full max-h-[400px] rounded-2xl shadow-xl object-cover aspect-[4/3] transition-transform duration-500 group-hover:scale-[1.01]"
                     style={{
                       borderRadius: theme?.borderRadius || '1rem',
-                      boxShadow: `0 25px 50px -12px ${primaryColor}30`
+                      boxShadow: `0 15px 30px -8px ${primaryColor}25`
                     }}
                   />
 
@@ -164,15 +164,15 @@ export function AboutBlock({ content, styles, theme, isRTL, className, locale = 
                       initial={{ scale: 0, rotate: -10 }}
                       whileInView={{ scale: 1, rotate: 0 }}
                       viewport={{ once: true }}
-                      transition={{ delay: 0.5, type: "spring" }}
-                      className="absolute -bottom-6 -right-6 w-28 h-28 rounded-2xl flex flex-col items-center justify-center shadow-xl"
+                      transition={{ delay: 0.4, type: "spring" }}
+                      className="absolute -bottom-4 -right-4 w-20 h-20 rounded-xl flex flex-col items-center justify-center shadow-lg"
                       style={{
                         background: `linear-gradient(135deg, ${primaryColor} 0%, ${secondaryColor} 100%)`,
-                        boxShadow: `0 15px 30px -10px ${primaryColor}50`
+                        boxShadow: `0 10px 20px -6px ${primaryColor}40`
                       }}
                     >
-                      <span className="text-3xl font-bold text-white">{years_experience}+</span>
-                      <span className="text-xs font-medium text-white/80 uppercase tracking-wide">
+                      <span className="text-2xl font-bold text-white">{years_experience}+</span>
+                      <span className="text-[10px] font-medium text-white/80 uppercase tracking-wide">
                         {t('years', 'common')}
                       </span>
                     </motion.div>
@@ -180,7 +180,7 @@ export function AboutBlock({ content, styles, theme, isRTL, className, locale = 
                 </div>
               ) : (
                 <div
-                  className="relative w-full aspect-[4/5] rounded-2xl flex flex-col items-center justify-center shadow-xl overflow-hidden"
+                  className="relative w-full max-h-[400px] aspect-[4/3] rounded-2xl flex flex-col items-center justify-center shadow-lg overflow-hidden"
                   style={{
                     background: `linear-gradient(135deg, ${primaryColor}20 0%, ${secondaryColor}40 100%)`,
                     borderRadius: theme?.borderRadius || '1rem'
@@ -249,7 +249,7 @@ export function AboutBlock({ content, styles, theme, isRTL, className, locale = 
 
               {title && (
                 <h2
-                  className="text-3xl sm:text-4xl lg:text-5xl font-bold mb-6 leading-tight"
+                  className="text-2xl sm:text-3xl lg:text-4xl font-bold mb-4 leading-tight"
                   style={{
                     fontFamily: theme?.fonts.heading,
                     color: isDark ? '#ffffff' : textColor

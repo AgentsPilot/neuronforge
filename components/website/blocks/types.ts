@@ -154,7 +154,7 @@ export interface ProcessStep {
   title: string;
   description: string;
   icon?: string;
-  /** Link to capability in Business OS (e.g., '/business-os/scheduling') */
+  /** Link to capability in Business OS (e.g., '/business-os/crm') */
   capability_link?: string;
   /** Whether this step was auto-generated from user capabilities */
   auto_generated?: boolean;

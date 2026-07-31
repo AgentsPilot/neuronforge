@@ -1,10 +1,14 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { motion } from 'framer-motion';
 import { BusinessOSHeader } from '@/components/business-os/BusinessOSHeader';
-import { Globe, Layout, Settings, Eye, EyeOff, ArrowLeft, Palette, ExternalLink, Copy, Check, Loader2, Rocket, PenLine, LayoutTemplate, RefreshCw, Plus, FileText, Trash2, X, Target, List, Megaphone, MessageCircle, Mail, DollarSign, HelpCircle, User, Sparkles, Calendar, CreditCard, Users, RotateCcw, Image as ImageIcon, Newspaper, Video, BarChart3, Package, ChevronDown, ChevronUp, Save, Wand2, Link2, Brain, Dumbbell, Hand, Flower2, Camera, Scale, Code, BookOpen, Music, Scissors, Heart, Briefcase, GraduationCap, Stethoscope, Calculator, PenTool, Mic, Utensils, Wrench, Car, Home, ShieldCheck, Plane, Dog, Baby, Leaf, Clock, TrendingUp, ShoppingCart, Apple, Star, Building, type LucideIcon } from 'lucide-react';
+import { Globe, Layout, Settings, Eye, EyeOff, ArrowLeft, Palette, ExternalLink, Copy, Check, Loader2, Rocket, PenLine, LayoutTemplate, RefreshCw, Plus, FileText, Trash2, X, Target, List, Megaphone, MessageCircle, Mail, DollarSign, HelpCircle, User, Sparkles, Calendar, CreditCard, Users, RotateCcw, Image as ImageIcon, Newspaper, Video, BarChart3, Package, ChevronDown, ChevronUp, Save, Wand2, Link2, Brain, Dumbbell, Hand, Flower2, Camera, Scale, Code, BookOpen, Music, Scissors, Heart, Briefcase, GraduationCap, Stethoscope, Calculator, PenTool, Mic, Utensils, Wrench, Car, Home, ShieldCheck, Plane, Dog, Baby, Leaf, Clock, TrendingUp, ShoppingCart, Apple, Star, Building, GripVertical, type LucideIcon } from 'lucide-react';
+import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core';
+import { arrayMove, SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
+import { restrictToVerticalAxis } from '@dnd-kit/modifiers';
+import { CSS } from '@dnd-kit/utilities';
 import { createLogger } from '@/lib/logger';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import { supabase } from '@/lib/supabaseClient';
@@ -13,9 +17,12 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import type { WebsitePage, PageTheme } from '@/lib/repositories/WebsitePageRepository';
 import type { WebsiteBlock } from '@/lib/repositories/WebsiteBlockRepository';
 import { TestimonialEditor } from '@/components/website/TestimonialEditor';
+import { ProcessStepEditor } from '@/components/website/ProcessStepEditor';
 import type { TestimonialItem, ProcessStep } from '@/components/website/blocks/types';
 import { ConfigurationDialog } from '@/components/business-os/ConfigurationDialog';
 import { MediaUploader } from '@/components/website/MediaUploader';
+import { WebsiteSetupWizard, type WizardResult } from '@/components/business-os/WebsiteSetupWizard';
+import { LandingPageWizard, type LandingPageWizardResult } from '@/components/business-os/LandingPageWizard';
 
 const logger = createLogger({ module: 'WebsitePage' });
 
@@ -39,10 +46,45 @@ function ServiceIconRenderer({ icon, className = "w-5 h-5 text-[#4F6EF7]" }: { i
   return <Sparkles className={className} />;
 }
 
+// Sortable block item wrapper for drag-and-drop
+function SortableBlockItem({ id, children }: { id: string; children: React.ReactNode }) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging
+  } = useSortable({ id });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+    zIndex: isDragging ? 1000 : 'auto' as const
+  };
+
+  return (
+    <div ref={setNodeRef} style={style} {...attributes}>
+      <div className="relative group">
+        {/* Drag handle */}
+        <button
+          {...listeners}
+          className="absolute left-0 top-1/2 -translate-y-1/2 -translate-x-full pr-2 opacity-0 group-hover:opacity-100 transition-opacity cursor-grab active:cursor-grabbing text-[var(--v2-text-muted)] hover:text-[var(--v2-text-secondary)]"
+          aria-label="Drag to reorder"
+        >
+          <GripVertical className="w-5 h-5" />
+        </button>
+        {children}
+      </div>
+    </div>
+  );
+}
+
 // Website theme color: Blue (matching CRM's purple pattern)
 const WEBSITE_COLOR = '#4F6EF7';
 
-type ViewMode = 'overview' | 'pages' | 'sections' | 'design' | 'settings' | 'templates';
+type ViewMode = 'overview' | 'pages' | 'journey' | 'sections' | 'design' | 'settings' | 'templates' | 'wizard';
 
 interface WebsiteTemplate {
   id: string;
@@ -81,6 +123,7 @@ const LABELS = {
     title: 'Website',
     subtitle: 'Manage your professional website',
     tab_overview: 'Overview',
+    tab_journey: 'Client Journey',
     tab_sections: 'Sections',
     tab_design: 'Design',
     tab_settings: 'Settings',
@@ -100,6 +143,7 @@ const LABELS = {
     loading: 'Loading...',
     preview: 'Preview',
     edit_content: 'Edit Content',
+    run_setup_wizard: 'Run Setup Wizard',
     subdomain: 'Subdomain',
     subdomain_desc: 'Your website will be available at',
     subdomain_taken: 'This subdomain is already taken',
@@ -112,9 +156,30 @@ const LABELS = {
     design_desc: 'Customize colors, fonts, and styling',
     settings_title: 'Website Settings',
     settings_desc: 'Configure subdomain and SEO settings',
-    visitors_today: 'Visitors Today',
-    visitors_month: 'This Month',
-    page_views: 'Page Views',
+    visitors_today: 'Today',
+    visitors_7d: 'Last 7 Days',
+    visitors_30d: 'Last 30 Days',
+    total_views: 'Total Views',
+    unique_visitors: 'Unique Visitors',
+    page_views: 'Analytics',
+    journey_title: 'Client Journey',
+    journey_desc: 'Define what happens when clients want to work with you',
+    journey_step_booking: 'Book Appointment',
+    journey_step_booking_desc: 'Client selects date and time',
+    journey_step_payment: 'Collect Payment',
+    journey_step_payment_desc: 'Secure payment before appointment',
+    journey_step_intake: 'Intake Form',
+    journey_step_intake_desc: 'Gather client information',
+    journey_step_confirmation: 'Confirmation',
+    journey_step_confirmation_desc: 'Client receives confirmation email',
+    journey_add_step: 'Add Step',
+    journey_save: 'Save Journey',
+    journey_saving: 'Saving...',
+    journey_always_included: 'Always included',
+    journey_services_only: 'Show services without booking flow',
+    journey_services_only_desc: 'Display your services as information only - no booking or payment',
+    journey_services_only_info: 'Your services will be displayed without a booking flow.',
+    journey_services_only_info2: "Clients can view your offerings but won't be able to book directly.",
     primary_color: 'Primary Color',
     font_heading: 'Heading Font',
     font_body: 'Body Font',
@@ -122,11 +187,11 @@ const LABELS = {
     meta_description: 'Meta Description',
     seo_keywords: 'SEO Keywords',
     templates_title: 'Change Template',
-    templates_desc: 'Select a different template for your website. This will replace your current design.',
+    templates_desc: 'Select a different template to change your website colors and fonts.',
     current_template: 'Current Template',
     apply_template: 'Apply Template',
     applying_template: 'Applying...',
-    template_warning: 'Applying a new template will replace your current design and blocks.',
+    template_warning: 'Your content will be preserved. Only colors and fonts will change.',
     create_website: 'Create Website',
     tab_pages: 'Pages',
     pages_title: 'Website Pages',
@@ -176,6 +241,7 @@ const LABELS = {
     title: 'Sitio Web',
     subtitle: 'Gestiona tu sitio web profesional',
     tab_overview: 'General',
+    tab_journey: 'Recorrido del Cliente',
     tab_sections: 'Secciones',
     tab_design: 'Diseño',
     tab_settings: 'Configuración',
@@ -195,6 +261,7 @@ const LABELS = {
     loading: 'Cargando...',
     preview: 'Vista Previa',
     edit_content: 'Editar Contenido',
+    run_setup_wizard: 'Ejecutar Asistente',
     subdomain: 'Subdominio',
     subdomain_desc: 'Tu sitio web estará disponible en',
     subdomain_taken: 'Este subdominio ya está ocupado',
@@ -207,9 +274,30 @@ const LABELS = {
     design_desc: 'Personaliza colores, fuentes y estilo',
     settings_title: 'Configuración del Sitio',
     settings_desc: 'Configura subdominio y SEO',
-    visitors_today: 'Visitantes Hoy',
-    visitors_month: 'Este Mes',
-    page_views: 'Visitas',
+    visitors_today: 'Hoy',
+    visitors_7d: 'Últimos 7 Días',
+    visitors_30d: 'Últimos 30 Días',
+    total_views: 'Visitas Totales',
+    unique_visitors: 'Visitantes Únicos',
+    page_views: 'Analíticas',
+    journey_title: 'Recorrido del Cliente',
+    journey_desc: 'Define qué sucede cuando los clientes quieren trabajar contigo',
+    journey_step_booking: 'Reservar Cita',
+    journey_step_booking_desc: 'El cliente selecciona fecha y hora',
+    journey_step_payment: 'Cobrar Pago',
+    journey_step_payment_desc: 'Pago seguro antes de la cita',
+    journey_step_intake: 'Formulario de Ingreso',
+    journey_step_intake_desc: 'Recopilar información del cliente',
+    journey_step_confirmation: 'Confirmación',
+    journey_step_confirmation_desc: 'El cliente recibe email de confirmación',
+    journey_add_step: 'Agregar Paso',
+    journey_save: 'Guardar Recorrido',
+    journey_saving: 'Guardando...',
+    journey_always_included: 'Siempre incluido',
+    journey_services_only: 'Mostrar servicios sin flujo de reserva',
+    journey_services_only_desc: 'Muestra tus servicios solo como información - sin reserva ni pago',
+    journey_services_only_info: 'Tus servicios se mostrarán sin flujo de reserva.',
+    journey_services_only_info2: 'Los clientes pueden ver tus ofertas pero no podrán reservar directamente.',
     primary_color: 'Color Principal',
     font_heading: 'Fuente de Títulos',
     font_body: 'Fuente de Texto',
@@ -217,11 +305,11 @@ const LABELS = {
     meta_description: 'Meta Descripción',
     seo_keywords: 'Palabras Clave SEO',
     templates_title: 'Cambiar Plantilla',
-    templates_desc: 'Selecciona una plantilla diferente para tu sitio web. Esto reemplazará tu diseño actual.',
+    templates_desc: 'Selecciona una plantilla para cambiar los colores y fuentes de tu sitio.',
     current_template: 'Plantilla Actual',
     apply_template: 'Aplicar Plantilla',
     applying_template: 'Aplicando...',
-    template_warning: 'Aplicar una nueva plantilla reemplazará tu diseño y bloques actuales.',
+    template_warning: 'Tu contenido se conservará. Solo cambiarán los colores y fuentes.',
     create_website: 'Crear Sitio Web',
     tab_pages: 'Páginas',
     pages_title: 'Páginas del Sitio',
@@ -271,6 +359,7 @@ const LABELS = {
     title: 'אתר אינטרנט',
     subtitle: 'נהל את האתר המקצועי שלך',
     tab_overview: 'סקירה',
+    tab_journey: 'מסע הלקוח',
     tab_sections: 'חלקים',
     tab_design: 'עיצוב',
     tab_settings: 'הגדרות',
@@ -290,6 +379,7 @@ const LABELS = {
     loading: '...טוען',
     preview: 'תצוגה מקדימה',
     edit_content: 'ערוך תוכן',
+    run_setup_wizard: 'הפעל אשף הגדרות',
     subdomain: 'תת-דומיין',
     subdomain_desc: 'האתר שלך יהיה זמין ב',
     subdomain_taken: 'תת-דומיין זה כבר תפוס',
@@ -302,9 +392,30 @@ const LABELS = {
     design_desc: 'התאם אישית צבעים, גופנים ועיצוב',
     settings_title: 'הגדרות האתר',
     settings_desc: 'הגדר תת-דומיין ו-SEO',
-    visitors_today: 'מבקרים היום',
-    visitors_month: 'החודש',
-    page_views: 'צפיות',
+    visitors_today: 'היום',
+    visitors_7d: '7 ימים אחרונים',
+    visitors_30d: '30 ימים אחרונים',
+    total_views: 'סה"כ צפיות',
+    unique_visitors: 'מבקרים ייחודיים',
+    page_views: 'אנליטיקס',
+    journey_title: 'מסע הלקוח',
+    journey_desc: 'הגדר מה קורה כשלקוחות רוצים לעבוד איתך',
+    journey_step_booking: 'קביעת פגישה',
+    journey_step_booking_desc: 'הלקוח בוחר תאריך ושעה',
+    journey_step_payment: 'גביית תשלום',
+    journey_step_payment_desc: 'תשלום מאובטח לפני הפגישה',
+    journey_step_intake: 'טופס קליטה',
+    journey_step_intake_desc: 'איסוף מידע על הלקוח',
+    journey_step_confirmation: 'אישור',
+    journey_step_confirmation_desc: 'הלקוח מקבל מייל אישור',
+    journey_add_step: 'הוסף שלב',
+    journey_save: 'שמור מסע לקוח',
+    journey_saving: 'שומר...',
+    journey_always_included: 'תמיד כלול',
+    journey_services_only: 'הצג שירותים ללא תהליך הזמנה',
+    journey_services_only_desc: 'הצג את השירותים שלך כמידע בלבד - ללא הזמנה או תשלום',
+    journey_services_only_info: 'השירותים שלך יוצגו ללא תהליך הזמנה.',
+    journey_services_only_info2: 'לקוחות יוכלו לצפות בשירותים שלך אך לא יוכלו להזמין ישירות.',
     primary_color: 'צבע ראשי',
     font_heading: 'גופן כותרות',
     font_body: 'גופן גוף',
@@ -312,11 +423,11 @@ const LABELS = {
     meta_description: 'תיאור מטא',
     seo_keywords: 'מילות מפתח SEO',
     templates_title: 'החלף תבנית',
-    templates_desc: 'בחר תבנית אחרת לאתר שלך. זה יחליף את העיצוב הנוכחי.',
+    templates_desc: 'בחר תבנית כדי לשנות את הצבעים והפונטים של האתר.',
     current_template: 'תבנית נוכחית',
     apply_template: 'החל תבנית',
     applying_template: '...מחיל',
-    template_warning: 'החלת תבנית חדשה תחליף את העיצוב והבלוקים הנוכחיים.',
+    template_warning: 'התוכן שלך יישמר. רק הצבעים והפונטים ישתנו.',
     create_website: 'צור אתר',
     tab_pages: 'דפים',
     pages_title: 'דפי האתר',
@@ -427,8 +538,24 @@ const getTranslatedVertical = (vertical: string, lang: 'en' | 'es' | 'he'): stri
   return VERTICAL_NAMES[vertical]?.[lang] || vertical;
 };
 
+// Brand voice translations
+const BRAND_VOICE_TRANSLATIONS: Record<string, { en: string; es: string; he: string }> = {
+  'warm': { en: 'Warm', es: 'Cálido', he: 'חם ומזמין' },
+  'professional': { en: 'Professional', es: 'Profesional', he: 'מקצועי וקליני' },
+  'minimal': { en: 'Minimal', es: 'Minimalista', he: 'מודרני ומינימליסטי' },
+  'bold': { en: 'Bold', es: 'Audaz', he: 'נועז' },
+  'elegant': { en: 'Elegant', es: 'Elegante', he: 'אלגנטי' },
+  'creative': { en: 'Creative', es: 'Creativo', he: 'יצירתי' },
+};
+
+// Helper function to get translated brand voice
+const getTranslatedBrandVoice = (voice: string, lang: 'en' | 'es' | 'he'): string => {
+  return BRAND_VOICE_TRANSLATIONS[voice]?.[lang] || voice;
+};
+
 export default function WebsiteManagementPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { language } = useLanguage();
   const { user } = useAuth();
   const labels = LABELS[language] || LABELS.en;
@@ -445,6 +572,7 @@ export default function WebsiteManagementPage() {
   const [saving, setSaving] = useState(false);
   const [applyingTemplate, setApplyingTemplate] = useState(false);
   const [showCreatePageModal, setShowCreatePageModal] = useState(false);
+  const [showLandingPageWizard, setShowLandingPageWizard] = useState(false);
   const [creatingPage, setCreatingPage] = useState(false);
   const [newPageTitle, setNewPageTitle] = useState('');
   const [newPageSlug, setNewPageSlug] = useState('');
@@ -459,6 +587,7 @@ export default function WebsiteManagementPage() {
   // Sync with business data state
   const [syncing, setSyncing] = useState(false);
   const [syncResult, setSyncResult] = useState<{ count: number; message: string } | null>(null);
+  const [resettingOrder, setResettingOrder] = useState(false);
   const [enrichmentSummary, setEnrichmentSummary] = useState<{
     has_services: boolean;
     service_count: number;
@@ -495,12 +624,37 @@ export default function WebsiteManagementPage() {
   const [enhancingTestimonial, setEnhancingTestimonial] = useState(false);
   const [enhancingTestimonialIndex, setEnhancingTestimonialIndex] = useState<number | null>(null);
 
+  // Client Journey state
+  type FlowStepKey = 'booking' | 'payment' | 'intake' | 'confirmation';
+  const [clientFlow, setClientFlow] = useState<FlowStepKey[]>(['booking', 'confirmation']);
+  const [servicesOnly, setServicesOnly] = useState(false);
+  const [savingJourney, setSavingJourney] = useState(false);
+  const [processTitle, setProcessTitle] = useState('');
+  const [processSubtitle, setProcessSubtitle] = useState('');
+
   // Configuration dialog state (for services editing)
   const [isConfigOpen, setIsConfigOpen] = useState(false);
 
   // Add Section modal state
   const [showAddSectionModal, setShowAddSectionModal] = useState(false);
   const [addingSection, setAddingSection] = useState(false);
+
+  // Setup Wizard state
+  const [wizardChecked, setWizardChecked] = useState(false);
+
+  // Analytics state
+  const [analytics, setAnalytics] = useState<{
+    total_views: number;
+    unique_visitors: number;
+    views_today: number;
+    visitors_today: number;
+    views_this_month: number;
+    visitors_this_month: number;
+    views_30d: number;
+    visitors_30d: number;
+    views_7d: number;
+    visitors_7d: number;
+  } | null>(null);
 
   useEffect(() => {
     fetchData();
@@ -574,17 +728,398 @@ export default function WebsiteManagementPage() {
         const blocksData = await blocksResponse.json();
         if (blocksData.success) {
           setBlocks(blocksData.blocks || []);
+          // Extract client flow from process block
+          const processBlock = (blocksData.blocks || []).find((b: WebsiteBlock) => b.block_type === 'process');
+          if (processBlock?.content) {
+            // Load client_flow - always load it if it exists
+            if (processBlock.content.client_flow && Array.isArray(processBlock.content.client_flow)) {
+              const savedFlow = processBlock.content.client_flow as FlowStepKey[];
+              const flowWithConfirmation = savedFlow.includes('confirmation')
+                ? savedFlow
+                : [...savedFlow.filter(s => s !== 'confirmation'), 'confirmation'];
+              setClientFlow(flowWithConfirmation);
+            }
+            // Set services_only mode separately
+            if (processBlock.content.services_only) {
+              setServicesOnly(true);
+            } else {
+              setServicesOnly(false);
+            }
+            // Load title and subtitle
+            setProcessTitle((processBlock.content.title as string) || '');
+            setProcessSubtitle((processBlock.content.subtitle as string) || '');
+          }
+        }
+
+        // Fetch website analytics
+        try {
+          const analyticsResponse = await fetch('/api/website/analytics');
+          const analyticsData = await analyticsResponse.json();
+          console.log('[Website] Analytics response:', analyticsData);
+          if (analyticsData.success && analyticsData.analytics) {
+            setAnalytics(analyticsData.analytics);
+          }
+        } catch (err) {
+          logger.warn({ err }, 'Failed to fetch website analytics');
         }
       }
 
       if (templatesData.success) {
         setTemplates(templatesData.templates || []);
       }
+
+      // Check if we should show setup wizard
+      if (!wizardChecked) {
+        setWizardChecked(true);
+
+        // Check for ?wizard=true query param (from dashboard setup card)
+        const wizardParam = searchParams.get('wizard');
+        if (wizardParam === 'true') {
+          setViewMode('wizard');
+          // Clean up the URL
+          router.replace('/business-os/website', { scroll: false });
+        } else {
+          // Auto-show wizard for first-time users
+          const hasNoPage = !pagesData.pages || pagesData.pages.length === 0;
+          const homepage = pagesData.pages?.find((p: WebsitePage) => p.page_type === 'homepage');
+          const isDraft = homepage?.status === 'draft';
+          const hasNoUserEdits = !homepage?.updated_at || homepage.created_at === homepage.updated_at;
+
+          // Show wizard if no page exists OR if page is draft with no user edits
+          if (hasNoPage || (isDraft && hasNoUserEdits)) {
+            setViewMode('wizard');
+          }
+        }
+      }
     } catch (error) {
       logger.error({ err: error }, 'Failed to fetch website data');
     } finally {
       setLoading(false);
     }
+  };
+
+  // Handle wizard completion - uses same API/tables as edit page
+  const handleWizardComplete = async (result: WizardResult) => {
+    try {
+      logger.info({ result }, 'Wizard completed');
+
+      // Step 1: Apply template (recreates blocks with standard structure)
+      if (result.templateId && page) {
+        await fetch(`/api/website/pages/${page.id}/apply-template`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ template_id: result.templateId })
+        });
+      }
+
+      // Step 2: Fetch fresh blocks after template application
+      const blocksResponse = await fetch(`/api/website/pages/${page?.id}/blocks-with-content`);
+      const blocksData = await blocksResponse.json();
+      const freshBlocks: WebsiteBlock[] = blocksData.success ? (blocksData.blocks || []) : [];
+
+      // Step 3: Update subdomain
+      if (result.subdomain && page) {
+        await fetch(`/api/website/pages/${page.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ subdomain: result.subdomain })
+        });
+        setSubdomain(result.subdomain);
+      }
+
+      // Step 4: Update header block with logo (same as edit page)
+      if (result.logoUrl && page) {
+        const headerBlock = freshBlocks.find(b => b.block_type === 'header');
+        if (headerBlock) {
+          await fetch(`/api/website/pages/${page.id}/blocks/${headerBlock.id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              content: { ...headerBlock.content, logo_url: result.logoUrl }
+            })
+          });
+        }
+      }
+
+      // Step 5: Update process block with client_flow (same as handleSaveJourney)
+      if (result.clientFlow && page) {
+        const processBlock = freshBlocks.find(b => b.block_type === 'process');
+        const isServicesOnly = result.clientFlow.length === 1 && result.clientFlow[0] === 'confirmation';
+        const contentToSave = {
+          ...(processBlock?.content || {}),
+          client_flow: result.clientFlow,
+          services_only: isServicesOnly
+        };
+
+        if (processBlock) {
+          await fetch(`/api/website/pages/${page.id}/blocks/${processBlock.id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ content: contentToSave })
+          });
+        } else {
+          await fetch(`/api/website/pages/${page.id}/blocks`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              block_type: 'process',
+              position: freshBlocks.length,
+              content: contentToSave
+            })
+          });
+        }
+      }
+
+      // Step 6: Update services block with hidden flags (same as edit page toggle)
+      if (page) {
+        const servicesBlock = freshBlocks.find(b => b.block_type === 'services');
+        if (servicesBlock) {
+          // Fetch services from API (same source as edit page)
+          const servicesResponse = await fetch('/api/website/blocks/services');
+          if (servicesResponse.ok) {
+            const servicesData = await servicesResponse.json();
+            if (servicesData.services && servicesData.services.length > 0) {
+              const hiddenSet = new Set(result.hiddenServiceIds);
+              // Build services array with hidden flag - same structure as edit page
+              const servicesWithHidden = servicesData.services.map((s: { id: string; name: string; description?: string; price?: string; duration?: string; icon?: string }) => ({
+                name: s.name,
+                description: s.description || '',
+                price: s.price,
+                duration: s.duration,
+                icon: s.icon || 'Briefcase',
+                hidden: hiddenSet.has(s.id)
+              }));
+
+              // Save to services block (same API as handleSaveBlockContent)
+              await fetch(`/api/website/pages/${page.id}/blocks/${servicesBlock.id}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  content: { ...servicesBlock.content, services: servicesWithHidden }
+                })
+              });
+            }
+          }
+        }
+      }
+
+      // Step 7: Publish if requested
+      if (result.shouldPublish && page) {
+        await fetch(`/api/website/pages/${page.id}/publish`, {
+          method: 'POST'
+        });
+      }
+
+      // Update local state for responsive UI
+      const isServicesOnly = result.clientFlow.length === 1 && result.clientFlow[0] === 'confirmation';
+      setClientFlow(result.clientFlow);
+      setServicesOnly(isServicesOnly);
+
+      // Close wizard and refresh
+      setViewMode('overview');
+      await fetchData();
+    } catch (error) {
+      logger.error({ err: error }, 'Failed to complete wizard');
+    }
+  };
+
+  const handleWizardSkip = () => {
+    setViewMode('overview');
+  };
+
+  // Handle saving wizard state before showing preview (Step 4)
+  // This ensures the preview shows accurate data including hidden services
+  const handleBeforePreview = async (data: Omit<WizardResult, 'shouldPublish'>) => {
+    if (!page) return;
+
+    try {
+      logger.info({ data }, 'Saving wizard state before preview');
+
+      // Step 1: Apply template if changed
+      if (data.templateId && data.templateId !== page.template_id) {
+        await fetch(`/api/website/pages/${page.id}/apply-template`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ template_id: data.templateId })
+        });
+      }
+
+      // Step 2: Fetch fresh blocks
+      const blocksResponse = await fetch(`/api/website/pages/${page.id}/blocks-with-content`);
+      const blocksData = await blocksResponse.json();
+      const freshBlocks: WebsiteBlock[] = blocksData.success ? (blocksData.blocks || []) : [];
+
+      // Step 3: Update header block with logo
+      if (data.logoUrl) {
+        const headerBlock = freshBlocks.find(b => b.block_type === 'header');
+        if (headerBlock) {
+          await fetch(`/api/website/pages/${page.id}/blocks/${headerBlock.id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              content: { ...headerBlock.content, logo_url: data.logoUrl }
+            })
+          });
+        }
+      }
+
+      // Step 4: Update process block with client_flow
+      if (data.clientFlow) {
+        const processBlock = freshBlocks.find(b => b.block_type === 'process');
+        const isServicesOnly = data.clientFlow.length === 1 && data.clientFlow[0] === 'confirmation';
+        const contentToSave = {
+          ...(processBlock?.content || {}),
+          client_flow: data.clientFlow,
+          services_only: isServicesOnly
+        };
+
+        if (processBlock) {
+          await fetch(`/api/website/pages/${page.id}/blocks/${processBlock.id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ content: contentToSave })
+          });
+        }
+      }
+
+      // Step 5: Update services block with hidden flags
+      const servicesBlock = freshBlocks.find(b => b.block_type === 'services');
+      if (servicesBlock) {
+        const servicesResponse = await fetch('/api/website/blocks/services');
+        if (servicesResponse.ok) {
+          const servicesData = await servicesResponse.json();
+          if (servicesData.services && servicesData.services.length > 0) {
+            const hiddenSet = new Set(data.hiddenServiceIds);
+            const servicesWithHidden = servicesData.services.map((s: { id: string; name: string; description?: string; price?: string; duration?: string; icon?: string }) => ({
+              name: s.name,
+              description: s.description || '',
+              price: s.price,
+              duration: s.duration,
+              icon: s.icon || 'Briefcase',
+              hidden: hiddenSet.has(s.id)
+            }));
+
+            await fetch(`/api/website/pages/${page.id}/blocks/${servicesBlock.id}`, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                content: { ...servicesBlock.content, services: servicesWithHidden }
+              })
+            });
+          }
+        }
+      }
+
+      logger.info('Successfully saved wizard state before preview');
+    } catch (error) {
+      logger.error({ err: error }, 'Failed to save wizard state before preview');
+    }
+  };
+
+  // Handle client journey save
+  const handleSaveJourney = async () => {
+    if (!page) return;
+
+    setSavingJourney(true);
+    try {
+      // Find or create process block
+      const processBlock = blocks.find(b => b.block_type === 'process');
+
+      // Ensure confirmation is always at the end
+      const flowToSave = clientFlow.includes('confirmation')
+        ? clientFlow
+        : [...clientFlow.filter(s => s !== 'confirmation'), 'confirmation'];
+
+      // When services_only is true, still save the flow so it can be restored
+      // We keep the existing flow if switching to services_only, or use current flow
+      const existingFlow = processBlock?.content?.client_flow as FlowStepKey[] | undefined;
+      const flowToStore = servicesOnly && existingFlow && existingFlow.length > 0
+        ? existingFlow  // Preserve existing flow when switching to services_only
+        : flowToSave;
+
+      const contentToSave = {
+        ...(processBlock?.content || {}),
+        client_flow: flowToStore,
+        services_only: servicesOnly,
+        // Always save title/subtitle - empty string means use default translation
+        title: processTitle,
+        subtitle: processSubtitle
+      };
+
+      if (processBlock) {
+        // Update existing process block - use correct API path with page.id
+        logger.info({ blockId: processBlock.id, contentToSave }, 'Updating process block');
+        const response = await fetch(`/api/website/pages/${page.id}/blocks/${processBlock.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ content: contentToSave })
+        });
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(errorData.error || 'Failed to update process block');
+        }
+        const result = await response.json();
+        logger.info({ result }, 'Process block updated successfully');
+      } else {
+        // Create new process block if none exists - use correct API path with page.id
+        logger.info({ contentToSave }, 'Creating new process block');
+        const response = await fetch(`/api/website/pages/${page.id}/blocks`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            block_type: 'process',
+            position: blocks.length,
+            content: contentToSave
+          })
+        });
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(errorData.error || 'Failed to create process block');
+        }
+        const result = await response.json();
+        logger.info({ result }, 'Process block created successfully');
+      }
+
+      // Refresh blocks to update local state
+      await fetchData();
+    } catch (error) {
+      logger.error({ err: error }, 'Failed to save journey');
+    } finally {
+      setSavingJourney(false);
+    }
+  };
+
+  // Toggle a step in the client journey
+  const toggleJourneyStep = (step: FlowStepKey) => {
+    if (step === 'confirmation') return; // Confirmation is always included
+
+    setClientFlow(prev => {
+      if (prev.includes(step)) {
+        return prev.filter(s => s !== step);
+      } else {
+        // Add step in correct order
+        const order: FlowStepKey[] = ['booking', 'payment', 'intake', 'confirmation'];
+        const newFlow = [...prev, step];
+        return order.filter(s => newFlow.includes(s));
+      }
+    });
+  };
+
+  // Move a step in the client journey
+  const moveJourneyStep = (step: FlowStepKey, direction: 'up' | 'down') => {
+    if (step === 'confirmation') return; // Confirmation must stay at the end
+
+    setClientFlow(prev => {
+      const index = prev.indexOf(step);
+      if (index === -1) return prev;
+
+      const newIndex = direction === 'up' ? index - 1 : index + 1;
+      if (newIndex < 0 || newIndex >= prev.length - 1) return prev; // Can't move past confirmation
+
+      const newFlow = [...prev];
+      [newFlow[index], newFlow[newIndex]] = [newFlow[newIndex], newFlow[index]];
+      return newFlow;
+    });
   };
 
   const handleCreateLandingPage = async () => {
@@ -857,7 +1392,7 @@ export default function WebsiteManagementPage() {
   };
 
   // Block types that should save directly to the block (page-specific, not shared)
-  const SAVE_DIRECTLY_TO_BLOCK = ['services', 'header'];
+  const SAVE_DIRECTLY_TO_BLOCK = ['services', 'header', 'process'];
 
   const handleSaveBlockContent = async (blockId: string) => {
     if (!editingBlockContent) return;
@@ -1024,7 +1559,7 @@ export default function WebsiteManagementPage() {
       services: { title: 'Services', subtitle: 'What we offer', services: [], layout: 'grid' },
       cta: { title: 'Ready to Get Started?', subtitle: 'Contact us today', cta_text: 'Contact Us', cta_link: '#contact' },
       testimonials: { title: 'Testimonials', testimonials: [] },
-      contact_form: { title: 'Contact Us', fields: [{ name: 'name', type: 'text', label: 'Name', required: true }, { name: 'email', type: 'email', label: 'Email', required: true }, { name: 'message', type: 'textarea', label: 'Message', required: true }] },
+      contact_form: { title: 'Contact Us', fields: [{ name: 'name', type: 'text', label: 'Name', required: true }, { name: 'email', type: 'email', label: 'Email', required: true }, { name: 'phone', type: 'tel', label: 'Phone', required: true }, { name: 'message', type: 'textarea', label: 'Message', required: true }] },
       intake_form: { title: 'Get Started', description: 'Fill out this form to begin', fields: [] },
       pricing: { title: 'Pricing', plans: [] },
       faq: { title: 'Frequently Asked Questions', items: [] },
@@ -1104,6 +1639,104 @@ export default function WebsiteManagementPage() {
       logger.error({ err: error }, 'Failed to sync with business data');
     } finally {
       setSyncing(false);
+    }
+  };
+
+  // Reset block order to defaults (Hero, Services, Process, About, etc.)
+  const handleResetBlockOrder = async () => {
+    if (!page) return;
+
+    try {
+      setResettingOrder(true);
+
+      const response = await fetch(`/api/website/pages/${page.id}/reset-block-order`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      });
+
+      const data = await response.json();
+
+      if (data.success) {
+        // Refresh blocks with new order
+        setBlocks(data.blocks || []);
+        setSyncResult({
+          count: data.blocks?.length || 0,
+          message: language === 'he' ? 'סדר החלקים אופס' : language === 'es' ? 'Orden restablecido' : 'Order reset'
+        });
+        setTimeout(() => setSyncResult(null), 3000);
+      }
+    } catch (error) {
+      logger.error({ err: error }, 'Failed to reset block order');
+    } finally {
+      setResettingOrder(false);
+    }
+  };
+
+  // DnD sensors for block reordering
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
+  );
+
+  // Handle block drag end - reorder blocks
+  const handleBlockDragEnd = async (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id || !page) return;
+
+    // Get filtered and sorted blocks (excluding process block for drag UI)
+    const sortedBlocks = blocks
+      .filter(b => b.block_type !== 'process')
+      .sort((a, b) => a.position - b.position);
+
+    const oldIndex = sortedBlocks.findIndex(b => b.id === active.id);
+    const newIndex = sortedBlocks.findIndex(b => b.id === over.id);
+
+    if (oldIndex === -1 || newIndex === -1) return;
+
+    // Reorder the draggable blocks
+    const reorderedBlocks = arrayMove(sortedBlocks, oldIndex, newIndex);
+
+    // Get process block (if exists) - insert it after services block
+    const processBlock = blocks.find(b => b.block_type === 'process');
+
+    // Build complete block list with process block inserted after services
+    const allBlocksReordered: typeof blocks = [];
+    let position = 0;
+
+    for (const block of reorderedBlocks) {
+      allBlocksReordered.push({ ...block, position: position++ });
+
+      // Insert process block right after services
+      if (block.block_type === 'services' && processBlock) {
+        allBlocksReordered.push({ ...processBlock, position: position++ });
+      }
+    }
+
+    // If process block exists but services block wasn't found, add it at the end
+    if (processBlock && !reorderedBlocks.some(b => b.block_type === 'services')) {
+      allBlocksReordered.push({ ...processBlock, position: position++ });
+    }
+
+    // Update state immediately for smooth UX
+    setBlocks(allBlocksReordered);
+
+    // Save to backend - send ALL block IDs in correct order
+    try {
+      const allBlockIds = allBlocksReordered.map(b => b.id);
+      const response = await fetch(`/api/website/pages/${page.id}/blocks`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ block_ids: allBlockIds })
+      });
+
+      if (!response.ok) {
+        // Revert on error
+        await fetchData();
+        logger.error('Failed to reorder blocks');
+      }
+    } catch (error) {
+      logger.error({ err: error }, 'Failed to reorder blocks');
+      await fetchData();
     }
   };
 
@@ -1433,7 +2066,7 @@ export default function WebsiteManagementPage() {
               <ArrowLeft className="h-4 w-4 rtl:rotate-180" />
             </button>
 
-            {page && (
+            {page && viewMode !== 'wizard' && (
               <>
                 {/* View Site Button */}
                 {page.status === 'live' && page.subdomain && (
@@ -1473,6 +2106,7 @@ export default function WebsiteManagementPage() {
                   {[
                     { id: 'overview', icon: Eye, title: labels.tab_overview },
                     { id: 'pages', icon: FileText, title: labels.tab_pages },
+                    { id: 'journey', icon: Target, title: labels.tab_journey },
                     { id: 'sections', icon: Layout, title: labels.tab_sections },
                     { id: 'design', icon: Palette, title: labels.tab_design },
                     { id: 'settings', icon: Settings, title: labels.tab_settings },
@@ -1571,94 +2205,45 @@ export default function WebsiteManagementPage() {
             </p>
 
             {/* Template Grid */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 max-w-4xl mx-auto">
-              {templates.slice(0, 6).map((template) => {
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 max-w-2xl mx-auto">
+              {templates.slice(0, 4).map((template) => {
                 const primaryColor = getTemplatePrimaryColor(template);
                 const secondaryColor = getTemplateSecondaryColor(template);
-                const blockTypes = template.blocks?.slice(0, 5) || [];
+                const accentColor = template.theme?.accent_color || secondaryColor;
+
                 return (
                   <motion.button
                     key={template.id}
-                    whileHover={{ scale: 1.02 }}
-                    whileTap={{ scale: 0.98 }}
+                    whileHover={{ scale: 1.03 }}
+                    whileTap={{ scale: 0.97 }}
                     onClick={() => handleCreateFromTemplate(template.id)}
-                    className="group p-4 bg-[var(--v2-surface)] border border-[var(--v2-border)] text-start hover:border-[#4F6EF7] transition-all overflow-hidden"
+                    className="group bg-[var(--v2-surface)] border border-[var(--v2-border)] text-start hover:border-[#4F6EF7] hover:shadow-lg transition-all overflow-hidden"
                     style={{ borderRadius: 'var(--v2-radius-card)' }}
                   >
-                    {/* Template Preview Mockup */}
-                    <div
-                      className="w-full h-40 rounded-lg mb-4 overflow-hidden relative"
-                      style={{ backgroundColor: '#1a1a2e' }}
-                    >
-                      {/* Header mockup */}
+                    {/* Color Preview Bar */}
+                    <div className="h-20 relative overflow-hidden">
                       <div
-                        className="h-2 w-full"
-                        style={{ backgroundColor: primaryColor }}
+                        className="absolute inset-0"
+                        style={{
+                          background: `linear-gradient(135deg, ${primaryColor} 0%, ${primaryColor} 50%, ${secondaryColor} 50%, ${secondaryColor} 100%)`
+                        }}
                       />
-                      {/* Hero section mockup */}
                       <div
-                        className="mx-3 mt-3 h-12 rounded-sm flex items-center justify-center"
-                        style={{ backgroundColor: `${primaryColor}30` }}
-                      >
-                        <div className="w-16 h-1.5 rounded" style={{ backgroundColor: primaryColor }} />
-                      </div>
-                      {/* Content blocks mockup */}
-                      <div className="px-3 mt-2 space-y-1.5">
-                        {blockTypes.slice(1, 4).map((block, idx) => (
-                          <div
-                            key={idx}
-                            className="h-4 rounded-sm flex items-center gap-1 px-1"
-                            style={{ backgroundColor: idx % 2 === 0 ? '#2a2a3e' : `${secondaryColor}20` }}
-                          >
-                            <div
-                              className="w-2 h-2 rounded-full"
-                              style={{ backgroundColor: idx % 2 === 0 ? secondaryColor : primaryColor }}
-                            />
-                            <div className="flex-1 h-1 rounded bg-gray-600" />
-                          </div>
-                        ))}
-                      </div>
-                      {/* Brand voice badge */}
-                      {template.theme?.brand_voice && (
-                        <div
-                          className="absolute bottom-2 right-2 px-2 py-0.5 text-[8px] font-medium rounded capitalize"
-                          style={{
-                            backgroundColor: `${primaryColor}30`,
-                            color: primaryColor
-                          }}
-                        >
-                          {template.theme.brand_voice}
-                        </div>
-                      )}
+                        className="absolute bottom-0 left-0 right-0 h-2"
+                        style={{ backgroundColor: accentColor }}
+                      />
                     </div>
+
                     {/* Template Info */}
-                    <h3 className="font-semibold text-[var(--v2-text-primary)] mb-1">
-                      {getTranslatedTemplateName(template.name, language)}
-                    </h3>
-                    <p className="text-xs text-[var(--v2-text-muted)] capitalize mb-2">
-                      {getTranslatedVertical(template.vertical, language)}
-                    </p>
-                    {/* Block count indicator */}
-                    <div className="flex items-center gap-1">
-                      {blockTypes.slice(0, 4).map((block, idx) => {
-                        const blockType = block.block_type || block.type || '';
-                        const BlockIcon = getBlockIcon(blockType);
-                        return (
-                          <div
-                            key={idx}
-                            className="w-5 h-5 rounded flex items-center justify-center"
-                            style={{ backgroundColor: `${primaryColor}15` }}
-                            title={getBlockName(blockType)}
-                          >
-                            <BlockIcon className="w-3 h-3" style={{ color: primaryColor }} />
-                          </div>
-                        );
-                      })}
-                      {blockTypes.length > 4 && (
-                        <span className="text-[10px] text-[var(--v2-text-muted)]">
-                          +{blockTypes.length - 4}
-                        </span>
-                      )}
+                    <div className="p-3">
+                      <h3 className="text-sm font-semibold text-[var(--v2-text-primary)] mb-0.5 truncate">
+                        {getTranslatedTemplateName(template.name, language)}
+                      </h3>
+                      <p className="text-xs text-[var(--v2-text-muted)]">
+                        {template.theme?.brand_voice
+                          ? getTranslatedBrandVoice(template.theme.brand_voice, language)
+                          : getTranslatedVertical(template.vertical, language)}
+                      </p>
                     </div>
                   </motion.button>
                 );
@@ -1734,6 +2319,14 @@ export default function WebsiteManagementPage() {
                       <PenLine className="h-4 w-4" />
                       {labels.edit_content}
                     </button>
+                    <button
+                      onClick={() => setViewMode('wizard')}
+                      className="flex items-center gap-2 px-4 py-2 text-[var(--v2-text-secondary)] text-sm font-medium border border-[var(--v2-border)] hover:bg-[var(--v2-surface-hover)] transition-all"
+                      style={{ borderRadius: 'var(--v2-radius-button)' }}
+                    >
+                      <Wand2 className="h-4 w-4" />
+                      {labels.run_setup_wizard}
+                    </button>
                   </div>
                 </div>
 
@@ -1745,17 +2338,249 @@ export default function WebsiteManagementPage() {
                   <h3 className="text-sm font-medium text-[var(--v2-text-muted)] uppercase tracking-wider mb-4">
                     {labels.page_views}
                   </h3>
-                  <div className="space-y-4">
-                    <div>
-                      <p className="text-3xl font-bold text-[var(--v2-text-primary)]">0</p>
-                      <p className="text-sm text-[var(--v2-text-muted)]">{labels.visitors_today}</p>
+                  <div className="grid grid-cols-2 gap-4">
+                    {/* Today */}
+                    <div className="text-center p-3 bg-[var(--v2-bg)] rounded-lg">
+                      <p className="text-2xl font-bold text-[var(--v2-text-primary)]">{analytics?.visitors_today ?? 0}</p>
+                      <p className="text-xs text-[var(--v2-text-muted)]">{labels.visitors_today}</p>
                     </div>
-                    <div>
-                      <p className="text-2xl font-bold text-[var(--v2-text-primary)]">0</p>
-                      <p className="text-sm text-[var(--v2-text-muted)]">{labels.visitors_month}</p>
+                    {/* 7 Days */}
+                    <div className="text-center p-3 bg-[var(--v2-bg)] rounded-lg">
+                      <p className="text-2xl font-bold text-[var(--v2-text-primary)]">{analytics?.visitors_7d ?? 0}</p>
+                      <p className="text-xs text-[var(--v2-text-muted)]">{labels.visitors_7d}</p>
+                    </div>
+                    {/* 30 Days */}
+                    <div className="text-center p-3 bg-[var(--v2-bg)] rounded-lg">
+                      <p className="text-2xl font-bold text-[var(--v2-text-primary)]">{analytics?.visitors_30d ?? 0}</p>
+                      <p className="text-xs text-[var(--v2-text-muted)]">{labels.visitors_30d}</p>
+                    </div>
+                    {/* Total Views */}
+                    <div className="text-center p-3 bg-[var(--v2-bg)] rounded-lg">
+                      <p className="text-2xl font-bold text-[var(--v2-text-primary)]">{analytics?.total_views ?? 0}</p>
+                      <p className="text-xs text-[var(--v2-text-muted)]">{labels.total_views}</p>
+                    </div>
+                  </div>
+                  {/* Unique visitors summary */}
+                  <div className="mt-4 pt-4 border-t border-[var(--v2-border)]">
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm text-[var(--v2-text-muted)]">{labels.unique_visitors}</span>
+                      <span className="text-lg font-semibold text-[var(--v2-text-primary)]">{analytics?.unique_visitors ?? 0}</span>
                     </div>
                   </div>
                 </div>
+              </div>
+            )}
+
+            {/* Client Journey Tab */}
+            {viewMode === 'journey' && (
+              <div
+                className="bg-[var(--v2-surface)] border border-[var(--v2-border)] p-6"
+                style={{ borderRadius: 'var(--v2-radius-card)' }}
+              >
+                <div className="mb-6 flex items-start justify-between">
+                  <div>
+                    <h3 className="text-lg font-semibold text-[var(--v2-text-primary)]">
+                      {labels.journey_title}
+                    </h3>
+                    <p className="text-sm text-[var(--v2-text-muted)] mt-1">
+                      {labels.journey_desc}
+                    </p>
+                  </div>
+                  <button
+                    onClick={handleSaveJourney}
+                    disabled={savingJourney}
+                    className="flex items-center gap-2 px-4 py-2 bg-[#4F6EF7] text-white text-sm font-medium hover:bg-[#4F6EF7]/90 transition-all disabled:opacity-50"
+                    style={{ borderRadius: 'var(--v2-radius-button)' }}
+                  >
+                    {savingJourney ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Save className="h-4 w-4" />
+                    )}
+                    {savingJourney ? labels.journey_saving : labels.journey_save}
+                  </button>
+                </div>
+
+                {/* Process Block Title & Subtitle */}
+                <div className="mb-6 p-4 bg-[var(--v2-bg)] rounded-lg border border-[var(--v2-border)]">
+                  <h4 className="text-sm font-medium text-[var(--v2-text-primary)] mb-3">
+                    {language === 'he' ? 'כותרת ותיאור הסקשן' : language === 'es' ? 'Título y descripción de la sección' : 'Section Title & Description'}
+                  </h4>
+                  <div className="space-y-3">
+                    <div>
+                      <label className="block text-xs font-medium text-[var(--v2-text-secondary)] mb-1">
+                        {labels.section_title}
+                      </label>
+                      <input
+                        type="text"
+                        value={processTitle}
+                        onChange={(e) => setProcessTitle(e.target.value)}
+                        placeholder={language === 'he' ? 'איך זה עובד' : language === 'es' ? 'Cómo Funciona' : 'How It Works'}
+                        className="w-full px-3 py-2 bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg text-[var(--v2-text-primary)] text-sm focus:outline-none focus:ring-2 focus:ring-[#4F6EF7]"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-[var(--v2-text-secondary)] mb-1">
+                        {labels.section_subtitle}
+                      </label>
+                      <input
+                        type="text"
+                        value={processSubtitle}
+                        onChange={(e) => setProcessSubtitle(e.target.value)}
+                        placeholder={language === 'he' ? 'צעדים פשוטים להתחלה' : language === 'es' ? 'Pasos simples para comenzar' : 'Simple steps to get started'}
+                        className="w-full px-3 py-2 bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg text-[var(--v2-text-primary)] text-sm focus:outline-none focus:ring-2 focus:ring-[#4F6EF7]"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Services Only Toggle */}
+                <div className="mb-6 p-4 bg-[var(--v2-bg)] rounded-lg border border-[var(--v2-border)]">
+                  <label className="flex items-start gap-3 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={servicesOnly}
+                      onChange={(e) => {
+                        setServicesOnly(e.target.checked);
+                        if (e.target.checked) {
+                          setClientFlow([]);
+                        } else {
+                          // Restore saved flow from process block, or use default
+                          const processBlock = blocks.find(b => b.block_type === 'process');
+                          const savedFlow = processBlock?.content?.client_flow as FlowStepKey[] | undefined;
+                          if (savedFlow && savedFlow.length > 0) {
+                            const flowWithConfirmation = savedFlow.includes('confirmation')
+                              ? savedFlow
+                              : [...savedFlow.filter(s => s !== 'confirmation'), 'confirmation'];
+                            setClientFlow(flowWithConfirmation);
+                          } else {
+                            setClientFlow(['booking', 'confirmation']);
+                          }
+                        }
+                      }}
+                      className="mt-1 h-4 w-4 text-[#4F6EF7] border-[var(--v2-border)] rounded focus:ring-[#4F6EF7]"
+                    />
+                    <div>
+                      <span className="font-medium text-[var(--v2-text-primary)]">
+                        {labels.journey_services_only}
+                      </span>
+                      <p className="text-sm text-[var(--v2-text-muted)] mt-0.5">
+                        {labels.journey_services_only_desc}
+                      </p>
+                    </div>
+                  </label>
+                </div>
+
+                {/* Journey Steps */}
+                {!servicesOnly && (
+                  <div className="space-y-3">
+                    {/* Available steps to add */}
+                    {(['booking', 'payment', 'intake'] as const).filter(step => !clientFlow.includes(step)).length > 0 && (
+                      <div className="mb-4">
+                        <p className="text-xs text-[var(--v2-text-muted)] mb-2">{labels.journey_add_step}:</p>
+                        <div className="flex flex-wrap gap-2">
+                          {(['booking', 'payment', 'intake'] as const)
+                            .filter(step => !clientFlow.includes(step))
+                            .map(step => {
+                              const stepInfo = {
+                                booking: { icon: Calendar, label: labels.journey_step_booking, color: 'blue' },
+                                payment: { icon: CreditCard, label: labels.journey_step_payment, color: 'green' },
+                                intake: { icon: FileText, label: labels.journey_step_intake, color: 'purple' }
+                              }[step];
+                              const Icon = stepInfo.icon;
+                              return (
+                                <button
+                                  key={step}
+                                  onClick={() => toggleJourneyStep(step)}
+                                  className="flex items-center gap-2 px-3 py-1.5 border-2 border-dashed border-[var(--v2-border)] rounded-full text-[var(--v2-text-secondary)] hover:border-[#4F6EF7] hover:text-[#4F6EF7] transition-colors"
+                                >
+                                  <Icon className="w-4 h-4" />
+                                  {stepInfo.label}
+                                  <Plus className="w-3 h-3" />
+                                </button>
+                              );
+                            })}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Current flow steps */}
+                    {clientFlow.map((step, index) => {
+                      const stepInfo = {
+                        booking: { icon: Calendar, label: labels.journey_step_booking, desc: labels.journey_step_booking_desc, bg: 'bg-[var(--v2-surface)]', border: 'border-[#4F6EF7]/40', circle: 'bg-[#4F6EF7]' },
+                        payment: { icon: CreditCard, label: labels.journey_step_payment, desc: labels.journey_step_payment_desc, bg: 'bg-[var(--v2-surface)]', border: 'border-green-500/40', circle: 'bg-green-500' },
+                        intake: { icon: FileText, label: labels.journey_step_intake, desc: labels.journey_step_intake_desc, bg: 'bg-[var(--v2-surface)]', border: 'border-purple-500/40', circle: 'bg-purple-500' },
+                        confirmation: { icon: Check, label: labels.journey_step_confirmation, desc: labels.journey_step_confirmation_desc, bg: 'bg-[var(--v2-surface)]', border: 'border-[var(--v2-border)]', circle: 'bg-gray-400' }
+                      }[step];
+                      const Icon = stepInfo.icon;
+                      const isConfirmation = step === 'confirmation';
+
+                      return (
+                        <div
+                          key={step}
+                          className={`flex items-center gap-3 p-4 rounded-xl ${stepInfo.bg} border ${stepInfo.border}`}
+                        >
+                          <div className={`w-10 h-10 rounded-full ${stepInfo.circle} text-white flex items-center justify-center font-bold`}>
+                            {index + 1}
+                          </div>
+                          <div className="flex-1">
+                            <div className="font-medium text-[var(--v2-text-primary)]">{stepInfo.label}</div>
+                            <div className="text-sm text-[var(--v2-text-secondary)]">{stepInfo.desc}</div>
+                          </div>
+                          {isConfirmation ? (
+                            <span className="text-xs text-[var(--v2-text-muted)] italic">{labels.journey_always_included}</span>
+                          ) : (
+                            <div className="flex items-center gap-1">
+                              <button
+                                onClick={() => moveJourneyStep(step, 'up')}
+                                disabled={index === 0}
+                                className="p-1.5 rounded hover:bg-black/10 dark:hover:bg-white/10 text-[var(--v2-text-muted)] disabled:opacity-30"
+                              >
+                                <ChevronUp className="w-4 h-4" />
+                              </button>
+                              <button
+                                onClick={() => moveJourneyStep(step, 'down')}
+                                disabled={index >= clientFlow.length - 2}
+                                className="p-1.5 rounded hover:bg-black/10 dark:hover:bg-white/10 text-[var(--v2-text-muted)] disabled:opacity-30"
+                              >
+                                <ChevronDown className="w-4 h-4" />
+                              </button>
+                              <button
+                                onClick={() => toggleJourneyStep(step)}
+                                className="p-1.5 rounded hover:bg-red-100 dark:hover:bg-red-900/30 text-red-400 hover:text-red-500"
+                              >
+                                <X className="w-4 h-4" />
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+
+                    {/* Add confirmation if not in list */}
+                    {!clientFlow.includes('confirmation') && clientFlow.length > 0 && (
+                      <div className="flex items-center gap-3 p-4 rounded-xl bg-gray-50 dark:bg-gray-800/50 border border-gray-200 dark:border-gray-600">
+                        <div className="w-10 h-10 rounded-full bg-gray-400 text-white flex items-center justify-center font-bold">
+                          {clientFlow.length + 1}
+                        </div>
+                        <div className="flex-1">
+                          <div className="font-medium text-[var(--v2-text-primary)]">{labels.journey_step_confirmation}</div>
+                          <div className="text-sm text-[var(--v2-text-secondary)]">{labels.journey_step_confirmation_desc}</div>
+                        </div>
+                        <span className="text-xs text-[var(--v2-text-muted)] italic">{labels.journey_always_included}</span>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Empty state when services only is selected */}
+                {servicesOnly && (
+                  <div className="text-center py-8 text-[var(--v2-text-muted)]">
+                    <Target className="w-12 h-12 mx-auto mb-3 opacity-30" />
+                    <p>{labels.journey_services_only_info}</p>
+                    <p className="text-sm mt-1">{labels.journey_services_only_info2}</p>
+                  </div>
+                )}
               </div>
             )}
 
@@ -1782,6 +2607,21 @@ export default function WebsiteManagementPage() {
                         {syncResult.message}
                       </span>
                     )}
+                    {/* Reset Order Button */}
+                    <button
+                      onClick={handleResetBlockOrder}
+                      disabled={resettingOrder}
+                      className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-[var(--v2-text-secondary)] bg-[var(--v2-surface-elevated)] hover:bg-[var(--v2-surface-hover)] border border-[var(--v2-border)] disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                      style={{ borderRadius: 'var(--v2-radius-button)' }}
+                      title={language === 'he' ? 'איפוס סדר לברירת מחדל' : language === 'es' ? 'Restablecer orden' : 'Reset to default order'}
+                    >
+                      {resettingOrder ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <RotateCcw className="w-4 h-4" />
+                      )}
+                      {language === 'he' ? 'איפוס סדר' : language === 'es' ? 'Restablecer' : 'Reset Order'}
+                    </button>
                     {/* Add Section Button */}
                     <button
                       onClick={() => setShowAddSectionModal(true)}
@@ -1813,21 +2653,35 @@ export default function WebsiteManagementPage() {
                   </div>
                 </div>
 
-                <div className="space-y-3">
-                  {blocks
-                    .sort((a, b) => a.position - b.position)
-                    .map((block) => {
-                      const isExpanded = expandedBlockId === block.id;
-                      const BlockIcon = getBlockIcon(block.block_type);
-                      return (
-                        <div
-                          key={block.id}
-                          className={`rounded-lg border transition-all ${
-                            block.enabled
-                              ? 'bg-[var(--v2-bg)] border-[var(--v2-border)]'
-                              : 'bg-gray-50 dark:bg-gray-900/50 border-gray-200 dark:border-gray-800 opacity-60'
-                          }`}
-                        >
+                <DndContext
+                  sensors={sensors}
+                  collisionDetection={closestCenter}
+                  modifiers={[restrictToVerticalAxis]}
+                  onDragEnd={handleBlockDragEnd}
+                >
+                  <SortableContext
+                    items={blocks
+                      .filter((block) => block.block_type !== 'process')
+                      .sort((a, b) => a.position - b.position)
+                      .map(b => b.id)}
+                    strategy={verticalListSortingStrategy}
+                  >
+                    <div className="space-y-3 pl-8">
+                      {blocks
+                        .filter((block) => block.block_type !== 'process') // Process block is managed in Client Journey tab
+                        .sort((a, b) => a.position - b.position)
+                        .map((block) => {
+                          const isExpanded = expandedBlockId === block.id;
+                          const BlockIcon = getBlockIcon(block.block_type);
+                          return (
+                            <SortableBlockItem key={block.id} id={block.id}>
+                              <div
+                                className={`rounded-lg border transition-all ${
+                                  block.enabled
+                                    ? 'bg-[var(--v2-bg)] border-[var(--v2-border)]'
+                                    : 'bg-gray-50 dark:bg-gray-900/50 border-gray-200 dark:border-gray-800 opacity-60'
+                                }`}
+                              >
                           {/* Block Header */}
                           <div className="flex items-center justify-between p-4">
                             <div className="flex items-center gap-4">
@@ -2398,8 +3252,118 @@ export default function WebsiteManagementPage() {
                                   </>
                                 )}
 
-                                {/* Process Block - Simple Visual Pipeline */}
-                                {block.block_type === 'process' && (
+                                {/* Process Block - Booking Flow + Custom Steps */}
+                                {block.block_type === 'process' && (() => {
+                                  // Flow step definitions with default content for each language
+                                  const flowStepDefs = [
+                                    {
+                                      key: 'booking',
+                                      icon: Calendar,
+                                      iconName: 'Calendar',
+                                      label: { en: 'Book a time', he: 'קביעת תור', es: 'Reservar hora' },
+                                      color: '#14B8A6',
+                                      defaultTitle: { en: 'Book Your Session', he: 'קבע את הפגישה שלך', es: 'Reserva tu Sesión' },
+                                      defaultDesc: { en: 'Choose a time that works best for you', he: 'בחר זמן שנוח לך', es: 'Elige un horario que te convenga' }
+                                    },
+                                    {
+                                      key: 'payment',
+                                      icon: CreditCard,
+                                      iconName: 'CreditCard',
+                                      label: { en: 'Pay online', he: 'תשלום אונליין', es: 'Pagar online' },
+                                      color: '#10B981',
+                                      defaultTitle: { en: 'Secure Payment', he: 'תשלום מאובטח', es: 'Pago Seguro' },
+                                      defaultDesc: { en: 'Pay safely with credit card or other methods', he: 'שלם בבטחה עם כרטיס אשראי', es: 'Paga de forma segura con tarjeta' }
+                                    },
+                                    {
+                                      key: 'intake',
+                                      icon: FileText,
+                                      iconName: 'FileText',
+                                      label: { en: 'Fill intake form', he: 'מילוי שאלון', es: 'Llenar formulario' },
+                                      color: '#8B5CF6',
+                                      defaultTitle: { en: 'Complete Intake Form', he: 'מלא שאלון קליטה', es: 'Completa el Formulario' },
+                                      defaultDesc: { en: 'Help us understand your needs better', he: 'עזור לנו להבין את הצרכים שלך', es: 'Ayúdanos a entender tus necesidades' }
+                                    },
+                                    {
+                                      key: 'confirmation',
+                                      icon: Mail,
+                                      iconName: 'Mail',
+                                      label: { en: 'Get confirmation email', he: 'קבלת אישור במייל', es: 'Recibir confirmación' },
+                                      color: '#F59E0B',
+                                      defaultTitle: { en: 'Confirmation Email', he: 'אישור במייל', es: 'Correo de Confirmación' },
+                                      defaultDesc: { en: 'Receive booking details and reminders', he: 'קבל פרטי הזמנה ותזכורות', es: 'Recibe detalles y recordatorios' }
+                                    },
+                                  ];
+
+                                  const flow = (editingBlockContent.flow as string[]) || ['booking', 'confirmation'];
+                                  const currentSteps = (editingBlockContent.steps as ProcessStep[]) || [];
+                                  const lang = (settingsForm.website_language || 'en') as 'en' | 'es' | 'he';
+
+                                  // Get active and inactive steps
+                                  const activeFlowSteps = flow.map(key => flowStepDefs.find(d => d.key === key)!).filter(Boolean);
+                                  const inactiveFlowSteps = flowStepDefs.filter(d => !flow.includes(d.key));
+
+                                  // Function to sync steps with flow
+                                  const syncStepsWithFlow = (newFlow: string[]) => {
+                                    // Build new steps array based on flow order
+                                    const newSteps: ProcessStep[] = newFlow.map((flowKey, index) => {
+                                      const def = flowStepDefs.find(d => d.key === flowKey);
+                                      // Check if we already have a customized step for this flow key
+                                      const existingStep = currentSteps.find(s => (s as any).flowKey === flowKey);
+
+                                      if (existingStep) {
+                                        // Keep existing customizations but update number
+                                        return { ...existingStep, number: index + 1 };
+                                      }
+
+                                      // Create new step from defaults
+                                      return {
+                                        number: index + 1,
+                                        title: def?.defaultTitle[lang] || '',
+                                        description: def?.defaultDesc[lang] || '',
+                                        icon: def?.iconName || 'CheckCircle',
+                                        flowKey: flowKey,
+                                        auto_generated: false
+                                      } as ProcessStep;
+                                    });
+
+                                    // Update both flow and steps
+                                    updateBlockField('flow', newFlow);
+                                    updateBlockField('steps', newSteps);
+                                  };
+
+                                  // Add step to flow
+                                  const addToFlow = (key: string) => {
+                                    // Insert before confirmation (always last)
+                                    const newFlow = [...flow.filter(f => f !== 'confirmation'), key, 'confirmation'];
+                                    syncStepsWithFlow(newFlow);
+                                  };
+
+                                  // Remove step from flow
+                                  const removeFromFlow = (key: string) => {
+                                    if (key === 'confirmation') return; // Can't remove confirmation
+                                    const newFlow = flow.filter(f => f !== key);
+                                    syncStepsWithFlow(newFlow);
+                                  };
+
+                                  // Move step in flow
+                                  const moveInFlow = (key: string, direction: 'up' | 'down') => {
+                                    const currentIndex = flow.indexOf(key);
+                                    if (currentIndex === -1) return;
+
+                                    // Can't move confirmation
+                                    if (key === 'confirmation') return;
+
+                                    const newIndex = direction === 'up' ? currentIndex - 1 : currentIndex + 1;
+
+                                    // Can't move before first or after confirmation (last)
+                                    if (newIndex < 0 || newIndex >= flow.length - 1) return;
+
+                                    const newFlow = [...flow];
+                                    [newFlow[currentIndex], newFlow[newIndex]] = [newFlow[newIndex], newFlow[currentIndex]];
+                                    syncStepsWithFlow(newFlow);
+                                  };
+
+                                  return (
                                   <>
                                     <div>
                                       <label className="block text-sm font-medium text-[var(--v2-text-secondary)] mb-1">
@@ -2409,78 +3373,137 @@ export default function WebsiteManagementPage() {
                                         type="text"
                                         value={(editingBlockContent.title as string) || ''}
                                         onChange={(e) => updateBlockField('title', e.target.value)}
+                                        placeholder={language === 'he' ? 'איך זה עובד' : language === 'es' ? 'Cómo Funciona' : 'How It Works'}
+                                        className="w-full px-3 py-2 bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg text-[var(--v2-text-primary)] focus:outline-none focus:ring-2 focus:ring-[#4F6EF7]"
+                                      />
+                                    </div>
+                                    <div>
+                                      <label className="block text-sm font-medium text-[var(--v2-text-secondary)] mb-1">
+                                        {labels.section_subtitle}
+                                      </label>
+                                      <textarea
+                                        rows={2}
+                                        value={(editingBlockContent.subtitle as string) || ''}
+                                        onChange={(e) => updateBlockField('subtitle', e.target.value)}
+                                        placeholder={language === 'he' ? 'צעדים פשוטים להתחלה' : language === 'es' ? 'Pasos simples para comenzar' : 'Simple steps to get started'}
                                         className="w-full px-3 py-2 bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg text-[var(--v2-text-primary)] focus:outline-none focus:ring-2 focus:ring-[#4F6EF7]"
                                       />
                                     </div>
 
-                                    {/* Simple Visual Pipeline */}
+                                    {/* Booking Flow Pipeline */}
                                     <div className="mt-4 p-4 bg-gradient-to-br from-[#4F6EF7]/5 to-transparent rounded-xl border border-[#4F6EF7]/20">
                                       <p className="text-sm font-medium text-[var(--v2-text-primary)] mb-4">
                                         {language === 'he' ? 'מה קורה אחרי שלקוח בוחר שירות?' : language === 'es' ? '¿Qué pasa después de elegir un servicio?' : 'What happens after a client picks a service?'}
                                       </p>
 
-                                      {/* Pipeline Steps - Click to toggle */}
-                                      <div className="space-y-2">
-                                        {[
-                                          { key: 'booking', icon: Calendar, label: { en: 'Book a time', he: 'קביעת תור', es: 'Reservar hora' }, color: '#14B8A6' },
-                                          { key: 'payment', icon: CreditCard, label: { en: 'Pay online', he: 'תשלום אונליין', es: 'Pagar online' }, color: '#10B981' },
-                                          { key: 'intake', icon: FileText, label: { en: 'Fill intake form', he: 'מילוי שאלון', es: 'Llenar formulario' }, color: '#8B5CF6' },
-                                          { key: 'confirmation', icon: Mail, label: { en: 'Get confirmation email', he: 'קבלת אישור במייל', es: 'Recibir confirmación' }, color: '#F59E0B' },
-                                        ].map((step, idx) => {
-                                          const flow = (editingBlockContent.flow as string[]) || ['booking', 'confirmation'];
-                                          const isActive = flow.includes(step.key);
+                                      {/* Active Flow Steps - Ordered list with reorder controls */}
+                                      <div className="space-y-2 mb-4">
+                                        {activeFlowSteps.map((step, index) => {
                                           const StepIcon = step.icon;
+                                          const isConfirmation = step.key === 'confirmation';
+                                          const canMoveUp = index > 0 && !isConfirmation;
+                                          const canMoveDown = index < activeFlowSteps.length - 2 && !isConfirmation; // -2 because confirmation is always last
+
                                           return (
-                                            <button
+                                            <div
                                               key={step.key}
-                                              onClick={() => {
-                                                if (step.key === 'confirmation') return; // Always keep confirmation
-                                                const newFlow = isActive
-                                                  ? flow.filter(f => f !== step.key)
-                                                  : [...flow.filter(f => f !== 'confirmation'), step.key, 'confirmation'];
-                                                updateBlockField('flow', newFlow);
-                                              }}
-                                              className={`w-full flex items-center gap-3 p-3 rounded-lg border-2 transition-all ${
-                                                isActive
-                                                  ? 'border-transparent shadow-sm'
-                                                  : 'border-dashed border-gray-300 bg-white/50 hover:border-gray-400'
-                                              }`}
-                                              style={isActive ? { backgroundColor: `${step.color}15`, borderColor: step.color } : {}}
+                                              className="flex items-center gap-2 p-3 rounded-lg border-2 shadow-sm bg-[var(--v2-surface)]"
+                                              style={{ borderColor: step.color }}
                                             >
-                                              <div
-                                                className={`w-8 h-8 rounded-full flex items-center justify-center ${isActive ? 'text-white' : 'text-gray-400 bg-gray-100'}`}
-                                                style={isActive ? { backgroundColor: step.color } : {}}
-                                              >
-                                                {isActive ? (
-                                                  <span className="text-sm font-bold">{flow.indexOf(step.key) + 1}</span>
-                                                ) : (
-                                                  <StepIcon className="w-4 h-4" />
-                                                )}
+                                              {/* Reorder buttons */}
+                                              <div className="flex flex-col gap-0.5">
+                                                <button
+                                                  onClick={() => moveInFlow(step.key, 'up')}
+                                                  disabled={!canMoveUp}
+                                                  className={`p-0.5 rounded ${canMoveUp ? 'hover:bg-[var(--v2-surface-hover)] text-[var(--v2-text-secondary)]' : 'text-[var(--v2-text-muted)] cursor-not-allowed'}`}
+                                                >
+                                                  <ChevronUp className="w-3 h-3" />
+                                                </button>
+                                                <button
+                                                  onClick={() => moveInFlow(step.key, 'down')}
+                                                  disabled={!canMoveDown}
+                                                  className={`p-0.5 rounded ${canMoveDown ? 'hover:bg-[var(--v2-surface-hover)] text-[var(--v2-text-secondary)]' : 'text-[var(--v2-text-muted)] cursor-not-allowed'}`}
+                                                >
+                                                  <ChevronDown className="w-3 h-3" />
+                                                </button>
                                               </div>
-                                              <span className={`text-sm font-medium ${isActive ? 'text-[var(--v2-text-primary)]' : 'text-gray-400'}`}>
+
+                                              {/* Step number */}
+                                              <div
+                                                className="w-7 h-7 rounded-full flex items-center justify-center text-white text-sm font-bold"
+                                                style={{ backgroundColor: step.color }}
+                                              >
+                                                {index + 1}
+                                              </div>
+
+                                              {/* Step icon and label */}
+                                              <StepIcon className="w-4 h-4" style={{ color: step.color }} />
+                                              <span className="flex-1 text-sm font-medium text-[var(--v2-text-primary)]">
                                                 {step.label[language] || step.label.en}
                                               </span>
-                                              {isActive && step.key !== 'confirmation' && (
-                                                <Check className="w-4 h-4 ms-auto" style={{ color: step.color }} />
+
+                                              {/* Remove button (not for confirmation) */}
+                                              {!isConfirmation && (
+                                                <button
+                                                  onClick={() => removeFromFlow(step.key)}
+                                                  className="p-1 rounded hover:bg-[var(--v2-surface-hover)] text-[var(--v2-text-secondary)] hover:text-red-500"
+                                                  title={language === 'he' ? 'הסר' : language === 'es' ? 'Eliminar' : 'Remove'}
+                                                >
+                                                  <X className="w-4 h-4" />
+                                                </button>
                                               )}
-                                              {!isActive && step.key !== 'confirmation' && (
-                                                <Plus className="w-4 h-4 ms-auto text-gray-300" />
-                                              )}
-                                            </button>
+                                            </div>
                                           );
                                         })}
                                       </div>
 
-                                      <p className="text-xs text-[var(--v2-text-secondary)] mt-3">
+                                      {/* Inactive Steps - Click to add */}
+                                      {inactiveFlowSteps.length > 0 && (
+                                        <div className="pt-3 border-t border-[var(--v2-border)]">
+                                          <p className="text-xs text-[var(--v2-text-secondary)] mb-2">
+                                            {language === 'he' ? 'לחץ להוסיף:' : language === 'es' ? 'Clic para agregar:' : 'Click to add:'}
+                                          </p>
+                                          <div className="flex flex-wrap gap-2">
+                                            {inactiveFlowSteps.map((step) => {
+                                              const StepIcon = step.icon;
+                                              return (
+                                                <button
+                                                  key={step.key}
+                                                  onClick={() => addToFlow(step.key)}
+                                                  className="flex items-center gap-2 px-3 py-1.5 rounded-full border-2 border-dashed border-[var(--v2-border)] bg-[var(--v2-surface)]/50 hover:border-[var(--v2-text-muted)] hover:bg-[var(--v2-surface)] transition-all text-sm text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)]"
+                                                >
+                                                  <StepIcon className="w-4 h-4" />
+                                                  {step.label[language] || step.label.en}
+                                                  <Plus className="w-3 h-3" />
+                                                </button>
+                                              );
+                                            })}
+                                          </div>
+                                        </div>
+                                      )}
+                                    </div>
+
+                                    {/* Custom Process Steps Editor */}
+                                    <div className="mt-4">
+                                      <label className="block text-sm font-medium text-[var(--v2-text-secondary)] mb-2">
+                                        {language === 'he' ? 'השלבים המוצגים באתר' : language === 'es' ? 'Pasos mostrados en el sitio' : 'Steps shown on website'}
+                                      </label>
+                                      <p className="text-xs text-[var(--v2-text-secondary)] mb-3">
                                         {language === 'he'
-                                          ? 'לחץ להוסיף או להסיר שלבים מהתהליך'
+                                          ? 'ערוך את הכותרות והתיאורים שיוצגו באתר שלך'
                                           : language === 'es'
-                                          ? 'Haz clic para agregar o quitar pasos'
-                                          : 'Click to add or remove steps from your flow'}
+                                          ? 'Edita los títulos y descripciones mostrados en tu sitio'
+                                          : 'Edit the titles and descriptions shown on your website'}
                                       </p>
+                                      <ProcessStepEditor
+                                        steps={currentSteps}
+                                        onChange={(steps) => updateBlockField('steps', steps)}
+                                        language={lang}
+                                      />
                                     </div>
                                   </>
-                                )}
+                                  );
+                                })()}
 
                                 {/* Generic Title/Subtitle for other blocks */}
                                 {['testimonials', 'pricing', 'faq', 'features', 'stats', 'team', 'gallery', 'newsletter'].includes(block.block_type) && (
@@ -3058,6 +4081,68 @@ export default function WebsiteManagementPage() {
                                         className="w-full px-3 py-2 bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg text-[var(--v2-text-primary)] focus:outline-none focus:ring-2 focus:ring-[#4F6EF7]"
                                       />
                                     </div>
+
+                                    {/* Contact Info Sidebar Fields */}
+                                    <div className="border-t border-[var(--v2-border)] pt-4 mt-4">
+                                      <h4 className="text-sm font-semibold text-[var(--v2-text-primary)] mb-3">
+                                        {language === 'he' ? 'פרטי התקשרות (סרגל צד)' : language === 'es' ? 'Información de Contacto (Barra lateral)' : 'Contact Info (Sidebar)'}
+                                      </h4>
+                                      <div className="space-y-3">
+                                        <div>
+                                          <label className="block text-sm font-medium text-[var(--v2-text-secondary)] mb-1">
+                                            {language === 'he' ? 'אימייל עסקי' : language === 'es' ? 'Email de Negocio' : 'Business Email'}
+                                          </label>
+                                          <input
+                                            type="email"
+                                            value={(editingBlockContent.business_email as string) || ''}
+                                            onChange={(e) => updateBlockField('business_email', e.target.value)}
+                                            placeholder={language === 'he' ? 'contact@example.com' : 'contact@example.com'}
+                                            className="w-full px-3 py-2 bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg text-[var(--v2-text-primary)] focus:outline-none focus:ring-2 focus:ring-[#4F6EF7]"
+                                          />
+                                        </div>
+                                        <div>
+                                          <label className="block text-sm font-medium text-[var(--v2-text-secondary)] mb-1">
+                                            {language === 'he' ? 'טלפון עסקי' : language === 'es' ? 'Teléfono de Negocio' : 'Business Phone'}
+                                          </label>
+                                          <input
+                                            type="tel"
+                                            dir="ltr"
+                                            value={(editingBlockContent.business_phone as string) || ''}
+                                            onChange={(e) => updateBlockField('business_phone', e.target.value)}
+                                            placeholder="+1 (555) 123-4567"
+                                            className="w-full px-3 py-2 bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg text-[var(--v2-text-primary)] focus:outline-none focus:ring-2 focus:ring-[#4F6EF7]"
+                                          />
+                                        </div>
+                                        <div>
+                                          <label className="block text-sm font-medium text-[var(--v2-text-secondary)] mb-1">
+                                            {language === 'he' ? 'כתובת' : language === 'es' ? 'Dirección' : 'Address'}
+                                          </label>
+                                          <input
+                                            type="text"
+                                            value={(editingBlockContent.business_address as string) || ''}
+                                            onChange={(e) => updateBlockField('business_address', e.target.value)}
+                                            placeholder={language === 'he' ? 'רחוב הראשי 123, תל אביב' : language === 'es' ? 'Calle Principal 123' : '123 Main Street, City'}
+                                            className="w-full px-3 py-2 bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg text-[var(--v2-text-primary)] focus:outline-none focus:ring-2 focus:ring-[#4F6EF7]"
+                                          />
+                                        </div>
+                                        <div>
+                                          <label className="block text-sm font-medium text-[var(--v2-text-secondary)] mb-1">
+                                            {language === 'he' ? 'שעות פעילות' : language === 'es' ? 'Horario de Atención' : 'Business Hours'}
+                                          </label>
+                                          <input
+                                            type="text"
+                                            value={(editingBlockContent.business_hours as string) || ''}
+                                            onChange={(e) => updateBlockField('business_hours', e.target.value)}
+                                            placeholder={language === 'he' ? 'א-ה: 9:00-18:00' : language === 'es' ? 'Lun-Vie: 9:00-18:00' : 'Mon-Fri: 9:00 AM - 6:00 PM'}
+                                            className="w-full px-3 py-2 bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg text-[var(--v2-text-primary)] focus:outline-none focus:ring-2 focus:ring-[#4F6EF7]"
+                                          />
+                                        </div>
+                                      </div>
+                                      <p className="mt-2 text-xs text-[var(--v2-text-muted)]">
+                                        {language === 'he' ? 'השדות האלה יוצגו בסרגל צד ליד הטופס' : language === 'es' ? 'Estos campos aparecerán en una barra lateral junto al formulario' : 'These fields will appear in a sidebar next to the form'}
+                                      </p>
+                                    </div>
+
                                     <div className="p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
                                       <p className="text-sm text-blue-700 dark:text-blue-300">
                                         {language === 'he' ? 'טפסים שנשלחו ייצרו אנשי קשר חדשים ב-CRM שלך אוטומטית.' : language === 'es' ? 'Los formularios enviados crearán contactos en tu CRM automáticamente.' : 'Submitted forms will automatically create contacts in your CRM.'}
@@ -3687,12 +4772,15 @@ export default function WebsiteManagementPage() {
                                   </button>
                                 </div>
                               </div>
-                            </div>
-                          )}
-                        </div>
+                              </div>
+                            )}
+                          </div>
+                        </SortableBlockItem>
                       );
                     })}
-                </div>
+                    </div>
+                  </SortableContext>
+                </DndContext>
               </div>
             )}
 
@@ -4005,7 +5093,7 @@ export default function WebsiteManagementPage() {
                     </p>
                   </div>
                   <button
-                    onClick={() => setShowCreatePageModal(true)}
+                    onClick={() => setShowLandingPageWizard(true)}
                     className="flex items-center gap-2 px-4 py-2 text-[#4F6EF7] text-sm font-medium border border-[#4F6EF7] bg-[#4F6EF7]/10 hover:bg-[#4F6EF7]/20 transition-all"
                     style={{ borderRadius: 'var(--v2-radius-button)' }}
                   >
@@ -4154,135 +5242,83 @@ export default function WebsiteManagementPage() {
                 )}
 
                 {/* Template Grid */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
                   {templates.map((template) => {
                     const isCurrentTemplate = template.id === page.template_id;
                     const primaryColor = getTemplatePrimaryColor(template);
                     const secondaryColor = getTemplateSecondaryColor(template);
-                    const blockTypes = template.blocks?.slice(0, 5) || [];
+                    const accentColor = template.theme?.accent_color || secondaryColor;
+
                     return (
                       <motion.div
                         key={template.id}
-                        whileHover={{ scale: isCurrentTemplate ? 1 : 1.02 }}
-                        whileTap={{ scale: isCurrentTemplate ? 1 : 0.98 }}
-                        className={`group p-4 bg-[var(--v2-bg)] border text-start transition-all overflow-hidden ${
+                        whileHover={{ scale: isCurrentTemplate ? 1 : 1.03 }}
+                        whileTap={{ scale: isCurrentTemplate ? 1 : 0.97 }}
+                        className={`group bg-[var(--v2-bg)] border text-start transition-all overflow-hidden cursor-pointer ${
                           isCurrentTemplate
                             ? 'border-[#4F6EF7] ring-2 ring-[#4F6EF7]/20'
                             : 'border-[var(--v2-border)] hover:border-[#4F6EF7]'
                         }`}
                         style={{ borderRadius: 'var(--v2-radius-card)' }}
+                        onClick={() => !isCurrentTemplate && !applyingTemplate && handleApplyTemplate(template.id)}
                       >
-                        {/* Template Preview Mockup */}
-                        <div
-                          className="w-full h-36 rounded-lg mb-4 overflow-hidden relative"
-                          style={{ backgroundColor: '#1a1a2e' }}
-                        >
-                          {/* Header mockup */}
+                        {/* Color Preview Bar */}
+                        <div className="h-16 relative overflow-hidden">
                           <div
-                            className="h-2 w-full"
-                            style={{ backgroundColor: primaryColor }}
+                            className="absolute inset-0"
+                            style={{
+                              background: `linear-gradient(135deg, ${primaryColor} 0%, ${primaryColor} 50%, ${secondaryColor} 50%, ${secondaryColor} 100%)`
+                            }}
                           />
-                          {/* Hero section mockup */}
                           <div
-                            className="mx-3 mt-3 h-10 rounded-sm flex items-center justify-center"
-                            style={{ backgroundColor: `${primaryColor}30` }}
-                          >
-                            <div className="w-14 h-1.5 rounded" style={{ backgroundColor: primaryColor }} />
-                          </div>
-                          {/* Content blocks mockup */}
-                          <div className="px-3 mt-2 space-y-1.5">
-                            {blockTypes.slice(1, 4).map((block, idx) => (
-                              <div
-                                key={idx}
-                                className="h-3.5 rounded-sm flex items-center gap-1 px-1"
-                                style={{ backgroundColor: idx % 2 === 0 ? '#2a2a3e' : `${secondaryColor}20` }}
-                              >
-                                <div
-                                  className="w-2 h-2 rounded-full"
-                                  style={{ backgroundColor: idx % 2 === 0 ? secondaryColor : primaryColor }}
-                                />
-                                <div className="flex-1 h-1 rounded bg-gray-600" />
-                              </div>
-                            ))}
-                          </div>
-                          {/* Brand voice badge */}
-                          {template.theme?.brand_voice && (
-                            <div
-                              className="absolute bottom-2 right-2 px-2 py-0.5 text-[8px] font-medium rounded capitalize"
-                              style={{
-                                backgroundColor: `${primaryColor}30`,
-                                color: primaryColor
-                              }}
-                            >
-                              {template.theme.brand_voice}
-                            </div>
-                          )}
+                            className="absolute bottom-0 left-0 right-0 h-1.5"
+                            style={{ backgroundColor: accentColor }}
+                          />
                           {/* Current template badge */}
                           {isCurrentTemplate && (
-                            <div className="absolute top-2 right-2 px-2 py-0.5 text-[8px] font-medium rounded bg-[#4F6EF7] text-white">
-                              Current
+                            <div className="absolute top-1.5 right-1.5 w-5 h-5 bg-white rounded-full flex items-center justify-center shadow-md">
+                              <Check className="w-3 h-3 text-[#4F6EF7]" />
                             </div>
-                          )}
-                        </div>
-                        {/* Template Info */}
-                        <h3 className="font-semibold text-[var(--v2-text-primary)] mb-1">
-                          {getTranslatedTemplateName(template.name, language)}
-                        </h3>
-                        <p className="text-xs text-[var(--v2-text-muted)] capitalize mb-2">
-                          {getTranslatedVertical(template.vertical, language)}
-                        </p>
-                        {/* Block icons row */}
-                        <div className="flex items-center gap-1 mb-3">
-                          {blockTypes.slice(0, 4).map((block, idx) => {
-                            const blockType = block.block_type || block.type || '';
-                            const BlockIcon = getBlockIcon(blockType);
-                            return (
-                              <div
-                                key={idx}
-                                className="w-5 h-5 rounded flex items-center justify-center"
-                                style={{ backgroundColor: `${primaryColor}15` }}
-                                title={getBlockName(blockType)}
-                              >
-                                <BlockIcon className="w-3 h-3" style={{ color: primaryColor }} />
-                              </div>
-                            );
-                          })}
-                          {blockTypes.length > 4 && (
-                            <span className="text-[10px] text-[var(--v2-text-muted)]">
-                              +{blockTypes.length - 4}
-                            </span>
                           )}
                         </div>
 
-                        <button
-                          onClick={() => !isCurrentTemplate && handleApplyTemplate(template.id)}
-                          disabled={isCurrentTemplate || applyingTemplate}
-                          className={`w-full flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium transition-all disabled:opacity-50 ${
-                            isCurrentTemplate
-                              ? 'bg-[#4F6EF7]/10 text-[#4F6EF7] border border-[#4F6EF7]'
-                              : 'bg-[var(--v2-surface)] text-[var(--v2-text-secondary)] border border-[var(--v2-border)] hover:bg-[#4F6EF7] hover:text-white hover:border-[#4F6EF7]'
-                          }`}
-                          style={{ borderRadius: 'var(--v2-radius-button)' }}
-                        >
-                          {isCurrentTemplate ? (
-                            <>
-                              <Check className="h-4 w-4" />
-                              {labels.current_template}
-                            </>
-                          ) : applyingTemplate ? (
-                            <>
-                              <Loader2 className="h-4 w-4 animate-spin" />
-                              {labels.applying_template}
-                            </>
-                          ) : (
-                            labels.apply_template
-                          )}
-                        </button>
+                        {/* Template Info */}
+                        <div className="p-2.5">
+                          <h3 className="text-xs font-semibold text-[var(--v2-text-primary)] mb-0.5 truncate">
+                            {getTranslatedTemplateName(template.name, language)}
+                          </h3>
+                          <p className="text-[10px] text-[var(--v2-text-muted)]">
+                            {template.theme?.brand_voice
+                              ? getTranslatedBrandVoice(template.theme.brand_voice, language)
+                              : getTranslatedVertical(template.vertical, language)}
+                          </p>
+                        </div>
                       </motion.div>
                     );
                   })}
                 </div>
               </div>
+            )}
+
+            {/* Wizard Tab */}
+            {viewMode === 'wizard' && (
+              <WebsiteSetupWizard
+                templates={templates}
+                currentTemplateId={page?.template_id}
+                currentLogoUrl={blocks.find(b => b.block_type === 'header')?.content?.logo_url}
+                currentClientFlow={clientFlow.length > 0 ? clientFlow : undefined}
+                currentHiddenServiceNames={
+                  (blocks.find(b => b.block_type === 'services')?.content?.services as Array<{ name: string; hidden?: boolean }> || [])
+                    .filter(s => s.hidden)
+                    .map(s => s.name)
+                }
+                subdomain={subdomain}
+                pageId={page?.id}
+                onComplete={handleWizardComplete}
+                onSkip={handleWizardSkip}
+                onBeforePreview={handleBeforePreview}
+                embedded={true}
+              />
             )}
           </>
         )}
@@ -4455,7 +5491,6 @@ export default function WebsiteManagementPage() {
                   { type: 'faq', icon: HelpCircle, label: { en: 'FAQ', es: 'Preguntas', he: 'שאלות נפוצות' }, desc: { en: 'Common questions', es: 'Preguntas frecuentes', he: 'שאלות ותשובות' } },
                   { type: 'pricing', icon: DollarSign, label: { en: 'Pricing', es: 'Precios', he: 'מחירון' }, desc: { en: 'Pricing plans', es: 'Planes de precios', he: 'תוכניות מחיר' } },
                   { type: 'features', icon: Sparkles, label: { en: 'Features', es: 'Características', he: 'תכונות' }, desc: { en: 'Key features', es: 'Características clave', he: 'יתרונות' } },
-                  { type: 'process', icon: List, label: { en: 'Process', es: 'Proceso', he: 'תהליך' }, desc: { en: 'How it works', es: 'Cómo funciona', he: 'איך זה עובד' } },
                   { type: 'team', icon: Users, label: { en: 'Team', es: 'Equipo', he: 'צוות' }, desc: { en: 'Team members', es: 'Miembros del equipo', he: 'חברי הצוות' } },
                   { type: 'stats', icon: BarChart3, label: { en: 'Stats', es: 'Estadísticas', he: 'סטטיסטיקות' }, desc: { en: 'Key metrics', es: 'Métricas clave', he: 'נתונים' } },
                   { type: 'gallery', icon: ImageIcon, label: { en: 'Gallery', es: 'Galería', he: 'גלריה' }, desc: { en: 'Image gallery', es: 'Galería de imágenes', he: 'גלריית תמונות' } },
@@ -4488,6 +5523,64 @@ export default function WebsiteManagementPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Landing Page Wizard */}
+      {showLandingPageWizard && (
+        <LandingPageWizard
+          existingTheme={page?.theme ? {
+            colors: {
+              primary: page.theme.colors?.primary || '#4F6EF7',
+              secondary: page.theme.colors?.secondary || '#6366F1'
+            },
+            fonts: {
+              heading: page.theme.fonts?.heading || 'Inter',
+              body: page.theme.fonts?.body || 'Inter'
+            }
+          } : null}
+          subdomain={page?.subdomain || ''}
+          businessInfo={{
+            companyName: businessProfile?.company_name,
+            logoUrl: blocks.find(b => b.block_type === 'header')?.content?.logo_url as string | undefined
+          }}
+          clientFlow={clientFlow}
+          onComplete={async (result: LandingPageWizardResult) => {
+            setShowLandingPageWizard(false);
+            setCreatingPage(true);
+            try {
+              const response = await fetch('/api/website/landing-pages', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  serviceId: result.serviceId,
+                  serviceName: result.serviceName,
+                  slug: result.slug,
+                  theme: result.theme,
+                  shouldPublish: result.shouldPublish
+                })
+              });
+
+              const data = await response.json();
+              if (data.success) {
+                // Refresh pages list
+                const pagesResponse = await fetch('/api/website/pages');
+                const pagesData = await pagesResponse.json();
+                if (pagesData.success) {
+                  setAllPages(pagesData.pages || []);
+                }
+                // Navigate to the new landing page
+                if (data.landingPage?.id) {
+                  router.push(`/business-os/website?pageId=${data.landingPage.id}`);
+                }
+              }
+            } catch (error) {
+              logger.error({ err: error }, 'Failed to create landing page');
+            } finally {
+              setCreatingPage(false);
+            }
+          }}
+          onCancel={() => setShowLandingPageWizard(false)}
+        />
       )}
 
     </div>

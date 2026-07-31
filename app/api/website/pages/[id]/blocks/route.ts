@@ -6,6 +6,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { revalidateTag } from 'next/cache';
 import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
@@ -155,6 +156,17 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
 
     if (result.error) {
       throw result.error;
+    }
+
+    // Revalidate the public website cache if page has a subdomain
+    if (pageResult.data.subdomain) {
+      try {
+        revalidateTag(`website-${pageResult.data.subdomain}`);
+        requestLogger.info({ subdomain: pageResult.data.subdomain }, 'Revalidated public website cache');
+      } catch (revalidateError) {
+        // Non-blocking - log but don't fail the request
+        requestLogger.warn({ err: revalidateError }, 'Failed to revalidate cache');
+      }
     }
 
     requestLogger.info({ pageId: id, count: validated.block_ids.length }, 'Reordered blocks');

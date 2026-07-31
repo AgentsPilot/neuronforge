@@ -8,7 +8,7 @@
  */
 
 import { useState, useEffect } from 'react';
-import { Calendar, Clock, User, Mail, Phone, ArrowLeft, ArrowRight, Check, Loader2, ClipboardList, CreditCard } from 'lucide-react';
+import { Calendar, Clock, User, Mail, Phone, ArrowLeft, ArrowRight, Check, Loader2, ClipboardList, CreditCard, ChevronDown } from 'lucide-react';
 
 interface Service {
   id: string;
@@ -220,6 +220,9 @@ export function BookingWidget({ subdomain, services, timezone, primaryColor, loc
   // Payment state
   const [processingPayment, setProcessingPayment] = useState(false);
 
+  // Custom select dropdown state
+  const [openSelectKey, setOpenSelectKey] = useState<string | null>(null);
+
   // Generate dates for next 14 days
   const dates = Array.from({ length: 14 }, (_, i) => {
     const date = new Date();
@@ -243,6 +246,21 @@ export function BookingWidget({ subdomain, services, timezone, primaryColor, loc
     };
     fetchIntakeTemplate();
   }, [subdomain]);
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    if (!openSelectKey) return;
+
+    const handleClickOutside = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (!target.closest('[data-select-container]')) {
+        setOpenSelectKey(null);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [openSelectKey]);
 
   // Fetch slots when service or date changes
   useEffect(() => {
@@ -311,6 +329,7 @@ export function BookingWidget({ subdomain, services, timezone, primaryColor, loc
           email,
           phone: phone || undefined,
           notes: notes || undefined,
+          timezone,
           // Skip contact creation for paid services - contact will be created after payment
           skip_contact: requiresPayment
         })
@@ -789,19 +808,63 @@ export function BookingWidget({ subdomain, services, timezone, primaryColor, loc
               )}
 
               {field.type === 'select' && field.options && (
-                <select
-                  value={(intakeResponses[field.key] as string) || ''}
-                  onChange={(e) => handleIntakeFieldChange(field.key, e.target.value)}
-                  required={field.required}
-                  className="w-full px-4 py-2.5 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[var(--booking-primary)] focus:border-transparent bg-white"
-                >
-                  <option value="">{t.select_option}</option>
-                  {field.options.map((opt) => (
-                    <option key={opt.value} value={opt.value}>
-                      {getLocalizedLabel(opt)}
-                    </option>
-                  ))}
-                </select>
+                <div className="relative" data-select-container>
+                  {/* Hidden input for form validation */}
+                  <input
+                    type="text"
+                    value={(intakeResponses[field.key] as string) || ''}
+                    required={field.required}
+                    className="sr-only"
+                    tabIndex={-1}
+                    onChange={() => {}}
+                  />
+                  {/* Custom styled select trigger */}
+                  <button
+                    type="button"
+                    onClick={() => setOpenSelectKey(openSelectKey === field.key ? null : field.key)}
+                    className={`w-full flex items-center justify-between px-4 py-2.5 border rounded-lg bg-white text-sm transition-all ${
+                      openSelectKey === field.key
+                        ? 'border-[var(--booking-primary)] ring-2 ring-[var(--booking-primary)] ring-opacity-20'
+                        : 'border-gray-200 hover:border-gray-300'
+                    }`}
+                  >
+                    <span className={intakeResponses[field.key] ? 'text-gray-900' : 'text-gray-400'}>
+                      {intakeResponses[field.key]
+                        ? getLocalizedLabel(field.options.find(o => o.value === intakeResponses[field.key]) || { label_en: String(intakeResponses[field.key]) })
+                        : t.select_option}
+                    </span>
+                    <ChevronDown className={`w-4 h-4 text-gray-400 transition-transform ${openSelectKey === field.key ? 'rotate-180' : ''}`} />
+                  </button>
+                  {/* Dropdown menu */}
+                  {openSelectKey === field.key && (
+                    <div className="absolute z-50 w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg overflow-hidden">
+                      {field.options.map((opt) => {
+                        const isSelected = intakeResponses[field.key] === opt.value;
+                        return (
+                          <button
+                            key={opt.value}
+                            type="button"
+                            onClick={() => {
+                              handleIntakeFieldChange(field.key, opt.value);
+                              setOpenSelectKey(null);
+                            }}
+                            className={`w-full flex items-center gap-2 px-4 py-2.5 text-sm text-left transition-colors ${
+                              isSelected
+                                ? 'bg-gray-50 text-gray-900 font-medium'
+                                : 'text-gray-700 hover:bg-gray-50'
+                            }`}
+                            style={isSelected ? { color: primaryColor } : {}}
+                          >
+                            <span className="w-4 h-4 flex items-center justify-center">
+                              {isSelected && <Check className="w-4 h-4" style={{ color: primaryColor }} />}
+                            </span>
+                            {getLocalizedLabel(opt)}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
               )}
 
               {field.type === 'radio' && field.options && (

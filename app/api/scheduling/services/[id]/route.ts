@@ -21,9 +21,9 @@ const updateServiceSchema = z.object({
   service_name: z.string().min(1).optional(),
   description: z.string().optional(),
   duration_minutes: z.number().min(5).max(480).optional(),
-  price: z.number().min(0).optional(),
+  price: z.number().min(0).nullable().optional(),
   currency: z.enum(['USD', 'EUR', 'ILS', 'GBP']).optional(),
-  buffer_minutes: z.number().min(0).max(120).optional(),
+  buffer_minutes: z.number().min(0).max(1440).optional(), // Max 24 hours
   max_bookings_per_day: z.number().min(1).nullable().optional(),
   advance_booking_days: z.number().min(0).optional(),
   min_notice_hours: z.number().min(0).optional(),
@@ -32,10 +32,10 @@ const updateServiceSchema = z.object({
   status: z.enum(['draft', 'active', 'inactive']).optional(),
   // Payment options
   payment_type: z.enum(['full', 'installments']).optional(),
-  installment_count: z.number().min(1).max(24).optional(),
-  installment_frequency: z.enum(['weekly', 'biweekly', 'monthly', 'quarterly']).optional(),
-  first_payment_due: z.enum(['on_booking', 'days_after']).optional(),
-  first_payment_days: z.number().min(0).max(365).optional()
+  installment_count: z.number().min(1).max(24).nullable().optional(),
+  installment_frequency: z.enum(['weekly', 'biweekly', 'monthly', 'quarterly']).nullable().optional(),
+  first_payment_due: z.enum(['on_booking', 'days_after']).nullable().optional(),
+  first_payment_days: z.number().min(0).max(365).nullable().optional()
 });
 
 export async function GET(

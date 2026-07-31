@@ -13,6 +13,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { z } from 'zod';
+import { BookingEmailService } from '@/lib/services/BookingEmailService';
 
 const logger = createLogger({ module: 'WebsiteContactFormAPI' });
 
@@ -74,6 +75,7 @@ export async function POST(request: NextRequest) {
       .single();
 
     let contactId: string;
+    let isNewContact = false;
 
     if (existingContact) {
       // Update existing contact
@@ -102,16 +104,22 @@ export async function POST(request: NextRequest) {
       contactId = existingContact.id;
       requestLogger.info({ contactId }, 'Contact updated');
     } else {
+      // Parse name into first_name and last_name
+      const nameParts = data.name.trim().split(/\s+/);
+      const firstName = nameParts[0] || data.name;
+      const lastName = nameParts.length > 1 ? nameParts.slice(1).join(' ') : null;
+
       // Create new contact
       const { data: newContact, error: createError } = await supabaseServer
         .from('crm_contacts')
         .insert({
           user_id: ownerId,
-          name: data.name,
+          first_name: firstName,
+          last_name: lastName,
           email: data.email,
           phone: data.phone || null,
           source: 'website_form',
-          status: 'lead',
+          stage: 'lead',
           custom_fields: {
             first_website_message: data.message,
             service_interest: data.service_interest,
@@ -129,34 +137,54 @@ export async function POST(request: NextRequest) {
       }
 
       contactId = newContact.id;
+      isNewContact = true;
       requestLogger.info({ contactId }, 'New contact created');
     }
 
     // Create activity/note for the message
+    // Build description with context
+    let activityDescription = data.message;
+    if (data.service_interest) {
+      activityDescription += `\n\nService Interest: ${data.service_interest}`;
+    }
+    if (data.referral_source) {
+      activityDescription += `\nReferral Source: ${data.referral_source}`;
+    }
+
     const { error: activityError } = await supabaseServer
       .from('crm_activities')
       .insert({
         user_id: ownerId,
         contact_id: contactId,
-        type: 'note',
+        activity_type: 'note',
         title: 'Website Contact Form Submission',
-        description: data.message,
-        metadata: {
-          source: 'website_form',
-          subdomain: data.subdomain,
-          service_interest: data.service_interest,
-          referral_source: data.referral_source,
-          page_url: data.page_url
-        }
+        description: activityDescription,
+        activity_date: new Date().toISOString(),
+        auto_logged: true,
+        source_capability: 'website'
       });
 
     if (activityError) {
-      requestLogger.warn({ err: activityError }, 'Failed to create activity (non-blocking)');
+      requestLogger.error({ err: activityError }, 'Failed to create activity');
+    } else {
+      requestLogger.info({ contactId }, 'Activity created for contact form submission');
     }
 
-    // TODO: Trigger email sequence if configured
-    // This would involve looking up the website's email automation settings
-    // and triggering the 'contact_form_submitted' sequence
+    // Send appropriate email based on whether contact is new or returning (non-blocking)
+    const emailData = {
+      name: data.name,
+      email: data.email,
+      message: data.message,
+      serviceInterest: data.service_interest
+    };
+
+    if (isNewContact) {
+      BookingEmailService.sendWelcomeEmail(contactId, ownerId, emailData)
+        .catch(err => requestLogger.warn({ err }, 'Welcome email failed (non-blocking)'));
+    } else {
+      BookingEmailService.sendReturningContactEmail(contactId, ownerId, emailData)
+        .catch(err => requestLogger.warn({ err }, 'Returning contact email failed (non-blocking)'));
+    }
 
     requestLogger.info(
       { subdomain: data.subdomain, contactId, email: data.email },

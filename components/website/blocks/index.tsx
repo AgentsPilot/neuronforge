@@ -294,7 +294,11 @@ export function WebsiteBlocks({
 
   // Extract client flow from process block if not explicitly provided
   const processBlock = sortedBlocks.find(b => b.block_type === 'process');
-  const clientFlow = explicitClientFlow || (processBlock?.content?.flow as FlowStep[] | undefined) || undefined;
+  // When services_only is true, hide booking buttons by returning undefined clientFlow
+  const isServicesOnly = processBlock?.content?.services_only === true;
+  const clientFlow = isServicesOnly
+    ? undefined
+    : explicitClientFlow || (processBlock?.content?.client_flow as FlowStep[] | undefined) || undefined;
   // Booking URL must be explicitly provided or stored in process block
   // No default fallback - if not set, booking buttons won't show (handled by ServicesBlock)
   const bookingUrl = explicitBookingUrl || (processBlock?.content?.booking_url as string | undefined);

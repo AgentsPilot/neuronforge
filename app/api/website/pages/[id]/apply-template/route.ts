@@ -4,11 +4,9 @@
  *
  * ARCHITECTURE:
  * - Templates define ONLY visual styling (theme: colors, fonts, brand_voice)
- * - STANDARD_HOMEPAGE_BLOCKS defines the fixed section structure (same for all templates)
- * - Services come from Scheduling capability, not templates
- * - Content comes from central website_content table
- * - Applying a template = changing theme + ensuring standard blocks exist
- * - User's header customizations are preserved across template changes
+ * - Applying a template = changing theme ONLY, preserving all block content
+ * - All user customizations (text, images, order) are preserved across template changes
+ * - Only creates standard blocks if the page has NO blocks (edge case)
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -148,25 +146,21 @@ export async function POST(
       );
     }
 
+    // Check if page has existing blocks
+    const existingBlocksResult = await blockRepo.findByPageId(pageId);
+    const hasExistingBlocks = existingBlocksResult.data && existingBlocksResult.data.length > 0;
+
     requestLogger.info({
       pageId,
       templateId: validated.template_id,
       templateName: template.name,
-      userId: user.id
-    }, 'Applying template to existing page');
+      userId: user.id,
+      hasExistingBlocks,
+      blockCount: existingBlocksResult.data?.length || 0
+    }, 'Applying template to existing page - preserving blocks');
 
-    // Get existing blocks to preserve header content
-    const existingBlocksResult = await blockRepo.findByPageId(pageId);
-    const existingHeaderBlock = existingBlocksResult.data?.find(b => b.block_type === 'header');
-    const existingHeaderContent = existingHeaderBlock?.content as Record<string, unknown> | undefined;
-
-    // Delete existing blocks
-    const deleteResult = await blockRepo.deleteByPageId(pageId);
-    if (deleteResult.error) {
-      requestLogger.warn({ err: deleteResult.error }, 'Failed to delete existing blocks');
-    }
-
-    // Update page with new template and theme
+    // Update page with new template and theme ONLY
+    // Preserve ALL existing block content and order - templates only change visual styling
     const updateResult = await pageRepo.update(pageId, user.id, {
       template_id: validated.template_id,
       theme: convertTemplateTheme(template)
@@ -176,35 +170,22 @@ export async function POST(
       throw updateResult.error;
     }
 
-    // Create new blocks from STANDARD structure (same for all templates)
-    // Templates only change the theme, not which sections exist
-    // Preserve existing header content if it was customized
-    const pageLanguage = (existingPage.data.website_language || 'en') as Locale;
-    const standardBlocks = getStandardHomepageBlocks();
+    // Only create standard blocks if page has NO blocks (edge case: empty/corrupted page)
+    if (!hasExistingBlocks) {
+      const pageLanguage = (existingPage.data.website_language || 'en') as Locale;
+      const standardBlocks = getStandardHomepageBlocks();
 
-    if (standardBlocks.length > 0) {
-      const blocksToCreate = standardBlocks.map((block, index) => {
-        const baseBlock = convertTemplateBlockToInsert(block, pageId, index, pageLanguage);
+      if (standardBlocks.length > 0) {
+        const blocksToCreate = standardBlocks.map((block, index) => {
+          return convertTemplateBlockToInsert(block, pageId, index, pageLanguage);
+        });
 
-        // Preserve existing header content (menu items, logo, CTA) if it exists
-        if (block.block_type === 'header' && existingHeaderContent) {
-          return {
-            ...baseBlock,
-            content: {
-              ...baseBlock.content,
-              ...existingHeaderContent // User's customizations on top
-            } as typeof baseBlock.content
-          };
+        const blocksResult = await blockRepo.bulkCreate(blocksToCreate);
+        if (blocksResult.error) {
+          requestLogger.warn({ err: blocksResult.error }, 'Failed to create standard blocks');
+        } else {
+          requestLogger.info({ blockCount: blocksToCreate.length }, 'Created standard blocks for empty page');
         }
-
-        return baseBlock;
-      });
-
-      const blocksResult = await blockRepo.bulkCreate(blocksToCreate);
-      if (blocksResult.error) {
-        requestLogger.warn({ err: blocksResult.error }, 'Failed to create standard blocks');
-      } else {
-        requestLogger.info({ blockCount: blocksToCreate.length, headerPreserved: !!existingHeaderContent }, 'Created standard blocks with template theme');
       }
     }
 

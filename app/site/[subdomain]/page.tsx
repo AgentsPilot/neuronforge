@@ -12,6 +12,10 @@ import type { PageTheme } from '@/components/website/blocks/types';
 import type { Locale } from '@/lib/i18n/config';
 import { isValidLocale, defaultLocale, getDirection } from '@/lib/i18n/config';
 
+// Force dynamic rendering - no caching at page level
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+
 interface PageProps {
   params: Promise<{ subdomain: string }>;
 }
@@ -35,8 +39,14 @@ async function getWebsiteData(subdomain: string): Promise<WebsiteData | null> {
   const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
 
   try {
+    // Always use no-store to ensure fresh data after reordering/editing
+    // Cache invalidation via revalidateTag wasn't working reliably
     const response = await fetch(`${baseUrl}/api/website/public/${subdomain}`, {
-      next: { revalidate: 60 } // Revalidate every 60 seconds
+      cache: 'no-store',
+      headers: {
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Pragma': 'no-cache'
+      }
     });
 
     if (!response.ok) {

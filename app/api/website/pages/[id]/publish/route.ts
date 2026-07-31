@@ -65,7 +65,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
 
       // Use page language for localized content
       const pageLanguage = pageResult.data.website_language || 'en';
-      const enrichedBlocks = await websiteBlockEnrichmentService.enrichBlocks(user.id, blocksForEnrichment, pageLanguage);
+      const enrichedBlocks = await websiteBlockEnrichmentService.enrichBlocks(user.id, blocksForEnrichment, pageLanguage, false, user.email);
 
       // Update each enriched block in the database
       let enrichedCount = 0;

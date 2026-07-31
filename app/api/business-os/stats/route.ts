@@ -7,6 +7,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
+import { WebsiteAnalyticsRepository } from '@/lib/repositories/WebsiteAnalyticsRepository';
 
 const logger = createLogger({ module: 'BusinessOSStatsAPI' });
 
@@ -21,10 +22,15 @@ interface CapabilityStats {
   website: {
     status: 'active' | 'inactive';
     visitors_30d: number;
+    bookings_30d: number;
     page_count: number;
     wants_website: boolean;
     has_live_pages: boolean;
     url?: string;
+    // Detailed breakdown
+    visitors_7d: number;
+    visitors_today: number;
+    form_submissions_30d: number;
   };
   crm: {
     status: 'active' | 'inactive';
@@ -33,6 +39,10 @@ interface CapabilityStats {
     became_clients_this_week: number;
     went_quiet: number;
     pipeline_stages: PipelineStageCount[];
+    // Detailed breakdown
+    contacts_by_source: { source: string; count: number }[];
+    active_leads: number;
+    active_clients: number;
   };
   scheduling: {
     status: 'active' | 'inactive';
@@ -42,11 +52,27 @@ interface CapabilityStats {
     active_services_count: number;
     open_days_count: number;
     stripe_connected: boolean;
+    calendar_synced: boolean;
+    calendar_provider: 'google_calendar' | 'outlook' | null;
+    // Detailed breakdown
+    confirmed_30d: number;
+    completed_30d: number;
+    cancelled_30d: number;
+    no_show_30d: number;
+    total_revenue_30d: number;
   };
   payments: {
     status: 'active' | 'inactive';
     revenue_30d: number;
     pending_invoices: number;
+    // Detailed breakdown
+    successful_transactions_30d: number;
+    failed_transactions_30d: number;
+    refunded_30d: number;
+    invoices_sent_30d: number;
+    invoices_paid_30d: number;
+    invoices_overdue: number;
+    average_invoice_amount: number;
   };
   email_automation: {
     status: 'active' | 'inactive';
@@ -163,6 +189,18 @@ export async function GET(request: NextRequest) {
       { count: executions30d },
       // Website pages
       { data: websitePages },
+      // Website bookings (bookings from website source)
+      { count: websiteBookings30d },
+      // === DETAILED BREAKDOWN RESULTS ===
+      { data: bookingsByStatus },
+      { data: completedBookingsWithRevenue },
+      { data: contactsBySource },
+      { count: activeLeads },
+      { count: activeClients },
+      { data: allTransactions30d },
+      { data: allInvoices30d },
+      { count: overdueInvoices },
+      { count: formSubmissions30d },
     ] = await Promise.all([
       // CRM: total contacts
       supabaseServer
@@ -175,12 +213,17 @@ export async function GET(request: NextRequest) {
         .select('*', { count: 'exact', head: true })
         .eq('user_id', user.id)
         .gte('created_at', sevenDaysAgo),
-      // CRM: contacts that became clients this week (stage contains 'client' and updated this week)
+      // CRM: contacts that became clients this week
+      // Match stages that indicate client status across different verticals:
+      // - 'active_client', 'client' (therapist/default)
+      // - 'active' (coach/consultant - Active Client / Active Project)
+      // - 'closed_won' (sales)
+      // We check updated_at as a proxy for when they moved to this stage
       supabaseServer
         .from('crm_contacts')
         .select('*', { count: 'exact', head: true })
         .eq('user_id', user.id)
-        .ilike('stage', '%client%')
+        .or('stage.ilike.%client%,stage.eq.active,stage.eq.closed_won')
         .gte('updated_at', sevenDaysAgo),
       // CRM: contacts with recent activity (to calculate "went quiet")
       supabaseServer
@@ -267,10 +310,138 @@ export async function GET(request: NextRequest) {
         .from('website_pages')
         .select('id, status, subdomain, custom_domain')
         .eq('user_id', user.id),
+      // Website: bookings from website source in last 30 days
+      supabaseServer
+        .from('scheduling_bookings')
+        .select('*', { count: 'exact', head: true })
+        .eq('user_id', user.id)
+        .eq('booking_source', 'website')
+        .gte('created_at', thirtyDaysAgo),
+      // === DETAILED BREAKDOWN QUERIES ===
+      // Scheduling: bookings by status in last 30 days
+      supabaseServer
+        .from('scheduling_bookings')
+        .select('status')
+        .eq('user_id', user.id)
+        .gte('start_time', thirtyDaysAgo),
+      // Scheduling: bookings with payment amounts (for total revenue)
+      supabaseServer
+        .from('scheduling_bookings')
+        .select('total_amount')
+        .eq('user_id', user.id)
+        .eq('status', 'completed')
+        .gte('start_time', thirtyDaysAgo),
+      // CRM: contacts by source
+      supabaseServer
+        .from('crm_contacts')
+        .select('source')
+        .eq('user_id', user.id),
+      // CRM: active leads (contacts in lead-type stages)
+      supabaseServer
+        .from('crm_contacts')
+        .select('*', { count: 'exact', head: true })
+        .eq('user_id', user.id)
+        .in('stage', ['lead', 'inquiry', 'contacted', 'meeting', 'proposal', 'negotiation', 'discovery', 'qualified']),
+      // CRM: active clients
+      supabaseServer
+        .from('crm_contacts')
+        .select('*', { count: 'exact', head: true })
+        .eq('user_id', user.id)
+        .or('stage.ilike.%client%,stage.eq.active,stage.eq.closed_won'),
+      // Payments: all transactions in 30 days (for breakdown by status)
+      supabaseServer
+        .from('payment_transactions')
+        .select('status, amount')
+        .eq('user_id', user.id)
+        .gte('created_at', thirtyDaysAgo),
+      // Payments: invoices in 30 days (for breakdown)
+      supabaseServer
+        .from('payment_invoices')
+        .select('status, amount')
+        .eq('user_id', user.id)
+        .gte('created_at', thirtyDaysAgo),
+      // Payments: overdue invoices
+      supabaseServer
+        .from('payment_invoices')
+        .select('*', { count: 'exact', head: true })
+        .eq('user_id', user.id)
+        .eq('status', 'overdue'),
+      // Website: form submissions in 30 days
+      supabaseServer
+        .from('crm_contacts')
+        .select('*', { count: 'exact', head: true })
+        .eq('user_id', user.id)
+        .eq('source', 'website_form')
+        .gte('created_at', thirtyDaysAgo),
     ]);
+
+    // Fetch website analytics
+    let websiteVisitors30d = 0;
+    let websiteVisitors7d = 0;
+    let websiteVisitorsToday = 0;
+    try {
+      const analyticsRepo = new WebsiteAnalyticsRepository(supabaseServer);
+      // Don't filter by subdomain - user_id is sufficient
+      const analyticsResult = await analyticsRepo.getSummary(user.id);
+      if (analyticsResult.data) {
+        websiteVisitors30d = analyticsResult.data.visitors_30d;
+        websiteVisitors7d = analyticsResult.data.visitors_7d;
+        websiteVisitorsToday = analyticsResult.data.visitors_today;
+      }
+    } catch (err) {
+      requestLogger.warn({ err }, 'Failed to fetch website analytics');
+    }
 
     // Calculate revenue from payments data
     const revenue30d = (paymentsData || []).reduce((sum: number, p: any) => sum + (p.amount || 0), 0);
+
+    // === PROCESS DETAILED BREAKDOWN DATA ===
+
+    // Scheduling breakdown by status
+    const bookingStatusCounts = { confirmed: 0, completed: 0, cancelled: 0, no_show: 0 };
+    (bookingsByStatus || []).forEach((b: { status: string }) => {
+      if (b.status in bookingStatusCounts) {
+        bookingStatusCounts[b.status as keyof typeof bookingStatusCounts]++;
+      }
+    });
+
+    // Total revenue from completed bookings
+    const schedulingRevenue30d = (completedBookingsWithRevenue || []).reduce(
+      (sum: number, b: { total_amount: number | null }) => sum + (b.total_amount || 0), 0
+    );
+
+    // Contacts by source breakdown
+    const sourceCountMap: Record<string, number> = {};
+    (contactsBySource || []).forEach((c: { source: string | null }) => {
+      const source = c.source || 'unknown';
+      sourceCountMap[source] = (sourceCountMap[source] || 0) + 1;
+    });
+    const contactsBySourceArray = Object.entries(sourceCountMap)
+      .map(([source, count]) => ({ source, count }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 5); // Top 5 sources
+
+    // Payment transactions breakdown
+    const transactionCounts = { succeeded: 0, failed: 0, refunded: 0 };
+    (allTransactions30d || []).forEach((t: { status: string }) => {
+      if (t.status in transactionCounts) {
+        transactionCounts[t.status as keyof typeof transactionCounts]++;
+      }
+    });
+
+    // Invoice breakdown
+    const invoiceCounts = { sent: 0, paid: 0 };
+    let totalInvoiceAmount = 0;
+    let paidInvoiceCount = 0;
+    (allInvoices30d || []).forEach((inv: { status: string; amount: number }) => {
+      if (inv.status === 'sent') invoiceCounts.sent++;
+      if (inv.status === 'paid') {
+        invoiceCounts.paid++;
+        paidInvoiceCount++;
+        totalInvoiceAmount += inv.amount || 0;
+      }
+    });
+    const averageInvoiceAmount = paidInvoiceCount > 0 ? totalInvoiceAmount / paidInvoiceCount : 0;
 
     // Calculate "went quiet" - contacts in lead/client stage with no activity in last 14 days
     const fourteenDaysAgo = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000);
@@ -325,6 +496,9 @@ export async function GET(request: NextRequest) {
     const openDaysCount = countOpenDays(businessProfile?.scheduling_availability);
     // stripe_account_id column may not exist in all environments yet - default to false
     const stripeConnected = !!(businessProfile as any)?.stripe_account_id;
+    // Calendar sync status from business profile
+    const calendarSynced = !!(businessProfile as any)?.calendar_sync_enabled;
+    const calendarProvider = (businessProfile as any)?.calendar_sync_provider || null;
 
     // Calculate website stats
     const allPages = websitePages || [];
@@ -348,11 +522,16 @@ export async function GET(request: NextRequest) {
     const stats: CapabilityStats = {
       website: {
         status: activeCapabilityKeys.has('website') ? 'active' : 'inactive',
-        visitors_30d: 0, // Website analytics not yet implemented
+        visitors_30d: websiteVisitors30d,
+        bookings_30d: websiteBookings30d || 0,
         page_count: allPages.length,
         wants_website: wantsWebsite,
         has_live_pages: hasLivePages,
         url: websiteUrl,
+        // Detailed breakdown
+        visitors_7d: websiteVisitors7d,
+        visitors_today: websiteVisitorsToday,
+        form_submissions_30d: formSubmissions30d || 0,
       },
       crm: {
         // Core capability - always active
@@ -362,6 +541,10 @@ export async function GET(request: NextRequest) {
         became_clients_this_week: becameClientsThisWeek || 0,
         went_quiet: wentQuietCount,
         pipeline_stages: pipelineStagesWithCounts,
+        // Detailed breakdown
+        contacts_by_source: contactsBySourceArray,
+        active_leads: activeLeads || 0,
+        active_clients: activeClients || 0,
       },
       scheduling: {
         // Core capability - always active
@@ -372,12 +555,28 @@ export async function GET(request: NextRequest) {
         active_services_count: activeServicesCount || 0,
         open_days_count: openDaysCount,
         stripe_connected: stripeConnected,
+        calendar_synced: calendarSynced,
+        calendar_provider: calendarProvider,
+        // Detailed breakdown
+        confirmed_30d: bookingStatusCounts.confirmed,
+        completed_30d: bookingStatusCounts.completed,
+        cancelled_30d: bookingStatusCounts.cancelled,
+        no_show_30d: bookingStatusCounts.no_show,
+        total_revenue_30d: schedulingRevenue30d,
       },
       payments: {
         // Core capability - always active
         status: activeCapabilityKeys.has('payments') ? 'active' : 'inactive',
         revenue_30d: revenue30d,
         pending_invoices: pendingInvoices || 0,
+        // Detailed breakdown
+        successful_transactions_30d: transactionCounts.succeeded,
+        failed_transactions_30d: transactionCounts.failed,
+        refunded_30d: transactionCounts.refunded,
+        invoices_sent_30d: invoiceCounts.sent,
+        invoices_paid_30d: invoiceCounts.paid,
+        invoices_overdue: overdueInvoices || 0,
+        average_invoice_amount: averageInvoiceAmount,
       },
       email_automation: {
         // Core capability - always active

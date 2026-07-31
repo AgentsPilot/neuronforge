@@ -1,6 +1,7 @@
 'use client';
 
-import { LucideIcon, AlertCircle, TrendingUp, TrendingDown, Minus } from 'lucide-react';
+import { useState } from 'react';
+import { LucideIcon, AlertCircle, TrendingUp, TrendingDown, Minus, ChevronDown, ChevronUp } from 'lucide-react';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import type { HealthStatus } from '@/lib/business-os/insights/StaticHealthRules';
 
@@ -12,6 +13,13 @@ export interface TrendPoint {
 
 // Different trend graph types based on card context
 export type TrendType = 'revenue' | 'people' | 'calendar' | 'collection';
+
+// Expanded details item
+export interface ExpandedDetailItem {
+  label: string;
+  value: string | number;
+  color?: 'green' | 'red' | 'amber' | 'default';
+}
 
 interface StoryCardProps {
   icon: LucideIcon;
@@ -32,6 +40,9 @@ interface StoryCardProps {
   trendData?: TrendPoint[];
   currentValue?: number;
   previousValue?: number;
+  // Expandable details
+  expandedDetails?: ExpandedDetailItem[];
+  expandedTitle?: string;
 }
 
 // Health status colors
@@ -59,6 +70,14 @@ const trendColors: Record<TrendType, string> = {
   people: '#8B5CF6',     // Purple
   calendar: '#14B8A6',   // Teal
   collection: '#F59E0B'  // Amber
+};
+
+// Detail value colors
+const detailValueColors = {
+  green: 'text-green-600 dark:text-green-400',
+  red: 'text-red-600 dark:text-red-400',
+  amber: 'text-amber-600 dark:text-amber-400',
+  default: 'text-[var(--v2-text-primary)]'
 };
 
 // Mini trend graph component
@@ -162,11 +181,15 @@ export function StoryCard({
   trendType,
   trendData,
   currentValue = 0,
-  previousValue = 0
+  previousValue = 0,
+  expandedDetails,
+  expandedTitle
 }: StoryCardProps) {
-  const { language } = useLanguage();
+  const { language, t } = useLanguage();
+  const [isExpanded, setIsExpanded] = useState(false);
   const colors = healthColors[health];
   const isRTL = language === 'he';
+  const hasExpandedDetails = expandedDetails && expandedDetails.length > 0;
 
   // Default trend data if not provided (simulated weekly data)
   const defaultTrendData: TrendPoint[] = [
@@ -180,11 +203,20 @@ export function StoryCard({
 
   const graphData = trendData && trendData.length > 0 ? trendData : defaultTrendData;
 
+  const handleCardClick = () => {
+    if (hasExpandedDetails) {
+      setIsExpanded(!isExpanded);
+    }
+  };
+
   return (
     <div
-      className="bg-[var(--v2-surface)] border border-[var(--v2-border)] p-3 flex flex-col h-full"
-      style={{ borderRadius: 'var(--v2-radius-card)' }}
+      className={`bg-[var(--v2-surface)] border border-[var(--v2-border)] p-3 flex flex-col transition-all duration-200 ${
+        hasExpandedDetails ? 'cursor-pointer hover:border-[var(--v2-primary)]/50' : ''
+      } ${isExpanded ? 'ring-1 ring-[var(--v2-primary)]/30' : ''}`}
+      style={{ borderRadius: 'var(--v2-radius-card)', minHeight: isExpanded ? 'auto' : '280px' }}
       dir={isRTL ? 'rtl' : 'ltr'}
+      onClick={handleCardClick}
     >
       {/* Header with icon and title */}
       <div className="flex items-center gap-2 mb-2">
@@ -194,9 +226,14 @@ export function StoryCard({
         >
           <Icon className="w-4 h-4" style={{ color: iconColor }} />
         </div>
-        <h3 className="text-sm font-semibold text-[var(--v2-text-primary)]">
+        <h3 className="text-sm font-semibold text-[var(--v2-text-primary)] flex-1">
           {title}
         </h3>
+        {hasExpandedDetails && (
+          <div className="text-[var(--v2-text-muted)]">
+            {isExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+          </div>
+        )}
       </div>
 
       {/* Trend graph - contextual to card type */}
@@ -241,13 +278,38 @@ export function StoryCard({
         </ul>
       )}
 
-      {/* Explanation - grows to fill space */}
-      <p className="text-xs text-[var(--v2-text-secondary)] leading-relaxed flex-grow mb-2">
-        "{explanation}"
-      </p>
+      {/* Expanded Details Section */}
+      {isExpanded && expandedDetails && (
+        <div className="mt-3 pt-3 pb-2 border-t border-[var(--v2-border)] animate-in slide-in-from-top-2 duration-200">
+          {expandedTitle && (
+            <p className="text-xs font-medium text-[var(--v2-text-secondary)] mb-3">
+              {expandedTitle}
+            </p>
+          )}
+          <div className="grid grid-cols-2 gap-3">
+            {expandedDetails.map((detail, index) => (
+              <div key={index} className="bg-[var(--v2-bg)] rounded-lg p-3">
+                <p className="text-[10px] text-[var(--v2-text-muted)] uppercase tracking-wide mb-1">
+                  {detail.label}
+                </p>
+                <p className={`text-sm font-semibold ${detailValueColors[detail.color || 'default']}`}>
+                  {detail.value}
+                </p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Explanation - grows to fill space (hide when expanded) */}
+      {!isExpanded && (
+        <p className="text-xs text-[var(--v2-text-secondary)] leading-relaxed flex-grow mb-2">
+          "{explanation}"
+        </p>
+      )}
 
       {/* Footer with status and action */}
-      <div className="flex items-center justify-between mt-auto pt-2 border-t border-[var(--v2-border)]">
+      <div className={`flex items-center justify-between mt-auto border-t border-[var(--v2-border)] ${isExpanded ? 'pt-3 mt-3' : 'pt-2'}`}>
         {/* Health status badge */}
         <div className={`flex items-center gap-1.5 px-2 py-1 rounded-full ${colors.bg}`}>
           <div className={`w-1.5 h-1.5 rounded-full ${colors.dot}`} />
@@ -256,15 +318,22 @@ export function StoryCard({
           </span>
         </div>
 
-        {/* Action button */}
-        {action && (
+        {/* Action button or expand hint */}
+        {action ? (
           <button
-            onClick={action.onClick}
+            onClick={(e) => {
+              e.stopPropagation();
+              action.onClick();
+            }}
             className="text-xs font-medium text-[var(--v2-primary)] hover:underline"
           >
             {action.label}
           </button>
-        )}
+        ) : hasExpandedDetails && !isExpanded ? (
+          <span className="text-[10px] text-[var(--v2-text-muted)]">
+            {t('reports.click_for_details') || 'Click for details'}
+          </span>
+        ) : null}
       </div>
     </div>
   );

@@ -14,8 +14,10 @@ import {
   Calendar, CreditCard, Clock, FileText, AlertCircle, Check,
   Upload, Download, Eye, MoreVertical, FolderOpen, UserX, Send,
   StickyNote, Video, CheckSquare, Circle, Flag, ClipboardList,
-  ChevronDown, ChevronUp
+  ChevronDown, ChevronUp, Edit2, ArrowUpDown
 } from 'lucide-react';
+import { SchedulingBookingModal } from '@/components/scheduling/SchedulingBookingModal';
+import type { SchedulingService, SchedulingBooking } from '@/lib/repositories/SchedulingRepository';
 import PhoneInput from 'react-phone-number-input';
 import en from 'react-phone-number-input/locale/en';
 import 'react-phone-number-input/style.css';
@@ -82,6 +84,7 @@ interface Appointment {
   client_last_name?: string;
   start_time: string;
   end_time: string;
+  timezone?: string;
   status: 'confirmed' | 'cancelled' | 'completed' | 'no_show';
   notes?: string;
   intake_responses?: IntakeResponses;
@@ -100,6 +103,16 @@ interface ContactTask {
   status: 'pending' | 'in_progress' | 'completed' | 'cancelled';
   due_date: string | null;
   created_by: string;
+  created_at: string;
+}
+
+interface ContactEmail {
+  id: string;
+  subject: string;
+  to_email: string;
+  status: 'pending' | 'sent' | 'delivered' | 'opened' | 'clicked' | 'bounced' | 'failed';
+  sent_at: string | null;
+  opened_at: string | null;
   created_at: string;
 }
 
@@ -258,6 +271,61 @@ const getFileType = (mimeType: string): string => {
   return 'file';
 };
 
+// Format activity title - handles database-stored titles like "Booking: ServiceName"
+const formatActivityTitle = (
+  title: string,
+  activityType: string,
+  t: (key: string) => string
+): string => {
+  // Handle "Booking: ServiceName"
+  if (activityType === 'booking') {
+    const bookingMatch = title.match(/^Booking:\s*(.+)$/);
+    if (bookingMatch) {
+      return `${t('crm.activity.title.booking')}: ${bookingMatch[1]}`;
+    }
+  }
+
+  // Handle "Booking Confirmed: ServiceName"
+  const confirmedMatch = title.match(/^Booking Confirmed:\s*(.+)$/);
+  if (confirmedMatch) {
+    return `${t('crm.activity.title.booking_confirmed')}: ${confirmedMatch[1]}`;
+  }
+
+  // Handle "Booking Cancelled"
+  if (title === 'Booking Cancelled') {
+    return t('crm.activity.title.booking_cancelled');
+  }
+
+  // Handle "No-Show"
+  if (title === 'No-Show') {
+    return t('crm.activity.title.no_show');
+  }
+
+  // Handle "Payment Received: $100"
+  if (activityType === 'payment') {
+    const paymentMatch = title.match(/^Payment Received:\s*(.+)$/);
+    if (paymentMatch) {
+      return `${t('crm.activity.title.payment_received')}: ${paymentMatch[1]}`;
+    }
+  }
+
+  // Handle "Email Sent: Subject"
+  if (activityType === 'email') {
+    const emailMatch = title.match(/^Email Sent:\s*(.+)$/);
+    if (emailMatch) {
+      return `${t('crm.activity.title.email_sent')}: ${emailMatch[1]}`;
+    }
+  }
+
+  // Handle "Website Contact Form Submission"
+  if (title === 'Website Contact Form Submission') {
+    return t('crm.activity.title.website_contact_form');
+  }
+
+  // Return as-is for other titles
+  return title;
+};
+
 // Format activity description - handles both old format and new JSON format
 const formatActivityDescription = (
   description: string | null | undefined,
@@ -327,6 +395,21 @@ const formatActivityDescription = (
     const scheduledMatch = description.match(/^Scheduled for (.+)$/);
     if (scheduledMatch) {
       return `${t('crm.activity.desc.scheduled_for')} ${scheduledMatch[1]}`;
+    }
+    // Translate "Booked via website for DATE (paid)"
+    const bookedViaPaidMatch = description.match(/^Booked via website for (.+) \(paid\)$/);
+    if (bookedViaPaidMatch) {
+      return `${t('crm.activity.desc.booked_via_website')} ${bookedViaPaidMatch[1]} (${t('crm.activity.desc.paid')})`;
+    }
+    // Translate "Booked via website for DATE - Paid CURRENCY AMOUNT"
+    const bookedViaCurrencyMatch = description.match(/^Booked via website for (.+) - Paid (.+)$/);
+    if (bookedViaCurrencyMatch) {
+      return `${t('crm.activity.desc.booked_via_website')} ${bookedViaCurrencyMatch[1]} - ${t('crm.activity.desc.paid')} ${bookedViaCurrencyMatch[2]}`;
+    }
+    // Translate "Booked via website for DATE"
+    const bookedViaMatch = description.match(/^Booked via website for (.+)$/);
+    if (bookedViaMatch) {
+      return `${t('crm.activity.desc.booked_via_website')} ${bookedViaMatch[1]}`;
     }
   }
 
@@ -562,7 +645,7 @@ export function CRMContactDrawer({ contact, stages, enabledCapabilities = [], is
     return enabledCapabilities.includes(capability);
   };
   const { t, isRTL, language } = useLanguage();
-  const [activeTab, setActiveTab] = useState(defaultTab || 'details');
+  const [activeTab, setActiveTab] = useState<string>(defaultTab || 'details');
   const [intakeTemplates, setIntakeTemplates] = useState<Record<string, IntakeTemplate>>({});
   const [expandedIntake, setExpandedIntake] = useState<string | null>(null);
   const [formData, setFormData] = useState({
@@ -607,6 +690,18 @@ export function CRMContactDrawer({ contact, stages, enabledCapabilities = [], is
   const [quickActivityText, setQuickActivityText] = useState('');
   const [savingActivity, setSavingActivity] = useState(false);
 
+  // Booking modal state
+  const [showBookingModal, setShowBookingModal] = useState(false);
+  const [editingBooking, setEditingBooking] = useState<SchedulingBooking | undefined>(undefined);
+  const [services, setServices] = useState<SchedulingService[]>([]);
+  const [availability, setAvailability] = useState<Record<string, { start: string; end: string }[]> | undefined>(undefined);
+  const [appointmentSort, setAppointmentSort] = useState<'date_desc' | 'date_asc' | 'service'>('date_desc');
+
+  // Email history state
+  const [emails, setEmails] = useState<ContactEmail[]>([]);
+  const [loadingEmails, setLoadingEmails] = useState(false);
+  const [activitySubTab, setActivitySubTab] = useState<'activity' | 'emails'>('activity');
+
   // Auto-save notes state
   const [savingNotes, setSavingNotes] = useState(false);
   const [notesSaved, setNotesSaved] = useState(false);
@@ -642,6 +737,9 @@ export function CRMContactDrawer({ contact, stages, enabledCapabilities = [], is
       fetchAppointments(contact.id);
       fetchDocuments(contact.id);
       fetchTasks(contact.id);
+      fetchServices();
+      fetchAvailability();
+      fetchEmails(contact.id);
     }
   }, [contact, isOpen, defaultTab]);
 
@@ -862,6 +960,59 @@ export function CRMContactDrawer({ contact, stages, enabledCapabilities = [], is
       setLoadingAppointments(false);
     }
   };
+
+  const fetchServices = async () => {
+    try {
+      const response = await fetch('/api/scheduling/services');
+      const data = await response.json();
+      if (data.success) {
+        setServices(data.services || []);
+      }
+    } catch (error) {
+      console.error('Failed to fetch services:', error);
+    }
+  };
+
+  const fetchAvailability = async () => {
+    try {
+      const response = await fetch('/api/scheduling/availability');
+      const data = await response.json();
+      if (data.success && data.availability) {
+        setAvailability(data.availability);
+      }
+    } catch (error) {
+      console.error('Failed to fetch availability:', error);
+    }
+  };
+
+  const fetchEmails = async (contactId: string) => {
+    try {
+      setLoadingEmails(true);
+      const response = await fetch(`/api/crm/emails?contact_id=${contactId}&limit=50`);
+      const data = await response.json();
+      if (data.success) {
+        setEmails(data.emails || []);
+      }
+    } catch (error) {
+      console.error('Failed to fetch emails:', error);
+    } finally {
+      setLoadingEmails(false);
+    }
+  };
+
+  // Compute sorted appointments based on selected sort option
+  const sortedAppointments = [...appointments].sort((a, b) => {
+    switch (appointmentSort) {
+      case 'date_asc':
+        return new Date(a.start_time).getTime() - new Date(b.start_time).getTime();
+      case 'date_desc':
+        return new Date(b.start_time).getTime() - new Date(a.start_time).getTime();
+      case 'service':
+        return (a.service?.service_name || '').localeCompare(b.service?.service_name || '');
+      default:
+        return new Date(b.start_time).getTime() - new Date(a.start_time).getTime();
+    }
+  });
 
   const fetchDocuments = async (contactId: string) => {
     try {
@@ -1177,6 +1328,7 @@ export function CRMContactDrawer({ contact, stages, enabledCapabilities = [], is
     .reduce((sum, p) => sum + p.amount, 0);
 
   return (
+    <>
     <Sheet open={isOpen} onOpenChange={onClose}>
       <SheetContent
         side={isRTL ? 'left' : 'right'}
@@ -1522,116 +1674,243 @@ export function CRMContactDrawer({ contact, stages, enabledCapabilities = [], is
 
             {/* Activity Tab */}
             <TabsContent value="activity" className="m-0 p-6" dir={isRTL ? 'rtl' : 'ltr'}>
-              {/* Quick Activity Input */}
-              <div className="mb-6 p-4 bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg">
-                {/* Activity Type Selector - Pill buttons */}
-                <div className="flex gap-2 mb-3 flex-wrap">
-                  {([
-                    { type: 'note', icon: StickyNote, label: t('crm.quick_activity.note') },
-                    { type: 'call', icon: PhoneIcon, label: t('crm.quick_activity.call') },
-                    { type: 'email', icon: Mail, label: t('crm.quick_activity.email') },
-                    { type: 'meeting', icon: Video, label: t('crm.quick_activity.meeting') }
-                  ] as const).map(({ type, icon: Icon, label }) => (
-                    <button
-                      key={type}
-                      onClick={() => setQuickActivityType(type)}
-                      className={`flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-full transition-all ${
-                        quickActivityType === type
-                          ? 'bg-[#8B5CF6] text-white'
-                          : 'bg-[var(--v2-bg)] text-[var(--v2-text-secondary)] hover:bg-[var(--v2-border)]'
-                      }`}
-                    >
-                      <Icon className="h-3.5 w-3.5" />
-                      {label}
-                    </button>
-                  ))}
-                </div>
-
-                {/* Input with send button */}
-                <div className="flex gap-2">
-                  <Input
-                    value={quickActivityText}
-                    onChange={(e) => setQuickActivityText(e.target.value)}
-                    placeholder={t(`crm.quick_activity.placeholder.${quickActivityType}`)}
-                    className="flex-1 bg-[var(--v2-bg)] border-[var(--v2-border)]"
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' && !e.shiftKey && quickActivityText.trim()) {
-                        e.preventDefault();
-                        handleQuickActivity();
-                      }
-                    }}
-                    disabled={savingActivity}
-                  />
-                  <Button
-                    onClick={handleQuickActivity}
-                    disabled={!quickActivityText.trim() || savingActivity}
-                    className="px-4 text-white"
-                    style={{
-                      background: quickActivityText.trim()
-                        ? 'linear-gradient(135deg, #8B5CF6 0%, #7C3AED 100%)'
-                        : undefined
-                    }}
-                  >
-                    {savingActivity ? (
-                      <div className="h-4 w-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                    ) : (
-                      <Send className="h-4 w-4" />
-                    )}
-                  </Button>
-                </div>
+              {/* Sub-tabs for Activity and Emails */}
+              <div className="flex gap-2 mb-4 border-b border-[var(--v2-border)]">
+                <button
+                  onClick={() => setActivitySubTab('activity')}
+                  className={`flex items-center gap-2 px-3 py-2 text-sm font-medium border-b-2 transition-all ${
+                    activitySubTab === 'activity'
+                      ? 'text-[#8B5CF6] border-[#8B5CF6]'
+                      : 'text-[var(--v2-text-secondary)] border-transparent hover:text-[var(--v2-text-primary)]'
+                  }`}
+                >
+                  <Clock className="h-4 w-4" />
+                  {t('crm.drawer.subtab_activity')}
+                </button>
+                <button
+                  onClick={() => setActivitySubTab('emails')}
+                  className={`flex items-center gap-2 px-3 py-2 text-sm font-medium border-b-2 transition-all ${
+                    activitySubTab === 'emails'
+                      ? 'text-[#8B5CF6] border-[#8B5CF6]'
+                      : 'text-[var(--v2-text-secondary)] border-transparent hover:text-[var(--v2-text-primary)]'
+                  }`}
+                >
+                  <Mail className="h-4 w-4" />
+                  {t('crm.drawer.subtab_emails')}
+                  {emails.length > 0 && (
+                    <span className="bg-[#8B5CF6]/20 text-[#8B5CF6] text-xs px-1.5 py-0.5 rounded-full">
+                      {emails.length}
+                    </span>
+                  )}
+                </button>
               </div>
 
-              <div className="space-y-3">
-                {loadingActivities ? (
-                  <div className="text-center py-12 text-[var(--v2-text-muted)]">
-                    {t('crm.modal.loading_activities')}
-                  </div>
-                ) : activities.length > 0 ? (
-                  activities.map(activity => {
-                    // Get translated activity type title, fallback to raw title
-                    const activityTypeKey = `crm.activity.type.${activity.activity_type}`;
-                    const translatedTitle = t(activityTypeKey);
-                    const displayTitle = translatedTitle !== activityTypeKey ? translatedTitle : activity.title;
-
-                    return (
-                    <div
-                      key={activity.id}
-                      className="border-s-2 border-[#8B5CF6] ps-4 pb-4 last:pb-0"
-                    >
-                      <div className="flex items-center gap-2 mb-1">
-                        <span className="font-medium text-[var(--v2-text-primary)] text-sm">
-                          {displayTitle}
-                        </span>
-                        {activity.auto_logged ? (
-                          <Badge className="text-xs gap-1 bg-purple-500/20 text-purple-600 dark:text-purple-400 border-purple-500/30">
-                            <Bot className="h-3 w-3" />
-                            {t('crm.activity.auto')}
-                          </Badge>
-                        ) : (
-                          <Badge className="text-xs gap-1 bg-blue-500/20 text-blue-600 dark:text-blue-400 border-blue-500/30">
-                            <User className="h-3 w-3" />
-                            {t('crm.activity.manual')}
-                          </Badge>
-                        )}
-                      </div>
-                      {activity.description && (
-                        <p className="text-sm text-[var(--v2-text-secondary)] mb-1 text-start">
-                          {formatActivityDescription(activity.description, activity.activity_type, t)}
-                        </p>
-                      )}
-                      <div className="text-[var(--v2-text-muted)] text-xs text-start">
-                        {formatDate(activity.activity_date)}
-                      </div>
+              {/* Activity Sub-tab Content */}
+              {activitySubTab === 'activity' && (
+                <>
+                  {/* Quick Activity Input */}
+                  <div className="mb-6 p-4 bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg">
+                    {/* Activity Type Selector - Pill buttons */}
+                    <div className="flex gap-2 mb-3 flex-wrap">
+                      {([
+                        { type: 'note', icon: StickyNote, label: t('crm.quick_activity.note') },
+                        { type: 'call', icon: PhoneIcon, label: t('crm.quick_activity.call') },
+                        { type: 'email', icon: Mail, label: t('crm.quick_activity.email') },
+                        { type: 'meeting', icon: Video, label: t('crm.quick_activity.meeting') }
+                      ] as const).map(({ type, icon: Icon, label }) => (
+                        <button
+                          key={type}
+                          onClick={() => setQuickActivityType(type)}
+                          className={`flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-full transition-all ${
+                            quickActivityType === type
+                              ? 'bg-[#8B5CF6] text-white'
+                              : 'bg-[var(--v2-bg)] text-[var(--v2-text-secondary)] hover:bg-[var(--v2-border)]'
+                          }`}
+                        >
+                          <Icon className="h-3.5 w-3.5" />
+                          {label}
+                        </button>
+                      ))}
                     </div>
-                  );
-                  })
-                ) : (
-                  <div className="text-center py-12 text-[var(--v2-text-muted)]">
-                    <Clock className="h-10 w-10 mx-auto mb-3 opacity-40" />
-                    <p>{t('crm.modal.no_activity')}</p>
+
+                    {/* Input with send button */}
+                    <div className="flex gap-2">
+                      <Input
+                        value={quickActivityText}
+                        onChange={(e) => setQuickActivityText(e.target.value)}
+                        placeholder={t(`crm.quick_activity.placeholder.${quickActivityType}`)}
+                        className="flex-1 bg-[var(--v2-bg)] border-[var(--v2-border)]"
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' && !e.shiftKey && quickActivityText.trim()) {
+                            e.preventDefault();
+                            handleQuickActivity();
+                          }
+                        }}
+                        disabled={savingActivity}
+                      />
+                      <Button
+                        onClick={handleQuickActivity}
+                        disabled={!quickActivityText.trim() || savingActivity}
+                        className="px-4 text-white"
+                        style={{
+                          background: quickActivityText.trim()
+                            ? 'linear-gradient(135deg, #8B5CF6 0%, #7C3AED 100%)'
+                            : undefined
+                        }}
+                      >
+                        {savingActivity ? (
+                          <div className="h-4 w-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                        ) : (
+                          <Send className="h-4 w-4" />
+                        )}
+                      </Button>
+                    </div>
                   </div>
-                )}
-              </div>
+
+                  <div className="space-y-3">
+                    {loadingActivities ? (
+                      <div className="text-center py-12 text-[var(--v2-text-muted)]">
+                        {t('crm.modal.loading_activities')}
+                      </div>
+                    ) : activities.length > 0 ? (
+                      activities.map(activity => {
+                        // Translate the activity title (handles patterns like "Booking: ServiceName")
+                        const displayTitle = formatActivityTitle(activity.title, activity.activity_type, t);
+
+                        // Activity type icons and colors
+                        const activityConfig: Record<string, { icon: React.ReactNode; color: string }> = {
+                          note: { icon: <StickyNote className="h-3.5 w-3.5" />, color: 'bg-yellow-500/20 text-yellow-600 dark:text-yellow-400' },
+                          email: { icon: <Mail className="h-3.5 w-3.5" />, color: 'bg-blue-500/20 text-blue-600 dark:text-blue-400' },
+                          call: { icon: <PhoneIcon className="h-3.5 w-3.5" />, color: 'bg-green-500/20 text-green-600 dark:text-green-400' },
+                          meeting: { icon: <Video className="h-3.5 w-3.5" />, color: 'bg-purple-500/20 text-purple-600 dark:text-purple-400' },
+                          booking: { icon: <Calendar className="h-3.5 w-3.5" />, color: 'bg-teal-500/20 text-teal-600 dark:text-teal-400' },
+                          payment: { icon: <CreditCard className="h-3.5 w-3.5" />, color: 'bg-emerald-500/20 text-emerald-600 dark:text-emerald-400' },
+                          document_uploaded: { icon: <FileText className="h-3.5 w-3.5" />, color: 'bg-indigo-500/20 text-indigo-600 dark:text-indigo-400' },
+                          contact_created: { icon: <User className="h-3.5 w-3.5" />, color: 'bg-slate-500/20 text-slate-600 dark:text-slate-400' }
+                        };
+                        const config = activityConfig[activity.activity_type] || { icon: <Clock className="h-3.5 w-3.5" />, color: 'bg-slate-500/20 text-slate-600 dark:text-slate-400' };
+                        const activityDate = new Date(activity.activity_date);
+
+                        return (
+                        <div
+                          key={activity.id}
+                          className="p-4 bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg"
+                        >
+                          <div className="flex items-center justify-between mb-2">
+                            <span className="font-medium text-[var(--v2-text-primary)] text-sm truncate flex-1 me-2">
+                              {displayTitle}
+                            </span>
+                            <div className="flex items-center gap-2">
+                              <Badge className={`text-xs ${config.color}`}>
+                                <span className="flex items-center gap-1">
+                                  {config.icon}
+                                  {t(`crm.activity.type.${activity.activity_type}`) !== `crm.activity.type.${activity.activity_type}`
+                                    ? t(`crm.activity.type.${activity.activity_type}`)
+                                    : activity.activity_type}
+                                </span>
+                              </Badge>
+                              {activity.auto_logged ? (
+                                <Badge className="text-xs gap-1 bg-purple-500/20 text-purple-600 dark:text-purple-400 border-purple-500/30">
+                                  <Bot className="h-3 w-3" />
+                                  {t('crm.activity.auto')}
+                                </Badge>
+                              ) : (
+                                <Badge className="text-xs gap-1 bg-blue-500/20 text-blue-600 dark:text-blue-400 border-blue-500/30">
+                                  <User className="h-3 w-3" />
+                                  {t('crm.activity.manual')}
+                                </Badge>
+                              )}
+                            </div>
+                          </div>
+                          {activity.description && (
+                            <p className="text-sm text-[var(--v2-text-secondary)] mb-2 text-start">
+                              {formatActivityDescription(activity.description, activity.activity_type, t)}
+                            </p>
+                          )}
+                          <div className="flex items-center gap-3 text-[var(--v2-text-muted)] text-xs">
+                            <span className="flex items-center gap-1">
+                              <Calendar className="h-3 w-3" />
+                              {activityDate.toLocaleDateString()}
+                            </span>
+                            <span className="flex items-center gap-1">
+                              <Clock className="h-3 w-3" />
+                              {activityDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            </span>
+                          </div>
+                        </div>
+                      );
+                      })
+                    ) : (
+                      <div className="text-center py-12 text-[var(--v2-text-muted)]">
+                        <Clock className="h-10 w-10 mx-auto mb-3 opacity-40" />
+                        <p>{t('crm.modal.no_activity')}</p>
+                      </div>
+                    )}
+                  </div>
+                </>
+              )}
+
+              {/* Emails Sub-tab Content */}
+              {activitySubTab === 'emails' && (
+                <div className="space-y-3">
+                  {loadingEmails ? (
+                    <div className="text-center py-12 text-[var(--v2-text-muted)]">
+                      {t('crm.drawer.loading_emails')}
+                    </div>
+                  ) : emails.length > 0 ? (
+                    emails.map(email => {
+                      const sentDate = email.sent_at ? new Date(email.sent_at) : new Date(email.created_at);
+                      const statusColors: Record<string, string> = {
+                        sent: 'bg-blue-500/20 text-blue-600 dark:text-blue-400',
+                        delivered: 'bg-green-500/20 text-green-600 dark:text-green-400',
+                        opened: 'bg-purple-500/20 text-purple-600 dark:text-purple-400',
+                        clicked: 'bg-indigo-500/20 text-indigo-600 dark:text-indigo-400',
+                        bounced: 'bg-red-500/20 text-red-600 dark:text-red-400',
+                        failed: 'bg-red-500/20 text-red-600 dark:text-red-400',
+                        pending: 'bg-yellow-500/20 text-yellow-600 dark:text-yellow-400'
+                      };
+
+                      return (
+                        <div
+                          key={email.id}
+                          className="p-4 bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg"
+                        >
+                          <div className="flex items-center justify-between mb-2">
+                            <span className="font-medium text-[var(--v2-text-primary)] text-sm truncate flex-1 me-2">
+                              {email.subject}
+                            </span>
+                            <Badge className={`text-xs ${statusColors[email.status] || 'bg-slate-500/20 text-slate-600'}`}>
+                              {t(`crm.email.status.${email.status}`)}
+                            </Badge>
+                          </div>
+                          <div className="flex items-center gap-3 text-[var(--v2-text-muted)] text-xs">
+                            <span className="flex items-center gap-1">
+                              <Mail className="h-3 w-3" />
+                              {email.to_email}
+                            </span>
+                            <span className="flex items-center gap-1">
+                              <Clock className="h-3 w-3" />
+                              {sentDate.toLocaleDateString()} {sentDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            </span>
+                          </div>
+                          {email.opened_at && (
+                            <div className="mt-2 text-xs text-green-600 dark:text-green-400 flex items-center gap-1">
+                              <Eye className="h-3 w-3" />
+                              {t('crm.email.opened_at')} {new Date(email.opened_at).toLocaleString()}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })
+                  ) : (
+                    <div className="text-center py-12 text-[var(--v2-text-muted)]">
+                      <Mail className="h-10 w-10 mx-auto mb-3 opacity-40" />
+                      <p>{t('crm.drawer.no_emails')}</p>
+                      <p className="text-xs mt-2">{t('crm.drawer.no_emails_hint')}</p>
+                    </div>
+                  )}
+                </div>
+              )}
             </TabsContent>
 
             {/* Payments Tab - only render if payments capability is enabled */}
@@ -1684,12 +1963,40 @@ export function CRMContactDrawer({ contact, stages, enabledCapabilities = [], is
             {hasCapability('scheduling') && (
             <TabsContent value="appointments" className="m-0 p-6" dir={isRTL ? 'rtl' : 'ltr'}>
               <div className="space-y-3">
+                {/* Header with Sort and Add Meeting */}
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center gap-2">
+                    <ArrowUpDown className="h-4 w-4 text-[var(--v2-text-muted)]" />
+                    <Select value={appointmentSort} onValueChange={(value: 'date_desc' | 'date_asc' | 'service') => setAppointmentSort(value)}>
+                      <SelectTrigger className="w-[140px] h-8 text-xs bg-[var(--v2-surface)] border-[var(--v2-border)]">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="date_desc">{t('crm.drawer.sort_date_desc')}</SelectItem>
+                        <SelectItem value="date_asc">{t('crm.drawer.sort_date_asc')}</SelectItem>
+                        <SelectItem value="service">{t('crm.drawer.sort_service')}</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <Button
+                    size="sm"
+                    onClick={() => {
+                      setEditingBooking(undefined);
+                      setShowBookingModal(true);
+                    }}
+                    className="h-8 px-3 text-xs bg-[#14B8A6] hover:bg-[#0D9488] text-white"
+                  >
+                    <Plus className="h-3.5 w-3.5 me-1" />
+                    {t('crm.drawer.new_meeting')}
+                  </Button>
+                </div>
+
                 {loadingAppointments ? (
                   <div className="text-center py-12 text-[var(--v2-text-muted)]">
                     {t('crm.drawer.loading_appointments')}
                   </div>
-                ) : appointments.length > 0 ? (
-                  appointments.map(appointment => {
+                ) : sortedAppointments.length > 0 ? (
+                  sortedAppointments.map(appointment => {
                     const startDate = new Date(appointment.start_time);
                     const endDate = new Date(appointment.end_time);
                     const duration = Math.round((endDate.getTime() - startDate.getTime()) / 60000);
@@ -1697,7 +2004,41 @@ export function CRMContactDrawer({ contact, stages, enabledCapabilities = [], is
                     return (
                     <div
                       key={appointment.id}
-                      className="p-4 bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg"
+                      onClick={() => {
+                        // Convert appointment to SchedulingBooking format for editing
+                        setEditingBooking({
+                          id: appointment.id,
+                          user_id: '',
+                          service_id: appointment.service_id,
+                          contact_id: contact.id,
+                          client_first_name: appointment.client_first_name,
+                          client_last_name: appointment.client_last_name || null,
+                          client_email: contact.email,
+                          client_phone: contact.phone || null,
+                          start_time: appointment.start_time,
+                          end_time: appointment.end_time,
+                          timezone: appointment.timezone || 'UTC',
+                          status: appointment.status,
+                          notes: appointment.notes || null,
+                          cancellation_reason: null,
+                          payment_status: 'pending',
+                          payment_id: null,
+                          internal_notes: null,
+                          booking_source: 'manual',
+                          reminder_24hr_sent: false,
+                          reminder_2hr_sent: false,
+                          external_calendar_event_id: null,
+                          calendar_sync_provider: null,
+                          calendar_synced_at: null,
+                          calendar_sync_error: null,
+                          intake_responses: appointment.intake_responses || null,
+                          intake_completed_at: appointment.intake_completed_at || null,
+                          created_at: '',
+                          updated_at: ''
+                        } as SchedulingBooking);
+                        setShowBookingModal(true);
+                      }}
+                      className="p-4 bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg cursor-pointer hover:border-[#14B8A6] hover:bg-[#14B8A6]/5 transition-colors"
                     >
                       <div className="flex items-center justify-between mb-2">
                         <span className="font-semibold text-[var(--v2-text-primary)]">
@@ -1729,6 +2070,75 @@ export function CRMContactDrawer({ contact, stages, enabledCapabilities = [], is
                           {appointment.notes}
                         </p>
                       )}
+                      {/* Intake indicator button */}
+                      {appointment.intake_responses && (
+                        <>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setExpandedIntake(expandedIntake === appointment.id ? null : appointment.id);
+                            }}
+                            className="mt-3 w-full justify-between text-xs bg-purple-500/10 hover:bg-purple-500/20 text-purple-600 dark:text-purple-400"
+                          >
+                            <span className="flex items-center gap-1.5">
+                              <ClipboardList className="h-3.5 w-3.5" />
+                              {t('crm.drawer.intake_completed')}
+                            </span>
+                            {expandedIntake === appointment.id ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+                          </Button>
+                          {/* Expanded intake details */}
+                          {expandedIntake === appointment.id && (
+                            <div className="mt-3 pt-3 border-t border-[var(--v2-border)] space-y-2">
+                              {(() => {
+                                const template = appointment.intake_responses?.template_id
+                                  ? intakeTemplates[appointment.intake_responses.template_id]
+                                  : null;
+                                return template?.fields ? (
+                                  template.fields.map((field) => {
+                                    const value = appointment.intake_responses?.responses[field.key];
+                                    if (value === undefined || value === null || value === '') return null;
+                                    let displayValue: string;
+                                    if (field.type === 'checkbox') {
+                                      displayValue = value ? '✓' : '✗';
+                                    } else if (field.type === 'select' || field.type === 'radio') {
+                                      const option = field.options?.find(o => o.value === value);
+                                      displayValue = option ? getOptionLabel(option) : String(value);
+                                    } else if (Array.isArray(value)) {
+                                      displayValue = value.join(', ');
+                                    } else {
+                                      displayValue = String(value);
+                                    }
+                                    return (
+                                      <div key={field.key} className="text-xs">
+                                        <span className="text-[var(--v2-text-muted)] font-medium">
+                                          {getFieldLabel(field)}:
+                                        </span>
+                                        <span className="text-[var(--v2-text-primary)] ms-2">
+                                          {displayValue}
+                                        </span>
+                                      </div>
+                                    );
+                                  })
+                                ) : (
+                                  // Fallback: render raw key-value pairs
+                                  appointment.intake_responses?.responses && Object.entries(appointment.intake_responses.responses).map(([key, value]) => (
+                                    <div key={key} className="text-xs">
+                                      <span className="text-[var(--v2-text-muted)] font-medium capitalize">
+                                        {key.replace(/_/g, ' ')}:
+                                      </span>
+                                      <span className="text-[var(--v2-text-primary)] ms-2">
+                                        {Array.isArray(value) ? value.join(', ') : String(value)}
+                                      </span>
+                                    </div>
+                                  ))
+                                );
+                              })()}
+                            </div>
+                          )}
+                        </>
+                      )}
                     </div>
                   );
                   })
@@ -1736,6 +2146,18 @@ export function CRMContactDrawer({ contact, stages, enabledCapabilities = [], is
                   <div className="text-center py-12 text-[var(--v2-text-muted)]">
                     <Calendar className="h-10 w-10 mx-auto mb-3 opacity-40" />
                     <p>{t('crm.drawer.no_appointments')}</p>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => {
+                        setEditingBooking(undefined);
+                        setShowBookingModal(true);
+                      }}
+                      className="mt-3 text-xs border-[var(--v2-border)]"
+                    >
+                      <Plus className="h-3.5 w-3.5 me-1" />
+                      {t('crm.drawer.new_meeting')}
+                    </Button>
                   </div>
                 )}
               </div>
@@ -2153,7 +2575,7 @@ export function CRMContactDrawer({ contact, stages, enabledCapabilities = [], is
               </p>
 
               {/* Warning about data loss */}
-              {(appointments.length > 0 || payments.length > 0 || documents.length > 0 || activities.length > 0) && (
+              {(appointments.length > 0 || payments.length > 0 || documents.length > 0 || activities.length > 0 || emails.length > 0) && (
                 <div className="bg-amber-500/10 border border-amber-500/30 p-4 mb-6" style={{ borderRadius: 'var(--v2-radius-button)' }}>
                   <p className="text-amber-600 dark:text-amber-400 font-medium mb-2 text-sm">
                     {t('crm.drawer.delete_data_warning_title')}
@@ -2169,6 +2591,12 @@ export function CRMContactDrawer({ contact, stages, enabledCapabilities = [], is
                       <li className="flex items-center gap-2">
                         <CreditCard className="h-3.5 w-3.5" />
                         {t('crm.drawer.delete_data_payments').replace('{count}', String(payments.length))}
+                      </li>
+                    )}
+                    {emails.length > 0 && (
+                      <li className="flex items-center gap-2">
+                        <Mail className="h-3.5 w-3.5" />
+                        {t('crm.drawer.delete_data_emails').replace('{count}', String(emails.length))}
                       </li>
                     )}
                     {documents.length > 0 && (
@@ -2310,5 +2738,61 @@ export function CRMContactDrawer({ contact, stages, enabledCapabilities = [], is
         `}</style>
       </SheetContent>
     </Sheet>
+
+    {/* Booking Modal - rendered outside Sheet for proper z-index stacking */}
+    <SchedulingBookingModal
+      booking={editingBooking}
+      services={services}
+      isOpen={showBookingModal}
+      onClose={() => {
+        setShowBookingModal(false);
+        setEditingBooking(undefined);
+      }}
+      onBookingUpdated={() => {
+        fetchAppointments(contact.id);
+        fetchActivities(contact.id);
+        setShowBookingModal(false);
+        setEditingBooking(undefined);
+      }}
+      availability={availability}
+      prefilledContact={{
+        id: contact.id,
+        first_name: contact.first_name,
+        last_name: contact.last_name,
+        email: contact.email,
+        phone: contact.phone
+      }}
+      existingBookings={appointments.map(apt => ({
+        id: apt.id,
+        user_id: '',
+        service_id: apt.service_id,
+        contact_id: contact.id,
+        client_first_name: apt.client_first_name,
+        client_last_name: apt.client_last_name || null,
+        client_email: contact.email,
+        client_phone: contact.phone || null,
+        start_time: apt.start_time,
+        end_time: apt.end_time,
+        timezone: apt.timezone || 'UTC',
+        status: apt.status,
+        notes: apt.notes || null,
+        cancellation_reason: null,
+        payment_status: 'pending',
+        payment_id: null,
+        internal_notes: null,
+        booking_source: 'manual',
+        reminder_24hr_sent: false,
+        reminder_2hr_sent: false,
+        external_calendar_event_id: null,
+        calendar_sync_provider: null,
+        calendar_synced_at: null,
+        calendar_sync_error: null,
+        intake_responses: apt.intake_responses || null,
+        intake_completed_at: apt.intake_completed_at || null,
+        created_at: '',
+        updated_at: ''
+      }) as SchedulingBooking)}
+    />
+    </>
   );
 }

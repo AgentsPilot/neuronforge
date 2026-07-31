@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from 'react';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { SchedulingCalendarView } from '@/components/scheduling/SchedulingCalendarView';
+import { SchedulingBookingModal } from '@/components/scheduling/SchedulingBookingModal';
 import { Calendar, Plus, Loader2, X, Search, UserPlus } from 'lucide-react';
 import { createLogger } from '@/lib/logger';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
@@ -180,11 +181,14 @@ export function SchedulingDialog({
   const [selectedContact, setSelectedContact] = useState<CRMContact | null>(null);
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Fetch data when dialog opens
+  // Edit booking modal state
+  const [editingBooking, setEditingBooking] = useState<SchedulingBooking | undefined>(undefined);
+  const [showEditModal, setShowEditModal] = useState(false);
+
+  // Fetch data when dialog opens - all requests in parallel for performance
   useEffect(() => {
     if (isOpen) {
-      fetchData();
-      fetchAvailability();
+      fetchAllData();
     }
   }, [isOpen]);
 
@@ -196,37 +200,31 @@ export function SchedulingDialog({
     }
   }, [isOpen]);
 
-  const fetchData = async () => {
+  const fetchAllData = async () => {
     try {
       setLoading(true);
-      const [servicesResponse, bookingsResponse] = await Promise.all([
+      // Fetch all data in parallel to minimize total wait time
+      const [servicesResponse, bookingsResponse, availabilityResponse] = await Promise.all([
         fetch('/api/scheduling/services'),
-        fetch('/api/scheduling/bookings')
+        fetch('/api/scheduling/bookings'),
+        fetch('/api/scheduling/availability')
       ]);
 
-      const [servicesData, bookingsData] = await Promise.all([
+      const [servicesData, bookingsData, availabilityData] = await Promise.all([
         servicesResponse.json(),
-        bookingsResponse.json()
+        bookingsResponse.json(),
+        availabilityResponse.json()
       ]);
 
       if (servicesData.success) setServices(servicesData.services);
       if (bookingsData.success) setBookings(bookingsData.bookings);
+      if (availabilityData.success && availabilityData.availability) {
+        setAvailability(parseAvailability(availabilityData.availability));
+      }
     } catch (error) {
       logger.error({ err: error }, 'Failed to fetch scheduling data');
     } finally {
       setLoading(false);
-    }
-  };
-
-  const fetchAvailability = async () => {
-    try {
-      const response = await fetch('/api/scheduling/availability');
-      const data = await response.json();
-      if (data.success && data.availability) {
-        setAvailability(parseAvailability(data.availability));
-      }
-    } catch (error) {
-      logger.error({ err: error }, 'Failed to fetch availability');
     }
   };
 
@@ -313,9 +311,9 @@ export function SchedulingDialog({
     setShowBookingPanel(true);
   };
 
-  const handleBookingClick = (_booking: SchedulingBooking) => {
-    // For now, clicking an existing booking does nothing
-    // This avoids dialog-on-dialog for viewing bookings too
+  const handleBookingClick = (booking: SchedulingBooking) => {
+    setEditingBooking(booking);
+    setShowEditModal(true);
   };
 
   // Search for clients in CRM
@@ -837,6 +835,24 @@ export function SchedulingDialog({
           </div>
         </div>
       </DialogContent>
+
+      {/* Edit Booking Modal */}
+      <SchedulingBookingModal
+        booking={editingBooking}
+        services={services}
+        isOpen={showEditModal}
+        onClose={() => {
+          setShowEditModal(false);
+          setEditingBooking(undefined);
+        }}
+        onBookingUpdated={() => {
+          fetchAllData();
+          setShowEditModal(false);
+          setEditingBooking(undefined);
+        }}
+        availability={availability}
+        existingBookings={bookings}
+      />
     </Dialog>
   );
 }

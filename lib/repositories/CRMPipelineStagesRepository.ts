@@ -65,6 +65,15 @@ export const DEFAULT_PIPELINE_STAGES: Record<string, Omit<CRMPipelineStageInsert
     { vertical: 'consultant', stage_key: 'active', stage_label: 'Active Project', position: 4, color: '#34D399' },
     { vertical: 'consultant', stage_key: 'completed', stage_label: 'Completed', position: 5, color: '#A78BFA' }
   ],
+  sales: [
+    { vertical: 'sales', stage_key: 'lead', stage_label: 'Lead', position: 0, color: '#94A3B8' },
+    { vertical: 'sales', stage_key: 'contacted', stage_label: 'Contacted', position: 1, color: '#60A5FA' },
+    { vertical: 'sales', stage_key: 'meeting', stage_label: 'Meeting', position: 2, color: '#FBBF24' },
+    { vertical: 'sales', stage_key: 'proposal', stage_label: 'Proposal', position: 3, color: '#F97316' },
+    { vertical: 'sales', stage_key: 'negotiation', stage_label: 'Negotiation', position: 4, color: '#A78BFA' },
+    { vertical: 'sales', stage_key: 'closed_won', stage_label: 'Closed Won', position: 5, color: '#34D399' },
+    { vertical: 'sales', stage_key: 'closed_lost', stage_label: 'Closed Lost', position: 6, color: '#F87171' }
+  ],
   // Generic fallback
   default: [
     { vertical: 'default', stage_key: 'lead', stage_label: 'Lead', position: 0, color: '#60A5FA' },

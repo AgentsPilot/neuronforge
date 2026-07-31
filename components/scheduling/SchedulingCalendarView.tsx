@@ -32,7 +32,8 @@ const SCHEDULING_COLOR = '#14B8A6';
 
 // Modern row height
 const ROW_HEIGHT = 56;
-const HOURS = Array.from({ length: 17 }, (_, i) => i + 6); // 6am - 10pm
+// Default hours 6am - 10pm (will be overridden by availability if present)
+const DEFAULT_HOURS = Array.from({ length: 17 }, (_, i) => i + 6);
 
 const STATUS_COLORS: Record<string, { bg: string; text: string; border: string; dot: string; label: string; glow: string }> = {
   confirmed: {
@@ -109,34 +110,40 @@ export function SchedulingCalendarView({
   const tooltipTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // Expand mode: 'both' shows both, 'calendar' expands calendar to full, 'list' expands list to full
-  const [expandMode, setExpandMode] = useState<'both' | 'calendar' | 'list'>('both');
+  // Default to 'calendar' for full-width calendar view when dialog opens
+  const [expandMode, setExpandMode] = useState<'both' | 'calendar' | 'list'>('calendar');
 
   // External calendar busy slots
   const [externalBusySlots, setExternalBusySlots] = useState<ExternalBusySlot[]>([]);
 
-  // Fetch external busy slots for current week
+  // Fetch external busy slots for current week - deferred to not block initial render
   useEffect(() => {
-    const fetchExternalBusySlots = async () => {
-      try {
-        const weekStart = currentWeek;
-        const weekEnd = new Date(currentWeek);
-        weekEnd.setDate(weekEnd.getDate() + 7);
+    // Defer this fetch to allow the main calendar UI to render first
+    // External busy slots are a nice-to-have overlay, not critical for initial display
+    const timeoutId = setTimeout(() => {
+      const fetchExternalBusySlots = async () => {
+        try {
+          const weekStart = currentWeek;
+          const weekEnd = new Date(currentWeek);
+          weekEnd.setDate(weekEnd.getDate() + 7);
 
-        const response = await fetch(
-          `/api/scheduling/calendar-sync/busy-slots?start=${encodeURIComponent(weekStart.toISOString())}&end=${encodeURIComponent(weekEnd.toISOString())}`
-        );
-        const data = await response.json();
+          const response = await fetch(
+            `/api/scheduling/calendar-sync/busy-slots?start=${encodeURIComponent(weekStart.toISOString())}&end=${encodeURIComponent(weekEnd.toISOString())}`
+          );
+          const data = await response.json();
 
-        if (data.success && data.busy_slots) {
-          setExternalBusySlots(data.busy_slots);
+          if (data.success && data.busy_slots) {
+            setExternalBusySlots(data.busy_slots);
+          }
+        } catch {
+          // Silently fail - external busy slots are optional
         }
-      } catch (error) {
-        // Silently fail - external busy slots are optional
-        console.debug('Failed to fetch external busy slots:', error);
-      }
-    };
+      };
 
-    fetchExternalBusySlots();
+      fetchExternalBusySlots();
+    }, 150); // Delay by 150ms to prioritize main UI
+
+    return () => clearTimeout(timeoutId);
   }, [currentWeek, externalEventsRefreshTrigger]);
 
   // Quick action handler
@@ -266,8 +273,8 @@ export function SchedulingCalendarView({
     const date = new Date(startTime);
     const hour = date.getHours();
     const minutes = date.getMinutes();
-    // Calendar starts at 6am
-    return ((hour - 6) * ROW_HEIGHT) + (minutes / 60 * ROW_HEIGHT);
+    // Calendar starts at the first visible hour
+    return ((hour - calendarStartHour) * ROW_HEIGHT) + (minutes / 60 * ROW_HEIGHT);
   };
 
   const getBookingHeight = (startTime: string, endTime: string) => {
@@ -309,6 +316,47 @@ export function SchedulingCalendarView({
     }
     return false;
   };
+
+  // Calculate visible hours based on availability
+  const getVisibleHours = (): number[] => {
+    if (!availability) return DEFAULT_HOURS;
+
+    let minHour = 23;
+    let maxHour = 0;
+    let hasAnyAvailability = false;
+
+    // Find the earliest start and latest end across all days
+    for (const dayKey of DAY_KEYS) {
+      const slots = availability[dayKey];
+      if (slots && slots.length > 0) {
+        hasAnyAvailability = true;
+        for (const slot of slots) {
+          const [startHour] = slot.start.split(':').map(Number);
+          const [endHour] = slot.end.split(':').map(Number);
+          if (startHour < minHour) minHour = startHour;
+          if (endHour > maxHour) maxHour = endHour;
+        }
+      }
+    }
+
+    // If no availability defined, show default hours
+    if (!hasAnyAvailability) return DEFAULT_HOURS;
+
+    // Add 1 hour buffer before and after for visual context
+    const bufferStart = Math.max(0, minHour - 1);
+    const bufferEnd = Math.min(24, maxHour + 1);
+
+    // Generate array of hours
+    const hours: number[] = [];
+    for (let h = bufferStart; h < bufferEnd; h++) {
+      hours.push(h);
+    }
+
+    return hours.length > 0 ? hours : DEFAULT_HOURS;
+  };
+
+  const visibleHours = getVisibleHours();
+  const calendarStartHour = visibleHours[0] || 6;
 
   const isDayAvailable = (date: Date): boolean => {
     if (!availability) return false;
@@ -353,31 +401,33 @@ export function SchedulingCalendarView({
     const start = new Date(slot.start);
     const hour = start.getHours();
     const minutes = start.getMinutes();
-    // Clamp to calendar start time (6am)
-    const clampedHour = Math.max(hour, 6);
-    const clampedMinutes = hour < 6 ? 0 : minutes;
-    return ((clampedHour - 6) * ROW_HEIGHT) + (clampedMinutes / 60 * ROW_HEIGHT);
+    // Clamp to calendar start time
+    const clampedHour = Math.max(hour, calendarStartHour);
+    const clampedMinutes = hour < calendarStartHour ? 0 : minutes;
+    return ((clampedHour - calendarStartHour) * ROW_HEIGHT) + (clampedMinutes / 60 * ROW_HEIGHT);
   };
 
   // Get the height for an external busy slot
   const getExternalSlotHeight = (slot: ExternalBusySlot): number => {
     const start = new Date(slot.start);
     const end = new Date(slot.end);
-    // Clamp start to 6am if earlier
-    const clampedStart = start.getHours() < 6 ? new Date(start.setHours(6, 0, 0, 0)) : start;
-    // Clamp end to 10pm (22:00) if later
-    const clampedEnd = end.getHours() >= 22 ? new Date(end.setHours(22, 0, 0, 0)) : end;
+    const lastVisibleHour = visibleHours[visibleHours.length - 1] || 22;
+    // Clamp start to first visible hour if earlier
+    const clampedStart = start.getHours() < calendarStartHour ? new Date(start.setHours(calendarStartHour, 0, 0, 0)) : start;
+    // Clamp end to last visible hour if later
+    const clampedEnd = end.getHours() >= lastVisibleHour ? new Date(end.setHours(lastVisibleHour, 0, 0, 0)) : end;
     const durationMs = clampedEnd.getTime() - clampedStart.getTime();
     const durationHours = durationMs / (1000 * 60 * 60);
     return Math.max(durationHours * ROW_HEIGHT, 20);
   };
 
-  // Check if external slot is within visible hours (6am-10pm)
+  // Check if external slot is within visible hours
   const isExternalSlotVisible = (slot: ExternalBusySlot): boolean => {
     const start = new Date(slot.start);
     const end = new Date(slot.end);
-    // Slot is visible if it overlaps with 6am-10pm range
-    return start.getHours() < 22 && end.getHours() >= 6;
+    const lastVisibleHour = visibleHours[visibleHours.length - 1] || 22;
+    // Slot is visible if it overlaps with visible hours range
+    return start.getHours() < lastVisibleHour && end.getHours() >= calendarStartHour;
   };
 
   const totalBookings = weekDates.reduce((acc, date) => acc + getBookingsForDay(date).length, 0);
@@ -509,7 +559,7 @@ export function SchedulingCalendarView({
 
             {/* Time Rows - Modern style */}
             <div className="relative">
-              {HOURS.map((hour, hourIndex) => (
+              {visibleHours.map((hour, hourIndex) => (
                 <div
                   key={hour}
                   className={`grid grid-cols-8 border-b border-white/5 last:border-b-0 ${

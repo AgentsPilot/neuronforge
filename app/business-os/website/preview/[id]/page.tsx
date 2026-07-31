@@ -7,7 +7,7 @@
  */
 
 import { useState, useEffect } from 'react';
-import { useRouter, useParams } from 'next/navigation';
+import { useRouter, useParams, useSearchParams } from 'next/navigation';
 import { ArrowLeft, Monitor, Tablet, Smartphone, Loader2, Globe } from 'lucide-react';
 import { createLogger } from '@/lib/logger';
 import { WebsiteBlocks, type BlockData } from '@/components/website/blocks';
@@ -27,7 +27,9 @@ const DEVICE_WIDTHS: Record<DeviceMode, string> = {
 
 export default function WebsitePreviewPage() {
   const params = useParams<{ id: string }>();
+  const searchParams = useSearchParams();
   const pageId = params.id;
+  const isEmbedded = searchParams.get('embedded') === 'true';
   const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -43,6 +45,21 @@ export default function WebsitePreviewPage() {
   useEffect(() => {
     if (pageId) {
       fetchPreviewData();
+    }
+  }, [pageId]);
+
+  // Track preview view for analytics
+  useEffect(() => {
+    if (pageId) {
+      // Track view via dedicated tracking endpoint
+      fetch('/api/website/analytics/track', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          page_id: pageId,
+          source: 'preview'
+        })
+      }).catch(() => {/* ignore */});
     }
   }, [pageId]);
 
@@ -118,6 +135,66 @@ export default function WebsitePreviewPage() {
   const locale = pageData?.website_language || 'en';
   const isRTL = getDirection(locale) === 'rtl';
 
+  // Embedded mode: render only the content without toolbar/chrome
+  if (isEmbedded) {
+    return (
+      <div className="min-h-full">
+        {/* Apply theme styles */}
+        <style>
+          {`
+            :root {
+              --website-primary: ${theme?.colors?.primary || '#4F6EF7'};
+              --website-secondary: ${theme?.colors?.secondary || '#6366F1'};
+              --website-accent: ${theme?.colors?.accent || '#EC4899'};
+              --website-background: ${theme?.colors?.background || '#FFFFFF'};
+              --website-surface: ${theme?.colors?.surface || '#F9FAFB'};
+              --website-text: ${theme?.colors?.text || '#111827'};
+              --website-text-secondary: ${theme?.colors?.textSecondary || '#6B7280'};
+              --website-border-radius: ${theme?.borderRadius || '0.5rem'};
+              --website-font-heading: ${theme?.fonts?.heading || 'Inter'}, sans-serif;
+              --website-font-body: ${theme?.fonts?.body || 'Inter'}, sans-serif;
+            }
+            body {
+              margin: 0;
+              padding: 0;
+            }
+          `}
+        </style>
+        <main
+          dir={isRTL ? 'rtl' : 'ltr'}
+          style={{
+            backgroundColor: 'var(--website-background)',
+            color: 'var(--website-text)',
+            fontFamily: 'var(--website-font-body)',
+            minHeight: '100vh'
+          }}
+        >
+          {blocks.length > 0 ? (
+            <WebsiteBlocks
+              blocks={blocks}
+              theme={theme}
+              locale={locale}
+              useLiveData={true}
+              pageId={pageId}
+              bookingUrl={pageData?.subdomain ? `/site/${pageData.subdomain}/book` : undefined}
+              subdomain={pageData?.subdomain || undefined}
+              isPreview={true}
+            />
+          ) : (
+            <div className="min-h-[400px] flex items-center justify-center text-gray-400">
+              <div className="text-center">
+                <Globe className="w-12 h-12 mx-auto mb-4 opacity-50" />
+                <p>No blocks to display</p>
+                <p className="text-sm">Add sections to your website to see them here</p>
+              </div>
+            </div>
+          )}
+        </main>
+      </div>
+    );
+  }
+
+  // Full preview mode with toolbar
   return (
     <div className="min-h-screen bg-gray-900 flex flex-col">
       {/* Preview Toolbar */}
