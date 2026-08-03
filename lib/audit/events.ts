@@ -98,6 +98,7 @@ export const AUDIT_EVENTS = {
   PLUGIN_AUTH_FAILED: 'PLUGIN_AUTH_FAILED',
   PLUGIN_PERMISSION_GRANTED: 'PLUGIN_PERMISSION_GRANTED',
   PLUGIN_PERMISSION_REVOKED: 'PLUGIN_PERMISSION_REVOKED',
+  PLUGIN_TESTER_EXECUTE: 'PLUGIN_TESTER_EXECUTE', // A plugin action was run via the /test-plugins-v2 Form Tester
 
   // ==========================================
   // DATA EVENTS (GDPR compliance)
@@ -440,6 +441,11 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
     severity: 'warning',
     complianceFlags: ['SOC2'],
     description: 'Plugin disconnected',
+  },
+  [AUDIT_EVENTS.PLUGIN_TESTER_EXECUTE]: {
+    severity: 'warning',
+    complianceFlags: ['SOC2'],
+    description: 'Plugin action executed via the Form Tester (real side effects)',
   },
 
   // GDPR events - all critical

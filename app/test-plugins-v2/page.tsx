@@ -9,6 +9,9 @@ import { useDebugStream, DebugState, StepStatus } from '@/hooks/useDebugStream';
 import { DebugControls } from '@/components/debug/DebugControls';
 import { StepVisualizer } from '@/components/debug/StepVisualizer';
 import { AdminCalibrationTrigger } from '@/components/admin/AdminCalibrationTrigger';
+import { FormTester } from '@/components/test-plugins/tester/FormTester';
+import { REQUIRED_GOOGLE_SUITE_PLUGIN_KEYS, runSequentialRefresh } from '@/lib/plugins/tester/connection-gate';
+import type { RefreshAllProgress } from '@/components/test-plugins/tester/ConnectionGatePanel';
 import type {
   ClarificationAnswer,
   StructuredSelectAnswer,
@@ -773,6 +776,10 @@ const AI_SERVICE_TEMPLATES = {
 export default function TestPluginsPage() {
   // Tab state
   const [activeTab, setActiveTab] = useState<TabType>('plugins');
+  // Plugins-tab sub-mode: schema-driven Form Tester (new) vs classic raw-JSON tester.
+  const [pluginTabMode, setPluginTabMode] = useState<'form' | 'classic'>('form');
+  // Live progress for the Form Tester's sequential "Refresh all tokens" run.
+  const [refreshAllProgress, setRefreshAllProgress] = useState<RefreshAllProgress | null>(null);
 
   // Core state
   // Initialize userId from env variable if available (add NEXT_PUBLIC_TEST_PAGE_USER_ID to .env.local)
@@ -944,6 +951,26 @@ export default function TestPluginsPage() {
     }
   }, [userId]);
 
+  // Re-sync plugin status when the window regains focus / becomes visible.
+  // OAuth connects happen in a popup/redirect; when the user returns to this tab
+  // we re-fetch so the connection panels (incl. the Form Tester gate) reflect reality
+  // even if a connect resolved early or a popup message was missed. Reuses loadUserStatus
+  // (single source of truth) — no forked status fetch.
+  useEffect(() => {
+    const resync = () => {
+      if (document.visibilityState === 'visible' && userId.trim()) {
+        loadUserStatus();
+      }
+    };
+    window.addEventListener('focus', resync);
+    document.addEventListener('visibilitychange', resync);
+    return () => {
+      window.removeEventListener('focus', resync);
+      document.removeEventListener('visibilitychange', resync);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userId]);
+
   // Update parameter template when action changes
   useEffect(() => {
     if (selectedPlugin && selectedAction) {
@@ -1077,6 +1104,61 @@ export default function TestPluginsPage() {
       setIsLoading(false);
     }
   };
+
+  // Sequentially refresh every required Google Suite plugin whose token is expired,
+  // reusing the existing refreshPluginToken path (which re-syncs userStatus after each,
+  // so the panel goes green live). Scoped to the required Google Suite set the tester
+  // panel shows (the gating keys) — iterate the required-keys list (F5, no hardcoding).
+  const refreshAllExpiredTokens = async () => {
+    if (!userId.trim()) {
+      addDebugLog('error', 'User ID is required to refresh tokens');
+      return;
+    }
+    const expiredRequired = REQUIRED_GOOGLE_SUITE_PLUGIN_KEYS.filter((key) =>
+      userStatus?.active_expired?.includes(key)
+    );
+    if (expiredRequired.length === 0) return;
+
+    // Await each before the next — refreshPluginToken also re-syncs userStatus, so the
+    // panel goes green live as each plugin completes.
+    await runSequentialRefresh(
+      expiredRequired,
+      (key) => refreshPluginToken(key),
+      (progress) => setRefreshAllProgress(progress)
+    );
+    setRefreshAllProgress(null);
+  };
+
+  // Stable callback identities for <FormTester>. Passing inline arrows here gave every
+  // prop a new identity each render, which re-fired FormTester's schema-load effect →
+  // refetch → re-seed → the user's typed input was silently overwritten with the
+  // PARAMETER_TEMPLATES seed. These wrappers keep identities stable across renders.
+  const testerGetActionSchema = useCallback(
+    (plugin: string, action?: string) => apiClient.getActionSchema(plugin, action),
+    [apiClient]
+  );
+  const testerExecuteAction = useCallback(
+    (uid: string, plugin: string, action: string, params: Record<string, unknown>) =>
+      apiClient.executeAction(uid, plugin, action, params),
+    [apiClient]
+  );
+  const testerRecordAudit = useCallback(
+    (input: {
+      targetUserId: string;
+      plugin: string;
+      action: string;
+      outcome: 'success' | 'error';
+      durationMs: number;
+    }) => apiClient.recordTesterAudit(input),
+    [apiClient]
+  );
+  // The connect/refresh handlers close over userId + other state; a latest-ref keeps the
+  // wrapper identity stable while always calling the current handler (no staleness).
+  const testerHandlersRef = useRef({ connectPlugin, refreshPluginToken, refreshAllExpiredTokens });
+  testerHandlersRef.current = { connectPlugin, refreshPluginToken, refreshAllExpiredTokens };
+  const testerOnConnect = useCallback((key: string) => testerHandlersRef.current.connectPlugin(key), []);
+  const testerOnRefresh = useCallback((key: string) => testerHandlersRef.current.refreshPluginToken(key), []);
+  const testerOnRefreshAll = useCallback(() => testerHandlersRef.current.refreshAllExpiredTokens(), []);
 
   const executeAction = async () => {
     if (!userId.trim() || !selectedPlugin || !selectedAction) {
@@ -2712,6 +2794,61 @@ export default function TestPluginsPage() {
       {/* Plugins Tab Content */}
       {activeTab === 'plugins' && (
         <>
+          {/* Plugins-tab sub-mode switch: Form Tester (schema-driven) vs Classic (raw JSON) */}
+          <div style={{ marginBottom: '20px', display: 'flex', gap: '8px' }}>
+            <button
+              onClick={() => setPluginTabMode('form')}
+              style={{
+                padding: '8px 16px',
+                backgroundColor: pluginTabMode === 'form' ? '#007bff' : '#f8f9fa',
+                color: pluginTabMode === 'form' ? 'white' : '#333',
+                border: '1px solid #ccc',
+                borderRadius: '4px',
+                cursor: 'pointer',
+                fontWeight: pluginTabMode === 'form' ? 'bold' : 'normal',
+              }}
+            >
+              Form Tester
+            </button>
+            <button
+              onClick={() => setPluginTabMode('classic')}
+              style={{
+                padding: '8px 16px',
+                backgroundColor: pluginTabMode === 'classic' ? '#007bff' : '#f8f9fa',
+                color: pluginTabMode === 'classic' ? 'white' : '#333',
+                border: '1px solid #ccc',
+                borderRadius: '4px',
+                cursor: 'pointer',
+                fontWeight: pluginTabMode === 'classic' ? 'bold' : 'normal',
+              }}
+            >
+              Classic (raw JSON)
+            </button>
+          </div>
+          {pluginTabMode === 'form' && (
+            <div style={{ marginBottom: '30px', padding: '15px', border: '1px solid #ccc', borderRadius: '5px' }}>
+              <FormTester
+                userId={userId}
+                connectionStatus={
+                  userStatus
+                    ? { connected: userStatus.connected, active_expired: userStatus.active_expired }
+                    : null
+                }
+                getActionSchema={testerGetActionSchema}
+                executeAction={testerExecuteAction}
+                recordAudit={testerRecordAudit}
+                onConnect={testerOnConnect}
+                onRefresh={testerOnRefresh}
+                onRefreshAll={testerOnRefreshAll}
+                connectDisabled={isLoading || !userId.trim()}
+                refreshAllProgress={refreshAllProgress}
+                pluginLabels={Object.fromEntries(availablePlugins.map((p) => [p.key, p.name]))}
+                parameterTemplates={PARAMETER_TEMPLATES as Record<string, Record<string, unknown>>}
+              />
+            </div>
+          )}
+          {pluginTabMode === 'classic' && (
+          <>
           {/* Plugin Management */}
           <div style={{ marginBottom: '30px', padding: '15px', border: '1px solid #ccc', borderRadius: '5px' }}>
             <h2>Plugin Management</h2>
@@ -2899,6 +3036,8 @@ export default function TestPluginsPage() {
                 {JSON.stringify(lastResponse, null, 2)}
               </pre>
             </div>
+          )}
+          </>
           )}
         </>
       )}

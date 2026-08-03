@@ -29,7 +29,7 @@ export class PluginAPIClient {
 
       return result.plugins;
     } catch (error: any) {
-      clientLogger.error('Error getting available plugins', error);
+      clientLogger.error({ err: error }, 'Error getting available plugins');
       throw error;
     }
   }
@@ -42,7 +42,7 @@ export class PluginAPIClient {
 
     // Wrap the entire fetch operation in deduplication
     return requestDeduplicator.deduplicate(cacheKey, async () => {
-      clientLogger.debug('Getting plugin status', { userId: userId || 'cookie-auth' });
+      clientLogger.debug({ userId: userId || 'cookie-auth' }, 'Getting plugin status');
 
       try {
         // Use cookie auth if userId not provided, otherwise use query param for backward compatibility
@@ -64,7 +64,7 @@ export class PluginAPIClient {
           summary: result.summary
         };
       } catch (error: any) {
-        clientLogger.error('Error getting user plugin status', error);
+        clientLogger.error({ err: error }, 'Error getting user plugin status');
         throw error;
       }
     });
@@ -76,7 +76,7 @@ export class PluginAPIClient {
     pluginKey: string,
     onAdditionalConfigRequired?: (pluginKey: string, pluginName: string, additionalConfig: any) => void
   ): Promise<{ success: boolean; data?: any; error?: string; requiresAdditionalConfig?: boolean }> {
-    clientLogger.debug('Connecting plugin', { pluginKey, userId });
+    clientLogger.debug({ pluginKey, userId }, 'Connecting plugin');
 
     try {
       // Get plugin auth configuration from server
@@ -91,7 +91,7 @@ export class PluginAPIClient {
       // Initiate OAuth flow
       const result = await this.oauthHandler.initiateOAuth(userId, pluginKey, authConfig);
 
-      clientLogger.debug('Plugin connection result', { pluginKey, success: result.success });
+      clientLogger.debug({ pluginKey, success: result.success }, 'Plugin connection result');
 
       // If OAuth succeeded, check if plugin requires additional configuration
       if (result.success) {
@@ -99,7 +99,7 @@ export class PluginAPIClient {
         const additionalConfig = (pluginDefinition as any)?.additional_config;
 
         if (additionalConfig?.enabled) {
-          clientLogger.debug('Plugin requires additional configuration', { pluginKey });
+          clientLogger.debug({ pluginKey }, 'Plugin requires additional configuration');
 
           // Trigger callback if provided
           if (onAdditionalConfigRequired) {
@@ -115,7 +115,7 @@ export class PluginAPIClient {
 
       return result;
     } catch (error: any) {
-      clientLogger.error('Error connecting plugin', error, { pluginKey });
+      clientLogger.error({ err: error, pluginKey }, 'Error connecting plugin');
       return {
         success: false,
         error: error.message
@@ -125,7 +125,7 @@ export class PluginAPIClient {
 
   // Disconnect a plugin
   async disconnectPlugin(userId: string, pluginKey: string): Promise<{ success: boolean; message?: string; error?: string }> {
-    clientLogger.debug('Disconnecting plugin', { pluginKey, userId });
+    clientLogger.debug({ pluginKey, userId }, 'Disconnecting plugin');
 
     try {
       const response = await fetch(`${this.baseUrl}/api/plugins/disconnect`, {
@@ -141,11 +141,11 @@ export class PluginAPIClient {
 
       const result = await response.json();
 
-      clientLogger.debug('Disconnect result', { pluginKey, success: result.success });
+      clientLogger.debug({ pluginKey, success: result.success }, 'Disconnect result');
 
       return result;
     } catch (error: any) {
-      clientLogger.error('Error disconnecting plugin', error, { pluginKey });
+      clientLogger.error({ err: error, pluginKey }, 'Error disconnecting plugin');
       return {
         success: false,
         error: error.message
@@ -160,7 +160,7 @@ export class PluginAPIClient {
     actionName: string,
     parameters: any
   ): Promise<ExecutionResult> {
-    clientLogger.debug('Executing action', { pluginName, actionName, userId });
+    clientLogger.debug({ pluginName, actionName, userId }, 'Executing action');
 
     try {
       const response = await fetch(`${this.baseUrl}/api/plugins/execute`, {
@@ -178,16 +178,16 @@ export class PluginAPIClient {
 
       const result = await response.json();
 
-      clientLogger.debug('Execution result', {
+      clientLogger.debug({
         pluginName,
         actionName,
         success: result.success,
         hasData: !!result.data
-      });
+      }, 'Execution result');
 
       return result;
     } catch (error: any) {
-      clientLogger.error('Error executing action', error, { pluginName, actionName });
+      clientLogger.error({ err: error, pluginName, actionName }, 'Error executing action');
       return {
         success: false,
         error: error.message,
@@ -198,7 +198,7 @@ export class PluginAPIClient {
 
   // Get LLM context for user
   async getLLMContext(userId: string): Promise<LLMContext> {
-    clientLogger.debug('Getting LLM context', { userId });
+    clientLogger.debug({ userId }, 'Getting LLM context');
 
     try {
       const response = await fetch(`${this.baseUrl}/api/llm/context?userId=${userId}`);
@@ -214,14 +214,67 @@ export class PluginAPIClient {
         summary: result.summary
       };
     } catch (error: any) {
-      clientLogger.error('Error getting LLM context', error);
+      clientLogger.error({ err: error }, 'Error getting LLM context');
       throw error;
+    }
+  }
+
+  // Get the full per-action schema block for the Form Tester (FR3/FR6).
+  // Backed by the read-only, metadata-only GET /api/plugins/action-schema endpoint.
+  async getActionSchema(
+    plugin: string,
+    action?: string
+  ): Promise<{ success: boolean; plugin: string; actions: any[]; action_count: number; error?: string }> {
+    clientLogger.debug({ plugin, action: action || 'all' }, 'Getting action schema');
+
+    try {
+      const query = action
+        ? `plugin=${encodeURIComponent(plugin)}&action=${encodeURIComponent(action)}`
+        : `plugin=${encodeURIComponent(plugin)}`;
+      const response = await fetch(`${this.baseUrl}/api/plugins/action-schema?${query}`, {
+        cache: 'no-store',
+      });
+      const result = await response.json();
+
+      if (!result.success) {
+        throw new Error(result.error || 'Failed to get action schema');
+      }
+
+      return result;
+    } catch (error: any) {
+      clientLogger.error({ err: error, plugin, action }, 'Error getting action schema');
+      throw error;
+    }
+  }
+
+  // Record a per-execution audit entry for the tester via the isolated audit endpoint.
+  // Non-blocking by design: failures are logged but never surfaced to the caller (CR2).
+  async recordTesterAudit(input: {
+    targetUserId: string;
+    plugin: string;
+    action: string;
+    outcome: 'success' | 'error';
+    durationMs?: number;
+  }): Promise<void> {
+    try {
+      await fetch(`${this.baseUrl}/api/plugins/test-audit`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(input),
+      });
+    } catch (error: any) {
+      // Audit is best-effort — never block or fail the tester on audit errors.
+      clientLogger.error({
+        err: error,
+        plugin: input.plugin,
+        action: input.action,
+      }, 'Error recording tester audit (non-blocking)');
     }
   }
 
   // Get plugin actions (for testing/UI purposes)
   async getPluginActions(pluginName?: string): Promise<any> {
-    clientLogger.debug('Getting plugin actions', { pluginName: pluginName || 'all' });
+    clientLogger.debug({ pluginName: pluginName || 'all' }, 'Getting plugin actions');
 
     try {
       const url = pluginName
@@ -237,7 +290,7 @@ export class PluginAPIClient {
 
       return result;
     } catch (error: any) {
-      clientLogger.error('Error getting plugin actions', error);
+      clientLogger.error({ err: error }, 'Error getting plugin actions');
       throw error;
     }
   }
@@ -248,14 +301,14 @@ export class PluginAPIClient {
       const status = await this.getUserPluginStatus(userId);
       return status.connected.some(plugin => plugin.key === pluginKey);
     } catch (error) {
-      clientLogger.error('Error checking plugin connection status', error as Error);
+      clientLogger.error({ err: error }, 'Error checking plugin connection status');
       return false;
     }
   }
 
   // Get connection status for a specific plugin
   async getPluginConnectionStatus(userId: string, pluginKey: string): Promise<any> {
-    clientLogger.debug('Getting connection status', { pluginKey });
+    clientLogger.debug({ pluginKey }, 'Getting connection status');
 
     try {
       const response = await fetch(`${this.baseUrl}/api/plugins/disconnect?userId=${userId}&pluginKey=${pluginKey}`);
@@ -263,7 +316,7 @@ export class PluginAPIClient {
 
       return result;
     } catch (error: any) {
-      clientLogger.error('Error getting plugin connection status', error);
+      clientLogger.error({ err: error }, 'Error getting plugin connection status');
       throw error;
     }
   }
@@ -322,7 +375,7 @@ export class PluginAPIClient {
 
       return results;
     } catch (error) {
-      clientLogger.error('Error testing connections', error as Error);
+      clientLogger.error({ err: error }, 'Error testing connections');
       return {};
     }
   }
