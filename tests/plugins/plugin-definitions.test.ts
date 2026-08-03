@@ -70,6 +70,35 @@ function collectVariableMappings(
 }
 
 /**
+ * Recursively collect every property name declared anywhere in an output_schema
+ * tree, descending into nested `properties` and array `items.properties`.
+ *
+ * x-variable-mapping.field_path references a field of an *upstream* entity, and
+ * that field commonly sits several levels deep — e.g. search_emails exposes its
+ * ids at output_schema.properties.emails.items.properties.id. A shallow one-level
+ * scan misses these and produces false "dangling reference" failures.
+ */
+function collectOutputFieldNames(
+  schema: Record<string, unknown> | undefined,
+  acc: Set<string>
+): void {
+  if (!schema || typeof schema !== 'object') return;
+
+  const properties = schema.properties as Record<string, unknown> | undefined;
+  if (properties) {
+    for (const [key, value] of Object.entries(properties)) {
+      acc.add(key);
+      collectOutputFieldNames(value as Record<string, unknown>, acc);
+    }
+  }
+
+  const items = schema.items as Record<string, unknown> | undefined;
+  if (items) {
+    collectOutputFieldNames(items, acc);
+  }
+}
+
+/**
  * Recursively check required-vs-properties consistency.
  * Returns array of { path, field } for each required field missing from properties.
  */
@@ -204,18 +233,7 @@ describe('Plugin Definition Validation', () => {
         const allOutputFields = new Set<string>();
         for (const action of Object.values(actions)) {
           const outputSchema = (action as Record<string, unknown>).output_schema as Record<string, unknown> | undefined;
-          if (outputSchema?.properties) {
-            for (const key of Object.keys(outputSchema.properties as Record<string, unknown>)) {
-              allOutputFields.add(key);
-            }
-          }
-          // Also collect from items.properties for array-type output schemas
-          const items = (outputSchema as Record<string, unknown>)?.items as Record<string, unknown> | undefined;
-          if (items?.properties) {
-            for (const key of Object.keys(items.properties as Record<string, unknown>)) {
-              allOutputFields.add(key);
-            }
-          }
+          collectOutputFieldNames(outputSchema, allOutputFields);
         }
 
         for (const [actionName, action] of Object.entries(actions)) {

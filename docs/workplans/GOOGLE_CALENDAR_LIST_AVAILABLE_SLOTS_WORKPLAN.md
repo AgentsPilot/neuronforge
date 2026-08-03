@@ -442,7 +442,15 @@ Within policy: 3 executor tests for the new action (happy + 401 + invalid-no-fet
 
 ## Commit Info
 
-_(RM to populate.)_
+| Field | Value |
+|-------|-------|
+| Branch | `feature/calendar-list-available-slots` |
+| Commit | `93dc979` — `feat(plugins): add Calendar list_available_slots (Phase 2 availability)` |
+| Date | 2026-07-27 |
+| Files | 10 (new calendar-slot-math.ts, executor, definition JSON, V6 input-type-compat, 2 unit tests + integration, plugin doc, test-page, this workplan) |
+| Tests | 40/40 unit tests passing (incl. 7-case pure slot-math suite w/ DST transitions) |
+| Pushed | No — local commit only, not yet pushed/PR'd |
+| Follow-up | Eastern-hemisphere DST-policy generalization (task_a6081af8) — transition-window-only, zero functional impact |
 
 ---
 
