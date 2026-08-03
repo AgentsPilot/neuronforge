@@ -113,5 +113,10 @@
     "tsx": "^4.20.6",
     "typescript": "^5",
     "url-loader": "^4.1.1"
+  },
+  "overrides": {
+    "jest-environment-jsdom": {
+      "canvas": "$canvas"
+    }
   }
 }
