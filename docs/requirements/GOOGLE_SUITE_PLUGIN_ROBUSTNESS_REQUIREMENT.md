@@ -1,10 +1,10 @@
 # Requirement: Google Suite Plugin Robustness & Capability Expansion
 
-> **Last Updated**: 2026-07-22
+> **Last Updated**: 2026-07-27
 
 **Created by:** BA
 **Date:** 2026-07-22
-**Status:** ✅ Approved (BA drafted · SA reviewed · user ratified all decisions 2026-07-26) — Phase 1 ready for Dev workplan
+**Status:** ✅ Approved (BA drafted · SA reviewed · user ratified all decisions 2026-07-26) — Phase 1 delivered & merged; Phase 2 partially delivered; remainder parked (see Delivery Status)
 
 ## Overview
 
@@ -12,6 +12,7 @@ AgentPilot's five Google Suite plugins (Calendar, Gmail, Drive, Sheets, Docs) cu
 
 ## Table of Contents
 
+0. [Delivery Status (as of 2026-07-27)](#delivery-status-as-of-2026-07-27)
 1. [Goals](#goals)
 2. [Current-State Inventory](#current-state-inventory)
 3. [Google API Capability Findings](#google-api-capability-findings)
@@ -23,6 +24,54 @@ AgentPilot's five Google Suite plugins (Calendar, Gmail, Drive, Sheets, Docs) cu
 9. [Open Questions / Decisions for SA](#open-questions--decisions-for-sa)
 10. [Notes on Integration Points](#notes-on-integration-points)
 11. [Change History](#change-history)
+
+---
+
+## Delivery Status (as of 2026-07-27)
+
+> Status record only — the requirement content below (goals, inventory, gap analysis, SA review) is unchanged. Phase 1 shipped in full; one Phase 2 item shipped; the remaining Phase 2/3 items are formally **PARKED** (documented, not scheduled).
+
+| Scope | Status | Reference |
+|-------|--------|-----------|
+| **Phase 1 — 17 actions** (Drive/Sheets/Docs/Gmail/Calendar) | ✅ **DELIVERED & MERGED** | PR #8 · merge commit `d668e3d` |
+| **Phase 2 — Calendar `list_available_slots`** | 🟢 **DELIVERED** (PR open) | PR #9 · commit `93dc979` |
+| **Phase 2 — Gmail filters** | ⬜ **PARKED** | needs `gmail.settings.basic` scope + consent-screen resubmission |
+| **Phase 2 — Sheets conditional-format / sort** | ⬜ **PARKED** | not scheduled |
+| **Phase 2 — Docs formatting / tables** | ⬜ **PARKED** | index-math actions; not scheduled |
+| **Phase 3 — Public booking surface** | ⬜ **PARKED** | separate requirement; now unblocked by the availability engine |
+
+### Phase 1 — DELIVERED & MERGED (PR #8, merge commit `d668e3d`)
+
+17 actions across five plugins. **No new OAuth scopes.** Plugin docs current.
+
+| Plugin | Actions delivered |
+|--------|-------------------|
+| Drive | `move_file`, `rename_file`, `copy_file`, `delete_file` (trash + confirm), `revoke_access` |
+| Sheets | `format_cells`, `clear_range`, `delete_rows` |
+| Docs | `replace_text` |
+| Gmail | `get_or_create_label`, `list_labels`, `delete_label`, `reply_to_email`, `send_draft`, `batch_modify_emails` |
+| Calendar | `get_free_busy`, `list_calendars` |
+
+### Phase 2 — IN PROGRESS
+
+- **Calendar `list_available_slots` — DELIVERED (PR #9, commit `93dc979`, open).** The Calendly-style availability engine: deterministic slot math over `freebusy` + working-hours / slot-duration / buffer, plus the new `time_slot` V6 semantic type.
+
+### Phase 2 — PARKED (documented, not scheduled)
+
+- **Gmail filters** (`create_filter`, `list_filters`, `delete_filter`) — requires the new `gmail.settings.basic` scope **and** an OAuth consent-screen resubmission for Google review. User-approved in principle (2026-07-26); not scheduled.
+- **Sheets** — `add_conditional_format` (conditional formatting) and `sort_range`.
+- **Docs** — `format_document_text` (styled text / headings) and `insert_table` (index-math actions).
+
+### Phase 3 — PARKED
+
+- **Public booking surface** — external-visitor `/book/[handle]` page + public booking API + reservation `holds` state for authoritative double-booking prevention. Its own BA/SA requirement cycle; **now unblocked** because the availability engine (`get_free_busy` + `list_available_slots` + `create_event`) is delivered.
+
+### Tracked follow-ups
+
+| Task | Summary | Impact |
+|------|---------|--------|
+| `task_2ea2e007` | Plugin rule-engine `extractRuleContext` lacks a generic `${param}_length` derivation, so length/count rules are inert platform-wide; enforcement is currently done in-executor. | Platform-wide but low — enforcement still applied inside the executor. |
+| `task_a6081af8` | Eastern-hemisphere DST-policy generalization in the calendar slot-math — transition-window-only. | Zero functional impact outside DST transition windows. |
 
 ---
 
@@ -390,3 +439,4 @@ Existing granted scopes: **Calendar** `calendar`, `calendar.events` · **Gmail**
 | 2026-07-22 | Initial draft | BA inventory of 5 Google plugins (37 actions), gap analysis against 3 capability goals + AI Business OS shortlist, grounded in Google API research. |
 | 2026-07-26 | SA architectural review | Added `## SA Architectural Review`: resolved 5 open questions, per-action feasibility table, scope analysis (only `gmail.settings.basic` is new), booking-surface verdict (plugin primitives vs new app surface), double-booking guidance, idempotency/V6/standards flags, and 3-phase sequencing. Amended action granularity (reject composite `manage_labels` / `update_file_metadata`). Flagged 3 user decisions; Phase 1 unblocked. |
 | 2026-07-26 | User ratification | User approved Gmail sensitive-scope addition (ops note: OAuth consent-screen resubmission required, no fresh CASA), confirmed Phase 3 deferral, confirmed no hard-delete, and ratified SA's action-granularity call. Status → Approved. Phase 1 cleared for Dev workplan. |
+| 2026-07-27 | Recorded delivery status; parked remaining Phase 2/3 items | Added `## Delivery Status (as of 2026-07-27)`: Phase 1 (17 actions) DELIVERED & MERGED via PR #8 (merge commit `d668e3d`), no new scopes; Phase 2 `list_available_slots` DELIVERED via PR #9 (commit `93dc979`, open); PARKED (documented, not scheduled) the remaining Phase 2 items (Gmail filters, Sheets conditional-format/sort, Docs formatting/tables) and Phase 3 public booking surface; logged tracked follow-ups `task_2ea2e007` and `task_a6081af8`. No existing requirement content changed. |
