@@ -34,6 +34,25 @@ interface BusinessData {
   };
 }
 
+// Translations for booking page
+const LABELS = {
+  en: {
+    bookWith: 'Book with',
+    selectService: 'Select a service to get started',
+    poweredBy: 'Powered by AgentPilot'
+  },
+  es: {
+    bookWith: 'Reservar con',
+    selectService: 'Selecciona un servicio para comenzar',
+    poweredBy: 'Desarrollado por AgentPilot'
+  },
+  he: {
+    bookWith: 'הזמנה אצל',
+    selectService: 'בחר שירות להתחלה',
+    poweredBy: 'מופעל על ידי AgentPilot'
+  }
+};
+
 async function getBusinessData(subdomain: string): Promise<BusinessData | null> {
   const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
 
@@ -106,6 +125,7 @@ export default async function PublicBookingPage({ params, searchParams }: PagePr
   const primaryColor = websiteData?.theme?.colors?.primary || '#4F6EF7';
   const language = (websiteData?.language || 'en') as Locale;
   const isRTL = isValidLocale(language) && getDirection(language) === 'rtl';
+  const labels = LABELS[language as keyof typeof LABELS] || LABELS.en;
 
   // Always use Heebo font (platform standard)
   const heeboFontLink = 'https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;600;700&subset=hebrew,latin&display=swap';
@@ -134,10 +154,10 @@ export default async function PublicBookingPage({ params, searchParams }: PagePr
         <header className="bg-white border-b border-gray-200 py-6">
           <div className="max-w-3xl mx-auto px-4">
             <h1 className="text-2xl font-bold text-gray-900">
-              Book with {businessData.businessName}
+              {labels.bookWith} {businessData.businessName}
             </h1>
             <p className="text-gray-600 mt-1">
-              Select a service to get started
+              {labels.selectService}
             </p>
           </div>
         </header>
@@ -157,7 +177,7 @@ export default async function PublicBookingPage({ params, searchParams }: PagePr
         {/* Footer */}
         <footer className="bg-white border-t border-gray-200 py-6 mt-auto">
           <div className="max-w-3xl mx-auto px-4 text-center text-gray-500 text-sm">
-            Powered by AgentPilot
+            {labels.poweredBy}
           </div>
         </footer>
       </main>

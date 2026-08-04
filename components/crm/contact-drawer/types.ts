@@ -54,6 +54,8 @@ export interface Appointment {
   end_time: string | null;    // null for product purchases (no time slot)
   timezone?: string;
   status: 'confirmed' | 'cancelled' | 'completed' | 'no_show';
+  payment_status?: 'pending' | 'paid' | 'refunded';  // Payment status from booking
+  payment_id?: string;        // Transaction ID for refunds
   notes?: string;
   intake_responses?: IntakeResponses;
   intake_completed_at?: string;

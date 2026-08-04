@@ -95,7 +95,8 @@ const translations = {
     submitting: 'Submitting...',
     select_option: 'Select...',
     min: 'min',
-    free: 'Free'
+    free: 'Free',
+    secure_payment_stripe: 'Secure payment powered by Stripe'
   },
   es: {
     choose_service: 'Elige un Servicio',
@@ -131,7 +132,8 @@ const translations = {
     submitting: 'Enviando...',
     select_option: 'Seleccionar...',
     min: 'min',
-    free: 'Gratis'
+    free: 'Gratis',
+    secure_payment_stripe: 'Pago seguro con Stripe'
   },
   he: {
     choose_service: 'בחר שירות',
@@ -167,7 +169,8 @@ const translations = {
     submitting: 'שולח...',
     select_option: 'בחר...',
     min: 'דק\'',
-    free: 'חינם'
+    free: 'חינם',
+    secure_payment_stripe: 'תשלום מאובטח באמצעות Stripe'
   }
 };
 
@@ -1127,7 +1130,7 @@ export function BookingWidget({ subdomain, services, timezone, primaryColor, loc
         </button>
 
         <p className="text-xs text-center text-gray-500">
-          Secure payment powered by Stripe
+          {t.secure_payment_stripe}
         </p>
       </div>
     );

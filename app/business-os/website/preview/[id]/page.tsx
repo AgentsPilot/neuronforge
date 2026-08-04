@@ -13,7 +13,7 @@ import { createLogger } from '@/lib/logger';
 import { WebsiteBlocks, type BlockData } from '@/components/website/blocks';
 import type { PageTheme } from '@/components/website/blocks/types';
 import type { Locale } from '@/lib/i18n/config';
-import { getDirection } from '@/lib/i18n/config';
+import { getDirection, isValidLocale, defaultLocale } from '@/lib/i18n/config';
 
 const logger = createLogger({ module: 'WebsitePreview' });
 
@@ -23,6 +23,37 @@ const DEVICE_WIDTHS: Record<DeviceMode, string> = {
   desktop: '100%',
   tablet: '768px',
   mobile: '375px'
+};
+
+// Translations for loading/error states
+const LABELS = {
+  en: {
+    loadingPreview: 'Loading preview...',
+    pageNotFound: 'Page not found',
+    failedToLoad: 'Failed to load preview',
+    goBack: 'Go Back',
+    previewMode: 'Preview Mode',
+    noBlocks: 'No blocks to display',
+    addSections: 'Add sections to your website to see them here'
+  },
+  es: {
+    loadingPreview: 'Cargando vista previa...',
+    pageNotFound: 'Página no encontrada',
+    failedToLoad: 'Error al cargar la vista previa',
+    goBack: 'Volver',
+    previewMode: 'Modo Vista Previa',
+    noBlocks: 'No hay bloques para mostrar',
+    addSections: 'Agrega secciones a tu sitio web para verlas aquí'
+  },
+  he: {
+    loadingPreview: 'טוען תצוגה מקדימה...',
+    pageNotFound: 'הדף לא נמצא',
+    failedToLoad: 'שגיאה בטעינת התצוגה המקדימה',
+    goBack: 'חזור',
+    previewMode: 'מצב תצוגה מקדימה',
+    noBlocks: 'אין בלוקים להצגה',
+    addSections: 'הוסף מקטעים לאתר שלך כדי לראות אותם כאן'
+  }
 };
 
 export default function WebsitePreviewPage() {
@@ -41,6 +72,25 @@ export default function WebsitePreviewPage() {
     website_language: Locale;
   } | null>(null);
   const [blocks, setBlocks] = useState<BlockData[]>([]);
+
+  // Detect browser language for loading state (before pageData loads)
+  // Initialize synchronously to avoid flash of English during loading
+  const [browserLocale, setBrowserLocale] = useState<Locale>(() => {
+    if (typeof window !== 'undefined') {
+      const browserLang = navigator.language?.split('-')[0] || defaultLocale;
+      return isValidLocale(browserLang) ? browserLang : defaultLocale;
+    }
+    return defaultLocale;
+  });
+
+  // Update browser locale after hydration if needed (handles SSR mismatch gracefully)
+  useEffect(() => {
+    const browserLang = navigator.language?.split('-')[0] || defaultLocale;
+    const detectedLocale = isValidLocale(browserLang) ? browserLang : defaultLocale;
+    if (detectedLocale !== browserLocale) {
+      setBrowserLocale(detectedLocale);
+    }
+  }, [browserLocale]);
 
   useEffect(() => {
     if (pageId) {
@@ -101,30 +151,41 @@ export default function WebsitePreviewPage() {
     }
   };
 
+  // Use page's language when loaded, otherwise fall back to browser language
+  const locale = pageData?.website_language || browserLocale;
+  const labels = LABELS[locale as keyof typeof LABELS] || LABELS.en;
+  const isRTL = getDirection(locale) === 'rtl';
+
   if (loading) {
+    // Use browser locale for loading state (pageData not yet available)
+    const loadingLabels = LABELS[browserLocale as keyof typeof LABELS] || LABELS.en;
+    const loadingIsRTL = getDirection(browserLocale) === 'rtl';
     return (
-      <div className="min-h-screen bg-gray-900 flex items-center justify-center">
+      <div className="min-h-screen bg-gray-900 flex items-center justify-center" dir={loadingIsRTL ? 'rtl' : 'ltr'}>
         <div className="text-center space-y-4">
           <Loader2 className="w-12 h-12 text-blue-500 animate-spin mx-auto" />
-          <p className="text-gray-400">Loading preview...</p>
+          <p className="text-gray-400">{loadingLabels.loadingPreview}</p>
         </div>
       </div>
     );
   }
 
   if (error) {
+    // Use browser locale for error state (pageData may not be available)
+    const errorLabels = LABELS[browserLocale as keyof typeof LABELS] || LABELS.en;
+    const errorIsRTL = getDirection(browserLocale) === 'rtl';
     return (
-      <div className="min-h-screen bg-gray-900 flex items-center justify-center">
+      <div className="min-h-screen bg-gray-900 flex items-center justify-center" dir={errorIsRTL ? 'rtl' : 'ltr'}>
         <div className="text-center space-y-4">
           <div className="w-16 h-16 rounded-full bg-red-500/20 flex items-center justify-center mx-auto">
             <Globe className="w-8 h-8 text-red-500" />
           </div>
-          <p className="text-red-400 text-lg">{error}</p>
+          <p className="text-red-400 text-lg">{error === 'Page not found' ? errorLabels.pageNotFound : errorLabels.failedToLoad}</p>
           <button
             onClick={() => router.back()}
             className="px-4 py-2 text-gray-400 hover:text-white transition-colors"
           >
-            Go Back
+            {errorLabels.goBack}
           </button>
         </div>
       </div>
@@ -132,8 +193,6 @@ export default function WebsitePreviewPage() {
   }
 
   const theme = pageData?.theme || undefined;
-  const locale = pageData?.website_language || 'en';
-  const isRTL = getDirection(locale) === 'rtl';
 
   // Heebo font link (platform standard)
   const heeboFontLink = 'https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;600;700&subset=hebrew,latin&display=swap';
@@ -190,8 +249,8 @@ export default function WebsitePreviewPage() {
             <div className="min-h-[400px] flex items-center justify-center text-gray-400">
               <div className="text-center">
                 <Globe className="w-12 h-12 mx-auto mb-4 opacity-50" />
-                <p>No blocks to display</p>
-                <p className="text-sm">Add sections to your website to see them here</p>
+                <p>{labels.noBlocks}</p>
+                <p className="text-sm">{labels.addSections}</p>
               </div>
             </div>
           )}
@@ -208,16 +267,16 @@ export default function WebsitePreviewPage() {
       <link rel="stylesheet" href={heeboFontLink} />
       {/* Preview Toolbar */}
       <div className="bg-gray-800 border-b border-gray-700 px-4 py-3 flex items-center justify-between">
-        <div className="flex items-center gap-4">
+        <div className={`flex items-center gap-4 ${isRTL ? 'flex-row-reverse' : ''}`}>
           <button
             onClick={() => router.back()}
             className="p-2 text-gray-400 hover:text-white hover:bg-gray-700 rounded-lg transition-all"
           >
-            <ArrowLeft className="w-5 h-5" />
+            <ArrowLeft className={`w-5 h-5 ${isRTL ? 'rotate-180' : ''}`} />
           </button>
           <div>
             <h1 className="text-white font-medium">{pageData?.title || 'Preview'}</h1>
-            <p className="text-gray-500 text-sm">Preview Mode</p>
+            <p className="text-gray-500 text-sm">{labels.previewMode}</p>
           </div>
         </div>
 
@@ -296,8 +355,8 @@ export default function WebsitePreviewPage() {
               <div className="min-h-[400px] flex items-center justify-center text-gray-400">
                 <div className="text-center">
                   <Globe className="w-12 h-12 mx-auto mb-4 opacity-50" />
-                  <p>No blocks to display</p>
-                  <p className="text-sm">Add sections to your website to see them here</p>
+                  <p>{labels.noBlocks}</p>
+                  <p className="text-sm">{labels.addSections}</p>
                 </div>
               </div>
             )}

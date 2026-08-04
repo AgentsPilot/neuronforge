@@ -148,12 +148,12 @@ export function MyDayInsightSection({
   if (loading) {
     return (
       <div
-        className="bg-white border border-[#E7E9F1] overflow-hidden animate-pulse"
+        className="bg-[var(--v2-bg)] border border-[var(--v2-border)] overflow-hidden animate-pulse"
         style={{ borderRadius: '22px', padding: '22px 24px' }}
       >
-        <div className="h-6 bg-[#E7E9F1] rounded w-48 mb-4" />
-        <div className="h-4 bg-[#E7E9F1] rounded w-96 mb-6" />
-        <div className="h-32 bg-[#E7E9F1] rounded-2xl" />
+        <div className="h-6 bg-[var(--v2-surface)] rounded w-48 mb-4" />
+        <div className="h-4 bg-[var(--v2-surface)] rounded w-96 mb-6" />
+        <div className="h-32 bg-[var(--v2-surface)] rounded-2xl" />
       </div>
     );
   }
@@ -162,7 +162,7 @@ export function MyDayInsightSection({
   if (isFullyCollapsed) {
     return (
       <section
-        className="bg-white border border-[#E7E9F1] relative overflow-hidden transition-all duration-300"
+        className="bg-[var(--v2-bg)] border border-[var(--v2-border)] relative overflow-hidden transition-all duration-300"
         style={{
           borderRadius: '22px',
           padding: '12px 24px',
@@ -177,22 +177,22 @@ export function MyDayInsightSection({
               <span className="absolute inset-0 rounded-full bg-[#22C58B] opacity-40 animate-ping" />
             </span>
             <span
+              className="text-[var(--v2-text-primary)]"
               style={{
                 fontFamily: '"Space Grotesk", system-ui, sans-serif',
                 fontWeight: 600,
                 fontSize: '15px',
-                color: '#131A2B'
               }}
             >
               {greetingText}, {userName}
             </span>
-            <span className="text-[#697187] text-sm">
+            <span className="text-[var(--v2-text-muted)] text-sm">
               · {dayName}, {dateStr}
             </span>
           </div>
           <button
             onClick={handleToggleCollapse}
-            className="flex items-center gap-2 px-3 py-1.5 rounded-full border border-[#E7E9F1] bg-[#FAFAFC] hover:bg-white hover:border-[#F97316] text-[#697187] hover:text-[#F97316] transition-all"
+            className="flex items-center gap-2 px-3 py-1.5 rounded-full border border-[var(--v2-border)] bg-[var(--v2-surface)] hover:bg-[var(--v2-bg)] hover:border-[#F97316] text-[var(--v2-text-muted)] hover:text-[#F97316] transition-all"
             style={{ fontSize: '12px', fontWeight: 500 }}
           >
             <span>{t('myday.show_details') || 'Show details'}</span>
@@ -207,7 +207,7 @@ export function MyDayInsightSection({
     <>
       {/* Main MyDay Card - contains everything */}
       <section
-        className="bg-white border border-[#E7E9F1] relative overflow-hidden transition-all duration-300"
+        className="bg-[var(--v2-bg)] border border-[var(--v2-border)] relative overflow-hidden transition-all duration-300"
         style={{
           borderRadius: '22px',
           padding: '22px 24px',
@@ -253,14 +253,13 @@ export function MyDayInsightSection({
 
             {/* Greeting */}
             <h1
-              className="mb-2"
+              className="mb-2 text-[var(--v2-text-primary)]"
               style={{
                 fontFamily: '"Space Grotesk", system-ui, sans-serif',
                 fontWeight: 600,
                 fontSize: '25px',
                 letterSpacing: '-0.025em',
                 lineHeight: 1.15,
-                color: '#131A2B'
               }}
             >
               {greetingText}, {userName}
@@ -268,7 +267,7 @@ export function MyDayInsightSection({
 
             {/* Summary */}
             <p
-              className="text-[#3a4256]"
+              className="text-[var(--v2-text-secondary)]"
               style={{ fontSize: '14.5px', lineHeight: 1.55, maxWidth: '44rem' }}
             >
               {t('myday.summary.default')}
@@ -278,17 +277,16 @@ export function MyDayInsightSection({
           {/* Date */}
           <div className={`flex-none ${isRTL ? 'text-start' : 'text-end'}`}>
             <b
-              className="block"
+              className="block text-[var(--v2-text-primary)]"
               style={{
                 fontFamily: '"Space Grotesk", system-ui, sans-serif',
                 fontSize: '15px',
                 fontWeight: 600,
-                color: '#131A2B'
               }}
             >
               {dayName}
             </b>
-            <span className="text-xs text-[#697187]">{dateStr}</span>
+            <span className="text-xs text-[var(--v2-text-muted)]">{dateStr}</span>
           </div>
         </div>
 
@@ -321,7 +319,7 @@ export function MyDayInsightSection({
         <div className={`flex pt-4 mt-2 ${isRTL ? 'justify-start' : 'justify-end'}`}>
           <button
             onClick={handleToggleCollapse}
-            className="flex items-center gap-2 px-3 py-1.5 rounded-full border border-[#E7E9F1] bg-[#FAFAFC] hover:bg-white hover:border-[#F97316] text-[#697187] hover:text-[#F97316] transition-all"
+            className="flex items-center gap-2 px-3 py-1.5 rounded-full border border-[var(--v2-border)] bg-[var(--v2-surface)] hover:bg-[var(--v2-bg)] hover:border-[#F97316] text-[var(--v2-text-muted)] hover:text-[#F97316] transition-all"
             style={{ fontSize: '12px', fontWeight: 500 }}
           >
             <span>{t('myday.hide_details') || 'Hide details'}</span>

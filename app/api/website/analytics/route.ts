@@ -38,22 +38,23 @@ export async function GET(request: NextRequest) {
 
     const pageRepo = new WebsitePageRepository(supabaseServer);
 
-    // Get user's website subdomain
-    const pagesResult = await pageRepo.listByUser(user.id);
-    if (pagesResult.error || !pagesResult.data || pagesResult.data.length === 0) {
+    // Get user's homepage (main website page, not landing pages)
+    const homepageResult = await pageRepo.getHomepage(user.id);
+    if (homepageResult.error || !homepageResult.data) {
       return NextResponse.json({
         success: true,
         analytics: ZERO_ANALYTICS
       });
     }
 
-    const subdomain = pagesResult.data[0].subdomain;
+    const homepage = homepageResult.data;
+    const subdomain = homepage.subdomain;
 
-    // Try to get analytics - if table doesn't exist, return zeros
+    // Get analytics for homepage only (not landing pages)
     let summaryData = ZERO_ANALYTICS;
     try {
       const analyticsRepo = new WebsiteAnalyticsRepository(supabaseServer);
-      const summaryResult = await analyticsRepo.getSummary(user.id);
+      const summaryResult = await analyticsRepo.getPageSummary(homepage.id, user.id);
       if (summaryResult.data) {
         summaryData = summaryResult.data;
       }
@@ -61,8 +62,7 @@ export async function GET(request: NextRequest) {
       requestLogger.warn({ err: analyticsError }, 'Analytics table query failed, returning zeros');
     }
 
-    requestLogger.info({ userId: user.id, subdomain, summaryData, analyticsDebug: true }, 'Fetched website analytics');
-    console.log('[Website Analytics API] Summary data:', JSON.stringify(summaryData));
+    requestLogger.info({ userId: user.id, subdomain, pageId: homepage.id, summaryData }, 'Fetched website analytics (homepage only)');
 
     return NextResponse.json({
       success: true,

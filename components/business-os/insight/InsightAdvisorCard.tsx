@@ -193,11 +193,11 @@ export function InsightAdvisorCard({
 
   return (
     <div
-      className="relative overflow-hidden transition-all"
+      className="relative overflow-hidden transition-all bg-[var(--v2-bg)]"
       style={{
         borderRadius: '16px',
         borderLeft: `4px solid ${style.accent}`,
-        background: `linear-gradient(135deg, ${style.tint} 0%, rgba(255,255,255,0.5) 100%)`,
+        background: `linear-gradient(135deg, ${style.tint} 0%, var(--v2-bg) 100%)`,
       }}
     >
       {/* Background glow */}
@@ -226,8 +226,8 @@ export function InsightAdvisorCard({
             <Sparkles className="w-3.5 h-3.5" style={{ color: '#F97316' }} strokeWidth={2} />
           </span>
           <span
-            className="text-xs font-semibold uppercase tracking-wide"
-            style={{ color: '#697187', letterSpacing: '0.08em' }}
+            className="text-xs font-semibold uppercase tracking-wide text-[var(--v2-text-muted)]"
+            style={{ letterSpacing: '0.08em' }}
           >
             {t('insight.badge') || 'Your advisor noticed'}
           </span>
@@ -283,21 +283,20 @@ export function InsightAdvisorCard({
         {/* Body */}
         <div className="flex-1 min-w-0">
           <h2
-            className="mb-2"
+            className="mb-2 text-[var(--v2-text-primary)]"
             style={{
               fontFamily: '"Space Grotesk", system-ui, sans-serif',
               fontWeight: 600,
               fontSize: '20px',
               letterSpacing: '-0.02em',
               lineHeight: 1.25,
-              color: '#131A2B',
             }}
           >
             {getTranslatedTitle()}
           </h2>
           <p
-            className="mb-3"
-            style={{ fontSize: '14px', lineHeight: 1.55, color: '#3a4256' }}
+            className="mb-3 text-[var(--v2-text-secondary)]"
+            style={{ fontSize: '14px', lineHeight: 1.55 }}
             dangerouslySetInnerHTML={{ __html: getTranslatedDescription() }}
           />
 
@@ -305,8 +304,7 @@ export function InsightAdvisorCard({
           {insight.affected_count > 0 && (
             <div className="flex flex-wrap gap-2 mb-3">
               <span
-                className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-full"
-                style={{ background: '#FAFAFC', border: '1px solid #E7E9F1', color: '#131A2B' }}
+                className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-full bg-[var(--v2-surface)] border border-[var(--v2-border)] text-[var(--v2-text-primary)]"
               >
                 <span className="w-1.5 h-1.5 rounded-full" style={{ background: style.accent }} />
                 {t(`insight.${insight.detector_id}.chip.invoices`).replace('{count}', String(insight.affected_count)) !== `insight.${insight.detector_id}.chip.invoices`
@@ -316,8 +314,7 @@ export function InsightAdvisorCard({
               </span>
               {insight.estimated_impact_usd && insight.estimated_impact_usd > 0 && (
                 <span
-                  className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-full"
-                  style={{ background: '#FAFAFC', border: '1px solid #E7E9F1', color: '#131A2B' }}
+                  className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-full bg-[var(--v2-surface)] border border-[var(--v2-border)] text-[var(--v2-text-primary)]"
                 >
                   <span className="w-1.5 h-1.5 rounded-full" style={{ background: style.accent }} />
                   {t(`insight.${insight.detector_id}.chip.total`).replace('{amount}', `$${insight.estimated_impact_usd.toLocaleString()}`) !== `insight.${insight.detector_id}.chip.total`
@@ -364,32 +361,31 @@ export function InsightAdvisorCard({
             <div className="relative">
               <button
                 onClick={() => setSnoozeOpen(!snoozeOpen)}
-                className="flex items-center justify-center w-full py-3 px-4 rounded-xl font-semibold text-sm transition-colors"
-                style={{ background: '#FAFAFC', border: '1.5px solid #E7E9F1', color: '#131A2B' }}
+                className="flex items-center justify-center w-full py-3 px-4 rounded-xl font-semibold text-sm transition-colors bg-[var(--v2-surface)] border-[1.5px] border-[var(--v2-border)] text-[var(--v2-text-primary)]"
               >
                 {t('insight.snooze') || 'Not now'} ▾
               </button>
 
               {snoozeOpen && (
                 <div
-                  className="absolute top-full left-0 right-0 mt-1.5 bg-white border border-[#E7E9F1] rounded-xl shadow-lg p-1 z-10"
+                  className="absolute top-full left-0 right-0 mt-1.5 bg-[var(--v2-bg)] border border-[var(--v2-border)] rounded-xl shadow-lg p-1 z-10"
                   style={{ boxShadow: '0 14px 30px -12px rgba(20,26,43,.3)' }}
                 >
                   <button
                     onClick={() => handleSnooze('tomorrow')}
-                    className="block w-full text-left text-sm px-3 py-2 rounded-lg hover:bg-[#FAFAFC]"
+                    className="block w-full text-left text-sm px-3 py-2 rounded-lg hover:bg-[var(--v2-surface)] text-[var(--v2-text-primary)]"
                   >
                     {t('insight.snooze.tomorrow') || 'Remind me tomorrow'}
                   </button>
                   <button
                     onClick={() => handleSnooze('week')}
-                    className="block w-full text-left text-sm px-3 py-2 rounded-lg hover:bg-[#FAFAFC]"
+                    className="block w-full text-left text-sm px-3 py-2 rounded-lg hover:bg-[var(--v2-surface)] text-[var(--v2-text-primary)]"
                   >
                     {t('insight.snooze.week') || 'Remind me next week'}
                   </button>
                   <button
                     onClick={() => handleSnooze('never')}
-                    className="block w-full text-left text-sm px-3 py-2 rounded-lg hover:bg-[#FAFAFC]"
+                    className="block w-full text-left text-sm px-3 py-2 rounded-lg hover:bg-[var(--v2-surface)] text-[var(--v2-text-primary)]"
                   >
                     {t('insight.snooze.never') || 'Not a problem — mute this'}
                   </button>
@@ -402,7 +398,7 @@ export function InsightAdvisorCard({
         {/* Running State */}
         {cardState === 'running' && (
           <div className="flex-none w-52 pt-1">
-            <div className="bg-[#FAFAFC] border border-[#E7E9F1] rounded-xl p-4">
+            <div className="bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-xl p-4">
               {steps.map((step, i) => (
                 <div key={i} className="flex items-center gap-2.5 text-sm font-semibold" style={{ marginTop: i > 0 ? '10px' : 0 }}>
                   {i < runningStep ? (
@@ -412,9 +408,9 @@ export function InsightAdvisorCard({
                   ) : i === runningStep ? (
                     <Loader2 className="w-5 h-5 text-[#F97316] animate-spin flex-none" strokeWidth={2.5} />
                   ) : (
-                    <span className="w-5 h-5 rounded-full border-2 border-[#E7E9F1] flex-none opacity-40" />
+                    <span className="w-5 h-5 rounded-full border-2 border-[var(--v2-border)] flex-none opacity-40" />
                   )}
-                  <span style={{ color: i <= runningStep ? '#131A2B' : '#697187' }}>{step}</span>
+                  <span className={i <= runningStep ? 'text-[var(--v2-text-primary)]' : 'text-[var(--v2-text-muted)]'}>{step}</span>
                 </div>
               ))}
             </div>
@@ -424,16 +420,16 @@ export function InsightAdvisorCard({
         {/* Completed State */}
         {cardState === 'completed' && (
           <div className="flex-none w-52 pt-1">
-            <div className="bg-[#FAFAFC] border border-[#E7E9F1] rounded-xl p-4">
+            <div className="bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-xl p-4">
               <div className="flex items-center gap-2.5">
                 <span className="w-5 h-5 rounded-full bg-[#22C58B] flex items-center justify-center flex-none">
                   <Check className="w-3 h-3 text-white" strokeWidth={3} />
                 </span>
-                <span className="text-sm font-bold text-[#131A2B]">
+                <span className="text-sm font-bold text-[var(--v2-text-primary)]">
                   {t('insight.done') || 'Done'}
                 </span>
               </div>
-              <p className="text-xs text-[#697187] mt-2 ml-7">
+              <p className="text-xs text-[var(--v2-text-muted)] mt-2 ml-7">
                 {insight.recommendation || "I'll keep watching this."}
               </p>
             </div>
@@ -471,10 +467,9 @@ export function InsightAdvisorCard({
       {/* Automate Offer Panel */}
       {cardState === 'automate_offer' && canAutomate && (
         <div
-          className="mx-5 mb-4 rounded-2xl p-4 transition-all"
+          className="mx-5 mb-4 rounded-2xl p-4 transition-all border-[1.5px] border-[rgba(249,115,22,.25)]"
           style={{
-            background: 'linear-gradient(180deg, #FFF8F3 0%, #fff 100%)',
-            border: '1.5px solid rgba(249,115,22,.25)',
+            background: 'linear-gradient(180deg, rgba(249,115,22,0.08) 0%, var(--v2-bg) 100%)',
           }}
         >
           <div className="flex items-center gap-3 mb-3">
@@ -487,43 +482,43 @@ export function InsightAdvisorCard({
               <Sparkles className="w-4 h-4" style={{ color: '#F97316' }} strokeWidth={2} />
             </span>
             <div>
-              <b className="block text-sm font-semibold" style={{ fontFamily: '"Space Grotesk", system-ui, sans-serif' }}>
+              <b className="block text-sm font-semibold text-[var(--v2-text-primary)]" style={{ fontFamily: '"Space Grotesk", system-ui, sans-serif' }}>
                 {t('insight.automate.title') || 'Want me to handle this for you from now on?'}
               </b>
-              <span className="text-xs text-[#697187]">
+              <span className="text-xs text-[var(--v2-text-muted)]">
                 {t('insight.automate.subtitle') || "I'll do it on my own — you won't need to ask each time"}
               </span>
             </div>
           </div>
 
           {/* Config */}
-          <div className="flex items-center gap-3 flex-wrap bg-white border border-[#E7E9F1] rounded-xl p-3 mb-3">
-            <span className="text-sm font-medium">{t('insight.automate.after')}</span>
-            <div className="inline-flex items-center bg-[#FAFAFC] border border-[#E7E9F1] rounded-lg overflow-hidden">
+          <div className="flex items-center gap-3 flex-wrap bg-[var(--v2-bg)] border border-[var(--v2-border)] rounded-xl p-3 mb-3">
+            <span className="text-sm font-medium text-[var(--v2-text-primary)]">{t('insight.automate.after')}</span>
+            <div className="inline-flex items-center bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg overflow-hidden">
               <button
                 onClick={() => stepAutoValue(-1)}
-                className="w-8 h-9 flex items-center justify-center text-lg font-semibold text-[#F97316] hover:bg-[#FFF8F3]"
+                className="w-8 h-9 flex items-center justify-center text-lg font-semibold text-[#F97316] hover:bg-[rgba(249,115,22,0.08)]"
               >
                 −
               </button>
               <span
-                className="min-w-[50px] text-center text-sm font-bold border-x border-[#E7E9F1] h-9 flex items-center justify-center"
+                className="min-w-[50px] text-center text-sm font-bold border-x border-[var(--v2-border)] h-9 flex items-center justify-center text-[var(--v2-text-primary)]"
                 style={{ fontFamily: '"Space Grotesk", system-ui, sans-serif' }}
               >
                 {autoValue}
               </span>
               <button
                 onClick={() => stepAutoValue(1)}
-                className="w-8 h-9 flex items-center justify-center text-lg font-semibold text-[#F97316] hover:bg-[#FFF8F3]"
+                className="w-8 h-9 flex items-center justify-center text-lg font-semibold text-[#F97316] hover:bg-[rgba(249,115,22,0.08)]"
               >
                 +
               </button>
             </div>
-            <span className="text-sm font-bold">{t('insight.automate.days')}</span>
+            <span className="text-sm font-bold text-[var(--v2-text-primary)]">{t('insight.automate.days')}</span>
           </div>
 
           {/* Note */}
-          <p className="flex items-start gap-2 text-xs text-[#697187] mb-3">
+          <p className="flex items-start gap-2 text-xs text-[var(--v2-text-muted)] mb-3">
             <span className="w-4 h-4 flex-none mt-0.5 text-[#F97316]">ℹ</span>
             {t('insight.automate.note') || "This runs by itself in the background — I'll do it without asking. You'll see everything I do in your daily summary, and you can pause it anytime."}
           </p>
@@ -532,8 +527,7 @@ export function InsightAdvisorCard({
           <div className="flex gap-2">
             <button
               onClick={handleDeclineAutomate}
-              className="flex-1 py-2.5 px-4 rounded-xl font-semibold text-sm transition-colors"
-              style={{ background: '#FAFAFC', border: '1.5px solid #E7E9F1', color: '#131A2B' }}
+              className="flex-1 py-2.5 px-4 rounded-xl font-semibold text-sm transition-colors bg-[var(--v2-surface)] border-[1.5px] border-[var(--v2-border)] text-[var(--v2-text-primary)]"
             >
               {t('insight.automate.decline') || 'No, just this once'}
             </button>
@@ -568,10 +562,10 @@ export function InsightAdvisorCard({
               <Check className="w-5 h-5 text-white" strokeWidth={2.4} />
             </span>
             <div className="flex-1">
-              <b className="block text-sm font-semibold" style={{ fontFamily: '"Space Grotesk", system-ui, sans-serif' }}>
+              <b className="block text-sm font-semibold text-[var(--v2-text-primary)]" style={{ fontFamily: '"Space Grotesk", system-ui, sans-serif' }}>
                 {t('insight.automated.title') || 'Automation created'}
               </b>
-              <span className="text-xs text-[#697187]">
+              <span className="text-xs text-[var(--v2-text-muted)]">
                 {t('insight.automated.subtitle') || "I'll handle this automatically from now on"}
               </span>
             </div>
@@ -581,15 +575,15 @@ export function InsightAdvisorCard({
           </div>
 
           <div className="flex gap-2 mt-3">
-            <button className="inline-flex items-center gap-2 text-sm font-semibold bg-white border border-[#E7E9F1] rounded-lg px-3 py-2 hover:border-[#D6DAE6] transition-colors">
+            <button className="inline-flex items-center gap-2 text-sm font-semibold bg-[var(--v2-bg)] border border-[var(--v2-border)] rounded-lg px-3 py-2 hover:border-[var(--v2-border-hover)] transition-colors text-[var(--v2-text-primary)]">
               <Pause className="w-3.5 h-3.5" strokeWidth={2} /> Pause
             </button>
-            <button className="inline-flex items-center gap-2 text-sm font-semibold bg-white border border-[#E7E9F1] rounded-lg px-3 py-2 hover:border-[#D6DAE6] transition-colors">
+            <button className="inline-flex items-center gap-2 text-sm font-semibold bg-[var(--v2-bg)] border border-[var(--v2-border)] rounded-lg px-3 py-2 hover:border-[var(--v2-border-hover)] transition-colors text-[var(--v2-text-primary)]">
               <Settings className="w-3.5 h-3.5" strokeWidth={2} /> Manage
             </button>
             <button
               onClick={handleDismiss}
-              className="inline-flex items-center gap-2 text-sm font-semibold bg-white border border-[#E7E9F1] rounded-lg px-3 py-2 hover:border-[#D6DAE6] transition-colors"
+              className="inline-flex items-center gap-2 text-sm font-semibold bg-[var(--v2-bg)] border border-[var(--v2-border)] rounded-lg px-3 py-2 hover:border-[var(--v2-border-hover)] transition-colors text-[var(--v2-text-primary)]"
             >
               <Minus className="w-3.5 h-3.5" strokeWidth={2} /> Done
             </button>

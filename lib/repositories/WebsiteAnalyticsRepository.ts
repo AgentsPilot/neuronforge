@@ -398,6 +398,104 @@ export class WebsiteAnalyticsRepository {
   }
 
   /**
+   * Get analytics summary for a specific page
+   */
+  async getPageSummary(pageId: string, userId: string): Promise<RepositoryResult<AnalyticsSummary>> {
+    try {
+      const { data, error } = await this.supabase
+        .from('website_page_views')
+        .select('viewed_at, ip_hash')
+        .eq('page_id', pageId)
+        .eq('user_id', userId);
+
+      if (error) throw error;
+
+      if (!data || data.length === 0) {
+        return {
+          data: {
+            total_views: 0,
+            unique_visitors: 0,
+            views_today: 0,
+            visitors_today: 0,
+            views_this_month: 0,
+            visitors_this_month: 0,
+            views_30d: 0,
+            visitors_30d: 0,
+            views_7d: 0,
+            visitors_7d: 0
+          },
+          error: null
+        };
+      }
+
+      // Calculate date boundaries
+      const now = new Date();
+      const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+      const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+      const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+
+      // Aggregate stats
+      const allIpHashes = new Set<string>();
+      const todayIpHashes = new Set<string>();
+      const monthIpHashes = new Set<string>();
+      const thirtyDayIpHashes = new Set<string>();
+      const sevenDayIpHashes = new Set<string>();
+
+      let viewsToday = 0;
+      let viewsThisMonth = 0;
+      let views30d = 0;
+      let views7d = 0;
+
+      for (const view of data) {
+        const viewedAt = new Date(view.viewed_at);
+        const ipHash = view.ip_hash || 'unknown';
+
+        allIpHashes.add(ipHash);
+
+        if (viewedAt >= todayStart) {
+          viewsToday++;
+          todayIpHashes.add(ipHash);
+        }
+
+        if (viewedAt >= monthStart) {
+          viewsThisMonth++;
+          monthIpHashes.add(ipHash);
+        }
+
+        if (viewedAt >= thirtyDaysAgo) {
+          views30d++;
+          thirtyDayIpHashes.add(ipHash);
+        }
+
+        if (viewedAt >= sevenDaysAgo) {
+          views7d++;
+          sevenDayIpHashes.add(ipHash);
+        }
+      }
+
+      return {
+        data: {
+          total_views: data.length,
+          unique_visitors: allIpHashes.size,
+          views_today: viewsToday,
+          visitors_today: todayIpHashes.size,
+          views_this_month: viewsThisMonth,
+          visitors_this_month: monthIpHashes.size,
+          views_30d: views30d,
+          visitors_30d: thirtyDayIpHashes.size,
+          views_7d: views7d,
+          visitors_7d: sevenDayIpHashes.size
+        },
+        error: null
+      };
+    } catch (error) {
+      logger.error({ err: error, pageId, userId }, 'Failed to get page analytics summary');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
    * Check if a page has activity (views)
    * Used to determine whether to warn user before deletion
    */

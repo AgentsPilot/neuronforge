@@ -23,6 +23,8 @@ import { TasksSection } from './TasksSection';
 import { ActivitySection } from './ActivitySection';
 import { FilesTab } from './FilesTab';
 import { BookingsTab } from './BookingsTab';
+import { PaymentManagementModal } from './PaymentManagementModal';
+import { FormSubmissionsSection } from './FormSubmissionsSection';
 
 import type {
   CRMContact,
@@ -473,6 +475,10 @@ export function CRMContactDrawerV2({
   const [availability, setAvailability] = useState<Record<string, { start: string; end: string }[]> | undefined>(undefined);
   const [allBookings, setAllBookings] = useState<SchedulingBooking[]>([]);
 
+  // Payment management modal state
+  const [showPaymentModal, setShowPaymentModal] = useState(false);
+  const [selectedBookingForPayment, setSelectedBookingForPayment] = useState<SessionCardData | null>(null);
+
   // UI states
   const [activeTab, setActiveTab] = useState<'customer' | 'activities'>('customer');
   const [isEditingHeader, setIsEditingHeader] = useState(false);
@@ -484,10 +490,10 @@ export function CRMContactDrawerV2({
   const [showUploadModal, setShowUploadModal] = useState(false);
 
   // Accordion state - only one section open at a time
-  const [openSection, setOpenSection] = useState<'details' | 'bookings' | 'tasks' | 'files' | null>('bookings');
+  const [openSection, setOpenSection] = useState<'details' | 'bookings' | 'tasks' | 'forms' | 'files' | null>('bookings');
 
   // Toggle section - closes others when opening one
-  const handleSectionToggle = (section: 'details' | 'bookings' | 'tasks' | 'files') => (isOpen: boolean) => {
+  const handleSectionToggle = (section: 'details' | 'bookings' | 'tasks' | 'forms' | 'files') => (isOpen: boolean) => {
     setOpenSection(isOpen ? section : null);
   };
 
@@ -609,6 +615,7 @@ export function CRMContactDrawerV2({
             currency: serviceCurrency,
             status: 'free' as const
           } : servicePrice > 0 ? {
+            id: booking.payment_id || undefined,  // Payment ID for refunds
             amount: servicePrice,
             currency: serviceCurrency,
             status: mapPaymentStatus(booking.payment_status)
@@ -1245,6 +1252,14 @@ export function CRMContactDrawerV2({
                 language={language}
                 onNewSession={handleNewSession}
                 onEditSession={handleEditSession}
+                onManagePayment={(session) => {
+                  setSelectedBookingForPayment(session);
+                  setShowPaymentModal(true);
+                }}
+                onIntakeSaved={() => {
+                  fetchSessions(contact.id);
+                  fetchActivities(contact.id);
+                }}
                 isLoading={loadingSessions}
                 intakeTemplates={intakeTemplates}
                 isOpen={openSection === 'bookings'}
@@ -1262,6 +1277,17 @@ export function CRMContactDrawerV2({
                 isLoading={loadingTasks}
                 isOpen={openSection === 'tasks'}
                 onToggle={handleSectionToggle('tasks')}
+              />
+
+              {/* Website Form Submissions Section */}
+              <FormSubmissionsSection
+                contact={contact}
+                activities={activities}
+                t={t}
+                isRTL={isRTL}
+                language={language}
+                isOpen={openSection === 'forms'}
+                onToggle={handleSectionToggle('forms')}
               />
 
               {/* Files Section */}
@@ -1460,6 +1486,30 @@ export function CRMContactDrawerV2({
         uploading={uploadingDocument}
         t={t}
       />
+
+      {/* Payment Management Modal */}
+      <PaymentManagementModal
+        isOpen={showPaymentModal}
+        onClose={() => {
+          setShowPaymentModal(false);
+          setSelectedBookingForPayment(null);
+        }}
+        booking={selectedBookingForPayment}
+        contactName={`${contact.first_name} ${contact.last_name || ''}`.trim()}
+        onPaymentUpdated={() => {
+          fetchSessions(contact.id);
+          fetchActivities(contact.id);
+        }}
+        onBookingDeleted={(bookingId) => {
+          fetchSessions(contact.id);
+          fetchActivities(contact.id);
+          setShowPaymentModal(false);
+          setSelectedBookingForPayment(null);
+        }}
+        t={t}
+        isRTL={isRTL}
+      />
+
     </>
   );
 }

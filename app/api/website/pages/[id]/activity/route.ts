@@ -1,6 +1,8 @@
 /**
- * Page Activity Check API
- * GET - Check if a page has activity (views, bookings) before deletion
+ * Page Activity/Analytics API
+ * GET - Check if a page has activity or fetch full analytics
+ *   ?full=true - Returns full analytics summary
+ *   default - Returns hasActivity and viewCount only
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -10,6 +12,20 @@ import { supabaseServer } from '@/lib/supabaseServer';
 import { WebsiteAnalyticsRepository } from '@/lib/repositories/WebsiteAnalyticsRepository';
 
 const logger = createLogger({ module: 'PageActivityAPI' });
+
+// Default zero analytics for fallback
+const ZERO_ANALYTICS = {
+  total_views: 0,
+  unique_visitors: 0,
+  views_today: 0,
+  visitors_today: 0,
+  views_this_month: 0,
+  visitors_this_month: 0,
+  views_30d: 0,
+  visitors_30d: 0,
+  views_7d: 0,
+  visitors_7d: 0
+};
 
 interface RouteParams {
   params: Promise<{ id: string }>;
@@ -28,15 +44,32 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 
     const analyticsRepo = new WebsiteAnalyticsRepository(supabaseServer);
 
-    // Check page views
+    // Check if full analytics are requested
+    const { searchParams } = new URL(request.url);
+    const fullAnalytics = searchParams.get('full') === 'true';
+
+    if (fullAnalytics) {
+      // Return full analytics summary
+      const summaryResult = await analyticsRepo.getPageSummary(id, user.id);
+
+      requestLogger.info({
+        pageId: id,
+        userId: user.id,
+        analytics: summaryResult.data
+      }, 'Fetched page analytics');
+
+      return NextResponse.json({
+        success: true,
+        analytics: summaryResult.data || ZERO_ANALYTICS
+      });
+    }
+
+    // Default: Check page views for activity check
     const activityResult = await analyticsRepo.hasPageActivity(id, user.id);
 
     if (activityResult.error) {
       throw activityResult.error;
     }
-
-    // TODO: Could also check for bookings linked to this page's service
-    // For now, we only check page views
 
     requestLogger.info({
       pageId: id,

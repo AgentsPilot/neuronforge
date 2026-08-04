@@ -12,7 +12,32 @@ import { Loader2 } from 'lucide-react';
 import { WebsiteBlocks, type BlockData } from '@/components/website/blocks';
 import type { PageTheme } from '@/components/website/blocks/types';
 import type { Locale } from '@/lib/i18n/config';
-import { getDirection } from '@/lib/i18n/config';
+import { getDirection, isValidLocale, defaultLocale } from '@/lib/i18n/config';
+
+// Translations for loading/error states
+const LABELS = {
+  en: {
+    loadingPreview: 'Loading preview...',
+    noPreviewData: 'No preview data',
+    previewDataNotFound: 'Preview data not found',
+    noDataKey: 'No preview data key provided',
+    failedToLoad: 'Failed to load preview'
+  },
+  es: {
+    loadingPreview: 'Cargando vista previa...',
+    noPreviewData: 'Sin datos de vista previa',
+    previewDataNotFound: 'Datos de vista previa no encontrados',
+    noDataKey: 'No se proporcionó clave de datos de vista previa',
+    failedToLoad: 'Error al cargar la vista previa'
+  },
+  he: {
+    loadingPreview: 'טוען תצוגה מקדימה...',
+    noPreviewData: 'אין נתוני תצוגה מקדימה',
+    previewDataNotFound: 'נתוני תצוגה מקדימה לא נמצאו',
+    noDataKey: 'לא סופק מפתח נתוני תצוגה מקדימה',
+    failedToLoad: 'שגיאה בטעינת התצוגה המקדימה'
+  }
+};
 
 interface PreviewData {
   blocks: BlockData[];
@@ -24,8 +49,28 @@ interface PreviewData {
 export default function LandingPreviewPage() {
   const searchParams = useSearchParams();
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [errorKey, setErrorKey] = useState<keyof typeof LABELS['en'] | null>(null);
+  const [apiError, setApiError] = useState<string | null>(null);
   const [previewData, setPreviewData] = useState<PreviewData | null>(null);
+
+  // Detect browser language for loading/error states
+  // Initialize synchronously to avoid flash of English during loading
+  const [browserLocale, setBrowserLocale] = useState<Locale>(() => {
+    if (typeof window !== 'undefined') {
+      const browserLang = navigator.language?.split('-')[0] || defaultLocale;
+      return isValidLocale(browserLang) ? browserLang : defaultLocale;
+    }
+    return defaultLocale;
+  });
+
+  // Update browser locale after hydration if needed
+  useEffect(() => {
+    const browserLang = navigator.language?.split('-')[0] || defaultLocale;
+    const detectedLocale = isValidLocale(browserLang) ? browserLang : defaultLocale;
+    if (detectedLocale !== browserLocale) {
+      setBrowserLocale(detectedLocale);
+    }
+  }, [browserLocale]);
 
   useEffect(() => {
     loadPreviewData();
@@ -34,19 +79,20 @@ export default function LandingPreviewPage() {
   const loadPreviewData = async () => {
     try {
       setLoading(true);
-      setError(null);
+      setErrorKey(null);
+      setApiError(null);
 
       // Check for data key in URL - data is stored in sessionStorage
       const dataKey = searchParams.get('dataKey');
       if (!dataKey) {
-        setError('No preview data key provided');
+        setErrorKey('noDataKey');
         return;
       }
 
       // Get data from sessionStorage
       const storedData = sessionStorage.getItem(dataKey);
       if (!storedData) {
-        setError('Preview data not found');
+        setErrorKey('previewDataNotFound');
         return;
       }
 
@@ -62,7 +108,8 @@ export default function LandingPreviewPage() {
       const result = await response.json();
 
       if (!result.success) {
-        setError(result.error || 'Failed to load preview');
+        setApiError(result.error);
+        setErrorKey('failedToLoad');
         return;
       }
 
@@ -74,24 +121,33 @@ export default function LandingPreviewPage() {
       });
     } catch (err) {
       console.error('Failed to load preview:', err);
-      setError('Failed to load preview');
+      setErrorKey('failedToLoad');
     } finally {
       setLoading(false);
     }
   };
 
+  // Use browser locale for loading/error states
+  const loadingLabels = LABELS[browserLocale as keyof typeof LABELS] || LABELS.en;
+  const loadingIsRTL = getDirection(browserLocale) === 'rtl';
+
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-white">
-        <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
+      <div className="min-h-screen flex items-center justify-center bg-white" dir={loadingIsRTL ? 'rtl' : 'ltr'}>
+        <div className="text-center space-y-3">
+          <Loader2 className="w-8 h-8 animate-spin text-blue-500 mx-auto" />
+          <p className="text-gray-500">{loadingLabels.loadingPreview}</p>
+        </div>
       </div>
     );
   }
 
-  if (error || !previewData) {
+  if (errorKey || !previewData) {
+    // Show translated error message, or API error, or fallback to noPreviewData
+    const errorMessage = errorKey ? loadingLabels[errorKey] : (apiError || loadingLabels.noPreviewData);
     return (
-      <div className="min-h-screen flex items-center justify-center bg-white">
-        <p className="text-gray-500">{error || 'No preview data'}</p>
+      <div className="min-h-screen flex items-center justify-center bg-white" dir={loadingIsRTL ? 'rtl' : 'ltr'}>
+        <p className="text-gray-500">{errorMessage}</p>
       </div>
     );
   }

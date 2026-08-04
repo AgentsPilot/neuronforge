@@ -223,6 +223,8 @@ const LABELS = {
     open_preview: 'Open Full Preview',
     preview: 'Preview',
     go_back_edit: 'Go Back & Edit',
+    loading_preview: 'Loading preview...',
+    preview_not_available: 'Preview not available',
   },
   es: {
     step: 'Paso',
@@ -259,6 +261,8 @@ const LABELS = {
     open_preview: 'Abrir Vista Previa',
     preview: 'Vista Previa',
     go_back_edit: 'Volver y Editar',
+    loading_preview: 'Cargando vista previa...',
+    preview_not_available: 'Vista previa no disponible',
   },
   he: {
     step: 'שלב',
@@ -295,6 +299,8 @@ const LABELS = {
     open_preview: 'פתח תצוגה מקדימה',
     preview: 'תצוגה מקדימה',
     go_back_edit: 'חזור ועריכה',
+    loading_preview: 'טוען תצוגה מקדימה...',
+    preview_not_available: 'התצוגה המקדימה לא זמינה',
   }
 };
 
@@ -917,7 +923,7 @@ export function WebsiteSetupWizard({
                   <div className="absolute inset-0 bg-white flex items-center justify-center z-10">
                     <div className="text-center">
                       <Loader2 className="w-8 h-8 text-[#4F6EF7] animate-spin mx-auto mb-2" />
-                      <p className="text-xs text-[var(--v2-text-secondary)]">Loading preview...</p>
+                      <p className="text-xs text-[var(--v2-text-secondary)]">{labels.loading_preview}</p>
                     </div>
                   </div>
                 )}
@@ -934,7 +940,7 @@ export function WebsiteSetupWizard({
               <div className="flex items-center justify-center h-full w-full">
                 <div className="text-center text-[var(--v2-text-muted)]">
                   <Globe className="w-12 h-12 mx-auto mb-2 opacity-50" />
-                  <p className="text-sm">Preview not available</p>
+                  <p className="text-sm">{labels.preview_not_available}</p>
                 </div>
               </div>
             )}

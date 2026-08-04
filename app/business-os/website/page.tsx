@@ -778,7 +778,7 @@ export default function WebsiteManagementPage() {
   // Setup Wizard state
   const [wizardChecked, setWizardChecked] = useState(false);
 
-  // Analytics state
+  // Analytics state (for main website)
   const [analytics, setAnalytics] = useState<{
     total_views: number;
     unique_visitors: number;
@@ -791,6 +791,20 @@ export default function WebsiteManagementPage() {
     views_7d: number;
     visitors_7d: number;
   } | null>(null);
+
+  // Landing page analytics state (keyed by page ID)
+  const [landingPagesAnalytics, setLandingPagesAnalytics] = useState<Record<string, {
+    total_views: number;
+    unique_visitors: number;
+    views_today: number;
+    visitors_today: number;
+    views_this_month: number;
+    visitors_this_month: number;
+    views_30d: number;
+    visitors_30d: number;
+    views_7d: number;
+    visitors_7d: number;
+  }>>({});
 
   // Delete confirmation dialog state
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
@@ -902,6 +916,29 @@ export default function WebsiteManagementPage() {
           }
         } catch (err) {
           logger.warn({ err }, 'Failed to fetch website analytics');
+        }
+
+        // Fetch analytics for all landing pages
+        const landingPages = pagesData.pages.filter((p: WebsitePage) => p.page_type === 'landing');
+        if (landingPages.length > 0) {
+          const analyticsPromises = landingPages.map(async (lp: WebsitePage) => {
+            try {
+              const response = await fetch(`/api/website/pages/${lp.id}/activity?full=true`);
+              const data = await response.json();
+              return { pageId: lp.id, analytics: data.success ? data.analytics : null };
+            } catch {
+              return { pageId: lp.id, analytics: null };
+            }
+          });
+
+          const results = await Promise.all(analyticsPromises);
+          const analyticsMap: Record<string, typeof results[0]['analytics']> = {};
+          results.forEach(r => {
+            if (r.analytics) {
+              analyticsMap[r.pageId] = r.analytics;
+            }
+          });
+          setLandingPagesAnalytics(analyticsMap);
         }
       }
 
@@ -2616,7 +2653,7 @@ export default function WebsiteManagementPage() {
                     {page.subdomain && page.slug && (
                       <div className="flex items-center gap-3 p-3 bg-white/50 dark:bg-slate-800/50 rounded-lg mb-4">
                         <Globe className="w-5 h-5 text-purple-400" />
-                        <span className="flex-1 text-purple-700 dark:text-purple-300 text-sm font-mono">
+                        <span className="flex-1 text-purple-700 dark:text-purple-300 text-sm font-mono" dir="ltr">
                           {page.subdomain}.agentpilot.io/{page.slug}
                         </span>
                         <button
@@ -2632,13 +2669,52 @@ export default function WebsiteManagementPage() {
                       </div>
                     )}
 
+                    {/* Landing Page Analytics */}
+                    <div
+                      className="bg-white/50 dark:bg-slate-800/50 border border-purple-200/50 dark:border-purple-700/50 p-4 mb-4"
+                      style={{ borderRadius: 'var(--v2-radius-card)' }}
+                    >
+                      <h4 className="text-sm font-medium text-purple-700 dark:text-purple-300 uppercase tracking-wider mb-3">
+                        {labels.page_views}
+                      </h4>
+                      <div className="grid grid-cols-4 gap-3">
+                        {/* Today */}
+                        <div className="text-center p-2 bg-purple-100/50 dark:bg-purple-900/30 rounded-lg">
+                          <p className="text-xl font-bold text-purple-900 dark:text-purple-100">{landingPagesAnalytics[page.id]?.visitors_today ?? 0}</p>
+                          <p className="text-xs text-purple-600 dark:text-purple-400">{labels.visitors_today}</p>
+                        </div>
+                        {/* 7 Days */}
+                        <div className="text-center p-2 bg-purple-100/50 dark:bg-purple-900/30 rounded-lg">
+                          <p className="text-xl font-bold text-purple-900 dark:text-purple-100">{landingPagesAnalytics[page.id]?.visitors_7d ?? 0}</p>
+                          <p className="text-xs text-purple-600 dark:text-purple-400">{labels.visitors_7d}</p>
+                        </div>
+                        {/* 30 Days */}
+                        <div className="text-center p-2 bg-purple-100/50 dark:bg-purple-900/30 rounded-lg">
+                          <p className="text-xl font-bold text-purple-900 dark:text-purple-100">{landingPagesAnalytics[page.id]?.visitors_30d ?? 0}</p>
+                          <p className="text-xs text-purple-600 dark:text-purple-400">{labels.visitors_30d}</p>
+                        </div>
+                        {/* Total Views */}
+                        <div className="text-center p-2 bg-purple-100/50 dark:bg-purple-900/30 rounded-lg">
+                          <p className="text-xl font-bold text-purple-900 dark:text-purple-100">{landingPagesAnalytics[page.id]?.total_views ?? 0}</p>
+                          <p className="text-xs text-purple-600 dark:text-purple-400">{labels.total_views}</p>
+                        </div>
+                      </div>
+                      {/* Unique visitors summary */}
+                      <div className="mt-3 pt-3 border-t border-purple-200/50 dark:border-purple-700/50">
+                        <div className="flex justify-between items-center">
+                          <span className="text-sm text-purple-600 dark:text-purple-400">{labels.unique_visitors}</span>
+                          <span className="text-lg font-semibold text-purple-900 dark:text-purple-100">{landingPagesAnalytics[page.id]?.unique_visitors ?? 0}</span>
+                        </div>
+                      </div>
+                    </div>
+
                     {/* Quick Actions for Landing Page - Simplified (main actions in upper toolbar) */}
                     <div className="flex flex-wrap gap-3">
                       <a
                         href={`/business-os/website/preview/${page.id}`}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="flex items-center gap-2 px-4 py-2 text-white text-sm font-medium bg-purple-600 hover:bg-purple-700 transition-all"
+                        className="flex items-center gap-2 px-4 py-2 text-[#4F6EF7] text-sm font-medium border border-[#4F6EF7] bg-[#4F6EF7]/10 hover:bg-[#4F6EF7]/20 transition-all"
                         style={{ borderRadius: 'var(--v2-radius-button)' }}
                       >
                         <Eye className="h-4 w-4" />
@@ -2767,7 +2843,7 @@ export default function WebsiteManagementPage() {
                         href={getPreviewUrl() || '#'}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="flex items-center gap-2 px-4 py-2 text-white text-sm font-medium bg-[#4F6EF7] hover:bg-[#3D5BD9] transition-all"
+                        className="flex items-center gap-2 px-4 py-2 text-[#4F6EF7] text-sm font-medium border border-[#4F6EF7] bg-[#4F6EF7]/10 hover:bg-[#4F6EF7]/20 transition-all"
                         style={{ borderRadius: 'var(--v2-radius-button)' }}
                       >
                         <Eye className="h-4 w-4" />
@@ -2787,26 +2863,26 @@ export default function WebsiteManagementPage() {
 
                 {/* Row 2: Landing Pages Section */}
                 <div
-                  className="bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800 p-6"
+                  className="bg-[var(--v2-surface)] border border-[var(--v2-border)] p-6"
                   style={{ borderRadius: 'var(--v2-radius-card)' }}
                 >
                   <div className="flex items-center justify-between mb-4">
                     <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-lg flex items-center justify-center bg-purple-100 dark:bg-purple-800/50">
-                        <Megaphone className="w-5 h-5 text-purple-600 dark:text-purple-400" />
+                      <div className="w-10 h-10 rounded-lg flex items-center justify-center" style={{ background: 'rgba(139, 92, 246, 0.12)' }}>
+                        <Megaphone className="w-5 h-5" style={{ color: '#8B5CF6' }} />
                       </div>
                       <div>
-                        <h3 className="text-lg font-semibold text-purple-900 dark:text-purple-100">
+                        <h3 className="text-lg font-semibold text-[var(--v2-text-primary)]">
                           {labels.landing_pages}
                         </h3>
-                        <p className="text-sm text-purple-600 dark:text-purple-300">
+                        <p className="text-sm text-[var(--v2-text-secondary)]">
                           {labels.landing_pages_desc}
                         </p>
                       </div>
                     </div>
                     <button
                       onClick={() => setShowLandingPageWizard(true)}
-                      className="flex items-center gap-2 px-4 py-2 text-purple-700 dark:text-purple-300 text-sm font-medium border border-purple-300 dark:border-purple-600 bg-purple-100 dark:bg-purple-800/50 hover:bg-purple-200 dark:hover:bg-purple-800 transition-all"
+                      className="flex items-center gap-2 px-4 py-2 text-[#4F6EF7] text-sm font-medium border border-[#4F6EF7] bg-[#4F6EF7]/10 hover:bg-[#4F6EF7]/20 transition-all"
                       style={{ borderRadius: 'var(--v2-radius-button)' }}
                     >
                       <Plus className="h-4 w-4" />
@@ -2819,39 +2895,40 @@ export default function WebsiteManagementPage() {
                     {allPages.filter(p => p.page_type === 'landing').map((p) => (
                       <div
                         key={p.id}
-                        className="flex items-center justify-between p-4 bg-white dark:bg-slate-800 rounded-lg border border-purple-200 dark:border-purple-700"
+                        className="p-4 bg-[var(--v2-bg)] rounded-lg border border-[var(--v2-border)]"
                       >
-                        <div className="flex items-center gap-4">
-                          <div className="w-10 h-10 rounded-lg flex items-center justify-center bg-purple-100 dark:bg-purple-800/50">
-                            <FileText className="w-5 h-5 text-purple-600 dark:text-purple-400" />
-                          </div>
-                          <div>
-                            <p className="font-medium text-[var(--v2-text-primary)]">
-                              {p.title}
-                            </p>
-                            <div className="flex items-center gap-2">
-                              {p.slug && (
-                                <span className="text-xs text-[var(--v2-text-muted)] font-mono">
-                                  /{p.slug}
+                        <div className="flex items-center justify-between mb-3">
+                          <div className="flex items-center gap-4">
+                            <div className="w-10 h-10 rounded-lg flex items-center justify-center bg-[var(--v2-surface)]">
+                              <FileText className="w-5 h-5 text-[var(--v2-text-secondary)]" />
+                            </div>
+                            <div>
+                              <p className="font-medium text-[var(--v2-text-primary)]">
+                                {p.title}
+                              </p>
+                              <div className="flex items-center gap-2" dir="ltr">
+                                {p.slug && (
+                                  <span className="text-xs text-[var(--v2-text-muted)] font-mono">
+                                    /{p.slug}
+                                  </span>
+                                )}
+                                <span
+                                  className={`px-2 py-0.5 text-xs font-medium rounded ${
+                                    p.status === 'live'
+                                      ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
+                                      : 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'
+                                  }`}
+                                >
+                                  {p.status === 'live' ? labels.status_live : labels.status_draft}
                                 </span>
-                              )}
-                              <span
-                                className={`px-2 py-0.5 text-xs font-medium rounded ${
-                                  p.status === 'live'
-                                    ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
-                                    : 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'
-                                }`}
-                              >
-                                {p.status === 'live' ? labels.status_live : labels.status_draft}
-                              </span>
+                              </div>
                             </div>
                           </div>
-                        </div>
 
-                        <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-2">
                           <button
                             onClick={() => handleSelectPage(p)}
-                            className="px-3 py-1.5 text-sm font-medium text-purple-600 dark:text-purple-400 hover:text-purple-700 dark:hover:text-purple-300 border border-purple-300 dark:border-purple-600 hover:border-purple-400 dark:hover:border-purple-500 transition-all"
+                            className="px-3 py-1.5 text-sm font-medium text-[var(--v2-text-primary)] border border-[var(--v2-border)] hover:border-[#4F6EF7] hover:text-[#4F6EF7] transition-all"
                             style={{ borderRadius: 'var(--v2-radius-button)' }}
                           >
                             {labels.edit_page}
@@ -2860,7 +2937,7 @@ export default function WebsiteManagementPage() {
                             href={`/business-os/website/preview/${p.id}`}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="p-1.5 text-purple-400 hover:text-purple-600 dark:hover:text-purple-300 transition-colors"
+                            className="p-1.5 text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)] transition-colors"
                             title={labels.preview}
                           >
                             <Eye className="h-4 w-4" />
@@ -2868,7 +2945,7 @@ export default function WebsiteManagementPage() {
                           <button
                             onClick={() => handleDeletePageClick(p.id, p.title)}
                             disabled={checkingActivity}
-                            className="p-1.5 text-purple-400 hover:text-red-500 transition-colors disabled:opacity-50"
+                            className="p-1.5 text-[var(--v2-text-muted)] hover:text-red-500 transition-colors disabled:opacity-50"
                             title={labels.delete_page}
                           >
                             {checkingActivity ? (
@@ -2879,15 +2956,34 @@ export default function WebsiteManagementPage() {
                           </button>
                         </div>
                       </div>
+
+                        {/* Landing Page Analytics - Compact row */}
+                        <div className="flex items-center gap-4 pt-3 border-t border-[var(--v2-border)]">
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs text-[var(--v2-text-muted)]">{labels.visitors_today}:</span>
+                            <span className="text-sm font-semibold text-[var(--v2-text-primary)]">{landingPagesAnalytics[p.id]?.visitors_today ?? 0}</span>
+                          </div>
+                          <div className="w-px h-4 bg-[var(--v2-border)]" />
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs text-[var(--v2-text-muted)]">{labels.visitors_30d}:</span>
+                            <span className="text-sm font-semibold text-[var(--v2-text-primary)]">{landingPagesAnalytics[p.id]?.visitors_30d ?? 0}</span>
+                          </div>
+                          <div className="w-px h-4 bg-[var(--v2-border)]" />
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs text-[var(--v2-text-muted)]">{labels.total_views}:</span>
+                            <span className="text-sm font-semibold text-[var(--v2-text-primary)]">{landingPagesAnalytics[p.id]?.total_views ?? 0}</span>
+                          </div>
+                        </div>
+                      </div>
                     ))}
 
                     {allPages.filter(p => p.page_type === 'landing').length === 0 && (
-                      <div className="text-center py-8 bg-white/50 dark:bg-slate-800/50 rounded-lg">
-                        <Megaphone className="w-10 h-10 mx-auto text-purple-300 dark:text-purple-600 mb-3" />
-                        <p className="text-sm text-purple-600 dark:text-purple-400 font-medium">
+                      <div className="text-center py-8 bg-[var(--v2-surface)] rounded-lg">
+                        <Megaphone className="w-10 h-10 mx-auto text-[var(--v2-text-muted)] mb-3 opacity-50" />
+                        <p className="text-sm text-[var(--v2-text-secondary)] font-medium">
                           {labels.no_landing_pages}
                         </p>
-                        <p className="text-xs text-purple-500 dark:text-purple-500 mt-1">
+                        <p className="text-xs text-[var(--v2-text-muted)] mt-1">
                           {labels.no_landing_pages_desc}
                         </p>
                       </div>

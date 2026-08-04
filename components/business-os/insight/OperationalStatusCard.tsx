@@ -186,22 +186,22 @@ export function OperationalStatusCard({ onConfigureClick }: OperationalStatusCar
   // Loading state
   if (loading) {
     return (
-      <div className="bg-white rounded-2xl border border-[#E7E9F1] p-4 animate-pulse">
+      <div className="bg-[var(--v2-bg)] rounded-2xl border border-[var(--v2-border)] p-4 animate-pulse">
         <div className="flex items-center gap-3 mb-3">
-          <div className="w-10 h-10 bg-[#E7E9F1] rounded-xl" />
+          <div className="w-10 h-10 bg-[var(--v2-surface)] rounded-xl" />
           <div className="flex-1">
-            <div className="h-4 bg-[#E7E9F1] rounded w-24 mb-1" />
-            <div className="h-3 bg-[#E7E9F1] rounded w-32" />
+            <div className="h-4 bg-[var(--v2-surface)] rounded w-24 mb-1" />
+            <div className="h-3 bg-[var(--v2-surface)] rounded w-32" />
           </div>
         </div>
-        <div className="h-2 bg-[#E7E9F1] rounded-full" />
+        <div className="h-2 bg-[var(--v2-surface)] rounded-full" />
       </div>
     );
   }
 
   return (
     <div
-      className="bg-white rounded-2xl border border-[#E7E9F1] overflow-hidden"
+      className="bg-[var(--v2-bg)] rounded-2xl border border-[var(--v2-border)] overflow-hidden"
       style={{ direction: isRTL ? 'rtl' : 'ltr' }}
     >
       {/* Header Section */}
@@ -226,17 +226,17 @@ export function OperationalStatusCard({ onConfigureClick }: OperationalStatusCar
           {/* Title & Progress */}
           <div className="flex-1 min-w-0">
             <div className="flex items-center justify-between gap-2">
-              <h3 className="text-sm font-semibold text-[#131A2B] truncate">
+              <h3 className="text-sm font-semibold text-[var(--v2-text-primary)] truncate">
                 {hasIncompleteSetup
                   ? (t('myday.status.quick_setup') || 'Quick Setup')
                   : (t('myday.status.all_set') || 'All Set!')}
               </h3>
-              <span className="text-xs text-[#697187] flex-shrink-0">
+              <span className="text-xs text-[var(--v2-text-muted)] flex-shrink-0">
                 {completedCount}/{totalSteps}
               </span>
             </div>
             {/* Progress Bar */}
-            <div className="mt-1.5 h-1.5 bg-[#E7E9F1] rounded-full overflow-hidden">
+            <div className="mt-1.5 h-1.5 bg-[var(--v2-surface)] rounded-full overflow-hidden">
               <div
                 className="h-full rounded-full transition-all duration-500"
                 style={{
@@ -267,30 +267,30 @@ export function OperationalStatusCard({ onConfigureClick }: OperationalStatusCar
                     onConfigureClick?.(step.id);
                     router.push(config.route);
                   }}
-                  className="group flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-[#F8F9FB] hover:bg-[#F0F1F4] border border-transparent hover:border-[#E7E9F1] transition-all text-xs"
+                  className="group flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-[var(--v2-surface)] hover:bg-[var(--v2-surface-hover,var(--v2-surface))] border border-transparent hover:border-[var(--v2-border)] transition-all text-xs"
                 >
                   <Icon
                     className="w-3.5 h-3.5 flex-shrink-0"
                     style={{ color: config.color }}
                     strokeWidth={2}
                   />
-                  <span className="text-[#131A2B] font-medium">
+                  <span className="text-[var(--v2-text-primary)] font-medium">
                     {t(`setup.${step.id}`) || config.label}
                   </span>
-                  <ChevronRight className="w-3 h-3 text-[#9CA3AF] group-hover:text-[#697187] transition-colors" strokeWidth={2} />
+                  <ChevronRight className="w-3 h-3 text-[var(--v2-text-muted)] group-hover:text-[var(--v2-text-secondary)] transition-colors" strokeWidth={2} />
                   {/* Dismiss X on hover */}
                   <span
                     onClick={(e) => handleDismissStep(step.id, e)}
-                    className="ml-0.5 p-0.5 rounded hover:bg-[#E7E9F1] opacity-0 group-hover:opacity-100 transition-opacity"
+                    className="ml-0.5 p-0.5 rounded hover:bg-[var(--v2-border)] opacity-0 group-hover:opacity-100 transition-opacity"
                     title={t('setup.dismiss') || "Skip"}
                   >
-                    <X className="w-3 h-3 text-[#9CA3AF] hover:text-[#697187]" strokeWidth={2} />
+                    <X className="w-3 h-3 text-[var(--v2-text-muted)] hover:text-[var(--v2-text-secondary)]" strokeWidth={2} />
                   </span>
                 </button>
               );
             })}
             {incompleteSteps.length > 4 && (
-              <span className="flex items-center px-2 py-1.5 text-xs text-[#697187]">
+              <span className="flex items-center px-2 py-1.5 text-xs text-[var(--v2-text-muted)]">
                 +{incompleteSteps.length - 4} {t('common.more') || 'more'}
               </span>
             )}
@@ -300,67 +300,66 @@ export function OperationalStatusCard({ onConfigureClick }: OperationalStatusCar
 
       {/* Metrics Row - Always visible */}
       <div
-        className="px-4 py-3 border-t border-[#F3F4F6]"
-        style={{ background: 'linear-gradient(180deg, #FAFBFC 0%, #F8F9FB 100%)' }}
+        className="px-4 py-3 border-t border-[var(--v2-border)] bg-[var(--v2-surface)]"
       >
         <div className="flex items-center justify-between gap-4">
           {/* Sessions Today */}
           <div className="flex items-center gap-2">
-            <div className="w-7 h-7 rounded-lg flex items-center justify-center bg-blue-50">
+            <div className="w-7 h-7 rounded-lg flex items-center justify-center bg-blue-500/10">
               <Calendar className="w-3.5 h-3.5 text-blue-500" strokeWidth={2} />
             </div>
             <div>
-              <span className="block text-sm font-bold text-[#131A2B] leading-tight">
+              <span className="block text-sm font-bold text-[var(--v2-text-primary)] leading-tight">
                 {metrics?.sessionsToday ?? 0}
               </span>
-              <span className="block text-[10px] text-[#9CA3AF] leading-tight">
+              <span className="block text-[10px] text-[var(--v2-text-muted)] leading-tight">
                 {t('myday.metric.today') || 'Today'}
               </span>
             </div>
           </div>
 
           {/* Divider */}
-          <div className="w-px h-8 bg-[#E7E9F1]" />
+          <div className="w-px h-8 bg-[var(--v2-border)]" />
 
           {/* Active Clients */}
           <div className="flex items-center gap-2">
-            <div className="w-7 h-7 rounded-lg flex items-center justify-center bg-emerald-50">
+            <div className="w-7 h-7 rounded-lg flex items-center justify-center bg-emerald-500/10">
               <Users className="w-3.5 h-3.5 text-emerald-500" strokeWidth={2} />
             </div>
             <div>
-              <span className="block text-sm font-bold text-[#131A2B] leading-tight">
+              <span className="block text-sm font-bold text-[var(--v2-text-primary)] leading-tight">
                 {metrics?.activeClients ?? 0}
               </span>
-              <span className="block text-[10px] text-[#9CA3AF] leading-tight">
+              <span className="block text-[10px] text-[var(--v2-text-muted)] leading-tight">
                 {t('myday.metric.clients') || 'Clients'}
               </span>
             </div>
           </div>
 
           {/* Divider */}
-          <div className="w-px h-8 bg-[#E7E9F1]" />
+          <div className="w-px h-8 bg-[var(--v2-border)]" />
 
           {/* Pending Payments */}
           <div className="flex items-center gap-2">
             <div
               className="w-7 h-7 rounded-lg flex items-center justify-center"
               style={{
-                background: (metrics?.pendingPayments ?? 0) > 0 ? '#FEF3C7' : '#F3F4F6'
+                background: (metrics?.pendingPayments ?? 0) > 0 ? 'rgba(217, 119, 6, 0.15)' : 'var(--v2-surface)'
               }}
             >
               <CreditCard
                 className="w-3.5 h-3.5"
-                style={{ color: (metrics?.pendingPayments ?? 0) > 0 ? '#D97706' : '#9CA3AF' }}
+                style={{ color: (metrics?.pendingPayments ?? 0) > 0 ? '#D97706' : 'var(--v2-text-muted)' }}
                 strokeWidth={2}
               />
             </div>
             <div>
-              <span className="block text-sm font-bold text-[#131A2B] leading-tight">
+              <span className="block text-sm font-bold text-[var(--v2-text-primary)] leading-tight">
                 {(metrics?.pendingPayments ?? 0) > 0
                   ? `$${(metrics?.pendingPaymentsAmount ?? 0).toLocaleString()}`
                   : '$0'}
               </span>
-              <span className="block text-[10px] text-[#9CA3AF] leading-tight">
+              <span className="block text-[10px] text-[var(--v2-text-muted)] leading-tight">
                 {t('myday.metric.pending') || 'Pending'}
               </span>
             </div>

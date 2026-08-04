@@ -5,10 +5,11 @@ import {
   Calendar, Clock, CreditCard, ClipboardList, Mail, CheckCircle2,
   XCircle, AlertCircle, ChevronDown, ChevronUp, Plus, Edit2,
   Loader2, ShoppingBag, Package, Truck, Gift, User, MapPin,
-  Phone, AtSign, Eye, ExternalLink,
+  Phone, AtSign, Eye, ExternalLink, Save, X,
   type LucideIcon
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { CollapsibleSection } from '../CollapsibleSection';
 import type { SessionCardData, IntakeTemplate, BookingJourneyData, BookingJourneyStep } from './types';
 
@@ -19,6 +20,8 @@ interface BookingsTabProps {
   language: string;
   onNewSession?: () => void;
   onEditSession?: (bookingId: string) => void;
+  onManagePayment?: (session: SessionCardData) => void;
+  onIntakeSaved?: (bookingId: string) => void;
   isLoading?: boolean;
   intakeTemplates?: Record<string, IntakeTemplate>;
   isOpen?: boolean;
@@ -107,6 +110,8 @@ export function BookingsTab({
   language,
   onNewSession,
   onEditSession,
+  onManagePayment,
+  onIntakeSaved,
   isLoading = false,
   intakeTemplates = {},
   isOpen,
@@ -114,6 +119,12 @@ export function BookingsTab({
 }: BookingsTabProps) {
   const [expandedBookings, setExpandedBookings] = useState<Set<string>>(new Set());
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set());
+  // Inline intake editing state
+  const [editingIntakeBookingId, setEditingIntakeBookingId] = useState<string | null>(null);
+  const [editingIntakeResponses, setEditingIntakeResponses] = useState<Record<string, unknown>>({});
+  const [intakeSaving, setIntakeSaving] = useState(false);
+  const [intakeError, setIntakeError] = useState<string | null>(null);
+  const [intakeSuccess, setIntakeSuccess] = useState(false);
 
   const toggleBooking = (id: string) => {
     setExpandedBookings(prev => {
@@ -214,9 +225,65 @@ export function BookingsTab({
     return labels[status] || { text: status, color: 'text-[var(--v2-text-muted)]', bgColor: 'bg-[var(--v2-surface)]' };
   };
 
-  // Build intake content for expanded view
+  // Intake editing helpers
+  const startEditingIntake = (booking: SessionCardData['booking']) => {
+    if (booking.intake_responses?.responses) {
+      setEditingIntakeBookingId(booking.id);
+      setEditingIntakeResponses({ ...booking.intake_responses.responses });
+      setIntakeError(null);
+      setIntakeSuccess(false);
+    }
+  };
+
+  const cancelEditingIntake = () => {
+    setEditingIntakeBookingId(null);
+    setEditingIntakeResponses({});
+    setIntakeError(null);
+    setIntakeSuccess(false);
+  };
+
+  const saveIntakeResponses = async (bookingId: string) => {
+    setIntakeSaving(true);
+    setIntakeError(null);
+
+    try {
+      const response = await fetch(`/api/scheduling/bookings/${bookingId}/intake`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ responses: editingIntakeResponses })
+      });
+
+      const data = await response.json();
+
+      if (!response.ok || !data.success) {
+        throw new Error(data.error || 'Failed to update intake responses');
+      }
+
+      setIntakeSuccess(true);
+      onIntakeSaved?.(bookingId);
+
+      // Reset after short delay to show success
+      setTimeout(() => {
+        setEditingIntakeBookingId(null);
+        setEditingIntakeResponses({});
+        setIntakeSuccess(false);
+      }, 1500);
+    } catch (err) {
+      setIntakeError(err instanceof Error ? err.message : 'Failed to update responses');
+    } finally {
+      setIntakeSaving(false);
+    }
+  };
+
+  const handleIntakeFieldChange = (key: string, value: unknown) => {
+    setEditingIntakeResponses(prev => ({ ...prev, [key]: value }));
+  };
+
+  // Build intake content for expanded view (supports view and edit modes)
   const buildIntakeContent = (booking: SessionCardData['booking'], template?: IntakeTemplate) => {
     if (!booking.intake_responses?.responses) return null;
+
+    const isEditing = editingIntakeBookingId === booking.id;
 
     const getFieldLabel = (key: string): string => {
       if (!template?.fields) return key.replace(/_/g, ' ');
@@ -224,6 +291,11 @@ export function BookingsTab({
       if (!field) return key.replace(/_/g, ' ');
       const langKey = `label_${language}` as keyof typeof field;
       return (field[langKey] as string) || field.label_en;
+    };
+
+    const getFieldPlaceholder = (field: IntakeTemplate['fields'][0]) => {
+      const langKey = `placeholder_${language}` as keyof typeof field;
+      return (field[langKey] as string) || '';
     };
 
     const getOptionLabel = (key: string, value: string): string => {
@@ -251,23 +323,277 @@ export function BookingsTab({
       return String(value);
     };
 
+    // Render editable field based on template field type
+    const renderEditableField = (field: IntakeTemplate['fields'][0]) => {
+      const value = editingIntakeResponses[field.key];
+      const label = getFieldLabel(field.key);
+      const placeholder = getFieldPlaceholder(field);
+
+      switch (field.type) {
+        case 'text':
+        case 'email':
+        case 'tel':
+          return (
+            <div key={field.key} className="space-y-1">
+              <label className="text-[10px] font-semibold text-[var(--v2-text-muted)] uppercase tracking-wider">
+                {label}
+                {field.required && <span className="text-red-500 ms-0.5">*</span>}
+              </label>
+              <Input
+                type={field.type}
+                value={(value as string) || ''}
+                onChange={(e) => handleIntakeFieldChange(field.key, e.target.value)}
+                placeholder={placeholder}
+                className="h-8 text-sm bg-[var(--v2-surface)] border-[var(--v2-border)] focus:border-[#8B5CF6]"
+                dir={isRTL ? 'rtl' : 'ltr'}
+              />
+            </div>
+          );
+
+        case 'textarea':
+          return (
+            <div key={field.key} className="space-y-1">
+              <label className="text-[10px] font-semibold text-[var(--v2-text-muted)] uppercase tracking-wider">
+                {label}
+                {field.required && <span className="text-red-500 ms-0.5">*</span>}
+              </label>
+              <textarea
+                value={(value as string) || ''}
+                onChange={(e) => handleIntakeFieldChange(field.key, e.target.value)}
+                placeholder={placeholder}
+                rows={2}
+                className="w-full px-3 py-2 text-sm bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-md text-[var(--v2-text-primary)] placeholder:text-[var(--v2-text-muted)] focus:outline-none focus:border-[#8B5CF6] focus:ring-1 focus:ring-[#8B5CF6]/20 resize-none"
+                dir={isRTL ? 'rtl' : 'ltr'}
+              />
+            </div>
+          );
+
+        case 'select':
+          return (
+            <div key={field.key} className="space-y-1">
+              <label className="text-[10px] font-semibold text-[var(--v2-text-muted)] uppercase tracking-wider">
+                {label}
+                {field.required && <span className="text-red-500 ms-0.5">*</span>}
+              </label>
+              <select
+                value={(value as string) || ''}
+                onChange={(e) => handleIntakeFieldChange(field.key, e.target.value)}
+                className="w-full h-8 px-3 text-sm bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-md text-[var(--v2-text-primary)] focus:outline-none focus:border-[#8B5CF6]"
+                dir={isRTL ? 'rtl' : 'ltr'}
+              >
+                <option value="">{t('common.select') || 'Select...'}</option>
+                {field.options?.map(option => (
+                  <option key={option.value} value={option.value}>
+                    {getOptionLabel(field.key, option.value)}
+                  </option>
+                ))}
+              </select>
+            </div>
+          );
+
+        case 'radio':
+          return (
+            <div key={field.key} className="space-y-1.5">
+              <label className="text-[10px] font-semibold text-[var(--v2-text-muted)] uppercase tracking-wider">
+                {label}
+                {field.required && <span className="text-red-500 ms-0.5">*</span>}
+              </label>
+              <div className="space-y-1">
+                {field.options?.map(option => (
+                  <label key={option.value} className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      name={field.key}
+                      value={option.value}
+                      checked={value === option.value}
+                      onChange={(e) => handleIntakeFieldChange(field.key, e.target.value)}
+                      className="h-3.5 w-3.5 text-[#8B5CF6] border-gray-300 focus:ring-[#8B5CF6]"
+                    />
+                    <span className="text-sm text-[var(--v2-text-primary)]">
+                      {getOptionLabel(field.key, option.value)}
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          );
+
+        case 'checkbox':
+          const isMultiple = field.options && field.options.length > 1;
+          if (isMultiple) {
+            const selectedValues = Array.isArray(value) ? value : [];
+            return (
+              <div key={field.key} className="space-y-1.5">
+                <label className="text-[10px] font-semibold text-[var(--v2-text-muted)] uppercase tracking-wider">
+                  {label}
+                  {field.required && <span className="text-red-500 ms-0.5">*</span>}
+                </label>
+                <div className="space-y-1">
+                  {field.options?.map(option => (
+                    <label key={option.value} className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        value={option.value}
+                        checked={selectedValues.includes(option.value)}
+                        onChange={(e) => {
+                          const newValues = e.target.checked
+                            ? [...selectedValues, option.value]
+                            : selectedValues.filter((v: string) => v !== option.value);
+                          handleIntakeFieldChange(field.key, newValues);
+                        }}
+                        className="h-3.5 w-3.5 rounded text-[#8B5CF6] border-gray-300 focus:ring-[#8B5CF6]"
+                      />
+                      <span className="text-sm text-[var(--v2-text-primary)]">
+                        {getOptionLabel(field.key, option.value)}
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            );
+          } else {
+            return (
+              <div key={field.key} className="space-y-1">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={value === true || value === 'yes'}
+                    onChange={(e) => handleIntakeFieldChange(field.key, e.target.checked ? 'yes' : 'no')}
+                    className="h-3.5 w-3.5 rounded text-[#8B5CF6] border-gray-300 focus:ring-[#8B5CF6]"
+                  />
+                  <span className="text-[10px] font-semibold text-[var(--v2-text-muted)] uppercase tracking-wider">
+                    {label}
+                    {field.required && <span className="text-red-500 ms-0.5">*</span>}
+                  </span>
+                </label>
+              </div>
+            );
+          }
+
+        default:
+          return null;
+      }
+    };
+
     const responses = Object.entries(booking.intake_responses.responses);
     const responseCount = responses.length;
 
+    // EDIT MODE
+    if (isEditing) {
+      return (
+        <div className="space-y-3">
+          {/* Header */}
+          <div className="flex items-center justify-between pb-2 border-b border-[var(--v2-border)]">
+            <span className="text-xs font-medium text-[#8B5CF6]">
+              {t('crm.intake.edit_title') || 'Edit Intake Form'}
+            </span>
+          </div>
+
+          {/* Success Message */}
+          {intakeSuccess && (
+            <div className="flex items-center gap-2 p-2 rounded-lg bg-green-500/10 text-green-600 text-sm">
+              <CheckCircle2 className="h-4 w-4 flex-shrink-0" />
+              {t('crm.intake.update_success') || 'Intake updated successfully'}
+            </div>
+          )}
+
+          {/* Error Message */}
+          {intakeError && (
+            <div className="flex items-center gap-2 p-2 rounded-lg bg-red-500/10 text-red-600 text-sm">
+              <AlertCircle className="h-4 w-4 flex-shrink-0" />
+              {intakeError}
+            </div>
+          )}
+
+          {/* Editable fields */}
+          <div className="space-y-3">
+            {template?.fields ? (
+              template.fields.map(renderEditableField)
+            ) : (
+              // Fallback: render text inputs for each response key
+              responses.map(([key]) => (
+                <div key={key} className="space-y-1">
+                  <label className="text-[10px] font-semibold text-[var(--v2-text-muted)] uppercase tracking-wider">
+                    {getFieldLabel(key)}
+                  </label>
+                  <Input
+                    type="text"
+                    value={(editingIntakeResponses[key] as string) || ''}
+                    onChange={(e) => handleIntakeFieldChange(key, e.target.value)}
+                    className="h-8 text-sm bg-[var(--v2-surface)] border-[var(--v2-border)] focus:border-[#8B5CF6]"
+                    dir={isRTL ? 'rtl' : 'ltr'}
+                  />
+                </div>
+              ))
+            )}
+          </div>
+
+          {/* Action buttons */}
+          <div className="flex items-center gap-2 pt-2 border-t border-[var(--v2-border)]">
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => saveIntakeResponses(booking.id)}
+              disabled={intakeSaving || intakeSuccess}
+              className="h-7 text-xs text-white"
+              style={{ background: 'linear-gradient(135deg, #8B5CF6 0%, #7C3AED 100%)' }}
+            >
+              {intakeSaving ? (
+                <>
+                  <Loader2 className="h-3 w-3 me-1.5 animate-spin" />
+                  {t('common.saving') || 'Saving...'}
+                </>
+              ) : (
+                <>
+                  <Save className="h-3 w-3 me-1.5" />
+                  {t('button.save') || 'Save'}
+                </>
+              )}
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={cancelEditingIntake}
+              disabled={intakeSaving}
+              className="h-7 text-xs border-[var(--v2-border)]"
+            >
+              <X className="h-3 w-3 me-1.5" />
+              {t('button.cancel') || 'Cancel'}
+            </Button>
+          </div>
+        </div>
+      );
+    }
+
+    // VIEW MODE
     return (
       <div className="space-y-3">
-        {/* Header with count */}
+        {/* Header with count and edit button */}
         <div className="flex items-center justify-between pb-2 border-b border-[var(--v2-border)]">
           <span className="text-xs font-medium text-[var(--v2-text-muted)]">
             {responseCount} {responseCount === 1
               ? (t('crm.intake.response') || 'response')
               : (t('crm.intake.responses') || 'responses')}
           </span>
-          {booking.intake_completed_at && (
-            <span className="text-xs text-[var(--v2-text-muted)]">
-              {formatShortDate(booking.intake_completed_at)}
-            </span>
-          )}
+          <div className="flex items-center gap-2">
+            {booking.intake_completed_at && (
+              <span className="text-xs text-[var(--v2-text-muted)]">
+                {formatShortDate(booking.intake_completed_at)}
+              </span>
+            )}
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                startEditingIntake(booking);
+              }}
+              className="flex items-center gap-1 px-2 py-0.5 text-xs font-medium text-[#8B5CF6] hover:bg-[#8B5CF6]/10 rounded-full transition-colors"
+            >
+              <Edit2 className="h-3 w-3" />
+              {t('button.edit') || 'Edit'}
+            </button>
+          </div>
         </div>
 
         {/* Response grid */}
@@ -535,8 +861,10 @@ export function BookingsTab({
                             const StepIcon = STEP_ICONS[step.key] || CheckCircle2;
                             const stepTitle = step.label || t(`crm.booking.step.${step.key}`) || step.key;
                             const isIntakeStep = step.key === 'intake';
+                            const isPaymentStep = step.key === 'payment';
                             const isConfirmationStep = step.key === 'confirmation';
                             const intakeExpandable = isIntakeStep && hasIntake;
+                            const paymentManageable = isPaymentStep && session.payment && session.payment.status !== 'free';
 
                             return renderJourneyRow(
                               StepIcon,
@@ -560,9 +888,23 @@ export function BookingsTab({
                                     {isConfirmationStep ? formatDateTime(step.timestamp) : formatShortDate(step.timestamp)}
                                   </p>
                                 )}
+                                {/* Payment step - show Manage button */}
+                                {paymentManageable && onManagePayment && (
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      onManagePayment(session);
+                                    }}
+                                    className="mt-1 flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-[#8B5CF6] bg-[#8B5CF6]/10 hover:bg-[#8B5CF6]/20 rounded-full transition-colors"
+                                  >
+                                    <CreditCard className="h-3 w-3" />
+                                    {t('crm.payment.manage') || 'Manage'}
+                                  </button>
+                                )}
                                 {/* Special rendering for intake step with response count */}
                                 {isIntakeStep && hasIntake && (
-                                  <div className="flex items-center gap-2">
+                                  <div className="flex items-center gap-2 flex-wrap">
                                     <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-green-500/10 text-green-600 dark:text-green-400">
                                       <CheckCircle2 className="h-3 w-3" />
                                       {t('crm.booking.intake_completed') || 'Completed'}
@@ -570,6 +912,7 @@ export function BookingsTab({
                                     <bdi className="text-xs text-[var(--v2-text-muted)]">
                                       {Object.keys(booking.intake_responses?.responses || {}).length} {t('crm.intake.responses')}
                                     </bdi>
+                                    {/* Edit button is now inside expanded content */}
                                   </div>
                                 )}
                               </div>,

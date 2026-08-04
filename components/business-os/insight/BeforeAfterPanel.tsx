@@ -27,10 +27,9 @@ export function BeforeAfterPanel({
 
   return (
     <div
-      className="mx-5 mb-4 grid grid-cols-2 gap-4 p-4 rounded-xl"
+      className="mx-5 mb-4 grid grid-cols-2 gap-4 p-4 rounded-xl border border-[var(--v2-border)]"
       style={{
         background: 'linear-gradient(135deg, rgba(239, 68, 68, 0.04) 0%, rgba(34, 197, 94, 0.04) 100%)',
-        border: '1px solid rgba(0, 0, 0, 0.06)',
         direction: isRTL ? 'rtl' : 'ltr',
       }}
     >
@@ -41,13 +40,13 @@ export function BeforeAfterPanel({
             className="w-2 h-2 rounded-full"
             style={{ background: '#EF4444' }}
           />
-          <span className="text-sm font-semibold text-gray-700">
+          <span className="text-sm font-semibold text-[var(--v2-text-primary)]">
             {t('myday.insight.do_nothing')}
           </span>
         </div>
         <ul className="space-y-2">
           {doNothingPoints.map((point, i) => (
-            <li key={i} className="flex items-start gap-2 text-sm text-gray-600">
+            <li key={i} className="flex items-start gap-2 text-sm text-[var(--v2-text-secondary)]">
               <span className="text-red-400 mt-0.5">•</span>
               <span>{point}</span>
             </li>
@@ -62,13 +61,13 @@ export function BeforeAfterPanel({
             className="w-2 h-2 rounded-full"
             style={{ background: '#22C55E' }}
           />
-          <span className="text-sm font-semibold text-gray-700">
+          <span className="text-sm font-semibold text-[var(--v2-text-primary)]">
             {t('myday.insight.let_me_handle')}
           </span>
         </div>
         <ul className="space-y-2">
           {handlePoints.map((point, i) => (
-            <li key={i} className="flex items-start gap-2 text-sm text-gray-600">
+            <li key={i} className="flex items-start gap-2 text-sm text-[var(--v2-text-secondary)]">
               <span className="text-green-500 mt-0.5">•</span>
               <span>{point}</span>
             </li>
