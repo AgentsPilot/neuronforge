@@ -86,21 +86,48 @@ const LABELS = {
   }
 };
 
+// Helper to normalize field definitions - handles both string arrays and object arrays
+function normalizeFields(fields: unknown): FormField[] {
+  const defaultFields: FormField[] = [
+    { name: 'name', type: 'text', label: 'Name', required: true },
+    { name: 'email', type: 'email', label: 'Email', required: true },
+    { name: 'phone', type: 'tel', label: 'Phone', required: true },
+    { name: 'message', type: 'textarea', label: 'Message', required: true }
+  ];
+
+  if (!fields || !Array.isArray(fields)) {
+    return defaultFields;
+  }
+
+  return fields.map((field): FormField => {
+    // If field is a string like 'name', 'email', 'message'
+    if (typeof field === 'string') {
+      const fieldName = field.toLowerCase();
+      const type = fieldName === 'email' ? 'email' : fieldName === 'phone' ? 'tel' : fieldName === 'message' ? 'textarea' : 'text';
+      return { name: fieldName, type, label: field, required: true };
+    }
+    // If field is already an object with name property
+    if (field && typeof field === 'object' && 'name' in field) {
+      return field as FormField;
+    }
+    // Fallback
+    return { name: 'field', type: 'text', label: 'Field', required: false };
+  });
+}
+
 export function ContactFormBlock({ content, styles, theme, locale, isRTL, className, subdomain }: BlockRendererProps) {
   const {
     title,
     subtitle,
-    fields: rawFields = [
-      { name: 'name', type: 'text', label: 'Name', required: true },
-      { name: 'email', type: 'email', label: 'Email', required: true },
-      { name: 'phone', type: 'tel', label: 'Phone', required: true },
-      { name: 'message', type: 'textarea', label: 'Message', required: true }
-    ],
+    fields: rawFieldsInput,
     business_email,
     business_phone,
     business_address,
     business_hours
-  } = content as ContactFormContent;
+  } = content as ContactFormContent & { fields?: unknown };
+
+  // Normalize fields to handle both string arrays and object arrays
+  const rawFields = normalizeFields(rawFieldsInput);
 
   // Ensure phone field exists and is required
   const hasPhoneField = rawFields.some(f => f.name === 'phone' || f.type === 'tel');
@@ -183,6 +210,10 @@ export function ContactFormBlock({ content, styles, theme, locale, isRTL, classN
   };
 
   const getFieldLabel = (field: FormField): string => {
+    // Handle cases where field.name might be undefined
+    if (!field.name) {
+      return field.label || 'Field';
+    }
     // Prioritize localized labels over field.label (which may be English)
     const key = field.name.toLowerCase() as keyof typeof labels;
     const localizedLabel = labels[key] as string | undefined;
@@ -212,7 +243,7 @@ export function ContactFormBlock({ content, styles, theme, locale, isRTL, classN
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             className="text-lg text-gray-700 dark:text-gray-300"
-            style={{ fontFamily: theme?.fonts.body }}
+            style={{ fontFamily: 'var(--website-font-body)' }}
           >
             {labels.success}
           </motion.p>
@@ -237,7 +268,7 @@ export function ContactFormBlock({ content, styles, theme, locale, isRTL, classN
                 whileInView={{ opacity: 1, y: 0 }}
                 viewport={{ once: true }}
                 className="text-2xl sm:text-3xl font-bold text-gray-900 dark:text-white"
-                style={{ fontFamily: theme?.fonts.heading }}
+                style={{ fontFamily: 'var(--website-font-heading)' }}
               >
                 {title}
               </motion.h2>
@@ -249,7 +280,7 @@ export function ContactFormBlock({ content, styles, theme, locale, isRTL, classN
                 viewport={{ once: true }}
                 transition={{ delay: 0.1 }}
                 className="mt-2 text-gray-600 dark:text-gray-300"
-                style={{ fontFamily: theme?.fonts.body }}
+                style={{ fontFamily: 'var(--website-font-body)' }}
               >
                 {subtitle}
               </motion.p>
@@ -278,7 +309,7 @@ export function ContactFormBlock({ content, styles, theme, locale, isRTL, classN
               {hasContactInfo && (
                 <h3
                   className="text-lg font-semibold text-gray-900 dark:text-white mb-5"
-                  style={{ fontFamily: theme?.fonts.heading }}
+                  style={{ fontFamily: 'var(--website-font-heading)' }}
                 >
                   {labels.sendUsMessage}
                 </h3>
@@ -315,7 +346,7 @@ export function ContactFormBlock({ content, styles, theme, locale, isRTL, classN
                         }`}
                         style={{
                           borderRadius: theme?.borderRadius || '0.5rem',
-                          fontFamily: theme?.fonts.body
+                          fontFamily: 'var(--website-font-body)'
                         }}
                       />
                     ) : field.type === 'tel' ? (
@@ -361,7 +392,7 @@ export function ContactFormBlock({ content, styles, theme, locale, isRTL, classN
                         }`}
                         style={{
                           borderRadius: theme?.borderRadius || '0.5rem',
-                          fontFamily: theme?.fonts.body
+                          fontFamily: 'var(--website-font-body)'
                         }}
                       >
                         <option value="">{field.placeholder || `Select ${getFieldLabel(field)}`}</option>
@@ -389,7 +420,7 @@ export function ContactFormBlock({ content, styles, theme, locale, isRTL, classN
                         }`}
                         style={{
                           borderRadius: theme?.borderRadius || '0.5rem',
-                          fontFamily: theme?.fonts.body
+                          fontFamily: 'var(--website-font-body)'
                         }}
                       />
                     )}
@@ -438,7 +469,7 @@ export function ContactFormBlock({ content, styles, theme, locale, isRTL, classN
               >
                 <h3
                   className="text-lg font-semibold text-white mb-6"
-                  style={{ fontFamily: theme?.fonts.heading }}
+                  style={{ fontFamily: 'var(--website-font-heading)' }}
                 >
                   {labels.contactInfo}
                 </h3>

@@ -324,6 +324,7 @@ OUTPUT FORMAT (JSON)
 {
   "offering_type": "course|service|coaching|treatment",
   "hero": {
+    "headline": "Short, impactful headline (3-6 words) that captures the essence of the offering",
     "subheadline": "Compelling 1-2 sentence summary that explains what this is, who it's for, and the transformation"
   },
   "features": {
@@ -348,7 +349,7 @@ OUTPUT FORMAT (JSON)
   },
   "faq": {
     "title": "${l.commonQuestions}",
-    "items": [
+    "faqs": [
       { "question": "Specific question about this offering?", "answer": "Helpful answer based on description" },
       { "question": "Another relevant question?", "answer": "Helpful answer based on description" },
       { "question": "Question about process/format?", "answer": "Helpful answer based on description" },
@@ -356,7 +357,12 @@ OUTPUT FORMAT (JSON)
     ]
   },
   "booking_widget": {
-    "title": "Appropriate CTA based on offering type"
+    "title": "Appropriate CTA based on offering type (for bookable services)"
+  },
+  "cta": {
+    "title": "Compelling CTA title (for courses/products - e.g. 'Ready to Start Learning?')",
+    "description": "Short motivating description (e.g. 'Enroll now and begin your journey')",
+    "cta_text": "Action button text (e.g. 'Enroll Now' for courses, 'Buy Now' for products)"
   },
   "contact_form": {
     "title": "${l.haveQuestions}"
@@ -413,7 +419,7 @@ function getDefaultContent(data: { serviceName?: string; serviceDescription?: st
     },
     faq: {
       title: 'Frequently Asked Questions',
-      items: [
+      faqs: [
         { question: 'What can I expect from this service?', answer: 'A supportive, professional environment focused on helping you achieve your goals.' },
         { question: 'How do I prepare?', answer: 'Simply come as you are. We will guide you through everything you need to know.' },
         { question: 'What if I need to reschedule?', answer: 'We understand life happens. Contact us to reschedule your appointment.' },

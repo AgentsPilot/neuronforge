@@ -611,7 +611,7 @@ export class SchedulingBookingRepository {
 
       let query = this.supabase
         .from('scheduling_bookings')
-        .select('*, service:scheduling_services(service_name)')
+        .select('*, service:scheduling_services(service_name, price, currency)')
         .eq('user_id', userId);
 
       if (serviceId) {

@@ -43,7 +43,73 @@
   "common": {
     "loading": "Loading...",
     "error": "Something went wrong",
-    "retry": "Try again"
+    "retry": "Try again",
+    "back": "Back",
+    "continue": "Continue",
+    "cancel": "Cancel",
+    "email": "Email",
+    "phone": "Phone",
+    "name": "Name",
+    "optional": "optional",
+    "try_again": "Try Again"
+  },
+  "payments": {
+    "stripe": {
+      "wizard": {
+        "title_choice": "Connect Stripe Account",
+        "title_create": "Create New Account",
+        "title_business": "Business Information",
+        "title_personal": "Personal Information",
+        "title_review": "Review & Confirm",
+        "title_success": "Setup Complete",
+        "title_error": "Setup Error",
+        "title_default": "Payment Setup",
+        "choose_desc": "Choose how you want to accept payments through your business",
+        "create_account_desc": "Provide your basic information to create a Stripe account",
+        "new_account": "Create New Account",
+        "new_account_desc": "New to Stripe? We'll help you create an account",
+        "existing_account": "Connect Existing Account",
+        "existing_account_desc": "Already have Stripe? Connect in seconds",
+        "individual": "Individual / Sole Proprietor",
+        "individual_desc": "For freelancers, consultants, and solo businesses",
+        "company": "Company / Corporation",
+        "company_desc": "For registered businesses and organizations",
+        "business_desc_individual": "Tell us about your business location",
+        "business_desc_company": "Tell us about your company",
+        "country": "Country",
+        "select_country": "Select country",
+        "business_name": "Business Name",
+        "business_name_placeholder": "Acme Inc.",
+        "website": "Website",
+        "personal_desc_individual": "Your personal information for account verification",
+        "personal_desc_company": "Representative information for account verification",
+        "first_name": "First Name",
+        "first_name_placeholder": "John",
+        "last_name": "Last Name",
+        "last_name_placeholder": "Doe",
+        "email_placeholder": "john@example.com",
+        "account_type": "Account Type",
+        "review_desc": "Review your information and complete setup",
+        "next_steps": "Next Steps",
+        "next_steps_desc": "After creating your account, you'll need to complete identity verification and add bank details through your Stripe dashboard to start receiving payments.",
+        "creating": "Creating Account...",
+        "create_account": "Create Payment Account",
+        "success_title": "Account Created Successfully!",
+        "success_desc": "Your Stripe payment account has been created. You can now accept payments.",
+        "account_id": "Account ID",
+        "finalizing": "Finalizing setup...",
+        "error_title": "Setup Error",
+        "error_default": "Failed to create payment account",
+        "error_country": "Country is required",
+        "error_business_name": "Business name is required",
+        "error_first_name": "First name is required",
+        "error_last_name": "Last name is required",
+        "error_email": "Email is required",
+        "error_email_invalid": "Invalid email address",
+        "error_create": "Failed to create account",
+        "error_generic": "Something went wrong. Please try again."
+      }
+    }
   },
   "scheduling": {
     "frequency_short": {
@@ -54,6 +120,128 @@
     },
     "availability": {
       "working_days": "Working days:"
+    }
+  },
+  "crm": {
+    "document": {
+      "upload_title": "Upload Document",
+      "remove": "Remove",
+      "drag_drop": "Drag and drop a file, or click to browse",
+      "max_size": "Max 10MB",
+      "supported_formats": "PDF, DOC, XLS, Images",
+      "name": "Document Name",
+      "name_placeholder": "Enter document name",
+      "type": "Document Type",
+      "description": "Description",
+      "description_placeholder": "Optional description...",
+      "type": {
+        "contract": "Contract",
+        "intake_form": "Intake Form",
+        "invoice": "Invoice",
+        "receipt": "Receipt",
+        "id_document": "ID Document",
+        "medical": "Medical",
+        "insurance": "Insurance",
+        "other": "Other"
+      }
+    },
+    "activity": {
+      "type": {
+        "note": "Note",
+        "call": "Call",
+        "email": "Email",
+        "meeting": "Meeting",
+        "booking": "Booking",
+        "payment": "Payment",
+        "task": "Task",
+        "booking_created": "Booking Created",
+        "booking_completed": "Booking Completed",
+        "booking_cancelled": "Booking Cancelled",
+        "booking_confirmed": "Booking Confirmed",
+        "payment_received": "Payment Received",
+        "payment_failed": "Payment Failed",
+        "document_uploaded": "Document Uploaded",
+        "contact_created": "Contact Created",
+        "contact_updated": "Contact Updated",
+        "stage_changed": "Stage Changed",
+        "task_created": "Task Created",
+        "task_completed": "Task Completed",
+        "email_sent": "Email Sent"
+      },
+      "system": {
+        "booking": "Booking",
+        "payment": "Payment",
+        "email": "Email Sent",
+        "task": "Task",
+        "booking_created": "Booking Created",
+        "booking_completed": "Booking Completed",
+        "booking_cancelled": "Booking Cancelled",
+        "booking_confirmed": "Booking Confirmed",
+        "payment_received": "Payment Received",
+        "payment_failed": "Payment Failed",
+        "document_uploaded": "Document Uploaded",
+        "contact_created": "Contact Created",
+        "contact_updated": "Contact Updated",
+        "stage_changed": "Stage Changed",
+        "task_created": "Task Created",
+        "task_completed": "Task Completed",
+        "email_sent": "Email Sent"
+      },
+      "add_placeholder": "Add a note...",
+      "just_now": "Just now",
+      "mins_ago": "m ago",
+      "hours_ago": "h ago",
+      "days_ago": "d ago",
+      "filter": {
+        "all": "All",
+        "notes": "Notes",
+        "calls": "Calls",
+        "emails": "Emails",
+        "meetings": "Meetings",
+        "bookings": "Bookings",
+        "payments": "Payments",
+        "tasks": "Tasks"
+      },
+      "no_matching": "No matching activities",
+      "clear_filter": "Clear filter",
+      "tab": {
+        "activity": "Activity",
+        "emails": "Emails"
+      },
+      "description": {
+        "booked_via_website": "Booked via website for {date}",
+        "booked_via_website_paid": "Booked via website for {date} (paid)",
+        "purchased_via_website": "Purchased via website",
+        "purchased_via_website_paid": "Purchased via website (paid)",
+        "scheduled_for": "Scheduled for {date}",
+        "manual_email": "Manual email",
+        "paid": "paid"
+      },
+      "desc": {
+        "type": "Type",
+        "file": "File",
+        "source": "Source",
+        "stage": "Stage",
+        "no_reason": "No reason provided",
+        "client_no_show": "Client did not attend scheduled session",
+        "booked_via_website": "Booked via website for",
+        "purchased_via_website": "Purchased via website",
+        "scheduled_for": "Scheduled for",
+        "manual_email": "Manual email",
+        "campaign_email": "Campaign email",
+        "paid": "paid"
+      }
+    },
+    "files": {
+      "intake_forms": "Intake Forms",
+      "intake_form": "Intake Form",
+      "documents": "Documents",
+      "no_documents": "No documents uploaded",
+      "upload_first": "Upload first document",
+      "upload": "Upload",
+      "download": "Download",
+      "delete": "Delete",
+      "open": "Open"
     }
   },
   "config": {
@@ -70,7 +258,10 @@
       "connected_desc": "Your Stripe account is connected. You can accept payments for your services.",
       "not_connected_desc": "Connect your Stripe account to accept payments for bookings and services.",
       "connect": "Connect Stripe",
-      "manage": "Manage account"
+      "manage": "Manage account",
+      "disconnect": "Disconnect",
+      "disconnect_title": "Disconnect Stripe?",
+      "disconnect_message": "You will no longer be able to accept payments until you reconnect your Stripe account."
     },
     "payments": {
       "settings_title": "Payment Settings",

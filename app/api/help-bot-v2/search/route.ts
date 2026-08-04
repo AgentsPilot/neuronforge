@@ -3,7 +3,9 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
-import crypto from 'crypto'
+
+// Force dynamic rendering for this API route
+export const dynamic = 'force-dynamic'
 
 const supabase = createClient(
   process.env.SUPABASE_URL!,

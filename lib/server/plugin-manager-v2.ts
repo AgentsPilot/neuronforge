@@ -30,6 +30,7 @@ const corePluginFiles = [
       'onedrive-plugin-v2.json',
       'outlook-plugin-v2.json',
       'salesforce-plugin-v2.json',
+      'stripe-plugin-v2.json',
     ];
 
 // Use globalThis to ensure singleton persists across module reloads (important for Next.js dev mode)

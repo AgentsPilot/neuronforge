@@ -1,7 +1,8 @@
 // lib/agentkit/analyzePrompt-v2-sdk.ts
 // OPTION 2: Use AgentKit SDK's native planning capabilities
 
-import { openai, AGENTKIT_CONFIG } from './agentkitClient';
+import OpenAI from 'openai';
+import { AGENTKIT_CONFIG } from './agentkitClient';
 import { convertPluginsToTools } from './convertPlugins';
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 
@@ -186,6 +187,9 @@ Now demonstrate the complete workflow for the user's request by making all neces
     // STEP 3: Call OpenAI with tools available (planning mode)
     console.log(`🎯 AgentKit SDK: Requesting workflow plan from GPT-4o...`);
 
+    const openai = new OpenAI({
+      apiKey: process.env.OPENAI_API_KEY
+    });
     const completion = await openai.chat.completions.create({
       model: AGENTKIT_CONFIG.model,
       messages: messages,
@@ -259,10 +263,7 @@ Now demonstrate the complete workflow for the user's request by making all neces
       }
     }
 
-    // STEP 5: Parse the textual response for additional context
-    const planContent = message.content || '';
-
-    // Determine workflow type based on tool calls
+    // STEP 5: Determine workflow type based on tool calls
     let workflowType: 'pure_ai' | 'data_retrieval_ai' | 'ai_external_actions' = 'pure_ai';
     if (suggestedPlugins.length > 0) {
       // Check if any plugins are data retrieval (gmail, sheets, drive, etc.)

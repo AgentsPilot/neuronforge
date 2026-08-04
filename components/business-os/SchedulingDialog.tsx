@@ -457,54 +457,48 @@ export function SchedulingDialog({
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
       <DialogContent
-        className="flex flex-col p-0 overflow-hidden"
-        style={{
-          maxWidth: '95vw',
-          width: '1200px',
-          maxHeight: '90vh',
-          height: '85vh',
-        }}
+        className="flex flex-col p-0 overflow-hidden w-full sm:w-[95vw] max-w-full sm:max-w-[1200px] h-[100vh] sm:h-[85vh] max-h-[100vh] sm:max-h-[90vh]"
       >
         {/* Header */}
         <div
-          className="flex items-center justify-between px-6 pe-14 py-4 border-b border-[var(--v2-border)]"
+          className="flex items-center justify-between px-3 sm:px-4 md:px-6 py-3 sm:py-4 border-b border-[var(--v2-border)]"
           style={{ background: `linear-gradient(135deg, ${SCHEDULING_COLOR}08 0%, transparent 100%)` }}
         >
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1 pe-2 sm:pe-0">
             <div
-              className="w-10 h-10 rounded-xl flex items-center justify-center"
+              className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl flex items-center justify-center flex-shrink-0"
               style={{ background: `${SCHEDULING_COLOR}15` }}
             >
-              <Calendar className="w-5 h-5" style={{ color: SCHEDULING_COLOR }} />
+              <Calendar className="w-4 h-4 sm:w-5 sm:h-5" style={{ color: SCHEDULING_COLOR }} />
             </div>
-            <div>
-              <DialogTitle className="text-lg font-semibold text-[var(--v2-text-primary)]">
+            <div className="min-w-0">
+              <DialogTitle className="text-base sm:text-lg font-semibold text-[var(--v2-text-primary)] truncate">
                 {language === 'he' ? 'יומן פגישות' : 'Calendar'}
               </DialogTitle>
-              <p className="text-xs text-[var(--v2-text-muted)]">
+              <p className="text-xs text-[var(--v2-text-muted)] hidden sm:block">
                 {language === 'he' ? 'נהל את הפגישות שלך' : 'Manage your appointments'}
               </p>
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-shrink-0 me-8 sm:me-12">
             <button
               onClick={handleNewBooking}
-              className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-white transition-all hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-[#14B8A6] focus:ring-offset-2 focus:ring-offset-[var(--v2-surface)]"
+              className="flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-medium text-white transition-all hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-[#14B8A6] focus:ring-offset-2 focus:ring-offset-[var(--v2-surface)]"
               style={{ background: SCHEDULING_COLOR }}
             >
-              <Plus className="w-4 h-4" />
-              {language === 'he' ? 'פגישה חדשה' : 'New Booking'}
+              <Plus className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+              <span className="hidden sm:inline">{language === 'he' ? 'פגישה חדשה' : 'New Booking'}</span>
             </button>
           </div>
         </div>
 
         {/* Content - Calendar + Side Panel */}
-        <div className="flex-1 overflow-hidden flex">
+        <div className="flex-1 overflow-hidden flex flex-col md:flex-row">
           {/* Calendar View - takes remaining space */}
-          <div className={`flex-1 overflow-hidden p-4 transition-all duration-300 ${showBookingPanel ? 'opacity-50' : ''}`}>
+          <div className={`flex-1 overflow-hidden p-2 sm:p-3 md:p-4 transition-all duration-300 ${showBookingPanel ? 'opacity-50 md:opacity-100' : ''}`}>
             {loading ? (
               <div className="flex items-center justify-center h-full">
-                <Loader2 className="w-8 h-8 animate-spin" style={{ color: SCHEDULING_COLOR }} />
+                <Loader2 className="w-6 h-6 sm:w-8 sm:h-8 animate-spin" style={{ color: SCHEDULING_COLOR }} />
               </div>
             ) : (
               <SchedulingCalendarView
@@ -518,11 +512,13 @@ export function SchedulingDialog({
             )}
           </div>
 
-          {/* Side Panel - Booking Form */}
+          {/* Side Panel - Booking Form - Overlay on mobile, side panel on desktop */}
           <div
-            className={`flex-shrink-0 border-s border-[var(--v2-border)] bg-[var(--v2-surface)] transition-all duration-300 overflow-hidden ${
-              showBookingPanel ? 'w-[380px]' : 'w-0'
-            }`}
+            className={`flex-shrink-0 border-s-0 md:border-s border-[var(--v2-border)] bg-[var(--v2-surface)] transition-all duration-300 overflow-hidden
+              ${showBookingPanel
+                ? 'fixed md:relative inset-0 md:inset-auto z-50 md:z-auto w-full md:w-[380px]'
+                : 'w-0 md:w-0'
+              }`}
           >
             {showBookingPanel && (
               <form onSubmit={handleSubmit} className="h-full flex flex-col">

@@ -111,7 +111,7 @@ export function PaymentButtonBlock({ content, styles, theme, locale, isRTL, clas
           {description && (
             <p
               className="text-gray-600 dark:text-gray-300 mb-4"
-              style={{ fontFamily: theme?.fonts.body }}
+              style={{ fontFamily: 'var(--website-font-body)' }}
             >
               {description}
             </p>
@@ -120,7 +120,7 @@ export function PaymentButtonBlock({ content, styles, theme, locale, isRTL, clas
           {amount && (
             <p
               className="text-4xl font-bold text-gray-900 dark:text-white mb-6"
-              style={{ fontFamily: theme?.fonts.heading }}
+              style={{ fontFamily: 'var(--website-font-heading)' }}
             >
               {formatAmount(amount, currency)}
               {payment_type === 'subscription' && (

@@ -247,7 +247,7 @@ export function HeroBlock({ content, styles, theme, isRTL, className, locale = '
           transition={{ duration: 0.6, delay: 0.1 }}
           className="text-3xl sm:text-4xl lg:text-5xl xl:text-6xl font-bold tracking-tight leading-[1.15]"
           style={{
-            fontFamily: theme?.fonts.heading,
+            fontFamily: 'var(--website-font-heading)',
             color: background_type === 'image' ? '#ffffff' : textColor,
             ...gradientTextStyle
           }}
@@ -262,7 +262,7 @@ export function HeroBlock({ content, styles, theme, isRTL, className, locale = '
             transition={{ duration: 0.6, delay: 0.2 }}
             className="mt-4 sm:mt-6 text-base sm:text-lg lg:text-xl max-w-2xl leading-relaxed"
             style={{
-              fontFamily: theme?.fonts.body,
+              fontFamily: 'var(--website-font-body)',
               color: background_type === 'image' ? '#e5e7eb' : (isDark ? '#9ca3af' : '#4b5563')
             }}
           >

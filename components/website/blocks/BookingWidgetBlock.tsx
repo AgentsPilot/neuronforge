@@ -175,7 +175,7 @@ export function BookingWidgetBlock({ content, styles, theme, locale, isRTL, clas
             whileInView={{ opacity: 1, y: 0 }}
             viewport={{ once: true }}
             className="text-3xl sm:text-4xl font-bold text-gray-900 dark:text-white"
-            style={{ fontFamily: theme?.fonts.heading }}
+            style={{ fontFamily: 'var(--website-font-heading)' }}
           >
             {title || labels.title}
           </motion.h2>
@@ -185,7 +185,7 @@ export function BookingWidgetBlock({ content, styles, theme, locale, isRTL, clas
             viewport={{ once: true }}
             transition={{ delay: 0.1 }}
             className="mt-4 text-gray-600 dark:text-gray-300"
-            style={{ fontFamily: theme?.fonts.body }}
+            style={{ fontFamily: 'var(--website-font-body)' }}
           >
             {subtitle || labels.subtitle}
           </motion.p>

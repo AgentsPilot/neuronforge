@@ -149,18 +149,33 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
       return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
     }
 
+    // Check for mode parameter: 'archive' (deactivate) or 'permanent' (hard delete)
+    const { searchParams } = new URL(request.url);
+    const mode = searchParams.get('mode') || 'archive';
+
     const pageRepo = new WebsitePageRepository(supabaseServer);
 
-    // Archive instead of hard delete
-    const result = await pageRepo.archive(id, user.id);
+    if (mode === 'permanent') {
+      // Hard delete - for pages with no activity
+      const result = await pageRepo.delete(id, user.id);
 
-    if (result.error) {
-      throw result.error;
+      if (result.error) {
+        throw result.error;
+      }
+
+      requestLogger.info({ pageId: id, userId: user.id, mode: 'permanent' }, 'Permanently deleted website page');
+    } else {
+      // Archive/deactivate - for pages with activity
+      const result = await pageRepo.archive(id, user.id);
+
+      if (result.error) {
+        throw result.error;
+      }
+
+      requestLogger.info({ pageId: id, userId: user.id, mode: 'archive' }, 'Archived website page');
     }
 
-    requestLogger.info({ pageId: id, userId: user.id }, 'Archived website page');
-
-    return NextResponse.json({ success: true });
+    return NextResponse.json({ success: true, mode });
   } catch (error) {
     requestLogger.error({ err: error, id }, 'Failed to delete page');
     return NextResponse.json(

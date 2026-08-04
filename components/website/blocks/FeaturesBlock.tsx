@@ -1,8 +1,58 @@
 'use client';
 
 import { motion } from 'framer-motion';
-import { Check } from 'lucide-react';
+import {
+  Check, Star, Users, TrendingUp, Heart, Brain, Target, Sparkles,
+  Award, Lightbulb, Shield, Zap, Clock, Calendar, BookOpen, GraduationCap,
+  Handshake, MessageCircle, Settings, Globe, Lock, Rocket, Smile, ThumbsUp
+} from 'lucide-react';
 import type { BlockRendererProps, FeatureItem } from './types';
+
+// Map icon names to Lucide components
+const ICON_MAP: Record<string, React.ComponentType<{ className?: string; style?: React.CSSProperties }>> = {
+  check: Check,
+  star: Star,
+  users: Users,
+  trendingup: TrendingUp,
+  heart: Heart,
+  brain: Brain,
+  target: Target,
+  sparkles: Sparkles,
+  award: Award,
+  lightbulb: Lightbulb,
+  shield: Shield,
+  zap: Zap,
+  clock: Clock,
+  calendar: Calendar,
+  bookopen: BookOpen,
+  graduationcap: GraduationCap,
+  handshake: Handshake,
+  messagecircle: MessageCircle,
+  settings: Settings,
+  globe: Globe,
+  lock: Lock,
+  rocket: Rocket,
+  smile: Smile,
+  thumbsup: ThumbsUp
+};
+
+// Get icon component from name string
+function getIconComponent(iconName: string | undefined, primaryColor: string): React.ReactNode {
+  if (!iconName) {
+    return <Check className="w-6 h-6" style={{ color: primaryColor }} />;
+  }
+
+  // Normalize icon name (lowercase, remove spaces)
+  const normalizedName = iconName.toLowerCase().replace(/\s+/g, '');
+  const IconComponent = ICON_MAP[normalizedName];
+
+  if (IconComponent) {
+    return <IconComponent className="w-6 h-6" style={{ color: primaryColor }} />;
+  }
+
+  // Fallback to Check if icon not found
+  return <Check className="w-6 h-6" style={{ color: primaryColor }} />;
+}
 
 interface FeaturesContent {
   title?: string;
@@ -43,7 +93,7 @@ export function FeaturesBlock({ content, styles, theme, isRTL, className }: Bloc
                 whileInView={{ opacity: 1, y: 0 }}
                 viewport={{ once: true }}
                 className="text-3xl sm:text-4xl font-bold text-gray-900 dark:text-white"
-                style={{ fontFamily: theme?.fonts.heading }}
+                style={{ fontFamily: 'var(--website-font-heading)' }}
               >
                 {title}
               </motion.h2>
@@ -55,7 +105,7 @@ export function FeaturesBlock({ content, styles, theme, isRTL, className }: Bloc
                 viewport={{ once: true }}
                 transition={{ delay: 0.1 }}
                 className="mt-4 text-lg text-gray-600 dark:text-gray-300 max-w-2xl mx-auto"
-                style={{ fontFamily: theme?.fonts.body }}
+                style={{ fontFamily: 'var(--website-font-body)' }}
               >
                 {subtitle}
               </motion.p>
@@ -79,17 +129,17 @@ export function FeaturesBlock({ content, styles, theme, isRTL, className }: Bloc
                   className="w-14 h-14 mx-auto rounded-xl flex items-center justify-center text-2xl mb-5"
                   style={{ backgroundColor: `${primaryColor}15` }}
                 >
-                  {feature.icon || <Check style={{ color: primaryColor }} />}
+                  {getIconComponent(feature.icon as string | undefined, primaryColor)}
                 </div>
                 <h3
                   className="text-lg font-semibold text-gray-900 dark:text-white mb-2"
-                  style={{ fontFamily: theme?.fonts.heading }}
+                  style={{ fontFamily: 'var(--website-font-heading)' }}
                 >
                   {feature.title}
                 </h3>
                 <p
                   className="text-gray-600 dark:text-gray-400"
-                  style={{ fontFamily: theme?.fonts.body }}
+                  style={{ fontFamily: 'var(--website-font-body)' }}
                 >
                   {feature.description}
                 </p>
@@ -114,18 +164,18 @@ export function FeaturesBlock({ content, styles, theme, isRTL, className }: Bloc
                   className="w-10 h-10 rounded-lg flex items-center justify-center text-lg flex-shrink-0"
                   style={{ backgroundColor: `${primaryColor}15` }}
                 >
-                  {feature.icon || <Check className="w-5 h-5" style={{ color: primaryColor }} />}
+                  {getIconComponent(feature.icon as string | undefined, primaryColor)}
                 </div>
                 <div>
                   <h3
                     className="text-lg font-semibold text-gray-900 dark:text-white mb-1"
-                    style={{ fontFamily: theme?.fonts.heading }}
+                    style={{ fontFamily: 'var(--website-font-heading)' }}
                   >
                     {feature.title}
                   </h3>
                   <p
                     className="text-gray-600 dark:text-gray-400"
-                    style={{ fontFamily: theme?.fonts.body }}
+                    style={{ fontFamily: 'var(--website-font-body)' }}
                   >
                     {feature.description}
                   </p>
@@ -153,18 +203,18 @@ export function FeaturesBlock({ content, styles, theme, isRTL, className }: Bloc
                   className="w-20 h-20 rounded-2xl flex items-center justify-center text-3xl flex-shrink-0"
                   style={{ backgroundColor: `${primaryColor}15` }}
                 >
-                  {feature.icon || '✨'}
+                  {getIconComponent(feature.icon as string | undefined, primaryColor)}
                 </div>
                 <div className={`text-center lg:text-start ${isRTL ? 'lg:text-end' : ''}`}>
                   <h3
                     className="text-2xl font-bold text-gray-900 dark:text-white mb-4"
-                    style={{ fontFamily: theme?.fonts.heading }}
+                    style={{ fontFamily: 'var(--website-font-heading)' }}
                   >
                     {feature.title}
                   </h3>
                   <p
                     className="text-lg text-gray-600 dark:text-gray-400 max-w-lg"
-                    style={{ fontFamily: theme?.fonts.body }}
+                    style={{ fontFamily: 'var(--website-font-body)' }}
                   >
                     {feature.description}
                   </p>
@@ -192,11 +242,11 @@ export function FeaturesBlock({ content, styles, theme, isRTL, className }: Bloc
                     className="w-8 h-8 rounded-full flex items-center justify-center text-sm flex-shrink-0"
                     style={{ backgroundColor: primaryColor, color: 'white' }}
                   >
-                    {feature.icon || <Check className="w-4 h-4" />}
+                    {getIconComponent(feature.icon as string | undefined, '#ffffff')}
                   </span>
                   <span
                     className="font-medium text-gray-900 dark:text-white"
-                    style={{ fontFamily: theme?.fonts.body }}
+                    style={{ fontFamily: 'var(--website-font-body)' }}
                   >
                     {feature.title}
                   </span>

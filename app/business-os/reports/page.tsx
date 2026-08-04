@@ -3,7 +3,6 @@
 import { useState, useEffect } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { BusinessOSHeader } from '@/components/business-os/BusinessOSHeader';
-import { BigPictureSummary } from '@/components/business-os/reports/BigPictureSummary';
 import { StoryCard } from '@/components/business-os/reports/StoryCard';
 import {
   ArrowLeft,
@@ -42,10 +41,8 @@ export default function ReportsPage() {
   const [viewMode, setViewMode] = useState<ViewMode>(initialViewMode);
   const [selectedInvoiceId, setSelectedInvoiceId] = useState<string | null>(invoiceIdParam);
   const [loading, setLoading] = useState(true);
-  const [storyLoading, setStoryLoading] = useState(false);
   const [stats, setStats] = useState<BusinessStats | null>(null);
   const [story, setStory] = useState<StoryResponse | null>(null);
-  const [hasGeneratedStory, setHasGeneratedStory] = useState(false);
   const [websiteAnalytics, setWebsiteAnalytics] = useState<{
     total_views: number;
     unique_visitors: number;
@@ -177,30 +174,6 @@ export default function ReportsPage() {
       }
     } catch (error) {
       console.error('Failed to fetch website analytics:', error);
-    }
-  };
-
-  // Only called when user clicks "Generate Insights" button
-  const generateInsights = async () => {
-    if (!stats) return;
-
-    try {
-      setStoryLoading(true);
-      const response = await fetch('/api/business-os/story', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ stats, language })
-      });
-      const data = await response.json();
-
-      if (data.success && data.story) {
-        setStory(data.story);
-        setHasGeneratedStory(true);
-      }
-    } catch (error) {
-      console.error('Failed to generate story:', error);
-    } finally {
-      setStoryLoading(false);
     }
   };
 
@@ -559,29 +532,29 @@ export default function ReportsPage() {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4 sm:py-6 space-y-4">
 
         {/* Page Header - Compact */}
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-0">
+          <div className="flex items-center gap-2 sm:gap-3 min-w-0">
             <div
-              className="w-10 h-10 rounded-lg flex items-center justify-center"
+              className="w-9 h-9 sm:w-10 sm:h-10 rounded-lg flex items-center justify-center flex-shrink-0"
               style={{ backgroundColor: 'rgba(34, 197, 139, 0.2)' }}
             >
-              <BarChart3 className="w-5 h-5" style={{ color: REPORTS_COLOR }} />
+              <BarChart3 className="w-4 h-4 sm:w-5 sm:h-5" style={{ color: REPORTS_COLOR }} />
             </div>
-            <div>
-              <h1 className="text-xl font-semibold text-[var(--v2-text-primary)]">
+            <div className="min-w-0">
+              <h1 className="text-lg sm:text-xl font-semibold text-[var(--v2-text-primary)] truncate">
                 {t('reports.title') || 'Your Business Story'}
               </h1>
-              <p className="text-xs text-[var(--v2-text-secondary)]">
+              <p className="text-xs text-[var(--v2-text-secondary)] hidden sm:block">
                 {t('reports.subtitle') || 'How your business is doing'}
               </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 sm:gap-3 w-full sm:w-auto">
             {/* Back to Dashboard */}
             <button
               onClick={() => router.push('/business-os')}
-              className="p-2 text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] bg-[var(--v2-surface)] border border-[var(--v2-border)] transition-all hover:bg-[var(--v2-border)]"
+              className="p-2 text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] bg-[var(--v2-surface)] border border-[var(--v2-border)] transition-all hover:bg-[var(--v2-border)] flex-shrink-0"
               style={{ borderRadius: 'var(--v2-radius-button)' }}
               title={t('reports.back_to_dashboard') || 'Back to dashboard'}
             >
@@ -590,11 +563,11 @@ export default function ReportsPage() {
 
             {/* View Mode Tabs */}
             <div
-              className="bg-[var(--v2-surface)] border border-[var(--v2-border)] p-1 inline-flex gap-1"
+              className="bg-[var(--v2-surface)] border border-[var(--v2-border)] p-0.5 sm:p-1 inline-flex gap-0.5 sm:gap-1 flex-1 sm:flex-initial justify-stretch sm:justify-start"
               style={{ borderRadius: 'var(--v2-radius-card)' }}
             >
               <button
-                className={`p-2 transition-all border ${
+                className={`p-1.5 sm:p-2 transition-all border flex-1 sm:flex-initial ${
                   viewMode === 'overview'
                     ? 'text-[#22C58B] border-[#22C58B] bg-[#22C58B]/10'
                     : 'text-[var(--v2-text-secondary)] border-transparent hover:text-[var(--v2-text-primary)]'
@@ -603,10 +576,10 @@ export default function ReportsPage() {
                 onClick={() => setViewMode('overview')}
                 title={t('reports.tab_overview') || 'Overview'}
               >
-                <LayoutDashboard className="h-4 w-4" />
+                <LayoutDashboard className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
               </button>
               <button
-                className={`p-2 transition-all border ${
+                className={`p-1.5 sm:p-2 transition-all border flex-1 sm:flex-initial ${
                   viewMode === 'transactions'
                     ? 'text-[#22C58B] border-[#22C58B] bg-[#22C58B]/10'
                     : 'text-[var(--v2-text-secondary)] border-transparent hover:text-[var(--v2-text-primary)]'
@@ -615,10 +588,10 @@ export default function ReportsPage() {
                 onClick={() => setViewMode('transactions')}
                 title={t('reports.tab_transactions') || 'Transactions'}
               >
-                <List className="h-4 w-4" />
+                <List className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
               </button>
               <button
-                className={`p-2 transition-all border ${
+                className={`p-1.5 sm:p-2 transition-all border flex-1 sm:flex-initial ${
                   viewMode === 'invoices'
                     ? 'text-[#22C58B] border-[#22C58B] bg-[#22C58B]/10'
                     : 'text-[var(--v2-text-secondary)] border-transparent hover:text-[var(--v2-text-primary)]'
@@ -627,7 +600,7 @@ export default function ReportsPage() {
                 onClick={() => setViewMode('invoices')}
                 title={t('reports.tab_invoices') || 'Invoices'}
               >
-                <FileText className="h-4 w-4" />
+                <FileText className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
               </button>
             </div>
           </div>
@@ -647,15 +620,6 @@ export default function ReportsPage() {
         ) : viewMode === 'overview' ? (
           /* Story-driven Overview - Compact layout */
           <div className="space-y-3">
-            {/* Big Picture Summary */}
-            <BigPictureSummary
-              narrative={story?.bigPicture || ''}
-              healthStatus={story?.healthStatus || 'healthy'}
-              loading={storyLoading}
-              onGenerateInsights={generateInsights}
-              hasGeneratedStory={hasGeneratedStory}
-            />
-
             {/* Story Cards Grid - 3 cards per row, equal heights */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3" style={{ gridAutoRows: 'minmax(280px, auto)' }}>
               {/* Money Card */}

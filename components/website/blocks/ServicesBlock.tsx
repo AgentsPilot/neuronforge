@@ -108,15 +108,36 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
   // Use translated default if no title provided
   const displayTitle = title || t('ourServices');
 
-  // CTA labels based on flow
+  // CTA labels based on flow - includes new 'scheduling' and 'client_info' steps
   const ctaLabels: Record<string, Record<FlowStep, string>> = {
-    en: { booking: 'Book Now', payment: 'Buy Now', intake: 'Get Started', confirmation: 'Learn More' },
-    es: { booking: 'Reservar', payment: 'Comprar', intake: 'Empezar', confirmation: 'Más Info' },
-    he: { booking: 'הזמן עכשיו', payment: 'קנה עכשיו', intake: 'התחל', confirmation: 'מידע נוסף' }
+    en: {
+      scheduling: 'Book Now',
+      client_info: 'Get Started',
+      booking: 'Book Now',  // legacy
+      payment: 'Buy Now',
+      intake: 'Get Started',
+      confirmation: 'Learn More'
+    },
+    es: {
+      scheduling: 'Reservar',
+      client_info: 'Comenzar',
+      booking: 'Reservar',  // legacy
+      payment: 'Comprar',
+      intake: 'Empezar',
+      confirmation: 'Más Info'
+    },
+    he: {
+      scheduling: 'הזמן עכשיו',
+      client_info: 'התחל',
+      booking: 'הזמן עכשיו',  // legacy
+      payment: 'קנה עכשיו',
+      intake: 'התחל',
+      confirmation: 'מידע נוסף'
+    }
   };
 
   // Determine CTA based on first step in flow
-  const firstStep = clientFlow?.[0] || 'booking';
+  const firstStep = clientFlow?.[0] || 'scheduling';
   const ctaText = ctaLabels[locale || 'en']?.[firstStep] || ctaLabels.en[firstStep];
   const hasBookingFlow = clientFlow && clientFlow.length > 0;
 
@@ -128,9 +149,13 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
   const primaryColor = theme?.colors.primary || '#4F6EF7';
   const secondaryColor = theme?.colors.secondary || '#E8DDD4';
 
+  // UUID regex for validation
+  const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
   // Helper to convert service to SelectedServiceData for booking modal
   const toSelectedServiceData = (service: ServiceItemWithRawData): SelectedServiceData | null => {
-    if (!service.id) return null;
+    // Validate that service.id is a valid UUID - required for booking API
+    if (!service.id || !UUID_REGEX.test(service.id)) return null;
     return {
       id: service.id,
       name: service.name,
@@ -150,12 +175,24 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
     }
   };
 
+  // Determine grid columns based on number of services and configured columns
+  // Center services when there are fewer items than columns
+  const serviceCount = services.length;
+  const effectiveColumns = Math.min(columns, serviceCount);
+
   const gridColsClass = {
     1: 'grid-cols-1',
     2: 'grid-cols-1 sm:grid-cols-2',
     3: 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-3',
     4: 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-4'
-  }[columns] || 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-3';
+  }[effectiveColumns] || 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-3';
+
+  // Add max-width and centering for fewer services
+  const gridContainerClass = serviceCount < 3
+    ? serviceCount === 1
+      ? 'max-w-md mx-auto'
+      : 'max-w-3xl mx-auto'
+    : '';
 
   const backgroundColor = theme?.colors.background || '#ffffff';
   const textColor = theme?.colors.text || '#1a1a1a';
@@ -244,7 +281,7 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
                 transition={{ delay: 0.1 }}
                 className="text-2xl sm:text-3xl lg:text-4xl font-bold"
                 style={{
-                  fontFamily: theme?.fonts.heading,
+                  fontFamily: 'var(--website-font-heading)',
                   color: isDark ? '#ffffff' : textColor
                 }}
               >
@@ -259,7 +296,7 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
                 transition={{ delay: 0.2 }}
                 className="mt-4 text-lg sm:text-xl max-w-2xl mx-auto"
                 style={{
-                  fontFamily: theme?.fonts.body,
+                  fontFamily: 'var(--website-font-body)',
                   color: isDark ? '#9ca3af' : '#6b7280'
                 }}
               >
@@ -283,7 +320,7 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
 
         {/* Grid Layout - Enhanced with glassmorphism */}
         {layout === 'grid' && (
-          <div className={`grid ${gridColsClass} gap-6 sm:gap-8`}>
+          <div className={`grid ${gridColsClass} gap-6 sm:gap-8 ${gridContainerClass}`}>
             {services.map((service, index) => (
               <motion.div
                 key={index}
@@ -339,7 +376,7 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
                 <h3
                   className="text-xl font-bold mb-3 group-hover:text-opacity-100 transition-colors"
                   style={{
-                    fontFamily: theme?.fonts.heading,
+                    fontFamily: 'var(--website-font-heading)',
                     color: isDark ? '#ffffff' : textColor
                   }}
                 >
@@ -349,7 +386,7 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
                 <p
                   className="text-base leading-relaxed mb-6"
                   style={{
-                    fontFamily: theme?.fonts.body,
+                    fontFamily: 'var(--website-font-body)',
                     color: isDark ? '#9ca3af' : '#6b7280'
                   }}
                 >
@@ -509,7 +546,7 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
                   <h3
                     className="text-lg font-bold mb-1"
                     style={{
-                      fontFamily: theme?.fonts.heading,
+                      fontFamily: 'var(--website-font-heading)',
                       color: isDark ? '#ffffff' : textColor
                     }}
                   >
@@ -518,7 +555,7 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
                   <p
                     className="text-sm leading-relaxed"
                     style={{
-                      fontFamily: theme?.fonts.body,
+                      fontFamily: 'var(--website-font-body)',
                       color: isDark ? '#9ca3af' : '#6b7280'
                     }}
                   >
@@ -576,7 +613,7 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
 
         {/* Cards Layout - Enhanced with hover effects */}
         {layout === 'cards' && (
-          <div className={`grid ${gridColsClass} gap-6`}>
+          <div className={`grid ${gridColsClass} gap-6 ${gridContainerClass}`}>
             {services.map((service, index) => (
               <motion.div
                 key={index}
@@ -611,7 +648,7 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
                   <h3
                     className="text-xl font-bold mb-3"
                     style={{
-                      fontFamily: theme?.fonts.heading,
+                      fontFamily: 'var(--website-font-heading)',
                       color: isDark ? '#ffffff' : textColor
                     }}
                   >
@@ -621,7 +658,7 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
                   <p
                     className="text-sm leading-relaxed mb-6"
                     style={{
-                      fontFamily: theme?.fonts.body,
+                      fontFamily: 'var(--website-font-body)',
                       color: isDark ? '#9ca3af' : '#6b7280'
                     }}
                   >
@@ -735,7 +772,7 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
                   <h3
                     className="text-3xl font-bold mb-4"
                     style={{
-                      fontFamily: theme?.fonts.heading,
+                      fontFamily: 'var(--website-font-heading)',
                       color: isDark ? '#ffffff' : textColor
                     }}
                   >
@@ -745,7 +782,7 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
                   <p
                     className="text-lg leading-relaxed mb-6"
                     style={{
-                      fontFamily: theme?.fonts.body,
+                      fontFamily: 'var(--website-font-body)',
                       color: isDark ? '#9ca3af' : '#6b7280'
                     }}
                   >
@@ -832,7 +869,7 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
                     <h4
                       className="text-lg font-bold mb-2"
                       style={{
-                        fontFamily: theme?.fonts.heading,
+                        fontFamily: 'var(--website-font-heading)',
                         color: isDark ? '#ffffff' : textColor
                       }}
                     >
@@ -841,7 +878,7 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
                     <p
                       className="text-sm mb-4"
                       style={{
-                        fontFamily: theme?.fonts.body,
+                        fontFamily: 'var(--website-font-body)',
                         color: isDark ? '#9ca3af' : '#6b7280'
                       }}
                     >

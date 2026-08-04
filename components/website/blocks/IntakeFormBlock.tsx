@@ -175,7 +175,7 @@ export function IntakeFormBlock({ content, styles, theme, locale, isRTL, classNa
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             className="text-2xl font-bold text-gray-900 dark:text-white mb-4"
-            style={{ fontFamily: theme?.fonts.heading }}
+            style={{ fontFamily: 'var(--website-font-heading)' }}
           >
             {success_message || labels.success}
           </motion.h3>
@@ -205,7 +205,7 @@ export function IntakeFormBlock({ content, styles, theme, locale, isRTL, classNa
             whileInView={{ opacity: 1, y: 0 }}
             viewport={{ once: true }}
             className="text-3xl sm:text-4xl font-bold text-gray-900 dark:text-white"
-            style={{ fontFamily: theme?.fonts.heading }}
+            style={{ fontFamily: 'var(--website-font-heading)' }}
           >
             {title || labels.title}
           </motion.h2>
@@ -217,7 +217,7 @@ export function IntakeFormBlock({ content, styles, theme, locale, isRTL, classNa
               viewport={{ once: true }}
               transition={{ delay: 0.1 }}
               className="mt-4 text-gray-600 dark:text-gray-300 max-w-lg mx-auto"
-              style={{ fontFamily: theme?.fonts.body }}
+              style={{ fontFamily: 'var(--website-font-body)' }}
             >
               {subtitle || description || labels.subtitle}
             </motion.p>
@@ -255,7 +255,7 @@ export function IntakeFormBlock({ content, styles, theme, locale, isRTL, classNa
                   className="w-full px-4 py-3 bg-gray-50 dark:bg-slate-700 border border-gray-200 dark:border-gray-600 text-gray-900 dark:text-white placeholder:text-gray-400 focus:outline-none focus:ring-2 transition-all"
                   style={{
                     borderRadius: theme?.borderRadius || '0.5rem',
-                    fontFamily: theme?.fonts.body
+                    fontFamily: 'var(--website-font-body)'
                   }}
                 />
               ) : field.type === 'select' && field.options ? (
@@ -268,7 +268,7 @@ export function IntakeFormBlock({ content, styles, theme, locale, isRTL, classNa
                   className="w-full px-4 py-3 bg-gray-50 dark:bg-slate-700 border border-gray-200 dark:border-gray-600 text-gray-900 dark:text-white focus:outline-none focus:ring-2 transition-all"
                   style={{
                     borderRadius: theme?.borderRadius || '0.5rem',
-                    fontFamily: theme?.fonts.body
+                    fontFamily: 'var(--website-font-body)'
                   }}
                 >
                   <option value="">{field.placeholder || `Select...`}</option>
@@ -317,7 +317,7 @@ export function IntakeFormBlock({ content, styles, theme, locale, isRTL, classNa
                   className="w-full px-4 py-3 bg-gray-50 dark:bg-slate-700 border border-gray-200 dark:border-gray-600 text-gray-900 dark:text-white placeholder:text-gray-400 focus:outline-none focus:ring-2 transition-all"
                   style={{
                     borderRadius: theme?.borderRadius || '0.5rem',
-                    fontFamily: theme?.fonts.body
+                    fontFamily: 'var(--website-font-body)'
                   }}
                 />
               )}

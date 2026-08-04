@@ -43,7 +43,73 @@
   "common": {
     "loading": "Cargando...",
     "error": "Algo salió mal",
-    "retry": "Intentar de nuevo"
+    "retry": "Intentar de nuevo",
+    "back": "Atrás",
+    "continue": "Continuar",
+    "cancel": "Cancelar",
+    "email": "Correo electrónico",
+    "phone": "Teléfono",
+    "name": "Nombre",
+    "optional": "opcional",
+    "try_again": "Intentar de nuevo"
+  },
+  "payments": {
+    "stripe": {
+      "wizard": {
+        "title_choice": "Conectar Cuenta de Stripe",
+        "title_create": "Crear Nueva Cuenta",
+        "title_business": "Información del Negocio",
+        "title_personal": "Información Personal",
+        "title_review": "Revisar y Confirmar",
+        "title_success": "Configuración Completa",
+        "title_error": "Error de Configuración",
+        "title_default": "Configuración de Pagos",
+        "choose_desc": "Elige cómo quieres aceptar pagos a través de tu negocio",
+        "create_account_desc": "Proporciona tu información básica para crear una cuenta de Stripe",
+        "new_account": "Crear Nueva Cuenta",
+        "new_account_desc": "¿Nuevo en Stripe? Te ayudaremos a crear una cuenta",
+        "existing_account": "Conectar Cuenta Existente",
+        "existing_account_desc": "¿Ya tienes Stripe? Conéctate en segundos",
+        "individual": "Individual / Propietario Único",
+        "individual_desc": "Para freelancers, consultores y negocios individuales",
+        "company": "Empresa / Corporación",
+        "company_desc": "Para empresas y organizaciones registradas",
+        "business_desc_individual": "Cuéntanos sobre la ubicación de tu negocio",
+        "business_desc_company": "Cuéntanos sobre tu empresa",
+        "country": "País",
+        "select_country": "Seleccionar país",
+        "business_name": "Nombre del Negocio",
+        "business_name_placeholder": "Acme Inc.",
+        "website": "Sitio web",
+        "personal_desc_individual": "Tu información personal para verificación de cuenta",
+        "personal_desc_company": "Información del representante para verificación de cuenta",
+        "first_name": "Nombre",
+        "first_name_placeholder": "Juan",
+        "last_name": "Apellido",
+        "last_name_placeholder": "Pérez",
+        "email_placeholder": "juan@example.com",
+        "account_type": "Tipo de Cuenta",
+        "review_desc": "Revisa tu información y completa la configuración",
+        "next_steps": "Próximos Pasos",
+        "next_steps_desc": "Después de crear tu cuenta, necesitarás completar la verificación de identidad y agregar detalles bancarios a través de tu panel de Stripe para comenzar a recibir pagos.",
+        "creating": "Creando Cuenta...",
+        "create_account": "Crear Cuenta de Pagos",
+        "success_title": "¡Cuenta Creada Exitosamente!",
+        "success_desc": "Tu cuenta de pagos de Stripe ha sido creada. Ahora puedes aceptar pagos.",
+        "account_id": "ID de Cuenta",
+        "finalizing": "Finalizando configuración...",
+        "error_title": "Error de Configuración",
+        "error_default": "Error al crear cuenta de pagos",
+        "error_country": "El país es requerido",
+        "error_business_name": "El nombre del negocio es requerido",
+        "error_first_name": "El nombre es requerido",
+        "error_last_name": "El apellido es requerido",
+        "error_email": "El correo electrónico es requerido",
+        "error_email_invalid": "Dirección de correo electrónico inválida",
+        "error_create": "Error al crear la cuenta",
+        "error_generic": "Algo salió mal. Por favor, inténtalo de nuevo."
+      }
+    }
   },
   "scheduling": {
     "frequency_short": {
@@ -54,6 +120,128 @@
     },
     "availability": {
       "working_days": "Días laborales:"
+    }
+  },
+  "crm": {
+    "document": {
+      "upload_title": "Subir Documento",
+      "remove": "Eliminar",
+      "drag_drop": "Arrastra y suelta un archivo, o haz clic para explorar",
+      "max_size": "Máx 10MB",
+      "supported_formats": "PDF, DOC, XLS, Imágenes",
+      "name": "Nombre del Documento",
+      "name_placeholder": "Ingresa el nombre del documento",
+      "type": "Tipo de Documento",
+      "description": "Descripción",
+      "description_placeholder": "Descripción opcional...",
+      "type": {
+        "contract": "Contrato",
+        "intake_form": "Formulario de Admisión",
+        "invoice": "Factura",
+        "receipt": "Recibo",
+        "id_document": "Documento de Identidad",
+        "medical": "Médico",
+        "insurance": "Seguro",
+        "other": "Otro"
+      }
+    },
+    "activity": {
+      "type": {
+        "note": "Nota",
+        "call": "Llamada",
+        "email": "Correo",
+        "meeting": "Reunión",
+        "booking": "Reserva",
+        "payment": "Pago",
+        "task": "Tarea",
+        "booking_created": "Reserva Creada",
+        "booking_completed": "Reserva Completada",
+        "booking_cancelled": "Reserva Cancelada",
+        "booking_confirmed": "Reserva Confirmada",
+        "payment_received": "Pago Recibido",
+        "payment_failed": "Pago Fallido",
+        "document_uploaded": "Documento Subido",
+        "contact_created": "Contacto Creado",
+        "contact_updated": "Contacto Actualizado",
+        "stage_changed": "Etapa Cambiada",
+        "task_created": "Tarea Creada",
+        "task_completed": "Tarea Completada",
+        "email_sent": "Correo Enviado"
+      },
+      "system": {
+        "booking": "Reserva",
+        "payment": "Pago",
+        "email": "Correo Enviado",
+        "task": "Tarea",
+        "booking_created": "Reserva Creada",
+        "booking_completed": "Reserva Completada",
+        "booking_cancelled": "Reserva Cancelada",
+        "booking_confirmed": "Reserva Confirmada",
+        "payment_received": "Pago Recibido",
+        "payment_failed": "Pago Fallido",
+        "document_uploaded": "Documento Subido",
+        "contact_created": "Contacto Creado",
+        "contact_updated": "Contacto Actualizado",
+        "stage_changed": "Etapa Cambiada",
+        "task_created": "Tarea Creada",
+        "task_completed": "Tarea Completada",
+        "email_sent": "Correo Enviado"
+      },
+      "add_placeholder": "Agregar una nota...",
+      "just_now": "Ahora",
+      "mins_ago": "m",
+      "hours_ago": "h",
+      "days_ago": "d",
+      "filter": {
+        "all": "Todos",
+        "notes": "Notas",
+        "calls": "Llamadas",
+        "emails": "Correos",
+        "meetings": "Reuniones",
+        "bookings": "Reservas",
+        "payments": "Pagos",
+        "tasks": "Tareas"
+      },
+      "no_matching": "No hay actividades que coincidan",
+      "clear_filter": "Limpiar filtro",
+      "tab": {
+        "activity": "Actividad",
+        "emails": "Correos"
+      },
+      "description": {
+        "booked_via_website": "Reservado por el sitio web para {date}",
+        "booked_via_website_paid": "Reservado por el sitio web para {date} (pagado)",
+        "purchased_via_website": "Comprado por el sitio web",
+        "purchased_via_website_paid": "Comprado por el sitio web (pagado)",
+        "scheduled_for": "Programado para {date}",
+        "manual_email": "Correo manual",
+        "paid": "pagado"
+      },
+      "desc": {
+        "type": "Tipo",
+        "file": "Archivo",
+        "source": "Origen",
+        "stage": "Etapa",
+        "no_reason": "No se proporcionó razón",
+        "client_no_show": "El cliente no asistió a la sesión programada",
+        "booked_via_website": "Reservado por el sitio web para",
+        "purchased_via_website": "Comprado por el sitio web",
+        "scheduled_for": "Programado para",
+        "manual_email": "Correo manual",
+        "campaign_email": "Correo de campaña",
+        "paid": "pagado"
+      }
+    },
+    "files": {
+      "intake_forms": "Formularios de Admisión",
+      "intake_form": "Formulario de Admisión",
+      "documents": "Documentos",
+      "no_documents": "No hay documentos subidos",
+      "upload_first": "Subir primer documento",
+      "upload": "Subir",
+      "download": "Descargar",
+      "delete": "Eliminar",
+      "open": "Abrir"
     }
   },
   "config": {
@@ -70,7 +258,10 @@
       "connected_desc": "Tu cuenta de Stripe está conectada. Puedes aceptar pagos por tus servicios.",
       "not_connected_desc": "Conecta tu cuenta de Stripe para aceptar pagos por reservas y servicios.",
       "connect": "Conectar Stripe",
-      "manage": "Administrar cuenta"
+      "manage": "Administrar cuenta",
+      "disconnect": "Desconectar",
+      "disconnect_title": "¿Desconectar Stripe?",
+      "disconnect_message": "No podrás aceptar pagos hasta que vuelvas a conectar tu cuenta de Stripe."
     },
     "payments": {
       "settings_title": "Configuración de Pagos",

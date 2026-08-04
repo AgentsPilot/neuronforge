@@ -18,6 +18,8 @@ import {
 } from 'lucide-react';
 import { SchedulingBookingModal } from '@/components/scheduling/SchedulingBookingModal';
 import type { SchedulingService, SchedulingBooking } from '@/lib/repositories/SchedulingRepository';
+import { SessionCard, type SessionCardData } from './SessionCard';
+import { CollapsibleSection } from './CollapsibleSection';
 import PhoneInput from 'react-phone-number-input';
 import en from 'react-phone-number-input/locale/en';
 import 'react-phone-number-input/style.css';

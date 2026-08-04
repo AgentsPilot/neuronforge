@@ -466,6 +466,64 @@ export class IntakeRepository {
       return { data: null, error: error as Error };
     }
   }
+
+  /**
+   * Update intake responses for a booking
+   * Preserves the template_id and template_key, only updates the responses
+   */
+  async updateIntakeResponses(
+    bookingId: string,
+    userId: string,
+    responses: Record<string, unknown>
+  ): Promise<IntakeRepositoryResult<boolean>> {
+    try {
+      logger.info({ bookingId }, 'Updating intake responses for booking');
+
+      // First get the existing intake data to preserve template info
+      const { data: existing, error: fetchError } = await this.supabase
+        .from('scheduling_bookings')
+        .select('intake_responses')
+        .eq('id', bookingId)
+        .eq('user_id', userId)
+        .single();
+
+      if (fetchError) {
+        if (fetchError.code === 'PGRST116') {
+          logger.warn({ bookingId }, 'Booking not found for intake update');
+          return { data: false, error: new Error('Booking not found') };
+        }
+        throw fetchError;
+      }
+
+      if (!existing.intake_responses) {
+        logger.warn({ bookingId }, 'No existing intake responses to update');
+        return { data: false, error: new Error('No existing intake responses found') };
+      }
+
+      // Update the responses while preserving template info
+      const updatedIntakeData = {
+        ...existing.intake_responses,
+        responses
+      };
+
+      const { error: updateError } = await this.supabase
+        .from('scheduling_bookings')
+        .update({
+          intake_responses: updatedIntakeData,
+          // Note: We don't update intake_completed_at to preserve original submission time
+        })
+        .eq('id', bookingId)
+        .eq('user_id', userId);
+
+      if (updateError) throw updateError;
+
+      logger.info({ bookingId }, 'Intake responses updated successfully');
+      return { data: true, error: null };
+    } catch (error) {
+      logger.error({ err: error, bookingId }, 'Failed to update intake responses');
+      return { data: null, error: error as Error };
+    }
+  }
 }
 
 // Singleton export

@@ -20,7 +20,7 @@ const auditTrail = AuditTrailService.getInstance();
 const updateServiceSchema = z.object({
   service_name: z.string().min(1).optional(),
   description: z.string().optional(),
-  duration_minutes: z.number().min(5).max(480).optional(),
+  duration_minutes: z.number().min(5).max(10080).optional(), // Up to 7 days (10080 minutes) for multi-day courses/retreats
   price: z.number().min(0).nullable().optional(),
   currency: z.enum(['USD', 'EUR', 'ILS', 'GBP']).optional(),
   buffer_minutes: z.number().min(0).max(1440).optional(), // Max 24 hours

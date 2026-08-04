@@ -50,27 +50,27 @@ export function BusinessOSHeader() {
 
   return (
     <div className="sticky top-0 z-50 border-b border-[var(--v2-border)] bg-[var(--v2-surface)]">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4 flex items-center justify-between">
+      <div className="max-w-7xl mx-auto px-3 sm:px-4 lg:px-6 py-3 sm:py-4 flex items-center justify-between">
         <V2Logo />
 
         {/* Calendar + Dark Mode Toggle + Language Selector + Settings */}
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2 sm:gap-3">
           {/* Calendar Button - only shown if user has scheduling */}
           {hasScheduling && (
             <button
               onClick={() => setIsSchedulingDialogOpen(true)}
-              className="flex items-center justify-center w-10 h-10 bg-[var(--v2-surface)] border border-[var(--v2-border)] hover:bg-[#14B8A6]/10 hover:border-[#14B8A6] transition-colors group"
+              className="flex items-center justify-center w-9 h-9 sm:w-10 sm:h-10 bg-[var(--v2-surface)] border border-[var(--v2-border)] hover:bg-[#14B8A6]/10 hover:border-[#14B8A6] transition-colors group"
               style={{ borderRadius: 'var(--v2-radius-button)' }}
               aria-label={t('myday.open_calendar') || 'Open calendar'}
             >
-              <Calendar className="w-5 h-5 text-[var(--v2-text-secondary)] group-hover:text-[#14B8A6] transition-colors" />
+              <Calendar className="w-4 h-4 sm:w-5 sm:h-5 text-[var(--v2-text-secondary)] group-hover:text-[#14B8A6] transition-colors" />
             </button>
           )}
 
           {/* Dark Mode Toggle */}
           <button
             onClick={toggleMode}
-            className="flex items-center justify-center w-10 h-10 bg-[var(--v2-surface)] border border-[var(--v2-border)] hover:bg-[var(--v2-surface-hover)] transition-colors"
+            className="flex items-center justify-center w-9 h-9 sm:w-10 sm:h-10 bg-[var(--v2-surface)] border border-[var(--v2-border)] hover:bg-[var(--v2-surface-hover)] transition-colors"
             style={{ borderRadius: 'var(--v2-radius-button)' }}
             aria-label="Toggle dark mode"
           >
@@ -85,14 +85,19 @@ export function BusinessOSHeader() {
           <div className="relative" ref={languageDropdownRef}>
             <button
               onClick={() => setIsLanguageOpen(!isLanguageOpen)}
-              className="flex items-center gap-2 px-3 py-2 bg-[var(--v2-surface)] border border-[var(--v2-border)] hover:bg-[var(--v2-surface-hover)] transition-colors"
+              className="flex items-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-2 bg-[var(--v2-surface)] border border-[var(--v2-border)] hover:bg-[var(--v2-surface-hover)] transition-colors"
               style={{ borderRadius: 'var(--v2-radius-button)' }}
             >
               <Globe className="w-4 h-4 text-[var(--v2-text-muted)]" />
-              <span className="text-sm font-medium text-[var(--v2-text-primary)]">
+              <span className="text-sm font-medium text-[var(--v2-text-primary)] hidden sm:inline">
                 {language === 'en' && '🇺🇸 English'}
                 {language === 'es' && '🇪🇸 Español'}
                 {language === 'he' && '🇮🇱 עברית'}
+              </span>
+              <span className="text-base sm:hidden">
+                {language === 'en' && '🇺🇸'}
+                {language === 'es' && '🇪🇸'}
+                {language === 'he' && '🇮🇱'}
               </span>
             </button>
 
@@ -129,11 +134,11 @@ export function BusinessOSHeader() {
           {/* Settings Icon - direct link */}
           <button
             onClick={() => router.push('/business-os/settings')}
-            className="flex items-center justify-center w-10 h-10 bg-[var(--v2-surface)] border border-[var(--v2-border)] hover:bg-[var(--v2-surface-hover)] transition-colors"
+            className="flex items-center justify-center w-9 h-9 sm:w-10 sm:h-10 bg-[var(--v2-surface)] border border-[var(--v2-border)] hover:bg-[var(--v2-surface-hover)] transition-colors"
             style={{ borderRadius: 'var(--v2-radius-button)' }}
             aria-label={t('settings.title')}
           >
-            <Settings className="w-5 h-5 text-[var(--v2-text-secondary)]" />
+            <Settings className="w-4 h-4 sm:w-5 sm:h-5 text-[var(--v2-text-secondary)]" />
           </button>
         </div>
       </div>

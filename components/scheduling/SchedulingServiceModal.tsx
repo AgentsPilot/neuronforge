@@ -76,12 +76,14 @@ export function SchedulingServiceModal({ service, isOpen, onClose, onServiceUpda
   useEffect(() => {
     if (service) {
       // Load existing service data, then apply any prefill updates (from chat commands like "change price to $200")
+      // IMPORTANT: Use the service's stored currency, NOT the user's locale currency
+      // Only fall back to 'USD' if no currency is stored (for legacy services created before currency was added)
       const baseData = {
         service_name: service.service_name,
         description: service.description || '',
         duration_minutes: service.duration_minutes,
         price: service.price || 0,
-        currency: service.currency || currencyCode as ServiceCurrency,
+        currency: (service.currency || 'USD') as ServiceCurrency,
         buffer_minutes: service.buffer_minutes,
         max_bookings_per_day: service.max_bookings_per_day,
         advance_booking_days: service.advance_booking_days,
@@ -109,7 +111,7 @@ export function SchedulingServiceModal({ service, isOpen, onClose, onServiceUpda
         setFormData(baseData);
       }
     } else {
-      // Start with defaults, then apply prefill values if provided
+      // New service: use user's preferred currency as default
       const defaults = {
         service_name: '',
         description: '',
@@ -142,6 +144,8 @@ export function SchedulingServiceModal({ service, isOpen, onClose, onServiceUpda
         setFormData(defaults);
       }
     }
+    // Note: currencyCode is only used for NEW services (when service is null)
+    // For existing services, we use the stored service.currency
   }, [service, currencyCode, prefill]);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -251,20 +255,20 @@ export function SchedulingServiceModal({ service, isOpen, onClose, onServiceUpda
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="max-w-2xl max-h-[90vh] flex flex-col bg-[var(--v2-surface)] border-[var(--v2-border)] p-0 overflow-hidden">
+      <DialogContent className="w-full sm:max-w-2xl h-[100vh] sm:h-auto sm:max-h-[90vh] flex flex-col bg-[var(--v2-surface)] border-[var(--v2-border)] p-0 overflow-hidden">
         {/* Sticky Header - pe-14 for close button space */}
-        <div className="flex-shrink-0 border-b border-[var(--v2-border)] p-6 pe-14 bg-[var(--v2-surface)]">
-          <div className="flex items-center gap-4">
-            <div className="w-14 h-14 rounded-xl flex items-center justify-center text-lg font-semibold text-[#14B8A6] border border-[#14B8A6] bg-[#14B8A6]/10 flex-shrink-0">
+        <div className="flex-shrink-0 border-b border-[var(--v2-border)] px-4 sm:px-6 py-4 sm:py-6 pe-12 sm:pe-14 bg-[var(--v2-surface)]">
+          <div className="flex items-center gap-3 sm:gap-4">
+            <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-lg sm:rounded-xl flex items-center justify-center text-base sm:text-lg font-semibold text-[#14B8A6] border border-[#14B8A6] bg-[#14B8A6]/10 flex-shrink-0">
               {getServiceInitials(formData.service_name)}
             </div>
             <div className="flex-1 min-w-0">
               <DialogHeader>
-                <DialogTitle className="text-xl font-semibold text-[var(--v2-text-primary)] rtl:text-right">
+                <DialogTitle className="text-lg sm:text-xl font-semibold text-[var(--v2-text-primary)] rtl:text-right truncate">
                   {service ? t('scheduling.modal.edit_service') : t('scheduling.modal.new_service')}
                 </DialogTitle>
               </DialogHeader>
-              <p className="text-sm text-[var(--v2-text-secondary)] mt-1">
+              <p className="text-xs sm:text-sm text-[var(--v2-text-secondary)] mt-1 hidden sm:block">
                 {t('scheduling.modal.service_subtitle')}
               </p>
             </div>
@@ -273,7 +277,7 @@ export function SchedulingServiceModal({ service, isOpen, onClose, onServiceUpda
 
         <form onSubmit={handleSubmit} className="flex-1 flex flex-col min-h-0">
           {/* Scrollable Content */}
-          <div className="flex-1 overflow-y-auto p-6 space-y-6">
+          <div className="flex-1 overflow-y-auto px-4 sm:px-6 py-4 sm:py-6 space-y-4 sm:space-y-6">
           {/* Basic Info Section */}
           <div className="space-y-4">
             <h3 className="text-sm font-semibold text-[var(--v2-text-muted)] uppercase tracking-wide">

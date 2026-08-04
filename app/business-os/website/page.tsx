@@ -23,6 +23,7 @@ import { ConfigurationDialog } from '@/components/business-os/ConfigurationDialo
 import { MediaUploader } from '@/components/website/MediaUploader';
 import { WebsiteSetupWizard, type WizardResult } from '@/components/business-os/WebsiteSetupWizard';
 import { LandingPageWizard, type LandingPageWizardResult } from '@/components/business-os/LandingPageWizard';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 
 const logger = createLogger({ module: 'WebsitePage' });
 
@@ -81,10 +82,47 @@ function SortableBlockItem({ id, children }: { id: string; children: React.React
   );
 }
 
+// Sortable item for landing page journey steps
+function SortableLandingPageJourneyStep({ id, children, disabled }: { id: string; children: React.ReactNode; disabled?: boolean }) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging
+  } = useSortable({ id, disabled });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+    zIndex: isDragging ? 1000 : 'auto' as const
+  };
+
+  return (
+    <div ref={setNodeRef} style={style} {...attributes}>
+      <div className="relative group">
+        {/* Drag handle - only show for non-disabled steps */}
+        {!disabled && (
+          <button
+            {...listeners}
+            className="absolute left-0 top-1/2 -translate-y-1/2 -translate-x-full pr-2 opacity-0 group-hover:opacity-100 transition-opacity cursor-grab active:cursor-grabbing text-purple-400 hover:text-purple-600"
+            aria-label="Drag to reorder"
+          >
+            <GripVertical className="w-4 h-4" />
+          </button>
+        )}
+        {children}
+      </div>
+    </div>
+  );
+}
+
 // Website theme color: Blue (matching CRM's purple pattern)
 const WEBSITE_COLOR = '#4F6EF7';
 
-type ViewMode = 'overview' | 'pages' | 'journey' | 'sections' | 'design' | 'settings' | 'templates' | 'wizard';
+type ViewMode = 'overview' | 'journey' | 'sections' | 'design' | 'settings' | 'templates' | 'wizard';
 
 interface WebsiteTemplate {
   id: string;
@@ -164,12 +202,16 @@ const LABELS = {
     page_views: 'Analytics',
     journey_title: 'Client Journey',
     journey_desc: 'Define what happens when clients want to work with you',
+    journey_step_scheduling: 'Schedule Appointment',
+    journey_step_scheduling_desc: 'Client selects date and time',
+    journey_step_client_info: 'Client Information',
+    journey_step_client_info_desc: 'Collect name, email, and phone',
     journey_step_booking: 'Book Appointment',
-    journey_step_booking_desc: 'Client selects date and time',
+    journey_step_booking_desc: 'Client selects date, time, and enters info',
     journey_step_payment: 'Collect Payment',
     journey_step_payment_desc: 'Secure payment before appointment',
     journey_step_intake: 'Intake Form',
-    journey_step_intake_desc: 'Gather client information',
+    journey_step_intake_desc: 'Gather additional client information',
     journey_step_confirmation: 'Confirmation',
     journey_step_confirmation_desc: 'Client receives confirmation email',
     journey_add_step: 'Add Step',
@@ -205,6 +247,12 @@ const LABELS = {
     creating_page: 'Creating...',
     cancel: 'Cancel',
     delete_page: 'Delete',
+    delete_page_title: 'Delete Page',
+    delete_page_confirm: 'Are you sure you want to delete this page?',
+    delete_page_has_activity: 'This page has activity ({count} views). Are you sure you want to delete it?',
+    delete_page_deactivate: 'The page will be deactivated but not permanently deleted.',
+    delete_confirm: 'Delete',
+    delete_deactivate: 'Deactivate',
     edit_page: 'Edit',
     page_slug: 'URL Slug',
     edit_block: 'Edit Content',
@@ -234,7 +282,20 @@ const LABELS = {
     refresh_services: 'Refresh from Scheduling',
     services_count: '{count} services from your Scheduling',
     position: 'Position',
-    generated_from_business: 'Generated from business name'
+    generated_from_business: 'Generated from business name',
+    main_website: 'Main Website',
+    main_website_desc: 'Your full business website',
+    design_colors: 'Design & Colors',
+    run_wizard: 'Run Setup Wizard',
+    create_landing_page: 'Create Landing Page',
+    landing_pages: 'Landing Pages',
+    landing_pages_desc: 'Standalone pages to promote specific services or products',
+    no_landing_pages: 'No landing pages yet',
+    no_landing_pages_desc: 'Create landing pages to promote specific services',
+    journey_booking: 'Booking',
+    journey_direct_sale: 'Direct Sale',
+    journey_full_flow: 'Full Flow',
+    journey_lead_capture: 'Lead Capture'
   },
   es: {
     back_to_dashboard: 'Volver al Panel',
@@ -282,12 +343,16 @@ const LABELS = {
     page_views: 'Analíticas',
     journey_title: 'Recorrido del Cliente',
     journey_desc: 'Define qué sucede cuando los clientes quieren trabajar contigo',
+    journey_step_scheduling: 'Programar Cita',
+    journey_step_scheduling_desc: 'El cliente selecciona fecha y hora',
+    journey_step_client_info: 'Información del Cliente',
+    journey_step_client_info_desc: 'Recopilar nombre, email y teléfono',
     journey_step_booking: 'Reservar Cita',
-    journey_step_booking_desc: 'El cliente selecciona fecha y hora',
+    journey_step_booking_desc: 'El cliente selecciona fecha, hora e ingresa info',
     journey_step_payment: 'Cobrar Pago',
     journey_step_payment_desc: 'Pago seguro antes de la cita',
     journey_step_intake: 'Formulario de Ingreso',
-    journey_step_intake_desc: 'Recopilar información del cliente',
+    journey_step_intake_desc: 'Recopilar información adicional del cliente',
     journey_step_confirmation: 'Confirmación',
     journey_step_confirmation_desc: 'El cliente recibe email de confirmación',
     journey_add_step: 'Agregar Paso',
@@ -323,6 +388,12 @@ const LABELS = {
     creating_page: 'Creando...',
     cancel: 'Cancelar',
     delete_page: 'Eliminar',
+    delete_page_title: 'Eliminar Página',
+    delete_page_confirm: '¿Estás seguro de que quieres eliminar esta página?',
+    delete_page_has_activity: 'Esta página tiene actividad ({count} visitas). ¿Estás seguro de que quieres eliminarla?',
+    delete_page_deactivate: 'La página será desactivada pero no eliminada permanentemente.',
+    delete_confirm: 'Eliminar',
+    delete_deactivate: 'Desactivar',
     edit_page: 'Editar',
     page_slug: 'URL Slug',
     edit_block: 'Editar Contenido',
@@ -352,7 +423,20 @@ const LABELS = {
     refresh_services: 'Actualizar desde Programación',
     services_count: '{count} servicios desde Programación',
     position: 'Posición',
-    generated_from_business: 'Generado del nombre del negocio'
+    generated_from_business: 'Generado del nombre del negocio',
+    main_website: 'Sitio Web Principal',
+    main_website_desc: 'Tu sitio web completo de negocios',
+    design_colors: 'Diseño y Colores',
+    run_wizard: 'Ejecutar Asistente',
+    create_landing_page: 'Crear Página de Destino',
+    landing_pages: 'Páginas de Destino',
+    landing_pages_desc: 'Páginas independientes para promover servicios o productos específicos',
+    no_landing_pages: 'Aún no hay páginas de destino',
+    no_landing_pages_desc: 'Crea páginas de destino para promover servicios específicos',
+    journey_booking: 'Reserva',
+    journey_direct_sale: 'Venta Directa',
+    journey_full_flow: 'Flujo Completo',
+    journey_lead_capture: 'Captura de Leads'
   },
   he: {
     back_to_dashboard: 'חזרה ללוח הבקרה',
@@ -400,12 +484,16 @@ const LABELS = {
     page_views: 'אנליטיקס',
     journey_title: 'מסע הלקוח',
     journey_desc: 'הגדר מה קורה כשלקוחות רוצים לעבוד איתך',
+    journey_step_scheduling: 'תיאום פגישה',
+    journey_step_scheduling_desc: 'הלקוח בוחר תאריך ושעה',
+    journey_step_client_info: 'פרטי לקוח',
+    journey_step_client_info_desc: 'איסוף שם, אימייל וטלפון',
     journey_step_booking: 'קביעת פגישה',
-    journey_step_booking_desc: 'הלקוח בוחר תאריך ושעה',
+    journey_step_booking_desc: 'הלקוח בוחר תאריך, שעה ומזין פרטים',
     journey_step_payment: 'גביית תשלום',
     journey_step_payment_desc: 'תשלום מאובטח לפני הפגישה',
     journey_step_intake: 'טופס קליטה',
-    journey_step_intake_desc: 'איסוף מידע על הלקוח',
+    journey_step_intake_desc: 'איסוף מידע נוסף על הלקוח',
     journey_step_confirmation: 'אישור',
     journey_step_confirmation_desc: 'הלקוח מקבל מייל אישור',
     journey_add_step: 'הוסף שלב',
@@ -441,6 +529,12 @@ const LABELS = {
     creating_page: '...יוצר',
     cancel: 'ביטול',
     delete_page: 'מחק',
+    delete_page_title: 'מחיקת דף',
+    delete_page_confirm: 'האם אתה בטוח שברצונך למחוק דף זה?',
+    delete_page_has_activity: 'לדף זה יש פעילות ({count} צפיות). האם אתה בטוח שברצונך למחוק אותו?',
+    delete_page_deactivate: 'הדף יושבת אך לא יימחק לצמיתות.',
+    delete_confirm: 'מחק',
+    delete_deactivate: 'השבת',
     edit_page: 'ערוך',
     page_slug: 'כתובת URL',
     edit_block: 'ערוך תוכן',
@@ -470,7 +564,20 @@ const LABELS = {
     refresh_services: 'רענן מהתיאום',
     services_count: '{count} שירותים מהתיאום שלך',
     position: 'מיקום',
-    generated_from_business: 'נוצר משם העסק'
+    generated_from_business: 'נוצר משם העסק',
+    main_website: 'אתר ראשי',
+    main_website_desc: 'האתר העסקי המלא שלך',
+    design_colors: 'עיצוב וצבעים',
+    run_wizard: 'הפעל אשף',
+    create_landing_page: 'צור דף נחיתה',
+    landing_pages: 'דפי נחיתה',
+    landing_pages_desc: 'דפים עצמאיים לקידום שירותים או מוצרים ספציפיים',
+    no_landing_pages: 'עדיין אין דפי נחיתה',
+    no_landing_pages_desc: 'צור דפי נחיתה לקידום שירותים ספציפיים',
+    journey_booking: 'הזמנה',
+    journey_direct_sale: 'מכירה ישירה',
+    journey_full_flow: 'תהליך מלא',
+    journey_lead_capture: 'איסוף לידים'
   }
 };
 
@@ -624,13 +731,42 @@ export default function WebsiteManagementPage() {
   const [enhancingTestimonial, setEnhancingTestimonial] = useState(false);
   const [enhancingTestimonialIndex, setEnhancingTestimonialIndex] = useState<number | null>(null);
 
-  // Client Journey state
-  type FlowStepKey = 'booking' | 'payment' | 'intake' | 'confirmation';
-  const [clientFlow, setClientFlow] = useState<FlowStepKey[]>(['booking', 'confirmation']);
+  // Client Journey state (for main website)
+  // New steps: 'scheduling' (date/time), 'client_info' (name/email/phone)
+  // Legacy 'booking' = scheduling + client_info combined
+  type FlowStepKey = 'scheduling' | 'client_info' | 'booking' | 'payment' | 'intake' | 'confirmation';
+  const [clientFlow, setClientFlow] = useState<FlowStepKey[]>(['scheduling', 'client_info', 'confirmation']);
   const [servicesOnly, setServicesOnly] = useState(false);
   const [savingJourney, setSavingJourney] = useState(false);
   const [processTitle, setProcessTitle] = useState('');
   const [processSubtitle, setProcessSubtitle] = useState('');
+
+  // Landing page client journey state (stored in booking_widget block)
+  // Default includes scheduling + client_info + confirmation for services
+  // For courses/products, default is client_info + confirmation (no scheduling)
+  const [landingPageClientFlow, setLandingPageClientFlow] = useState<FlowStepKey[]>(['scheduling', 'client_info', 'confirmation']);
+  const [savingLandingPageJourney, setSavingLandingPageJourney] = useState(false);
+
+  // Load landing page client flow from booking_widget block when editing a landing page
+  useEffect(() => {
+    if (page?.page_type === 'landing' && blocks.length > 0) {
+      // Client flow can be stored in booking_widget, pricing, or cta block
+      const sourceBlock = blocks.find(b => b.block_type === 'booking_widget')
+        || blocks.find(b => b.block_type === 'pricing')
+        || blocks.find(b => b.block_type === 'cta');
+      if (sourceBlock?.content?.client_flow && Array.isArray(sourceBlock.content.client_flow)) {
+        const flow = sourceBlock.content.client_flow as FlowStepKey[];
+        // Load flow as-is - all 4 steps are fully configurable
+        // Only ensure confirmation is at the end if it's included
+        const hasConfirmation = flow.includes('confirmation');
+        const normalizedFlow: FlowStepKey[] = flow.filter(s => s !== 'confirmation');
+        if (hasConfirmation) {
+          normalizedFlow.push('confirmation');
+        }
+        setLandingPageClientFlow(normalizedFlow.length > 0 ? normalizedFlow : ['confirmation']);
+      }
+    }
+  }, [page?.id, page?.page_type, blocks]);
 
   // Configuration dialog state (for services editing)
   const [isConfigOpen, setIsConfigOpen] = useState(false);
@@ -642,7 +778,7 @@ export default function WebsiteManagementPage() {
   // Setup Wizard state
   const [wizardChecked, setWizardChecked] = useState(false);
 
-  // Analytics state
+  // Analytics state (for main website)
   const [analytics, setAnalytics] = useState<{
     total_views: number;
     unique_visitors: number;
@@ -655,6 +791,25 @@ export default function WebsiteManagementPage() {
     views_7d: number;
     visitors_7d: number;
   } | null>(null);
+
+  // Landing page analytics state (keyed by page ID)
+  const [landingPagesAnalytics, setLandingPagesAnalytics] = useState<Record<string, {
+    total_views: number;
+    unique_visitors: number;
+    views_today: number;
+    visitors_today: number;
+    views_this_month: number;
+    visitors_this_month: number;
+    views_30d: number;
+    visitors_30d: number;
+    views_7d: number;
+    visitors_7d: number;
+  }>>({});
+
+  // Delete confirmation dialog state
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [deletingPage, setDeletingPage] = useState<{ id: string; title: string; hasActivity: boolean; viewCount: number } | null>(null);
+  const [checkingActivity, setCheckingActivity] = useState(false);
 
   useEffect(() => {
     fetchData();
@@ -734,9 +889,9 @@ export default function WebsiteManagementPage() {
             // Load client_flow - always load it if it exists
             if (processBlock.content.client_flow && Array.isArray(processBlock.content.client_flow)) {
               const savedFlow = processBlock.content.client_flow as FlowStepKey[];
-              const flowWithConfirmation = savedFlow.includes('confirmation')
+              const flowWithConfirmation: FlowStepKey[] = savedFlow.includes('confirmation')
                 ? savedFlow
-                : [...savedFlow.filter(s => s !== 'confirmation'), 'confirmation'];
+                : [...savedFlow.filter(s => s !== 'confirmation'), 'confirmation' as const];
               setClientFlow(flowWithConfirmation);
             }
             // Set services_only mode separately
@@ -762,6 +917,29 @@ export default function WebsiteManagementPage() {
         } catch (err) {
           logger.warn({ err }, 'Failed to fetch website analytics');
         }
+
+        // Fetch analytics for all landing pages
+        const landingPages = pagesData.pages.filter((p: WebsitePage) => p.page_type === 'landing');
+        if (landingPages.length > 0) {
+          const analyticsPromises = landingPages.map(async (lp: WebsitePage) => {
+            try {
+              const response = await fetch(`/api/website/pages/${lp.id}/activity?full=true`);
+              const data = await response.json();
+              return { pageId: lp.id, analytics: data.success ? data.analytics : null };
+            } catch {
+              return { pageId: lp.id, analytics: null };
+            }
+          });
+
+          const results = await Promise.all(analyticsPromises);
+          const analyticsMap: Record<string, typeof results[0]['analytics']> = {};
+          results.forEach(r => {
+            if (r.analytics) {
+              analyticsMap[r.pageId] = r.analytics;
+            }
+          });
+          setLandingPagesAnalytics(analyticsMap);
+        }
       }
 
       if (templatesData.success) {
@@ -771,6 +949,19 @@ export default function WebsiteManagementPage() {
       // Check if we should show setup wizard
       if (!wizardChecked) {
         setWizardChecked(true);
+
+        // Check for ?pageId=... query param (from landing page creation)
+        const pageIdParam = searchParams.get('pageId');
+        if (pageIdParam && pagesData.pages) {
+          const targetPage = pagesData.pages.find((p: WebsitePage) => p.id === pageIdParam);
+          if (targetPage) {
+            // Load the specific page (e.g., newly created landing page)
+            handleSelectPage(targetPage);
+            // Clean up the URL
+            router.replace('/business-os/website', { scroll: false });
+            return; // Skip wizard check since we're loading a specific page
+          }
+        }
 
         // Check for ?wizard=true query param (from dashboard setup card)
         const wizardParam = searchParams.get('wizard');
@@ -1097,8 +1288,8 @@ export default function WebsiteManagementPage() {
       if (prev.includes(step)) {
         return prev.filter(s => s !== step);
       } else {
-        // Add step in correct order
-        const order: FlowStepKey[] = ['booking', 'payment', 'intake', 'confirmation'];
+        // Add step in correct order - new steps: scheduling, client_info replace booking
+        const order: FlowStepKey[] = ['scheduling', 'client_info', 'booking', 'payment', 'intake', 'confirmation'];
         const newFlow = [...prev, step];
         return order.filter(s => newFlow.includes(s));
       }
@@ -1119,6 +1310,116 @@ export default function WebsiteManagementPage() {
       const newFlow = [...prev];
       [newFlow[index], newFlow[newIndex]] = [newFlow[newIndex], newFlow[index]];
       return newFlow;
+    });
+  };
+
+  // Toggle a step in the landing page client journey - all steps are fully configurable
+  const toggleLandingPageStep = (step: FlowStepKey) => {
+    setLandingPageClientFlow(prev => {
+      if (prev.includes(step)) {
+        // Remove step - but ensure at least one step remains
+        const filtered = prev.filter(s => s !== step);
+        if (filtered.length === 0) {
+          // Must have at least one step
+          return prev;
+        }
+        return filtered;
+      } else {
+        // Add step in the correct order - new steps: scheduling, client_info replace booking
+        const order: FlowStepKey[] = ['scheduling', 'client_info', 'booking', 'payment', 'intake', 'confirmation'];
+        const newFlow = [...prev, step];
+        // Sort by defined order
+        return order.filter(s => newFlow.includes(s));
+      }
+    });
+  };
+
+  // Move a step in the landing page client journey - any step can be reordered
+  const moveLandingPageStep = (step: FlowStepKey, direction: 'up' | 'down') => {
+    setLandingPageClientFlow(prev => {
+      const index = prev.indexOf(step);
+      if (index === -1) return prev;
+
+      const newIndex = direction === 'up' ? index - 1 : index + 1;
+      // Can't move to negative or beyond array bounds
+      if (newIndex < 0 || newIndex >= prev.length) return prev;
+
+      const newFlow = [...prev];
+      [newFlow[index], newFlow[newIndex]] = [newFlow[newIndex], newFlow[index]];
+      return newFlow;
+    });
+  };
+
+  // Save landing page client journey - can be stored in booking_widget, pricing, or cta block
+  const handleSaveLandingPageJourney = async () => {
+    if (!page || page.page_type !== 'landing') return;
+
+    setSavingLandingPageJourney(true);
+    try {
+      // Find a block to save the journey to (priority order: booking_widget > pricing > cta)
+      const targetBlock = blocks.find(b => b.block_type === 'booking_widget')
+        || blocks.find(b => b.block_type === 'pricing')
+        || blocks.find(b => b.block_type === 'cta');
+
+      if (!targetBlock) {
+        logger.warn({ pageId: page.id }, 'No target block found for client journey (need booking_widget, pricing, or cta)');
+        return;
+      }
+
+      const contentToSave = {
+        ...targetBlock.content,
+        client_flow: landingPageClientFlow
+      };
+
+      logger.info({ blockId: targetBlock.id, blockType: targetBlock.block_type, clientFlow: landingPageClientFlow }, 'Saving landing page client journey');
+
+      const response = await fetch(`/api/website/pages/${page.id}/blocks/${targetBlock.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: contentToSave })
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || 'Failed to update landing page journey');
+      }
+
+      // Update local state
+      setBlocks(prev => prev.map(b =>
+        b.id === targetBlock.id
+          ? { ...b, content: contentToSave }
+          : b
+      ));
+
+      logger.info({ pageId: page.id }, 'Landing page client journey saved successfully');
+    } catch (error) {
+      logger.error({ err: error }, 'Failed to save landing page journey');
+    } finally {
+      setSavingLandingPageJourney(false);
+    }
+  };
+
+  // Handle drag end for landing page journey reorder
+  const handleLandingPageJourneyDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+
+    const activeStep = active.id as FlowStepKey;
+    const overStep = over.id as FlowStepKey;
+
+    // Don't allow moving confirmation (always last)
+    if (activeStep === 'confirmation') return;
+    if (overStep === 'confirmation') return;
+
+    setLandingPageClientFlow(prev => {
+      const oldIndex = prev.indexOf(activeStep);
+      const newIndex = prev.indexOf(overStep);
+
+      if (oldIndex === -1 || newIndex === -1) return prev;
+      // Don't allow moving to confirmation position (last)
+      if (newIndex >= prev.length - 1) return prev;
+
+      return arrayMove(prev, oldIndex, newIndex);
     });
   };
 
@@ -1161,18 +1462,55 @@ export default function WebsiteManagementPage() {
     }
   };
 
-  const handleDeletePage = async (pageId: string) => {
+  // Initiate delete process - check for activity first
+  const handleDeletePageClick = async (pageId: string, pageTitle: string) => {
     try {
-      const response = await fetch(`/api/website/pages/${pageId}`, {
+      setCheckingActivity(true);
+
+      // Check if page has activity
+      const activityResponse = await fetch(`/api/website/pages/${pageId}/activity`);
+      const activityData = await activityResponse.json();
+
+      if (!activityData.success) {
+        logger.error({ error: activityData.error }, 'Failed to check page activity');
+        return;
+      }
+
+      // Open dialog with activity info
+      setDeletingPage({
+        id: pageId,
+        title: pageTitle,
+        hasActivity: activityData.hasActivity,
+        viewCount: activityData.viewCount
+      });
+      setDeleteDialogOpen(true);
+    } catch (error) {
+      logger.error({ err: error }, 'Failed to check page activity');
+    } finally {
+      setCheckingActivity(false);
+    }
+  };
+
+  // Confirm delete - perform actual deletion
+  const handleConfirmDelete = async () => {
+    if (!deletingPage) return;
+
+    try {
+      // If page has activity, archive (deactivate). If no activity, permanently delete.
+      const mode = deletingPage.hasActivity ? 'archive' : 'permanent';
+      const response = await fetch(`/api/website/pages/${deletingPage.id}?mode=${mode}`, {
         method: 'DELETE'
       });
       const data = await response.json();
 
       if (data.success) {
-        setAllPages(prev => prev.filter(p => p.id !== pageId));
+        setAllPages(prev => prev.filter(p => p.id !== deletingPage.id));
       }
     } catch (error) {
       logger.error({ err: error }, 'Failed to delete page');
+    } finally {
+      setDeleteDialogOpen(false);
+      setDeletingPage(null);
     }
   };
 
@@ -1205,7 +1543,13 @@ export default function WebsiteManagementPage() {
       logger.error({ err: error }, 'Failed to fetch blocks for page');
     }
 
-    setViewMode('overview');
+    // For landing pages, go directly to sections view to edit content
+    // For main website, go to overview
+    if (selectedPage.page_type === 'landing') {
+      setViewMode('sections');
+    } else {
+      setViewMode('overview');
+    }
   };
 
   const handlePublish = async () => {
@@ -1406,11 +1750,16 @@ export default function WebsiteManagementPage() {
 
       const sectionName = BLOCK_TO_SECTION[block.block_type];
 
+      // LANDING PAGES: Always save directly to block content
+      // Landing pages don't use central content store - all content is stored in blocks
+      const isLandingPage = page?.page_type === 'landing';
+
       // Certain blocks save directly to block content (page-specific, not shared):
       // - services: includes hidden flags from Scheduling
       // - header: logo/menu is specific to each page
-      // Other sections: Save to central content store (persists across templates)
-      if (SAVE_DIRECTLY_TO_BLOCK.includes(block.block_type)) {
+      // - ALL blocks for landing pages: landing pages are standalone, no central content
+      // Other sections (homepage only): Save to central content store (persists across templates)
+      if (isLandingPage || SAVE_DIRECTLY_TO_BLOCK.includes(block.block_type)) {
         // Save directly to block content
         const response = await fetch(`/api/website/pages/${page?.id}/blocks/${blockId}`, {
           method: 'PUT',
@@ -1422,7 +1771,7 @@ export default function WebsiteManagementPage() {
           throw new Error(`Failed to save ${block.block_type}`);
         }
       } else {
-        // Save to central content store (content persists across templates)
+        // Homepage/main website: Save to central content store (content persists across templates)
         const contentResponse = await fetch('/api/website/content', {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
@@ -2037,29 +2386,39 @@ export default function WebsiteManagementPage() {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 sm:py-8 space-y-8">
 
         {/* Page Header with blue theme (Website capability color) - matching CRM pattern */}
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-4">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+          <div className="flex items-center gap-3 sm:gap-4 min-w-0">
             <div
-              className="w-12 h-12 rounded-xl flex items-center justify-center"
-              style={{ backgroundColor: 'rgba(79, 110, 247, 0.2)' }}
+              className={`w-10 h-10 sm:w-12 sm:h-12 rounded-xl flex items-center justify-center flex-shrink-0 ${
+                page?.page_type === 'landing'
+                  ? 'bg-purple-100 dark:bg-purple-900/30'
+                  : ''
+              }`}
+              style={page?.page_type !== 'landing' ? { backgroundColor: 'rgba(79, 110, 247, 0.2)' } : undefined}
             >
-              <Globe className="w-6 h-6" style={{ color: WEBSITE_COLOR }} />
+              {page?.page_type === 'landing' ? (
+                <Megaphone className="w-5 h-5 sm:w-6 sm:h-6 text-purple-600 dark:text-purple-400" />
+              ) : (
+                <Globe className="w-5 h-5 sm:w-6 sm:h-6" style={{ color: WEBSITE_COLOR }} />
+              )}
             </div>
-            <div>
-              <h1 className="text-2xl font-semibold text-[var(--v2-text-primary)]">
-                {labels.title}
+            <div className="min-w-0">
+              <h1 className="text-xl sm:text-2xl font-semibold text-[var(--v2-text-primary)] truncate">
+                {page?.page_type === 'landing' ? page.title : labels.title}
               </h1>
-              <p className="text-sm text-[var(--v2-text-secondary)] mt-1">
-                {labels.subtitle}
+              <p className="text-xs sm:text-sm text-[var(--v2-text-secondary)] mt-0.5 sm:mt-1 hidden sm:block">
+                {page?.page_type === 'landing'
+                  ? (language === 'he' ? 'עריכת דף נחיתה' : language === 'es' ? 'Editando Página de Destino' : 'Editing Landing Page')
+                  : labels.subtitle}
               </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 sm:gap-3 w-full sm:w-auto overflow-x-auto pb-2 sm:pb-0">
             {/* Back to Dashboard */}
             <button
               onClick={() => router.push('/business-os')}
-              className="p-2 text-[var(--v2-text-secondary)] bg-[var(--v2-surface)] border border-[var(--v2-border)] hover:bg-[var(--v2-surface-hover)] hover:text-[var(--v2-text-primary)] transition-all"
+              className="p-2 text-[var(--v2-text-secondary)] bg-[var(--v2-surface)] border border-[var(--v2-border)] hover:bg-[var(--v2-surface-hover)] hover:text-[var(--v2-text-primary)] transition-all flex-shrink-0"
               style={{ borderRadius: 'var(--v2-radius-button)' }}
               title={labels.back_to_dashboard}
             >
@@ -2068,17 +2427,17 @@ export default function WebsiteManagementPage() {
 
             {page && viewMode !== 'wizard' && (
               <>
-                {/* View Site Button */}
+                {/* View Site Button - only when live */}
                 {page.status === 'live' && page.subdomain && (
                   <a
                     href={getWebsiteUrl() || '#'}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="flex items-center gap-2 px-4 py-2 text-[var(--v2-text-secondary)] text-sm font-medium bg-[var(--v2-surface)] border border-[var(--v2-border)] hover:bg-[var(--v2-surface-hover)] transition-all"
+                    className="flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 text-[var(--v2-text-secondary)] text-xs sm:text-sm font-medium bg-[var(--v2-surface)] border border-[var(--v2-border)] hover:bg-[var(--v2-surface-hover)] transition-all whitespace-nowrap"
                     style={{ borderRadius: 'var(--v2-radius-button)' }}
                   >
-                    <ExternalLink className="h-4 w-4" />
-                    {labels.view_site}
+                    <ExternalLink className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+                    <span className="hidden sm:inline">{labels.view_site}</span>
                   </a>
                 )}
 
@@ -2086,35 +2445,36 @@ export default function WebsiteManagementPage() {
                 {page.subdomain && (
                   <button
                     onClick={copyLink}
-                    className="flex items-center gap-2 px-4 py-2 text-[var(--v2-text-secondary)] text-sm font-medium bg-[var(--v2-surface)] border border-[var(--v2-border)] hover:bg-[var(--v2-surface-hover)] transition-all"
+                    className="flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 text-[var(--v2-text-secondary)] text-xs sm:text-sm font-medium bg-[var(--v2-surface)] border border-[var(--v2-border)] hover:bg-[var(--v2-surface-hover)] transition-all flex-shrink-0"
                     style={{ borderRadius: 'var(--v2-radius-button)' }}
                     title={labels.copy_link}
                   >
                     {linkCopied ? (
-                      <Check className="h-4 w-4 text-green-500" />
+                      <Check className="h-3.5 w-3.5 sm:h-4 sm:w-4 text-green-500" />
                     ) : (
-                      <Copy className="h-4 w-4" />
+                      <Copy className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
                     )}
                   </button>
                 )}
 
-                {/* View Mode Tabs - matching CRM pattern */}
+                {/* View Mode Tabs - matching CRM pattern - Scrollable on mobile */}
                 <div
-                  className="bg-[var(--v2-surface)] border border-[var(--v2-border)] p-1 inline-flex gap-1"
+                  className="bg-[var(--v2-surface)] border border-[var(--v2-border)] p-0.5 sm:p-1 inline-flex gap-0.5 sm:gap-1 overflow-x-auto"
                   style={{ borderRadius: 'var(--v2-radius-card)' }}
                 >
                   {[
                     { id: 'overview', icon: Eye, title: labels.tab_overview },
-                    { id: 'pages', icon: FileText, title: labels.tab_pages },
-                    { id: 'journey', icon: Target, title: labels.tab_journey },
+                    { id: 'journey', icon: Target, title: labels.tab_journey, hideForLanding: true },
                     { id: 'sections', icon: Layout, title: labels.tab_sections },
                     { id: 'design', icon: Palette, title: labels.tab_design },
                     { id: 'settings', icon: Settings, title: labels.tab_settings },
-                    { id: 'templates', icon: LayoutTemplate, title: labels.tab_templates }
-                  ].map((tab) => (
+                    { id: 'templates', icon: LayoutTemplate, title: labels.tab_templates, hideForLanding: true }
+                  ]
+                    .filter(tab => !(tab.hideForLanding && page?.page_type === 'landing'))
+                    .map((tab) => (
                     <button
                       key={tab.id}
-                      className={`p-2 transition-all border ${
+                      className={`p-1.5 sm:p-2 transition-all border ${
                         viewMode === tab.id
                           ? 'text-[#4F6EF7] border-[#4F6EF7] bg-[#4F6EF7]/10'
                           : 'text-[var(--v2-text-secondary)] border-transparent hover:text-[var(--v2-text-primary)]'
@@ -2123,7 +2483,7 @@ export default function WebsiteManagementPage() {
                       onClick={() => setViewMode(tab.id as ViewMode)}
                       title={tab.title}
                     >
-                      <tab.icon className="h-4 w-4" />
+                      <tab.icon className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
                     </button>
                   ))}
                 </div>
@@ -2257,117 +2617,381 @@ export default function WebsiteManagementPage() {
           <>
             {/* Overview Tab */}
             {viewMode === 'overview' && (
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                {/* Site Info Card */}
-                <div
-                  className="lg:col-span-2 bg-[var(--v2-surface)] border border-[var(--v2-border)] p-6"
-                  style={{ borderRadius: 'var(--v2-radius-card)' }}
-                >
-                  <div className="flex items-center justify-between mb-4">
-                    <h3 className="text-lg font-semibold text-[var(--v2-text-primary)]">
-                      {page.title || 'My Website'}
-                    </h3>
-                    {/* Status Badge */}
-                    <span
-                      className={`px-3 py-1 text-xs font-medium rounded-full ${
-                        page.status === 'live'
-                          ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
-                          : 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'
-                      }`}
-                    >
-                      {page.status === 'live' ? labels.status_live : labels.status_draft}
-                    </span>
-                  </div>
-
-                  {/* URL Display */}
-                  {page.subdomain && (
-                    <div className="flex items-center gap-3 p-3 bg-[var(--v2-bg)] rounded-lg mb-4">
-                      <Globe className="w-5 h-5 text-[var(--v2-text-muted)]" />
-                      <span className="flex-1 text-[var(--v2-text-secondary)] text-sm font-mono">
-                        {page.subdomain}.agentpilot.io
-                      </span>
-                      <button
-                        onClick={copyLink}
-                        className="p-2 hover:bg-[var(--v2-surface)] rounded transition-colors"
+              <div className="space-y-6">
+                {/* Landing Page Overview - shown when editing a landing page */}
+                {page.page_type === 'landing' && (
+                  <div
+                    className="bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800 p-6"
+                    style={{ borderRadius: 'var(--v2-radius-card)' }}
+                  >
+                    <div className="flex items-center justify-between mb-4">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-lg flex items-center justify-center bg-purple-100 dark:bg-purple-800/50">
+                          <Megaphone className="w-5 h-5 text-purple-600 dark:text-purple-400" />
+                        </div>
+                        <div>
+                          <h3 className="text-lg font-semibold text-purple-900 dark:text-purple-100">
+                            {page.title}
+                          </h3>
+                          <p className="text-sm text-purple-600 dark:text-purple-300 font-mono">
+                            /{page.slug}
+                          </p>
+                        </div>
+                      </div>
+                      <span
+                        className={`px-3 py-1 text-xs font-medium rounded-full ${
+                          page.status === 'live'
+                            ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
+                            : 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'
+                        }`}
                       >
-                        {linkCopied ? (
-                          <Check className="w-4 h-4 text-green-500" />
-                        ) : (
-                          <Copy className="w-4 h-4 text-[var(--v2-text-muted)]" />
-                        )}
+                        {page.status === 'live' ? labels.status_live : labels.status_draft}
+                      </span>
+                    </div>
+
+                    {/* URL Display for Landing Page */}
+                    {page.subdomain && page.slug && (
+                      <div className="flex items-center gap-3 p-3 bg-white/50 dark:bg-slate-800/50 rounded-lg mb-4">
+                        <Globe className="w-5 h-5 text-purple-400" />
+                        <span className="flex-1 text-purple-700 dark:text-purple-300 text-sm font-mono" dir="ltr">
+                          {page.subdomain}.agentpilot.io/{page.slug}
+                        </span>
+                        <button
+                          onClick={copyLink}
+                          className="p-2 hover:bg-purple-100 dark:hover:bg-purple-800/50 rounded transition-colors"
+                        >
+                          {linkCopied ? (
+                            <Check className="w-4 h-4 text-green-500" />
+                          ) : (
+                            <Copy className="w-4 h-4 text-purple-400" />
+                          )}
+                        </button>
+                      </div>
+                    )}
+
+                    {/* Landing Page Analytics */}
+                    <div
+                      className="bg-white/50 dark:bg-slate-800/50 border border-purple-200/50 dark:border-purple-700/50 p-4 mb-4"
+                      style={{ borderRadius: 'var(--v2-radius-card)' }}
+                    >
+                      <h4 className="text-sm font-medium text-purple-700 dark:text-purple-300 uppercase tracking-wider mb-3">
+                        {labels.page_views}
+                      </h4>
+                      <div className="grid grid-cols-4 gap-3">
+                        {/* Today */}
+                        <div className="text-center p-2 bg-purple-100/50 dark:bg-purple-900/30 rounded-lg">
+                          <p className="text-xl font-bold text-purple-900 dark:text-purple-100">{landingPagesAnalytics[page.id]?.visitors_today ?? 0}</p>
+                          <p className="text-xs text-purple-600 dark:text-purple-400">{labels.visitors_today}</p>
+                        </div>
+                        {/* 7 Days */}
+                        <div className="text-center p-2 bg-purple-100/50 dark:bg-purple-900/30 rounded-lg">
+                          <p className="text-xl font-bold text-purple-900 dark:text-purple-100">{landingPagesAnalytics[page.id]?.visitors_7d ?? 0}</p>
+                          <p className="text-xs text-purple-600 dark:text-purple-400">{labels.visitors_7d}</p>
+                        </div>
+                        {/* 30 Days */}
+                        <div className="text-center p-2 bg-purple-100/50 dark:bg-purple-900/30 rounded-lg">
+                          <p className="text-xl font-bold text-purple-900 dark:text-purple-100">{landingPagesAnalytics[page.id]?.visitors_30d ?? 0}</p>
+                          <p className="text-xs text-purple-600 dark:text-purple-400">{labels.visitors_30d}</p>
+                        </div>
+                        {/* Total Views */}
+                        <div className="text-center p-2 bg-purple-100/50 dark:bg-purple-900/30 rounded-lg">
+                          <p className="text-xl font-bold text-purple-900 dark:text-purple-100">{landingPagesAnalytics[page.id]?.total_views ?? 0}</p>
+                          <p className="text-xs text-purple-600 dark:text-purple-400">{labels.total_views}</p>
+                        </div>
+                      </div>
+                      {/* Unique visitors summary */}
+                      <div className="mt-3 pt-3 border-t border-purple-200/50 dark:border-purple-700/50">
+                        <div className="flex justify-between items-center">
+                          <span className="text-sm text-purple-600 dark:text-purple-400">{labels.unique_visitors}</span>
+                          <span className="text-lg font-semibold text-purple-900 dark:text-purple-100">{landingPagesAnalytics[page.id]?.unique_visitors ?? 0}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Quick Actions for Landing Page - Simplified (main actions in upper toolbar) */}
+                    <div className="flex flex-wrap gap-3">
+                      <a
+                        href={`/business-os/website/preview/${page.id}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex items-center gap-2 px-4 py-2 text-[#4F6EF7] text-sm font-medium border border-[#4F6EF7] bg-[#4F6EF7]/10 hover:bg-[#4F6EF7]/20 transition-all"
+                        style={{ borderRadius: 'var(--v2-radius-button)' }}
+                      >
+                        <Eye className="h-4 w-4" />
+                        {labels.preview}
+                      </a>
+                      <button
+                        onClick={() => {
+                          // Find and load homepage so user can edit main website
+                          const homepage = allPages.find(p => p.page_type === 'homepage');
+                          if (homepage) {
+                            handleSelectPage(homepage);
+                          } else {
+                            setPage(null);
+                            setBlocks([]);
+                          }
+                          setViewMode('overview');
+                        }}
+                        className="flex items-center gap-2 px-4 py-2 text-[var(--v2-text-secondary)] text-sm font-medium border border-[var(--v2-border)] hover:bg-[var(--v2-surface-hover)] transition-all"
+                        style={{ borderRadius: 'var(--v2-radius-button)' }}
+                      >
+                        <ArrowLeft className="h-4 w-4" />
+                        {language === 'he' ? 'חזרה לאתר הראשי' : language === 'es' ? 'Volver al Sitio Principal' : 'Back to Main Website'}
                       </button>
                     </div>
-                  )}
+                  </div>
+                )}
 
-                  {/* Quick Actions */}
-                  <div className="flex gap-3">
-                    <a
-                      href={getPreviewUrl() || '#'}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="flex items-center gap-2 px-4 py-2 text-[#4F6EF7] text-sm font-medium border border-[#4F6EF7] bg-[#4F6EF7]/10 hover:bg-[#4F6EF7]/20 transition-all"
-                      style={{ borderRadius: 'var(--v2-radius-button)' }}
-                    >
-                      <Eye className="h-4 w-4" />
-                      {labels.preview}
-                    </a>
-                    <button
-                      onClick={() => setViewMode('sections')}
-                      className="flex items-center gap-2 px-4 py-2 text-[var(--v2-text-secondary)] text-sm font-medium border border-[var(--v2-border)] hover:bg-[var(--v2-surface-hover)] transition-all"
-                      style={{ borderRadius: 'var(--v2-radius-button)' }}
-                    >
-                      <PenLine className="h-4 w-4" />
-                      {labels.edit_content}
-                    </button>
-                    <button
-                      onClick={() => setViewMode('wizard')}
-                      className="flex items-center gap-2 px-4 py-2 text-[var(--v2-text-secondary)] text-sm font-medium border border-[var(--v2-border)] hover:bg-[var(--v2-surface-hover)] transition-all"
-                      style={{ borderRadius: 'var(--v2-radius-button)' }}
-                    >
-                      <Wand2 className="h-4 w-4" />
-                      {labels.run_setup_wizard}
-                    </button>
+                {/* Main Website Overview - shown when NOT editing a landing page */}
+                {page.page_type !== 'landing' && (
+                  <>
+                {/* Row 1: Analytics + Main Website Card */}
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                  {/* Stats Card */}
+                  <div
+                    className="bg-[var(--v2-surface)] border border-[var(--v2-border)] p-6"
+                    style={{ borderRadius: 'var(--v2-radius-card)' }}
+                  >
+                    <h3 className="text-sm font-medium text-[var(--v2-text-muted)] uppercase tracking-wider mb-4">
+                      {labels.page_views}
+                    </h3>
+                    <div className="grid grid-cols-2 gap-4">
+                      {/* Today */}
+                      <div className="text-center p-3 bg-[var(--v2-bg)] rounded-lg">
+                        <p className="text-2xl font-bold text-[var(--v2-text-primary)]">{analytics?.visitors_today ?? 0}</p>
+                        <p className="text-xs text-[var(--v2-text-muted)]">{labels.visitors_today}</p>
+                      </div>
+                      {/* 7 Days */}
+                      <div className="text-center p-3 bg-[var(--v2-bg)] rounded-lg">
+                        <p className="text-2xl font-bold text-[var(--v2-text-primary)]">{analytics?.visitors_7d ?? 0}</p>
+                        <p className="text-xs text-[var(--v2-text-muted)]">{labels.visitors_7d}</p>
+                      </div>
+                      {/* 30 Days */}
+                      <div className="text-center p-3 bg-[var(--v2-bg)] rounded-lg">
+                        <p className="text-2xl font-bold text-[var(--v2-text-primary)]">{analytics?.visitors_30d ?? 0}</p>
+                        <p className="text-xs text-[var(--v2-text-muted)]">{labels.visitors_30d}</p>
+                      </div>
+                      {/* Total Views */}
+                      <div className="text-center p-3 bg-[var(--v2-bg)] rounded-lg">
+                        <p className="text-2xl font-bold text-[var(--v2-text-primary)]">{analytics?.total_views ?? 0}</p>
+                        <p className="text-xs text-[var(--v2-text-muted)]">{labels.total_views}</p>
+                      </div>
+                    </div>
+                    {/* Unique visitors summary */}
+                    <div className="mt-4 pt-4 border-t border-[var(--v2-border)]">
+                      <div className="flex justify-between items-center">
+                        <span className="text-sm text-[var(--v2-text-muted)]">{labels.unique_visitors}</span>
+                        <span className="text-lg font-semibold text-[var(--v2-text-primary)]">{analytics?.unique_visitors ?? 0}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Main Website Card */}
+                  <div
+                    className="lg:col-span-2 bg-[var(--v2-surface)] border border-[#4F6EF7]/30 p-6"
+                    style={{ borderRadius: 'var(--v2-radius-card)' }}
+                  >
+                    <div className="flex items-center justify-between mb-4">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-lg flex items-center justify-center bg-[#4F6EF7]/10">
+                          <Globe className="w-5 h-5 text-[#4F6EF7]" />
+                        </div>
+                        <div>
+                          <h3 className="text-lg font-semibold text-[var(--v2-text-primary)]">
+                            {labels.main_website}
+                          </h3>
+                          <p className="text-sm text-[var(--v2-text-muted)]">
+                            {labels.main_website_desc}
+                          </p>
+                        </div>
+                      </div>
+                      {/* Status Badge */}
+                      <span
+                        className={`px-3 py-1 text-xs font-medium rounded-full ${
+                          page.status === 'live'
+                            ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
+                            : 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'
+                        }`}
+                      >
+                        {page.status === 'live' ? labels.status_live : labels.status_draft}
+                      </span>
+                    </div>
+
+                    {/* URL Display */}
+                    {page.subdomain && (
+                      <div className="flex items-center gap-3 p-3 bg-[var(--v2-bg)] rounded-lg mb-4">
+                        <Globe className="w-5 h-5 text-[var(--v2-text-muted)]" />
+                        <span className="flex-1 text-[var(--v2-text-secondary)] text-sm font-mono">
+                          {page.subdomain}.agentpilot.io
+                        </span>
+                        <button
+                          onClick={copyLink}
+                          className="p-2 hover:bg-[var(--v2-surface)] rounded transition-colors"
+                        >
+                          {linkCopied ? (
+                            <Check className="w-4 h-4 text-green-500" />
+                          ) : (
+                            <Copy className="w-4 h-4 text-[var(--v2-text-muted)]" />
+                          )}
+                        </button>
+                      </div>
+                    )}
+
+                    {/* Quick Actions - Simplified (main actions in upper toolbar) */}
+                    <div className="flex flex-wrap gap-3">
+                      <a
+                        href={getPreviewUrl() || '#'}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex items-center gap-2 px-4 py-2 text-[#4F6EF7] text-sm font-medium border border-[#4F6EF7] bg-[#4F6EF7]/10 hover:bg-[#4F6EF7]/20 transition-all"
+                        style={{ borderRadius: 'var(--v2-radius-button)' }}
+                      >
+                        <Eye className="h-4 w-4" />
+                        {labels.preview}
+                      </a>
+                      <button
+                        onClick={() => setViewMode('wizard')}
+                        className="flex items-center gap-2 px-4 py-2 text-[var(--v2-text-secondary)] text-sm font-medium border border-[var(--v2-border)] hover:bg-[var(--v2-surface-hover)] transition-all"
+                        style={{ borderRadius: 'var(--v2-radius-button)' }}
+                      >
+                        <Wand2 className="h-4 w-4" />
+                        {labels.run_wizard}
+                      </button>
+                    </div>
                   </div>
                 </div>
 
-                {/* Stats Card */}
+                {/* Row 2: Landing Pages Section */}
                 <div
                   className="bg-[var(--v2-surface)] border border-[var(--v2-border)] p-6"
                   style={{ borderRadius: 'var(--v2-radius-card)' }}
                 >
-                  <h3 className="text-sm font-medium text-[var(--v2-text-muted)] uppercase tracking-wider mb-4">
-                    {labels.page_views}
-                  </h3>
-                  <div className="grid grid-cols-2 gap-4">
-                    {/* Today */}
-                    <div className="text-center p-3 bg-[var(--v2-bg)] rounded-lg">
-                      <p className="text-2xl font-bold text-[var(--v2-text-primary)]">{analytics?.visitors_today ?? 0}</p>
-                      <p className="text-xs text-[var(--v2-text-muted)]">{labels.visitors_today}</p>
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-lg flex items-center justify-center" style={{ background: 'rgba(139, 92, 246, 0.12)' }}>
+                        <Megaphone className="w-5 h-5" style={{ color: '#8B5CF6' }} />
+                      </div>
+                      <div>
+                        <h3 className="text-lg font-semibold text-[var(--v2-text-primary)]">
+                          {labels.landing_pages}
+                        </h3>
+                        <p className="text-sm text-[var(--v2-text-secondary)]">
+                          {labels.landing_pages_desc}
+                        </p>
+                      </div>
                     </div>
-                    {/* 7 Days */}
-                    <div className="text-center p-3 bg-[var(--v2-bg)] rounded-lg">
-                      <p className="text-2xl font-bold text-[var(--v2-text-primary)]">{analytics?.visitors_7d ?? 0}</p>
-                      <p className="text-xs text-[var(--v2-text-muted)]">{labels.visitors_7d}</p>
-                    </div>
-                    {/* 30 Days */}
-                    <div className="text-center p-3 bg-[var(--v2-bg)] rounded-lg">
-                      <p className="text-2xl font-bold text-[var(--v2-text-primary)]">{analytics?.visitors_30d ?? 0}</p>
-                      <p className="text-xs text-[var(--v2-text-muted)]">{labels.visitors_30d}</p>
-                    </div>
-                    {/* Total Views */}
-                    <div className="text-center p-3 bg-[var(--v2-bg)] rounded-lg">
-                      <p className="text-2xl font-bold text-[var(--v2-text-primary)]">{analytics?.total_views ?? 0}</p>
-                      <p className="text-xs text-[var(--v2-text-muted)]">{labels.total_views}</p>
-                    </div>
+                    <button
+                      onClick={() => setShowLandingPageWizard(true)}
+                      className="flex items-center gap-2 px-4 py-2 text-[#4F6EF7] text-sm font-medium border border-[#4F6EF7] bg-[#4F6EF7]/10 hover:bg-[#4F6EF7]/20 transition-all"
+                      style={{ borderRadius: 'var(--v2-radius-button)' }}
+                    >
+                      <Plus className="h-4 w-4" />
+                      {labels.create_landing_page}
+                    </button>
                   </div>
-                  {/* Unique visitors summary */}
-                  <div className="mt-4 pt-4 border-t border-[var(--v2-border)]">
-                    <div className="flex justify-between items-center">
-                      <span className="text-sm text-[var(--v2-text-muted)]">{labels.unique_visitors}</span>
-                      <span className="text-lg font-semibold text-[var(--v2-text-primary)]">{analytics?.unique_visitors ?? 0}</span>
-                    </div>
+
+                  {/* Landing Pages List */}
+                  <div className="space-y-3">
+                    {allPages.filter(p => p.page_type === 'landing').map((p) => (
+                      <div
+                        key={p.id}
+                        className="p-4 bg-[var(--v2-bg)] rounded-lg border border-[var(--v2-border)]"
+                      >
+                        <div className="flex items-center justify-between mb-3">
+                          <div className="flex items-center gap-4">
+                            <div className="w-10 h-10 rounded-lg flex items-center justify-center bg-[var(--v2-surface)]">
+                              <FileText className="w-5 h-5 text-[var(--v2-text-secondary)]" />
+                            </div>
+                            <div>
+                              <p className="font-medium text-[var(--v2-text-primary)]">
+                                {p.title}
+                              </p>
+                              <div className="flex items-center gap-2" dir="ltr">
+                                {p.slug && (
+                                  <span className="text-xs text-[var(--v2-text-muted)] font-mono">
+                                    /{p.slug}
+                                  </span>
+                                )}
+                                <span
+                                  className={`px-2 py-0.5 text-xs font-medium rounded ${
+                                    p.status === 'live'
+                                      ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
+                                      : 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'
+                                  }`}
+                                >
+                                  {p.status === 'live' ? labels.status_live : labels.status_draft}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => handleSelectPage(p)}
+                            className="px-3 py-1.5 text-sm font-medium text-[var(--v2-text-primary)] border border-[var(--v2-border)] hover:border-[#4F6EF7] hover:text-[#4F6EF7] transition-all"
+                            style={{ borderRadius: 'var(--v2-radius-button)' }}
+                          >
+                            {labels.edit_page}
+                          </button>
+                          <a
+                            href={`/business-os/website/preview/${p.id}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="p-1.5 text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)] transition-colors"
+                            title={labels.preview}
+                          >
+                            <Eye className="h-4 w-4" />
+                          </a>
+                          <button
+                            onClick={() => handleDeletePageClick(p.id, p.title)}
+                            disabled={checkingActivity}
+                            className="p-1.5 text-[var(--v2-text-muted)] hover:text-red-500 transition-colors disabled:opacity-50"
+                            title={labels.delete_page}
+                          >
+                            {checkingActivity ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <Trash2 className="h-4 w-4" />
+                            )}
+                          </button>
+                        </div>
+                      </div>
+
+                        {/* Landing Page Analytics - Compact row */}
+                        <div className="flex items-center gap-4 pt-3 border-t border-[var(--v2-border)]">
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs text-[var(--v2-text-muted)]">{labels.visitors_today}:</span>
+                            <span className="text-sm font-semibold text-[var(--v2-text-primary)]">{landingPagesAnalytics[p.id]?.visitors_today ?? 0}</span>
+                          </div>
+                          <div className="w-px h-4 bg-[var(--v2-border)]" />
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs text-[var(--v2-text-muted)]">{labels.visitors_30d}:</span>
+                            <span className="text-sm font-semibold text-[var(--v2-text-primary)]">{landingPagesAnalytics[p.id]?.visitors_30d ?? 0}</span>
+                          </div>
+                          <div className="w-px h-4 bg-[var(--v2-border)]" />
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs text-[var(--v2-text-muted)]">{labels.total_views}:</span>
+                            <span className="text-sm font-semibold text-[var(--v2-text-primary)]">{landingPagesAnalytics[p.id]?.total_views ?? 0}</span>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+
+                    {allPages.filter(p => p.page_type === 'landing').length === 0 && (
+                      <div className="text-center py-8 bg-[var(--v2-surface)] rounded-lg">
+                        <Megaphone className="w-10 h-10 mx-auto text-[var(--v2-text-muted)] mb-3 opacity-50" />
+                        <p className="text-sm text-[var(--v2-text-secondary)] font-medium">
+                          {labels.no_landing_pages}
+                        </p>
+                        <p className="text-xs text-[var(--v2-text-muted)] mt-1">
+                          {labels.no_landing_pages_desc}
+                        </p>
+                      </div>
+                    )}
                   </div>
                 </div>
+                  </>
+                )}
               </div>
             )}
 
@@ -2475,15 +3099,16 @@ export default function WebsiteManagementPage() {
                 {!servicesOnly && (
                   <div className="space-y-3">
                     {/* Available steps to add */}
-                    {(['booking', 'payment', 'intake'] as const).filter(step => !clientFlow.includes(step)).length > 0 && (
+                    {(['scheduling', 'client_info', 'payment', 'intake'] as const).filter(step => !clientFlow.includes(step)).length > 0 && (
                       <div className="mb-4">
                         <p className="text-xs text-[var(--v2-text-muted)] mb-2">{labels.journey_add_step}:</p>
                         <div className="flex flex-wrap gap-2">
-                          {(['booking', 'payment', 'intake'] as const)
+                          {(['scheduling', 'client_info', 'payment', 'intake'] as const)
                             .filter(step => !clientFlow.includes(step))
                             .map(step => {
                               const stepInfo = {
-                                booking: { icon: Calendar, label: labels.journey_step_booking, color: 'blue' },
+                                scheduling: { icon: Calendar, label: labels.journey_step_scheduling, color: 'blue' },
+                                client_info: { icon: User, label: labels.journey_step_client_info, color: 'indigo' },
                                 payment: { icon: CreditCard, label: labels.journey_step_payment, color: 'green' },
                                 intake: { icon: FileText, label: labels.journey_step_intake, color: 'purple' }
                               }[step];
@@ -2507,11 +3132,14 @@ export default function WebsiteManagementPage() {
                     {/* Current flow steps */}
                     {clientFlow.map((step, index) => {
                       const stepInfo = {
+                        scheduling: { icon: Calendar, label: labels.journey_step_scheduling, desc: labels.journey_step_scheduling_desc, bg: 'bg-[var(--v2-surface)]', border: 'border-[#4F6EF7]/40', circle: 'bg-[#4F6EF7]' },
+                        client_info: { icon: User, label: labels.journey_step_client_info, desc: labels.journey_step_client_info_desc, bg: 'bg-[var(--v2-surface)]', border: 'border-indigo-500/40', circle: 'bg-indigo-500' },
                         booking: { icon: Calendar, label: labels.journey_step_booking, desc: labels.journey_step_booking_desc, bg: 'bg-[var(--v2-surface)]', border: 'border-[#4F6EF7]/40', circle: 'bg-[#4F6EF7]' },
                         payment: { icon: CreditCard, label: labels.journey_step_payment, desc: labels.journey_step_payment_desc, bg: 'bg-[var(--v2-surface)]', border: 'border-green-500/40', circle: 'bg-green-500' },
                         intake: { icon: FileText, label: labels.journey_step_intake, desc: labels.journey_step_intake_desc, bg: 'bg-[var(--v2-surface)]', border: 'border-purple-500/40', circle: 'bg-purple-500' },
                         confirmation: { icon: Check, label: labels.journey_step_confirmation, desc: labels.journey_step_confirmation_desc, bg: 'bg-[var(--v2-surface)]', border: 'border-[var(--v2-border)]', circle: 'bg-gray-400' }
                       }[step];
+                      if (!stepInfo) return null; // Skip unknown steps
                       const Icon = stepInfo.icon;
                       const isConfirmation = step === 'confirmation';
 
@@ -2593,65 +3221,253 @@ export default function WebsiteManagementPage() {
                 <div className="mb-6 flex items-start justify-between">
                   <div>
                     <h3 className="text-lg font-semibold text-[var(--v2-text-primary)]">
-                      {labels.sections_title}
+                      {page?.page_type === 'landing'
+                        ? (language === 'he' ? 'עריכת דף נחיתה' : language === 'es' ? 'Editar Página de Destino' : 'Edit Landing Page')
+                        : labels.sections_title}
                     </h3>
                     <p className="text-sm text-[var(--v2-text-muted)] mt-1">
-                      {labels.sections_desc}
+                      {page?.page_type === 'landing'
+                        ? (language === 'he' ? 'ערוך את התוכן והעיצוב של דף הנחיתה שלך' : language === 'es' ? 'Edita el contenido y diseño de tu página' : 'Edit the content and design of your landing page')
+                        : labels.sections_desc}
                     </p>
                   </div>
 
-                  {/* Action Buttons */}
+                  {/* Action Buttons - Different for landing pages vs main website */}
                   <div className="flex items-center gap-3">
-                    {syncResult && (
+                    {/* Preview Button for Landing Pages - "View Landing Page" */}
+                    {page?.page_type === 'landing' && (
+                      <a
+                        href={`/business-os/website/preview/${page.id}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-[#4F6EF7] hover:bg-[#3D5BD9] transition-all"
+                        style={{ borderRadius: 'var(--v2-radius-button)' }}
+                      >
+                        <Eye className="w-4 h-4" />
+                        {language === 'he' ? 'צפה בדף הנחיתה' : language === 'es' ? 'Ver Página' : 'View Landing Page'}
+                      </a>
+                    )}
+                    {/* Back to Main Website Button for Landing Pages */}
+                    {page?.page_type === 'landing' && (
+                      <button
+                        onClick={() => {
+                          // Find and load homepage so user can edit main website
+                          const homepage = allPages.find(p => p.page_type === 'homepage');
+                          if (homepage) {
+                            handleSelectPage(homepage);
+                          } else {
+                            setPage(null);
+                            setBlocks([]);
+                          }
+                          setViewMode('overview');
+                        }}
+                        className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-[var(--v2-text-secondary)] bg-[var(--v2-surface-elevated)] hover:bg-[var(--v2-surface-hover)] border border-[var(--v2-border)] transition-all"
+                        style={{ borderRadius: 'var(--v2-radius-button)' }}
+                      >
+                        <ArrowLeft className="w-4 h-4" />
+                        {language === 'he' ? 'חזרה לאתר הראשי' : language === 'es' ? 'Volver al Sitio Principal' : 'Back to Main Website'}
+                      </button>
+                    )}
+                    {/* Main Website specific buttons */}
+                    {page?.page_type !== 'landing' && syncResult && (
                       <span className={`text-sm ${syncResult.count > 0 ? 'text-green-500' : 'text-[var(--v2-text-muted)]'}`}>
                         {syncResult.message}
                       </span>
                     )}
-                    {/* Reset Order Button */}
-                    <button
-                      onClick={handleResetBlockOrder}
-                      disabled={resettingOrder}
-                      className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-[var(--v2-text-secondary)] bg-[var(--v2-surface-elevated)] hover:bg-[var(--v2-surface-hover)] border border-[var(--v2-border)] disabled:opacity-50 disabled:cursor-not-allowed transition-all"
-                      style={{ borderRadius: 'var(--v2-radius-button)' }}
-                      title={language === 'he' ? 'איפוס סדר לברירת מחדל' : language === 'es' ? 'Restablecer orden' : 'Reset to default order'}
-                    >
-                      {resettingOrder ? (
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                      ) : (
-                        <RotateCcw className="w-4 h-4" />
-                      )}
-                      {language === 'he' ? 'איפוס סדר' : language === 'es' ? 'Restablecer' : 'Reset Order'}
-                    </button>
-                    {/* Add Section Button */}
-                    <button
-                      onClick={() => setShowAddSectionModal(true)}
-                      className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-[#4F6EF7] bg-[#4F6EF7]/10 hover:bg-[#4F6EF7]/20 transition-all"
-                      style={{ borderRadius: 'var(--v2-radius-button)' }}
-                    >
-                      <Plus className="w-4 h-4" />
-                      {language === 'he' ? 'הוסף חלק' : language === 'es' ? 'Agregar Sección' : 'Add Section'}
-                    </button>
-                    {/* Sync Button */}
-                    <button
-                      onClick={handleSyncWithBusinessData}
-                      disabled={syncing}
-                      className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-[#4F6EF7] hover:bg-[#3D5BD9] disabled:opacity-50 disabled:cursor-not-allowed transition-all"
-                      style={{ borderRadius: 'var(--v2-radius-button)' }}
-                    >
-                      {syncing ? (
-                        <>
+                    {/* Reset Order Button - Main website only */}
+                    {page?.page_type !== 'landing' && (
+                      <button
+                        onClick={handleResetBlockOrder}
+                        disabled={resettingOrder}
+                        className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-[var(--v2-text-secondary)] bg-[var(--v2-surface-elevated)] hover:bg-[var(--v2-surface-hover)] border border-[var(--v2-border)] disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                        style={{ borderRadius: 'var(--v2-radius-button)' }}
+                        title={language === 'he' ? 'איפוס סדר לברירת מחדל' : language === 'es' ? 'Restablecer orden' : 'Reset to default order'}
+                      >
+                        {resettingOrder ? (
                           <Loader2 className="w-4 h-4 animate-spin" />
-                          {labels.syncing}
-                        </>
-                      ) : (
-                        <>
-                          <RefreshCw className="w-4 h-4" />
-                          {labels.sync_business_data}
-                        </>
-                      )}
-                    </button>
+                        ) : (
+                          <RotateCcw className="w-4 h-4" />
+                        )}
+                        {language === 'he' ? 'איפוס סדר' : language === 'es' ? 'Restablecer' : 'Reset Order'}
+                      </button>
+                    )}
+                    {/* Add Section Button - Main website only */}
+                    {page?.page_type !== 'landing' && (
+                      <button
+                        onClick={() => setShowAddSectionModal(true)}
+                        className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-[#4F6EF7] bg-[#4F6EF7]/10 hover:bg-[#4F6EF7]/20 transition-all"
+                        style={{ borderRadius: 'var(--v2-radius-button)' }}
+                      >
+                        <Plus className="w-4 h-4" />
+                        {language === 'he' ? 'הוסף חלק' : language === 'es' ? 'Agregar Sección' : 'Add Section'}
+                      </button>
+                    )}
+                    {/* Sync Button - Main website only */}
+                    {page?.page_type !== 'landing' && (
+                      <button
+                        onClick={handleSyncWithBusinessData}
+                        disabled={syncing}
+                        className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-[#4F6EF7] hover:bg-[#3D5BD9] disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                        style={{ borderRadius: 'var(--v2-radius-button)' }}
+                      >
+                        {syncing ? (
+                          <>
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                            {labels.syncing}
+                          </>
+                        ) : (
+                          <>
+                            <RefreshCw className="w-4 h-4" />
+                            {labels.sync_business_data}
+                          </>
+                        )}
+                      </button>
+                    )}
                   </div>
                 </div>
+
+                {/* Landing Page Client Journey Editor - show for all landing pages */}
+                {page?.page_type === 'landing' && (
+                  <div className="mb-6 p-4 bg-purple-50 dark:bg-purple-900/20 rounded-lg border border-purple-200 dark:border-purple-800">
+                    <div className="flex items-center justify-between mb-4">
+                      <div>
+                        <h4 className="font-semibold text-purple-900 dark:text-purple-100">
+                          {language === 'he' ? 'מסע הלקוח' : language === 'es' ? 'Recorrido del Cliente' : 'Client Journey'}
+                        </h4>
+                        <p className="text-sm text-purple-600 dark:text-purple-300">
+                          {language === 'he' ? 'הגדר את תהליך ההזמנה עבור דף הנחיתה הזה' : language === 'es' ? 'Configura el flujo de reservas para esta página' : 'Configure the booking flow for this landing page'}
+                        </p>
+                      </div>
+                      <button
+                        onClick={handleSaveLandingPageJourney}
+                        disabled={savingLandingPageJourney}
+                        className="flex items-center gap-2 px-4 py-2 bg-purple-600 text-white text-sm font-medium hover:bg-purple-700 transition-all disabled:opacity-50"
+                        style={{ borderRadius: 'var(--v2-radius-button)' }}
+                      >
+                        {savingLandingPageJourney ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <Save className="h-4 w-4" />
+                        )}
+                        {savingLandingPageJourney
+                          ? (language === 'he' ? 'שומר...' : language === 'es' ? 'Guardando...' : 'Saving...')
+                          : (language === 'he' ? 'שמור מסע' : language === 'es' ? 'Guardar Recorrido' : 'Save Journey')
+                        }
+                      </button>
+                    </div>
+
+                    {/* Available steps to add - all steps are fully configurable */}
+                    {(['scheduling', 'client_info', 'payment', 'intake', 'confirmation'] as const).filter(step => !landingPageClientFlow.includes(step)).length > 0 && (
+                      <div className="mb-4">
+                        <p className="text-xs text-purple-600 dark:text-purple-400 mb-2">
+                          {language === 'he' ? 'הוסף שלב:' : language === 'es' ? 'Agregar paso:' : 'Add step:'}
+                        </p>
+                        <div className="flex flex-wrap gap-2">
+                          {(['scheduling', 'client_info', 'payment', 'intake', 'confirmation'] as const)
+                            .filter(step => !landingPageClientFlow.includes(step))
+                            .map(step => {
+                              const stepInfo = {
+                                scheduling: { icon: Calendar, label: labels.journey_step_scheduling },
+                                client_info: { icon: User, label: labels.journey_step_client_info },
+                                payment: { icon: CreditCard, label: labels.journey_step_payment },
+                                intake: { icon: FileText, label: labels.journey_step_intake },
+                                confirmation: { icon: Check, label: labels.journey_step_confirmation }
+                              }[step];
+                              const Icon = stepInfo.icon;
+                              return (
+                                <button
+                                  key={step}
+                                  onClick={() => toggleLandingPageStep(step)}
+                                  className="flex items-center gap-2 px-3 py-1.5 border-2 border-dashed border-purple-300 dark:border-purple-600 rounded-full text-purple-600 dark:text-purple-300 hover:border-purple-500 hover:bg-purple-100 dark:hover:bg-purple-800/30 transition-colors"
+                                >
+                                  <Icon className="w-4 h-4" />
+                                  {stepInfo.label}
+                                  <Plus className="w-3 h-3" />
+                                </button>
+                              );
+                            })}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Current flow steps with drag-and-drop */}
+                    <DndContext
+                      sensors={sensors}
+                      collisionDetection={closestCenter}
+                      modifiers={[restrictToVerticalAxis]}
+                      onDragEnd={handleLandingPageJourneyDragEnd}
+                    >
+                      <SortableContext items={landingPageClientFlow} strategy={verticalListSortingStrategy}>
+                        <div className="space-y-2">
+                          {landingPageClientFlow.map((step, index) => {
+                            const stepInfo = {
+                              scheduling: { icon: Calendar, label: labels.journey_step_scheduling, desc: labels.journey_step_scheduling_desc, bg: 'bg-white dark:bg-slate-800', border: 'border-[#4F6EF7]/40', circle: 'bg-[#4F6EF7]' },
+                              client_info: { icon: User, label: labels.journey_step_client_info, desc: labels.journey_step_client_info_desc, bg: 'bg-white dark:bg-slate-800', border: 'border-indigo-500/40', circle: 'bg-indigo-500' },
+                              booking: { icon: Calendar, label: labels.journey_step_booking, desc: labels.journey_step_booking_desc, bg: 'bg-white dark:bg-slate-800', border: 'border-[#4F6EF7]/40', circle: 'bg-[#4F6EF7]' },
+                              payment: { icon: CreditCard, label: labels.journey_step_payment, desc: labels.journey_step_payment_desc, bg: 'bg-white dark:bg-slate-800', border: 'border-green-500/40', circle: 'bg-green-500' },
+                              intake: { icon: FileText, label: labels.journey_step_intake, desc: labels.journey_step_intake_desc, bg: 'bg-white dark:bg-slate-800', border: 'border-purple-500/40', circle: 'bg-purple-500' },
+                              confirmation: { icon: Check, label: labels.journey_step_confirmation, desc: labels.journey_step_confirmation_desc, bg: 'bg-white dark:bg-slate-800', border: 'border-emerald-500/40', circle: 'bg-emerald-500' }
+                            }[step];
+                            if (!stepInfo) return null; // Skip unknown steps
+                            const Icon = stepInfo.icon;
+                            // Can only remove if there's more than 1 step
+                            const canRemove = landingPageClientFlow.length > 1;
+
+                            return (
+                              <SortableLandingPageJourneyStep
+                                key={step}
+                                id={step}
+                                disabled={false}
+                              >
+                                <div
+                                  className={`flex items-center gap-3 p-3 rounded-lg ${stepInfo.bg} border ${stepInfo.border}`}
+                                >
+                                  <div className={`w-8 h-8 rounded-full ${stepInfo.circle} text-white flex items-center justify-center font-bold text-sm`}>
+                                    {index + 1}
+                                  </div>
+                                  <div className="flex-1 min-w-0">
+                                    <div className="flex items-center gap-2">
+                                      <Icon className="w-4 h-4 text-[var(--v2-text-secondary)]" />
+                                      <span className="font-medium text-sm text-[var(--v2-text-primary)]">{stepInfo.label}</span>
+                                    </div>
+                                    <p className="text-xs text-[var(--v2-text-muted)] truncate">{stepInfo.desc}</p>
+                                  </div>
+                                  {/* Move and remove buttons - all steps are fully configurable */}
+                                  <div className="flex items-center gap-1">
+                                    <button
+                                      onClick={() => moveLandingPageStep(step, 'up')}
+                                      disabled={index === 0}
+                                      className="p-1 text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)] disabled:opacity-30 disabled:cursor-not-allowed"
+                                      title={language === 'he' ? 'הזז למעלה' : language === 'es' ? 'Mover arriba' : 'Move up'}
+                                    >
+                                      <ChevronUp className="w-4 h-4" />
+                                    </button>
+                                    <button
+                                      onClick={() => moveLandingPageStep(step, 'down')}
+                                      disabled={index >= landingPageClientFlow.length - 1}
+                                      className="p-1 text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)] disabled:opacity-30 disabled:cursor-not-allowed"
+                                      title={language === 'he' ? 'הזז למטה' : language === 'es' ? 'Mover abajo' : 'Move down'}
+                                    >
+                                      <ChevronDown className="w-4 h-4" />
+                                    </button>
+                                    <button
+                                      onClick={() => toggleLandingPageStep(step)}
+                                      disabled={!canRemove}
+                                      className="p-1 text-red-400 hover:text-red-500 disabled:opacity-30 disabled:cursor-not-allowed"
+                                      title={language === 'he' ? 'הסר שלב' : language === 'es' ? 'Eliminar paso' : 'Remove step'}
+                                    >
+                                      <X className="w-4 h-4" />
+                                    </button>
+                                  </div>
+                                </div>
+                              </SortableLandingPageJourneyStep>
+                            );
+                          })}
+                        </div>
+                      </SortableContext>
+                    </DndContext>
+                  </div>
+                )}
 
                 <DndContext
                   sensors={sensors}
@@ -5077,133 +5893,6 @@ export default function WebsiteManagementPage() {
               </div>
             )}
 
-            {/* Pages Tab */}
-            {viewMode === 'pages' && (
-              <div
-                className="bg-[var(--v2-surface)] border border-[var(--v2-border)] p-6"
-                style={{ borderRadius: 'var(--v2-radius-card)' }}
-              >
-                <div className="flex items-center justify-between mb-6">
-                  <div>
-                    <h3 className="text-lg font-semibold text-[var(--v2-text-primary)]">
-                      {labels.pages_title}
-                    </h3>
-                    <p className="text-sm text-[var(--v2-text-muted)] mt-1">
-                      {labels.pages_desc}
-                    </p>
-                  </div>
-                  <button
-                    onClick={() => setShowLandingPageWizard(true)}
-                    className="flex items-center gap-2 px-4 py-2 text-[#4F6EF7] text-sm font-medium border border-[#4F6EF7] bg-[#4F6EF7]/10 hover:bg-[#4F6EF7]/20 transition-all"
-                    style={{ borderRadius: 'var(--v2-radius-button)' }}
-                  >
-                    <Plus className="h-4 w-4" />
-                    {labels.add_landing_page}
-                  </button>
-                </div>
-
-                {/* Pages List */}
-                <div className="space-y-3">
-                  {allPages.map((p) => {
-                    const isCurrentPage = p.id === page?.id;
-                    const isHomepage = p.page_type === 'homepage';
-                    return (
-                      <div
-                        key={p.id}
-                        className={`flex items-center justify-between p-4 rounded-lg border transition-all ${
-                          isCurrentPage
-                            ? 'bg-[#4F6EF7]/5 border-[#4F6EF7]'
-                            : 'bg-[var(--v2-bg)] border-[var(--v2-border)] hover:border-[#4F6EF7]/50'
-                        }`}
-                      >
-                        <div className="flex items-center gap-4">
-                          <div
-                            className="w-10 h-10 rounded-lg flex items-center justify-center"
-                            style={{ backgroundColor: isHomepage ? 'rgba(79, 110, 247, 0.1)' : 'rgba(236, 72, 153, 0.1)' }}
-                          >
-                            {isHomepage ? (
-                              <Globe className="w-5 h-5" style={{ color: WEBSITE_COLOR }} />
-                            ) : (
-                              <FileText className="w-5 h-5 text-pink-500" />
-                            )}
-                          </div>
-                          <div>
-                            <p className="font-medium text-[var(--v2-text-primary)]">
-                              {p.title}
-                            </p>
-                            <div className="flex items-center gap-2">
-                              <span className="text-xs text-[var(--v2-text-muted)]">
-                                {isHomepage ? labels.homepage : labels.landing_page}
-                              </span>
-                              {p.slug && !isHomepage && (
-                                <span className="text-xs text-[var(--v2-text-muted)] font-mono">
-                                  /{p.slug}
-                                </span>
-                              )}
-                              <span
-                                className={`px-2 py-0.5 text-xs font-medium rounded ${
-                                  p.status === 'live'
-                                    ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
-                                    : 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'
-                                }`}
-                              >
-                                {p.status === 'live' ? labels.status_live : labels.status_draft}
-                              </span>
-                            </div>
-                          </div>
-                        </div>
-
-                        <div className="flex items-center gap-2">
-                          <button
-                            onClick={() => handleSelectPage(p)}
-                            className={`px-3 py-1.5 text-sm font-medium transition-all ${
-                              isCurrentPage
-                                ? 'text-[#4F6EF7] bg-[#4F6EF7]/10 border border-[#4F6EF7]'
-                                : 'text-[var(--v2-text-secondary)] hover:text-[#4F6EF7] border border-[var(--v2-border)] hover:border-[#4F6EF7]'
-                            }`}
-                            style={{ borderRadius: 'var(--v2-radius-button)' }}
-                          >
-                            {isCurrentPage ? (
-                              <Check className="h-4 w-4" />
-                            ) : (
-                              labels.edit_page
-                            )}
-                          </button>
-                          <a
-                            href={`/business-os/website/preview/${p.id}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="p-1.5 text-[var(--v2-text-muted)] hover:text-[#4F6EF7] transition-colors"
-                            title={labels.preview}
-                          >
-                            <Eye className="h-4 w-4" />
-                          </a>
-                          {!isHomepage && (
-                            <button
-                              onClick={() => handleDeletePage(p.id)}
-                              className="p-1.5 text-[var(--v2-text-muted)] hover:text-red-500 transition-colors"
-                              title={labels.delete_page}
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })}
-
-                  {allPages.length === 0 && (
-                    <div className="text-center py-12">
-                      <FileText className="w-12 h-12 mx-auto text-[var(--v2-text-muted)] mb-4 opacity-50" />
-                      <p className="text-[var(--v2-text-secondary)]">
-                        {labels.no_website_desc}
-                      </p>
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-
             {/* Templates Tab */}
             {viewMode === 'templates' && (
               <div
@@ -5548,6 +6237,13 @@ export default function WebsiteManagementPage() {
             setShowLandingPageWizard(false);
             setCreatingPage(true);
             try {
+              logger.info({
+                serviceId: result.serviceId,
+                slug: result.slug,
+                hasGeneratedContent: !!result.generatedContent,
+                contentKeys: result.generatedContent ? Object.keys(result.generatedContent) : []
+              }, 'Creating landing page');
+
               const response = await fetch('/api/website/landing-pages', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -5556,11 +6252,20 @@ export default function WebsiteManagementPage() {
                   serviceName: result.serviceName,
                   slug: result.slug,
                   theme: result.theme,
-                  shouldPublish: result.shouldPublish
+                  shouldPublish: result.shouldPublish,
+                  clientFlow: result.clientFlow,
+                  generatedContent: result.generatedContent,
+                  // Pass website language for localized content
+                  language: language,
+                  // Pass business branding for header
+                  logoUrl: blocks.find(b => b.block_type === 'header')?.content?.logo_url as string | undefined,
+                  companyName: businessProfile?.company_name
                 })
               });
 
               const data = await response.json();
+              logger.info({ success: data.success, error: data.error, landingPageId: data.landingPage?.id }, 'Landing page API response');
+
               if (data.success) {
                 // Refresh pages list
                 const pagesResponse = await fetch('/api/website/pages');
@@ -5572,6 +6277,10 @@ export default function WebsiteManagementPage() {
                 if (data.landingPage?.id) {
                   router.push(`/business-os/website?pageId=${data.landingPage.id}`);
                 }
+              } else {
+                logger.error({ error: data.error }, 'Failed to create landing page - API returned error');
+                // Show error to user
+                alert(data.error || 'Failed to create landing page. Please try again.');
               }
             } catch (error) {
               logger.error({ err: error }, 'Failed to create landing page');
@@ -5582,6 +6291,39 @@ export default function WebsiteManagementPage() {
           onCancel={() => setShowLandingPageWizard(false)}
         />
       )}
+
+      {/* Delete Page Confirmation Dialog */}
+      <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Trash2 className="w-5 h-5 text-red-500" />
+              {labels.delete_page_title}
+            </DialogTitle>
+            <DialogDescription className="text-[var(--v2-text-secondary)]">
+              {deletingPage?.hasActivity
+                ? `${labels.delete_page_has_activity.replace('{count}', String(deletingPage.viewCount))} ${labels.delete_page_deactivate}`
+                : labels.delete_page_confirm}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <button
+              onClick={() => setDeleteDialogOpen(false)}
+              className="px-4 py-2 text-sm font-medium text-[var(--v2-text-secondary)] bg-[var(--v2-surface)] border border-[var(--v2-border)] hover:bg-[var(--v2-border)] transition-colors"
+              style={{ borderRadius: 'var(--v2-radius-button)' }}
+            >
+              {labels.cancel}
+            </button>
+            <button
+              onClick={handleConfirmDelete}
+              className="px-4 py-2 text-sm font-medium text-white bg-red-500 hover:bg-red-600 transition-colors"
+              style={{ borderRadius: 'var(--v2-radius-button)' }}
+            >
+              {deletingPage?.hasActivity ? labels.delete_deactivate : labels.delete_confirm}
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
     </div>
   );

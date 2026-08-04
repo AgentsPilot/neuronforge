@@ -43,7 +43,73 @@
   "common": {
     "loading": "טוען...",
     "error": "משהו השתבש",
-    "retry": "נסה שוב"
+    "retry": "נסה שוב",
+    "back": "חזור",
+    "continue": "המשך",
+    "cancel": "ביטול",
+    "email": "אימייל",
+    "phone": "טלפון",
+    "name": "שם",
+    "optional": "אופציונלי",
+    "try_again": "נסה שוב"
+  },
+  "payments": {
+    "stripe": {
+      "wizard": {
+        "title_choice": "חבר חשבון Stripe",
+        "title_create": "צור חשבון חדש",
+        "title_business": "מידע עסקי",
+        "title_personal": "מידע אישי",
+        "title_review": "סקירה ואישור",
+        "title_success": "ההגדרה הושלמה",
+        "title_error": "שגיאת הגדרה",
+        "title_default": "הגדרת תשלומים",
+        "choose_desc": "בחר כיצד ברצונך לקבל תשלומים דרך העסק שלך",
+        "create_account_desc": "ספק את המידע הבסיסי שלך כדי ליצור חשבון Stripe",
+        "new_account": "צור חשבון חדש",
+        "new_account_desc": "חדש ב-Stripe? נעזור לך ליצור חשבון",
+        "existing_account": "חבר חשבון קיים",
+        "existing_account_desc": "כבר יש לך Stripe? התחבר תוך שניות",
+        "individual": "עצמאי / בעלים יחיד",
+        "individual_desc": "למתכנתים עצמאיים, יועצים ועסקים סולו",
+        "company": "חברה / תאגיד",
+        "company_desc": "לעסקים וארגונים רשומים",
+        "business_desc_individual": "ספר לנו על מיקום העסק שלך",
+        "business_desc_company": "ספר לנו על החברה שלך",
+        "country": "מדינה",
+        "select_country": "בחר מדינה",
+        "business_name": "שם העסק",
+        "business_name_placeholder": "חברת דוגמה בע\"מ",
+        "website": "אתר אינטרנט",
+        "personal_desc_individual": "המידע האישי שלך לאימות חשבון",
+        "personal_desc_company": "מידע נציג לאימות חשבון",
+        "first_name": "שם פרטי",
+        "first_name_placeholder": "יוסי",
+        "last_name": "שם משפחה",
+        "last_name_placeholder": "כהן",
+        "email_placeholder": "yossi@example.com",
+        "account_type": "סוג חשבון",
+        "review_desc": "סקור את המידע שלך והשלם את ההגדרה",
+        "next_steps": "שלבים הבאים",
+        "next_steps_desc": "לאחר יצירת החשבון שלך, תצטרך להשלים אימות זהות ולהוסיף פרטי בנק דרך לוח הבקרה של Stripe כדי להתחיל לקבל תשלומים.",
+        "creating": "יוצר חשבון...",
+        "create_account": "צור חשבון תשלומים",
+        "success_title": "החשבון נוצר בהצלחה!",
+        "success_desc": "חשבון התשלומים שלך ב-Stripe נוצר. כעת תוכל לקבל תשלומים.",
+        "account_id": "מזהה חשבון",
+        "finalizing": "משלים הגדרה...",
+        "error_title": "שגיאת הגדרה",
+        "error_default": "יצירת חשבון התשלום נכשלה",
+        "error_country": "מדינה נדרשת",
+        "error_business_name": "שם העסק נדרש",
+        "error_first_name": "שם פרטי נדרש",
+        "error_last_name": "שם משפחה נדרש",
+        "error_email": "אימייל נדרש",
+        "error_email_invalid": "כתובת אימייל לא חוקית",
+        "error_create": "יצירת החשבון נכשלה",
+        "error_generic": "משהו השתבש. אנא נסה שנית."
+      }
+    }
   },
   "scheduling": {
     "frequency_short": {
@@ -54,6 +120,128 @@
     },
     "availability": {
       "working_days": "ימי עבודה:"
+    }
+  },
+  "crm": {
+    "document": {
+      "upload_title": "העלאת מסמך",
+      "remove": "הסר",
+      "drag_drop": "גרור ושחרר קובץ, או לחץ לעיון",
+      "max_size": "עד 10MB",
+      "supported_formats": "PDF, DOC, XLS, תמונות",
+      "name": "שם המסמך",
+      "name_placeholder": "הזן שם מסמך",
+      "type": "סוג מסמך",
+      "description": "תיאור",
+      "description_placeholder": "תיאור אופציונלי...",
+      "type": {
+        "contract": "חוזה",
+        "intake_form": "טופס קליטה",
+        "invoice": "חשבונית",
+        "receipt": "קבלה",
+        "id_document": "תעודת זהות",
+        "medical": "רפואי",
+        "insurance": "ביטוח",
+        "other": "אחר"
+      }
+    },
+    "activity": {
+      "type": {
+        "note": "הערה",
+        "call": "שיחה",
+        "email": "אימייל",
+        "meeting": "פגישה",
+        "booking": "הזמנה",
+        "payment": "תשלום",
+        "task": "משימה",
+        "booking_created": "הזמנה נוצרה",
+        "booking_completed": "הזמנה הושלמה",
+        "booking_cancelled": "הזמנה בוטלה",
+        "booking_confirmed": "הזמנה אושרה",
+        "payment_received": "תשלום התקבל",
+        "payment_failed": "תשלום נכשל",
+        "document_uploaded": "מסמך הועלה",
+        "contact_created": "איש קשר נוצר",
+        "contact_updated": "איש קשר עודכן",
+        "stage_changed": "שלב השתנה",
+        "task_created": "משימה נוצרה",
+        "task_completed": "משימה הושלמה",
+        "email_sent": "אימייל נשלח"
+      },
+      "system": {
+        "booking": "הזמנה",
+        "payment": "תשלום",
+        "email": "אימייל נשלח",
+        "task": "משימה",
+        "booking_created": "הזמנה נוצרה",
+        "booking_completed": "הזמנה הושלמה",
+        "booking_cancelled": "הזמנה בוטלה",
+        "booking_confirmed": "הזמנה אושרה",
+        "payment_received": "תשלום התקבל",
+        "payment_failed": "תשלום נכשל",
+        "document_uploaded": "מסמך הועלה",
+        "contact_created": "איש קשר נוצר",
+        "contact_updated": "איש קשר עודכן",
+        "stage_changed": "שלב השתנה",
+        "task_created": "משימה נוצרה",
+        "task_completed": "משימה הושלמה",
+        "email_sent": "אימייל נשלח"
+      },
+      "add_placeholder": "הוסף הערה...",
+      "just_now": "עכשיו",
+      "mins_ago": "ד׳",
+      "hours_ago": "ש׳",
+      "days_ago": "י׳",
+      "filter": {
+        "all": "הכל",
+        "notes": "הערות",
+        "calls": "שיחות",
+        "emails": "אימיילים",
+        "meetings": "פגישות",
+        "bookings": "הזמנות",
+        "payments": "תשלומים",
+        "tasks": "משימות"
+      },
+      "no_matching": "אין פעילויות תואמות",
+      "clear_filter": "נקה סינון",
+      "tab": {
+        "activity": "פעילות",
+        "emails": "אימיילים"
+      },
+      "description": {
+        "booked_via_website": "הוזמן דרך האתר ל-{date}",
+        "booked_via_website_paid": "הוזמן דרך האתר ל-{date} (שולם)",
+        "purchased_via_website": "נרכש דרך האתר",
+        "purchased_via_website_paid": "נרכש דרך האתר (שולם)",
+        "scheduled_for": "מתוזמן ל-{date}",
+        "manual_email": "אימייל ידני",
+        "paid": "שולם"
+      },
+      "desc": {
+        "type": "סוג",
+        "file": "קובץ",
+        "source": "מקור",
+        "stage": "שלב",
+        "no_reason": "לא סופקה סיבה",
+        "client_no_show": "הלקוח לא הגיע לפגישה המתוזמנת",
+        "booked_via_website": "הוזמן דרך האתר ל-",
+        "purchased_via_website": "נרכש דרך האתר",
+        "scheduled_for": "מתוזמן ל-",
+        "manual_email": "אימייל ידני",
+        "campaign_email": "אימייל קמפיין",
+        "paid": "שולם"
+      }
+    },
+    "files": {
+      "intake_forms": "טפסי קליטה",
+      "intake_form": "טופס קליטה",
+      "documents": "מסמכים",
+      "no_documents": "לא הועלו מסמכים",
+      "upload_first": "העלה מסמך ראשון",
+      "upload": "העלאה",
+      "download": "הורדה",
+      "delete": "מחיקה",
+      "open": "פתח"
     }
   },
   "config": {
@@ -70,7 +258,10 @@
       "connected_desc": "חשבון ה-Stripe שלך מחובר. אתה יכול לקבל תשלומים עבור השירותים שלך.",
       "not_connected_desc": "חבר את חשבון ה-Stripe שלך כדי לקבל תשלומים עבור הזמנות ושירותים.",
       "connect": "התחבר ל-Stripe",
-      "manage": "נהל חשבון"
+      "manage": "נהל חשבון",
+      "disconnect": "נתק",
+      "disconnect_title": "לנתק את Stripe?",
+      "disconnect_message": "לא תוכל לקבל תשלומים עד שתחבר מחדש את חשבון ה-Stripe שלך."
     },
     "payments": {
       "settings_title": "הגדרות תשלום",

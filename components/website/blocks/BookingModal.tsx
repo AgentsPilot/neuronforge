@@ -16,6 +16,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { X, Calendar, Clock, User, CreditCard, FileText, Check } from 'lucide-react';
 import { ProcessFlowSection } from './ProcessFlowSection';
 import type { PageTheme, FlowStep, SelectedServiceData } from './types';
+import { flowHasScheduling, flowHasClientInfo } from './types';
 import type { Locale } from '@/lib/i18n/config';
 
 type CurrentStep = 'services' | 'datetime' | 'details' | 'payment' | 'intake' | 'confirmation';
@@ -108,18 +109,37 @@ export function BookingModal({
   initialService
 }: BookingModalProps) {
   // Default flow includes payment - this is the default booking journey
-  const effectiveFlow = clientFlow || ['booking', 'payment', 'confirmation'];
+  // Use new split steps as default - scheduling + client_info + payment for paid services
+  const effectiveFlow = clientFlow || ['scheduling', 'client_info', 'payment', 'confirmation'];
+
+  // Use helper functions to handle both legacy 'booking' and new 'scheduling'/'client_info' steps
+  const hasScheduling = flowHasScheduling(effectiveFlow);
+  const hasClientInfo = flowHasClientInfo(effectiveFlow);
+  const hasPayment = effectiveFlow.includes('payment');
+  const hasIntake = effectiveFlow.includes('intake');
+
+  // Determine initial step based on flow configuration
+  const getInitialStep = (): CurrentStep => {
+    if (!initialService) return 'services';
+    if (hasScheduling) return 'datetime';
+    if (hasClientInfo) return 'details';
+    return 'services';
+  };
+
   // Track current step and completed steps for the sticky header
-  const [currentStep, setCurrentStep] = useState<CurrentStep>(initialService ? 'datetime' : 'services');
+  const [currentStep, setCurrentStep] = useState<CurrentStep>(getInitialStep());
   const [completedSteps, setCompletedSteps] = useState<CurrentStep[]>(initialService ? ['services'] : []);
   const contentRef = useRef<HTMLDivElement>(null);
 
   const primaryColor = theme?.colors?.primary || '#4F6EF7';
 
-  // Build step sequence based on flow
-  const hasPayment = effectiveFlow.includes('payment');
-  const hasIntake = effectiveFlow.includes('intake');
-  const stepSequence: CurrentStep[] = ['services', 'datetime', 'details'];
+  // Build step sequence dynamically based on capabilities
+  // - 'services' is always first (unless pre-selected)
+  // - 'datetime' is included only if scheduling is needed
+  // - 'details' (client info) is included if client_info is in flow OR scheduling is in flow
+  const stepSequence: CurrentStep[] = ['services'];
+  if (hasScheduling) stepSequence.push('datetime');
+  if (hasClientInfo) stepSequence.push('details');
   if (hasPayment) stepSequence.push('payment');
   if (hasIntake) stepSequence.push('intake');
   stepSequence.push('confirmation');
@@ -145,10 +165,11 @@ export function BookingModal({
   // Reset state when modal opens/closes
   useEffect(() => {
     if (isOpen) {
-      setCurrentStep(initialService ? 'datetime' : 'services');
+      setCurrentStep(getInitialStep());
       setCompletedSteps(initialService ? ['services'] : []);
     }
-  }, [isOpen, initialService]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, initialService, hasScheduling, hasClientInfo]);
 
   // Callback to sync step state from ProcessFlowSection
   const handleStepChange = useCallback((step: CurrentStep, completed: CurrentStep[]) => {
@@ -235,7 +256,7 @@ export function BookingModal({
                   useLiveData={true}
                   pageId={pageId}
                   subdomain={subdomain}
-                  isPreview={false}
+                  isPreview={true}
                   onStepChange={handleStepChange}
                 />
               </div>

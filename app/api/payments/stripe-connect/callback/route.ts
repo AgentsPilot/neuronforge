@@ -145,6 +145,40 @@ export async function GET(request: NextRequest) {
         business_type: status.businessType,
       });
 
+      // If onboarding is complete, create plugin connection for agent usage
+      if (type === 'onboarding' && status.chargesEnabled && status.payoutsEnabled) {
+        try {
+          const { UserPluginConnections } = await import('@/lib/server/user-plugin-connections');
+          const userConnections = UserPluginConnections.getInstance();
+
+          await userConnections.repository.upsert({
+            user_id: user.id,
+            plugin_key: 'stripe',
+            plugin_name: 'Stripe',
+            access_token: 'express', // Placeholder (not used for Express accounts)
+            refresh_token: null,
+            expires_at: null,
+            profile_data: {
+              stripe_account_id: accountId,
+              stripe_account_type: 'express',
+              charges_enabled: status.chargesEnabled,
+              payouts_enabled: status.payoutsEnabled,
+              country: status.country,
+              currency: status.defaultCurrency,
+            },
+            username: user.email || 'Express Account',
+            email: user.email,
+            settings: {},
+            status: 'active',
+          });
+
+          requestLogger.info({ accountId, userId: user.id }, 'Created Stripe plugin connection for Express account');
+        } catch (pluginError) {
+          requestLogger.error({ err: pluginError }, 'Failed to create plugin connection (non-blocking)');
+          // Don't fail the entire flow if plugin connection creation fails
+        }
+      }
+
       // Determine setup status for redirect
       const setupStatus = status.chargesEnabled && status.payoutsEnabled
         ? 'complete'

@@ -21,6 +21,7 @@ export interface SetupStatus {
   totalCount: number;
   allComplete: boolean;
   dismissed: boolean;
+  dismissedSteps: string[];
 }
 
 export async function GET(request: NextRequest) {
@@ -39,17 +40,18 @@ export async function GET(request: NextRequest) {
 
     requestLogger.info({ userId: user.id }, 'Fetching setup status');
 
-    // 2. Fetch all setup-related data in parallel
+    // 2. Fetch all setup-related data in parallel (optimized - 4 queries instead of 6)
     const [
       { data: businessProfile },
       { count: servicesCount },
-      { data: availabilityData },
-      { data: stripeConnection },
+      { data: pluginConnections },
+      { data: websitePage },
     ] = await Promise.all([
-      // Business profile (from onboarding)
+      // Business profile - includes availability and dismissed steps
+      // Using * to ensure we get all columns including newly added ones
       supabaseServer
         .from('business_profiles')
-        .select('id, setup_checklist_dismissed')
+        .select('*')
         .eq('user_id', user.id)
         .maybeSingle(),
       // Services count
@@ -58,38 +60,46 @@ export async function GET(request: NextRequest) {
         .select('*', { count: 'exact', head: true })
         .eq('user_id', user.id)
         .eq('status', 'active'),
-      // Availability - check if business_profiles has scheduling_availability set
-      supabaseServer
-        .from('business_profiles')
-        .select('scheduling_availability')
-        .eq('user_id', user.id)
-        .maybeSingle(),
-      // Stripe connection
+      // All relevant plugin connections in one query
       supabaseServer
         .from('plugin_connections')
-        .select('id')
+        .select('plugin_key')
         .eq('user_id', user.id)
-        .eq('plugin_key', 'stripe')
-        .eq('is_active', true)
+        .in('plugin_key', ['stripe', 'google_calendar', 'outlook_calendar'])
+        .eq('status', 'active'),
+      // Website page - check if user has a published homepage
+      supabaseServer
+        .from('website_pages')
+        .select('id, published, subdomain')
+        .eq('user_id', user.id)
+        .eq('page_type', 'homepage')
         .maybeSingle(),
     ]);
 
+    // Debug: Log the full businessProfile to see all fields
+    requestLogger.info({ businessProfile }, 'Full business profile from DB');
+
     // 3. Determine completion status for each step
-    const hasBusinessProfile = !!businessProfile;
+    const connectedPlugins = new Set(pluginConnections?.map(p => p.plugin_key) || []);
     const hasServices = (servicesCount || 0) > 0;
-    const hasAvailability = !!(availabilityData?.scheduling_availability &&
-      Object.keys(availabilityData.scheduling_availability).length > 0);
-    const hasStripe = !!stripeConnection;
+
+    // Check if availability has at least one day with time slots
+    const availability = businessProfile?.scheduling_availability as Record<string, Array<{ start: string; end: string }>> | null;
+    const hasAvailability = !!(availability &&
+      Object.values(availability).some(slots => Array.isArray(slots) && slots.length > 0));
+
+    const hasStripe = connectedPlugins.has('stripe');
+    const hasCalendar = connectedPlugins.has('google_calendar') || connectedPlugins.has('outlook_calendar');
+    const hasWebsite = !!(websitePage?.published && websitePage?.subdomain);
 
     // 4. Build steps array (order matters for display)
-    // Note: CRM contacts removed - doesn't require initial setup, users add contacts over time
+    // Only include steps that are NOT complete - we only show what's missing
     const steps: SetupStep[] = [
-      { id: 'profile', complete: hasBusinessProfile },
       { id: 'services', complete: hasServices },
       { id: 'availability', complete: hasAvailability },
       { id: 'payments', complete: hasStripe },
-      // Google Calendar is optional - only show if not connected
-      // { id: 'calendar', complete: hasGoogleCalendar },
+      { id: 'calendar', complete: hasCalendar },
+      { id: 'website', complete: hasWebsite },
     ];
 
     const completedCount = steps.filter(s => s.complete).length;
@@ -97,12 +107,30 @@ export async function GET(request: NextRequest) {
     const allComplete = completedCount === totalCount;
     const dismissed = businessProfile?.setup_checklist_dismissed || false;
 
+    // Handle dismissed_setup_steps which might be TEXT[] array or JSON string
+    let dismissedSteps: string[] = [];
+    const rawDismissed = businessProfile?.dismissed_setup_steps;
+    requestLogger.info({ rawDismissed, type: typeof rawDismissed, isArray: Array.isArray(rawDismissed) }, 'Raw dismissed steps from DB');
+    if (rawDismissed) {
+      if (Array.isArray(rawDismissed)) {
+        dismissedSteps = rawDismissed;
+      } else if (typeof rawDismissed === 'string') {
+        try {
+          dismissedSteps = JSON.parse(rawDismissed);
+        } catch {
+          dismissedSteps = [];
+        }
+      }
+    }
+    requestLogger.info({ dismissedSteps }, 'Parsed dismissed steps');
+
     const status: SetupStatus = {
       steps,
       completedCount,
       totalCount,
       allComplete,
       dismissed,
+      dismissedSteps,
     };
 
     requestLogger.info(

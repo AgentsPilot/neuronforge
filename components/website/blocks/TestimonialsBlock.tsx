@@ -119,7 +119,7 @@ export function TestimonialsBlock({ content, styles, theme, isRTL, className, lo
         <p
           className={`leading-relaxed mb-8 ${featured ? 'text-xl lg:text-2xl' : 'text-base lg:text-lg'}`}
           style={{
-            fontFamily: theme?.fonts.body,
+            fontFamily: 'var(--website-font-body)',
             color: isDark ? '#e5e7eb' : '#374151'
           }}
         >
@@ -158,7 +158,7 @@ export function TestimonialsBlock({ content, styles, theme, isRTL, className, lo
             <p
               className="font-bold text-lg"
               style={{
-                fontFamily: theme?.fonts.heading,
+                fontFamily: 'var(--website-font-heading)',
                 color: isDark ? '#ffffff' : textColor
               }}
             >
@@ -245,7 +245,7 @@ export function TestimonialsBlock({ content, styles, theme, isRTL, className, lo
                 transition={{ delay: 0.1 }}
                 className="text-2xl sm:text-3xl lg:text-4xl font-bold"
                 style={{
-                  fontFamily: theme?.fonts.heading,
+                  fontFamily: 'var(--website-font-heading)',
                   color: isDark ? '#ffffff' : textColor
                 }}
               >
@@ -260,7 +260,7 @@ export function TestimonialsBlock({ content, styles, theme, isRTL, className, lo
                 transition={{ delay: 0.2 }}
                 className="mt-4 text-lg sm:text-xl max-w-2xl mx-auto"
                 style={{
-                  fontFamily: theme?.fonts.body,
+                  fontFamily: 'var(--website-font-body)',
                   color: isDark ? '#9ca3af' : '#6b7280'
                 }}
               >
@@ -321,7 +321,7 @@ export function TestimonialsBlock({ content, styles, theme, isRTL, className, lo
                   <p
                     className="text-xl sm:text-2xl lg:text-3xl leading-relaxed mb-10"
                     style={{
-                      fontFamily: theme?.fonts.body,
+                      fontFamily: 'var(--website-font-body)',
                       color: isDark ? '#e5e7eb' : '#374151'
                     }}
                   >
@@ -360,7 +360,7 @@ export function TestimonialsBlock({ content, styles, theme, isRTL, className, lo
                       <p
                         className="font-bold text-xl"
                         style={{
-                          fontFamily: theme?.fonts.heading,
+                          fontFamily: 'var(--website-font-heading)',
                           color: isDark ? '#ffffff' : textColor
                         }}
                       >
@@ -526,7 +526,7 @@ export function TestimonialsBlock({ content, styles, theme, isRTL, className, lo
                   <h3
                     className="text-2xl font-bold mb-2"
                     style={{
-                      fontFamily: theme?.fonts.heading,
+                      fontFamily: 'var(--website-font-heading)',
                       color: isDark ? '#ffffff' : textColor
                     }}
                   >
@@ -551,7 +551,7 @@ export function TestimonialsBlock({ content, styles, theme, isRTL, className, lo
                   <p
                     className="text-2xl lg:text-3xl leading-relaxed"
                     style={{
-                      fontFamily: theme?.fonts.body,
+                      fontFamily: 'var(--website-font-body)',
                       color: isDark ? '#e5e7eb' : '#374151'
                     }}
                   >

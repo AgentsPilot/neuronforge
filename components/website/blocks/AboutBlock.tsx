@@ -251,7 +251,7 @@ export function AboutBlock({ content, styles, theme, isRTL, className, locale = 
                 <h2
                   className="text-2xl sm:text-3xl lg:text-4xl font-bold mb-4 leading-tight"
                   style={{
-                    fontFamily: theme?.fonts.heading,
+                    fontFamily: 'var(--website-font-heading)',
                     color: isDark ? '#ffffff' : textColor
                   }}
                 >
@@ -262,7 +262,7 @@ export function AboutBlock({ content, styles, theme, isRTL, className, locale = 
               <div
                 className="prose prose-lg max-w-none leading-relaxed"
                 style={{
-                  fontFamily: theme?.fonts.body,
+                  fontFamily: 'var(--website-font-body)',
                   color: isDark ? '#9ca3af' : '#4b5563'
                 }}
                 dangerouslySetInnerHTML={{ __html: aboutContent.replace(/\n/g, '<br/>') }}
@@ -386,7 +386,7 @@ export function AboutBlock({ content, styles, theme, isRTL, className, locale = 
               <h2
                 className="text-3xl sm:text-4xl lg:text-5xl font-bold mb-8 leading-tight"
                 style={{
-                  fontFamily: theme?.fonts.heading,
+                  fontFamily: 'var(--website-font-heading)',
                   color: isDark ? '#ffffff' : textColor
                 }}
               >
@@ -397,7 +397,7 @@ export function AboutBlock({ content, styles, theme, isRTL, className, locale = 
             <div
               className="prose prose-xl max-w-none mx-auto leading-relaxed"
               style={{
-                fontFamily: theme?.fonts.body,
+                fontFamily: 'var(--website-font-body)',
                 color: isDark ? '#9ca3af' : '#4b5563'
               }}
               dangerouslySetInnerHTML={{ __html: aboutContent.replace(/\n/g, '<br/>') }}
@@ -490,7 +490,7 @@ export function AboutBlock({ content, styles, theme, isRTL, className, locale = 
                 <h2
                   className="text-3xl sm:text-4xl lg:text-5xl font-bold mb-6"
                   style={{
-                    fontFamily: theme?.fonts.heading,
+                    fontFamily: 'var(--website-font-heading)',
                     color: isDark ? '#ffffff' : textColor
                   }}
                 >
@@ -501,7 +501,7 @@ export function AboutBlock({ content, styles, theme, isRTL, className, locale = 
               <div
                 className="prose prose-lg max-w-none leading-relaxed"
                 style={{
-                  fontFamily: theme?.fonts.body,
+                  fontFamily: 'var(--website-font-body)',
                   color: isDark ? '#9ca3af' : '#4b5563'
                 }}
                 dangerouslySetInnerHTML={{ __html: aboutContent.replace(/\n/g, '<br/>') }}
@@ -540,7 +540,7 @@ export function AboutBlock({ content, styles, theme, isRTL, className, locale = 
                 <h2
                   className="text-3xl sm:text-4xl lg:text-5xl font-bold mb-8"
                   style={{
-                    fontFamily: theme?.fonts.heading,
+                    fontFamily: 'var(--website-font-heading)',
                     color: image ? '#ffffff' : (isDark ? '#ffffff' : textColor)
                   }}
                 >
@@ -551,7 +551,7 @@ export function AboutBlock({ content, styles, theme, isRTL, className, locale = 
               <div
                 className="prose prose-xl max-w-none"
                 style={{
-                  fontFamily: theme?.fonts.body,
+                  fontFamily: 'var(--website-font-body)',
                   color: image ? 'rgba(255,255,255,0.9)' : (isDark ? '#9ca3af' : '#4b5563')
                 }}
                 dangerouslySetInnerHTML={{ __html: aboutContent.replace(/\n/g, '<br/>') }}
@@ -635,7 +635,7 @@ export function AboutBlock({ content, styles, theme, isRTL, className, locale = 
                   <h2
                     className="text-3xl sm:text-4xl lg:text-5xl font-bold mb-6 leading-tight"
                     style={{
-                      fontFamily: theme?.fonts.heading,
+                      fontFamily: 'var(--website-font-heading)',
                       color: isDark ? '#ffffff' : textColor
                     }}
                   >
@@ -646,7 +646,7 @@ export function AboutBlock({ content, styles, theme, isRTL, className, locale = 
                 <div
                   className="prose prose-lg max-w-none leading-relaxed"
                   style={{
-                    fontFamily: theme?.fonts.body,
+                    fontFamily: 'var(--website-font-body)',
                     color: isDark ? '#9ca3af' : '#4b5563'
                   }}
                   dangerouslySetInnerHTML={{ __html: aboutContent.replace(/\n/g, '<br/>') }}

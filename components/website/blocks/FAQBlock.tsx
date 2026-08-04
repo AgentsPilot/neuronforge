@@ -13,15 +13,22 @@ interface FAQContent {
   layout?: 'accordion' | 'grid' | 'simple';
 }
 
+// Extended interface to handle legacy 'items' key from older data
+interface FAQContentWithLegacy extends FAQContent {
+  items?: FAQItem[];
+}
+
 export function FAQBlock({ content, styles, theme, isRTL, className, locale = 'en' }: BlockRendererProps) {
   const t = (key: string) => getBlockTranslation('faq', key, locale);
 
+  // Support both 'faqs' (new) and 'items' (legacy) keys for backwards compatibility
+  const contentWithLegacy = content as FAQContentWithLegacy;
   const {
     title = t('frequentlyAskedQuestions'),
     subtitle,
-    faqs = [],
+    faqs = contentWithLegacy.items || [],  // Fallback to 'items' for existing data
     layout = 'accordion'
-  } = content as FAQContent;
+  } = contentWithLegacy;
 
   const [openIndex, setOpenIndex] = useState<number | null>(0);
   const primaryColor = theme?.colors.primary || '#4F6EF7';
@@ -45,7 +52,7 @@ export function FAQBlock({ content, styles, theme, isRTL, className, locale = 'e
                 whileInView={{ opacity: 1, y: 0 }}
                 viewport={{ once: true }}
                 className="text-3xl sm:text-4xl font-bold text-gray-900 dark:text-white"
-                style={{ fontFamily: theme?.fonts.heading }}
+                style={{ fontFamily: 'var(--website-font-heading)' }}
               >
                 {title}
               </motion.h2>
@@ -57,7 +64,7 @@ export function FAQBlock({ content, styles, theme, isRTL, className, locale = 'e
                 viewport={{ once: true }}
                 transition={{ delay: 0.1 }}
                 className="mt-4 text-lg text-gray-600 dark:text-gray-300"
-                style={{ fontFamily: theme?.fonts.body }}
+                style={{ fontFamily: 'var(--website-font-body)' }}
               >
                 {subtitle}
               </motion.p>
@@ -84,7 +91,7 @@ export function FAQBlock({ content, styles, theme, isRTL, className, locale = 'e
                 >
                   <span
                     className="font-semibold text-gray-900 dark:text-white pe-4"
-                    style={{ fontFamily: theme?.fonts.heading }}
+                    style={{ fontFamily: 'var(--website-font-heading)' }}
                   >
                     {faq.question}
                   </span>
@@ -110,7 +117,7 @@ export function FAQBlock({ content, styles, theme, isRTL, className, locale = 'e
                     >
                       <p
                         className="px-5 pb-5 text-gray-600 dark:text-gray-300 leading-relaxed"
-                        style={{ fontFamily: theme?.fonts.body }}
+                        style={{ fontFamily: 'var(--website-font-body)' }}
                       >
                         {faq.answer}
                       </p>
@@ -137,13 +144,13 @@ export function FAQBlock({ content, styles, theme, isRTL, className, locale = 'e
               >
                 <h3
                   className="font-semibold text-gray-900 dark:text-white mb-3"
-                  style={{ fontFamily: theme?.fonts.heading }}
+                  style={{ fontFamily: 'var(--website-font-heading)' }}
                 >
                   {faq.question}
                 </h3>
                 <p
                   className="text-gray-600 dark:text-gray-300 leading-relaxed"
-                  style={{ fontFamily: theme?.fonts.body }}
+                  style={{ fontFamily: 'var(--website-font-body)' }}
                 >
                   {faq.answer}
                 </p>
@@ -169,7 +176,7 @@ export function FAQBlock({ content, styles, theme, isRTL, className, locale = 'e
                 >
                   <span
                     className="font-semibold text-gray-900 dark:text-white pe-4 group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors"
-                    style={{ fontFamily: theme?.fonts.heading }}
+                    style={{ fontFamily: 'var(--website-font-heading)' }}
                   >
                     {faq.question}
                   </span>
@@ -190,7 +197,7 @@ export function FAQBlock({ content, styles, theme, isRTL, className, locale = 'e
                       exit={{ height: 0, opacity: 0 }}
                       transition={{ duration: 0.2 }}
                       className="pb-6 text-gray-600 dark:text-gray-300 leading-relaxed"
-                      style={{ fontFamily: theme?.fonts.body }}
+                      style={{ fontFamily: 'var(--website-font-body)' }}
                     >
                       {faq.answer}
                     </motion.p>

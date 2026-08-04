@@ -15,6 +15,7 @@ import { useState } from 'react';
 import type { Locale } from '@/lib/i18n/config';
 import { getDirection } from '@/lib/i18n/config';
 import type { BlockType, BlockStyles, PageTheme, FlowStep, SelectedServiceData } from './types';
+import { normalizeClientFlow } from './types';
 
 // Block Components
 import { HeaderBlock } from './HeaderBlock';
@@ -292,13 +293,25 @@ export function WebsiteBlocks({
     .filter(block => block.enabled !== false)
     .sort((a, b) => a.position - b.position);
 
-  // Extract client flow from process block if not explicitly provided
+  // Extract client flow from process block OR booking_widget/pricing/cta blocks (for landing pages)
   const processBlock = sortedBlocks.find(b => b.block_type === 'process');
+  const bookingWidgetBlock = sortedBlocks.find(b => b.block_type === 'booking_widget');
+  const pricingBlock = sortedBlocks.find(b => b.block_type === 'pricing');
+  const ctaBlock = sortedBlocks.find(b => b.block_type === 'cta');
   // When services_only is true, hide booking buttons by returning undefined clientFlow
   const isServicesOnly = processBlock?.content?.services_only === true;
-  const clientFlow = isServicesOnly
+  // Landing pages store client_flow in booking_widget, pricing, or cta block; regular pages use process block
+  // Apply normalizeClientFlow to expand legacy 'booking' to ['scheduling', 'client_info'] for backward compatibility
+  const rawClientFlow = isServicesOnly
     ? undefined
-    : explicitClientFlow || (processBlock?.content?.client_flow as FlowStep[] | undefined) || undefined;
+    : explicitClientFlow
+      || (processBlock?.content?.client_flow as FlowStep[] | undefined)
+      || (bookingWidgetBlock?.content?.client_flow as FlowStep[] | undefined)
+      || (pricingBlock?.content?.client_flow as FlowStep[] | undefined)
+      || (ctaBlock?.content?.client_flow as FlowStep[] | undefined)
+      || undefined;
+  // Normalize the flow to expand legacy 'booking' step to ['scheduling', 'client_info']
+  const clientFlow = rawClientFlow ? normalizeClientFlow(rawClientFlow) : undefined;
   // Booking URL must be explicitly provided or stored in process block
   // No default fallback - if not set, booking buttons won't show (handled by ServicesBlock)
   const bookingUrl = explicitBookingUrl || (processBlock?.content?.booking_url as string | undefined);

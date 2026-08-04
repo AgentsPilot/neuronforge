@@ -60,7 +60,12 @@
 }
 
 /* Dark mode overrides */
-.dark {
+/* Note: We define on .dark, :root.dark, and html.dark to ensure
+   CSS variables are available in Radix portals (Sheet, Dialog, etc.)
+   which render outside the .dark container */
+.dark,
+:root.dark,
+html.dark {
   --v2-bg: #0F172A;
   --v2-surface: #1E293B;
   --v2-surface-hover: #334155;

@@ -692,30 +692,30 @@ export function SchedulingBookingModal({
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="max-w-2xl max-h-[90vh] flex flex-col bg-[var(--v2-surface)] border-[var(--v2-border)] p-0 overflow-hidden">
-        {/* Sticky Header - pt-6 pb-6 for vertical, px-6 for horizontal, extra end padding for close button */}
-        <div className="flex-shrink-0 border-b border-[var(--v2-border)] pt-6 pb-6 px-6 pe-14 bg-[var(--v2-surface)]">
-          <div className="flex items-center gap-4">
-            <div className="w-14 h-14 rounded-xl flex items-center justify-center text-lg font-semibold text-[#14B8A6] border border-[#14B8A6] bg-[#14B8A6]/10 flex-shrink-0">
+      <DialogContent className="w-full sm:max-w-2xl h-[100vh] sm:h-auto sm:max-h-[90vh] flex flex-col bg-[var(--v2-surface)] border-[var(--v2-border)] p-0 overflow-hidden">
+        {/* Sticky Header */}
+        <div className="flex-shrink-0 border-b border-[var(--v2-border)] px-4 sm:px-6 py-4 sm:py-6 pe-12 sm:pe-14 bg-[var(--v2-surface)]">
+          <div className="flex items-center gap-3 sm:gap-4">
+            <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-lg sm:rounded-xl flex items-center justify-center text-base sm:text-lg font-semibold text-[#14B8A6] border border-[#14B8A6] bg-[#14B8A6]/10 flex-shrink-0">
               {getClientInitials()}
             </div>
             <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2 sm:gap-3">
                 <DialogHeader>
-                  <DialogTitle className="text-xl font-semibold text-[var(--v2-text-primary)] rtl:text-right">
+                  <DialogTitle className="text-lg sm:text-xl font-semibold text-[var(--v2-text-primary)] rtl:text-right truncate">
                     {booking ? t('scheduling.booking.edit_booking') : t('scheduling.booking.new_booking')}
                   </DialogTitle>
                 </DialogHeader>
                 {booking && (
                   <Badge
                     variant="outline"
-                    className={`${statusStyle.bg} ${statusStyle.text} ${statusStyle.border}`}
+                    className={`${statusStyle.bg} ${statusStyle.text} ${statusStyle.border} text-xs sm:text-sm`}
                   >
                     {t(`scheduling.status.${booking.status}`)}
                   </Badge>
                 )}
               </div>
-              <p className="text-sm text-[var(--v2-text-secondary)] mt-1">
+              <p className="text-xs sm:text-sm text-[var(--v2-text-secondary)] mt-1 hidden sm:block">
                 {getServiceName()}
               </p>
             </div>
@@ -724,11 +724,11 @@ export function SchedulingBookingModal({
 
         <form onSubmit={handleSubmit} className="flex-1 flex flex-col min-h-0">
           {/* Scrollable Content */}
-          <div className="flex-1 overflow-y-auto p-6 space-y-6">
+          <div className="flex-1 overflow-y-auto px-4 sm:px-6 py-4 sm:py-6 space-y-4 sm:space-y-6">
           {/* Service Selection */}
-          <div className="space-y-4">
-            <h3 className="text-sm font-semibold text-[var(--v2-text-muted)] uppercase tracking-wide flex items-center gap-2">
-              <Calendar className="h-4 w-4" />
+          <div className="space-y-3 sm:space-y-4">
+            <h3 className="text-xs sm:text-sm font-semibold text-[var(--v2-text-muted)] uppercase tracking-wide flex items-center gap-2">
+              <Calendar className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
               {t('scheduling.booking.service_section')}
             </h3>
             <div>
@@ -789,9 +789,9 @@ export function SchedulingBookingModal({
           </div>
 
           {/* Client Info Section */}
-          <div className="space-y-4">
-            <h3 className="text-sm font-semibold text-[var(--v2-text-muted)] uppercase tracking-wide flex items-center gap-2">
-              <User className="h-4 w-4" />
+          <div className="space-y-3 sm:space-y-4">
+            <h3 className="text-xs sm:text-sm font-semibold text-[var(--v2-text-muted)] uppercase tracking-wide flex items-center gap-2">
+              <User className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
               {t('scheduling.booking.client_info')}
             </h3>
 
@@ -912,9 +912,9 @@ export function SchedulingBookingModal({
                   </button>
                 )}
 
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
                   <div>
-                    <label className="block text-sm font-medium text-[var(--v2-text-primary)] mb-2">
+                    <label className="block text-xs sm:text-sm font-medium text-[var(--v2-text-primary)] mb-1.5 sm:mb-2">
                       {t('scheduling.booking.first_name')} <span className="text-red-500">*</span>
                     </label>
                     <input
@@ -927,7 +927,7 @@ export function SchedulingBookingModal({
                     />
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-[var(--v2-text-primary)] mb-2">
+                    <label className="block text-xs sm:text-sm font-medium text-[var(--v2-text-primary)] mb-1.5 sm:mb-2">
                       {t('scheduling.booking.last_name')}
                     </label>
                     <input
@@ -941,9 +941,9 @@ export function SchedulingBookingModal({
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-[var(--v2-text-primary)] mb-2">
+                  <label className="block text-xs sm:text-sm font-medium text-[var(--v2-text-primary)] mb-1.5 sm:mb-2">
                     <div className="flex items-center gap-2">
-                      <Mail className="h-4 w-4 text-[var(--v2-text-muted)]" />
+                      <Mail className="h-3.5 w-3.5 sm:h-4 sm:w-4 text-[var(--v2-text-muted)]" />
                       {t('scheduling.booking.email')} <span className="text-red-500">*</span>
                     </div>
                   </label>
@@ -959,9 +959,9 @@ export function SchedulingBookingModal({
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-[var(--v2-text-primary)] mb-2">
+                  <label className="block text-xs sm:text-sm font-medium text-[var(--v2-text-primary)] mb-1.5 sm:mb-2">
                     <div className="flex items-center gap-2">
-                      <Phone className="h-4 w-4 text-[var(--v2-text-muted)]" />
+                      <Phone className="h-3.5 w-3.5 sm:h-4 sm:w-4 text-[var(--v2-text-muted)]" />
                       {t('scheduling.booking.phone')}
                     </div>
                   </label>
@@ -1187,9 +1187,9 @@ export function SchedulingBookingModal({
           )}
 
           {/* Time Section */}
-          <div className="space-y-4">
-            <h3 className="text-sm font-semibold text-[var(--v2-text-muted)] uppercase tracking-wide flex items-center gap-2">
-              <Clock className="h-4 w-4" />
+          <div className="space-y-3 sm:space-y-4">
+            <h3 className="text-xs sm:text-sm font-semibold text-[var(--v2-text-muted)] uppercase tracking-wide flex items-center gap-2">
+              <Clock className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
               {t('scheduling.booking.time_section')}
               {/* Show indicator when time editing is disabled (only for completed/cancelled) */}
               {booking && ['completed', 'cancelled'].includes(booking.status) && (
@@ -1199,9 +1199,9 @@ export function SchedulingBookingModal({
               )}
             </h3>
 
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
               <div>
-                <label className="block text-sm font-medium text-[var(--v2-text-primary)] mb-2">
+                <label className="block text-xs sm:text-sm font-medium text-[var(--v2-text-primary)] mb-1.5 sm:mb-2">
                   {t('scheduling.booking.start_time')} <span className="text-red-500">*</span>
                 </label>
                 <input
@@ -1216,7 +1216,7 @@ export function SchedulingBookingModal({
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-[var(--v2-text-primary)] mb-2">
+                <label className="block text-xs sm:text-sm font-medium text-[var(--v2-text-primary)] mb-1.5 sm:mb-2">
                   {t('scheduling.booking.end_time')} <span className="text-red-500">*</span>
                 </label>
                 <input
@@ -1234,9 +1234,9 @@ export function SchedulingBookingModal({
           </div>
 
           {/* Notes Section */}
-          <div className="space-y-4">
-            <h3 className="text-sm font-semibold text-[var(--v2-text-muted)] uppercase tracking-wide flex items-center gap-2">
-              <FileText className="h-4 w-4" />
+          <div className="space-y-3 sm:space-y-4">
+            <h3 className="text-xs sm:text-sm font-semibold text-[var(--v2-text-muted)] uppercase tracking-wide flex items-center gap-2">
+              <FileText className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
               {t('scheduling.booking.notes_section')}
             </h3>
             <textarea
@@ -1249,121 +1249,115 @@ export function SchedulingBookingModal({
             />
           </div>
 
-          {/* Quick Actions (for existing confirmed bookings) */}
-          {booking && booking.status === 'confirmed' && (
-            <div
-              className="p-4 bg-[var(--v2-bg)] border border-[var(--v2-border)] space-y-3"
-              style={{ borderRadius: 'var(--v2-radius-button)' }}
-            >
-              <h4 className="text-sm font-medium text-[var(--v2-text-primary)]">
-                {t('scheduling.booking.quick_actions')}
-              </h4>
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={() => handleQuickAction('complete')}
-                  disabled={loading}
-                  className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-medium text-blue-600 bg-blue-500/10 border border-blue-500/30 hover:bg-blue-500/20 transition-all disabled:opacity-50"
-                  style={{ borderRadius: 'var(--v2-radius-button)' }}
-                >
-                  <CheckCircle className="h-4 w-4" />
-                  {t('scheduling.booking.mark_completed')}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleQuickAction('no-show')}
-                  disabled={loading}
-                  className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-medium text-amber-600 bg-amber-500/10 border border-amber-500/30 hover:bg-amber-500/20 transition-all disabled:opacity-50"
-                  style={{ borderRadius: 'var(--v2-radius-button)' }}
-                >
-                  <AlertCircle className="h-4 w-4" />
-                  {t('scheduling.booking.mark_no_show')}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleQuickAction('cancel')}
-                  disabled={loading}
-                  className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-medium text-red-600 bg-red-500/10 border border-red-500/30 hover:bg-red-500/20 transition-all disabled:opacity-50"
-                  style={{ borderRadius: 'var(--v2-radius-button)' }}
-                >
-                  <XCircle className="h-4 w-4" />
-                  {t('scheduling.booking.cancel_booking')}
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* Delete Booking Section (for any existing booking) */}
-          {booking && (
-            <div
-              className="p-4 bg-red-500/5 border border-red-500/20 space-y-3"
-              style={{ borderRadius: 'var(--v2-radius-button)' }}
-            >
-              <h4 className="text-sm font-medium text-red-600 dark:text-red-400">
-                {t('scheduling.booking.danger_zone')}
-              </h4>
-              {!showDeleteConfirm ? (
-                <button
-                  type="button"
-                  onClick={() => setShowDeleteConfirm(true)}
-                  disabled={loading}
-                  className="flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-medium text-red-600 bg-red-500/10 border border-red-500/30 hover:bg-red-500/20 transition-all disabled:opacity-50"
-                  style={{ borderRadius: 'var(--v2-radius-button)' }}
-                >
-                  <Trash2 className="h-4 w-4" />
-                  {t('scheduling.booking.delete_booking')}
-                </button>
-              ) : (
-                <div className="space-y-3">
-                  <p className="text-sm text-red-600 dark:text-red-400">
-                    {t('scheduling.booking.delete_confirm_message')}
-                  </p>
-                  <div className="flex gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setShowDeleteConfirm(false)}
-                      disabled={loading}
-                      className="flex-1 px-4 py-2.5 text-sm font-medium text-[var(--v2-text-secondary)] bg-[var(--v2-surface)] border border-[var(--v2-border)] hover:bg-[var(--v2-surface-hover)] transition-all disabled:opacity-50"
-                      style={{ borderRadius: 'var(--v2-radius-button)' }}
-                    >
-                      {t('button.cancel')}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleDelete}
-                      disabled={loading}
-                      className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-medium text-white bg-red-600 hover:bg-red-700 transition-all disabled:opacity-50"
-                      style={{ borderRadius: 'var(--v2-radius-button)' }}
-                    >
-                      <Trash2 className="h-4 w-4" />
-                      {loading ? t('scheduling.booking.deleting') : t('scheduling.booking.confirm_delete')}
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-
           </div>
 
           {/* Sticky Footer */}
-          <div className="flex-shrink-0 flex justify-end gap-3 p-6 border-t border-[var(--v2-border)] bg-[var(--v2-surface)]">
-            <button
-              type="button"
-              onClick={onClose}
-              className="px-5 py-2.5 text-sm font-medium text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] bg-[var(--v2-bg)] border border-[var(--v2-border)] hover:bg-[var(--v2-surface-hover)] transition-all"
-              style={{ borderRadius: 'var(--v2-radius-button)' }}
-            >
-              {t('button.cancel')}
-            </button>
-            <button
-              type="submit"
-              disabled={loading || !formData.service_id || !formData.client_first_name || !formData.client_email}
-              className="px-5 py-2.5 text-sm font-medium text-[#14B8A6] border border-[#14B8A6] bg-[#14B8A6]/10 hover:bg-[#14B8A6]/20 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-              style={{ borderRadius: 'var(--v2-radius-button)' }}
-            >
-              {loading ? t('scheduling.booking.saving') : booking ? t('scheduling.booking.save_changes') : t('scheduling.booking.create_booking')}
-            </button>
+          <div className="flex-shrink-0 border-t border-[var(--v2-border)] bg-[var(--v2-surface)] px-4 sm:px-6 py-3 sm:py-4">
+            {/* Delete confirmation overlay */}
+            {showDeleteConfirm ? (
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-sm text-red-600 dark:text-red-400 flex-1">
+                  {t('scheduling.booking.delete_confirm_message')}
+                </p>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowDeleteConfirm(false)}
+                    disabled={loading}
+                    className="px-4 py-2 text-sm font-medium text-[var(--v2-text-secondary)] bg-[var(--v2-bg)] border border-[var(--v2-border)] hover:bg-[var(--v2-surface-hover)] transition-all disabled:opacity-50"
+                    style={{ borderRadius: 'var(--v2-radius-button)' }}
+                  >
+                    {t('button.cancel')}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleDelete}
+                    disabled={loading}
+                    className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 transition-all disabled:opacity-50"
+                    style={{ borderRadius: 'var(--v2-radius-button)' }}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                    {loading ? t('scheduling.booking.deleting') : t('scheduling.booking.confirm_delete')}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="flex items-center justify-between gap-3">
+                {/* Left side - Quick actions for existing bookings */}
+                <div className="flex items-center gap-2">
+                  {booking && booking.status === 'confirmed' && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => handleQuickAction('complete')}
+                        disabled={loading}
+                        className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-blue-600 hover:bg-blue-500/10 transition-all disabled:opacity-50"
+                        style={{ borderRadius: 'var(--v2-radius-button)' }}
+                        title={t('scheduling.booking.mark_completed')}
+                      >
+                        <CheckCircle className="h-4 w-4" />
+                        <span className="hidden sm:inline">{t('scheduling.booking.mark_completed')}</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleQuickAction('no-show')}
+                        disabled={loading}
+                        className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-amber-600 hover:bg-amber-500/10 transition-all disabled:opacity-50"
+                        style={{ borderRadius: 'var(--v2-radius-button)' }}
+                        title={t('scheduling.booking.mark_no_show')}
+                      >
+                        <AlertCircle className="h-4 w-4" />
+                        <span className="hidden sm:inline">{t('scheduling.booking.mark_no_show')}</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleQuickAction('cancel')}
+                        disabled={loading}
+                        className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-500/10 transition-all disabled:opacity-50"
+                        style={{ borderRadius: 'var(--v2-radius-button)' }}
+                        title={t('scheduling.booking.cancel_booking')}
+                      >
+                        <XCircle className="h-4 w-4" />
+                        <span className="hidden sm:inline">{t('scheduling.booking.cancel_booking')}</span>
+                      </button>
+                    </>
+                  )}
+                  {booking && (
+                    <button
+                      type="button"
+                      onClick={() => setShowDeleteConfirm(true)}
+                      disabled={loading}
+                      className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-500/10 transition-all disabled:opacity-50"
+                      style={{ borderRadius: 'var(--v2-radius-button)' }}
+                      title={t('scheduling.booking.delete_booking')}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                      <span className="hidden sm:inline">{t('scheduling.booking.delete_booking')}</span>
+                    </button>
+                  )}
+                </div>
+
+                {/* Right side - Cancel and Save */}
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={onClose}
+                    className="px-4 py-2 text-sm font-medium text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] bg-[var(--v2-bg)] border border-[var(--v2-border)] hover:bg-[var(--v2-surface-hover)] transition-all"
+                    style={{ borderRadius: 'var(--v2-radius-button)' }}
+                  >
+                    {t('button.cancel')}
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={loading || !formData.service_id || !formData.client_first_name || !formData.client_email}
+                    className="px-4 py-2 text-sm font-medium text-[#14B8A6] border border-[#14B8A6] bg-[#14B8A6]/10 hover:bg-[#14B8A6]/20 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                    style={{ borderRadius: 'var(--v2-radius-button)' }}
+                  >
+                    {loading ? t('scheduling.booking.saving') : booking ? t('scheduling.booking.save_changes') : t('scheduling.booking.create_booking')}
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </form>
         <style jsx global>{`

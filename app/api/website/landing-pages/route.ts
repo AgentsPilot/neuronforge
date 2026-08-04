@@ -14,64 +14,113 @@ import { z } from 'zod';
 
 const logger = createLogger({ module: 'LandingPagesAPI' });
 
-// Landing page block structure
-const LANDING_PAGE_BLOCKS: Array<{ block_type: string; defaultContent: Record<string, unknown> }> = [
-  {
-    block_type: 'header',
-    defaultContent: {
-      logo_text: '',
-      menu_items: [],
-      cta_button: { text: 'Book Now', link: '#booking' },
-      style: 'minimal'
+// Offering types that require booking vs direct purchase
+const BOOKABLE_TYPES = ['service', 'coaching', 'treatment', 'session', 'consultation'];
+
+// Get blocks based on offering type - courses/products don't need booking
+function getBlocksForOfferingType(
+  offeringType: string | undefined,
+  language: string = 'en'
+): Array<{ block_type: string; defaultContent: Record<string, unknown> }> {
+  const needsBooking = !offeringType || BOOKABLE_TYPES.includes(offeringType.toLowerCase());
+  const isCourse = offeringType?.toLowerCase() === 'course';
+
+  // Localized CTA text
+  const ctaText = {
+    book: language === 'he' ? 'הזמן עכשיו' : language === 'es' ? 'Reservar Ahora' : 'Book Now',
+    enroll: language === 'he' ? 'הירשם עכשיו' : language === 'es' ? 'Inscríbete Ahora' : 'Enroll Now',
+    buy: language === 'he' ? 'קנה עכשיו' : language === 'es' ? 'Comprar Ahora' : 'Buy Now',
+    getStarted: language === 'he' ? 'התחל עכשיו' : language === 'es' ? 'Comenzar' : 'Get Started'
+  };
+
+  const blocks: Array<{ block_type: string; defaultContent: Record<string, unknown> }> = [
+    {
+      block_type: 'header',
+      defaultContent: {
+        logo_text: '',
+        menu_items: [],
+        cta_button: {
+          text: needsBooking ? ctaText.book : (isCourse ? ctaText.enroll : ctaText.getStarted),
+          link: needsBooking ? '#booking' : '#pricing'
+        },
+        style: 'minimal'
+      }
+    },
+    {
+      block_type: 'hero',
+      defaultContent: {
+        layout: 'center',
+        headline: '',
+        subheadline: '',
+        cta_text: needsBooking ? ctaText.book : (isCourse ? ctaText.enroll : ctaText.buy),
+        cta_link: needsBooking ? '#booking' : '#pricing',
+        background_type: 'gradient'
+      }
+    },
+    {
+      block_type: 'features',
+      defaultContent: {
+        title: isCourse
+          ? (language === 'he' ? 'מה תלמדו' : language === 'es' ? 'Qué Aprenderás' : 'What You Will Learn')
+          : (language === 'he' ? 'למה לבחור בנו' : language === 'es' ? 'Por Qué Elegirnos' : 'Why Choose Us'),
+        features: []
+      }
+    },
+    {
+      block_type: 'pricing',
+      defaultContent: {
+        title: isCourse
+          ? (language === 'he' ? 'פרטי הקורס' : language === 'es' ? 'Detalles del Curso' : 'Course Details')
+          : (language === 'he' ? 'השקעה' : language === 'es' ? 'Inversión' : 'Investment'),
+        plans: []
+      }
+    },
+    {
+      block_type: 'faq',
+      defaultContent: {
+        title: language === 'he' ? 'שאלות נפוצות' : language === 'es' ? 'Preguntas Frecuentes' : 'Frequently Asked Questions',
+        faqs: []
+      }
     }
-  },
-  {
-    block_type: 'hero',
-    defaultContent: {
-      layout: 'center',
-      headline: '',
-      subheadline: '',
-      cta_text: 'Book Now',
-      cta_link: '#booking',
-      background_type: 'gradient'
-    }
-  },
-  {
-    block_type: 'features',
-    defaultContent: {
-      title: 'Why Choose This Service',
-      features: []
-    }
-  },
-  {
-    block_type: 'pricing',
-    defaultContent: {
-      title: 'Investment',
-      plans: []
-    }
-  },
-  {
-    block_type: 'faq',
-    defaultContent: {
-      title: 'Frequently Asked Questions',
-      items: []
-    }
-  },
-  {
-    block_type: 'booking_widget',
-    defaultContent: {
-      title: 'Ready to Get Started?',
-      services: []
-    }
-  },
-  {
+  ];
+
+  // Only add booking widget for bookable services
+  if (needsBooking) {
+    blocks.push({
+      block_type: 'booking_widget',
+      defaultContent: {
+        title: language === 'he' ? 'מוכנים להתחיל?' : language === 'es' ? '¿Listo para comenzar?' : 'Ready to Get Started?',
+        services: []
+      }
+    });
+  } else {
+    // For courses/products, add a CTA block instead of booking
+    blocks.push({
+      block_type: 'cta',
+      defaultContent: {
+        title: isCourse
+          ? (language === 'he' ? 'מוכנים להתחיל ללמוד?' : language === 'es' ? '¿Listo para empezar a aprender?' : 'Ready to Start Learning?')
+          : (language === 'he' ? 'מוכנים להתחיל?' : language === 'es' ? '¿Listo para comenzar?' : 'Ready to Get Started?'),
+        description: isCourse
+          ? (language === 'he' ? 'הירשמו עכשיו והתחילו את המסע שלכם' : language === 'es' ? 'Inscríbete ahora y comienza tu viaje' : 'Enroll now and begin your journey')
+          : (language === 'he' ? 'קבלו גישה היום' : language === 'es' ? 'Obtén acceso hoy' : 'Get access today'),
+        cta_text: isCourse ? ctaText.enroll : ctaText.buy,
+        cta_link: '#pricing'
+      }
+    });
+  }
+
+  // Always add contact form at the end
+  blocks.push({
     block_type: 'contact_form',
     defaultContent: {
-      title: 'Questions? Get in Touch',
+      title: language === 'he' ? 'שאלות? צרו קשר' : language === 'es' ? '¿Preguntas? Contáctenos' : 'Questions? Get in Touch',
       fields: ['name', 'email', 'message']
     }
-  }
-];
+  });
+
+  return blocks;
+}
 
 const CreateLandingPageSchema = z.object({
   serviceId: z.string().uuid(),
@@ -88,7 +137,18 @@ const CreateLandingPageSchema = z.object({
     })
   }),
   generatedContent: z.record(z.unknown()).optional(),
-  shouldPublish: z.boolean().default(false)
+  shouldPublish: z.boolean().default(false),
+  // Client flow steps - 'scheduling' and 'client_info' are the new split steps, 'booking' is legacy
+  clientFlow: z.array(z.enum(['scheduling', 'client_info', 'booking', 'payment', 'intake', 'confirmation'])).optional(),
+  // Language for localized content
+  language: z.enum(['en', 'es', 'he']).optional().default('en'),
+  // Business branding for header
+  logoUrl: z.string().optional(),
+  companyName: z.string().optional(),
+  // Service details for pricing and booking
+  servicePrice: z.number().nullable().optional(),
+  serviceDuration: z.number().optional(),
+  serviceCurrency: z.string().optional().default('USD')
 });
 
 export async function GET(request: NextRequest) {
@@ -169,7 +229,9 @@ export async function POST(request: NextRequest) {
       title: validated.serviceName,
       subdomain: subdomain || null,
       status: validated.shouldPublish ? 'live' : 'draft',
-      theme: pageTheme
+      theme: pageTheme,
+      // Store the language for RTL support and localized content
+      website_language: validated.language
     };
 
     const pageResult = await pageRepo.create(pageData);
@@ -178,8 +240,18 @@ export async function POST(request: NextRequest) {
       throw pageResult.error || new Error('Failed to create landing page');
     }
 
+    // Get offering type from AI-generated content to determine which blocks to include
+    const offeringType = (validated.generatedContent?.offering_type as string) || undefined;
+    const landingPageBlocks = getBlocksForOfferingType(offeringType, validated.language);
+
+    requestLogger.info({
+      offeringType,
+      blockTypes: landingPageBlocks.map(b => b.block_type),
+      hasBookingWidget: landingPageBlocks.some(b => b.block_type === 'booking_widget')
+    }, 'Generating landing page blocks based on offering type');
+
     // Create blocks with generated content
-    const blocksToCreate: WebsiteBlockInsert[] = LANDING_PAGE_BLOCKS.map((block, index) => {
+    const blocksToCreate: WebsiteBlockInsert[] = landingPageBlocks.map((block, index) => {
       // Merge generated content if available
       let content = { ...block.defaultContent };
       if (validated.generatedContent && validated.generatedContent[block.block_type]) {
@@ -189,10 +261,53 @@ export async function POST(request: NextRequest) {
         };
       }
 
-      // For booking_widget, add the specific service
+      // For header, set logo and company name
+      if (block.block_type === 'header') {
+        content.logo_url = validated.logoUrl || null;
+        content.logo_text = validated.companyName || '';
+      }
+
+      // For hero, always set headline to service name (AI only generates subheadline)
+      if (block.block_type === 'hero') {
+        content.headline = validated.serviceName;
+      }
+
+      // For booking_widget, add the specific service and client flow
       if (block.block_type === 'booking_widget') {
         content.services = [validated.serviceId];
         content.service_filter = [validated.serviceId];
+        // Use new split steps as default - scheduling + client_info for bookable services
+        content.client_flow = validated.clientFlow || ['scheduling', 'client_info', 'confirmation'];
+      }
+
+      // For pricing, add the service info for booking integration
+      if (block.block_type === 'pricing') {
+        content.serviceId = validated.serviceId;
+        content.serviceName = validated.serviceName;
+        content.durationMinutes = validated.serviceDuration || 60;
+        content.currency = validated.serviceCurrency || 'USD';
+        // Set client flow from wizard - determines which steps are shown in booking modal
+        content.client_flow = validated.clientFlow || ['scheduling', 'client_info', 'confirmation'];
+        // Add priceRaw to plans if present
+        if (content.plans && Array.isArray(content.plans)) {
+          content.plans = (content.plans as Array<Record<string, unknown>>).map(plan => ({
+            ...plan,
+            serviceId: validated.serviceId,
+            priceRaw: validated.servicePrice || undefined,
+            currency: validated.serviceCurrency || 'USD',
+            durationMinutes: validated.serviceDuration || 60
+          }));
+        }
+      }
+
+      // For CTA (courses/products), also add service info
+      if (block.block_type === 'cta') {
+        content.serviceId = validated.serviceId;
+        content.serviceName = validated.serviceName;
+        content.priceRaw = validated.servicePrice || undefined;
+        content.currency = validated.serviceCurrency || 'USD';
+        // Set client flow from wizard - for courses/products, typically no scheduling
+        content.client_flow = validated.clientFlow || ['client_info', 'payment', 'confirmation'];
       }
 
       return {
@@ -232,6 +347,20 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         { success: false, error: 'Invalid input', details: error.errors },
         { status: 400 }
+      );
+    }
+
+    // Check for duplicate slug error
+    const pgError = error as { code?: string; details?: string };
+    if (pgError.code === '23505' && pgError.details?.includes('slug')) {
+      requestLogger.warn({ err: error }, 'Duplicate landing page slug');
+      return NextResponse.json(
+        {
+          success: false,
+          error: 'A landing page with this URL already exists. Please choose a different name or URL.',
+          code: 'DUPLICATE_SLUG'
+        },
+        { status: 409 }
       );
     }
 

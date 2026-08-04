@@ -199,7 +199,7 @@ export function IntakeFormStep({
         </div>
         <h3
           className="text-xl font-semibold text-gray-900 dark:text-white mb-2"
-          style={{ fontFamily: theme?.fonts?.heading }}
+          style={{ fontFamily: 'var(--website-font-heading)' }}
         >
           {labels.aFewQuestions}
         </h3>

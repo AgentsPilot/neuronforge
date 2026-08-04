@@ -368,11 +368,25 @@ export class WebsitePageRepository {
 
   async archive(id: string, userId: string): Promise<RepositoryResult<WebsitePage>> {
     try {
+      // First get the current page to modify the slug
+      const { data: currentPage, error: fetchError } = await this.supabase
+        .from('website_pages')
+        .select('slug')
+        .eq('id', id)
+        .eq('user_id', userId)
+        .single();
+
+      if (fetchError) throw fetchError;
+
+      // Append timestamp to slug to free up the URL for new pages
+      const archivedSlug = `${currentPage.slug}-archived-${Date.now()}`;
+
       const { data, error } = await this.supabase
         .from('website_pages')
         .update({
           status: 'archived',
-          published: false
+          published: false,
+          slug: archivedSlug
         })
         .eq('id', id)
         .eq('user_id', userId)
@@ -380,7 +394,7 @@ export class WebsitePageRepository {
         .single();
 
       if (error) throw error;
-      logger.info({ pageId: id, userId }, 'Archived website page');
+      logger.info({ pageId: id, userId, originalSlug: currentPage.slug, archivedSlug }, 'Archived website page');
       return { data, error: null };
     } catch (error) {
       logger.error({ err: error, id }, 'Failed to archive page');
